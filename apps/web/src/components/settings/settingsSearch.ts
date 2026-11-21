@@ -414,6 +414,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("latex tex katex equations formulas markdown")],
   },
   {
+    id: "file-link-path-depth",
+    title: FORK_SETTING_TITLES.fileLinkPathDepth,
+    to: "/settings/appearance",
+    searchTerms: ["file link path folder directory parent depth segments chip name"],
+  },
+  {
     id: "panel-animations",
     title: msg("Panel animations"),
     to: "/settings/appearance",

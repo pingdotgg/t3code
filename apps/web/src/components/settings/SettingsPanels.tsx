@@ -68,7 +68,11 @@ import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
 import { CompactIdleValueRows } from "~/fork/CompactIdleValueRows";
-import { COMPACT_IDLE_THREADS_DESCRIPTION, COMPACT_WHEN_IDLE_LABEL } from "~/fork/forkCopy";
+import {
+  COMPACT_IDLE_THREADS_DESCRIPTION,
+  COMPACT_WHEN_IDLE_LABEL,
+  FORK_SETTING_TITLES,
+} from "~/fork/forkCopy";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
 import { SnoozePresetsRow } from "./SnoozePresetsSettings";
@@ -509,6 +513,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? [gt("Render math")]
       : []),
+    ...(settings.fileLinkPathDepth !== DEFAULT_UNIFIED_SETTINGS.fileLinkPathDepth
+      ? [FORK_SETTING_TITLES.fileLinkPathDepth]
+      : []),
     ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
       ? [gt("Panel animations")]
       : []),
@@ -702,6 +709,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
+      fileLinkPathDepth: DEFAULT_UNIFIED_SETTINGS.fileLinkPathDepth,
       language: DEFAULT_UNIFIED_SETTINGS.language,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,

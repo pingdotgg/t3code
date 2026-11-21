@@ -44,6 +44,7 @@ interface MarkdownFileLinkProps {
   panelPath: string | null;
   line?: number | undefined;
   label: string;
+  labelPrefix?: string | undefined;
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
@@ -70,6 +71,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   panelPath,
   line,
   label,
+  labelPrefix,
   copyMarkdown,
   theme,
   threadRef,
@@ -376,6 +378,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 path={iconPath}
                 environmentId={environmentId}
                 label={label}
+                labelPrefix={labelPrefix}
                 theme={theme}
               />
             </ContextChip>
@@ -385,7 +388,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
               kind={chipKind}
               dir="ltr"
               render={<button type="button" />}
-              aria-label={gt("File options for {label}", { label })}
+              aria-label={gt("File options for {label}", { label: `${labelPrefix ?? ""}${label}` })}
               aria-haspopup="menu"
               className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, "select-text")}
               data-markdown-copy={copyMarkdown}
@@ -401,6 +404,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 path={iconPath}
                 environmentId={environmentId}
                 label={label}
+                labelPrefix={labelPrefix}
                 theme={theme}
               />
             </ContextChip>
@@ -427,6 +431,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&
+    previous.labelPrefix === next.labelPrefix &&
     previous.copyMarkdown === next.copyMarkdown &&
     previous.theme === next.theme &&
     previous.threadRef === next.threadRef &&

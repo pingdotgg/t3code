@@ -5,6 +5,7 @@ export const FORK_SETTING_TITLES = {
   newThreadDisplayMode: "Display mode",
   previewBrowserMode: "Preview browser",
   rightPanel: "Right panel",
+  fileLinkPathDepth: "File link folders",
 };
 
 export const COMPACT_WHEN_IDLE_LABEL = "Compact when idle";

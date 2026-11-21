@@ -50,7 +50,8 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
     };
     const visit = (node: Node, inPre = false) => {
       const element = node.nodeType === 1 ? (node as Element) : null;
-      if (element?.matches("svg")) return;
+      // Decorations are visual only: unlike ignored text they keep the surrounding run whole.
+      if (element?.matches("svg, [data-thread-find-decoration]")) return;
       if (element?.matches(`${THREAD_FIND_IGNORE_SELECTOR}, [role="toolbar"]`)) {
         flush();
         return;

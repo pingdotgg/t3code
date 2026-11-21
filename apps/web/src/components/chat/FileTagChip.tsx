@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ContextChipLabel } from "../ContextChip";
+import { FileLinkPathPrefix } from "../../fork/FileLinkPathPrefix";
 import { WorkspaceEntryIcon } from "./WorkspaceEntryIcon";
 
 export function FileTagChipContent(props: {
   icon?: ReactNode;
   path: string;
   label: string;
+  labelPrefix?: string | undefined;
   theme: "light" | "dark";
   environmentId?: EnvironmentId | null | undefined;
   cwd?: string | undefined;
@@ -21,7 +23,10 @@ export function FileTagChipContent(props: {
           theme={props.theme}
         />
       )}
-      <ContextChipLabel>{props.label}</ContextChipLabel>
+      <ContextChipLabel>
+        <FileLinkPathPrefix prefix={props.labelPrefix} />
+        {props.label}
+      </ContextChipLabel>
     </>
   );
 }

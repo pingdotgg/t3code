@@ -37,6 +37,7 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { FileLinkPathDepthSetting } from "../../fork/FileLinkPathDepthSetting";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: msg("Artwork"),
@@ -361,6 +362,7 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        <FileLinkPathDepthSetting />
         <AdvancedSettings
           targetIds={[
             searchableSetting("panel-animations").id,
