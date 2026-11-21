@@ -1,6 +1,7 @@
 /**
  * The `TextDiff` module computes edit scripts for arrays and text, applies and
- * inverts them, and formats line differences as unified diffs.
+ * inverts them, groups line differences into hunks, and formats them as
+ * unified diffs.
  *
  * Scripts are computed with Myers' O(ND) algorithm in linear space, after
  * trimming common prefixes and suffixes. Scripts are minimal unless the
@@ -69,6 +70,58 @@ export interface EditInsert<A> {
 export interface EditDelete<A> {
   readonly _tag: "Delete"
   readonly items: ReadonlyArray<A>
+}
+
+/**
+ * A changed region of a line diff, with the unchanged lines around it.
+ *
+ * **Details**
+ *
+ * `beforeStart` and `afterStart` are zero-based line indexes in `before` and
+ * `after` where the hunk starts, and `beforeLines` and `afterLines` are how
+ * many lines of each it spans. Within each change, its `Delete` lines come
+ * before its `Insert` lines.
+ *
+ * @see {@link hunks} to group a line diff into hunks
+ * @stability experimental
+ * @category models
+ * @since 4.1.4
+ */
+export interface Hunk {
+  readonly beforeStart: number
+  readonly beforeLines: number
+  readonly afterStart: number
+  readonly afterLines: number
+  readonly lines: ReadonlyArray<HunkLine>
+}
+
+/**
+ * One line of a {@link Hunk}.
+ *
+ * **Details**
+ *
+ * `text` is the line as it appears in its string, with its line break when it
+ * has one. With the `inline` option of {@link hunks}, the deleted and inserted
+ * lines of a change are paired by position when there are as many of each, and
+ * `ranges` holds the UTF-16 ranges `[start, end)` of `text` that differ from
+ * its counterpart. The final `\n` is not compared.
+ *
+ * **Gotchas**
+ *
+ * - `ranges` is `undefined` when `inline` is off or the line is not paired,
+ *   and empty when a pair differs only in its final `\n`, so an empty array
+ *   does not mean the lines are identical.
+ * - A `\r` before the `\n` is compared, so `"a\r\n"` against `"a\n"` reports
+ *   the `\r` as a range.
+ *
+ * @stability experimental
+ * @category models
+ * @since 4.1.4
+ */
+export interface HunkLine {
+  readonly _tag: "Equal" | "Delete" | "Insert"
+  readonly text: string
+  readonly ranges?: ReadonlyArray<readonly [start: number, end: number]> | undefined
 }
 
 /**
@@ -446,51 +499,59 @@ export const invert = <A>(edits: ReadonlyArray<Edit<A>>): Array<Edit<A>> => {
 }
 
 /**
- * Formats a line edit script as a unified diff.
+ * Groups a line edit script into hunks: its changes with the unchanged lines
+ * around them.
  *
  * **Details**
  *
  * The script must come from {@link lines}, or otherwise hold one line per
- * item. The output follows `diff -u`: hunks whose context would touch or
- * overlap are merged, and a final line without a newline is followed by
- * `\ No newline at end of file`. When `fromFile` or `toFile` is set, both
- * header lines are emitted and an unset name falls back to the other. A script
- * without changes produces an empty string.
+ * item. Hunks are grouped as by `diff -u`: changes whose context would touch
+ * or overlap share a hunk. A script without changes has no hunks.
  *
  * **Gotchas**
  *
- * Among equally small diffs, hunks can differ from those of GNU diff or Git,
- * which apply extra heuristics.
+ * With `inline`, each pair of lines gets a minimal code point diff with no
+ * similarity cutoff, so unrelated lines yield many short ranges. Deciding
+ * whether to highlight them, for example by how much of the line they cover,
+ * is up to the caller. Set `inlineMaxEdits` when lines can be long or
+ * untrusted.
  *
- * **Example** (Formatting a unified diff)
+ * **Example** (Grouping a line diff)
  *
  * ```ts import.meta.vitest
  * import { TextDiff } from "effect"
  *
- * TextDiff.unified(TextDiff.lines("a\nb\n", "a\nc\n")) // => "@@ -1,2 +1,2 @@\n a\n-b\n+c\n"
+ * TextDiff.hunks(TextDiff.lines("a\nb\nc\n", "a\nB\nc\n"), { context: 0, inline: true }) // => [{ beforeStart: 1, beforeLines: 1, afterStart: 1, afterLines: 1, lines: [{ _tag: "Delete", text: "b\n", ranges: [[0, 1]] }, { _tag: "Insert", text: "B\n", ranges: [[0, 1]] }] }]
  * ```
  *
  * @see {@link lines} to compute a line diff
+ * @see {@link unified} to format a line diff as text
  * @stability experimental
- * @category formatting
- * @since 4.0.6
+ * @category combinators
+ * @since 4.1.4
  */
-export const unified = (edits: ReadonlyArray<Edit<string>>, options?: {
+export const hunks = (edits: ReadonlyArray<Edit<string>>, options?: {
   /**
-   * Number of unchanged lines shown around each change.
+   * Number of unchanged lines kept around each change.
    *
    * @default 3
    */
   readonly context?: number | undefined
   /**
-   * Name shown in the `---` header line.
+   * Whether paired lines carry the `ranges` that differ from their
+   * counterpart, see {@link HunkLine}.
+   *
+   * @default false
    */
-  readonly fromFile?: string | undefined
+  readonly inline?: boolean | undefined
   /**
-   * Name shown in the `+++` header line.
+   * The `maxEdits` of the code point diff of each pair of lines, see
+   * {@link codePoints}. Has no effect without `inline`.
+   *
+   * @default Infinity
    */
-  readonly toFile?: string | undefined
-}): string => {
+  readonly inlineMaxEdits?: number | undefined
+}): Array<Hunk> => {
   const a: Array<string> = []
   const b: Array<string> = []
   // Group consecutive deletions and insertions between Equal runs.
@@ -518,13 +579,10 @@ export const unified = (edits: ReadonlyArray<Edit<string>>, options?: {
       change.b1 = b.length
     }
   }
-  if (changes.length === 0) return ""
 
   const context = Math.max(0, Math.floor(options?.context ?? 3))
-  let out = ""
-  if (options?.fromFile !== undefined || options?.toFile !== undefined) {
-    out += `--- ${options.fromFile ?? options.toFile}\n+++ ${options.toFile ?? options.fromFile}\n`
-  }
+  const inline = options?.inline === true
+  const out: Array<Hunk> = []
   let start = 0
   while (start < changes.length) {
     let end = start + 1
@@ -535,17 +593,88 @@ export const unified = (edits: ReadonlyArray<Edit<string>>, options?: {
     const b0 = first.b0 - (first.a0 - a0)
     const a1 = Math.min(a.length, last.a1 + context)
     const b1 = last.b1 + (a1 - last.a1)
-    out += `@@ -${range(a0, a1 - a0)} +${range(b0, b1 - b0)} @@\n`
+    const lines: Array<HunkLine> = []
     let line = a0
     for (let c = start; c < end; c++) {
       const change = changes[c]
-      for (; line < change.a0; line++) out += formatLine(" ", a[line])
-      for (let k = change.a0; k < change.a1; k++) out += formatLine("-", a[k])
-      for (let k = change.b0; k < change.b1; k++) out += formatLine("+", b[k])
+      for (; line < change.a0; line++) lines.push({ _tag: "Equal", text: a[line] })
+      if (inline && change.a1 - change.a0 === change.b1 - change.b0) {
+        const inserts: Array<HunkLine> = []
+        for (let k = change.a0, l = change.b0; k < change.a1; k++, l++) {
+          const [deleted, inserted] = inlineRanges(a[k], b[l], options?.inlineMaxEdits)
+          lines.push({ _tag: "Delete", text: a[k], ranges: deleted })
+          inserts.push({ _tag: "Insert", text: b[l], ranges: inserted })
+        }
+        for (const insert of inserts) lines.push(insert)
+      } else {
+        for (let k = change.a0; k < change.a1; k++) lines.push({ _tag: "Delete", text: a[k] })
+        for (let k = change.b0; k < change.b1; k++) lines.push({ _tag: "Insert", text: b[k] })
+      }
       line = change.a1
     }
-    for (; line < a1; line++) out += formatLine(" ", a[line])
+    for (; line < a1; line++) lines.push({ _tag: "Equal", text: a[line] })
+    out.push({ beforeStart: a0, beforeLines: a1 - a0, afterStart: b0, afterLines: b1 - b0, lines })
     start = end
+  }
+  return out
+}
+
+/**
+ * Formats a line edit script as a unified diff.
+ *
+ * **Details**
+ *
+ * The script must come from {@link lines}, or otherwise hold one line per
+ * item. The output follows `diff -u`: hunks whose context would touch or
+ * overlap are merged, and a final line without a newline is followed by
+ * `\ No newline at end of file`. When `fromFile` or `toFile` is set, both
+ * header lines are emitted and an unset name falls back to the other. A script
+ * without changes produces an empty string.
+ *
+ * **Gotchas**
+ *
+ * Among equally small diffs, hunks can differ from those of GNU diff or Git,
+ * which apply extra heuristics.
+ *
+ * **Example** (Formatting a unified diff)
+ *
+ * ```ts import.meta.vitest
+ * import { TextDiff } from "effect"
+ *
+ * TextDiff.unified(TextDiff.lines("a\nb\n", "a\nc\n")) // => "@@ -1,2 +1,2 @@\n a\n-b\n+c\n"
+ * ```
+ *
+ * @see {@link lines} to compute a line diff
+ * @see {@link hunks} for the same hunks as data
+ * @stability experimental
+ * @category formatting
+ * @since 4.0.6
+ */
+export const unified = (edits: ReadonlyArray<Edit<string>>, options?: {
+  /**
+   * Number of unchanged lines shown around each change.
+   *
+   * @default 3
+   */
+  readonly context?: number | undefined
+  /**
+   * Name shown in the `---` header line.
+   */
+  readonly fromFile?: string | undefined
+  /**
+   * Name shown in the `+++` header line.
+   */
+  readonly toFile?: string | undefined
+}): string => {
+  const found = hunks(edits, { context: options?.context })
+  if (found.length === 0) return ""
+  let out = ""
+  if (options?.fromFile !== undefined || options?.toFile !== undefined) {
+    out += `--- ${options.fromFile ?? options.toFile}\n+++ ${options.toFile ?? options.fromFile}\n`
+  }
+  for (const hunk of found) {
+    out += `@@ -${range(hunk.beforeStart, hunk.beforeLines)} +${range(hunk.afterStart, hunk.afterLines)} @@\n`
+    for (const line of hunk.lines) out += formatLine(prefixes[line._tag], line.text)
   }
   return out
 }
@@ -589,8 +718,35 @@ const splitLines = (text: string): Array<string> => text.match(/[^\n]*\n|[^\n]+$
 const range = (start: number, count: number): string =>
   count === 0 ? `${start},0` : count === 1 ? `${start + 1}` : `${start + 1},${count}`
 
+const prefixes = { Equal: " ", Delete: "-", Insert: "+" } as const
+
 const formatLine = (prefix: string, line: string): string =>
   line.endsWith("\n") ? prefix + line : `${prefix}${line}\n\\ No newline at end of file\n`
+
+const withoutBreak = (line: string): string => line.endsWith("\n") ? line.slice(0, -1) : line
+
+// The UTF-16 ranges of each line that differ from the other, ignoring a final `\n`
+const inlineRanges = (before: string, after: string, maxEdits: number | undefined) => {
+  const inBefore: Array<readonly [number, number]> = []
+  const inAfter: Array<readonly [number, number]> = []
+  let i = 0
+  let j = 0
+  for (const edit of codePoints(withoutBreak(before), withoutBreak(after), { maxEdits })) {
+    let length = 0
+    for (const item of edit.items) length += item.length
+    if (edit._tag === "Equal") {
+      i += length
+      j += length
+    } else if (edit._tag === "Delete") {
+      inBefore.push([i, i + length])
+      i += length
+    } else {
+      inAfter.push([j, j + length])
+      j += length
+    }
+  }
+  return [inBefore, inAfter] as const
+}
 
 // Interns the tokens so the search compares integers instead of strings
 const diffStrings = (a: ReadonlyArray<string>, b: ReadonlyArray<string>, maxEdits?: number) => {

@@ -621,6 +621,25 @@ describe("buildThreadFeed", () => {
       });
       expect(before[1]).not.toHaveProperty("message.checkpointSummary");
       expect(getReviewSectionIdForCheckpoint(summary)).toBe("turn:2");
+      // A plain folder's own checkpoint is missing every turn; its repositories still changed.
+      const inRepository = {
+        ...summary,
+        status: "missing" as const,
+        files: [],
+        repositories: [
+          {
+            scopeId: CheckpointScopeId.make("scope-api"),
+            name: "api",
+            repositoryPath: "/work/api",
+            cwd: "/work/api",
+            files: summary.files,
+            baselineMissing: false,
+          },
+        ],
+      };
+      expect(buildThreadFeed(rows, { checkpointSummaries: [inRepository] })[1]).toMatchObject({
+        message: { checkpointSummary: inRepository },
+      });
       const fallback = deriveThreadFeedPresentation(
         [after.at(-1)!],
         null,
@@ -2100,6 +2119,13 @@ describe("streamed feed updates", () => {
     completedAt: null,
   };
   const settled = { ...running, status: "completed" as const, completedAt: at(50) };
+  // A follow-up the server accepted waits under the running turn until a run picks it up.
+  const queuedBehindRun: OrchestrationV2TurnItem[] = [
+    ...history,
+    reply("a3", 22, runs[2], "Working", true),
+    shell("s4", 23, runs[2]),
+    { ...user("queued", 30, runs[2]), runId: null },
+  ];
   // Each step is what one streamed event leaves behind, including the edits
   // that reach back into earlier runs.
   const steps: ReadonlyArray<{
@@ -2186,6 +2212,8 @@ describe("streamed feed updates", () => {
       ],
       latestRun: running,
     },
+    { items: queuedBehindRun, latestRun: running },
+    { items: queuedBehindRun, latestRun: running },
   ];
   // Like the projection reducer, an unchanged item at an unchanged position keeps its row.
   const rowsByItem = new Map<

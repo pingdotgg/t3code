@@ -108,6 +108,53 @@ describe("Response", () => {
       deepStrictEqual(decoded.encodedResult, encodedFailure, "round-tripped encoded AiError")
     }))
 
+  it.effect("round trips a Toolkit result with a non-JSON encoding through AllParts JSON", () =>
+    Effect.gen(function*() {
+      const tool = Tool.make("Schedule", { success: Schema.Struct({ at: Schema.Date }) })
+      const toolkit = Toolkit.make(tool)
+      const at = new Date("2026-01-01T00:00:00.000Z")
+      const handlers = yield* toolkit.pipe(Effect.provide(toolkit.toLayer({
+        Schedule: () => Effect.succeed({ at })
+      })))
+      const results = yield* handlers.handle(tool.name, {}).pipe(Effect.flatMap(Stream.runCollect))
+      const part = Response.makePart("tool-result", {
+        ...results[0],
+        id: "tool-123",
+        name: tool.name,
+        providerExecuted: false
+      })
+      const schema = Response.AllParts(toolkit)
+      const encoded = yield* Schema.encodeEffect(schema)(part)
+      const decoded = yield* Schema.decodeUnknownEffect(schema)(JSON.parse(JSON.stringify(encoded)))
+
+      assertTrue(encoded.type === "tool-result")
+      deepStrictEqual(encoded.result, { at: "2026-01-01T00:00:00.000Z" })
+      deepStrictEqual(decoded, part)
+    }))
+
+  it.effect("keeps the raw encoding for provider-executed tool results", () =>
+    Effect.gen(function*() {
+      const tool = Tool.providerDefined({
+        id: "test.provider_search",
+        customName: "ProviderSearch",
+        providerName: "provider_search",
+        success: Schema.Struct({ cursor: Schema.optional(Schema.String) })
+      })()
+      const part = Response.makePart("tool-result", {
+        id: "tool-123",
+        name: tool.name,
+        isFailure: false,
+        result: { cursor: undefined },
+        encodedResult: { cursor: undefined },
+        providerExecuted: true,
+        preliminary: false
+      })
+      const encoded = yield* Schema.encodeUnknownEffect(Response.AllParts(Toolkit.make(tool)))(part)
+
+      // The JSON encoding would hold `null` for the omitted optional
+      deepStrictEqual((encoded as Response.ToolResultPartEncoded).result, { cursor: undefined })
+    }))
+
   describe("provider-defined tool execution failures", () => {
     const tool = Tool.providerDefined({
       id: "test.provider_tool",
