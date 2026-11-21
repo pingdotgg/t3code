@@ -12,6 +12,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
   type ServerProviderUsageLimits,
+  type ServerProviderUsageSpend,
   type ServerProviderUsageWindow,
   type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshot,
@@ -815,6 +816,27 @@ export function resetCountdown(
   if (resetsAt <= now) return { kind: "now" };
   if (resetsAt - now < MINUTE) return { kind: "momentarily" };
   return { kind: "in", ms: resetsAt - now };
+}
+
+function formatMinor(amount: number, { currency, exponent }: ServerProviderUsageSpend): string {
+  const value = amount / 10 ** exponent;
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: exponent,
+      maximumFractionDigits: exponent,
+    }).format(value);
+  } catch {
+    return `${value.toFixed(Math.min(exponent, 100))} ${currency}`;
+  }
+}
+
+/** "$342.60 / $500.00" (used / limit), as Claude Code's /usage shows; null without amounts. */
+export function formatSpend(window: ServerProviderUsageWindow): string | null {
+  const { spend } = window;
+  if (!spend) return null;
+  return `${formatMinor(spend.usedMinor, spend)} / ${formatMinor(spend.limitMinor, spend)}`;
 }
 
 export const USAGE_LIMITS_COMMAND = {
