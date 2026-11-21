@@ -224,3 +224,61 @@ it.effect("merges with Forgejo's fast-forward-only style", () =>
     ]);
   }),
 );
+
+it.effect("drafts and readies a pull request through Forgejo's WIP title prefix", () =>
+  Effect.gen(function* () {
+    let title = "Add the relay";
+    const patches: Array<unknown> = [];
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            assert.strictEqual(input.path, "repos/maria/project/pulls/3");
+            if (input.method === "PATCH") {
+              patches.push(input.body);
+              title = (input.body as { title: string }).title;
+            }
+            return Effect.succeed(
+              TestSourceControlHost.processOutput(
+                JSON.stringify({
+                  number: 3,
+                  title,
+                  body: "",
+                  html_url: "https://forge.example:3000/maria/project/pulls/3",
+                  user: { login: "maria" },
+                  state: "open",
+                  merged: false,
+                  head: { ref: "feature", sha: "head-sha", repo: null },
+                  base: { ref: "main", sha: "base-sha", repo: null },
+                  created_at: "2026-10-12T00:00:00Z",
+                  updated_at: "2026-10-12T00:00:00Z",
+                  closed_at: null,
+                  merged_at: null,
+                  labels: [],
+                }),
+              ),
+            );
+          },
+        }),
+      ),
+    );
+    assert.includeMembers([...provider.capabilities.actions], ["draft", "ready"]);
+    const pr = {
+      cwd: "/forgejo",
+      repository: "maria/project",
+      host: "forge.example:3000",
+      number: 3,
+    };
+    yield* provider.runAction({ ...pr, action: "draft" });
+    yield* provider.runAction({ ...pr, action: "draft" });
+    yield* provider.runAction({ ...pr, action: "ready" });
+    title = "[WIP] Add the relay";
+    yield* provider.runAction({ ...pr, action: "ready" });
+    yield* provider.runAction({ ...pr, action: "ready" });
+    assert.deepStrictEqual(patches, [
+      { title: "WIP: Add the relay" },
+      { title: "Add the relay" },
+      { title: "Add the relay" },
+    ]);
+  }),
+);
