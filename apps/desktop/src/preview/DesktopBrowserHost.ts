@@ -32,6 +32,10 @@ const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
 const FOCUS_IDLE = "5 seconds";
 /** How long a screenshot waits for the client to draw its guest at full detail. */
 const CAPTURE_DRAW_WAIT = "1 second";
+/** Most waits settle within a frame or two of this, so a quick one is never prodded. */
+const PAINT_NUDGE_INTERVAL = "250 millis";
+/** A cold guest can stall Electron's capture; the next prod goes out regardless. */
+const PAINT_NUDGE_TIMEOUT = "2 seconds";
 /** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
 const FIRST_PAGE_TIMEOUT = "5 seconds";
 const ERR_ABORTED = -3;
@@ -46,6 +50,8 @@ export interface DesktopBrowserTabDebugger {
   readonly debugger: Electron.Debugger;
   /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
   readonly cookiesCleared?: () => Promise<void>;
+  /** Whether the window hosting the guest draws it; one that cannot is prodded to. */
+  readonly windowDrawing?: () => boolean;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
@@ -258,6 +264,33 @@ export const make = Effect.gen(function* () {
     runFork(PubSub.publish(painting, { key: tab.key, active }));
   };
 
+  /**
+   * A hidden or minimized window stops drawing its guest even while unthrottled, so a
+   * capture, or a command that waits on a frame, never settles. Electron's own capture still
+   * draws one, so a wait that outlasts a frame prods the guest until it settles.
+   */
+  const nudgePaint = ({ webContents, windowDrawing }: DesktopBrowserTabDebugger) =>
+    Effect.sleep(PAINT_NUDGE_INTERVAL).pipe(
+      Effect.andThen(
+        Effect.suspend(() =>
+          webContents.isDestroyed() || windowDrawing?.() === true
+            ? Effect.void
+            : Effect.promise(() =>
+                webContents.capturePage().then(
+                  () => undefined,
+                  () => undefined,
+                ),
+              ).pipe(Effect.timeoutOption(PAINT_NUDGE_TIMEOUT)),
+        ),
+      ),
+      Effect.forever,
+    );
+
+  const nudgedUntilSettled = <A>(tab: AttachedTab, work: () => Promise<A>) => {
+    const nudging = runFork(nudgePaint(tab.debuggee));
+    return work().finally(() => runFork(Fiber.interrupt(nudging)));
+  };
+
   /** A command may wait on the page's next frame, so the guest stays focused until it settles. */
   const holdFocus = <A>(tab: AttachedTab, owner: string | undefined, work: () => Promise<A>) => {
     const pending = {};
@@ -265,7 +298,7 @@ export const make = Effect.gen(function* () {
     tab.focusUses += 1;
     setFocusEmulation(tab, true);
     releaseFocusWhenIdle(tab);
-    return work().finally(() => {
+    return nudgedUntilSettled(tab, work).finally(() => {
       if (!tab.focusPending.delete(pending)) return;
       tab.focusUses += 1;
       releaseFocusWhenIdle(tab);
@@ -296,11 +329,14 @@ export const make = Effect.gen(function* () {
     const sent = {};
     tab.capturing.add(sent);
     syncPainting(tab);
+    const sendNudged = () => nudgedUntilSettled(tab, send);
     // Sent at once when already drawn, so it keeps its place among the commands after it.
-    return (drawnTabs.has(keyOf(tab.key)) ? send() : whenDrawn(tab).then(send)).finally(() => {
-      tab.capturing.delete(sent);
-      syncPainting(tab);
-    });
+    return (drawnTabs.has(keyOf(tab.key)) ? sendNudged() : whenDrawn(tab).then(sendNudged)).finally(
+      () => {
+        tab.capturing.delete(sent);
+        syncPainting(tab);
+      },
+    );
   };
 
   /**

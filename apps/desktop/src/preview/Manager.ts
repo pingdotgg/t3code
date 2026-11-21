@@ -2579,6 +2579,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           webContents: wc,
           debugger: control.debugger,
           cookiesCleared: () => runPromise(browserSession.cookiesCleared(wc.session)),
+          windowDrawing: () => {
+            const host = wc.hostWebContents;
+            const window = host && !host.isDestroyed() ? BrowserWindow.fromWebContents(host) : null;
+            return window !== null && window.isVisible() && !window.isMinimized();
+          },
         });
         // CDP cannot recover a failure that happened before it attached.
         const { navStatus } = afterAttach;

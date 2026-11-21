@@ -50,6 +50,9 @@ const makeDebuggee = (
     readonly deferFocus?: boolean;
     /** The guest is still loading its first page. */
     readonly loading?: boolean;
+    /** Like a guest of a hidden window: it answers a capture only once Electron captures it. */
+    readonly drawsOnlyWhenCaptured?: boolean;
+    readonly windowDrawing?: () => boolean;
     readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
   } = {},
 ) => {
@@ -90,7 +93,13 @@ const makeDebuggee = (
       }),
   });
   let destroyed = false;
+  let nativeCaptures = 0;
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+    capturePage: () => {
+      nativeCaptures += 1;
+      if (options.drawsOnlyWhenCaptured) pending.splice(0).forEach((resolve) => resolve());
+      return Promise.resolve({});
+    },
     getURL: () => "http://localhost/",
     getTitle: () => "Page",
     getUserAgent: () => "Electron",
@@ -101,6 +110,7 @@ const makeDebuggee = (
     tab: {
       webContents: webContents as unknown as Electron.WebContents,
       debugger: debuggee as unknown as Electron.Debugger,
+      ...(options.windowDrawing ? { windowDrawing: options.windowDrawing } : {}),
     },
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
@@ -117,6 +127,7 @@ const makeDebuggee = (
     /** Refuses the pending command the debugger received with this id. */
     refuse: (id: number) => rejects[sent.indexOf(id)]?.(),
     focusEmulation,
+    nativeCaptures: () => nativeCaptures,
     nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
     releaseFirst: () => pending.shift()?.(),
@@ -362,6 +373,47 @@ describe("DesktopBrowserHost", () => {
         yield* settle;
         expect(debuggee.sent).toEqual([1, 2]);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("prods a guest its window stopped drawing until what waits on it settles", () =>
+    Effect.gen(function* () {
+      let drawing = false;
+      const host = yield* makeDrawnHost;
+      const debuggee = makeDebuggee({ drawsOnlyWhenCaptured: true, windowDrawing: () => drawing });
+      host.attach(key, debuggee.tab);
+      const replies = yield* watchReplies(host);
+
+      yield* command(host, 1, "Page.captureScreenshot");
+      yield* settle;
+      expect(debuggee.sent).toEqual([1]);
+      yield* TestClock.adjust("250 millis");
+      expect(yield* Queue.take(replies)).toBe(1);
+      expect(debuggee.nativeCaptures()).toBe(1);
+
+      // A click waits on the guest's next frame the same way.
+      yield* command(host, 2, "Input.dispatchMouseEvent");
+      yield* settle;
+      yield* TestClock.adjust("250 millis");
+      expect(yield* Queue.take(replies)).toBe(2);
+      expect(debuggee.nativeCaptures()).toBe(2);
+
+      // A wait that settles within a frame is never prodded.
+      yield* command(host, 3, "Page.captureScreenshot");
+      yield* settle;
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(3);
+      yield* TestClock.adjust("1 second");
+      expect(debuggee.nativeCaptures()).toBe(2);
+
+      // Nor is a guest whose window draws it, however long the wait.
+      drawing = true;
+      yield* command(host, 4, "Page.captureScreenshot");
+      yield* settle;
+      yield* TestClock.adjust("5 seconds");
+      expect(debuggee.nativeCaptures()).toBe(2);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(4);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("stops waiting on a screenshot the page navigated away from", () =>
