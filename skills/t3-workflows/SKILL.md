@@ -11,7 +11,7 @@ Use a workflow for multi-stage work that must not be lost or repeated (triage �
 
 ## Quick start
 
-Put a `.ts` file in `~/.t3/workflows/` (the `workflows` folder of T3 home, or the path in `T3CODE_WORKFLOWS`). The server watches the folder and reloads files automatically—nothing to enable or restart. A file name with a space or other unusual character (`fix issue.ts`) is skipped without a message: use letters, digits, `-`, `_` and `.`. Files run with Node's type stripping, so only erasable TypeScript works: no `enum`, `namespace` or parameter properties.
+Put a `.ts` file in `~/.t3/workflows/` (the `workflows` folder of T3 home, or the path in `T3CODE_WORKFLOWS`). The server watches the folder and reloads files automatically—nothing to enable or restart. A file name with a space or other unusual character (`fix issue.ts`) is skipped with a warning in the server log: use letters, digits, `-`, `_` and `.`. Files run with Node's type stripping, so only erasable TypeScript works: no `enum`, `namespace` or parameter properties.
 
 Workflow files import nothing from T3 or Effect. `T3`, `Effect`, `Schema`, `Option`, `Duration`, and `Schedule` are injected as globals. Never `import` from `effect` (that loads a second runtime copy the engine cannot run). Node built-ins (`node:fs`, `node:crypto`) can be imported normally.
 
@@ -136,11 +136,12 @@ Call these directly in the workflow body with `yield*`. Every named primitive st
 | `pullRequests.wait(name, pr, { until, timeout? })`             | Sleeps until PR checks settle, or the PR merges or closes.                                                                                 | `Option<PullRequestStanding>` (`None` on timeout)                                                 |
 | `sleep(name, duration)`                                        | Durable sleep across restarts (e.g. `"1 hour"`, `"2 days"`).                                                                               | `void`                                                                                            |
 | `invoke(name, workflow, payload, { key? })`                    | Runs another workflow as a child run and waits for it to end.                                                                              | `{ outcome: "completed", value }` or `{ outcome: "stopped" \| "skipped" \| "cancelled", reason }` |
-| `title(text)`                                                  | Sets the run's display title in lists. Takes no step name.                                                                                 | `void`                                                                                            |
+| `title(text)`                                                  | Sets the run's display title in lists (cut to 200 characters). Takes no step name.                                                         | `void`                                                                                            |
 | `stop(reason)`                                                 | Ends the run on purpose as `stopped` (not a failure). Body only: inside a `step` it fails the step and pauses the run, and so does `skip`. | `never`                                                                                           |
 | `skip(reason)`                                                 | Ends the run as `skipped`, which run lists leave out unless asked (`runs()` includes them).                                                | `never`                                                                                           |
 
 - **Retries and failures:** A `step` runs once by default. For idempotent work, pass `retry: { times: 3, schedule: Schedule.exponential("2 seconds") }`. Nothing in the body can catch a failed `step` or `agent` because the engine pauses the run—use `step.try` or `agent.try` whenever the workflow should branch on failure.
+- **Timeouts are checked about every 15 seconds:** a `wait` or `ask` timeout can end up to 15 seconds late, and a signal that arrives before the check still wins.
 - **`Option` results:** `wait`, `ask` and `pullRequests.wait` always give an `Option`, with or without a `timeout`. Check `Option.isNone(result)` first, then read `result.value`. Never put the `Option` itself into a string or a return value.
 - **Concurrency:** Run steps or agents in parallel with `Effect.all([agent("a", …), agent("b", …)], { concurrency: 2 })`.
 - **Strict options:** Every call refuses an option it does not take, naming the ones it does, since workflow files are not type-checked. So does `every` under a minute and a `daily` time it cannot read.
@@ -334,7 +335,7 @@ t3 workflow start <name> --input '<json>' --key <key>
 t3 workflow list [--status paused]
 t3 workflow show <run> [--json]
 t3 workflow resume <run>
-t3 workflow cancel <run>
+t3 workflow cancel <run> [--reason '<why>']
 t3 workflow questions
 t3 workflow signal '{"choice":"upgrade"}' --run <run> --wait approve-upgrade
 t3 workflow signal '<json>' --workflow <name> --channel <channel>
