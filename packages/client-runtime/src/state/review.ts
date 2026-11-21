@@ -55,6 +55,12 @@ export function createReviewEnvironmentAtoms<R, E>(
         // Older servers ignore trackedOnly and already return the complete preview.
         if (!tracked.incomplete) return tracked;
         yield* emit(tracked);
+        if (tracked.completionToken !== undefined) {
+          return yield* request(WS_METHODS.reviewGetDiffPreview, {
+            ...input,
+            completionToken: tracked.completionToken,
+          });
+        }
       }
       return yield* request(WS_METHODS.reviewGetDiffPreview, input);
     }),

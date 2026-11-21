@@ -1,6 +1,6 @@
 "@effect/sql-sqlite-node/SqliteClient#SqliteClient":
   replacement: "@effect/sql-sqlite-node/SqliteClient#SqliteClient"
-  note: "Retained on node:sqlite, but the byte-export member was removed; use backup(destination) for file backup."
+  note: "Retained on node:sqlite, but the byte-export member was removed; use backup(destination) for file backup. The SqliteClient interface no longer extends SqlClient.SqlClient. Yielding the service still gives SqliteClient & SqlClient, but an effect that requires SqliteClient no longer type-checks against a SqlClient requirement annotation, and a SqlClient-only layer no longer satisfies SqliteClient. Annotate a layer chosen between drivers as Layer.Layer<SqlClient.SqlClient, E>."
 "@effect/sql-sqlite-node/SqliteClient#SqliteClientConfig":
   replacement: "@effect/sql-sqlite-node/SqliteClient#SqliteClientConfig"
   note: "Retained; prepareCacheTTL now uses Duration.Input."

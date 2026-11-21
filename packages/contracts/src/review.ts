@@ -10,6 +10,8 @@ export const ReviewDiffPreviewInput = Schema.Struct({
   ignoreWhitespace: Schema.optionalKey(Schema.Boolean),
   sourceKind: Schema.optionalKey(Schema.Literals(["working-tree", "branch-range"])),
   trackedOnly: Schema.optionalKey(Schema.Boolean),
+  /** From a trackedOnly result, so the complete read adds only the untracked files. */
+  completionToken: Schema.optionalKey(Schema.String),
   metadataOnly: Schema.optionalKey(Schema.Boolean),
   file: Schema.optionalKey(
     Schema.Struct({
@@ -102,6 +104,7 @@ export const ReviewDiffPreviewResult = Schema.Struct({
   generatedAt: Schema.DateTimeUtc,
   sources: Schema.Array(ReviewDiffPreviewSource),
   incomplete: Schema.optionalKey(Schema.Boolean),
+  completionToken: Schema.optionalKey(Schema.String),
 });
 export type ReviewDiffPreviewResult = typeof ReviewDiffPreviewResult.Type;
 

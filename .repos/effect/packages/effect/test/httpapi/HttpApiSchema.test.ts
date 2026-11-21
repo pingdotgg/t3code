@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Schema } from "effect"
-import { HttpApiSchema } from "effect/http-api"
+import { Schema, SchemaTransformation } from "effect"
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api"
 
 const getStreamMetadata = (self: HttpApiSchema.StreamSchema) =>
   self._tag === "StreamSse" ?
@@ -331,6 +331,40 @@ describe("HttpApiSchema", () => {
         status: 500,
         encoding: { _tag: "Json", contentType: "application/json" }
       })
+    })
+
+    it("distinguishes reflected declared parts from an ordinary pair transformation", () => {
+      const Body = Schema.Array(Schema.String)
+      const headers = { "x-total": Schema.String }
+      const Page = Schema.Struct({ rows: Body, total: Schema.String })
+      const transformation = {
+        decode: ({ body, headers }: { body: typeof Body.Type; headers: { "x-total": string } }) => ({
+          rows: body,
+          total: headers["x-total"]
+        }),
+        encode: (page: typeof Page.Type) => ({ body: page.rows, headers: { "x-total": page.total } })
+      }
+      const PageWithHeaders = Page.pipe(HttpApiSchema.encodeToWithHeaders({ body: Body, headers }, transformation))
+      const PageFromPair = Schema.Struct({ body: Body, headers: Schema.Struct(headers) }).pipe(
+        Schema.decodeTo(Page, SchemaTransformation.transform(transformation))
+      )
+
+      const api = HttpApi.make("Api").add(
+        HttpApiGroup.make("pages").add(
+          HttpApiEndpoint.get("split", "/split", { success: PageWithHeaders }),
+          HttpApiEndpoint.get("pair", "/pair", { success: PageFromPair })
+        )
+      )
+      const reflected: Record<string, ReturnType<typeof HttpApiSchema.getEncodeToWithHeadersParts>> = {}
+      HttpApi.reflect(api, {
+        onGroup: () => {},
+        onEndpoint: ({ endpoint, successes }) => {
+          reflected[endpoint.identifier] = HttpApiSchema.getEncodeToWithHeadersParts(successes.get(200)![0])
+        }
+      })
+      assert.strictEqual(reflected.split?.body, Body)
+      assert.strictEqual(reflected.split?.headers.fields["x-total"], headers["x-total"])
+      assert.isUndefined(reflected.pair)
     })
   })
 
