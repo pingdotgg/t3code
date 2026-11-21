@@ -11,6 +11,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -661,7 +662,10 @@ describe("RelayClient", () => {
   describe("version selection", () => {
     const run = <A, E>(
       body: (baseDir: string) => Effect.Effect<A, E, RelayClientTestServices>,
-      options: { readonly versions?: Record<string, string> } = {},
+      options: {
+        readonly platform?: NodeJS.Platform;
+        readonly versions?: Record<string, string>;
+      } = {},
     ) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -677,7 +681,7 @@ describe("RelayClient", () => {
             NodeCrypto.layer,
             layerHttpClient(new Uint8Array()),
             layerSpawner([], options.versions),
-            layerHostRuntime({ PATH: "" }),
+            layerHostRuntime({ PATH: "" }, options.platform),
           ),
         ),
       );
@@ -716,6 +720,53 @@ describe("RelayClient", () => {
         { versions },
       );
     });
+
+    it.effect("keeps a Windows relay binary available when its version probe is slow", () =>
+      run(
+        (baseDir) =>
+          Effect.gen(function* () {
+            const path = yield* Path.Path;
+            const fileSystem = yield* FileSystem.FileSystem;
+            const managedPath = path.join(
+              baseDir,
+              "tools",
+              "cloudflared",
+              RelayClient.CLOUDFLARED_VERSION,
+              "win32-x64",
+              "cloudflared.exe",
+            );
+            yield* fileSystem.makeDirectory(path.dirname(managedPath), { recursive: true });
+            yield* fileSystem.writeFileString(managedPath, "cloudflared");
+            const probeStarted = yield* Deferred.make<void>();
+            const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir }).pipe(
+              Effect.provideService(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make(() =>
+                  Deferred.succeed(probeStarted, undefined).pipe(
+                    Effect.andThen(Effect.sleep("30 seconds")),
+                    Effect.as(
+                      makeHandle(
+                        0,
+                        `cloudflared version ${RelayClient.CLOUDFLARED_VERSION} (built 2026-01-01-00:00 UTC)\n`,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+
+            const resolving = yield* manager.resolve.pipe(Effect.forkChild);
+            yield* Deferred.await(probeStarted);
+            yield* TestClock.adjust("30 seconds");
+
+            expect(yield* Fiber.join(resolving)).toMatchObject({
+              status: "available",
+              executablePath: managedPath,
+            });
+          }),
+        { platform: "win32" },
+      ),
+    );
 
     it.effect.skipIf(windowsHost)("reports an outdated override as missing", () => {
       const versions: Record<string, string> = {};
