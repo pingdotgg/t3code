@@ -21,6 +21,7 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { readClaudeSettingsEnv } from "./ClaudeSkills.ts";
+import { linkInferenceSkills } from "./inferenceSkills.ts";
 
 const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
@@ -154,12 +155,14 @@ export type ClaudeRuntime = {
       readonly config: ClaudeSettings;
       readonly configDir: string;
       readonly overlay: undefined;
+      readonly nativeSkillsHome?: string;
     }
   | {
       readonly mode: "cli";
       readonly config: ClaudeSettings & { readonly homePath: ClaudeAccountDir };
       readonly configDir: ClaudeAccountDir;
       readonly overlay: HomeOverlay;
+      readonly nativeSkillsHome?: never;
     }
 );
 
@@ -168,6 +171,7 @@ export const resolveClaudeRuntime = Effect.fn("resolveClaudeRuntime")(function* 
   readonly config: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly stateDir: string;
+  readonly nativeEnvironment?: NodeJS.ProcessEnv;
 }): Effect.fn.Return<ClaudeRuntime, never, Path.Path> {
   if (input.config.setupMode !== "cli") {
     return {
@@ -176,6 +180,14 @@ export const resolveClaudeRuntime = Effect.fn("resolveClaudeRuntime")(function* 
       configDir: yield* resolveClaudeHomePath(input.config, input.environment),
       environment: yield* makeClaudeEnvironment(input.config, input.environment),
       overlay: undefined,
+      ...(input.config.setupMode === "inference" && input.config.shareProfile
+        ? {
+            nativeSkillsHome: yield* resolveClaudeHomePath(
+              { homePath: input.config.inferenceSkillsHomePath ?? "" },
+              input.nativeEnvironment ?? (yield* HostProcess.Environment),
+            ),
+          }
+        : {}),
     };
   }
   const path = yield* Path.Path;
@@ -199,6 +211,11 @@ export const resolveClaudeRuntime = Effect.fn("resolveClaudeRuntime")(function* 
 export const materializeClaudeHome = Effect.fn("materializeClaudeHome")(function* (
   runtime: ClaudeRuntime,
 ) {
+  if (runtime.mode === "existing" && runtime.config.setupMode === "inference") {
+    yield* linkInferenceSkills(runtime.nativeSkillsHome, runtime.configDir, "synced").pipe(
+      Effect.ignoreCause({ log: true }),
+    );
+  }
   if (!runtime.overlay) return;
   const fileSystem = yield* FileSystem.FileSystem;
   yield* fileSystem.makeDirectory(runtime.configDir, { recursive: true, mode: 0o700 });

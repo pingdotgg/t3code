@@ -419,6 +419,11 @@ and your next message starts the agent again with the new setup.
 
 ### One skills library for every provider
 
+Inference routing uses skills from the machine running the thread, not from the inference
+host. OpenCode and Pi keep their usual skill paths. Claude and Codex also pick up personal
+skills from their local profiles; a skill installed directly in the routed profile wins if
+both have the same name. Turning off **Use your Claude profile** keeps those personal skills private.
+
 Turn on **Settings → Labs → Zack → Skills library** to keep one set of
 skills for every provider and account on that environment. T3 Code moves each skill
 folder from `~/.claude/skills`, `~/.codex/skills`, and Antigravity's user skill folders

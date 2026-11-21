@@ -742,9 +742,15 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
   );
 }
 
+const inferenceSkillsHomePath = Schema.optionalKey(TrimmedString).pipe(
+  machineLocalSetting,
+  Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+);
+
 export const CodexSettings = makeProviderSettingsSchema(
   {
     ...InferenceProviderFields,
+    inferenceSkillsHomePath,
     setupMode: Schema.optionalKey(
       Schema.Literals(["managed", "existing", "cli", "inference"]),
     ).pipe(Schema.annotateKey({ providerSettingsForm: { hidden: true } })),
@@ -827,6 +833,7 @@ const InstanceIdleCompaction = Schema.Literals(
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
     ...InferenceProviderFields,
+    inferenceSkillsHomePath,
     setupMode: Schema.optionalKey(Schema.Literals(["existing", "cli", "inference"])).pipe(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),

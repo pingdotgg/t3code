@@ -58,6 +58,14 @@ type ProviderInstanceRegistryHydrationEnv =
   // Adapter ids read which subagent threads predate short ids.
   | SqlClient.SqlClient;
 
+function inferenceSkillsHome(driver: "claudeAgent" | "codex", config: object) {
+  const mode = "setupMode" in config ? config.setupMode : undefined;
+  if (driver === "claudeAgent" && mode === "cli") return "";
+  const native =
+    "homePath" in config && typeof config.homePath === "string" ? config.homePath.trim() : "";
+  return native || (driver === "codex" && mode === "managed" ? "~/.codex" : "");
+}
+
 export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,
   hostEnvironment: NodeJS.ProcessEnv = {},
@@ -119,7 +127,13 @@ export const deriveProviderInstanceConfigMap = (
     merged[id] = {
       ...native,
       ...(replacesAccounts ? { displayName: proxy.displayName } : {}),
-      config: { ...native.config, ...proxy.config },
+      config: {
+        ...native.config,
+        ...proxy.config,
+        ...(driver === "codex" || driver === "claudeAgent"
+          ? { inferenceSkillsHomePath: inferenceSkillsHome(driver, route) }
+          : {}),
+      },
       environment: [
         ...(native.environment ?? []).filter((entry) => !names.has(entry.name)),
         ...proxy.environment,

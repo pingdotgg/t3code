@@ -593,6 +593,7 @@ describe("machine-local provider settings", () => {
   it("keeps native paths and inference routes local on Codex", () => {
     expect(machineLocalSettingsFields(CodexSettings)).toEqual([
       ...routingFields,
+      "inferenceSkillsHomePath",
       "binaryPath",
       "homePath",
       "shadowHomePath",
@@ -602,6 +603,7 @@ describe("machine-local provider settings", () => {
   it("marks home and binary paths on Claude", () => {
     expect(machineLocalSettingsFields(ClaudeSettings)).toEqual([
       ...routingFields,
+      "inferenceSkillsHomePath",
       "binaryPath",
       "homePath",
       "shareProfile",

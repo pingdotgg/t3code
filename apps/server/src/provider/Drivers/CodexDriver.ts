@@ -60,10 +60,12 @@ import {
   codexContinuationIdentity,
   codexHomeLaunchArgs,
   materializeCodexShadowHome,
+  resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
 import { resolveCodexRuntime } from "./CodexRuntime.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
+import { linkInferenceSkills } from "./inferenceSkills.ts";
 import * as CodexInstallation from "../CodexInstallation.ts";
 import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -225,6 +227,26 @@ export const CodexDriver: ProviderDriver<
     });
     const { homeLayout, environment: processEnv } = runtime;
     const accountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
+    const nativeHome =
+      config.setupMode === "inference"
+        ? (yield* resolveCodexHomeLayout(
+            {
+              ...config,
+              homePath: config.inferenceSkillsHomePath ?? "",
+              shadowHomePath: "",
+            },
+            instanceEnvironment,
+          )).sharedHomePath
+        : undefined;
+    const syncInferenceSkills =
+      nativeHome === undefined
+        ? Effect.void
+        : linkInferenceSkills(nativeHome, accountKey, ".system").pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
+            Effect.ignoreCause({ log: true }),
+          );
+    yield* syncInferenceSkills;
     const runtimePaths = {
       homePath: homeLayout.sharedHomePath,
       shadowHomePath: accountKey,
@@ -506,7 +528,8 @@ export const CodexDriver: ProviderDriver<
         : Effect.all([
             snapshot.getSnapshot,
             withAccess(
-              resolveRuntime.pipe(
+              syncInferenceSkills.pipe(
+                Effect.andThen(resolveRuntime),
                 Effect.flatMap((runtime) =>
                   probeSkills({
                     binaryPath: runtime.config.binaryPath,

@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   makeClaudeCapabilitiesCacheKey,
@@ -19,6 +20,7 @@ import {
   mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
+import { discoverClaudeSkills } from "./ClaudeSkills.ts";
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -155,6 +157,84 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
           }),
       );
     }
+
+    it.effect.skipIf(!symlinksSupported)("retains personal skills in an inference home", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-inference-" });
+        const personal = path.join(root, "personal");
+        const routed = path.join(root, "routed");
+        const skill = (home: string, name: string) => path.join(home, "skills", name, "SKILL.md");
+        for (const [home, name, body] of [
+          [personal, "review", "Personal review"],
+          [personal, "existing", "Personal copy"],
+          [routed, "existing", "Routed copy"],
+        ] as const) {
+          yield* fs.makeDirectory(path.dirname(skill(home, name)), { recursive: true });
+          yield* fs.writeFileString(skill(home, name), body);
+        }
+        yield* fs.writeFileString(path.join(personal, "settings.json"), "{}");
+
+        const runtime = yield* resolveClaudeRuntime({
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          stateDir: root,
+          config: decodeClaudeSettings({ setupMode: "inference", homePath: routed }),
+          environment: { CLAUDE_CONFIG_DIR: routed },
+          nativeEnvironment: { CLAUDE_CONFIG_DIR: personal },
+        }).pipe(Effect.provideService(HostProcess.Environment, {}));
+        yield* materializeClaudeHome(runtime);
+        expect(yield* fs.readFileString(skill(routed, "existing"))).toBe("Routed copy");
+        expect(yield* fs.exists(path.join(routed, "settings.json"))).toBe(false);
+        expect(
+          (yield* discoverClaudeSkills(runtime.config, undefined, runtime.environment)).map(
+            ({ name }) => name,
+          ),
+        ).toEqual(["existing", "review"]);
+        expect(yield* fs.readFileString(skill(routed, "review"))).toBe("Personal review");
+        yield* fs.symlink(
+          path.dirname(skill(personal, "existing")),
+          path.dirname(skill(routed, "manual")),
+        );
+        const alternate = path.join(root, "alternate");
+        yield* fs.makeDirectory(path.dirname(skill(alternate, "review")), { recursive: true });
+        yield* fs.writeFileString(skill(alternate, "review"), "Alternate review");
+        const switched = yield* resolveClaudeRuntime({
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          stateDir: root,
+          config: decodeClaudeSettings({
+            setupMode: "inference",
+            homePath: routed,
+            inferenceSkillsHomePath: alternate,
+          }),
+          environment: { CLAUDE_CONFIG_DIR: routed },
+        });
+        yield* materializeClaudeHome(switched);
+        expect(yield* fs.readFileString(skill(routed, "review"))).toBe("Alternate review");
+        yield* fs.remove(path.dirname(skill(alternate, "review")), { recursive: true });
+        yield* materializeClaudeHome(switched);
+        expect((yield* fs.readDirectory(path.join(routed, "skills"))).sort()).toEqual([
+          "existing",
+          "manual",
+        ]);
+        expect(yield* fs.readFileString(skill(routed, "manual"))).toBe("Personal copy");
+        yield* materializeClaudeHome(runtime);
+        const privateRuntime = yield* resolveClaudeRuntime({
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          stateDir: root,
+          config: decodeClaudeSettings({
+            setupMode: "inference",
+            homePath: routed,
+            shareProfile: false,
+          }),
+          environment: { CLAUDE_CONFIG_DIR: routed },
+          nativeEnvironment: { CLAUDE_CONFIG_DIR: personal },
+        });
+        yield* materializeClaudeHome(privateRuntime);
+        expect(yield* fs.exists(skill(routed, "review"))).toBe(false);
+        expect(yield* fs.readFileString(skill(routed, "manual"))).toBe("Personal copy");
+      }),
+    );
 
     it.effect("separates capability probes by cwd", () =>
       Effect.gen(function* () {

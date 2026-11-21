@@ -65,6 +65,7 @@ import {
   mergeClaudeProcessEnvironment,
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
@@ -132,7 +133,19 @@ export const ClaudeDriver: ProviderDriver<
         enabled,
         binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
       },
-      environment: yield* mergeClaudeProcessEnvironment(config, environment, process.env),
+      environment: yield* mergeClaudeProcessEnvironment(
+        config,
+        environment,
+        yield* HostProcess.Environment,
+      ),
+      ...(config.setupMode === "inference"
+        ? {
+            nativeEnvironment: yield* mergeProviderInstanceEnvironment(
+              environment,
+              yield* HostProcess.Environment,
+            ),
+          }
+        : {}),
       stateDir,
     });
     const { config: effectiveConfig, environment: processEnv, configDir } = runtime;
@@ -519,7 +532,8 @@ export const ClaudeDriver: ProviderDriver<
     return {
       instanceId,
       driverKind: DRIVER_KIND,
-      ...(runtime.overlay?.active === false
+      ...(runtime.overlay?.active === false ||
+      (config.setupMode === "inference" && !config.shareProfile)
         ? {}
         : { sharedSkillsDirectory: path.join(runtime.overlay?.sharedRoot ?? configDir, "skills") }),
       continuationIdentity: {
@@ -535,7 +549,11 @@ export const ClaudeDriver: ProviderDriver<
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
       workspaceRescans: Stream.fromQueue(workspaceRescans),
       snapshotForCwd: (cwd: string) =>
-        snapshot.getSnapshot.pipe(
+        (runtime.nativeSkillsHome === undefined
+          ? Effect.void
+          : materializeClaudeHome(runtime).pipe(Effect.ignoreCause({ log: true }))
+        ).pipe(
+          Effect.andThen(snapshot.getSnapshot),
           Effect.flatMap((machineSnapshot) =>
             withAccess(
               probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),

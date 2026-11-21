@@ -106,20 +106,27 @@ it.layer(NodeServices.layer)("SkillsLibrary", (it) => {
           const path = yield* Path.Path;
           const customHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-custom-skills-" });
           const directory = path.join(customHome, "skills");
-          const { service, library, skill, read, link } = yield* setup(
+          const { service, claude, library, skill, read, link } = yield* setup(
             [ProviderDriverKind.make("claudeAgent")],
             { directory, enabled: true },
           );
           yield* skill(directory, "custom", "custom instructions");
+          yield* skill(claude, "personal", "personal instructions");
+          yield* skill(library, "personal", "personal instructions");
+          yield* fs.symlink(path.join(claude, "personal"), path.join(directory, "personal"));
           yield* skill(library, "shared", "shared instructions");
           yield* service.apply;
           yield* service.apply;
           expect(yield* read(library, "custom")).toContain("custom instructions");
           expect(yield* read(directory, "shared")).toContain("shared instructions");
           expect(yield* link(directory, "custom")).toBe(path.join(library, "custom"));
+          expect(yield* read(library, "personal")).toContain("personal instructions");
+          expect(yield* read(directory, "personal")).toContain("personal instructions");
+          expect((yield* service.status).conflicts).toEqual([]);
           yield* service.detach;
           expect(yield* link(directory, "custom")).toBeUndefined();
           expect(yield* read(directory, "shared")).toContain("shared instructions");
+          expect(yield* read(directory, "personal")).toContain("personal instructions");
           yield* service.detach;
         }),
     );

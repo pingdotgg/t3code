@@ -154,6 +154,7 @@ describe("deriveProviderInstanceConfigMap", () => {
       config: {
         setupMode: "inference",
         homePath: "/proxy/home",
+        inferenceSkillsHomePath: "/native/home",
         shadowHomePath: "",
         customModels: ["gpt-fixture"],
       },
@@ -168,6 +169,23 @@ describe("deriveProviderInstanceConfigMap", () => {
       value: "proxy-key",
       sensitive: true,
     });
+    for (const [kind, setupMode, homePath, expected] of [
+      ["codex", "managed", "", "~/.codex"],
+      ["claudeAgent", "cli", "/ignored-by-cli", ""],
+    ] as const) {
+      const key = ProviderInstanceId.make(kind);
+      const active = deriveProviderInstanceConfigMap(
+        settingsWith({
+          providerInstances: {
+            [key]: {
+              driver: ProviderDriverKind.make(kind),
+              config: { ...route, setupMode, homePath },
+            },
+          },
+        }),
+      );
+      expect(active[key]?.config).toMatchObject({ inferenceSkillsHomePath: expected });
+    }
     expect(settings).toEqual(before);
     const disabled = deriveProviderInstanceConfigMap({
       ...settings,
@@ -210,7 +228,12 @@ describe("deriveProviderInstanceConfigMap", () => {
             inferenceHomePath: "/proxy/home",
           },
           environment: [
-            { name: "OPENCODE_CONFIG_CONTENT", value: '{"theme":"mine"}', sensitive: false },
+            {
+              name: "OPENCODE_CONFIG_CONTENT",
+              value: '{"theme":"mine","skills":{"paths":["/native/skills"]}}',
+              sensitive: false,
+            },
+            { name: "OPENCODE_CONFIG_DIR", value: "/native/opencode", sensitive: false },
           ],
         },
         [other]: { driver },
@@ -229,9 +252,15 @@ describe("deriveProviderInstanceConfigMap", () => {
       sensitive: true,
     });
     const contents = environment.filter((entry) => entry.name === "OPENCODE_CONFIG_CONTENT");
+    expect(environment).toContainEqual({
+      name: "OPENCODE_CONFIG_DIR",
+      value: "/native/opencode",
+      sensitive: false,
+    });
     expect(contents).toHaveLength(1);
     expect(JSON.parse(String(contents[0]?.value))).toMatchObject({
       theme: "mine",
+      skills: { paths: ["/native/skills"] },
       provider: { t3proxy: { models: { "grok-fixture": { name: "grok-fixture" } } } },
     });
     expect(JSON.parse(String(contents[0]?.value)).provider).not.toHaveProperty("host");
@@ -279,7 +308,7 @@ describe("deriveProviderInstanceConfigMap", () => {
       driver: ProviderDriverKind.make("pi"),
       displayName: "My Pi",
       config: {
-        launchArgs: "--provider native --model native-model",
+        launchArgs: "--provider native --model native-model --skill /native/extra-skill",
         customModels: ["native/native-model"],
         inferenceEnabled: true,
         inferenceHostId: "host",

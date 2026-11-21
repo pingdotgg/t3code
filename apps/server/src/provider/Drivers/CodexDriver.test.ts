@@ -720,6 +720,35 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
   );
 
+  it.effect.skipIf(windowsHost)(
+    "keeps personal skills in an inference home without sharing auth",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-inference-" });
+        const native = NodePath.join(root, "native");
+        const routed = NodePath.join(root, "routed");
+        const skill = (home: string, name: string) =>
+          NodePath.join(home, "skills", name, "SKILL.md");
+        for (const name of ["review", ".system"]) {
+          yield* fs.makeDirectory(NodePath.dirname(skill(native, name)), { recursive: true });
+          yield* fs.writeFileString(skill(native, name), name);
+        }
+        yield* fs.writeFileString(NodePath.join(native, "auth.json"), "{}");
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex-inference"),
+          displayName: "Codex Inference",
+          enabled: false,
+          environment: [{ name: "CODEX_HOME", value: native, sensitive: false }],
+          config: { ...CodexDriver.defaultConfig(), homePath: routed, setupMode: "inference" },
+        });
+        expect(instance.continuationIdentity.continuationKey).toBe(`codex:home:${routed}`);
+        expect(yield* fs.readFileString(skill(routed, "review"))).toBe("review");
+        expect(yield* fs.exists(skill(routed, ".system"))).toBe(false);
+        expect(yield* fs.exists(NodePath.join(routed, "auth.json"))).toBe(false);
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
+  );
+
   it.effect.each(["inference", "existing"] as const)(
     "publishes models with the right provenance in %s mode",
     (setupMode) =>

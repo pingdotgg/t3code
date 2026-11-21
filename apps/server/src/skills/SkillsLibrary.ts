@@ -101,6 +101,7 @@ interface LibraryScan {
   /** Case-folded names with a conflict; nothing moves for them. */
   readonly conflicted: ReadonlySet<string>;
   readonly copies: ReadonlyMap<string, ReadonlyArray<string>>;
+  readonly aliases: ReadonlySet<string>;
 }
 
 const RESTORE_SUFFIX = ".t3-restore";
@@ -403,11 +404,21 @@ export const make = Effect.gen(function* () {
         if (link !== undefined) conflict({ name, paths: [copy, link], reason: "outsideLink" });
       }
     }
+    const aliases = new Set<string>();
     for (const rootScan of rootScans.filter((root) => root.active)) {
       for (const name of rootScan.otherLinks) {
         const first = groups.get(fold(name))?.[0];
         if (first !== undefined) {
-          conflict({ name, paths: [path.join(rootScan.directory, name), first.path] });
+          const linkPath = path.join(rootScan.directory, name);
+          const target = yield* realPath(linkPath).pipe(Effect.orElseSucceed(() => undefined));
+          if (
+            target !== undefined &&
+            (yield* Effect.forEach(copies.get(name) ?? [], realPath)).includes(target)
+          ) {
+            aliases.add(linkPath);
+          } else {
+            conflict({ name, paths: [linkPath, first.path] });
+          }
         }
       }
     }
@@ -427,6 +438,7 @@ export const make = Effect.gen(function* () {
       conflicts,
       conflicted,
       copies,
+      aliases,
     } satisfies LibraryScan;
   });
 
@@ -477,7 +489,11 @@ export const make = Effect.gen(function* () {
         const linkPath = path.join(rootScan.directory, name);
         yield* io("apply", linkPath, () => NodeFSP.unlink(linkPath));
       }
-      const names = linkable.filter((name) => !rootScan.root.private.includes(name));
+      const names = linkable.filter(
+        (name) =>
+          !rootScan.root.private.includes(name) &&
+          !current.aliases.has(path.join(rootScan.directory, name)),
+      );
       yield* materializeHomeOverlay({
         sharedRoot: current.libraryPath,
         accountDir: rootScan.directory,
