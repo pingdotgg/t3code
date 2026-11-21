@@ -79,7 +79,7 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
             items: subscribe(WS_METHODS.peerLinksSubscribeThread, input),
             historyPage: (cursor) =>
               request(WS_METHODS.peerLinksThreadHistoryPage, { ...input, cursor }),
-            readPrevious: () => registry.get(kept),
+            previous: registry.get(kept),
           }),
         ),
       )

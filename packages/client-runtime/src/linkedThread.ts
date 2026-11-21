@@ -257,13 +257,13 @@ export const keepLinkedThreadView = (
 export const followLinkedThread = <E, R, E2, R2>(source: {
   readonly items: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>;
   readonly historyPage: (cursor: string) => Effect.Effect<OrchestrationV2ThreadHistoryPage, E2, R2>;
-  readonly readPrevious?: () => LinkedThreadView | null;
+  readonly previous?: LinkedThreadView | null;
 }): Stream.Stream<LinkedThreadView, E, R | R2> =>
   Stream.unwrap(
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<void>();
       let requested = false;
-      let previous = source.readPrevious?.() ?? null;
+      let previous = source.previous ?? null;
       let snapshotCursor: string | null = null;
       // Both halves below run one step at a time, so each reads the view the other left.
       let view: LinkedThreadView = {
