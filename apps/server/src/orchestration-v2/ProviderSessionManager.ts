@@ -1,4 +1,4 @@
-import type * as Path from "effect/Path";
+import * as Path from "effect/Path";
 import { supportsProfiles } from "@t3tools/shared/profiles";
 import * as Profiles from "../profiles/Profiles.ts";
 import { PROFILE_MCP_DRIVERS, resolveProfileMcpServers } from "../profiles/mcpServers.ts";
@@ -450,6 +450,7 @@ export const layerWithOptions = (
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const profiles = yield* Profiles.Profiles.pipe(Effect.provide(Profiles.layer));
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -3061,6 +3062,7 @@ export const layerWithOptions = (
               let profileInstructions: string | undefined;
               let providerSettings: ResolvedProviderSettings | undefined;
               let profileMcpServers: ProviderAdapter.ProviderAdapterV2OpenSessionInput["profileMcpServers"];
+              let profileSkillDirectories: ReadonlyArray<string> | undefined;
               const profileId = input.modelSelection.profileId;
               if (
                 profileId &&
@@ -3101,6 +3103,9 @@ export const layerWithOptions = (
                       warning ??
                       `Profile ${profileId} no longer exists. Select another profile or No profile.`,
                   });
+                profileSkillDirectories = loaded.catalog.profiles[profileId]?.skills.map((skill) =>
+                  path.join(loaded.catalog.folder, ".agents", "skills", skill),
+                );
                 const servers = Object.hasOwn(loaded.mcpServers, profileId)
                   ? loaded.mcpServers[profileId]
                   : undefined;
@@ -3158,6 +3163,7 @@ export const layerWithOptions = (
                     ...(profileInstructions === undefined ? {} : { profileInstructions }),
                     ...(providerSettings === undefined ? {} : { providerSettings }),
                     ...(profileMcpServers === undefined ? {} : { profileMcpServers }),
+                    ...(profileSkillDirectories?.length ? { profileSkillDirectories } : {}),
                     ...(input.resumeFromSession === undefined
                       ? {}
                       : { resumeFromSession: input.resumeFromSession }),

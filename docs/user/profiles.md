@@ -106,6 +106,6 @@ to every environment, so do not put secrets in them. Add MCP servers in the MCP 
 here.
 
 Changes apply when a session starts or resumes, not to a turn that is running. Claude, Codex, Pi,
-Muse and ACP providers support profile prompts and skills. Named provider settings apply only to
-Claude, Codex and Pi. Cursor, OpenCode and other unsupported providers gray out the picker and start
-sessions normally.
+Muse, Antigravity and ACP Registry agents support profile prompts and skills. Named provider settings
+apply only to Claude, Codex and Pi, and MCP servers only to Claude and Codex. Cursor, OpenCode and
+other unsupported providers gray out the picker and start sessions normally.

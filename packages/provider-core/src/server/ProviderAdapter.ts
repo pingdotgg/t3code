@@ -541,6 +541,8 @@ export interface ProviderAdapterV2OpenSessionInput {
   readonly providerSettings?: ResolvedProviderSettings;
   /** Only Claude and Codex receive these. */
   readonly profileMcpServers?: Readonly<Record<string, ProfileMcpServerLaunch>>;
+  /** Folders of the profile's selected skills, which a sandboxed agent may read. */
+  readonly profileSkillDirectories?: ReadonlyArray<string>;
   readonly threadId: ThreadId;
   readonly providerSessionId: ProviderSessionId;
   readonly modelSelection: ModelSelection;

@@ -420,6 +420,11 @@ describe("AntigravityAdapterV2 client file system", () => {
       yield* fileSystem.writeFileString(outsideFile, "secret");
       const attachment = path.join(host.paths.attachmentsDir, "pasted.txt");
       yield* fileSystem.writeFileString(attachment, "pasted");
+      const skills = path.join(outside, ".agents", "skills");
+      for (const name of ["selected", "unselected"]) {
+        yield* fileSystem.makeDirectory(path.join(skills, name), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(skills, name, "SKILL.md"), name);
+      }
 
       const threadId = ThreadId.make("thread-antigravity-containment");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -433,6 +438,7 @@ describe("AntigravityAdapterV2 client file system", () => {
         providerSessionId: ProviderSessionId.make("provider-session-antigravity-containment"),
         modelSelection,
         runtimePolicy,
+        profileSkillDirectories: [path.join(skills, "selected")],
       });
       yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
       const requests = (yield* fileSystem.readFileString(requestLog))
@@ -474,6 +480,16 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(pasted.content, "pasted");
+      const skill = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join(skills, "selected", "SKILL.md") },
+        context("fs/read_text_file"),
+      );
+      assert.equal(skill.content, "selected");
+      const unselected = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join(skills, "unselected", "SKILL.md") },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(unselected), "only the profile's selected skills are readable");
       yield* fileSystem.writeFileString(insidePath, "\uFEFFfirst\né中🙂\nlast");
       const sliced = yield* readTextFile(
         { sessionId: "mock-session-1", path: insidePath, line: 2, limit: 1 },

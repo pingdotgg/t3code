@@ -1,3 +1,4 @@
+import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as NetAddress from "effect/net/NetAddress";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -5784,6 +5785,7 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
 it.effect("loads profiles only when opening a session and rereads them after close", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const root = yield* fs.makeTempDirectoryScoped();
     yield* fs.makeDirectory(`${root}/profiles/prompts`, { recursive: true });
     yield* fs.writeFileString(
@@ -5797,8 +5799,14 @@ it.effect("loads profiles only when opening a session and rereads them after clo
             mcpServers: ["docs"],
           },
           runner: { prompts: [], skills: [], mcpServers: ["local"] },
+          reviewer: { prompts: [], skills: ["review"] },
         },
       }),
+    );
+    yield* fs.makeDirectory(`${root}/profiles/.agents/skills/review`, { recursive: true });
+    yield* fs.writeFileString(
+      `${root}/profiles/.agents/skills/review/SKILL.md`,
+      "---\nname: review\ndescription: Reviews code\n---\n",
     );
     yield* fs.writeFileString(
       `${root}/profiles/mcp-servers.json`,
@@ -5819,6 +5827,7 @@ it.effect("loads profiles only when opening a session and rereads them after clo
     );
     const resolved: unknown[] = [];
     const mcpServers: unknown[] = [];
+    const skillDirectories: unknown[] = [];
     const state = yield* Ref.make(emptyState);
     const opened: Array<string | undefined> = [];
     yield* Effect.gen(function* () {
@@ -5877,6 +5886,16 @@ it.effect("loads profiles only when opening a session and rereads them after clo
       const result = yield* manager.open(input).pipe(Effect.flip);
       assert.include(result.message, "coding.md");
       assert.equal(opened.length, 3);
+      yield* manager.open({
+        ...input,
+        modelSelection: { ...modelSelection, profileId: "reviewer" },
+      });
+      assert.deepEqual(skillDirectories, [
+        undefined,
+        undefined,
+        undefined,
+        [path.join(root, "profiles", ".agents", "skills", "review")],
+      ]);
     }).pipe(
       Effect.provide(
         layerTest({
@@ -5888,6 +5907,7 @@ it.effect("loads profiles only when opening a session and rereads them after clo
               opened.push(input.profileInstructions);
               resolved.push(input.providerSettings);
               mcpServers.push(input.profileMcpServers);
+              skillDirectories.push(input.profileSkillDirectories);
             }),
         }).pipe(Layer.provide(ServerConfig.layerTest(root, root))),
       ),
