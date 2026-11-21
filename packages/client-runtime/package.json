@@ -67,6 +67,10 @@
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
     },
+    "./cloudflare-access-login": {
+      "types": "./src/cloudflareAccessLogin.ts",
+      "default": "./src/cloudflareAccessLogin.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"

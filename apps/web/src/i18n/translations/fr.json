@@ -7377,6 +7377,7 @@
   "7fe508061821950a": "{environment} est maintenant joignable via SSH {host}.",
   "4170d9655b26518a": "{host} est prêt via un tunnel géré par SSH.",
   "83c244095d10045d": "{environment} dispose maintenant d’un autre moyen de connexion.",
+  "b0958d57470a023e": "Impossible de se connecter. Réessaie.",
   "38fedf9df8ac5394": "CODEAPPAIRAGE",
   "77ae65e250a4f558": "Impossible d’ajouter la route.",
   "53c162d8868a1d0e": "Ajouter un environnement",

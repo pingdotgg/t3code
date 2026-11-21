@@ -7375,6 +7375,7 @@
   "7fe508061821950a": "{environment} ist jetzt über SSH {host} erreichbar.",
   "4170d9655b26518a": "{host} ist über einen SSH-verwalteten Tunnel bereit.",
   "83c244095d10045d": "{environment} hat jetzt eine weitere Verbindungsmöglichkeit.",
+  "b0958d57470a023e": "Anmeldung fehlgeschlagen. Versuche es erneut.",
   "38fedf9df8ac5394": "KOPPLUNGSCODE",
   "77ae65e250a4f558": "Die Route konnte nicht hinzugefügt werden.",
   "53c162d8868a1d0e": "Umgebung hinzufügen",

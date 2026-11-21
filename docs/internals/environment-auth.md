@@ -61,7 +61,10 @@ the request's Host header is not checked, because a LAN client can forge it.
 
 [Cloudflare Access sign-in](../../apps/server/src/auth/CloudflareAccessLogin.ts)
 turns a verified `Cf-Access-Jwt-Assertion` into the one-time pairing link
-`t3 pair` would issue, and redirects to `/pair` with it in the fragment. It never
+`t3 pair` would issue, and redirects to `/pair` with it in the fragment, or with
+`?client=app` to the build's fixed `<app scheme>://cloudflare-access`, which the
+desktop window and the mobile auth session catch and pair with the host they
+opened. Nothing in the request chooses any other destination. It never
 issues a session itself, so the browser redeems it through the same exchange,
 and Sharing & access lists and revokes it like any other pairing. The header is
 trusted only after its signature checks out against the team's key set, with
