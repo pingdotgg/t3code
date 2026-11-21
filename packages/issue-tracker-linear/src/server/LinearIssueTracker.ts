@@ -441,6 +441,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           reference !== null && (reference[1] === undefined || reference[1].toUpperCase() === team)
             ? Number(reference[2])
             : undefined;
+        // "ENG-42" and "#42" name one issue; only a bare "42" may also be title or body text.
+        const exact = number !== undefined && reference?.[0] !== reference?.[2];
         // Each is its own clause: an assignee filter must narrow "assigned to me", not replace it.
         const clauses: LinearApi.IssueFilter[] = [
           ...(input.assignee === undefined
@@ -464,13 +466,15 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           ...(clauses.length === 0 ? {} : { and: clauses }),
           ...(input.query === undefined
             ? {}
-            : {
-                or: [
-                  { title: { containsIgnoreCase: input.query } },
-                  { description: { containsIgnoreCase: input.query } },
-                  ...(number === undefined ? [] : [{ number: { eq: number } }]),
-                ],
-              }),
+            : exact
+              ? { number: { eq: number } }
+              : {
+                  or: [
+                    { title: { containsIgnoreCase: input.query } },
+                    { description: { containsIgnoreCase: input.query } },
+                    ...(number === undefined ? [] : [{ number: { eq: number } }]),
+                  ],
+                }),
         };
         return linear
           .listIssues({

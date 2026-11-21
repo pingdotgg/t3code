@@ -137,13 +137,17 @@ const target = { cwd: "/w/web", host: "linear.app", scope: "ENG" };
 describe("LinearIssueTracker", () => {
   it.effect("matches an issue number only in the team it names", () =>
     Effect.gen(function* () {
-      const numbers: Array<number | undefined> = [];
+      const searches: Array<{ number: number | undefined; text: boolean }> = [];
       const { tracker } = fakeLinear({
         T3Issues: (variables) => {
           const filter = variables.filter as {
-            or: ReadonlyArray<{ number?: { eq: number } }>;
+            number?: { eq: number };
+            or?: ReadonlyArray<{ number?: { eq: number } }>;
           };
-          numbers.push(filter.or.find((clause) => clause.number)?.number?.eq);
+          searches.push({
+            number: (filter.number ?? filter.or?.find((clause) => clause.number)?.number)?.eq,
+            text: filter.or !== undefined,
+          });
           return { issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } };
         },
       });
@@ -164,7 +168,13 @@ describe("LinearIssueTracker", () => {
           limit: 50,
         });
       }
-      expect(numbers).toEqual([42, undefined, 42, 42]);
+      // An identifier names one issue, so descriptions that mention it must not match too.
+      expect(searches).toEqual([
+        { number: 42, text: false },
+        { number: undefined, text: true },
+        { number: 42, text: true },
+        { number: 42, text: false },
+      ]);
     }),
   );
 
