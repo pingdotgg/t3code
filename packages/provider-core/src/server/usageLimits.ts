@@ -53,12 +53,17 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  // Every block re-stamps checkedAt so a probe in flight cannot grant over it; providers send each block once.
+  const revokesCredits = update.continuesOnCredits === false && previous !== undefined;
+  if (
+    (update.windows.length === 0 && !revokesCredits) ||
+    previous?.unavailable?.reason === "unsupported"
+  ) {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
   // Codex repeats unchanged limits on token ticks; avoid allocating snapshots for no-ops.
-  let changed = false;
+  let changed = revokesCredits;
   for (const window of update.windows) {
     const existing = merged.get(window.id);
     const next: ServerProviderUsageWindow = {
@@ -85,6 +90,11 @@ export function applyUsageLimitsUpdate(input: {
     ...makeUsageLimits({ checkedAt: input.checkedAt, windows: merged.values() }),
     ...(previous?.resetCredits !== undefined ? { resetCredits: previous.resetCredits } : {}),
     ...(previous?.zeroSpendCap ? { zeroSpendCap: true } : {}),
+    ...(revokesCredits
+      ? { continuesOnCredits: false }
+      : previous?.continuesOnCredits !== undefined
+        ? { continuesOnCredits: previous.continuesOnCredits }
+        : {}),
     ...(unavailable !== undefined ? { unavailable } : {}),
   };
 }
@@ -121,11 +131,18 @@ export function resolveUsageLimitsAfterProbe(input: {
   if (
     published &&
     probed &&
-    !published.unavailable &&
     !probed.unavailable &&
     Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
   ) {
-    return { ...probed, checkedAt: published.checkedAt, windows: published.windows };
+    // A block reported after this probe read the account outranks the probe's grant.
+    const revoked = published.continuesOnCredits === false && probed.continuesOnCredits === true;
+    if (published.unavailable) return revoked ? { ...probed, continuesOnCredits: false } : probed;
+    return {
+      ...probed,
+      checkedAt: published.checkedAt,
+      windows: published.windows,
+      ...(revoked ? { continuesOnCredits: false } : {}),
+    };
   }
   return probed;
 }
