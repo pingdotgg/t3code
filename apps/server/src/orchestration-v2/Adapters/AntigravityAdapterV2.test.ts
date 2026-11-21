@@ -1587,9 +1587,20 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         sender: "mock-session-1",
         sourceMetadata: { tool: { toolCall: { id: "call_research", name: tool } } },
       });
-      const report = write(records("mock-session-1", "messages"), "report.json", {
-        sender: "child-1",
-      });
+      // A swarm worker reports on the parent's board, not in its inbox.
+      const report =
+        tool === "swarm"
+          ? write(records("mock-session-1", "swarm"), "members.json", {
+              members: { "worker-a": { conversation_id: "child-1" } },
+            }).pipe(
+              Effect.andThen(
+                fileSystem.writeFileString(
+                  path.join(records("mock-session-1", "swarm"), "board.jsonl"),
+                  `${JSON.stringify({ seq: 1, agent: "coordinator", text: "@worker-a Read it" })}\n${JSON.stringify({ seq: 2, agent: "worker-a", text: "@coordinator Done" })}\n`,
+                ),
+              ),
+            )
+          : write(records("mock-session-1", "messages"), "report.json", { sender: "child-1" });
       if (duringPrompt) yield* report;
 
       const { usage, offers, send, startTurn, until, throughPromptSettled } =
@@ -1606,6 +1617,13 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         );
       const prompt = yield* throughPromptSettled;
       assert.equal(statuses(prompt).at(-1), duringPrompt ? "idle" : "running");
+      const launched = prompt.find((event) => event.type === "subagent.updated");
+      assert.deepInclude(
+        launched?.type === "subagent.updated" ? launched.subagent : {},
+        tool === "swarm"
+          ? { title: "worker-a", prompt: "Read it" }
+          : { title: "Researcher", prompt: "Read it" },
+      );
       if (!duringPrompt) {
         yield* TestClock.adjust("10 minutes");
         yield* report;

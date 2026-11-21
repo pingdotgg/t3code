@@ -51,11 +51,16 @@ const LaunchInput = Schema.Struct({ Role: Schema.String, Prompt: Schema.String }
 const decodeLaunchInput = Schema.decodeUnknownOption(
   Schema.Union([Schema.Struct({ Subagents: Schema.NonEmptyArray(LaunchInput) }), LaunchInput]),
 );
+const decodeSwarmAdd = Schema.decodeUnknownOption(
+  Schema.Struct({ action: Schema.Literal("add"), name: Schema.String, brief: Schema.String }),
+);
 
-/** `invoke_subagent` arguments, from the permission prompt or the persisted record. */
+/** `invoke_subagent` or `swarm` add arguments, from the tool call or the persisted record. */
 export function antigravitySubagentLaunches(
   input: unknown,
 ): ReadonlyArray<AntigravityChildLaunch> | undefined {
+  const swarmAdd = Option.getOrUndefined(decodeSwarmAdd(input));
+  if (swarmAdd !== undefined) return [{ role: swarmAdd.name, prompt: swarmAdd.brief }];
   return Option.getOrUndefined(
     Option.map(decodeLaunchInput(input), (decoded) =>
       ("Subagents" in decoded ? decoded.Subagents : [decoded]).map((entry) => ({
@@ -651,11 +656,50 @@ async function findDetachedInvokeRecord(
   return matches.length === 1 ? match : undefined;
 }
 
+const decodeSwarmMembers = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      members: Schema.Record(Schema.String, Schema.Struct({ conversation_id: Schema.String })),
+    }),
+  ),
+);
+const decodeBoardEntry = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ agent: Schema.String })),
+);
+
 /**
- * agy 1.5 children outlive their `invoke_subagent` call and the agent reports no end for them:
- * a child is done, or waits for guidance, once its message is in the parent's inbox or its record
- * says it was killed. Returns the launching tool call ids of children with neither; none when the
- * records prove nothing.
+ * Swarm workers report on the parent's board, and the parent's inbox only gets a notice it sent
+ * itself. Returns the conversation ids of members that have posted. Throws past a bound.
+ */
+async function readSwarmBoardPosters(profileRoot: string, rootSessionId: string) {
+  const directory = ["antigravity-acp", "brain", rootSessionId, ".system_generated", "swarm"];
+  const members = await antigravityManagedPath(profileRoot, [...directory, "members.json"], "file");
+  const board = await antigravityManagedPath(profileRoot, [...directory, "board.jsonl"], "file");
+  if (members === undefined || board === undefined) return new Set<string>();
+  if (members.info.size > MAX_STEP_BYTES || board.info.size > MAX_SCAN_BYTES)
+    throw new Error("Swarm board too large");
+  const roster = Option.getOrThrow(
+    decodeSwarmMembers(await NodeFSP.readFile(members.path, "utf8")),
+  );
+  const posters = new Set(
+    (await NodeFSP.readFile(board.path, "utf8"))
+      .split("\n")
+      .flatMap((line) =>
+        Option.toArray(Option.map(decodeBoardEntry(line), (entry) => entry.agent)),
+      ),
+  );
+  return new Set(
+    Object.entries(roster.members).flatMap(([name, member]) =>
+      posters.has(name) ? [member.conversation_id] : [],
+    ),
+  );
+}
+
+/**
+ * agy 1.5 children outlive their `invoke_subagent` or `swarm` call and the agent reports no end
+ * for them: a child is done, or waits for guidance, once its message is in the parent's inbox or
+ * on its swarm board, or its record says it was killed. Returns the launching tool call ids of
+ * children with none of these; none when the records prove nothing.
  */
 export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenAtWork")(
   function* (input: {
@@ -671,9 +715,10 @@ export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenA
           ? undefined
           : await listDetachedChildIds(profileRoot, input.rootSessionId);
       if (profileRoot === undefined || childIds === undefined) return [];
-      const reported = new Set(
-        (await readInbox(profileRoot, input.rootSessionId)).map((message) => message.sender),
-      );
+      const reported = new Set([
+        ...(await readInbox(profileRoot, input.rootSessionId)).map((message) => message.sender),
+        ...(await readSwarmBoardPosters(profileRoot, input.rootSessionId)),
+      ]);
       const atWork: Array<string> = [];
       for (const childId of childIds) {
         if (reported.has(childId)) continue;
