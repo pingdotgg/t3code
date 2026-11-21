@@ -16,6 +16,7 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import * as DateTime from "effect/DateTime";
 import { WorkLogRow } from "./WorkLog";
 import {
+  isContextRestore,
   resolveHandoffEndpoints,
   type HandoffEndpoints,
   type HandoffTimelineRun,
@@ -49,6 +50,7 @@ import {
   ArrowRightIcon,
   EraserIcon,
   GitForkIcon,
+  HistoryIcon,
   MessageSquareIcon,
 } from "lucide-react";
 
@@ -683,6 +685,15 @@ export function HandoffRow(props: {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
   const derived = deriveProviderInstanceEntries(props.providers);
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
+  if (isContextRestore(props.endpoints)) {
+    return (
+      <TimelineSystemDivider
+        label={gt("Context restored")}
+        icon={HistoryIcon}
+        tone={props.failed ? "danger" : "neutral"}
+      />
+    );
+  }
   return (
     <TimelineSystemDivider
       label={props.pending ? gt("Context handoff pending") : gt("Context handoff")}

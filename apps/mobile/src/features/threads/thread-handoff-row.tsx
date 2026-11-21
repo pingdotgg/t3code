@@ -2,6 +2,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  isContextRestore,
   resolveHandoffEndpoints,
   resolveModelSwitchChange,
   type HandoffEndpoints,
@@ -94,6 +95,16 @@ export function ThreadHandoffRow(props: {
   const endpoints = useAtomValue(endpointsAtom);
   if (item.type !== "handoff" || endpoints === null) return null;
   const color = item.status === "failed" ? "#e11d48" : props.iconColor;
+  if (isContextRestore(endpoints)) {
+    return (
+      <ThreadContextDivider
+        label={gt("Context restored")}
+        icon="arrow.uturn.backward"
+        iconColor={color}
+        failed={item.status === "failed"}
+      />
+    );
+  }
   return (
     <ThreadHandoffDivider
       environmentId={props.environmentId}
