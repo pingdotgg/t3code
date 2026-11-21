@@ -16,6 +16,8 @@
     "start:windows": "node scripts/launch-windows.mjs",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run && node --test scripts/*.test.mjs",
+    "package": "electron-builder --config electron-builder.yml --win nsis zip --x64 --publish never",
+    "release": "node scripts/release.mjs",
     "check:boundary": "node scripts/check-engine-untouched.mjs",
     "standards": "node ../../standards/check-added-diagnostics.mjs",
     "standards:deps": "cd ../.. && depcruise --config standards/.dependency-cruiser.cjs --ignore-known standards/dependency-baseline.json apps packages"
@@ -31,7 +33,6 @@
     "@tailwindcss/vite": "catalog:",
     "dompurify": "^3.4.17",
     "effect": "catalog:",
-    "electron": "44.10.1",
     "hast-util-to-html": "^9.0.5",
     "hast-util-to-jsx-runtime": "^2.3.6",
     "katex": "^0.18.2",
@@ -50,6 +51,8 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "dependency-cruiser": "^18.8.0",
+    "electron": "44.10.1",
+    "electron-builder": "26.16.1",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }
