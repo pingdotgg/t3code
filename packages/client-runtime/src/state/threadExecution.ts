@@ -16,6 +16,7 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
   type OrchestrationV2ProviderSession,
+  type ProviderOptionDescriptor,
   type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
@@ -288,10 +289,24 @@ export function formatSubagentEffort(input: {
   if (provider.models.some((model) => model.slug === modelSlug)) {
     return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
   }
+  return readSelectedEffortValue(selection);
+}
+
+/** The raw saved effort, preferring the option the model marks as its reasoning control. */
+export function readSelectedEffortValue(
+  selection: ModelSelection | undefined,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> = [],
+): string | null {
+  const ids = [
+    ...descriptors.flatMap((descriptor) =>
+      descriptor.type === "select" && descriptor.role === "reasoning" ? [descriptor.id] : [],
+    ),
+    ...REASONING_EFFORT_OPTION_IDS,
+  ];
   return (
-    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
-      (value) => value && value !== DEFAULT_VARIANT_CHOICE_ID,
-    ) ?? null
+    ids
+      .map((id) => getModelSelectionStringOptionValue(selection, id))
+      .find((value) => value && value !== DEFAULT_VARIANT_CHOICE_ID) ?? null
   );
 }
 

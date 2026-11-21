@@ -37,6 +37,7 @@ import {
   presentPendingBackgroundWork,
   presentProviderGoal,
   presentRunStop,
+  readSelectedEffortValue,
   threadRuntimeHasInterruptibleRun,
 } from "./threadExecution.ts";
 
@@ -826,6 +827,9 @@ describe("formatModelSelectionEffort", () => {
         provider: { driver: ProviderDriverKind.make("antigravity"), models },
       }),
     ).toBe("high");
+    expect(
+      readSelectedEffortValue(customSelection, models[1]?.capabilities?.optionDescriptors),
+    ).toBe("deep");
   });
 });
 
