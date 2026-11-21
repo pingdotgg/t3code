@@ -387,7 +387,6 @@ describe("thread action permissions", () => {
       "clear-draft:thread",
       "release-uploads:side-chat",
       "clear-draft:side-chat",
-      "refresh-archive",
       "clear-terminal-ui",
     ]);
     expect(state.localEffects).not.toContain("clear-draft:fork");

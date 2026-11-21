@@ -1571,12 +1571,9 @@ describe("environment query lifecycle", () => {
       const atom = createOrchestrationEnvironmentAtoms(runtime, {
         shellState: () => shellState,
       }).archivedShellSnapshot({ environmentId: QUERY_ENVIRONMENT.environmentId, input: {} });
-      const page = (
-        threads: OrchestrationV2ArchivedShellSnapshot["threads"],
-        snapshotSequence = 1,
-      ) => ({
+      const page = (threads: OrchestrationV2ArchivedShellSnapshot["threads"]) => ({
         schemaVersion: 1,
-        snapshotSequence,
+        snapshotSequence: 1,
         projects: [v2Project],
         threads,
       });
@@ -1597,24 +1594,6 @@ describe("environment query lifecycle", () => {
       expect(yield* archivedIds).toEqual([v2ThreadId]);
       registry.set(shellState, { removedAt: new Map([[v2ThreadId, 3]]) });
       yield* Deferred.succeed(yield* Queue.take(requests), page([]));
-      expect(yield* archivedIds).toEqual([]);
-
-      // This client refreshes after its own action; the removal it reports lands during that read.
-      registry.refresh(atom);
-      const ownRefresh = yield* Queue.take(requests);
-      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 4]]) });
-      yield* Deferred.succeed(ownRefresh, page([], 4));
-      yield* readEnvironmentQuery(registry, atom);
-      expect(registry.get(atom).waiting).toBe(false);
-      expect(yield* Queue.size(requests)).toBe(0);
-
-      // A removal the in-flight read predates is read once that read lands.
-      registry.refresh(atom);
-      const staleRead = yield* Queue.take(requests);
-      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 5]]) });
-      expect(yield* Queue.size(requests)).toBe(0);
-      yield* Deferred.succeed(staleRead, page([], 4));
-      yield* Deferred.succeed(yield* Queue.take(requests), page([], 5));
       expect(yield* archivedIds).toEqual([]);
     }),
   );

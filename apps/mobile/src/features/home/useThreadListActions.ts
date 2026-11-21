@@ -190,9 +190,8 @@ function useThreadActionExecutor(
       if (action === "archive" || action === "delete") {
         for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
       }
-      if (action === "archive" || action === "unarchive" || action === "delete") {
-        refreshArchivedThreadsForEnvironment(thread.environmentId);
-      }
+      // Archiving and deleting reach an open archive as shell removals; unarchiving does not.
+      if (action === "unarchive") refreshArchivedThreadsForEnvironment(thread.environmentId);
       if (action === "delete") clearComposerDraft(key);
       onCompleted?.(action, thread);
       return true;

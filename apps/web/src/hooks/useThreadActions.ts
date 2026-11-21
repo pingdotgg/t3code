@@ -395,6 +395,7 @@ export function useThreadActions() {
     if (result._tag === "Failure") {
       return result;
     }
+    // Unarchiving is no removal from the shell, so nothing else refreshes an open archive.
     refreshArchivedThreadsForEnvironment(target.environmentId);
     if (opts.navigate) {
       return settlePromise(() =>
@@ -441,7 +442,7 @@ export function useThreadActions() {
     if (wokeAt !== null) {
       markThreadVisited(scopedThreadKey(threadRef), wokeAt);
     }
-    refreshArchivedThreadsForEnvironment(threadRef.environmentId);
+    // The shell reports the archived thread as a removal, which refreshes an open archive.
     opts.onArchived?.();
     showThreadUndoNotice({
       action: "Archived",
@@ -503,7 +504,6 @@ export function useThreadActions() {
           clearComposerDraftForThread(ref);
         }
         expireThreadUndos(target, [...LIST_PLACEMENT_UNDO_KINDS, "archive"]);
-        refreshArchivedThreadsForEnvironment(target.environmentId);
         clearTerminalUiState(target);
         clearDeletedThreadPanelState(target);
       }
@@ -635,7 +635,6 @@ export function useThreadActions() {
       return deleteResult;
     }
     expireThreadUndos(threadRef, [...LIST_PLACEMENT_UNDO_KINDS, "archive"]);
-    refreshArchivedThreadsForEnvironment(threadRef.environmentId);
     releaseComposerDraftUploads(threadRef);
     clearComposerDraftForThread(threadRef);
     // The server deletes the thread's side chats with it.
