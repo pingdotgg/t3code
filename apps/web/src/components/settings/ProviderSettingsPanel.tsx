@@ -210,7 +210,7 @@ function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }
       {lastCheckedRelative.suffix ? (
         <T context="the time is an elapsed time such as 5m">
           Checked{" "}
-          <span className="font-mono tabular-nums">
+          <span className="font-mono leading-none tabular-nums">
             <Var>{lastCheckedRelative.value}</Var>
           </span>{" "}
           ago
@@ -1049,8 +1049,8 @@ export function EnvironmentProviderSettings({
           ) : null
         }
         headerAction={
-          // The ghost button's padding would inset its label, so pull the text to the card edge.
-          <div className="-me-2 flex min-w-0 items-center gap-2">
+          // The ghost button's padding would inset its icon, so pull the icon to the card edge.
+          <div className="-me-1.5 flex min-w-0 items-center gap-2">
             <ProviderUpdatesAction />
             <Tooltip>
               <TooltipTrigger
@@ -1062,7 +1062,6 @@ export function EnvironmentProviderSettings({
                     aria-busy={isRefreshingProviders}
                     onClick={() => void refreshProviders()}
                   >
-                    <RefreshIcon refreshing={isRefreshingProviders} />
                     <span className="sr-only">
                       <T>Refresh provider status</T>
                     </span>
@@ -1073,6 +1072,8 @@ export function EnvironmentProviderSettings({
                         <ProviderLastChecked environmentId={environmentId} />
                       )}
                     </span>
+                    {/* Last, so the icon holds the card edge while the label changes length. */}
+                    <RefreshIcon refreshing={isRefreshingProviders} />
                   </Button>
                 }
               />

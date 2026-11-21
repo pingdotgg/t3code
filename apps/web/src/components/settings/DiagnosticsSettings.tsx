@@ -733,7 +733,7 @@ function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null 
       {relative.suffix ? (
         <T context="the time is an elapsed time such as 5m">
           Checked{" "}
-          <span className="font-mono tabular-nums">
+          <span className="font-mono leading-none tabular-nums">
             <Var>{relative.value}</Var>
           </span>{" "}
           ago
