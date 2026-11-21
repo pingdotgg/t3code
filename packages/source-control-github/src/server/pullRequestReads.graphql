@@ -477,9 +477,9 @@ query ReviewerCandidates($owner: String!, $name: String!, $number: Int!, $query:
   }
 }
 
-query LabelCandidates($owner: String!, $name: String!, $number: Int!) {
+query LabelCandidates($owner: String!, $name: String!, $number: Int!, $query: String) {
   repository(owner: $owner, name: $name) {
-    labels(first: 100, orderBy: { field: NAME, direction: ASC }) {
+    labels(first: 100, query: $query, orderBy: { field: NAME, direction: ASC }) {
       pageInfo {
         hasNextPage
       }

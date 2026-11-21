@@ -24,6 +24,8 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { SelectionRow } from "../../components/ui/SelectionRow";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
+import { useDebouncedValue } from "../../state/queries";
+import { hostLabelQuery, labelCandidateView } from "@t3tools/client-runtime/pull-request-labels";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestLabelDot } from "./PullRequestLabelDot";
 import { pullRequestLabelColor } from "./pullRequestList";
@@ -61,20 +63,36 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
   const setLabels = useAtomCommand(composerPullRequests.setLabels, { reportFailure: false });
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState(emptySelection<PullRequestLabelCandidate>);
-  const needle = query.trim().toLowerCase();
-  // Host order, not applied-first: re-sorting on toggle would move the row out from under a tap.
-  const candidates = (result.data?.candidates ?? []).filter((candidate) =>
-    `${candidate.name} ${candidate.description ?? ""}`.toLowerCase().includes(needle),
+  const needle = query.trim();
+  // Past the first page the host is asked, since what was loaded cannot answer for the rest.
+  const debouncedQuery = useDebouncedValue(needle, 250);
+  const hostQuery = hostLabelQuery({ loaded: result.data, debouncedQuery });
+  const searchResult = useEnvironmentQuery(
+    hostQuery === null
+      ? null
+      : composerPullRequests.labelSearch({
+          ...target,
+          input: { ...target.input, query: hostQuery },
+        }),
   );
-  const latest = result.data?.candidates;
+  // Host order, not applied-first: re-sorting on toggle would move the row out from under a tap.
+  const { candidates, searchPending, truncated } = labelCandidateView({
+    loaded: result.data,
+    query,
+    debouncedQuery,
+    search: searchResult,
+  });
+  const loadedCandidates = result.data?.candidates;
+  const searchedCandidates = searchResult.data?.candidates;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- picks are sent when the sheet leaves the navigation stack, however it is dismissed
   useEffect(
     () =>
       navigation.addListener("beforeRemove", () => {
+        const latest = [...(loadedCandidates ?? []), ...(searchedCandidates ?? [])];
         const { add, remove } = selectionChanges(
           draft,
           (name, label) =>
-            latest?.find((entry) => entry.name === name)?.isApplied ?? label.isApplied,
+            latest.find((entry) => entry.name === name)?.isApplied ?? label.isApplied,
         );
         const sendBatch = async (
           labels: ReadonlyArray<PullRequestLabelCandidate>,
@@ -102,7 +120,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
         // Adding first keeps the Labels row from showing empty between the two writes.
         void send(add, true).then(() => send(remove, false));
       }),
-    [navigation, draft, latest, setLabels, target, gt],
+    [navigation, draft, loadedCandidates, searchedCandidates, setLabels, target, gt],
   );
   return (
     <PullRequestSearchSheet
@@ -152,7 +170,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
             />
           )}
           ListEmptyComponent={
-            result.isPending && !result.data ? (
+            (result.isPending && !result.data) || searchPending ? (
               <AppActivityIndicator className="my-8" />
             ) : (
               <View>
@@ -177,7 +195,7 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
             )
           }
           ListFooterComponent={
-            result.data?.truncated ? (
+            truncated ? (
               <Text className="py-4 text-xs text-foreground-muted">
                 <T>
                   This repository has more labels than are listed here. Apply the rest on the

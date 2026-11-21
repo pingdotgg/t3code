@@ -8,6 +8,8 @@ import { m } from "~/i18n/messages";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { useDebouncedValue } from "~/state/queries";
+import { hostLabelQuery, labelCandidateView } from "@t3tools/client-runtime/pull-request-labels";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   emptySelection,
@@ -21,15 +23,6 @@ import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { readableFailure } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
-
-function matches(candidate: PullRequestLabelCandidate, query: string): boolean {
-  if (query.length === 0) return true;
-  const needle = query.toLowerCase();
-  return (
-    candidate.name.toLowerCase().includes(needle) ||
-    (candidate.description ?? "").toLowerCase().includes(needle)
-  );
-}
 
 export function PullRequestLabelPicker({
   environmentId,
@@ -49,13 +42,27 @@ export function PullRequestLabelPicker({
     open ? pullRequestEnvironment.labelCandidates({ environmentId, input: reference }) : null,
     useMessages(),
   );
+  // Past the first page the host is asked, since what was loaded cannot answer for the rest.
+  const debouncedQuery = useDebouncedValue(query.trim(), 250);
+  const hostQuery = hostLabelQuery({ loaded: candidatesQuery.data, debouncedQuery });
+  const searchResult = useEnvironmentQuery(
+    open && hostQuery !== null
+      ? pullRequestEnvironment.labelSearch({
+          environmentId,
+          input: { ...reference, query: hostQuery },
+        })
+      : null,
+  );
   const setLabels = useAtomCommand(pullRequestEnvironment.setLabels, {
     reportFailure: false,
   });
 
-  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
-    matches(entry, query),
-  );
+  const { candidates, searchPending, truncated } = labelCandidateView({
+    loaded: candidatesQuery.data,
+    query,
+    debouncedQuery,
+    search: searchResult,
+  });
 
   const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
     for (const batch of changeBatches(labels)) await sendBatch(batch, applied);
@@ -82,7 +89,10 @@ export function PullRequestLabelPicker({
   const onOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
     if (nextOpen) return;
-    const latest = candidatesQuery.data?.candidates ?? [];
+    const latest = [
+      ...(candidatesQuery.data?.candidates ?? []),
+      ...(searchResult.data?.candidates ?? []),
+    ];
     const { add, remove } = selectionChanges(
       draft,
       (name, label) => latest.find((entry) => entry.name === name)?.isApplied ?? label.isApplied,
@@ -103,13 +113,13 @@ export function PullRequestLabelPicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel={gt("Search labels")}
-      isPending={candidatesQuery.isPending && candidatesQuery.data === null}
+      isPending={(candidatesQuery.isPending && candidatesQuery.data === null) || searchPending}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
       emptyLabel={gt("This repository has no labels.")}
       noMatchLabel={gt("No label matches that.")}
       errorLabel={gt("The labels could not be read.")}
-      truncated={candidatesQuery.data?.truncated === true}
+      truncated={truncated}
       truncatedLabel={gt(
         "This repository has more labels than are listed here. Apply the rest on the host.",
       )}

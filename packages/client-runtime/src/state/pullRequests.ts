@@ -1031,6 +1031,22 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       edit: (value, edits) => edits.reduce(withLabelCandidateEdit, value),
     }),
   );
+  // Asked only when the first page is not every label, so a query cannot be answered from it.
+  const labelSearchQueries = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:label-search",
+    tag: WS_METHODS.pullRequestsLabelCandidates,
+    execute: (input) => routedRequest(WS_METHODS.pullRequestsLabelCandidates, input),
+    staleTimeMs: 60_000,
+  });
+  const writableLabelSearch = Atom.family((source: ReturnType<typeof labelSearchQueries>) =>
+    writableQuery(source),
+  );
+  const labelSearch = (target: Parameters<typeof labelSearchQueries>[0]) =>
+    editedQuery(writableLabelSearch(labelSearchQueries(target)), {
+      environmentId: target.environmentId,
+      concerns: (reference) => samePullRequest(target.input, reference),
+      edit: (value, edits) => edits.reduce(withLabelCandidateEdit, value),
+    });
   const labelEdit = (
     registry: AtomRegistry.AtomRegistry,
     target: {
@@ -1533,6 +1549,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         }),
     }),
     labelCandidates,
+    /** The host's search for labels past the first page, keyed by what was typed. */
+    labelSearch,
     setLabels: showWhileInFlight(
       createEnvironmentRpcCommand(runtime, {
         label: "environment-data:pull-requests:set-labels",
