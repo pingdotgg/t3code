@@ -1,6 +1,6 @@
 // Run with: node packages/source-control-github/scripts/measure-pr-preview.ts owner/repo 123 456 [--repeats=N]
-// With repeats, `elapsedMs` is the median and `minMs` the fastest sample; request counts and
-// `points` are totals across all samples.
+// With --repeats, `elapsedMs` is the median, rows add `minMs` (fastest sample) and `repeats`, and
+// request counts and `points` are totals across all samples.
 
 // Real GitHub reads share repository-permission caches, excluding browser and service caches.
 // HTTP client request counts are exact; GraphQL cost uses changes in `x-ratelimit-used`,
@@ -164,8 +164,7 @@ for (const mode of ["detail", "preview"] as const) {
               mode,
               state,
               elapsedMs: medianMs,
-              minMs: sorted[0] ?? 0,
-              repeats,
+              ...(repeatsFlag === undefined ? {} : { minMs: sorted[0] ?? 0, repeats }),
               points,
               graphqlRequests: measured.reduce((total, read) => total + read.graphqlRequests, 0),
               restRequests: measured.reduce((total, read) => total + read.restRequests, 0),
