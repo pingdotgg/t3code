@@ -848,7 +848,13 @@ export function instanceHubs(
   return endpoint === undefined ? [] : sources.filter((source) => source.origin === endpoint);
 }
 
-/** Gemini quota is metered apart from the Claude and GPT quota, so each blocks only its models. */
+// Antigravity meters Gemini Argon, Gemini Carbon, other Gemini, and Claude/GPT models apart.
+function antigravityQuotaFamily(id: string) {
+  if (!id.startsWith("gemini")) return "shared";
+  return id.includes("argon") ? "argon" : id.includes("carbon") ? "carbon" : "gemini";
+}
+
+/** Each Antigravity quota blocks only the models it meters. */
 export function antigravityWindowLimitsModel(
   window: Pick<ServerProviderUsageWindow, "id">,
   model: string | null,
@@ -857,7 +863,7 @@ export function antigravityWindowLimitsModel(
   const base = model?.slice(model.lastIndexOf("/") + 1);
   // An alias such as "fast" may route to either quota, so both hold it back.
   if (base === undefined || !/^(gemini|claude|gpt)/.test(base)) return true;
-  return window.id.startsWith("gemini") === base.startsWith("gemini");
+  return antigravityQuotaFamily(window.id) === antigravityQuotaFamily(base);
 }
 
 /** The hub accounts that serve a model: those that list it, else every account of the driver. */

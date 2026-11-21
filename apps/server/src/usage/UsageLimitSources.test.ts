@@ -411,6 +411,18 @@ it.each([
     model: "fast",
     expected: at(24),
   },
+  {
+    name: "an Argon model waits only for the Argon quota",
+    accounts: [
+      {
+        driver: "antigravity",
+        models: ["gemini-4-argon-high"],
+        windows: [spent("gemini-argon-5h", 2), spent("gemini-carbon-weekly", 96)],
+      },
+    ],
+    model: "gemini-4-argon-high",
+    expected: at(2),
+  },
 ])("hub pool reset: $name", ({ accounts, model, expected }) => {
   expect(
     UsageLimitSources.hubPoolResetAt(
