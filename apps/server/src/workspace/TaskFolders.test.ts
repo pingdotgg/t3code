@@ -106,10 +106,17 @@ it.live("lays a plain wrapper out as links around its repositories' worktrees", 
       yield* fileSystem.makeDirectory(path.join(shop, ".git-not"));
       yield* fileSystem.writeFileString(path.join(shop, "AGENTS.md"), "root rules\n");
       yield* fileSystem.writeFileString(path.join(shop, "services", "README.md"), "services\n");
+      const unborn = path.join(shop, "unborn");
+      yield* fileSystem.makeDirectory(unborn);
+      yield* run(unborn, "init", "-b", "main");
       state.workspaceRoot = shop;
-      state.trackedFolders = tracked(api, web, unpicked, path.join(shop, "notes"));
+      state.trackedFolders = tracked(api, web, unpicked, unborn, path.join(shop, "notes"));
 
-      const { taskFolder, branch } = yield* create("feature", [{ path: api }, { path: web }]);
+      const { taskFolder, branch } = yield* create("feature", [
+        { path: api },
+        { path: web },
+        { path: unborn },
+      ]);
       const root = taskFolder.root;
 
       assert.equal(branch, "feature");
@@ -143,6 +150,8 @@ it.live("lays a plain wrapper out as links around its repositories' worktrees", 
       assert.isTrue(yield* isLink(path.join(root, "services", "README.md")));
       // A tracked repository that was not chosen is absent: a link would be the original checkout.
       assert.isFalse(yield* fileSystem.exists(path.join(root, "unpicked")));
+      // So is a chosen one with no commit yet, which has nothing to branch from.
+      assert.isFalse(yield* fileSystem.exists(path.join(root, "unborn")));
       assert.isFalse(yield* fileSystem.exists(path.join(root, ".git")));
       for (const worktree of [path.join(root, "services", "api"), path.join(root, "web")]) {
         assert.equal(yield* run(worktree, "symbolic-ref", "--short", "HEAD"), "feature");
@@ -628,18 +637,17 @@ it.live("removes what it created when one repository fails", () =>
     Effect.gen(function* () {
       const { fileSystem, path, tmp, run, repository, worktreeCount } = yield* fixture;
       const api = yield* repository("shop/api");
-      // No commit yet, so no branch can start there.
-      const empty = path.join(tmp, "shop", "empty");
-      yield* fileSystem.makeDirectory(empty);
-      yield* run(empty, "init", "-b", "main");
+      // Git keeps its worktrees in a folder of this name, so none can be added here.
+      const broken = yield* repository("shop/broken");
+      yield* fileSystem.writeFileString(path.join(broken, ".git", "worktrees"), "");
       yield* fileSystem.writeFileString(path.join(tmp, "shop", "AGENTS.md"), "rules\n");
       state.workspaceRoot = path.join(tmp, "shop");
-      state.trackedFolders = tracked(api, empty);
+      state.trackedFolders = tracked(api, broken);
       const config = yield* ServerConfig.ServerConfig;
 
       const error = yield* create("feature").pipe(Effect.flip);
 
-      assert.include(String((error as { readonly detail?: string }).detail), "empty worktree");
+      assert.include(String((error as { readonly detail?: string }).detail), "broken worktree");
       assert.equal(yield* worktreeCount(api), 1);
       assert.equal(yield* run(api, "branch", "--format=%(refname:short)"), "main");
       assert.deepEqual(yield* fileSystem.readDirectory(path.join(config.worktreesDir, "shop")), []);
@@ -652,13 +660,14 @@ it.live("removes what it created when one repository fails", () =>
 it.live("selects every tracked repository up to eight and none beyond", () =>
   withState((state) =>
     Effect.gen(function* () {
-      const { fileSystem, path, tmp } = yield* fixture;
+      const { fileSystem, path, tmp, repository } = yield* fixture;
       const taskFolders = yield* TaskFolders.TaskFolders;
       // Outside the project folder, so the stored list alone says which are tracked.
-      const folders = Array.from({ length: 9 }, (_, index) => path.join(tmp, "repos", `r${index}`));
-      for (const folder of folders) {
-        yield* fileSystem.makeDirectory(path.join(folder, ".git"), { recursive: true });
-      }
+      const folders = yield* Effect.forEach(
+        Array.from({ length: 9 }, (_, index) => `repos/r${index}`),
+        repository,
+        { concurrency: 3 },
+      );
       const plain = path.join(tmp, "shop", "notes");
       yield* fileSystem.makeDirectory(plain, { recursive: true });
       state.workspaceRoot = path.join(tmp, "shop");

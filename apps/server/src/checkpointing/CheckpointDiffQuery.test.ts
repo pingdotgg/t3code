@@ -414,3 +414,22 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
     );
   }).pipe(Effect.provide(layer));
 });
+
+it.effect("answers a turn in a folder that is not a repository with an empty patch", () => {
+  const projection = makeProjection();
+  const layer = layerFor({
+    projection: Effect.succeed({
+      ...projection,
+      checkpoints: projection.checkpoints.map((checkpoint) => ({
+        ...checkpoint,
+        status: "missing" as const,
+      })),
+    }),
+  });
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    const result = yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+    assert.strictEqual(result.diff, "");
+    assert.isUndefined(result.repositories);
+  }).pipe(Effect.provide(layer));
+});

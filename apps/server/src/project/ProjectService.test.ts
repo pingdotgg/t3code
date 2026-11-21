@@ -352,20 +352,29 @@ it.layer(layerTest)("ProjectService", (it) => {
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;
       const projectId = ProjectId.make("project:tracked-folders");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const work = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-tracked-" }),
+      );
+      yield* fileSystem.makeDirectory(`${work}/app/packages/web`, { recursive: true });
+      yield* fileSystem.makeDirectory(`${work}/api`);
+      yield* fileSystem.writeFileString(`${work}/notes.txt`, "not a folder\n");
       const folder = (path: string) => ({ path, name: "Folder" });
       const invalid = [
         ["relative", [folder("sibling")]],
-        ["own-folder", [folder("/work/tracked/app/")]],
-        ["parent", [folder("/work/tracked")]],
-        ["duplicate", [folder("/work/tracked/api"), folder("/work/tracked/api/")]],
+        ["own-folder", [folder(`${work}/app/`)]],
+        ["parent", [folder(work)]],
+        ["duplicate", [folder(`${work}/api`), folder(`${work}/api/`)]],
         ["too-many", Array.from({ length: 129 }, (_, index) => folder(`/work/other/${index}`))],
+        ["missing", [folder(`${work}/gone`)]],
+        ["file", [folder(`${work}/notes.txt`)]],
       ] as const;
       const create = (key: string, trackedFolders: ReadonlyArray<ProjectTrackedFolder>) =>
         service.create({
           commandId: CommandId.make(`command:tracked:create:${key}`),
           projectId,
           title: "Tracked",
-          workspaceRoot: "/work/tracked/app",
+          workspaceRoot: `${work}/app`,
           trackedFolders,
         });
       const update = (key: string, change: Partial<ProjectUpdatePayload>) =>
@@ -381,8 +390,8 @@ it.layer(layerTest)("ProjectService", (it) => {
           "ProjectInvalidError",
         );
       }
-      const tracked = [folder("/work/tracked/api"), folder("/work/tracked/app/packages/web")];
-      const created = yield* create("valid", [folder("/work/tracked/api/"), tracked[1]!]);
+      const tracked = [folder(`${work}/api`), folder(`${work}/app/packages/web`)];
+      const created = yield* create("valid", [folder(`${work}/api/`), tracked[1]!]);
       assert.deepEqual(created.trackedFolders, tracked);
 
       for (const [key, trackedFolders] of invalid) {
@@ -393,7 +402,7 @@ it.layer(layerTest)("ProjectService", (it) => {
       }
       // The kept list is checked against the new folder, and stays as it was when refused.
       assert.equal(
-        (yield* update("move-onto", { workspaceRoot: "/work/tracked/api" }).pipe(Effect.flip))._tag,
+        (yield* update("move-onto", { workspaceRoot: `${work}/api` }).pipe(Effect.flip))._tag,
         "ProjectInvalidError",
       );
       assert.deepEqual((yield* update("rename", { title: "Renamed" })).trackedFolders, tracked);
@@ -401,10 +410,15 @@ it.layer(layerTest)("ProjectService", (it) => {
         Option.getOrThrow(yield* service.getById(projectId)).trackedFolders,
         tracked,
       );
+      // A folder already tracked may go missing; only one being added has to be there.
+      yield* fileSystem.remove(`${work}/api`, { recursive: true });
+      assert.deepEqual(
+        (yield* update("gone", { trackedFolders: tracked })).trackedFolders,
+        tracked,
+      );
       assert.deepEqual((yield* update("clear", { trackedFolders: [] })).trackedFolders, []);
 
       // A moved project lists the repositories of the folder it moved to, without being told.
-      const fileSystem = yield* FileSystem.FileSystem;
       const moved = yield* fileSystem.realPath(
         yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-moved-" }),
       );
@@ -1043,7 +1057,12 @@ it.effect("keeps a folder added while a scan of the project folder waited to com
       title: "Folder sync",
       workspaceRoot: root,
     });
-    const added = { path: "/work/elsewhere", name: "Elsewhere" };
+    const added = {
+      path: yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-elsewhere-" }),
+      ),
+      name: "Elsewhere",
+    };
     const update = yield* service
       .update({ commandId: trackCommandId, projectId, trackedFolders: [added] })
       .pipe(Effect.forkChild({ startImmediately: true }));

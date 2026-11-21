@@ -326,6 +326,7 @@ export const make = Effect.gen(function* () {
     projectId: ProjectId,
     workspaceRoot: string,
     folders: ReadonlyArray<ProjectTrackedFolder>,
+    known: ReadonlyArray<ProjectTrackedFolder> = [],
   ) => {
     const invalid = (detail: string) => Effect.fail(new ProjectInvalidError({ projectId, detail }));
     const normalized: Array<ProjectTrackedFolder> = [];
@@ -352,7 +353,19 @@ export const make = Effect.gen(function* () {
         `A project tracks at most ${PROJECT_TRACKED_FOLDERS_MAX} added folders; ${normalized.length} were given.`,
       );
     }
-    return withDiscovered(workspaceRoot, normalized);
+    // Only a folder being added has to be there: one already tracked may have gone missing since.
+    return Effect.forEach(
+      normalized.filter((folder) => !known.some((existing) => existing.path === folder.path)),
+      (folder) =>
+        fileSystem.stat(folder.path).pipe(
+          Effect.map((info) => info.type === "Directory"),
+          Effect.orElseSucceed(() => false),
+          Effect.flatMap((isFolder) =>
+            isFolder ? Effect.void : invalid(`'${folder.path}' is not a folder on this machine.`),
+          ),
+        ),
+      { discard: true },
+    ).pipe(Effect.andThen(withDiscovered(workspaceRoot, normalized)));
   };
 
   // Git for Windows can't trust an index written inside the distro and rereads every file across the
@@ -598,6 +611,7 @@ export const make = Effect.gen(function* () {
             input.projectId,
             root,
             input.trackedFolders ?? current.trackedFolders,
+            current.trackedFolders,
           );
           return { ...command, trackedFolders };
         }),

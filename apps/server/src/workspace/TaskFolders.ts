@@ -429,6 +429,13 @@ const make = Effect.gen(function* () {
       }
       repositories = [...selected.values()];
     }
+    // A repository with no commit yet has nothing to branch from, so it is left out.
+    repositories = yield* Effect.filter(
+      repositories,
+      (folder) =>
+        git.hasCommit({ cwd: folder.path, refName: "HEAD" }).pipe(Effect.orElseSucceed(() => true)),
+      { concurrency: REPOSITORY_CONCURRENCY },
+    );
     return {
       projectId: project.projectId,
       projectRoot,

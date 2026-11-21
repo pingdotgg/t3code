@@ -83,7 +83,8 @@ project, and each repository you choose gets a worktree there, all on the thread
 
 Choose the repositories with the repositories control next to the workspace picker before you send.
 Every repository is included when the project covers eight or fewer; with more, none is
-included until you choose. On web and desktop, your last choice is remembered for the project in
+included until you choose. A repository with no commit yet is left out, since it has nothing to
+branch from. On web and desktop, your last choice is remembered for the project in
 that browser. To bring another repository into a running thread, pick it under **Other
 repositories** in the thread details panel or the mobile Git sheet.
 

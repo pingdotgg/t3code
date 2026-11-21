@@ -290,10 +290,10 @@ export const make = Effect.gen(function* () {
         (scope) => typeof scope.repositoryPath === "string",
       );
       // A thread folder that is not a Git repository records missing checkpoints; its turns still
-      // exist for the repositories inside it.
+      // exist, for the repositories inside it and as an empty patch while none of them changed.
       const turnCheckpoints = projection.checkpoints.filter(
         (checkpoint) =>
-          (checkpoint.status === "ready" || (hasRepositories && checkpoint.status === "missing")) &&
+          (checkpoint.status === "ready" || checkpoint.status === "missing") &&
           checkpoint.appRunOrdinal !== null &&
           checkpoint.runId !== null &&
           completedRunIds.has(checkpoint.runId),

@@ -260,27 +260,25 @@ const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixt
   return { baseDir, workspaceRoot, project: project! };
 });
 
-const kept = { path: "/work/cli-kept", name: "Kept" };
-
 it.effect.each([
-  { label: "keeps its title", args: [], expectedTitle: undefined, tracked: [kept] },
+  { label: "keeps its title", args: [], expectedTitle: undefined, named: false },
   {
     label: "applies --title",
     args: ["--title", " Back again "],
     expectedTitle: "Back again",
-    tracked: [kept],
+    named: false,
   },
-  {
-    label: "adds the --track folders to the ones it had",
-    args: ["--track", kept.path, "--track", "/work/cli-named"],
-    expectedTitle: undefined,
-    tracked: [kept, { path: "/work/cli-named", name: "cli-named" }],
-  },
+  { label: "adds the --track folders to the ones it had", args: [], named: true },
 ])(
   "adding an archived project's folder again unarchives it and $label",
-  ({ args, expectedTitle, tracked }) =>
+  ({ args, expectedTitle, named }) =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
       const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
+      const kept = { path: NodePath.join(baseDir, "..", "cli-kept"), name: "Kept" };
+      const added = { path: NodePath.join(baseDir, "..", "cli-named"), name: "cli-named" };
+      yield* fs.makeDirectory(kept.path);
+      yield* fs.makeDirectory(added.path);
       yield* withProjectService(baseDir, (projects) =>
         projects.update({
           commandId: CommandId.make("project-cli-archive"),
@@ -290,7 +288,15 @@ it.effect.each([
         }),
       );
 
-      yield* runCli(["project", "add", workspaceRoot, ...args, "--base-dir", baseDir]);
+      yield* runCli([
+        "project",
+        "add",
+        workspaceRoot,
+        ...args,
+        ...(named ? ["--track", kept.path, "--track", added.path] : []),
+        "--base-dir",
+        baseDir,
+      ]);
 
       const projects = (yield* readProjects(baseDir)).projects;
       assert.deepEqual(
@@ -305,7 +311,7 @@ it.effect.each([
             id: project.id,
             title: expectedTitle ?? project.title,
             archivedAt: null,
-            trackedFolders: tracked,
+            trackedFolders: named ? [kept, added] : [kept],
           },
         ],
       );
