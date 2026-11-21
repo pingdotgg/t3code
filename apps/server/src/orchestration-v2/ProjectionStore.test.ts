@@ -12050,7 +12050,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         [runId, newerRunId],
       );
       assert.lengthOf(statements, 2);
-      // Live-item filters must hit the active partial indexes, not walk the thread's history.
+      // Live-item and run recovery lookups must hit their indexes, not walk the thread's history.
       const sql = yield* SqlClient.SqlClient;
       for (const statement of statements.filter((query) => query.includes("turn_items"))) {
         const plan = (yield* sql.unsafe<{ readonly detail: string }>(
@@ -12060,6 +12060,17 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           assert.notMatch(detail, /turn_items_(thread_ordinal|thread_run)_idx \(thread_id=\?\)$/);
         }
       }
+      const runsStatement = statements.find((query) =>
+        query.includes("FROM orchestration_v2_projection_runs AS run"),
+      );
+      assert.isDefined(runsStatement);
+      const runsPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${runsStatement}`,
+      )).map((row) => row.detail);
+      assert.isTrue(
+        runsPlan.some((detail) => /SEARCH run USING INDEX \w+ \(run_id=\?\)/.test(detail)),
+        `expected run lookup by primary key:\n${runsPlan.join("\n")}`,
+      );
     }),
   );
 });

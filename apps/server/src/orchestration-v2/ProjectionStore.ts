@@ -3784,10 +3784,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         keep: NonNullable<ProjectionRecordFilter["sinceLastCompaction"]>,
       ) {
         // A held queue can run out of ordinal order, so a run that ended after the compaction's
-        // run was requested is recent too. Every run row is read anyway, so this scan reads no
-        // extra pages.
+        // run was requested is recent too. Each branch seeks its own index instead of scanning
+        // every run of the thread under a single OR.
         const recent = yield* sql<{ readonly run_id: RunId }>`
-          WITH compaction AS (
+          WITH compaction AS MATERIALIZED (
             SELECT run.ordinal, run.requested_at
             FROM orchestration_v2_projection_turn_items AS item
               INDEXED BY orchestration_v2_projection_turn_items_conversation_idx
@@ -3801,11 +3801,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           )
           SELECT run.run_id
           FROM compaction
-          INNER JOIN orchestration_v2_projection_runs AS run ON run.thread_id = ${threadId}
-          WHERE run.ordinal >= compaction.ordinal
-            OR run.completed_at IS NULL
-            OR run.completed_at >= compaction.requested_at
-            OR run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+          INNER JOIN orchestration_v2_projection_runs AS run
+            INDEXED BY orchestration_v2_projection_runs_thread_ordinal_idx
+            ON run.thread_id = ${threadId} AND run.ordinal >= compaction.ordinal
+          UNION
+          SELECT run.run_id
+          FROM compaction
+          INNER JOIN orchestration_v2_projection_runs AS run
+            ON run.thread_id = ${threadId} AND run.completed_at IS NULL
+          UNION
+          SELECT run.run_id
+          FROM compaction
+          INNER JOIN orchestration_v2_projection_runs AS run
+            ON run.thread_id = ${threadId} AND run.completed_at >= compaction.requested_at
+          UNION
+          SELECT run.run_id
+          FROM compaction
+          INNER JOIN orchestration_v2_projection_runs AS run
+            INDEXED BY orchestration_v2_projection_runs_recovery_idx
+            ON run.thread_id = ${threadId}
+            AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
           UNION
           SELECT message.run_id
           FROM compaction
@@ -5627,48 +5642,48 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           const queries = {
             runs: sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_runs AS run
-              WHERE run.thread_id = ${threadId}
-                AND (
-                  run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
-                  OR run.run_id = (
-                    SELECT latest.run_id FROM orchestration_v2_projection_runs AS latest
-                    WHERE latest.thread_id = ${threadId}
-                    ORDER BY latest.ordinal DESC LIMIT 1
-                  )
-                  -- Retain the latest ended run for each provider thread with lost
-                  -- background work, including owners used before a handoff. An
-                  -- unfinished run is read above and may prove never started.
-                  OR run.run_id IN (
-                    SELECT (
-                      SELECT ended.run_id FROM orchestration_v2_projection_runs AS ended
-                      WHERE ended.thread_id = ${threadId}
-                        AND ended.provider_thread_id = roster.provider_thread_id
-                        AND ended.status NOT IN (
-                          'queued', 'preparing', 'starting', 'running', 'waiting', 'rolled_back'
-                        )
-                        -- A run that never started (see neverStarted) owns no work.
-                        AND NOT (
-                          json_type(ended.payload_json, '$.startedAt') = 'null'
-                          AND json_type(ended.payload_json, '$.restartContinuationOfRunId') IS NULL
-                        )
-                      ORDER BY ended.completed_at IS NULL DESC, ended.completed_at DESC,
-                        ended.ordinal DESC
-                      LIMIT 1
-                    )
-                    FROM orchestration_v2_projection_provider_threads AS roster
-                    WHERE roster.thread_id = ${threadId}
-                      AND CASE WHEN json_valid(roster.payload_json)
-                        THEN json_array_length(roster.payload_json, '$.pendingBackgroundTasks') > 0
-                        ELSE 0 END
-                  )
-                  OR run.run_id IN (
-                    SELECT item.run_id FROM orchestration_v2_projection_turn_items AS item
-                    WHERE item.thread_id = ${threadId}
-                      AND item.type IN ('command_execution', 'dynamic_tool', 'subagent')
-                      AND item.status IN ('pending', 'running', 'waiting')
-                      AND item.run_id IS NOT NULL
-                  )
+              WHERE run.run_id IN (
+                SELECT run_id FROM orchestration_v2_projection_runs
+                WHERE thread_id = ${threadId}
+                  AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                UNION
+                SELECT run_id FROM (
+                  SELECT latest.run_id FROM orchestration_v2_projection_runs AS latest
+                  WHERE latest.thread_id = ${threadId}
+                  ORDER BY latest.ordinal DESC LIMIT 1
                 )
+                -- Retain the latest ended run for each provider thread with lost
+                -- background work, including owners used before a handoff. An
+                -- unfinished run is read above and may prove never started.
+                UNION
+                SELECT (
+                  SELECT ended.run_id FROM orchestration_v2_projection_runs AS ended
+                  WHERE ended.thread_id = ${threadId}
+                    AND ended.provider_thread_id = roster.provider_thread_id
+                    AND ended.status NOT IN (
+                      'queued', 'preparing', 'starting', 'running', 'waiting', 'rolled_back'
+                    )
+                    -- A run that never started (see neverStarted) owns no work.
+                    AND NOT (
+                      json_type(ended.payload_json, '$.startedAt') = 'null'
+                      AND json_type(ended.payload_json, '$.restartContinuationOfRunId') IS NULL
+                    )
+                  ORDER BY ended.completed_at IS NULL DESC, ended.completed_at DESC,
+                    ended.ordinal DESC
+                  LIMIT 1
+                )
+                FROM orchestration_v2_projection_provider_threads AS roster
+                WHERE roster.thread_id = ${threadId}
+                  AND CASE WHEN json_valid(roster.payload_json)
+                    THEN json_array_length(roster.payload_json, '$.pendingBackgroundTasks') > 0
+                    ELSE 0 END
+                UNION
+                SELECT item.run_id FROM orchestration_v2_projection_turn_items AS item
+                WHERE item.thread_id = ${threadId}
+                  AND item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+                  AND item.status IN ('pending', 'running', 'waiting')
+                  AND item.run_id IS NOT NULL
+              )
               ORDER BY run.ordinal ASC
             `,
             attempts: sql<PayloadRow>`
