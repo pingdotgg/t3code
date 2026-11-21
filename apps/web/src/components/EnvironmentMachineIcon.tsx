@@ -1,8 +1,29 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { msg } from "gt-react";
-import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "lucide-react";
+import {
+  CloudIcon,
+  LaptopIcon,
+  MonitorIcon,
+  ServerIcon,
+  SquareTerminalIcon,
+  type LucideProps,
+} from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
-import { LinuxIcon } from "./Icons";
+import {
+  AlpineLinuxIcon,
+  AppleIcon,
+  ArchLinuxIcon,
+  DebianIcon,
+  DockerIcon,
+  FedoraIcon,
+  LinuxIcon,
+  LinuxMintIcon,
+  NixOsIcon,
+  OpenSuseIcon,
+  RaspberryPiIcon,
+  UbuntuIcon,
+  WindowsIcon,
+} from "./Icons";
 
 function LucideLike(props: SVGProps<SVGSVGElement>) {
   return (
@@ -39,6 +60,11 @@ function MacStudioIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** The shared Apple mark, padded to match the other OS marks. */
+function MacOsIcon(props: SVGProps<SVGSVGElement>) {
+  return <AppleIcon viewBox="-2 -2 28 28" {...props} />;
+}
+
 const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps>> = {
   server: ServerIcon,
   cloud: CloudIcon,
@@ -47,16 +73,42 @@ const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps
   laptop: LaptopIcon,
   "mac-mini": MacMiniIcon,
   "mac-studio": MacStudioIcon,
+  "raspberry-pi": RaspberryPiIcon,
+  docker: DockerIcon,
+  macos: MacOsIcon,
+  windows: WindowsIcon,
+  wsl: SquareTerminalIcon,
+  debian: DebianIcon,
+  ubuntu: UbuntuIcon,
+  fedora: FedoraIcon,
+  arch: ArchLinuxIcon,
+  mint: LinuxMintIcon,
+  opensuse: OpenSuseIcon,
+  nixos: NixOsIcon,
+  alpine: AlpineLinuxIcon,
 };
 
 export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
   server: msg("Server"),
   cloud: msg("Cloud VM"),
-  linux: msg("Linux/WSL"),
+  linux: msg("Linux"),
   desktop: msg("Desktop"),
   laptop: msg("Laptop"),
   "mac-mini": msg("Mini PC"),
   "mac-studio": msg("Workstation"),
+  "raspberry-pi": msg("Raspberry Pi"),
+  docker: msg("Docker"),
+  macos: msg("macOS"),
+  windows: msg("Windows"),
+  wsl: msg("WSL"),
+  debian: msg("Debian"),
+  ubuntu: msg("Ubuntu"),
+  fedora: msg("Fedora"),
+  arch: msg("Arch Linux"),
+  mint: msg("Linux Mint"),
+  opensuse: msg("openSUSE"),
+  nixos: msg("NixOS"),
+  alpine: msg("Alpine Linux"),
 };
 
 export function environmentMachineIcon(
