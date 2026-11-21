@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationV2AppThread,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   type RuntimeMode,
   type ServerProvider,
@@ -281,6 +282,139 @@ it.layer(
       const allowed = yield* resolve("auto-accept-edits");
       assert.equal(allowed.runtimeMode, "auto-accept-edits");
       assert.equal(allowed.maxRuntimeMode, "auto-accept-edits");
+    }),
+  );
+});
+
+const limitedProviderInstanceFor = (usedPercent: number) =>
+  ({
+    snapshot: {
+      getSnapshot: Effect.succeed({
+        instanceId: providerInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: true,
+        status: "ready",
+        version: null,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+        usageLimits: {
+          checkedAt: "2026-01-01T00:00:00Z",
+          windows: [{ id: "primary", kind: "session", label: "Session", usedPercent }],
+        },
+      } as ServerProvider),
+    },
+  }) as ProviderInstance;
+
+const usedPercentByInstance = new Map<ProviderInstanceId, number>([
+  [providerInstanceId, 62],
+  [grokInstanceId, 40],
+  [antigravityInstanceId, 100],
+]);
+
+const layerWithUsageLimitStop = (usageLimitStopPercent: number | null) =>
+  RuntimePolicy.layerFromProjectStore.pipe(
+    Layer.provide(ServerSettings.layerTest({ usageLimitStopPercent })),
+    Layer.provide(
+      Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+        getInstance: (instanceId) =>
+          Effect.succeed(limitedProviderInstanceFor(usedPercentByInstance.get(instanceId) ?? 0)),
+        listInstances: Effect.succeed([]),
+        listUnavailable: Effect.succeed([]),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.never,
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(ProjectStore.ProjectStoreV2)({
+        get: () =>
+          Effect.succeedSome({
+            projectId,
+            title: "Project",
+            workspaceRoot: "/project-root",
+            defaultModelSelection: null,
+            defaultThreadEnvMode: null,
+            hasCustomTitle: false,
+            autoPull: false,
+            faviconPath: null,
+            projectIcon: null,
+            scripts: [],
+            pinnedAt: null,
+            archivedAt: null,
+            createdAt: "2026-06-21T00:00:00.000Z",
+            updatedAt: "2026-06-21T00:00:00.000Z",
+            deletedAt: null,
+          }),
+      }),
+    ),
+  );
+
+it.layer(layerWithUsageLimitStop(50))("RuntimePolicyV2 with a usage limit stop", (it) => {
+  it.effect("refuses a turn whose provider window is past the stop", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const refused = yield* policy
+        .resolve({
+          thread: makeThread({ now, worktreePath: null }),
+          modelSelection,
+          admission: "turn-start",
+        })
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "UsageLimitThresholdReachedError");
+      assert.equal(
+        refused.message,
+        "Session usage is at 62%, at or past your 50% usage stop. The turn did not start; raise or clear usageLimitStopPercent in settings, or switch this thread to another provider or model.",
+      );
+    }),
+  );
+
+  it.effect("starts a turn while the window is under the stop", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolved = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: null }),
+        modelSelection: { instanceId: grokInstanceId, model: "test-model" },
+        admission: "turn-start",
+      });
+      assert.equal(resolved.runtimeMode, "full-access");
+    }),
+  );
+
+  it.effect("allows non-turn-start resolution when usage is past the stop", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const resolved = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: null }),
+        modelSelection,
+      });
+      assert.equal(resolved.runtimeMode, "full-access");
+    }),
+  );
+});
+
+it.layer(layerWithUsageLimitStop(100))("RuntimePolicyV2 with a 100% usage limit stop", (it) => {
+  it.effect("refuses a turn when the provider window is at 100%", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const now = yield* DateTime.now;
+      const refused = yield* policy
+        .resolve({
+          thread: makeThread({ now, worktreePath: null }),
+          modelSelection: { instanceId: antigravityInstanceId, model: "test-model" },
+          admission: "turn-start",
+        })
+        .pipe(Effect.flip);
+      if (refused._tag !== "UsageLimitThresholdReachedError") {
+        return assert.fail(`Expected UsageLimitThresholdReachedError, got ${refused._tag}`);
+      }
+      assert.equal(refused.stopPercent, 100);
+      assert.equal(refused.usedPercent, 100);
     }),
   );
 });

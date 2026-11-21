@@ -8,7 +8,9 @@ import {
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -54,9 +56,30 @@ export class RuntimePolicyAboveCeilingError extends Schema.TaggedError<RuntimePo
 
 export const isRuntimePolicyAboveCeilingError = Schema.is(RuntimePolicyAboveCeilingError);
 
+/**
+ * A turn would start on a provider whose reported usage window is already past the server's
+ * `usageLimitStopPercent`. The turn does not start, so the rest of the window stays available.
+ */
+export class UsageLimitThresholdReachedError extends Schema.TaggedError<UsageLimitThresholdReachedError>()(
+  "UsageLimitThresholdReachedError",
+  {
+    threadId: ThreadId,
+    providerInstanceId: ProviderInstanceId,
+    model: Schema.String,
+    usedPercent: Schema.Number,
+    windowLabel: Schema.String,
+    stopPercent: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `${this.windowLabel} usage is at ${Math.round(this.usedPercent)}%, at or past your ${this.stopPercent}% usage stop. The turn did not start; raise or clear usageLimitStopPercent in settings, or switch this thread to another provider or model.`;
+  }
+}
+
 export const RuntimePolicyV2Error = Schema.Union([
   RuntimePolicyResolveError,
   RuntimePolicyAboveCeilingError,
+  UsageLimitThresholdReachedError,
 ]);
 export type RuntimePolicyV2Error = typeof RuntimePolicyV2Error.Type;
 
@@ -72,6 +95,7 @@ export interface RuntimePolicyV2Shape {
   readonly resolve: (input: {
     readonly thread: OrchestrationV2AppThread;
     readonly modelSelection: ModelSelection;
+    readonly admission?: "turn-start";
   }) => Effect.Effect<ProviderAdapter.ProviderAdapterV2RuntimePolicy, RuntimePolicyV2Error>;
 }
 
@@ -151,17 +175,39 @@ export const layerFromProjectStore: Layer.Layer<
     const projects = yield* ProjectStore.ProjectStoreV2;
     const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     // The same ceiling the orchestrator enforces, fixed for the server's life.
-    const { managedPolicy } = yield* ServerSettings.ServerSettingsService;
+    const { managedPolicy } = serverSettings;
     const maxRuntimeMode = managedPolicy?.limits?.maxRuntimeMode;
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         yield* refuseAboveCeiling(managedPolicy, input.thread);
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
-        const supportedRuntimeModes =
-          instance === undefined
-            ? undefined
-            : (yield* instance.snapshot.getSnapshot).supportedRuntimeModes;
+        const snapshot = instance === undefined ? undefined : yield* instance.snapshot.getSnapshot;
+        if (input.admission === "turn-start" && snapshot !== undefined) {
+          const stopPercent = (yield* serverSettings.getSettings.pipe(Effect.orDie))
+            .usageLimitStopPercent;
+          if (stopPercent !== null) {
+            const now = DateTime.toEpochMillis(yield* DateTime.now);
+            const window = exhaustedUsageWindow(
+              snapshot,
+              now,
+              input.modelSelection.model,
+              stopPercent,
+            );
+            if (window !== undefined) {
+              return yield* new UsageLimitThresholdReachedError({
+                threadId: input.thread.id,
+                providerInstanceId: input.modelSelection.instanceId,
+                model: input.modelSelection.model,
+                usedPercent: window.usedPercent ?? stopPercent,
+                windowLabel: window.label,
+                stopPercent,
+              });
+            }
+          }
+        }
+        const supportedRuntimeModes = snapshot?.supportedRuntimeModes;
         const cwd =
           input.thread.worktreePath ??
           (yield* projects.get(input.thread.projectId).pipe(
