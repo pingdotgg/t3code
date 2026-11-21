@@ -202,10 +202,9 @@ export function PreviewChromeRow({
               }
             />
           </Tooltip>
-          {onOpenInBrowser && !inputFocused ? (
+          {onOpenInBrowser ? (
             <InputGroupAddon align="inline-end">
-              {}
-              <span className="pointer-events-none flex opacity-0 transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/address:pointer-events-auto group-hover/address:opacity-100">
+              <span className="pointer-events-none flex opacity-0 transition-opacity group-focus-within/address:pointer-events-auto group-focus-within/address:opacity-100 group-hover/address:pointer-events-auto group-hover/address:opacity-100">
                 <Tooltip>
                   <TooltipTrigger
                     render={
