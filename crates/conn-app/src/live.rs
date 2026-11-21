@@ -66,10 +66,6 @@ pub(crate) fn initial_theme() -> ThemeDefinition {
 }
 
 /// Tokens for a theme id, if it is a built-in theme.
-#[cfg_attr(
-    not(feature = "automation"),
-    expect(dead_code, reason = "used by theme switching")
-)]
 pub(crate) fn tokens_for(theme_id: &str) -> Option<(ThemeDefinition, Tokens)> {
     let theme = conn_theme::theme_by_id(theme_id)?;
     let tokens = Tokens::derive(&theme);

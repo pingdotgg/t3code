@@ -13,6 +13,7 @@
 //! - `{"cmd":"theme","id":"t3-code-light"}`
 //! - `{"cmd":"select","title":"..."}` or `{"cmd":"select","id":"..."}`
 //! - `{"cmd":"send","text":"..."}` (to the selected thread), `{"cmd":"stop"}`
+//! - `{"cmd":"palette"}`, `{"cmd":"settings"}`: toggle the overlays
 //! - `{"cmd":"sidebar"}`, `{"cmd":"panel","tab":"files"}`, `{"cmd":"close-panel"}`
 //! - `{"cmd":"resize","width":1440,"height":900}`
 
@@ -129,6 +130,22 @@ async fn run(
                 json!("ok")
             })
             .map_err(|e| err(e.into())),
+        "palette" | "settings" => {
+            let which = text(cmd, "cmd").to_owned();
+            let entity = app.upgrade().ok_or("app is gone")?;
+            window
+                .update(cx, |_, window, cx| {
+                    entity.update(cx, |app, cx| {
+                        if which == "palette" {
+                            app.open_command_palette(window, cx);
+                        } else {
+                            app.open_settings(window, cx);
+                        }
+                    });
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!("ok"))
+        }
         "sidebar" => app
             .update(cx, |app, cx| {
                 app.toggle_sidebar(cx);

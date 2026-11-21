@@ -31,6 +31,8 @@ const ALL_RIGHT_PANEL_TABS: [RightPanelTab; 4] = [
 
 /// Registers global shell keyboard shortcuts (`Cmd+B` and `Cmd+Alt+B`).
 pub(crate) fn register_keybindings(cx: &mut App) {
+    crate::palette::register_keybindings(cx);
+    crate::settings::register_keybindings(cx);
     cx.bind_keys([
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-alt-b", ToggleRightPanel, None),
@@ -46,10 +48,6 @@ pub(crate) struct ConnApp {
     active_workspace: Option<String>,
     collapsed_projects: HashSet<String>,
     focus_handle: FocusHandle,
-    #[cfg_attr(
-        not(feature = "automation"),
-        expect(dead_code, reason = "read by Settings in a later phase")
-    )]
     theme_id: String,
     connection: Option<Connection>,
     status: Option<ConnectionStatus>,
@@ -57,6 +55,10 @@ pub(crate) struct ConnApp {
     threads: HashMap<String, ThreadState>,
     chat: Entity<crate::chat::ChatView>,
     right_panel: Entity<crate::panels::RightPanel>,
+    command_palette: Option<Entity<crate::palette::CommandPalette>>,
+    settings_modal: Option<Entity<crate::settings::SettingsModal>>,
+    overlay_subscriptions: Vec<gpui_kit::Subscription>,
+    server_url: Option<String>,
 }
 
 impl std::fmt::Debug for ConnApp {
@@ -82,6 +84,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let mut layout = LayoutState::default();
+        let server_url = server.as_ref().map(|c| c.http_base_url.to_string());
         let chat = cx.new(|cx| crate::chat::ChatView::new(tokens.clone(), window, cx));
         cx.subscribe(
             &chat,
@@ -129,7 +132,89 @@ impl ConnApp {
             threads: HashMap::new(),
             chat,
             right_panel,
+            command_palette: None,
+            settings_modal: None,
+            overlay_subscriptions: Vec::new(),
+            server_url,
         }
+    }
+
+    /// Opens (or closes) the `Cmd+K` command palette.
+    pub(crate) fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        use crate::palette::{CommandPalette, PaletteAction, PaletteEvent, PaletteItems};
+        if self.command_palette.take().is_some() {
+            cx.notify();
+            return;
+        }
+        let items = PaletteItems::from_shell(
+            &self.shell,
+            self.layout.selected_thread_id.as_deref(),
+            &self.theme_id,
+        );
+        let tokens = self.tokens.clone();
+        let palette = cx.new(|cx| CommandPalette::new(items, tokens, window, cx));
+        let sub = cx.subscribe_in(
+            &palette,
+            window,
+            |app, _entity, event: &PaletteEvent, window, cx| {
+                app.command_palette = None;
+                match event {
+                    PaletteEvent::SelectThread(id) => app.select_thread(id.clone(), cx),
+                    PaletteEvent::ApplyTheme(id) => {
+                        app.set_theme(id, cx);
+                    }
+                    PaletteEvent::Action(PaletteAction::ToggleSidebar) => app.toggle_sidebar(cx),
+                    PaletteEvent::Action(PaletteAction::ToggleRightPanel) => {
+                        app.toggle_right_panel(cx);
+                    }
+                    PaletteEvent::Action(PaletteAction::OpenPanel(tab)) => {
+                        app.select_right_panel_tab(*tab, cx);
+                    }
+                    PaletteEvent::Action(PaletteAction::SelectProject(id)) => {
+                        app.select_workspace(Some(id.clone()), cx);
+                    }
+                    PaletteEvent::Action(PaletteAction::OpenSettings) => {
+                        app.open_settings(window, cx);
+                    }
+                    PaletteEvent::Dismiss => cx.notify(),
+                }
+            },
+        );
+        self.overlay_subscriptions.push(sub);
+        self.command_palette = Some(palette);
+        cx.notify();
+    }
+
+    /// Opens (or closes) the Settings route modal.
+    pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        use crate::settings::{SettingsConnectionInfo, SettingsEvent, SettingsModal};
+        if self.settings_modal.take().is_some() {
+            cx.notify();
+            return;
+        }
+        let connection = SettingsConnectionInfo {
+            server_url: self.server_url.clone(),
+            status: self.status.clone(),
+        };
+        let theme_id = self.theme_id.clone();
+        let tokens = self.tokens.clone();
+        let modal = cx.new(|cx| SettingsModal::new(theme_id, tokens, connection, window, cx));
+        let sub = cx.subscribe(
+            &modal,
+            |app, _entity, event: &SettingsEvent, cx| match event {
+                SettingsEvent::ApplyTheme(id) => {
+                    // set_theme pushes the new tokens into the open modal too.
+                    app.set_theme(id, cx);
+                }
+                SettingsEvent::Close => {
+                    app.settings_modal = None;
+                    cx.notify();
+                }
+            },
+        );
+        self.overlay_subscriptions.push(sub);
+        self.settings_modal = Some(modal);
+        cx.notify();
     }
 
     /// Pushes the selected thread's timeline (and title/model) into the chat view.
@@ -569,6 +654,13 @@ impl ConnApp {
             .update(cx, |chat, cx| chat.set_tokens(tokens.clone(), cx));
         self.right_panel
             .update(cx, |panel, cx| panel.set_tokens(tokens.clone(), cx));
+        if let Some(modal) = &self.settings_modal {
+            let theme_id = self.theme_id.clone();
+            modal.update(cx, |m, cx| m.set_tokens(theme_id, tokens.clone(), cx));
+        }
+        if let Some(palette) = &self.command_palette {
+            palette.update(cx, |p, cx| p.set_tokens(tokens.clone(), cx));
+        }
         self.tokens = tokens;
         cx.notify();
     }
@@ -591,6 +683,17 @@ impl Render for ConnApp {
             .on_action(cx.listener(|app, _: &ToggleRightPanel, _window, cx| {
                 app.toggle_right_panel(cx);
             }))
+            .on_action(
+                cx.listener(|app, _: &crate::palette::OpenCommandPalette, window, cx| {
+                    app.open_command_palette(window, cx);
+                }),
+            )
+            .on_action(
+                cx.listener(|app, _: &crate::settings::OpenSettings, window, cx| {
+                    app.open_settings(window, cx);
+                }),
+            )
+            .relative()
             .flex()
             .flex_row()
             .size_full()
@@ -628,6 +731,13 @@ impl Render for ConnApp {
             root = root
                 .child(two_tone_divider(&self.tokens, &self.geometry))
                 .child(self.render_right_panel_column(cx));
+        }
+
+        if let Some(modal) = &self.settings_modal {
+            root = root.child(crate::settings::render_overlay(modal));
+        }
+        if let Some(palette) = &self.command_palette {
+            root = root.child(crate::palette::render_overlay(palette));
         }
 
         root

@@ -29,10 +29,6 @@ pub(crate) use filter::{
 actions!(conn_palette, [OpenCommandPalette]);
 
 /// Registers the global `Cmd+K` shortcut for the command palette.
-#[expect(
-    dead_code,
-    reason = "called by ConnApp / main.rs once orchestrator wires the palette"
-)]
 pub(crate) fn register_keybindings(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("cmd-k", OpenCommandPalette, None)]);
 }
@@ -54,10 +50,6 @@ pub(crate) enum PaletteEvent {
 impl PaletteItems {
     /// Builds palette items from the live [`ShellState`] and built-in themes.
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "called by ConnApp when opening the command palette"
-    )]
     pub(crate) fn from_shell(
         shell: &ShellState,
         active_thread_id: Option<&str>,
@@ -137,10 +129,6 @@ impl std::fmt::Debug for CommandPalette {
 
 impl EventEmitter<PaletteEvent> for CommandPalette {}
 
-#[expect(
-    dead_code,
-    reason = "instantiated and updated by ConnApp once orchestrator wires the palette"
-)]
 impl CommandPalette {
     /// Creates a new command palette, initializes filtered groups, and focuses
     /// its search input.
@@ -614,10 +602,6 @@ impl Render for CommandPalette {
 
 /// Renders an open [`CommandPalette`] entity as a deferred window overlay.
 #[must_use]
-#[expect(
-    dead_code,
-    reason = "mounted by ConnApp::render once orchestrator wires the palette"
-)]
 pub(crate) fn render_overlay(palette: &Entity<CommandPalette>) -> AnyElement {
     palette.clone().into_any_element()
 }

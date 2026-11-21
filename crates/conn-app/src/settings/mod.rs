@@ -32,10 +32,6 @@ use self::controls::{kbd_cap, pill_switch, settings_row, settings_section};
 actions!(conn_settings, [OpenSettings]);
 
 /// Registers the global `Cmd+,` shortcut for opening Settings.
-#[expect(
-    dead_code,
-    reason = "called by ConnApp / main.rs once orchestrator wires Settings"
-)]
 pub(crate) fn register_keybindings(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("cmd-,", OpenSettings, None)]);
 }
@@ -137,10 +133,6 @@ impl Focusable for SettingsModal {
     }
 }
 
-#[expect(
-    dead_code,
-    reason = "instantiated and updated by ConnApp once orchestrator wires Settings"
-)]
 impl SettingsModal {
     /// Creates the Settings route modal and focuses it so Escape closes cleanly.
     #[must_use]
@@ -273,10 +265,11 @@ impl SettingsModal {
         let inset = px(self.geometry.shell_inset_px);
         let corner = px(self.geometry.shell_corner_px);
         let border = px(INNER_BORDER_PX);
+        let frame = over(self.tokens.shell_fill, self.tokens.sidebar);
         let inner_fill = if self.reduce_transparency {
             hsla(self.tokens.shell_card)
         } else {
-            hsla(self.tokens.shell_inner_fill)
+            hsla(over(self.tokens.shell_inner_fill, frame))
         };
 
         let mut items = Vec::with_capacity(ALL_PAGES.len());
@@ -335,10 +328,11 @@ impl SettingsModal {
         let inset = px(self.geometry.shell_inset_px);
         let corner = px(self.geometry.shell_corner_px);
         let border = px(INNER_BORDER_PX);
+        let frame = over(self.tokens.shell_fill, self.tokens.sidebar);
         let inner_fill = if self.reduce_transparency {
             hsla(self.tokens.shell_card)
         } else {
-            hsla(self.tokens.shell_inner_fill)
+            hsla(over(self.tokens.shell_inner_fill, frame))
         };
 
         let page_content: AnyElement = match self.active_page {
@@ -710,10 +704,13 @@ impl Render for SettingsModal {
             Appearance::Light => 0.25,
         };
         let scrim = hsla_alpha(self.tokens.background, scrim_alpha);
+        // GPUI cannot blur in-window content, so the frame's frosted tint is flattened onto
+        // the sidebar color: the same look as Conn's frame over its own sidebar, never the
+        // chat showing through.
         let frame_bg = if self.reduce_transparency {
             hsla(self.tokens.shell_card)
         } else {
-            hsla(self.tokens.shell_fill)
+            hsla(over(self.tokens.shell_fill, self.tokens.sidebar))
         };
 
         let body = div()
@@ -784,10 +781,17 @@ impl Render for SettingsModal {
 
 /// Renders an open [`SettingsModal`] entity as a deferred window overlay.
 #[must_use]
-#[expect(
-    dead_code,
-    reason = "mounted by ConnApp::render once orchestrator wires Settings"
-)]
 pub(crate) fn render_overlay(modal: &Entity<SettingsModal>) -> AnyElement {
     modal.clone().into_any_element()
+}
+
+/// Source-over compositing of `top` on an opaque `below`.
+fn over(top: conn_theme::Rgba, below: conn_theme::Rgba) -> conn_theme::Rgba {
+    let a = top.a;
+    conn_theme::Rgba::new(
+        top.r * a + below.r * (1.0 - a),
+        top.g * a + below.g * (1.0 - a),
+        top.b * a + below.b * (1.0 - a),
+        1.0,
+    )
 }
