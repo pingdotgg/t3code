@@ -18,8 +18,16 @@ vi.mock("react-native-keyboard-controller/src/bindings", () => ({
   KeyboardControllerNative: { dismiss: () => {} },
 }));
 
+// useSoftKeyboardShowing imports the package root, which loads react-native.
+vi.mock("react-native-keyboard-controller", async () => ({
+  KeyboardController: (await import("react-native-keyboard-controller/src/module"))
+    .KeyboardController,
+  KeyboardEvents: (await import("react-native-keyboard-controller/src/bindings")).KeyboardEvents,
+}));
+
 import { useKeyboardState } from "react-native-keyboard-controller/src/hooks/useKeyboardState";
 import { KeyboardController } from "react-native-keyboard-controller/src/module";
+import { useSoftKeyboardShowing } from "./useSoftKeyboardShowing";
 
 function emit(name: string, height: number) {
   const event: KeyboardEventData = {
@@ -38,6 +46,10 @@ function emit(name: string, height: number) {
 function KeyboardState() {
   const { isVisible, height } = useKeyboardState();
   return <output>{JSON.stringify({ isVisible, height })}</output>;
+}
+
+function SoftKeyboardShowing() {
+  return <output>{String(useSoftKeyboardShowing())}</output>;
 }
 
 // The library keeps keyboard state at module scope; every test starts and ends hidden.
@@ -81,4 +93,23 @@ it("waits for the native hide before dismiss resolves after a didShow-only repai
   expect(dismissed).toBe(false);
   emit("keyboardDidHide", 0);
   await dismissal;
+});
+
+// Returning to the app after Home with the keyboard open: the IME is gone without an
+// animation, and syncKeyboardPosition emits a lone keyboardDidHide.
+it("reports the keyboard hidden after Android repairs the IME inset without keyboardWillHide", () => {
+  using _keyboard = setup();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  act(() => root.render(<SoftKeyboardShowing />));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+
+  emit("keyboardWillShow", 376);
+  emit("keyboardDidShow", 376);
+  emit("keyboardDidHide", 0);
+
+  expect({ isVisible: KeyboardController.isVisible(), hook: container.textContent }).toEqual({
+    isVisible: false,
+    hook: "false",
+  });
 });
