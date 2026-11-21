@@ -12,6 +12,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
+import { ShareTemplatesSection } from "./ShareTemplatesSection";
 
 const FOLLOW_UP_OPTIONS: ReadonlyArray<{
   readonly behavior: FollowUpBehavior;
@@ -70,6 +71,7 @@ export function SettingsFollowUpRouteScreen() {
           keyboard, hold <Var>{Platform.OS === "android" ? "Ctrl" : "Command"}</Var> while sending.
         </T>
       </Text>
+      <ShareTemplatesSection />
     </ScrollView>
   );
 

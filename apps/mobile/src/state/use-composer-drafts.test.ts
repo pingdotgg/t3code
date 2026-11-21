@@ -2446,6 +2446,7 @@ describe("mobile composer drafts", () => {
 
   it("lets a shared file through the send check", async () => {
     const { attachments } = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-1",
       id: "share-1",
       createdAt: "2026-07-15T10:00:00.000Z",
       payloads: [

@@ -3,7 +3,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { IncomingShareDraft } from "../sharing/incoming-share-model";
-import { undoComposerDraftMergeState, type ComposerDraft } from "../../state/use-composer-drafts";
+import {
+  mergeComposerDraftContentState,
+  undoComposerDraftMergeState,
+  type ComposerDraft,
+} from "../../state/use-composer-drafts";
 import {
   makeIncomingShareImports,
   type ShareImportDeps,
@@ -55,7 +59,7 @@ function fileAttachment(id: string): DraftComposerAttachment {
 
 function share(attachments: ReadonlyArray<DraftComposerAttachment> = []): IncomingShareDraft {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: "share-1",
     createdAt: "2026-01-01T00:00:00.000Z",
     text: "shared text",
@@ -71,6 +75,7 @@ function importTarget(overrides: Partial<ShareImportTarget> = {}): ShareImportTa
     draftKey: "draft-a",
     destination,
     shareId: "share-1",
+    createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -153,6 +158,50 @@ describe("incoming share imports", () => {
     expect(drafts.get("draft-a")?.attachments).toEqual([kept]);
     expect(deps.releaseUnusedAttachments).toHaveBeenCalledWith([skipped]);
     expect(deps.onWarnings).toHaveBeenCalledWith(["too big"]);
+  });
+
+  it("wraps each share handoff once in its chosen template", async () => {
+    const { drafts, inbox, imports, watch, deps } = setup({
+      mergeIntoDraft: async (draftKey, content) => {
+        const next = mergeComposerDraftContentState(Object.fromEntries(drafts), draftKey, content);
+        for (const [key, value] of Object.entries(next)) drafts.set(key, value);
+        return { skippedAttachmentCount: 0 };
+      },
+    });
+    const legacyDraft: ComposerDraft = {
+      text: "User edited the imported context",
+      attachments: [],
+      importedShareIds: ["share-1"],
+    };
+    drafts.set("draft-a", legacyDraft);
+    const legacyCreatedAt = "2025-12-31T00:00:00.000Z";
+    inbox.set("share-1", {
+      ...share(),
+      schemaVersion: 1,
+      createdAt: legacyCreatedAt,
+      destination,
+    });
+    const legacyTarget = importTarget({ createdAt: legacyCreatedAt });
+    watch(legacyTarget);
+    await imports.settled(legacyTarget);
+    expect(drafts.get("draft-a")).toEqual(legacyDraft);
+    for (const [createdAt, template] of [
+      ["2026-01-01T00:00:00.000Z", "Review {{shared}} for bugs."],
+      ["2026-01-02T00:00:00.000Z", "Summarize {{shared}}."],
+      ["2026-01-03T00:00:00.000Z", "Summarize {{shared}}."],
+    ] as const) {
+      inbox.set("share-1", { ...share(), createdAt });
+      const target = { ...importTarget({ template }), createdAt };
+      watch(target);
+      await imports.settled(target);
+      const draft = drafts.get("draft-a")!;
+      expect(draft.text).toContain(template.replace("{{shared}}", "shared text"));
+      drafts.set("draft-a", { ...draft, text: `${draft.text}\nuser edit` });
+    }
+    expect(drafts.get("draft-a")?.text).toBe(
+      "User edited the imported context\n\nReview shared text for bugs.\nuser edit\n\nSummarize shared text.\nuser edit\n\nSummarize shared text.\nuser edit",
+    );
+    expect(deps.consume).toHaveBeenCalledTimes(4);
   });
 
   it("runs once when its atom node is removed and rebuilt", async () => {

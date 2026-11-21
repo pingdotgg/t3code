@@ -21,7 +21,7 @@ import type { DraftComposerAttachment } from "../../lib/composerImages";
 import { estimateBase64ByteSize } from "../../lib/base64";
 
 export interface IncomingShareDraft {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 1 | 2;
   readonly id: string;
   readonly createdAt: string;
   readonly destination?: IncomingShareDestination;
@@ -41,7 +41,7 @@ const IncomingShareDestinationSchema = Schema.Struct({
 });
 
 export const IncomingShareDraftSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(1),
+  schemaVersion: Schema.Literals([1, 2]),
   id: Schema.String,
   createdAt: Schema.String,
   destination: Schema.optional(IncomingShareDestinationSchema),
@@ -242,6 +242,7 @@ export async function buildIncomingShareDraft(input: {
   readonly resolvedPayloads: ReadonlyArray<ResolvedSharePayload>;
   readonly fileReader: IncomingShareFileReader;
   readonly id: string;
+  readonly attachmentIdPrefix: string;
   readonly createdAt: string;
 }): Promise<IncomingShareDraft> {
   const attachments: DraftComposerAttachment[] = [];
@@ -355,7 +356,7 @@ export async function buildIncomingShareDraft(input: {
           }
         }
         attachments.push({
-          id: `${input.id}-file-${index}`,
+          id: `${input.attachmentIdPrefix}-file-${index}`,
           type: "file",
           name,
           mimeType,
@@ -436,7 +437,7 @@ export async function buildIncomingShareDraft(input: {
       }
       const dataUrl = `data:${mimeType};base64,${base64}`;
       attachments.push({
-        id: `${input.id}-image-${index}`,
+        id: `${input.attachmentIdPrefix}-image-${index}`,
         type: "image",
         name: resolved?.originalName ?? fallbackName(uri, index, mimeType),
         mimeType,
@@ -455,7 +456,7 @@ export async function buildIncomingShareDraft(input: {
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: input.id,
     createdAt: input.createdAt,
     text: sharedText(input.payloads),

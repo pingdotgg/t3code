@@ -163,6 +163,7 @@ const incomingShareInbox = new IncomingShareInbox({
         ? await resolvedPayloadsForFiles()
         : [];
     const draft = await buildIncomingShareDraft({
+      attachmentIdPrefix: Crypto.randomUUID(),
       payloads,
       resolvedPayloads,
       fileReader: {
