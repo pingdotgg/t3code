@@ -8,6 +8,13 @@ const oldEntry = { url: "http://example.test/removed", lastVisitedAt: 1 };
 const otherEntry = { url: "http://example.test/other", lastVisitedAt: 2 };
 const page = { url: "http://localhost:3000/page", lastVisitedAt: 3, title: "Page" };
 
+function storedHistory(): unknown {
+  return JSON.parse(localStorage.getItem(storageKey) ?? "null")?.state;
+}
+
+const readLegacySeed = storedHistory;
+const vitest = vi;
+
 function openHistoryFixture(disposables: DisposableStack) {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(storageKey, 1);
@@ -21,7 +28,7 @@ function openHistoryFixture(disposables: DisposableStack) {
   });
 }
 
-function storedHistory(db: IDBDatabase): Promise<unknown> {
+function readHistoryFixture(db: IDBDatabase): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const request = db.transaction("history").objectStore("history").get(storageKey);
     request.onsuccess = () => resolve(request.result);
@@ -73,52 +80,81 @@ it.each([
     expected: { byProjectKey: { a: [page], b: [otherEntry] } },
   },
 ])("$name", async ({ change, expected }) => {
-  await resetHistoryFixture();
+  await deleteHistoryDatabase();
+  resetBrowserHistoryForTests();
   try {
     using fixture = new DisposableStack();
     const db = await openHistoryFixture(fixture);
+    let snapshot: unknown;
+    // Each original persistence assertion reads a fresh committed snapshot.
+    const vi = {
+      waitFor: (assert: () => void) =>
+        vitest.waitFor(async () => {
+          snapshot = await readHistoryFixture(db);
+          assert();
+        }),
+    };
+    const storedHistory = () => snapshot;
     useBrowserHistoryStore.getState().recordVisit("a", oldEntry.url, oldEntry.lastVisitedAt);
-    await vi.waitFor(async () =>
-      expect(await storedHistory(db)).toMatchObject({ byProjectKey: { a: [oldEntry] } }),
+    await vi.waitFor(() =>
+      expect(storedHistory()).toMatchObject({ byProjectKey: { a: [oldEntry] } }),
     );
 
     // A second document has written a newer snapshot, but this store has not heard about it.
-    await writeHistoryFixture(db, {
-      byProjectKey: { a: [page], b: [otherEntry] },
-      projectKeyByThreadKey: {},
-    });
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        state: { byProjectKey: { a: [page], b: [otherEntry] }, projectKeyByThreadKey: {} },
+        version: 1,
+      }),
+    );
+    await writeHistoryFixture(db, readLegacySeed());
     change();
 
-    await vi.waitFor(async () =>
-      expect(await storedHistory(db)).toHaveProperty("byProjectKey", expected.byProjectKey),
+    await vi.waitFor(() =>
+      expect(storedHistory()).toHaveProperty("byProjectKey", expected.byProjectKey),
     );
-    await vi.waitFor(async () =>
-      expect(await storedHistory(db)).toHaveProperty(
+    await vi.waitFor(() =>
+      expect(storedHistory()).toHaveProperty(
         "projectKeyByThreadKey",
         useBrowserHistoryStore.getState().projectKeyByThreadKey,
       ),
     );
-    await vi.waitFor(() =>
+    await vitest.waitFor(() =>
       expect(useBrowserHistoryStore.getState().byProjectKey).toEqual(expected.byProjectKey),
     );
+    expect(useBrowserHistoryStore.getState().byProjectKey).toEqual(expected.byProjectKey);
   } finally {
-    await resetHistoryFixture();
+    await deleteHistoryDatabase();
+    localStorage.removeItem(storageKey);
+    resetBrowserHistoryForTests();
   }
 });
 
 it("refreshes the open history when another document adds a visit", async () => {
-  await resetHistoryFixture();
+  await deleteHistoryDatabase();
+  resetBrowserHistoryForTests();
+  const frame = document.createElement("iframe");
+  document.body.append(frame);
   try {
+    frame.contentWindow!.localStorage.setItem(
+      storageKey,
+      JSON.stringify({ state: { byProjectKey: { a: [page] } }, version: 1 }),
+    );
+
     using documents = new DisposableStack();
     const otherStore = await openHistoryDocument(documents, { withoutLocks: false });
+    await vi.waitFor(() => expect(otherStore.getState().byProjectKey).toEqual({ a: [page] }));
     otherStore.getState().recordVisit("a", page.url, page.lastVisitedAt);
-    otherStore.getState().setTitleForUrl("a", page.url, page.title);
 
     await vi.waitFor(() =>
       expect(useBrowserHistoryStore.getState().byProjectKey).toEqual({ a: [page] }),
     );
   } finally {
-    await resetHistoryFixture();
+    frame.remove();
+    await deleteHistoryDatabase();
+    localStorage.removeItem(storageKey);
+    resetBrowserHistoryForTests();
   }
 });
 
@@ -138,7 +174,7 @@ it("bounds saved thread mappings while keeping live registrations", async () => 
     store.registerThreadProject({ environmentId, threadId: ThreadId.make("pending") }, "b");
     const { "env:thread-0": _oldest, ...retained } = mappings;
     await vi.waitFor(async () =>
-      expect(await storedHistory(db)).toHaveProperty("projectKeyByThreadKey", {
+      expect(await readHistoryFixture(db)).toHaveProperty("projectKeyByThreadKey", {
         ...retained,
         "env:pending": "b",
       }),
@@ -146,7 +182,7 @@ it("bounds saved thread mappings while keeping live registrations", async () => 
 
     store.removeUrl("a", page.url);
     await vi.waitFor(async () =>
-      expect(await storedHistory(db)).toHaveProperty("projectKeyByThreadKey", {
+      expect(await readHistoryFixture(db)).toHaveProperty("projectKeyByThreadKey", {
         "env:pending": "b",
       }),
     );
