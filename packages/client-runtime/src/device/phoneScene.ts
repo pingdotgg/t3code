@@ -24,18 +24,29 @@ import { IOS_PHONE_SHAPE, type DeviceShapeProfile } from "./shapeProfile.ts";
 
 const SCREEN_HEIGHT = 2.2;
 
-function roundedPath(width: number, height: number, radius: number, path = new Shape()) {
-  const x = -width / 2;
-  const y = -height / 2;
-  path.moveTo(x + radius, y);
-  path.lineTo(x + width - radius, y);
-  path.quadraticCurveTo(x + width, y, x + width, y + radius);
-  path.lineTo(x + width, y + height - radius);
-  path.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-  path.lineTo(x + radius, y + height);
-  path.quadraticCurveTo(x, y + height, x, y + height - radius);
-  path.lineTo(x, y + radius);
-  path.quadraticCurveTo(x, y, x + radius, y);
+function roundedPath(width: number, height: number, radius: number, continuous = false) {
+  const path = new Shape();
+  const corners = [
+    [width / 2, -height / 2, -1, 0, 0, 1],
+    [width / 2, height / 2, 0, -1, -1, 0],
+    [-width / 2, height / 2, 1, 0, 0, -1],
+    [-width / 2, -height / 2, 0, 1, 1, 0],
+  ] as const;
+  path.moveTo(-width / 2 + radius, -height / 2);
+  for (const [x, y, beforeX, beforeY, afterX, afterY] of corners) {
+    path.lineTo(x + beforeX * radius, y + beforeY * radius);
+    if (continuous && radius > 0) {
+      // Approximate the tangent and diagonal intersection of Apple's continuous display curve.
+      const point = (before: number, after: number): [number, number] => [
+        x + radius * (beforeX * before + afterX * after),
+        y + radius * (beforeY * before + afterY * after),
+      ];
+      path.bezierCurveTo(...point(0.64, 0), ...point(0.405, 0.025), ...point(0.215, 0.215));
+      path.bezierCurveTo(...point(0.025, 0.405), ...point(0, 0.64), ...point(0, 1));
+    } else if (radius > 0) {
+      path.quadraticCurveTo(x, y, x + afterX * radius, y + afterY * radius);
+    }
+  }
   return path;
 }
 
@@ -74,6 +85,10 @@ export function createPhoneScene(
   const orientation = new Group();
   root.add(orientation);
   const screenWidth = SCREEN_HEIGHT * aspect;
+  const { screenCornerRatio } = profile;
+  const continuous = screenCornerRatio !== undefined;
+  const screenRadius = continuous ? screenWidth * screenCornerRatio : profile.screenRadius;
+  const bodyRadius = continuous ? screenRadius + profile.bezel : profile.bodyRadius;
   const width = screenWidth + profile.bezel * 2;
   const height = SCREEN_HEIGHT + profile.bezel * 2;
   const backZ = 0.01 - profile.depth;
@@ -98,7 +113,7 @@ export function createPhoneScene(
   const materials = [metal, glass, backMaterial, lensMaterial];
 
   const body = new Mesh(
-    new ExtrudeGeometry(roundedPath(width, height, profile.bodyRadius), {
+    new ExtrudeGeometry(roundedPath(width, height, bodyRadius, continuous), {
       depth: profile.depth,
       bevelEnabled: true,
       bevelSize: 0.012,
@@ -112,13 +127,19 @@ export function createPhoneScene(
   body.position.z = 0.025 - profile.depth;
   orientation.add(body);
   const face = new Mesh(
-    new ShapeGeometry(roundedPath(width - 0.014, height - 0.014, profile.bodyRadius - 0.01), 16),
+    new ShapeGeometry(
+      roundedPath(width - 0.014, height - 0.014, bodyRadius - 0.01, continuous),
+      16,
+    ),
     glass,
   );
   face.position.z = 0.04;
   orientation.add(face);
   const back = new Mesh(
-    new ShapeGeometry(roundedPath(width - 0.012, height - 0.012, profile.bodyRadius - 0.01), 16),
+    new ShapeGeometry(
+      roundedPath(width - 0.012, height - 0.012, bodyRadius - 0.01, continuous),
+      16,
+    ),
     backMaterial,
   );
   back.name = "device-back";
@@ -127,7 +148,7 @@ export function createPhoneScene(
   orientation.add(back);
 
   const screenGeometry = new ShapeGeometry(
-    roundedPath(screenWidth, SCREEN_HEIGHT, profile.screenRadius),
+    roundedPath(screenWidth, SCREEN_HEIGHT, screenRadius, continuous),
     20,
   );
   updateDisplayUv(screenGeometry, screenWidth, SCREEN_HEIGHT, layout);
