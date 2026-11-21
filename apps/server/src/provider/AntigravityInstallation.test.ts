@@ -196,7 +196,9 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(FileSystem.FileSystem, trackedFs),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, arch),
-    Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
+    Effect.provideService(HostProcess.Environment, {
+      PATH: options.path ?? process.env.PATH ?? "",
+    }),
     Effect.provideService(ModelManifest.ModelManifest, {
       current: options.manifest ?? Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
       refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
@@ -541,7 +543,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
 
   it.effect("reports missing Node before downloading the standalone provider runtime", () =>
     Effect.gen(function* () {
-      const { installation, requests, validations } = yield* makeHarness();
+      const { installation, requests, validations } = yield* makeHarness({ path: "" });
       yield* installation.start;
       expect(yield* terminalState(installation)).toMatchObject({
         phase: "failed",
