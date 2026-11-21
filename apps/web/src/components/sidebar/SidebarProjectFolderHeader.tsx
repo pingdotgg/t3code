@@ -14,14 +14,14 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
-const FOLDER_DOT_CLASS_NAME = {
+export const FOLDER_DOT_CLASS_NAME = {
   attention: "bg-warning",
   failed: "bg-error",
   unread: "bg-success",
   working: "bg-info",
 } as const;
 
-const FOLDER_DOT_LABEL = {
+export const FOLDER_DOT_LABEL = {
   attention: msg(", needs you", { $context: "project folder status, read after its name" }),
   failed: msg(", failed", { $context: "project folder status, read after its name" }),
   unread: msg(", done", { $context: "project folder status, read after its name" }),

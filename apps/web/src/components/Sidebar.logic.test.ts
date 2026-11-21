@@ -15,6 +15,8 @@ import {
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
   resolveSidebarRowStatus,
+  sidebarRowVariantAction,
+  splitFoldedSidebarThreads,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWindowTitleThreadStatus,
@@ -1654,6 +1656,40 @@ describe("groupSidebarThreadsByProject", () => {
     expect(summarize((group) => group.projectKey === "fleet")).toEqual([
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
+    ]);
+  });
+});
+
+describe("splitFoldedSidebarThreads", () => {
+  it("keeps each folded task's own section and the actions its row would offer", () => {
+    const now = "2026-06-02T00:00:00.000Z";
+    const threads = [
+      makeThreadFixture({ id: ThreadId.make("listed") }),
+      makeThreadFixture({ id: ThreadId.make("busy") }),
+      makeThreadFixture({ id: ThreadId.make("done"), settledOverride: "settled" }),
+      makeThreadFixture({
+        id: ThreadId.make("later"),
+        snoozedAt: now,
+        snoozedUntil: "2026-06-03T00:00:00.000Z",
+      }),
+    ];
+    const keyOf = (thread: (typeof threads)[number]) =>
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    const { unfolded, folded } = splitFoldedSidebarThreads(threads, {
+      foldedThreadKeys: new Set(threads.slice(1).map(keyOf)),
+      configLoaded: () => true,
+      now,
+    });
+    expect(unfolded.map((thread) => thread.id)).toEqual(["listed"]);
+    expect(
+      threads.slice(1).map((thread) => {
+        const section = folded.get(keyOf(thread))!;
+        return [thread.id, section, sidebarRowVariantAction(section)];
+      }),
+    ).toEqual([
+      ["busy", "active", "settle"],
+      ["done", "settled", "unsettle"],
+      ["later", "snoozed", "unsnooze"],
     ]);
   });
 });

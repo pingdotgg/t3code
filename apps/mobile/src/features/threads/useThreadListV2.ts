@@ -1,10 +1,12 @@
+import { useAtomValue } from "@effect/atom-react";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 
 import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
+import { steadyDelegatedTaskGroupsAtom } from "../../state/threads";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
@@ -132,6 +134,16 @@ export function useThreadListV2(input: {
     visibleCount: input.searchQuery.trim().length === 0 ? input.settledLimit : 0,
   });
   const { isListed, unloadedCount } = olderSettledShelf;
+  const delegatedTaskGroups = useAtomValue(steadyDelegatedTaskGroupsAtom);
+  const [expandedDelegatedGroupKeys, setExpandedDelegatedGroupKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const toggleDelegatedGroup = (groupKey: string) =>
+    setExpandedDelegatedGroupKeys((keys) => {
+      const next = new Set(keys);
+      if (!next.delete(groupKey)) next.add(groupKey);
+      return next;
+    });
   const layout = useMemo(
     () =>
       buildThreadListV2Items({
@@ -154,6 +166,8 @@ export function useThreadListV2(input: {
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
         isListedSettled: isListed,
+        delegatedTaskGroups,
+        expandedDelegatedGroupKeys,
         unloadedSettledCount: unloadedCount(
           threads.filter(
             (thread) =>
@@ -188,6 +202,8 @@ export function useThreadListV2(input: {
       isListed,
       unloadedCount,
       scopes,
+      delegatedTaskGroups,
+      expandedDelegatedGroupKeys,
     ],
   );
   useOlderSettledShelfGrowth(olderSettledShelf, layout.listedSettledThreads);
@@ -244,7 +260,7 @@ export function useThreadListV2(input: {
       input.shelfPreferencesLoaded,
     ],
   );
-  return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
+  return { layout, items, contentOnlyThreadKeys, olderSettledShelf, toggleDelegatedGroup };
 }
 
 /** The list's scope per environment: its projects there, or every project. */

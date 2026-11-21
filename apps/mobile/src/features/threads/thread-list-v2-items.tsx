@@ -87,7 +87,9 @@ import {
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
+  resolveDelegatedGroupStatus,
   threadListV2RowAccessibilityLabel,
+  type ThreadListV2DelegatedGroup,
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
@@ -431,6 +433,111 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
         {label}
       </Text>
     </Pressable>
+  );
+});
+
+/**
+ * The row for a parent thread on a machine this app does not list, in its most relevant
+ * task's place. A tap opens or closes the list of tasks the parent delegated here.
+ */
+export const ThreadListV2DelegatedGroupRow = memo(function ThreadListV2DelegatedGroupRow(props: {
+  readonly pane?: "screen" | "sidebar";
+  readonly delegatedGroup: ThreadListV2DelegatedGroup;
+  /** The open thread is one of the tasks. */
+  readonly selected: boolean;
+  readonly showTrailingDivider: boolean;
+  readonly onToggle: (groupKey: string) => void;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const theme = useUniwindTheme();
+  const sidebarPane = props.pane === "sidebar";
+  const { group, tasks, expanded } = props.delegatedGroup;
+  const selected = props.selected && !expanded;
+  const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
+  const status = STATUS_LABEL_BY_STATUS[resolveDelegatedGroupStatus(tasks)];
+  const statusLabel = status?.label == null ? null : m(status.label);
+  const machineLabel =
+    group.environmentLabel ??
+    gt("Other machine", { $context: "a machine this app is not connected to" });
+  const foreground = selected
+    ? selectedThreadRowColors.foregroundClassName
+    : rowAppearance.foregroundClassName;
+  const muted = selected
+    ? selectedThreadRowColors.mutedForegroundClassName
+    : rowAppearance.tertiaryForegroundClassName;
+  return (
+    <RowPressable
+      interactionClassName={rowAppearance.interactionClassName}
+      interactionOpacity={rowAppearance.interactionOpacity}
+      className={rowAppearance.className}
+      accessibilityRole="button"
+      accessibilityLabel={[
+        gt(
+          "{title}, delegated from {machine}, {count, plural, one {{count} task} other {{count} tasks}}",
+          { title: group.title, machine: machineLabel, count: tasks.length },
+        ),
+        statusLabel,
+      ]
+        .filter((part) => part !== null)
+        .join(", ")}
+      accessibilityState={{ expanded, selected }}
+      onPress={() => props.onToggle(group.key)}
+      style={rowAppearance.style}
+    >
+      <View
+        className={cn(
+          THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
+          "min-h-[44px] flex-row items-center gap-2 py-2",
+          sidebarPane && "px-3",
+        )}
+      >
+        <SymbolView
+          name="point.3.connected.trianglepath.dotted"
+          size={14}
+          tintColorClassName={
+            selected
+              ? selectedThreadRowColors.mutedIconTintClassName
+              : rowAppearance.mutedIconTintClassName
+          }
+          type="monochrome"
+        />
+        <View className="min-w-0 flex-1">
+          <Text className={cn("text-base", foreground)} numberOfLines={1}>
+            {group.title}
+          </Text>
+          <Text className={cn("text-xs", muted)} numberOfLines={1}>
+            {gt("{machine} · {count, plural, one {{count} task} other {{count} tasks}}", {
+              machine: machineLabel,
+              count: tasks.length,
+            })}
+          </Text>
+        </View>
+        {status ? (
+          <View className="flex-row items-center gap-1">
+            <SymbolView
+              name={status.icon}
+              size={13}
+              tintColorClassName={status.iconTintClassName}
+              type="monochrome"
+            />
+            {statusLabel ? (
+              <Text className={cn("text-xs", status.className)}>{statusLabel}</Text>
+            ) : null}
+          </View>
+        ) : null}
+        <SymbolView
+          name="chevron.down"
+          size={10}
+          tintColorClassName={rowAppearance.mutedIconTintClassName}
+          type="monochrome"
+          style={{ transform: [{ rotate: expanded ? "180deg" : "0deg" }] }}
+        />
+      </View>
+      {!sidebarPane && THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider ? (
+        <View className="ml-5 h-px bg-border-subtle" />
+      ) : null}
+    </RowPressable>
   );
 });
 

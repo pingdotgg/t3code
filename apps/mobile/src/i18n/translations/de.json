@@ -5381,5 +5381,8 @@
   "ad208e3e32c85029": "Alle ausblenden",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
-  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt."
+  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "3d4448e3c061f894": "Anderer Rechner",
+  "349587beaf00ce5e": "{title}, delegiert von {machine}, {count, plural, one {{count} Aufgabe} other {{count} Aufgaben}}",
+  "88bcb7d812dfb32a": "{machine} · {count, plural, one {{count} Aufgabe} other {{count} Aufgaben}}"
 }

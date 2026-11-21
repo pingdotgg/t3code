@@ -15,6 +15,7 @@ import {
 } from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import { groupDelegatedTasks } from "@t3tools/client-runtime/state/threads";
 import {
   CommandId,
   EnvironmentId,
@@ -639,6 +640,189 @@ describe("buildThreadListV2Items", () => {
     });
 
     expect(items.map((item) => item.thread.id)).toEqual(["local", "remote"]);
+  });
+});
+
+describe("buildThreadListV2Items delegated task groups", () => {
+  const macbook = EnvironmentId.make("macbook");
+  const delegated = (id: string, at: string, settled = false) =>
+    makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      updatedAt: at,
+      delegatedFrom: {
+        environmentId: macbook,
+        threadId: ThreadId.make("coordinator"),
+        title: "Plan",
+      },
+      ...(settled ? { settledOverride: "settled" as const, settledAt: at } : {}),
+    });
+  const layoutOf = (
+    threads: ReadonlyArray<EnvironmentThreadShell>,
+    options: {
+      readonly expanded?: boolean;
+      readonly searchQuery?: string;
+      readonly environmentId?: EnvironmentId;
+      readonly projectRefs?: ReadonlyArray<{ environmentId: EnvironmentId; projectId: ProjectId }>;
+    } = {},
+  ) => {
+    const delegatedTaskGroups = groupDelegatedTasks({
+      threads,
+      delegatedUnderParent: new Set(),
+      isParentArchived: () => false,
+      environmentLabel: () => null,
+    });
+    return buildThreadListV2Items({
+      threads,
+      environmentId: options.environmentId ?? null,
+      projectRefs: options.projectRefs ?? null,
+      searchQuery: options.searchQuery ?? "",
+      now: NOW,
+      delegatedTaskGroups,
+      expandedDelegatedGroupKeys: new Set(
+        options.expanded ? delegatedTaskGroups.groups.map((group) => group.key) : [],
+      ),
+    });
+  };
+  const rows = (layout: ReturnType<typeof buildThreadListV2Items>) =>
+    layout.items.map((item) =>
+      item.delegatedGroup
+        ? `group ${item.delegatedGroup.group.title}: ${item.delegatedGroup.tasks.map((task) => task.id).join(",")}`
+        : `${item.nested ? "  " : ""}${item.thread.id}`,
+    );
+
+  it("lists the tasks of a parent no list shows under one row for it", () => {
+    const threads = [
+      makeThread({
+        id: ThreadId.make("mine"),
+        title: "Mine",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }),
+      delegated("older", "2026-06-01T01:00:00.000Z"),
+      delegated("newer", "2026-06-01T02:00:00.000Z"),
+    ];
+    expect(rows(layoutOf(threads))).toEqual(["mine", "group Plan: newer,older"]);
+    expect(rows(layoutOf(threads, { expanded: true }))).toEqual([
+      "mine",
+      "group Plan: newer,older",
+      "  newer",
+      "  older",
+    ]);
+    // A search lists each match on its own row.
+    expect(rows(layoutOf(threads, { searchQuery: "older" }))).toEqual(["older"]);
+    const listItems = buildThreadListV2ListItems({
+      items: layoutOf(threads).items,
+      pendingTasks: [],
+    });
+    expect(listItems.map((item) => item.key)).toEqual([
+      `v2-thread:${environmentId}:mine`,
+      `v2-delegated-group:${layoutOf(threads).items[1]?.delegatedGroup?.group.key}`,
+    ]);
+  });
+
+  it("gives each project and environment in scope a group with only its tasks", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const app = ProjectId.make("app");
+    const site = ProjectId.make("site");
+    const threads = [
+      { ...delegated("app-task", "2026-06-01T01:00:00.000Z"), projectId: app },
+      { ...delegated("site-task", "2026-06-01T02:00:00.000Z"), projectId: site },
+      {
+        ...delegated("laptop-task", "2026-06-01T03:00:00.000Z"),
+        environmentId: laptop,
+        projectId: app,
+      },
+    ];
+    expect(rows(layoutOf(threads)).toSorted()).toEqual([
+      "group Plan: app-task",
+      "group Plan: laptop-task",
+      "group Plan: site-task",
+    ]);
+    expect(
+      rows(layoutOf(threads, { expanded: true, projectRefs: [{ environmentId, projectId: app }] })),
+    ).toEqual(["group Plan: app-task", "  app-task"]);
+    expect(rows(layoutOf(threads, { projectRefs: [{ environmentId, projectId: site }] }))).toEqual([
+      "group Plan: site-task",
+    ]);
+    expect(rows(layoutOf(threads, { environmentId: laptop }))).toEqual(["group Plan: laptop-task"]);
+  });
+
+  it("gives a nested task its own state and the actions of a top-level row", () => {
+    const layout = layoutOf(
+      [
+        delegated("busy", "2026-06-01T03:00:00.000Z"),
+        delegated("done", "2026-06-01T02:00:00.000Z", true),
+        {
+          ...delegated("later", "2026-06-01T01:00:00.000Z"),
+          snoozedAt: NOW,
+          snoozedUntil: "2026-06-03T00:00:00.000Z",
+        },
+        { ...delegated("kept", "2026-06-01T00:00:00.000Z"), pinnedAt: NOW },
+      ],
+      { expanded: true },
+    );
+    const nested = layout.items.filter((item) => item.nested === true);
+    expect(
+      nested.map((item) => ({
+        id: item.thread.id,
+        variant: item.variant,
+        snoozed: item.snoozed,
+        pinned: item.pinned,
+        actions: resolveThreadListV2SwipeActions({
+          variant: item.variant,
+          settlementSupported: true,
+          snoozeSupported: true,
+          snoozable: true,
+          snoozed: item.snoozed,
+        }),
+      })),
+    ).toEqual([
+      {
+        id: "busy",
+        variant: "card",
+        snoozed: false,
+        pinned: false,
+        actions: { primary: "settle", secondary: "snooze" },
+      },
+      {
+        id: "done",
+        variant: "slim",
+        snoozed: false,
+        pinned: false,
+        actions: { primary: "unsettle", secondary: "snooze" },
+      },
+      {
+        id: "later",
+        variant: "slim",
+        snoozed: true,
+        pinned: false,
+        actions: { primary: "unsnooze", secondary: null },
+      },
+      {
+        id: "kept",
+        variant: "card",
+        snoozed: false,
+        pinned: true,
+        actions: { primary: "settle", secondary: "snooze" },
+      },
+    ]);
+  });
+
+  it("keeps the group among active rows until every task is settled", () => {
+    const partlySettled = layoutOf([
+      delegated("done", "2026-06-01T02:00:00.000Z", true),
+      delegated("busy", "2026-06-01T01:00:00.000Z"),
+    ]);
+    expect(rows(partlySettled)).toEqual(["group Plan: done,busy"]);
+    expect(partlySettled.settledShelfHeaderIndex).toBeNull();
+
+    const settled = layoutOf([
+      delegated("done", "2026-06-01T02:00:00.000Z", true),
+      delegated("busy", "2026-06-01T01:00:00.000Z", true),
+    ]);
+    expect(rows(settled)).toEqual(["group Plan: done,busy"]);
+    expect(settled.settledShelfHeaderIndex).toBe(0);
+    expect(settled.items[0]?.variant).toBe("slim");
   });
 });
 

@@ -507,20 +507,27 @@ export function SortableThreadRow(
     transition: contextDrag && isDragging ? "transform 150ms ease-out" : transition,
     isDragging: isDragging && !contextDrag,
   };
-  // The sidebar arranges rows from quiet shells, which hold still while a
-  // thread streams; reading the live shell here re-renders only this row.
-  const liveThread = useThreadShell(
-    scopeThreadRef(rowProps.thread.environmentId, rowProps.thread.id),
-  );
-  // A runtime on the arranged copy but not the run-less live shell is the list's launch overlay.
-  const thread =
-    liveThread === null
-      ? rowProps.thread
-      : rowProps.thread.runtime !== null
-        ? asLaunchingThread(liveThread)
-        : liveThread;
+  const thread = useLiveRowThread(rowProps.thread);
   // Keyed by variant so a card/slim switch remounts the row.
   return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
+}
+
+/** A row outside the sortable list, such as a task listed inside a delegated task group. */
+export function NestedThreadRow(props: Omit<SidebarThreadRowProps, "sortable">) {
+  const thread = useLiveRowThread(props.thread);
+  return <SidebarThreadRow key={props.variant} {...props} thread={thread} />;
+}
+
+// The sidebar arranges rows from quiet shells, which hold still while a
+// thread streams; reading the live shell here re-renders only this row.
+function useLiveRowThread(arranged: SidebarThreadSummary): SidebarThreadSummary {
+  const liveThread = useThreadShell(scopeThreadRef(arranged.environmentId, arranged.id));
+  // A runtime on the arranged copy but not the run-less live shell is the list's launch overlay.
+  return liveThread === null
+    ? arranged
+    : arranged.runtime !== null
+      ? asLaunchingThread(liveThread)
+      : liveThread;
 }
 export type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {

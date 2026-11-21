@@ -12372,5 +12372,7 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "3d4448e3c061f894": "Autre machine",
+  "349587beaf00ce5e": "{title}, délégué depuis {machine}, {count, plural, one {{count} tâche} other {{count} tâches}}"
 }

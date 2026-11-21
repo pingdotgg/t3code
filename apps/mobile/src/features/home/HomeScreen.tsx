@@ -74,6 +74,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2DelegatedGroupRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
@@ -418,6 +419,7 @@ export function HomeScreen(props: HomeScreenProps) {
     items: threadListV2Items,
     contentOnlyThreadKeys,
     olderSettledShelf,
+    toggleDelegatedGroup,
   } = useThreadListV2({
     threads: props.threads,
     pendingTasks: props.pendingTasks,
@@ -527,8 +529,20 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       );
     }
+    if (item.type === "v2-delegated-group") {
+      const group = item.item.delegatedGroup.group;
+      return (
+        <ThreadListV2DelegatedGroupRow
+          pane={sidebarSurface ? "sidebar" : "screen"}
+          delegatedGroup={item.item.delegatedGroup}
+          selected={selectedThreadKey !== null && group.taskKeys.includes(selectedThreadKey)}
+          showTrailingDivider={item.showTrailingDivider}
+          onToggle={toggleDelegatedGroup}
+        />
+      );
+    }
     const thread = item.item.thread;
-    return (
+    const row = (
       <ThreadListV2Row
         pane={sidebarSurface ? "sidebar" : "screen"}
         selected={scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey}
@@ -597,6 +611,8 @@ export function HomeScreen(props: HomeScreenProps) {
         activationKey={item.key}
       />
     );
+    // A task under its open delegated task group sits one step in.
+    return item.item.nested ? <View className="pl-6">{row}</View> : row;
   };
   const v2KeyExtractor = (item: ThreadListV2ListItem) => item.key;
 

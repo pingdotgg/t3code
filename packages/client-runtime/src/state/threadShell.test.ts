@@ -452,6 +452,204 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("groups tasks by parent while no list can show the parent", () => {
+    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+    ]);
+    const parent = { ...v2ThreadShell, id: ThreadId.make("parent"), title: "Coordinator" };
+    const otherParent = { ...parent, id: ThreadId.make("other-parent"), title: "Other" };
+    const task = (id: string, from: typeof parent, at: string) => ({
+      ...v2ThreadShell,
+      id: ThreadId.make(id),
+      creationSource: "mcp" as const,
+      updatedAt: DateTime.makeUnsafe(at),
+      delegatedFrom: { environmentId: remoteEnvironmentId, threadId: from.id, title: from.title },
+    });
+    const older = task("older", parent, "2026-06-20T01:00:00.000Z");
+    const newer = task("newer", parent, "2026-06-20T02:00:00.000Z");
+    const alone = task("alone", otherParent, "2026-06-20T03:00:00.000Z");
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [older, newer, alone],
+    });
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [parent, otherParent],
+    });
+    const dispose = registry.mount(threads.delegatedTaskGroupsAtom);
+    const key = (thread: { id: ThreadId } | { threadId: ThreadId }, env = environmentId) =>
+      `${env}:${"id" in thread ? thread.id : thread.threadId}`;
+    const groups = () =>
+      registry.get(threads.delegatedTaskGroupsAtom).groups.map((group) => ({
+        parent: key(group.parent, group.parent.environmentId),
+        title: group.title,
+        label: group.environmentLabel,
+        representative: group.representativeKey,
+        tasks: group.taskKeys,
+      }));
+    const setRemoteEnabled = (enabled: boolean) => {
+      const catalog = registry.get(catalogValueAtom);
+      const entries = new Map(catalog.entries);
+      entries.set(remoteEnvironmentId, { ...entries.get(remoteEnvironmentId)!, enabled });
+      registry.set(catalogValueAtom, { ...catalog, entries });
+    };
+
+    // Listed parents keep their tasks under them.
+    expect(groups()).toEqual([]);
+
+    // The parent's machine is off: one group per parent, newest task first.
+    setRemoteEnabled(false);
+    registry.set(snapshotAtom(remoteEnvironmentId), null);
+    expect(groups()).toEqual([
+      {
+        parent: key(parent, remoteEnvironmentId),
+        title: "Coordinator",
+        label: "Environment",
+        representative: key(newer),
+        tasks: [key(newer), key(older)],
+      },
+      {
+        parent: key(otherParent, remoteEnvironmentId),
+        title: "Other",
+        label: "Environment",
+        representative: key(alone),
+        tasks: [key(alone)],
+      },
+    ]);
+    expect([...registry.get(threads.delegatedTaskGroupsAtom).foldedKeys]).toEqual([key(older)]);
+
+    // An unsettled task stands for the group until every task is settled.
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [older, { ...newer, settledOverride: "settled" as const }, alone],
+    });
+    expect(groups()[0]?.representative).toBe(key(older));
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [
+        { ...older, settledOverride: "settled" as const },
+        { ...newer, settledOverride: "settled" as const },
+        alone,
+      ],
+    });
+    expect(groups()[0]?.representative).toBe(key(newer));
+
+    // A parent known to be archived leaves its tasks on their own.
+    setRemoteEnabled(true);
+    registry.set(snapshotAtom(remoteEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [{ ...parent, archivedAt: v2Now }],
+    });
+    expect(groups().map((group) => group.parent)).toEqual([key(otherParent, remoteEnvironmentId)]);
+    dispose();
+    registry.dispose();
+  });
+
+  it("gives each project and environment its tasks run in a group of its own", () => {
+    const thirdEnvironmentId = EnvironmentId.make("third-environment-v2");
+    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+      thirdEnvironmentId,
+    ]);
+    const task = (id: string, projectId: ProjectId) => ({
+      ...v2ThreadShell,
+      id: ThreadId.make(id),
+      projectId,
+      creationSource: "mcp" as const,
+      delegatedFrom: {
+        environmentId: remoteEnvironmentId,
+        threadId: ThreadId.make("parent"),
+        title: "Coordinator",
+      },
+    });
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [task("here-a", v2ThreadShell.projectId), task("here-b", otherProjectId)],
+    });
+    registry.set(snapshotAtom(thirdEnvironmentId), {
+      ...v2ShellSnapshot,
+      threads: [task("there-a", v2ThreadShell.projectId)],
+    });
+    const catalog = registry.get(catalogValueAtom);
+    const entries = new Map(catalog.entries);
+    entries.set(remoteEnvironmentId, { ...entries.get(remoteEnvironmentId)!, enabled: false });
+    registry.set(catalogValueAtom, { ...catalog, entries });
+    registry.set(snapshotAtom(remoteEnvironmentId), null);
+    const dispose = registry.mount(threads.delegatedTaskGroupsAtom);
+    const groups = registry.get(threads.delegatedTaskGroupsAtom).groups;
+    expect(groups.map((group) => group.taskKeys)).toEqual([
+      [`${environmentId}:here-a`],
+      [`${environmentId}:here-b`],
+      [`${thirdEnvironmentId}:there-a`],
+    ]);
+    expect(new Set(groups.map((group) => group.key)).size).toBe(3);
+    expect(registry.get(threads.delegatedTaskGroupsAtom).foldedKeys.size).toBe(0);
+    dispose();
+    registry.dispose();
+  });
+
+  it("keeps the groups through a task's streaming ticks", () => {
+    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness([
+      environmentId,
+      remoteEnvironmentId,
+    ]);
+    const runId = RunId.make("task-run");
+    const task = (id: string, seconds: number) => ({
+      ...v2ThreadShell,
+      id: ThreadId.make(id),
+      creationSource: "mcp" as const,
+      updatedAt: DateTime.add(v2Now, { seconds }),
+      delegatedFrom: {
+        environmentId: remoteEnvironmentId,
+        threadId: ThreadId.make("parent"),
+        title: "Coordinator",
+      },
+    });
+    const running = {
+      ...task("running", 1),
+      latestRunId: runId,
+      activeRunId: runId,
+      status: "running" as const,
+      itemCount: 1,
+      visibleItemCount: 1,
+    };
+    const idle = task("idle", 2);
+    const setThreads = (sequence: number, ...shells: ReadonlyArray<OrchestrationV2ThreadShell>) =>
+      registry.set(snapshotAtom(environmentId), {
+        ...v2ShellSnapshot,
+        snapshotSequence: sequence,
+        threads: shells,
+      });
+    const catalog = registry.get(catalogValueAtom);
+    const entries = new Map(catalog.entries);
+    entries.set(remoteEnvironmentId, { ...entries.get(remoteEnvironmentId)!, enabled: false });
+    registry.set(catalogValueAtom, { ...catalog, entries });
+    registry.set(snapshotAtom(remoteEnvironmentId), null);
+    setThreads(1, v2ThreadShell);
+    const dispose = registry.mount(threads.delegatedTaskGroupsAtom);
+    const empty = registry.get(threads.delegatedTaskGroupsAtom);
+    setThreads(2, { ...v2ThreadShell, title: "Renamed" });
+    expect(registry.get(threads.delegatedTaskGroupsAtom)).toBe(empty);
+
+    setThreads(3, running, idle);
+    const first = registry.get(threads.delegatedTaskGroupsAtom);
+    expect(first.groups[0]?.taskKeys).toEqual([
+      `${environmentId}:idle`,
+      `${environmentId}:running`,
+    ]);
+    // Streaming moves the running task's updatedAt past the idle one without reordering.
+    setThreads(
+      4,
+      { ...running, updatedAt: DateTime.add(v2Now, { seconds: 3 }), itemCount: 5 },
+      idle,
+    );
+    expect(registry.get(threads.delegatedTaskGroupsAtom)).toBe(first);
+    dispose();
+    registry.dispose();
+  });
+
   it("brings an approval up a chain of tasks across three environments to its root", () => {
     const thirdEnvironmentId = EnvironmentId.make("third-environment-v2");
     const { registry, threads, snapshotAtom } = makeHarness([

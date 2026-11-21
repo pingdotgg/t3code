@@ -5375,5 +5375,8 @@
   "ad208e3e32c85029": "Ocultar todo",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
-  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran."
+  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
+  "3d4448e3c061f894": "Otra máquina",
+  "349587beaf00ce5e": "{title}, delegado desde {machine}, {count, plural, one {{count} tarea} other {{count} tareas}}",
+  "88bcb7d812dfb32a": "{machine} · {count, plural, one {{count} tarea} other {{count} tareas}}"
 }

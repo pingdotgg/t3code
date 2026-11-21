@@ -63,6 +63,7 @@ import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2DelegatedGroupRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
@@ -276,6 +277,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     items: threadListV2Items,
     contentOnlyThreadKeys,
     olderSettledShelf,
+    toggleDelegatedGroup,
   } = useThreadListV2({
     threads: launchingThreads,
     pendingTasks,
@@ -413,10 +415,26 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           />
         );
       }
+      case "v2-delegated-group": {
+        const group = item.item.delegatedGroup.group;
+        return (
+          <ThreadListV2DelegatedGroupRow
+            pane="sidebar"
+            delegatedGroup={item.item.delegatedGroup}
+            selected={
+              !activeNewTask &&
+              selectedThreadKey !== null &&
+              group.taskKeys.includes(selectedThreadKey)
+            }
+            showTrailingDivider={item.showTrailingDivider}
+            onToggle={toggleDelegatedGroup}
+          />
+        );
+      }
       case "v2-thread": {
         const thread = item.item.thread;
         const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
-        return (
+        const row = (
           <ThreadListV2Row
             onNewThreadOnBranch={props.onNewThreadOnBranch}
             thread={thread}
@@ -489,6 +507,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             simultaneousSwipeGesture={sidebarScrollGesture}
           />
         );
+        // A task under its open delegated task group sits one step in.
+        return item.item.nested ? <View className="pl-4">{row}</View> : row;
       }
       case "v2-working-shelf":
         return (

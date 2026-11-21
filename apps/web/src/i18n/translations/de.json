@@ -12372,5 +12372,7 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "3d4448e3c061f894": "Anderer Rechner",
+  "349587beaf00ce5e": "{title}, delegiert von {machine}, {count, plural, one {{count} Aufgabe} other {{count} Aufgaben}}"
 }

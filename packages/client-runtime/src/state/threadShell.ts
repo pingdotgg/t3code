@@ -19,6 +19,11 @@ import { Atom } from "effect/reactivity";
 import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 import { presentThreadShell, threadRuntimeIsActive } from "./models.ts";
 import { hiddenThreadKeys, NO_HIDDEN_THREADS } from "./threadTagFilter.ts";
+import {
+  delegatedTaskGroupsEqual,
+  groupDelegatedTasks,
+  NO_DELEGATED_TASK_GROUPS,
+} from "./delegatedTaskGroups.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import {
   arrayElementsEqual,
@@ -28,6 +33,12 @@ import {
   threadKey,
   threadRefsEqual,
 } from "./entities.ts";
+
+export {
+  groupDelegatedTasks,
+  type DelegatedTaskGroup,
+  type DelegatedTaskGroups,
+} from "./delegatedTaskGroups.ts";
 
 const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
 const EMPTY_SCOPED_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
@@ -56,6 +67,8 @@ const isChildRunLive = (
       thread.status === "starting" ||
       thread.status === "running" ||
       thread.status === "waiting";
+
+const isDelegatedTask = (thread: EnvironmentThreadShell) => thread.delegatedFrom != null;
 
 /**
  * Whether a thread shows under its parent rather than in thread lists: a
@@ -779,6 +792,39 @@ export function createEnvironmentThreadShellAtoms(input: {
     return next;
   }).pipe(Atom.withLabel("environment-navigation-thread-shells"));
 
+  // Tasks whose parent no list shows, grouped for a row per parent in each project. Built
+  // from the quiet shells, so a task's streaming ticks do not regroup.
+  let previousDelegatedTaskGroups = NO_DELEGATED_TASK_GROUPS;
+  const delegatedTaskGroupsAtom = Atom.make((get) => {
+    const threads = get(quietThreadShellsAtom);
+    if (!threads.some(isDelegatedTask)) {
+      previousDelegatedTaskGroups = NO_DELEGATED_TASK_GROUPS;
+      return NO_DELEGATED_TASK_GROUPS;
+    }
+    const catalog = get(input.catalogValueAtom);
+    let archivedKeys: ReadonlySet<string> | undefined;
+    const next = groupDelegatedTasks({
+      threads,
+      delegatedUnderParent: get(delegatedUnderParentAtom),
+      isParentArchived: (parent) => {
+        archivedKeys ??= new Set(
+          threads.flatMap((thread) =>
+            thread.archivedAt === null
+              ? []
+              : [threadKey({ environmentId: thread.environmentId, threadId: thread.id })],
+          ),
+        );
+        return archivedKeys.has(threadKey(parent));
+      },
+      environmentLabel: (environmentId) => catalog.entries.get(environmentId)?.target.label ?? null,
+    });
+    if (delegatedTaskGroupsEqual(previousDelegatedTaskGroups, next)) {
+      return previousDelegatedTaskGroups;
+    }
+    previousDelegatedTaskGroups = next;
+    return next;
+  }).pipe(Atom.withLabel("environment-delegated-task-groups"));
+
   return {
     environmentThreadsAtom,
     environmentThreadIndexAtom,
@@ -792,6 +838,7 @@ export function createEnvironmentThreadShellAtoms(input: {
     quietThreadShellsAtom,
     navigationThreadShellsAtom,
     delegatedUnderParentAtom,
+    delegatedTaskGroupsAtom,
     pendingSubagentRequestsAtom,
     threadShellsForProjectRefsAtom: (refs: ReadonlyArray<ScopedProjectRef>) =>
       threadShellsForProjectRefsAtomFamily(projectRefCollectionKey(refs)),

@@ -204,6 +204,56 @@ export function resolveSidebarThreadSection(input: {
   return "active";
 }
 
+/** The action a row in `section` offers in its trailing slot and swipe. */
+export function sidebarRowVariantAction(
+  section: SidebarSection,
+): "settle" | "unsettle" | "unsnooze" {
+  return section === "snoozed" ? "unsnooze" : section === "settled" ? "unsettle" : "settle";
+}
+
+type SidebarFoldableThread = ThreadSnoozeShell & {
+  readonly environmentId: EnvironmentId;
+  readonly id: ThreadId;
+  readonly settledOverride: "settled" | "active" | null;
+  readonly pinnedAt?: string | null;
+};
+
+/**
+ * Splits off the tasks a delegated task group lists inside its row. Each keeps the section
+ * its own row would have, so its row and menus offer the same actions.
+ */
+export function splitFoldedSidebarThreads<T extends SidebarFoldableThread>(
+  threads: readonly T[],
+  input: {
+    readonly foldedThreadKeys: ReadonlySet<string>;
+    readonly configLoaded: (environmentId: EnvironmentId) => boolean;
+    readonly now: string;
+  },
+): { readonly unfolded: readonly T[]; readonly folded: ReadonlyMap<string, SidebarSection> } {
+  if (input.foldedThreadKeys.size === 0) return { unfolded: threads, folded: NO_FOLDED_SECTIONS };
+  const unfolded: T[] = [];
+  const folded = new Map<string, SidebarSection>();
+  for (const thread of threads) {
+    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+    if (!input.foldedThreadKeys.has(key)) {
+      unfolded.push(thread);
+      continue;
+    }
+    const configLoaded = input.configLoaded(thread.environmentId);
+    folded.set(
+      key,
+      resolveSidebarThreadSection({
+        snoozed: configLoaded && effectiveSnoozed(thread, { now: input.now }),
+        settled: configLoaded && thread.settledOverride === "settled",
+        pinned: thread.pinnedAt != null,
+      }),
+    );
+  }
+  return { unfolded, folded };
+}
+
+const NO_FOLDED_SECTIONS: ReadonlyMap<string, SidebarSection> = new Map();
+
 const SIDEBAR_MARKER_PREFIX = "sidebar-marker-";
 
 export type SidebarListMarker =

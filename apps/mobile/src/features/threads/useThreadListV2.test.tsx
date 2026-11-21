@@ -12,10 +12,18 @@ import { olderSettledThreads } from "../../state/threads";
 import { makeRawThreadShell } from "../../test-fixtures";
 import { useThreadListV2 } from "./useThreadListV2";
 
-vi.mock("../../state/threads", () => ({
-  olderSettledThreads: { shelfAtom: vi.fn() },
-  threadFamilies: { mountRows: () => () => {} },
-}));
+vi.mock("../../state/threads", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    olderSettledThreads: { shelfAtom: vi.fn() },
+    threadFamilies: { mountRows: () => () => {} },
+    steadyDelegatedTaskGroupsAtom: Atom.make({
+      groups: [],
+      byRepresentativeKey: new Map(),
+      foldedKeys: new Set(),
+    }),
+  };
+});
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: undefined }));
 
 it("reuses a large thread list across tab renders and updates when its inputs change", async () => {
