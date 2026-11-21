@@ -26,6 +26,7 @@ import { HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effec
 import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "./AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "./WorkspacePreviewRevisions.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { makeFakeWslHost } from "../testUtils/fakeWsl.ts";
@@ -125,6 +126,7 @@ const layerTest = Layer.mergeAll(
   AssetSigner.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(layerConfig))),
   ),
+  WorkspacePreviewRevisions.layer,
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 describe("AssetAccess", () => {
@@ -627,6 +629,33 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  // Agents on Windows copy paths from Git Bash, which prints `C:\x` as `/c/x`.
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "resolves a Git Bash drive media path on Windows",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-gitbash-" });
+        const canonicalFile = path.join(yield* fs.realPath(workspaceRoot), "shot.png");
+        yield* fs.writeFile(canonicalFile, screenshotPng);
+        const gitBashPath = `/${canonicalFile[0]!.toLowerCase()}${canonicalFile.slice(2).replaceAll("\\", "/")}`;
+
+        for (const resource of [
+          { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: gitBashPath },
+          { _tag: "draft-workspace-file", cwd: workspaceRoot, path: gitBashPath },
+        ] as const) {
+          const result = yield* issueAssetUrl({ resource, workspaceRoot });
+          expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          expect(
+            yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+          ).toMatchObject({ kind: "file", path: canonicalFile, mimeType: "image/png" });
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   // Resolving `file://attacker.test/share/cat.jpg` from an agent's markdown sent the
   // Windows user's NTLM credentials to attacker.test.
   it.effect("never resolves a network media path outside the thread's project", () =>
@@ -703,6 +732,46 @@ describe("AssetAccess", () => {
           },
         }).pipe(Effect.flip);
         expect(directoryError._tag).toBe("AssetWorkspaceAssetNotFoundError");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "serves a linked workspace file only while its target is previewable",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "t3-link-" }));
+        yield* fs.writeFileString(path.join(root, "payload.xhtml"), "<html/>");
+        yield* fs.writeFileString(path.join(root, "real.pdf"), "%PDF-1.4");
+        const link = path.join(root, "report.pdf");
+        const issue = issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: "report.pdf",
+          },
+          workspaceRoot: root,
+        });
+        const resolveIssued = (relativeUrl: string) => {
+          const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          return resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+        };
+
+        yield* fs.symlink(path.join(root, "payload.xhtml"), link);
+        expect((yield* issue.pipe(Effect.flip))._tag).toBe("AssetPreviewTypeValidationError");
+
+        yield* fs.remove(link);
+        yield* fs.symlink(path.join(root, "real.pdf"), link);
+        const issued = yield* issue;
+        expect(yield* resolveIssued(issued.relativeUrl)).toMatchObject({
+          path: path.join(root, "real.pdf"),
+        });
+
+        yield* fs.remove(link);
+        yield* fs.symlink(path.join(root, "payload.xhtml"), link);
+        expect(yield* resolveIssued(issued.relativeUrl)).toBeNull();
       }).pipe(Effect.provide(layerTest)),
   );
 
@@ -1029,6 +1098,52 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)(
+    "validates canonical sibling assets for previews in dot-prefixed folders",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const reportsDirectory = path.join(root, ".reports");
+        yield* fs.makeDirectory(path.join(reportsDirectory, ".cache"), { recursive: true });
+        yield* fs.makeDirectory(path.join(root, ".secret"));
+        const page = path.join(reportsDirectory, "report.html");
+        yield* fs.writeFileString(page, "<!doctype html>");
+        const dependencies = [
+          { name: "linked.css", target: path.join(root, ".secret", "key.css"), allowed: false },
+          {
+            name: "inner.css",
+            target: path.join(reportsDirectory, ".cache", "hidden.css"),
+            allowed: false,
+          },
+          { name: "shared.css", target: path.join(root, "shared.css"), allowed: true },
+        ];
+        for (const { name, target } of dependencies) {
+          yield* fs.writeFileString(target, "fixture");
+          yield* fs.symlink(target, path.join(reportsDirectory, name));
+        }
+        const result = yield* issueAssetUrl({
+          resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: page },
+          workspaceRoot: root,
+        });
+        const suffix = result.relativeUrl.slice(ASSET_ROUTE_PREFIX.length + 1);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        for (const { name, target, allowed } of dependencies) {
+          const resolved = yield* resolveAsset(token, name);
+          if (allowed) {
+            expect(resolved).toEqual({
+              kind: "file",
+              path: yield* fs.realPath(target),
+              renderIntent: "file-preview",
+            });
+          } else {
+            expect(resolved).toBeNull();
+          }
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("issues workspace URLs that resolve the entry file and sibling assets", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1096,6 +1211,35 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(token, "../secret.txt")).toBeNull();
       expect(yield* resolveAsset(token, ".env")).toBeNull();
       expect(yield* resolveAsset(`${token}tampered`, "report.html")).toBeNull();
+
+      const reportsDirectory = path.join(root, ".reports");
+      yield* fileSystem.makeDirectory(path.join(reportsDirectory, ".cache"), { recursive: true });
+      const dotHtmlPath = path.join(reportsDirectory, "report.html");
+      const dotCssPath = path.join(reportsDirectory, "report.css");
+      yield* fileSystem.writeFileString(dotHtmlPath, "<h1>Quarterly report</h1>");
+      yield* fileSystem.writeFileString(dotCssPath, "body { color: red; }");
+      yield* fileSystem.writeFileString(path.join(reportsDirectory, ".cache", "hidden.css"), "");
+      const dotUrl = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: dotHtmlPath,
+        },
+        workspaceRoot: root,
+      });
+      const dotSuffix = dotUrl.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const dotToken = dotSuffix.slice(0, dotSuffix.indexOf("/"));
+      expect(yield* resolveAsset(dotToken, "report.html")).toEqual({
+        kind: "file",
+        path: yield* fileSystem.realPath(dotHtmlPath),
+        renderIntent: "file-preview",
+      });
+      expect(yield* resolveAsset(dotToken, "report.css")).toEqual({
+        kind: "file",
+        path: yield* fileSystem.realPath(dotCssPath),
+        renderIntent: "file-preview",
+      });
+      expect(yield* resolveAsset(dotToken, ".cache/hidden.css")).toBeNull();
       for (const extension of [
         "odt",
         "ods",
@@ -1133,6 +1277,94 @@ describe("AssetAccess", () => {
           expect(yield* resolveAsset(suffix.slice(0, suffix.indexOf("/")), siblingName)).toBeNull();
         }
       }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("moves an HTML preview's revision only for the page and the files it requested", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-revision-" });
+      const pages = path.join(root, "pages");
+      yield* fileSystem.makeDirectory(pages);
+      const write = (name: string, text: string) =>
+        fileSystem.writeFileString(path.join(pages, name), text);
+      yield* write("a.html", '<link rel="stylesheet" href="a.css"><script src="late.js"></script>');
+      yield* write("a.css", "body { color: red; }");
+      yield* write("b.html", "<h1>b</h1>");
+      const mint = (name: string) =>
+        issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: path.join(pages, name),
+          },
+          workspaceRoot: root,
+        });
+      const load = Effect.fn(function* (name: string, requests: ReadonlyArray<string>) {
+        const { relativeUrl } = yield* mint(name);
+        const suffix = relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        for (const request of requests) {
+          yield* resolveAsset(suffix.slice(0, suffix.indexOf("/")), request);
+        }
+      });
+      const revisions = Effect.fn(function* () {
+        return [(yield* mint("a.html")).fileRevision, (yield* mint("b.html")).fileRevision];
+      });
+
+      // Two tabs each load a page; a.html also asks for a script that does not exist yet.
+      const opened = yield* revisions();
+      expect(opened[0]).toBeDefined();
+      expect(opened[1]).not.toBe(opened[0]);
+      yield* load("a.html", ["a.html", "a.css", "late.js"]);
+      yield* load("b.html", ["b.html"]);
+      expect(yield* revisions()).toEqual(opened);
+
+      // Files no page asked for leave both previews alone.
+      yield* write("unrelated.css", "p {}");
+      yield* fileSystem.writeFileString(path.join(root, "notes.md"), "notes");
+      expect(yield* revisions()).toEqual(opened);
+
+      // An edit to one page leaves the page beside it alone.
+      yield* write("b.html", "<h1>B</h1>");
+      const afterPageEdit = yield* revisions();
+      expect(afterPageEdit[0]).toBe(opened[0]);
+      expect(afterPageEdit[1]).not.toBe(opened[1]);
+
+      // A same-size edit to a requested stylesheet reloads only the page that uses it.
+      yield* write("a.css", "body { color: blue }");
+      const afterStyleEdit = yield* revisions();
+      expect(afterStyleEdit[0]).not.toBe(afterPageEdit[0]);
+      expect(afterStyleEdit[1]).toBe(afterPageEdit[1]);
+
+      // So does a requested file that appears, and one that goes away.
+      yield* write("late.js", "document.title = 'late';");
+      const afterCreate = yield* revisions();
+      expect(afterCreate[0]).not.toBe(afterStyleEdit[0]);
+      yield* fileSystem.remove(path.join(pages, "a.css"));
+      const afterRemove = yield* revisions();
+      expect(afterRemove[0]).not.toBe(afterCreate[0]);
+      expect(afterRemove[1]).toBe(afterPageEdit[1]);
+
+      // Overlapping mints after one edit agree, so the edit reloads the page once.
+      yield* write("late.js", "document.title = 'later';");
+      const overlapping = yield* Effect.all(
+        Array.from({ length: 8 }, () => mint("a.html")),
+        { concurrency: "unbounded" },
+      );
+      expect(new Set(overlapping.map((minted) => minted.fileRevision)).size).toBe(1);
+      expect(overlapping[0]?.fileRevision).not.toBe(afterRemove[0]);
+
+      // A page that loads more files than are tracked falls back to the client's own reloads.
+      yield* load(
+        "b.html",
+        Array.from(
+          { length: WorkspacePreviewRevisions.MAX_TRACKED_FILES_PER_DOCUMENT },
+          (_, index) => `chunk-${index}.js`,
+        ),
+      );
+      expect((yield* mint("b.html")).fileRevision).toBeUndefined();
+      expect((yield* mint("a.html")).fileRevision).toBe(overlapping[0]?.fileRevision);
     }).pipe(Effect.provide(layerTest)),
   );
 

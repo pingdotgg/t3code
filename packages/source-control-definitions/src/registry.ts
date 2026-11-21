@@ -6,14 +6,14 @@ import * as Forgejo from "@t3tools/source-control-forgejo/shared/definition";
 import * as GitCafe from "@t3tools/source-control-gitcafe/shared/definition";
 import * as GitHub from "@t3tools/source-control-github/shared/definition";
 import * as GitLab from "@t3tools/source-control-gitlab/shared/definition";
+import * as TanStackSource from "@t3tools/source-control-tanstack-source/shared/definition";
 
 export { canonicalizePullRequestUrl as canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-gitcafe/shared/definition";
 
 /**
- * GitHub comes first to preserve the client default for repositories with an unknown host.
- * GitCafe and Cursor Origin claim URLs first because GitHub and Forgejo accept the same routes on
- * any hostname.
- * Remote recognition needs its own order because host labels can overlap (`gitea.github.example`).
+ * GitHub comes first as the client default for unknown hosts. GitCafe, TanStack Source and Origin
+ * claim URLs first: GitHub and Forgejo accept the same routes on any hostname. TanStack Source is a
+ * private beta: every reader knows its URLs, and only a server with its flag on offers the forge.
  */
 export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegistry(
   [
@@ -21,6 +21,7 @@ export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegist
     CursorOrigin.definition,
     GitLab.definition,
     GitCafe.definition,
+    TanStackSource.definition,
     Forgejo.definition,
     Bitbucket.definition,
     AzureDevOps.definition,
@@ -28,11 +29,13 @@ export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegist
   {
     claimChangeRequestUrlsFirst: [
       GitCafe.definition.kind,
+      TanStackSource.definition.kind,
       CursorOrigin.definition.kind,
       AzureDevOps.definition.kind,
     ],
     recognizeRemotesIn: [
       GitCafe.definition.kind,
+      TanStackSource.definition.kind,
       CursorOrigin.definition.kind,
       Forgejo.definition.kind,
       GitHub.definition.kind,

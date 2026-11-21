@@ -14,15 +14,15 @@ import { formatEnvironmentQueryError } from "./query";
 
 export const issueEnvironment = createIssueEnvironmentAtoms(connectionAtomRuntime);
 
-const mergedIssueLists = createMergedIssueListAtoms(
-  issueEnvironment.list,
-  formatEnvironmentQueryError,
-);
+const mergedIssueLists = createMergedIssueListAtoms(issueEnvironment, formatEnvironmentQueryError);
 
 /** One listing read across every environment asked. */
 export function useIssueList(targets: ReadonlyArray<IssueListTarget>) {
   const view = useAtomValue(mergedIssueLists.atom(targets));
-  return { ...view, refresh: () => mergedIssueLists.refresh(appAtomRegistry, targets) };
+  return {
+    ...view,
+    refresh: () => mergedIssueLists.refresh(appAtomRegistry, targets, "manual"),
+  };
 }
 
 /** After a write the list cannot see, such as a new issue filed from a sheet. */
@@ -37,9 +37,10 @@ const mergedIssueCandidates = createMergedIssueCandidatesAtoms(
 
 /** The labels and people of every scope a list filter covers; no targets reads nothing. */
 export function useIssueFilterCandidates(targets: ReadonlyArray<IssueCandidatesTarget>) {
-  return useAtomValue(mergedIssueCandidates(targets));
+  return useAtomValue(mergedIssueCandidates.atom(targets));
 }
 
+/** Asks again only the scopes that failed; the ones that answered keep their answer. */
 export function refreshIssueFilterCandidates(targets: ReadonlyArray<IssueCandidatesTarget>) {
-  for (const target of targets) appAtomRegistry.refresh(issueEnvironment.candidates(target));
+  mergedIssueCandidates.retry(appAtomRegistry, targets);
 }

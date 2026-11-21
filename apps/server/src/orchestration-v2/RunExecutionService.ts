@@ -1,6 +1,7 @@
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  isDelegatedAppThread,
   isOrchestrationV2WorkActive,
   CommandId,
   type EventId,
@@ -1055,6 +1056,7 @@ export const layer: Layer.Layer<
         .captureBaseline({
           scope: input.checkpointScope,
           ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+          thread: input.appThread,
         })
         .pipe(
           Effect.catchCause((cause) =>
@@ -1988,6 +1990,7 @@ export const layer: Layer.Layer<
               return yield* shouldStopProviderEventIngestion;
             }),
             Ref.get(rootTerminalSeen).pipe(Effect.map((seen) => !seen)),
+            { threadId: input.run.threadId, delegated: isDelegatedAppThread(input.appThread) },
           )
           .pipe(
             Effect.ensuring(closeIdleFlush),
@@ -2055,7 +2058,11 @@ export const layer: Layer.Layer<
                           ).pipe(Effect.as(false)),
                       ),
                     );
-                    if (handedOff) return;
+                    if (handedOff) {
+                      // Its tool calls, the handoff's own among them, died with that process.
+                      yield* endWorkLostAfterRootRun(completedAt);
+                      return;
+                    }
                   }
                   yield* Effect.logWarning("orchestration V2 provider event ingestion failed", {
                     runId: input.run.id,
@@ -2200,21 +2207,10 @@ export const layer: Layer.Layer<
           }),
         );
         yield* touchMcpCredential;
-        const appContext = (yield* mcpAppModelContext
-          .forThread(input.run.threadId)
-          .pipe(
-            Effect.catch((cause) =>
-              Effect.logWarning("Failed to read MCP app model context.", { cause }).pipe(
-                Effect.as([]),
-              ),
-            ),
-          )).map((entry) => ({
-          // The item id alone is unique and needs no escaping; server and
-          // tool names are free text that would break the tag Codex wraps
-          // the context in.
-          key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
-          text: entry.text,
-        }));
+        const appContext = yield* McpAppModelContext.forProvider(
+          mcpAppModelContext,
+          input.run.threadId,
+        );
         const turnInput = {
           appThread: input.appThread,
           threadId: input.run.threadId,
