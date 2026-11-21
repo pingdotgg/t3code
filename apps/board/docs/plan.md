@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, R2, A1, P1, O1, X1, and Y1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, R2, A1, P1, G1, O1, X1, and Y1.
 
 ## How to read this
 
@@ -38,7 +38,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. R2 after L1. A1 after L1. P1 after R2 and A1. O1 after B12 and P1. X1 after O1. Y1 after O1.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. R2 after L1. A1 after L1. P1 after R2 and A1. G1 after P1. O1 after B12 and G1. X1 after O1. Y1 after O1.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 and R2 also edit the separate `13kparkin/pstack-t3` repo.
 - [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, R2, A1, P1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
@@ -1864,9 +1864,67 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends P1 to the base-branch stack and the operator lands it bottom-up.
 
+## Ship Windows releases of the board from GitHub (G1)
+
+**Depends on.** P1.
+
+**Files.**
+
+- [ ] Edit `.github/workflows/agent-board.yml`, `apps/board/package.json`, `pnpm-lock.yaml`, and `apps/board/README.md`.
+- [ ] Create `apps/board/electron-builder.yml`.
+
+**Build.**
+
+- [ ] First find out why GitHub creates no Actions runs on `13kparkin/t3code` since 2026-11-20 22:24 UTC. The repo is public, Actions is enabled with all actions allowed, and `agent-board` is active, yet no pull request since has a run. Add `workflow_dispatch` to `agent-board.yml`, and dispatch it once on a branch. Record what GitHub does in the PR body. If GitHub still creates no run, stop and tell the operator what was checked, because the release job cannot work without runs.
+- [ ] Package the board with `electron-builder` at the version T3's `apps/desktop` already uses, 26.16.1, so the lockfile gains no new copy. `electron-builder.yml` builds two Windows x64 artifacts from `dist/` and `dist-electron/`: an NSIS installer `Agent-Board-Setup-<version>.exe` that adds a Start menu and desktop shortcut, and a portable `Agent-Board-<version>-win-x64.zip`. There is no code signing, so Windows SmartScreen warns on first run. There is no auto-update.
+- [ ] Add a `release` job to `agent-board.yml` that runs only on `workflow_dispatch`, with a `version` input such as `0.1.0`. It runs on `windows-latest`, runs the same gates as the `agent-board` job, builds, packages, and creates the GitHub release `board-v<version>` on the dispatched commit with `gh release create --generate-notes`. It attaches the installer, the zip, and `SHA256SUMS`. Only this job gets `contents: write`. A version whose tag exists fails before building.
+- [ ] Turn off the upstream workflows that cannot run in this fork, such as T3's nightly `Release`, with `gh workflow disable`, because they need upstream's secrets and would fail on a schedule. This changes repo settings, not files. List each one in the PR body.
+- [ ] `README.md` says how to download and install a release, and how to cut one with `gh workflow run agent-board.yml -f version=<version>`.
+
+**You see.**
+
+- [ ] The repo's Releases page lists Agent Board releases with an installer and a zip, and the operator cuts one from the Actions tab or one command.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] No new unit test. The change is packaging and CI. Run `vp test run` from `apps/board`, and it passes.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Live lanes run the real workflow on the fork and install on this Windows machine. Each release made by a lane is a pre-release named `board-v0.0.<n>-test`, deleted at cleanup.
+
+- [ ] Lane 1. Dispatch `agent-board.yml` on the PR branch. Save `g1-dispatch.txt` with `gh run list` output. Pass when GitHub creates a run and the gates pass.
+- [ ] Lane 2. Dispatch the release job with a test version. Save `g1-release.txt` with `gh release view --json assets`. Pass when the release has the installer, the zip, and `SHA256SUMS`.
+- [ ] Lane 3. Download both artifacts and check them against `SHA256SUMS`. Save `g1-sums.txt`. Pass when both match.
+- [ ] Lane 4. Run the installer on Windows. Save `g1-install.png`. Pass when the Start menu and desktop shortcuts exist.
+- [ ] Lane 5. Open the installed app from its desktop shortcut. Save `g1-launch.png`. Pass when the sidebar footer shows the engine connected, with no WSL command typed.
+- [ ] Lane 6. Create a board in the installed app and send the orchestrator one message. Save `g1-board.png`. Pass when it answers, so pstack and the engine both load from an installed app.
+- [ ] Lane 7. Unzip the portable zip and run it. Save `g1-portable.png`. Pass when it opens as in lane 5.
+- [ ] Lane 8. Dispatch again with the same version. Save `g1-dup.txt`. Pass when the job fails before building and names the existing tag.
+- [ ] Lane 9. Uninstall from Windows settings. Save `g1-uninstall.txt`. Pass when the app folder and both shortcuts are gone, and the board's own data folder is left alone.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `g1-checks.txt`. Pass when all three exit 0.
+- [ ] Cleanup. Delete every test release and its tag, uninstall, and remove downloaded files.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from launching the installed app to `board:first-paint`.
+- [ ] Probe. Launch it ten times and read the `board:first-paint` line.
+- [ ] Baseline. `start:windows` from WSL, timed the same way.
+- [ ] Rule. The installed app's median is no slower than the baseline's, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 4 and lane 5 screenshots into `apps/board/docs/media/g1-review-<slug>.png`.
+- [ ] Post them in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends G1 to the base-branch stack and the operator lands it bottom-up.
+- [ ] After merge, the root cuts `board-v0.1.0` from `main`.
+
 ## Meet every recorded speed budget (O1)
 
-**Depends on.** B12 and P1.
+**Depends on.** B12 and G1.
 
 **Files.**
 
