@@ -1,3 +1,4 @@
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -162,5 +163,28 @@ describe("claudeTaskOutputRoot", () => {
           `/work/claude/${user}`,
         );
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("uses the folder Claude Code names without a uid on Windows, from TEMP only", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const temp = "C:\\Users\\me\\AppData\\Local\\Temp";
+      const root = (environment: Record<string, string>, cwd: string | null = null) =>
+        claudeTaskOutputRoot(environment, path, cwd, "win32");
+      assert.equal(root({ TEMP: temp }), `${temp}\\claude`);
+      assert.equal(root({ TEMP: `${temp}\\` }), `${temp}\\claude`);
+      // Claude Code ignores TMP and TMPDIR on Windows, and so does this.
+      assert.equal(root({ TEMP: temp, TMP: "D:\\other", TMPDIR: "/tmp" }), `${temp}\\claude`);
+      assert.isUndefined(root({ TMP: "D:\\other", TMPDIR: "/tmp" }));
+      assert.isUndefined(root({}));
+      assert.equal(
+        root({ CLAUDE_CODE_TMPDIR: "D:\\claude-tmp", TEMP: temp }),
+        "D:\\claude-tmp\\claude",
+      );
+      assert.equal(
+        root({ CLAUDE_CODE_TMPDIR: "reltmp", TEMP: temp }, "C:\\work\\project"),
+        "C:\\work\\project\\reltmp\\claude",
+      );
+    }).pipe(Effect.provide(NodePath.layerWin32)),
   );
 });
