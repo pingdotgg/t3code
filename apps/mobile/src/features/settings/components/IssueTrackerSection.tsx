@@ -3,7 +3,6 @@ import {
   issueTrackerBindingFor,
   issueTrackerScopeOptions,
   issueTrackerSummary,
-  type IssueTrackerPick,
 } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -226,21 +225,24 @@ export function IssueTrackerProjectRows(props: {
     label: `bind project to ${tracker.displayName}`,
   });
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const [pick, setPick] = useState<IssueTrackerPick | null>(null);
+  const [picks, setPicks] = useState<Partial<Record<ProjectId, ReadonlyArray<string>>>>({});
   const [saving, setSaving] = useState(false);
-  if (pick !== null && !saving && !props.refreshing && !props.refreshFailed) setPick(null);
-  const busy = saving || (pick !== null && props.refreshing);
+  const held = Object.values(picks).some((scopes) => scopes !== undefined);
+  if (held && !saving && !props.refreshing && !props.refreshFailed) setPicks({});
+  const busy = saving || (held && props.refreshing);
   const bound = (projectId: ProjectId) =>
-    pick?.projectId === projectId
-      ? pick.scopes
-      : boundIssueTrackerScopes(tracker.tracker, props.bindings[projectId]);
+    picks[projectId] ?? boundIssueTrackerScopes(tracker.tracker, props.bindings[projectId]);
   const change = async (projectId: ProjectId, scopes: ReadonlyArray<string>) => {
     if (props.disabled || busy) return;
     const binding = issueTrackerBindingFor(tracker.tracker, bound(projectId), scopes);
+    const before = picks[projectId];
     setSaving(true);
-    setPick({ projectId, scopes: boundIssueTrackerScopes(tracker.tracker, binding ?? undefined) });
+    setPicks((current) => ({
+      ...current,
+      [projectId]: boundIssueTrackerScopes(tracker.tracker, binding ?? undefined),
+    }));
     const result = await bind({ environmentId, input: { projectId, binding } });
-    if (result._tag !== "Success") setPick(null);
+    if (result._tag !== "Success") setPicks((current) => ({ ...current, [projectId]: before }));
     setSaving(false);
   };
   return projects.map((project) => {

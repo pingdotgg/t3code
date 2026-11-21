@@ -6,7 +6,6 @@ import {
   type IssueTrackerConnectionList,
   type IssueTrackerKind,
   type IssueTrackerProjectBinding,
-  type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
@@ -137,11 +136,6 @@ export function issueTrackerBindingFor(
   const [scope, ...additionalScopes] = [...kept, ...scopes.filter((key) => !kept.includes(key))];
   if (scope === undefined) return null;
   return additionalScopes.length === 0 ? { tracker, scope } : { tracker, scope, additionalScopes };
-}
-
-export interface IssueTrackerPick {
-  readonly projectId: ProjectId;
-  readonly scopes: ReadonlyArray<string>;
 }
 
 export function issueTrackerScopeOptions(
