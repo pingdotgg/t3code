@@ -31,10 +31,12 @@ import {
   DeferringFailedCheck,
   makeManagedServerProvider,
 } from "@t3tools/provider-core/server/managedProvider";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
-  makeManualOnlyProviderMaintenanceCapabilities,
-  type ProviderMaintenanceCapabilities,
-} from "@t3tools/provider-core/server/maintenanceResolver";
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+} from "@t3tools/provider-core/server/snapshotSettings";
+import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import {
   buildServerProvider,
   isCommandMissingCause,
@@ -170,7 +172,8 @@ interface AntigravityProviderOptions {
   readonly supportsTextGeneration: Effect.Effect<boolean>;
   readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
   readonly clearUsage?: Effect.Effect<void>;
-  readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
+  readonly resolveMaintenance?: ManagedServerProvider["resolveMaintenance"];
+  readonly releaseChanges?: Stream.Stream<void>;
   readonly auth?: { readonly type: string; readonly label: string };
 }
 
@@ -369,21 +372,31 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     return yield* options.stampIdentity(next.draft);
   });
 
-  const maintenanceCapabilities =
-    options.maintenanceCapabilities ??
-    makeManualOnlyProviderMaintenanceCapabilities({
-      provider: ProviderDriverKind.make("antigravity"),
-      packageName: null,
-    });
+  const manualMaintenance = makeManualOnlyProviderMaintenanceCapabilities({
+    provider: ProviderDriverKind.make("antigravity"),
+    packageName: null,
+  });
+  const resolveMaintenance =
+    options.resolveMaintenance ?? (() => Effect.succeed(manualMaintenance));
+  const snapshotSettings = yield* makeProviderSnapshotSettingsSource(settings);
+  const metadataChanges = SubscriptionRef.changes(metadata);
+  const snapshotChanges = options.releaseChanges
+    ? Stream.merge(
+        metadataChanges,
+        options.releaseChanges.pipe(Stream.mapEffect(() => SubscriptionRef.get(metadata))),
+      )
+    : metadataChanges;
   const managed = yield* makeManagedServerProvider({
-    resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
-    getSettings: Effect.succeed(settings),
-    streamSettings: Stream.empty,
-    haveSettingsChanged: () => false,
+    // The health probe already resolves the executable and records its ownership.
+    resolveMaintenance: () => resolveMaintenance(),
+    getSettings: snapshotSettings.getSettings,
+    streamSettings: snapshotSettings.streamSettings,
+    haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+    checkProviderOnSettingsChange: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
     enrichSnapshot: ({ publishSnapshot }) =>
-      SubscriptionRef.changes(metadata).pipe(
+      snapshotChanges.pipe(
         Stream.runForEach((state) =>
           options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
         ),
@@ -552,7 +565,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   });
 
   return {
-    snapshot: { ...managed, getSnapshot },
+    snapshot: { ...managed, getSnapshot, resolveMaintenance },
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,

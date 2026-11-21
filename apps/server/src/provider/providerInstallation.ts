@@ -9,6 +9,7 @@ import {
   type ProviderSetupInput,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Exit from "effect/Exit";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -31,11 +32,27 @@ const hasBinaryPath = Schema.is(Schema.Struct({ binaryPath: Schema.String }));
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 const decodeAntigravitySettings = Schema.decodeUnknownEffect(AntigravitySettings);
 
+/** True once the operation ended or another state replaced it. */
+const hasSettled = (operationId: string | null) => (state: ProviderInstallState) =>
+  state.operationId !== operationId ||
+  state.phase === "succeeded" ||
+  state.phase === "failed" ||
+  state.phase === "cancelled";
+
 export class ProviderInstallation extends Context.Service<
   ProviderInstallation,
   {
     readonly start: (
       input: ProviderSetupInput,
+    ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
+    /**
+     * Starts an Antigravity update or joins the matching operation. Cancels an operation
+     * this request started when interrupted.
+     */
+    readonly run: (
+      input: ProviderSetupInput,
+      onProgress: (message: string) => Effect.Effect<void>,
+      expectedVersion?: string,
     ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
     readonly cancel: (
       input: ProviderInstallCancelInput,
@@ -153,37 +170,88 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
     }
   });
 
-  const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
-    const { installation, driver } = yield* requireInstance(input.instanceId, "install", true);
-    const started = yield* installation.start.pipe(Effect.mapError(failure(input.instanceId)));
-    if (
-      driver === ANTIGRAVITY &&
-      started.operationId !== null &&
-      accountCheckOperation !== started.operationId
-    ) {
-      accountCheckOperation = started.operationId;
+  const watchAntigravityInstall = Effect.fn("ProviderInstallation.watchAntigravityInstall")(
+    function* (instanceId: ProviderInstanceId, operationId: string | null) {
+      if (operationId === null || accountCheckOperation === operationId) return;
+      accountCheckOperation = operationId;
       // Installation outlives the request and may finish while every client is disconnected.
-      yield* installation.changes.pipe(
-        Stream.filter(
-          (state) =>
-            state.operationId !== started.operationId ||
-            state.phase === "succeeded" ||
-            state.phase === "failed" ||
-            state.phase === "cancelled",
-        ),
+      yield* antigravityInstallation.changes.pipe(
+        Stream.filter(hasSettled(operationId)),
         Stream.runHead,
         Effect.flatMap((result) =>
           Option.isSome(result) &&
-          result.value.operationId === started.operationId &&
+          result.value.operationId === operationId &&
           result.value.phase === "succeeded"
-            ? checkManagedRuntimeInstances(input.instanceId)
+            ? checkManagedRuntimeInstances(instanceId)
             : Effect.void,
         ),
         Effect.ignore({ log: true }),
         Effect.forkIn(scope),
       );
+    },
+  );
+
+  const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
+    const { installation, driver } = yield* requireInstance(input.instanceId, "install", true);
+    const started = yield* installation.start.pipe(Effect.mapError(failure(input.instanceId)));
+    if (driver === ANTIGRAVITY) {
+      yield* watchAntigravityInstall(input.instanceId, started.operationId);
     }
     return started;
+  });
+
+  const run = Effect.fn("ProviderInstallation.run")(function* (
+    input: ProviderSetupInput,
+    onProgress: (message: string) => Effect.Effect<void>,
+    expectedVersion?: string,
+  ) {
+    const { driver } = yield* requireInstance(input.instanceId, "install", true);
+    if (driver !== ANTIGRAVITY) {
+      return yield* new ProviderSetupError({
+        instanceId: input.instanceId,
+        operation: "install",
+        detail: "Managed updates are not available for this provider instance.",
+      });
+    }
+    return yield* Effect.acquireUseRelease(
+      antigravityInstallation
+        .startOperation(expectedVersion)
+        .pipe(Effect.mapError(failure(input.instanceId))),
+      ({ state: started }) =>
+        Effect.gen(function* () {
+          const { operationId } = started;
+          yield* watchAntigravityInstall(input.instanceId, operationId);
+          const settled = yield* antigravityInstallation.changes.pipe(
+            // Download progress changes the state several times a second; report each message once.
+            Stream.changesWith(
+              (a, b) =>
+                a.operationId === b.operationId && a.phase === b.phase && a.message === b.message,
+            ),
+            Stream.tap((state) =>
+              state.message !== null && !hasSettled(operationId)(state)
+                ? onProgress(state.message)
+                : Effect.void,
+            ),
+            Stream.filter(hasSettled(operationId)),
+            Stream.runHead,
+          );
+          const final = Option.getOrElse(settled, () => started);
+          if (final.operationId !== operationId || final.phase !== "succeeded") {
+            return yield* new ProviderSetupError({
+              instanceId: input.instanceId,
+              operation: "install",
+              detail:
+                (final.operationId === operationId ? final.message : null) ??
+                "The installation did not finish.",
+            });
+          }
+          return final;
+        }),
+      ({ state: started, owned }, exit) =>
+        owned && started.operationId !== null && Exit.hasInterrupts(exit)
+          ? antigravityInstallation.cancel(started.operationId).pipe(Effect.ignore)
+          : Effect.void,
+    );
   });
 
   const cancel = Effect.fn("ProviderInstallation.cancel")(function* (
@@ -249,7 +317,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
     return yield* installation.state;
   });
 
-  return { start, cancel, subscribe, remove };
+  return { start, run, cancel, subscribe, remove };
 });
 
 export const layer = Layer.effect(ProviderInstallation, make());

@@ -24,6 +24,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeUtil from "node:util";
 
 import * as ModelManifest from "./ModelManifest.ts";
+import * as ProviderInstallation from "./providerInstallation.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
@@ -324,6 +325,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
+  const providerInstallation = yield* ProviderInstallation.ProviderInstallation;
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
     onProgress: (line: string) => Effect.Effect<void>,
@@ -350,7 +352,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
           .getProviderMaintenanceCapabilitiesForInstance(candidate.instanceId, candidate.driver)
           .pipe(
             Effect.map((capabilities) =>
-              capabilities.update?.lockKey === lockKey ? [candidate.instanceId] : [],
+              (capabilities.update ?? capabilities.managedInstall)?.lockKey === lockKey
+                ? [candidate.instanceId]
+                : [],
             ),
           ),
       { concurrency: "unbounded" },
@@ -434,7 +438,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       instanceId,
       provider,
     );
-    const update = capabilities.update;
+    const update = capabilities.update ?? capabilities.managedInstall;
     if (!update) {
       return yield* new ServerProviderUpdateError({
         provider,
@@ -491,7 +495,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               provider,
               { fresh: true },
             );
-            if (!fresh.update || fresh.update.lockKey !== update.lockKey) {
+            if ((fresh.update ?? fresh.managedInstall)?.lockKey !== update.lockKey) {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
@@ -502,20 +506,20 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               );
             }
 
-            const manifest = yield* manifestService.current;
             // Check compatibility against what an unpinned command would install now.
-            const candidateVersion =
-              targetVersion ??
-              (yield* invalidateLatestProviderVersion(fresh).pipe(
+            const lookupCandidate =
+              fresh.managedInstall?.refreshLatestVersion ??
+              invalidateLatestProviderVersion(fresh).pipe(
                 Effect.andThen(resolveLatestProviderVersion(fresh)),
                 Effect.provideService(HttpClient.HttpClient, httpClient),
                 Effect.provideService(
                   ProviderLatestVersions.ProviderLatestVersions,
                   latestVersions,
                 ),
-              ));
+              );
+            const candidateVersion = targetVersion ?? (yield* lookupCandidate);
             const advisory = ModelManifest.providerCompatibility(
-              manifest,
+              yield* manifestService.current,
               provider,
               candidateVersion,
             );
@@ -529,7 +533,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   advisory?.recommendedVersion !== targetVersion ||
                   advisory.status !== "supported"
                 : advisory?.status === "broken" || advisory?.status === "unsupported";
-            if (rejected || !command) {
+            if (rejected || (!command && fresh.managedInstall === undefined)) {
               return yield* finish(
                 makeUpdateState({
                   status: "failed",
@@ -550,7 +554,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               const precheck = yield* verifyFromRefresh(
                 providerRegistry.refreshInstance(instanceId),
                 provider,
-                fresh,
+                fresh.managedInstall === undefined
+                  ? fresh
+                  : { ...fresh, latestVersion: candidateVersion },
                 instanceId,
                 "pre-update",
               );
@@ -587,12 +593,30 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             yield* setRunningMessage("Waiting for running provider work to finish.");
             const result = yield* installationGate.update(
               sharingInstances,
-              setRunningMessage(`Running ${describeCommand(command)}`).pipe(
-                Effect.andThen(runMaintenanceCommand(command, setRunningMessage)),
-              ),
+              Effect.gen(function* () {
+                if (command === null) {
+                  // A managed install has no command. A failed one fails here with its own
+                  // message, which recordFailedUpdate reports.
+                  if (candidateVersion === null) {
+                    return yield* new ServerProviderUpdateError({
+                      provider,
+                      reason:
+                        "Could not determine which provider version to install. Check for updates and try again.",
+                    });
+                  }
+                  yield* providerInstallation.run(
+                    { instanceId },
+                    setRunningMessage,
+                    candidateVersion,
+                  );
+                  return null;
+                }
+                yield* setRunningMessage(`Running ${describeCommand(command)}`);
+                return yield* runMaintenanceCommand(command, setRunningMessage);
+              }),
             );
             const finishedAt = yield* nowIso;
-            if (result.timedOut || result.exitCode !== 0) {
+            if (command !== null && result !== null && (result.timedOut || result.exitCode !== 0)) {
               yield* Effect.logWarning("Provider update command failed", {
                 provider,
                 command: describeCommand(command),
@@ -659,7 +683,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                     : needsOpenCodeServerRestart(verifiedProviders)
                       ? OPENCODE_SERVER_RESTART_MESSAGE
                       : "Provider updated.",
-                output: commandOutput(result),
+                output: result && commandOutput(result),
               }),
             );
           },

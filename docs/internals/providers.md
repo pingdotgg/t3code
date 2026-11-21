@@ -116,6 +116,14 @@ Ownership is cached per instance and re-read immediately before an update runs. 
 changed since the advisory, and reports success only when the refreshed provider is still installed
 with a readable, current version.
 
+A runtime T3 Code installs itself, such as Antigravity's, has no command to run. Its capabilities
+set `managedInstall` instead, and the runner updates it through
+[`ProviderInstallation`](../../apps/server/src/provider/providerInstallation.ts), the same install
+its setup section starts. The runner passes the version it checked for compatibility, and the
+installer refuses if the selected release changed before the install could start.
+Explicit update checks and update runs refresh the Antigravity release offer once per installation.
+Routine health checks use the installer's hourly throttle.
+
 ## Protocol traps
 
 Codex async questions arrive as notifications and are answered with a new user message. There is

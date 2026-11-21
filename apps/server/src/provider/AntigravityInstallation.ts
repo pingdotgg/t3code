@@ -113,12 +113,20 @@ interface AntigravityInstallationService {
     version: string,
   ) => Effect.Effect<ServerProviderCompatibilityAdvisory | undefined>;
   readonly start: Effect.Effect<ProviderInstallState, AntigravityInstallationError>;
+  /** Reports ownership from the start lock. A checked version must still match the selected release. */
+  readonly startOperation: (
+    expectedVersion?: string,
+  ) => Effect.Effect<
+    { readonly state: ProviderInstallState; readonly owned: boolean },
+    AntigravityInstallationError
+  >;
   readonly cancel: (
     operationId: string,
   ) => Effect.Effect<ProviderInstallState, AntigravityInstallationError>;
   readonly state: Effect.Effect<ProviderInstallState>;
   readonly changes: Stream.Stream<ProviderInstallState>;
   readonly checkForUpdate: Effect.Effect<void>;
+  readonly refreshUpdate: Effect.Effect<string | null>;
   readonly remove: (
     protectedBinaryPaths?: ReadonlyArray<string>,
   ) => Effect.Effect<void, AntigravityInstallationError>;
@@ -1219,16 +1227,27 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     ),
   );
 
+  const eligibleAsset = Effect.fn("AntigravityInstallation.eligibleAsset")(function* (
+    asset: AntigravityCliReleaseAsset | null,
+  ) {
+    return asset !== null && !(yield* isWithdrawn(asset.version)) ? asset : null;
+  });
+  const preferInstalled = (version: string, asset: AntigravityCliReleaseAsset | null) =>
+    asset === null || compareSemverVersions(version, asset.version) > 0;
+
+  const updateChecksEnabled = options.updateChecksEnabled ?? Effect.succeed(true);
   let lastUpdateCheck: number | undefined;
+  let latestLookup = 0;
   const refreshRelease = Effect.fn("AntigravityInstallation.refreshRelease")(function* (
     explicit = false,
   ) {
     if (options.releaseAsset !== undefined || !supported) return;
-    if (!explicit && !(yield* options.updateChecksEnabled ?? Effect.succeed(true))) return;
+    if (!explicit && !(yield* updateChecksEnabled)) return;
     const now = yield* Clock.currentTimeMillis;
     if (!explicit && lastUpdateCheck !== undefined && now - lastUpdateCheck < UPDATE_CHECK_INTERVAL)
       return;
     lastUpdateCheck = now;
+    const lookup = ++latestLookup;
     const musl =
       platform === "linux" &&
       (yield* fs.exists(
@@ -1242,127 +1261,139 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.timeout("10 seconds"),
       Effect.orElseSucceed(() => null),
     );
-    if (latest === null) return;
-    if (yield* isWithdrawn(latest.version)) {
-      releaseAsset = null;
-      return;
-    }
-    releaseAsset = latest;
-    yield* SubscriptionRef.updateEffect(state, (value) =>
-      isRunning(value)
-        ? Effect.succeed(value)
-        : Effect.gen(function* () {
-            const keepInstalled =
-              value.installedVersion !== null &&
-              compareSemverVersions(value.installedVersion, latest.version) > 0 &&
-              !(yield* isWithdrawn(value.installedVersion));
-            return {
-              ...value,
-              version: keepInstalled ? value.installedVersion : latest.version,
-              totalBytes: null,
-            };
-          }),
+    if (latest === null || lookup !== latestLookup) return;
+    yield* gate.withPermit(
+      SubscriptionRef.updateEffect(state, (value) =>
+        Effect.gen(function* () {
+          const asset = yield* eligibleAsset(latest);
+          const keepInstalled =
+            value.installedVersion !== null &&
+            preferInstalled(value.installedVersion, asset) &&
+            !(yield* isWithdrawn(value.installedVersion));
+          if (lookup !== latestLookup) return value;
+          releaseAsset = asset;
+          if (isRunning(value)) return value;
+          return {
+            ...value,
+            version: keepInstalled ? value.installedVersion : (asset?.version ?? null),
+            totalBytes: null,
+          };
+        }),
+      ),
     );
   });
 
-  const start = Effect.gen(function* () {
-    const current = yield* SubscriptionRef.get(state);
-    if (isRunning(current)) return current;
-    yield* refreshRelease(true);
-    return yield* gate.withPermit(
-      Effect.gen(function* () {
-        const current = yield* SubscriptionRef.get(state);
-        if (isRunning(current)) return current;
-        if (!supported) {
-          return yield* installationError(
-            "start",
-            `Google does not publish an Antigravity runtime for ${platform}-${arch}. Use a supported remote environment or a custom executable.`,
-          );
-        }
-        const asset =
-          releaseAsset !== null && !(yield* isWithdrawn(releaseAsset.version))
-            ? releaseAsset
-            : null;
-        const installed = yield* resolve().pipe(Effect.option);
-        const reuse =
-          Option.isSome(installed) &&
-          installed.value.source === "managed" &&
-          (asset === null || compareSemverVersions(installed.value.version!, asset.version) > 0)
-            ? installed.value
-            : undefined;
-        if (asset === null && reuse === undefined)
-          return yield* installationError(
-            "start",
-            "Could not find a native Antigravity CLI release. Check the network connection and try again.",
-          );
-        const operationId = yield* random.uuidV4();
-        const next: ProviderInstallState = {
-          driver: DRIVER,
-          operationId,
-          phase: reuse === undefined ? "downloading" : "verifying",
-          downloadedBytes: 0,
-          totalBytes: null,
-          version: reuse?.version ?? asset?.version ?? null,
-          installedVersion: current.installedVersion,
-          canRemove: current.canRemove,
-          message:
+  const startOperation = Effect.fn("AntigravityInstallation.startOperation")(
+    function* (expectedVersion?: string) {
+      const checkVersion = (version: string | null) =>
+        expectedVersion !== undefined && expectedVersion !== version
+          ? installationError(
+              "start",
+              "The Antigravity release changed. Check for updates and try again.",
+            )
+          : Effect.void;
+      const current = yield* SubscriptionRef.get(state);
+      if (expectedVersion === undefined && !isRunning(current)) {
+        yield* refreshRelease(true).pipe(Effect.interruptible);
+      }
+      return yield* gate.withPermit(
+        Effect.gen(function* () {
+          const current = yield* SubscriptionRef.get(state);
+          if (isRunning(current)) {
+            yield* checkVersion(current.version);
+            return { state: current, owned: false };
+          }
+          if (!supported) {
+            return yield* installationError(
+              "start",
+              `Google does not publish an Antigravity runtime for ${platform}-${arch}. Use a supported remote environment or a custom executable.`,
+            );
+          }
+          const asset = yield* eligibleAsset(releaseAsset);
+          const installed = yield* resolve().pipe(Effect.option);
+          const reuse =
+            Option.isSome(installed) &&
+            installed.value.source === "managed" &&
+            preferInstalled(installed.value.version!, asset)
+              ? installed.value
+              : undefined;
+          if (asset === null && reuse === undefined)
+            return yield* installationError(
+              "start",
+              "Could not find a native Antigravity CLI release. Check the network connection and try again.",
+            );
+          const version = reuse?.version ?? asset?.version ?? null;
+          yield* checkVersion(version);
+          const operationId = yield* random.uuidV4();
+          const next: ProviderInstallState = {
+            driver: DRIVER,
+            operationId,
+            phase: reuse === undefined ? "downloading" : "verifying",
+            downloadedBytes: 0,
+            totalBytes: null,
+            version,
+            installedVersion: current.installedVersion,
+            canRemove: current.canRemove,
+            message:
+              reuse === undefined
+                ? "Downloading Google's official Antigravity runtime."
+                : "Checking the installed runtime.",
+          };
+          yield* SubscriptionRef.set(state, next);
+          const work = (
             reuse === undefined
-              ? "Downloading Google's official Antigravity runtime."
-              : "Checking the installed runtime.",
-        };
-        yield* SubscriptionRef.set(state, next);
-        const work = (
-          reuse === undefined
-            ? install(asset!)
-            : validate(reuse, reuse.version!).pipe(
-                Effect.scoped,
-                withValidationTimeout,
-                Effect.andThen(ensureEligible(reuse.version!)),
-                Effect.andThen(
-                  SubscriptionRef.update(state, (value) => ({
-                    ...value,
-                    phase: "succeeded" as const,
-                    installedVersion: reuse.version,
-                    message: null,
-                  })),
-                ),
-              )
-        ).pipe(
-          Effect.mapError(
-            wrapFailure("verify", "Could not verify the installed Antigravity runtime."),
-          ),
-          Effect.onExit((exit) =>
-            Exit.isFailure(exit)
-              ? SubscriptionRef.update(state, (value) => {
-                  if (value.operationId !== operationId || value.phase === "succeeded")
-                    return value;
-                  const error = Cause.findErrorOption(exit.cause);
-                  const cancelled = Cause.hasInterruptsOnly(exit.cause);
-                  return {
-                    ...value,
-                    phase: cancelled ? "cancelled" : "failed",
-                    message: cancelled
-                      ? "Installation cancelled. The previous runtime is unchanged."
-                      : Option.isSome(error)
-                        ? error.value.detail
-                        : "Could not finish the Antigravity installation. Check disk space and directory access.",
-                  } satisfies ProviderInstallState;
-                })
-              : Effect.void,
-          ),
-          Effect.ignoreCause,
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (running?.operationId === operationId) running = undefined;
-            }),
-          ),
-        );
-        const fiber = yield* Effect.forkIn(Effect.interruptible(work), serviceScope);
-        running = { operationId, fiber };
-        return next;
-      }).pipe(Effect.uninterruptible),
-    );
-  }).pipe(Effect.mapError(wrapFailure("start", "Could not start the Antigravity installation.")));
+              ? install(asset!)
+              : validate(reuse, reuse.version!).pipe(
+                  Effect.scoped,
+                  withValidationTimeout,
+                  Effect.andThen(ensureEligible(reuse.version!)),
+                  Effect.andThen(
+                    SubscriptionRef.update(state, (value) => ({
+                      ...value,
+                      phase: "succeeded" as const,
+                      installedVersion: reuse.version,
+                      message: null,
+                    })),
+                  ),
+                )
+          ).pipe(
+            Effect.mapError(
+              wrapFailure("verify", "Could not verify the installed Antigravity runtime."),
+            ),
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit)
+                ? SubscriptionRef.update(state, (value) => {
+                    if (value.operationId !== operationId || value.phase === "succeeded")
+                      return value;
+                    const error = Cause.findErrorOption(exit.cause);
+                    const cancelled = Cause.hasInterruptsOnly(exit.cause);
+                    return {
+                      ...value,
+                      phase: cancelled ? "cancelled" : "failed",
+                      message: cancelled
+                        ? "Installation cancelled. The previous runtime is unchanged."
+                        : Option.isSome(error)
+                          ? error.value.detail
+                          : "Could not finish the Antigravity installation. Check disk space and directory access.",
+                    } satisfies ProviderInstallState;
+                  })
+                : Effect.void,
+            ),
+            Effect.ignoreCause,
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (running?.operationId === operationId) running = undefined;
+              }),
+            ),
+          );
+          const fiber = yield* Effect.forkIn(Effect.interruptible(work), serviceScope);
+          running = { operationId, fiber };
+          return { state: next, owned: true };
+        }).pipe(Effect.uninterruptible),
+      );
+    },
+    Effect.mapError(wrapFailure("start", "Could not start the Antigravity installation.")),
+  );
 
   const cancel = Effect.fn("AntigravityInstallation.cancel")(function* (operationId: string) {
     return yield* gate.withPermit(
@@ -1516,11 +1547,19 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     resolve,
     acquire,
     compatibility,
-    start,
+    start: startOperation().pipe(Effect.map((operation) => operation.state)),
+    startOperation,
     cancel,
     state: SubscriptionRef.get(state),
     changes: SubscriptionRef.changes(state),
     checkForUpdate: refreshRelease().pipe(Effect.ignore),
+    refreshUpdate: updateChecksEnabled.pipe(
+      Effect.flatMap((enabled) =>
+        enabled ? refreshRelease(true).pipe(Effect.ignore) : Effect.void,
+      ),
+      Effect.andThen(SubscriptionRef.get(state)),
+      Effect.map((current) => current.version),
+    ),
     remove,
   });
 });
