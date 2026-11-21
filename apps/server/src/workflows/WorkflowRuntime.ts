@@ -319,6 +319,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   /** Code files in the folder that are not loaded because of their name. */
   let misnamed: ReadonlyArray<WorkflowDefinitionProblem> = [];
   let retrying = false;
+  let unstarted = false;
   const state = yield* SubscriptionRef.make<{ revision: number; problem: string | null }>({
     revision: 0,
     problem: null,
@@ -511,14 +512,15 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
         problems: [...held.values()].flat(),
       });
     }
-    between = problems.map((entry) => entry.problem);
-    if (between.length > 0) {
-      yield* Effect.logWarning("Workflow definitions were not changed", { problems: between });
-      yield* report;
-      return true;
+    // What is left was so before any of these changes, so it holds none of them back.
+    const standing = problems.map((entry) => entry.problem);
+    if (standing.length > 0) {
+      yield* Effect.logWarning("Workflow definitions have problems", { problems: standing });
     }
     const taking = [...pending.keys()].filter((name) => !held.has(name));
-    if (taking.length === 0 && held.size > 0) {
+    // An engine that did not start is tried again, as the runs it tripped on may have ended.
+    if (taking.length === 0 && !unstarted) {
+      between = standing;
       yield* report;
       return true;
     }
@@ -526,7 +528,8 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     for (const [name, definitions] of next) good.set(name, definitions);
     for (const name of taking) pending.delete(name);
     const failed = yield* boot(gathered(next).flatMap((file) => file.definitions));
-    between = failed === null ? [] : [{ message: failed }];
+    unstarted = failed !== null;
+    between = failed === null ? standing : [...standing, { message: failed }];
     yield* report;
     return true;
   });
