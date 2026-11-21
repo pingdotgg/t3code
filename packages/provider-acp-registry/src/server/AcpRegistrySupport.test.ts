@@ -1608,6 +1608,60 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect(
+    "installs the registry's current version when a cached index pins a removed build",
+    () => {
+      const binaryAgent = (version: string) => ({
+        ...makeAgent({
+          binary: {
+            "linux-x86_64": {
+              archive: `https://registry.test/example-agent-${version}.bin`,
+              cmd: "./bin/example-agent",
+              args: ["acp"],
+            },
+          },
+        }),
+        version,
+      });
+      const requests: Array<string> = [];
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-stale-",
+        });
+        yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${cacheDir}/acp-registry/registry.json`,
+          makeRegistry(binaryAgent("1.2.3")),
+        );
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+        const resolved = yield* resolver.resolve(settings(), "/workspace");
+
+        expect(resolved.agent?.version).toBe("1.2.4");
+        expect(resolved.spawn.command).toContain("/tools/example-agent/1.2.4/");
+        expect(requests).toContain(registryUrl);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            requests.push(request.url);
+            const response =
+              request.url === registryUrl
+                ? new Response(makeRegistry(binaryAgent("1.2.4")))
+                : request.url.endsWith("-1.2.4.bin")
+                  ? new Response("#!/bin/sh\necho example\n")
+                  : new Response("forbidden", { status: 403 });
+            return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("rejects unsafe command paths before downloading an archive", () => {
     const agent = makeAgent({
       binary: {
