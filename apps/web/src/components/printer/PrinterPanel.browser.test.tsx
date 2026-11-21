@@ -283,6 +283,7 @@ describe("PrinterPanel", () => {
           action: {
             kind: "stop",
             expectedJobFileName: "desk-rear-edge-jig.gcode.3mf",
+            expectedJobStartedAt: "2026-11-21T00:30:00.000Z",
           },
         },
       }),
@@ -514,6 +515,7 @@ describe("PrinterPanel", () => {
             kind: "skipObjects",
             objectIds: [1],
             expectedJobFileName: "next-plate.gcode.3mf",
+            expectedJobStartedAt: "2026-11-21T00:30:00.000Z",
           },
         },
       }),

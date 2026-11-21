@@ -2202,4 +2202,124 @@ describe("PrinterService safety guards & lifecycle", () => {
         });
       }),
   );
+
+  it.effect(
+    "rejects stale Stop confirmation when same filename reprints with a new startedAt or missing startedAt",
+    () =>
+      Effect.gen(function* () {
+        const cancelCalls: Array<string> = [];
+        let printDuration = 600;
+        let printState: "printing" | "standby" = "printing";
+        const moonrakerConfig: MoonrakerPrinterConfig = {
+          kind: "moonraker",
+          id: PrinterId.make("voron-stop-guard"),
+          label: "Voron Guard",
+          baseUrl: "http://192.168.1.52:7125",
+          apiKey: "moonraker-secret",
+          pollIntervalSeconds: 4,
+        };
+        const moonClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/server/info") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(JSON.stringify({ result: { klippy_state: "ready" } }), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                  }),
+                ),
+              );
+            }
+            if (url.pathname === "/printer/objects/query") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify({
+                      result: {
+                        status: {
+                          webhooks: { state: "ready" },
+                          print_stats: {
+                            state: printState,
+                            filename: "same-plate.gcode",
+                            print_duration: printDuration,
+                          },
+                        },
+                      },
+                    }),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            if (url.pathname === "/printer/print/cancel") {
+              cancelCalls.push(url.pathname);
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("ok", { status: 200 })),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("Not Found", { status: 404 })),
+            );
+          }),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            yield* TestClock.adjust(Duration.seconds(1000));
+            const initial = yield* service.list({ refresh: true });
+            const originalStartedAt = initial.printers[0]?.job.startedAt;
+            expect(originalStartedAt).not.toBeNull();
+
+            // Same filename reprints immediately before browser updates (elapsed drops to 2s -> new startedAt).
+            yield* TestClock.adjust(Duration.seconds(10));
+            printDuration = 2;
+            const staleStopExit = yield* Effect.exit(
+              service.action({
+                printerId: moonrakerConfig.id,
+                action: {
+                  kind: "stop",
+                  expectedJobFileName: "same-plate.gcode",
+                  expectedJobStartedAt: originalStartedAt,
+                },
+              }),
+            );
+            expect(Exit.isFailure(staleStopExit)).toBe(true);
+            expect(cancelCalls).toHaveLength(0);
+
+            // Missing observed startedAt (e.g. standby/idle) also fails closed when expectedJobStartedAt is supplied.
+            printState = "standby";
+            const missingStartedExit = yield* Effect.exit(
+              service.action({
+                printerId: moonrakerConfig.id,
+                action: {
+                  kind: "stop",
+                  expectedJobFileName: "same-plate.gcode",
+                  expectedJobStartedAt: originalStartedAt,
+                },
+              }),
+            );
+            expect(Exit.isFailure(missingStartedExit)).toBe(true);
+            expect(cancelCalls).toHaveLength(0);
+          }).pipe(
+            Effect.provide(
+              PrinterService.layer.pipe(
+                Layer.provide(
+                  ServerSettings.layerTest({
+                    enablePrinterSupport: true,
+                    printers: [moonrakerConfig],
+                  }),
+                ),
+                Layer.provide(mockSecretResolverLayer),
+                Layer.provide(moonClient),
+              ),
+            ),
+          ),
+        );
+      }),
+  );
 });

@@ -238,24 +238,43 @@ function validateSafetyGuards(
   }
 
   if (
-    (action.kind === "pause" ||
-      action.kind === "resume" ||
-      action.kind === "stop" ||
-      action.kind === "skipObjects") &&
-    action.expectedJobFileName !== undefined &&
-    action.expectedJobFileName !== null &&
-    (snapshot.job.fileName === null || action.expectedJobFileName !== snapshot.job.fileName)
+    action.kind === "pause" ||
+    action.kind === "resume" ||
+    action.kind === "stop" ||
+    action.kind === "skipObjects"
   ) {
-    return Effect.fail(
-      new PrinterSafetyError({
-        action: action.kind,
-        printerId,
-        reason:
-          snapshot.job.fileName === null
-            ? `Active print job filename is unavailable; cannot confirm "${action.expectedJobFileName}" before ${action.kind}.`
-            : `Active print job changed to "${snapshot.job.fileName}". Refresh before retrying ${action.kind}.`,
-      }),
-    );
+    if (
+      action.expectedJobFileName !== undefined &&
+      action.expectedJobFileName !== null &&
+      (snapshot.job.fileName === null || action.expectedJobFileName !== snapshot.job.fileName)
+    ) {
+      return Effect.fail(
+        new PrinterSafetyError({
+          action: action.kind,
+          printerId,
+          reason:
+            snapshot.job.fileName === null
+              ? `Active print job filename is unavailable; cannot confirm "${action.expectedJobFileName}" before ${action.kind}.`
+              : `Active print job changed to "${snapshot.job.fileName}". Refresh before retrying ${action.kind}.`,
+        }),
+      );
+    }
+    if (
+      action.expectedJobStartedAt !== undefined &&
+      action.expectedJobStartedAt !== null &&
+      (snapshot.job.startedAt === null || action.expectedJobStartedAt !== snapshot.job.startedAt)
+    ) {
+      return Effect.fail(
+        new PrinterSafetyError({
+          action: action.kind,
+          printerId,
+          reason:
+            snapshot.job.startedAt === null
+              ? `Active print job start timestamp is unavailable; cannot confirm the target job before ${action.kind}.`
+              : `Active print job restarted or changed since confirmation. Refresh before retrying ${action.kind}.`,
+        }),
+      );
+    }
   }
 
   if (action.kind === "skipObjects") {

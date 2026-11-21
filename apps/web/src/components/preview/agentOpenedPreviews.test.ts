@@ -495,5 +495,39 @@ describe("applyPrinterSnapshot", () => {
     );
     const ownerRef = scopeThreadRef(proxyEnvId, ref.threadId);
     expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(ownerRef)]).toBeUndefined();
+
+    // Owner-ends / proxy-remains: ownership transfers to surviving proxy env and opens its panel cleanly.
+    setup();
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    const ownerSession = {
+      threadId: ref.threadId,
+      printerId: PrinterId.make("p1s-studio"),
+      printerLabel: "Studio P1S",
+      openedAt: "2026-11-21T02:00:00.000Z",
+    };
+    const proxySession = {
+      ...ownerSession,
+      proxyEnvironmentId: proxyEnvId,
+      openedAt: "2026-11-21T02:00:02.000Z",
+    };
+    // Owner opens first; proxy duplicate is suppressed.
+    applyPrinterSnapshot(proxyEnvId, printerState([ownerSession]), { sheetLayout: false });
+    applyPrinterSnapshot(ref.environmentId, printerState([proxySession]), { sheetLayout: false });
+    expect(
+      useRightPanelStore
+        .getState()
+        .byThreadKey[scopedThreadKey(ownerRef)]?.surfaces.map((s) => s.id),
+    ).toEqual(["printer:p1s-studio"]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]).toBeUndefined();
+
+    // Owner session ends while proxy remains active -> owner panel closes, proxy panel opens.
+    applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
+    expect(
+      useRightPanelStore.getState().byThreadKey[scopedThreadKey(ownerRef)]?.surfaces ?? [],
+    ).toEqual([]);
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
   });
 });

@@ -377,14 +377,17 @@ export const PrinterAction = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("pause"),
     expectedJobFileName: Schema.optional(Schema.NullOr(Schema.String)),
+    expectedJobStartedAt: Schema.optional(Schema.NullOr(Schema.String)),
   }),
   Schema.Struct({
     kind: Schema.Literal("resume"),
     expectedJobFileName: Schema.optional(Schema.NullOr(Schema.String)),
+    expectedJobStartedAt: Schema.optional(Schema.NullOr(Schema.String)),
   }),
   Schema.Struct({
     kind: Schema.Literal("stop"),
     expectedJobFileName: Schema.optional(Schema.NullOr(Schema.String)),
+    expectedJobStartedAt: Schema.optional(Schema.NullOr(Schema.String)),
   }),
   Schema.Struct({
     kind: Schema.Literal("setChamberLight"),
@@ -419,6 +422,7 @@ export const PrinterAction = Schema.Union([
     kind: Schema.Literal("skipObjects"),
     objectIds: Schema.Array(Schema.Int).check(Schema.isMinLength(1)),
     expectedJobFileName: Schema.optional(Schema.NullOr(Schema.String)),
+    expectedJobStartedAt: Schema.optional(Schema.NullOr(Schema.String)),
   }),
   Schema.Struct({
     kind: Schema.Literal("refresh"),

@@ -456,6 +456,7 @@ export function PrinterPanel(props: {
     readonly printerLabel: string;
     readonly proxyEnvironmentId: EnvironmentId;
     readonly expectedJobFileName: string | null;
+    readonly expectedJobStartedAt: string | null;
     readonly displayName: string;
   } | null>(null);
   const [skipTarget, setSkipTarget] = useState<{
@@ -463,6 +464,7 @@ export function PrinterPanel(props: {
     readonly proxyEnvironmentId: EnvironmentId;
     readonly object: PrinterObject;
     readonly jobFileName: string | null;
+    readonly jobStartedAt: string | null;
   } | null>(null);
   const [isWide, setIsWide] = useState(false);
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
@@ -481,13 +483,15 @@ export function PrinterPanel(props: {
     activePrinter !== undefined &&
     stopTarget.printerId === activePrinter.id &&
     stopTarget.proxyEnvironmentId === proxyEnvironmentId &&
-    stopTarget.expectedJobFileName === activePrinter.job.fileName;
+    stopTarget.expectedJobFileName === activePrinter.job.fileName &&
+    stopTarget.expectedJobStartedAt === activePrinter.job.startedAt;
   const skipDialogValid =
     skipTarget !== null &&
     activePrinter !== undefined &&
     skipTarget.printerId === activePrinter.id &&
     skipTarget.proxyEnvironmentId === proxyEnvironmentId &&
-    skipTarget.jobFileName === activePrinter.job.fileName;
+    skipTarget.jobFileName === activePrinter.job.fileName &&
+    skipTarget.jobStartedAt === activePrinter.job.startedAt;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks container width to switch single-tree narrow vs wide layout without duplicating viewport polling
   useEffect(() => {
@@ -746,6 +750,7 @@ export function PrinterPanel(props: {
                 void handleAction({
                   kind: "pause",
                   expectedJobFileName: activePrinter.job.fileName,
+                  expectedJobStartedAt: activePrinter.job.startedAt,
                 })
               }
             >
@@ -762,6 +767,7 @@ export function PrinterPanel(props: {
                 void handleAction({
                   kind: "resume",
                   expectedJobFileName: activePrinter.job.fileName,
+                  expectedJobStartedAt: activePrinter.job.startedAt,
                 })
               }
             >
@@ -780,6 +786,7 @@ export function PrinterPanel(props: {
                   printerLabel: activePrinter.label,
                   proxyEnvironmentId,
                   expectedJobFileName: activePrinter.job.fileName,
+                  expectedJobStartedAt: activePrinter.job.startedAt,
                   displayName:
                     activePrinter.job.displayName ??
                     activePrinter.job.fileName ??
@@ -869,6 +876,7 @@ export function PrinterPanel(props: {
           proxyEnvironmentId,
           object: obj,
           jobFileName: activePrinter.job.fileName,
+          jobStartedAt: activePrinter.job.startedAt,
         })
       }
     />
@@ -1159,6 +1167,7 @@ export function PrinterPanel(props: {
                   {
                     kind: "stop",
                     expectedJobFileName: captured.expectedJobFileName,
+                    expectedJobStartedAt: captured.expectedJobStartedAt,
                   },
                   {
                     printerId: captured.printerId,
@@ -1204,6 +1213,9 @@ export function PrinterPanel(props: {
                     objectIds: [captured.object.id],
                     ...(captured.jobFileName !== null
                       ? { expectedJobFileName: captured.jobFileName }
+                      : {}),
+                    ...(captured.jobStartedAt !== null
+                      ? { expectedJobStartedAt: captured.jobStartedAt }
                       : {}),
                   },
                   {
