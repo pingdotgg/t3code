@@ -375,9 +375,12 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedError<Orche
     commandType: Schema.String,
     receiptThreadId: ThreadId,
     commandThreadId: ThreadId,
+    receiptCommandType: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
+    if (this.receiptCommandType !== undefined)
+      return `Command ${this.commandId} was already handled as ${this.receiptCommandType} and cannot be replayed as ${this.commandType}.`;
     return `Command ${this.commandId} was already handled for thread ${this.receiptThreadId} and cannot be replayed for ${this.commandThreadId}.`;
   }
 }
@@ -1906,8 +1909,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       .findThread(threadId)
       .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
 
+  const sideChatLifecycleSuffix = (threadId: ThreadId) => `:side-chat:${threadId}`;
   const sideChatLifecycleCommandId = (commandId: CommandId, threadId: ThreadId) =>
-    CommandId.make(`${commandId}:side-chat:${threadId}`);
+    CommandId.make(`${commandId}${sideChatLifecycleSuffix(threadId)}`);
 
   // A cascade walks the whole subtree itself, so its own commands start none.
   const subagentCascadeEffects = Effect.fn("Orchestrator.subagentCascadeEffects")(function* (
@@ -16117,6 +16121,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  const rejectConflictingSideChatReceipt = Effect.fn(
+    "OrchestratorV2.rejectConflictingSideChatReceipt",
+  )(function* (command: OrchestrationV2ServerCommand, receipt: CommandReceiptV2) {
+    if (receipt.commandType !== "thread.archive" && receipt.commandType !== "thread.unarchive")
+      return;
+    const suffix = sideChatLifecycleSuffix(receipt.threadId);
+    if (receipt.commandId.length <= suffix.length || !receipt.commandId.endsWith(suffix)) return;
+    const parentId = CommandId.make(receipt.commandId.slice(0, -suffix.length));
+    const parent = Option.getOrUndefined(
+      yield* commandReceipts.getByCommandId(parentId).pipe(mapDispatchError(command)),
+    );
+    if (
+      parent?.status === "accepted" &&
+      parent.commandType === receipt.commandType &&
+      parent.resultSequence === receipt.resultSequence &&
+      parent.threadId !== receipt.threadId
+    ) {
+      return yield* new OrchestratorCommandIdConflictError({
+        commandId: command.commandId,
+        commandType: command.type,
+        receiptThreadId: receipt.threadId,
+        commandThreadId: receipt.threadId,
+        receiptCommandType: receipt.commandType,
+      });
+    }
+  });
+
   const replayCommandReceipt = Effect.fn("orchestrationV2.dispatch.replayReceipt")(function* (
     command: OrchestrationV2ServerCommand,
     receipt: CommandReceiptV2,
@@ -16138,6 +16169,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandThreadId: dispatchThreadId,
       });
     }
+    if (receipt.commandType !== command.type)
+      yield* rejectConflictingSideChatReceipt(command, receipt);
     const storedEvents = yield* eventSink.readByCommandId({ commandId: command.commandId }).pipe(
       Stream.runCollect,
       Effect.map((events): ReadonlyArray<OrchestrationV2StoredEvent> => Array.from(events)),
@@ -16439,6 +16472,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandThreadId: commandThreadId(command),
       });
     }
+    if (!committed.committed && committed.receipt.commandType !== command.type)
+      yield* rejectConflictingSideChatReceipt(command, committed.receipt);
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||

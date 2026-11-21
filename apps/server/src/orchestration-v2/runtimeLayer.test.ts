@@ -14508,25 +14508,27 @@ describe("subagent lifecycle cascade", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("preserves a newer side-chat archive through a delayed nested restore", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture;
-      const side = ThreadId.make("side");
-      const child = ThreadId.make("side-child");
-      yield* f.sideChat(app, side);
-      yield* f.set(child, {
-        lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
-      });
-      yield* f.run("archive");
-      yield* f.drain;
-      assert.equal(yield* f.archived(parent, app, side, child), "1111");
-      yield* f.commit("unarchive");
-      yield* f.commit("unarchive", side);
-      yield* TestClock.adjust("1 second");
-      yield* f.commit("archive", side);
-      yield* f.drain;
-      assert.equal(yield* f.archived(parent, app, side, child), "0001");
-    }).pipe(Effect.provide(layerTest)),
+  it.effect(
+    "keeps the descendant archived during a delayed restore after a newer side-chat archive",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const side = ThreadId.make("side");
+        const child = ThreadId.make("side-child");
+        yield* f.sideChat(app, side);
+        yield* f.set(child, {
+          lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+        });
+        yield* f.run("archive");
+        yield* f.drain;
+        assert.equal(yield* f.archived(parent, app, side, child), "1111");
+        yield* f.commit("unarchive");
+        yield* f.commit("unarchive", side);
+        yield* TestClock.adjust("1 second");
+        yield* f.commit("archive", side);
+        yield* f.drain;
+        assert.equal(yield* f.archived(parent, app, side, child), "0001");
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect.each([
@@ -14683,6 +14685,64 @@ describe("subagent lifecycle cascade", () => {
       yield* f.commit("delete", side, "direct:fresh-delete");
       yield* f.drain;
       assert.equal(yield* f.state("deletedAt", parent, side, child), "111");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["archive", "unarchive"] as const)(
+    "rolls back a direct %s with an occupied lifecycle recovery ID",
+    (operation) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const { side } = yield* f.movedSideChat();
+        const fork = ThreadId.make("fork");
+        const child = ThreadId.make("fork-child");
+        if (operation === "unarchive") {
+          yield* f.run("archive", fork);
+          yield* f.drain;
+        }
+        const before = yield* f.archived(fork, child);
+        const collidingId = `delete:parent:side-chat:${side}`;
+        const effectId = `effect:${collidingId}:subagent-threads.cascade`;
+        yield* f.commit("delete");
+        const occupied = Option.getOrThrow(yield* f.outbox.get(effectId));
+        const refused = yield* f.commit(operation, fork, collidingId).pipe(Effect.flip);
+        assert.equal(refused._tag, "OrchestratorDispatchError");
+        assert.equal(yield* f.archived(fork, child), before);
+        assert.isTrue(Option.isNone(yield* receipt(collidingId)));
+        assert.deepEqual(Option.getOrThrow(yield* f.outbox.get(effectId)), occupied);
+        const fresh = yield* f.commit(operation, fork, "direct:fresh-lifecycle");
+        const replay = yield* f.commit(operation, fork, "direct:fresh-lifecycle");
+        assert.equal(replay.sequence, fresh.sequence);
+        assert.isTrue(replay.replayed);
+        yield* f.drain;
+        assert.equal(yield* f.archived(fork, child), operation === "archive" ? "11" : "00");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rejects a direct delete that reuses a generated archive receipt", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const side = ThreadId.make("side");
+      const child = ThreadId.make("side-child");
+      yield* f.sideChat(parent, side);
+      yield* f.set(child, {
+        lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+      });
+      yield* f.run("archive");
+      yield* f.drain;
+      yield* TestClock.adjust("8 days");
+      yield* f.outbox.pruneSettled;
+      const generatedId = `archive:parent:side-chat:${side}`;
+      const generated = Option.getOrThrow(yield* receipt(generatedId));
+      const replay = yield* f.commit("archive", side, generatedId);
+      assert.equal(replay.sequence, generated.resultSequence);
+      assert.isTrue(replay.replayed);
+      const refused = yield* f.commit("delete", side, generatedId).pipe(Effect.flip);
+      assert.equal(refused._tag, "OrchestratorCommandIdConflictError");
+      assert.deepEqual(Option.getOrThrow(yield* receipt(generatedId)), generated);
+      assert.equal(yield* f.state("deletedAt", side, child), "00");
+      yield* f.run("delete", side, "direct:fresh-delete");
+      assert.equal(yield* f.state("deletedAt", side, child), "11");
     }).pipe(Effect.provide(layerTest)),
   );
 
