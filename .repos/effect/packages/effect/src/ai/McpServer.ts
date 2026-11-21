@@ -13,12 +13,14 @@
  */
 import * as Arr from "../Array.ts"
 import * as Cause from "../Cause.ts"
+import * as Clock from "../Clock.ts"
 import * as Context from "../Context.ts"
 import * as Digest from "../crypto/Digest.ts"
 import * as Data from "../Data.ts"
 import * as Deferred from "../Deferred.ts"
 import * as Duration from "../Duration.ts"
 import * as Effect from "../Effect.ts"
+import * as Base64 from "../encoding/Base64.ts"
 import * as ErrorReporter from "../ErrorReporter.ts"
 import * as Exit from "../Exit.ts"
 import * as Fiber from "../Fiber.ts"
@@ -28,7 +30,9 @@ import { appendPreResponseHandlerUnsafe } from "../http/HttpEffect.ts"
 import * as HttpRouter from "../http/HttpRouter.ts"
 import * as HttpServerRequest from "../http/HttpServerRequest.ts"
 import * as HttpServerResponse from "../http/HttpServerResponse.ts"
+import * as HttpTraceContext from "../http/HttpTraceContext.ts"
 import type * as JsonSchema from "../JsonSchema.ts"
+import * as Latch from "../Latch.ts"
 import * as Layer from "../Layer.ts"
 import * as Option from "../Option.ts"
 import * as Predicate from "../Predicate.ts"
@@ -92,6 +96,7 @@ import type {
   ReadResourceResult,
   ServerCapabilities
 } from "./McpSchema.ts"
+import * as AiPrompt from "./Prompt.ts"
 import * as Tool from "./Tool.ts"
 import * as Toolkit from "./Toolkit.ts"
 
@@ -104,6 +109,7 @@ interface QueuedServerNotification {
   readonly delivered: Deferred.Deferred<void>
   readonly requestContext?: McpRequestContext["Service"] | undefined
   readonly requestHeaders?: Headers.Headers | undefined
+  readonly requestLiveness?: { active: boolean } | undefined
 }
 
 const internalState = new WeakMap<object, {
@@ -119,6 +125,10 @@ const internalState = new WeakMap<object, {
 // that request's server instead of the shared notification queue.
 const RequestNotificationQueue = Context.Reference<Queue.Queue<QueuedServerNotification> | undefined>(
   "effect/ai/McpServer/RequestNotificationQueue",
+  { defaultValue: () => undefined }
+)
+const RequestLiveness = Context.Reference<{ active: boolean } | undefined>(
+  "effect/ai/McpServer/RequestLiveness",
   { defaultValue: () => undefined }
 )
 // Progress and logs belong to the request that emitted them.
@@ -188,14 +198,27 @@ const requestServiceKeys = new Set<string>([
   Tracer.ParentSpan.key
 ])
 
-const omitRequestServices = <Services>(context: Context.Context<Services>): Context.Context<Services> => {
-  const services = new Map<string, any>()
-  for (const [key, value] of context.mapUnsafe) {
-    if (!requestServiceKeys.has(key) && !key.startsWith(middlewareKeyPrefix)) {
-      services.set(key, value)
+// A registration's services without request services, and its middleware.
+// Contexts are immutable, so this is derived once per context: every tool of a
+// toolkit registers from one context that holds all of the toolkit's handlers.
+const preparedContexts = new WeakMap<Context.Context<never>, {
+  readonly services: Context.Context<never>
+  readonly localMiddleware: ReadonlyArray<AnyMiddlewareFn>
+}>()
+
+const prepareContext = (context: Context.Context<never>) => {
+  let prepared = preparedContexts.get(context)
+  if (prepared === undefined) {
+    const services = new Map<string, any>()
+    for (const [key, value] of context.mapUnsafe) {
+      if (!requestServiceKeys.has(key) && !key.startsWith(middlewareKeyPrefix)) {
+        services.set(key, value)
+      }
     }
+    prepared = { services: Context.makeUnsafe(services), localMiddleware: getMiddleware(context) }
+    preparedContexts.set(context, prepared)
   }
-  return Context.makeUnsafe(services)
+  return prepared
 }
 
 const provideInvocationContext = <A, E, R>(
@@ -906,8 +929,9 @@ const makeInvoke = (
   context: Context.Context<never> | undefined,
   globalMiddleware: ReadonlyArray<AnyMiddlewareFn>
 ) => {
-  const services = context === undefined ? Context.empty() : omitRequestServices(context)
-  const localMiddleware = context === undefined ? [] : getMiddleware(context)
+  const { localMiddleware, services } = context === undefined
+    ? { services: Context.empty(), localMiddleware: [] }
+    : prepareContext(context)
   const invoke = <A, E, M extends CallMethod>(
     handler: Effect.Effect<A, E, any>,
     invocation: McpCore.McpInvocation,
@@ -1117,6 +1141,7 @@ export class McpServer extends Context.Service<McpServer, {
             const queued: QueuedServerNotification = {
               notification,
               delivered,
+              requestLiveness: Context.get(fiber.context, RequestLiveness),
               requestContext: Context.getOrUndefined(fiber.context, McpRequestContext),
               requestHeaders: Context.getOrUndefined(fiber.context, HttpServerRequest.HttpServerRequest)?.headers
             }
@@ -1233,8 +1258,8 @@ export class McpServer extends Context.Service<McpServer, {
           }),
           visible: visible("tools/list", options.tool.name),
           isVisible: isEnabled(options.annotations),
-          handle: (call, invocation) =>
-            invoke(options.handle(call.arguments), invocation, {
+          handle: (call, invocation, beforeHandle) =>
+            invoke(Effect.andThen(beforeHandle, () => options.handle(call.arguments)), invocation, {
               method: "tools/call",
               target: call.name,
               payload: call
@@ -1485,8 +1510,121 @@ const requestKey = (requestId: string | number): string => `${typeof requestId}:
 interface ActiveRequest {
   readonly requestId: RpcMessage.RequestId
   readonly prepared: McpRuntime.PreparedRequest
+  readonly liveness: { active: boolean }
   readonly cancelled: boolean
   readonly httpPost: { expected: number } | undefined
+}
+
+// JSON-RPC errors caused by the request rather than the server: parse error,
+// invalid request, method not found, invalid params and resource not found.
+// Per the MCP semantic conventions they do not mark the server span as failed.
+const requestErrorCodes: ReadonlySet<number> = new Set([-32700, -32600, -32601, -32602, -32002])
+
+// Only the W3C keys are read: other `_meta` members can carry protocol claims.
+const remoteParentSpan = (params: Readonly<Record<string, unknown>> | undefined): Tracer.ExternalSpan | undefined => {
+  const meta = params?._meta
+  if (!Predicate.isReadonlyObject(meta) || typeof meta.traceparent !== "string") {
+    return undefined
+  }
+  return Option.getOrUndefined(HttpTraceContext.w3c(Headers.fromInput({ traceparent: meta.traceparent })))
+}
+
+const requestSpanOptions = (
+  method: string,
+  request: RpcMessage.Request<Rpc.Any>,
+  options: {
+    readonly protocolVersion: string
+    readonly networkTransport: string | undefined
+    readonly sessionId: string | undefined
+    readonly recordToolArguments: boolean
+  }
+): Tracer.SpanOptionsNoTrace & { readonly name: string } => {
+  const params = Predicate.isReadonlyObject(request.payload)
+    ? request.payload as Readonly<Record<string, unknown>>
+    : undefined
+  const attributes: Record<string, unknown> = {
+    "mcp.method.name": method,
+    "mcp.protocol.version": options.protocolVersion
+  }
+  if (request.isNotification !== true) attributes["jsonrpc.request.id"] = String(request.id)
+  if (options.sessionId !== undefined) attributes["mcp.session.id"] = options.sessionId
+  if (options.networkTransport !== undefined) attributes["network.transport"] = options.networkTransport
+  let target: string | undefined
+  switch (method) {
+    case "tools/call": {
+      attributes["gen_ai.operation.name"] = "execute_tool"
+      if (typeof params?.name === "string") {
+        target = params.name
+        attributes["gen_ai.tool.name"] = target
+      }
+      if (options.recordToolArguments && params?.arguments !== undefined) {
+        attributes["gen_ai.tool.call.arguments"] = Toolkit.stringifyToolArguments(params.arguments)
+      }
+      break
+    }
+    case "prompts/get": {
+      if (typeof params?.name === "string") {
+        target = params.name
+        attributes["gen_ai.prompt.name"] = target
+      }
+      break
+    }
+    case "resources/read":
+    case "resources/subscribe":
+    case "resources/unsubscribe": {
+      // Resource URIs can be unbounded and sensitive, so they stay out of the span name.
+      if (typeof params?.uri === "string") attributes["mcp.resource.uri"] = params.uri
+      break
+    }
+  }
+  return {
+    name: target === undefined ? method : `${method} ${target}`,
+    kind: "server",
+    attributes,
+    parent: remoteParentSpan(params)
+  }
+}
+
+// The MCP span of the request being handled. Unlike `Tracer.ParentSpan`, it is
+// unset outside a request, so code that sends a response for a request can
+// tell whether that request has an MCP span.
+const CurrentRequestSpan = Context.Reference<Tracer.Span | undefined>("effect/ai/McpServer/CurrentRequestSpan", {
+  defaultValue: () => undefined
+})
+
+// Spans whose request was answered with an error response sent by `McpServer`
+// itself. That response, not the handler's exit, classifies the span.
+const errorResponseSpans = new WeakSet<Tracer.Span>()
+
+const recordErrorResponse = (span: Tracer.Span, code: number) => {
+  errorResponseSpans.add(span)
+  span.attribute("rpc.status_code", String(code))
+  span.attribute("error.type", String(code))
+}
+
+const endRequestSpan = (span: Tracer.Span, method: string, exit: Exit.Exit<unknown, unknown>, endTime: bigint) => {
+  if (errorResponseSpans.has(span)) {
+    return span.end(endTime, exit)
+  }
+  if (Exit.isSuccess(exit)) {
+    if (method === "tools/call" && Predicate.hasProperty(exit.value, "isError") && exit.value.isError === true) {
+      span.attribute("error.type", "tool_error")
+    }
+    return span.end(endTime, exit)
+  }
+  // Interruptions and defects carry no JSON-RPC error. When one is answered
+  // with an internal error, the response write records it on the span.
+  const error = Cause.findErrorOption(exit.cause)
+  if (Option.isNone(error) || !Predicate.hasProperty(error.value, "code") || typeof error.value.code !== "number") {
+    return span.end(endTime, exit)
+  }
+  const code = error.value.code
+  span.attribute("rpc.status_code", String(code))
+  if (requestErrorCodes.has(code)) {
+    return span.end(endTime, Exit.void)
+  }
+  span.attribute("error.type", String(code))
+  span.end(endTime, exit)
 }
 
 class McpClientKey extends Data.Class<{
@@ -1582,6 +1720,14 @@ const normalizeCacheHints = (
  * runtime handles protocol lifecycle state and determines which clients receive
  * queued server notifications.
  *
+ * Each request handled by the server runs in a server span that follows the
+ * OpenTelemetry MCP semantic conventions. Spans are named after the JSON-RPC
+ * method, with the tool or prompt name appended for `tools/call` and
+ * `prompts/get` (for example `tools/call get_weather`). A W3C `traceparent` in
+ * `params._meta` becomes the span's parent, and the transport span (such as
+ * the HTTP server span) is linked. Tool arguments are recorded only when
+ * `Toolkit.RecordToolArguments` is `true`.
+ *
  * @stability unstable
  * @category running
  * @since 4.0.0
@@ -1642,14 +1788,56 @@ const runWithRuntime = Effect.fnUntraced(function*(
   const server = yield* McpServer
   const defaultLogLevel = yield* CurrentLogLevel
   const isHttp = transport === "http"
+  const networkTransport = isHttp ? "tcp" : transport === "stdio" ? "pipe" : undefined
+  // `RpcServer` tracing is disabled so that this span can follow the MCP
+  // semantic conventions and continue the client's `_meta` trace. Wrapping the
+  // request effect keeps the span on its lifecycle: it ends after the response
+  // is written, or when the request is interrupted.
+  const traceRequest = <X, E, R>(
+    effect: Effect.Effect<X, E, R>,
+    request: RpcMessage.Request<Rpc.Any>
+  ): Effect.Effect<X, E, R> =>
+    Effect.withFiber((fiber) => {
+      const method = runtime.methodForInternalTag(request.tag)
+      const { name, ...spanOptions } = requestSpanOptions(method, request, {
+        protocolVersion: runtime.protocolForInternalTag(request.tag).protocolVersion,
+        networkTransport,
+        sessionId: isHttp
+          ? Context.getOrUndefined(fiber.context, HttpServerRequest.HttpServerRequest)?.headers[MCP_SESSION_ID_HEADER]
+          : undefined,
+        recordToolArguments: fiber.getRef(Toolkit.RecordToolArguments)
+      })
+      const ambientParent = Context.getOrUndefined(fiber.context, Tracer.ParentSpan)
+      return Effect.flatMap(
+        Effect.makeSpan(name, {
+          ...spanOptions,
+          links: spanOptions.parent !== undefined && ambientParent !== undefined
+            ? [{ span: ambientParent, attributes: {} }]
+            : undefined
+        }),
+        (span) =>
+          Effect.onExit(
+            effect.pipe(
+              Effect.provideService(Tracer.ParentSpan, span),
+              Effect.provideService(CurrentRequestSpan, span)
+            ),
+            (exit) =>
+              Effect.sync(() => endRequestSpan(span, method, exit, fiber.getRef(Clock.Clock).currentTimeNanosUnsafe()))
+          )
+      )
+    })
   const clientStates = new Map<number, {
     protocol: McpProtocol.AnyProtocolAdapter
     profile: McpCore.NegotiatedProtocolProfile<string> | undefined
     sessionHeaders: Headers.Headers | undefined
   }>()
   const activeRequests = new Map<number, Map<string, ActiveRequest>>()
+  // Stdio has a single client whose session ends with stdin, so one latch is
+  // enough; built-in subscriptions complete on it while finite requests drain.
+  const stdioEnd = transport === "stdio" ? Latch.makeUnsafe() : undefined
   const reverseRequestClients = new Map<string, Array<McpClientKey>>()
   const disconnectClient = (clientId: number) => {
+    for (const request of activeRequests.get(clientId)?.values() ?? []) request.liveness.active = false
     activeRequests.delete(clientId)
     clientStates.delete(clientId)
     runtime.disconnect(clientId)
@@ -1712,6 +1900,7 @@ const runWithRuntime = Effect.fnUntraced(function*(
     if (request === undefined) {
       return false
     }
+    request.liveness.active = false
     requests!.set(key, { ...request, cancelled: true })
     return true
   }
@@ -1740,6 +1929,7 @@ const runWithRuntime = Effect.fnUntraced(function*(
     getListChangeRevision: () => notificationDelivery.listChangeRevision,
     ...(!protocol.supportsNotifications || options.allowSubscriptions === false ? {} : {
       sendNotification,
+      awaitClientEnd: stdioEnd?.await,
       markSubscriptionCancelled: (clientId: number, requestId: RpcMessage.RequestId) =>
         Effect.sync(() => {
           cancelRequest(clientId, requestId)
@@ -1879,6 +2069,7 @@ const runWithRuntime = Effect.fnUntraced(function*(
         const requests = activeRequests.get(clientId)
         const key = requestKey(response.requestId)
         const active = requests?.get(key)
+        if (active !== undefined) active.liveness.active = false
         if (requests !== undefined && requests.delete(key) && requests.size === 0) {
           activeRequests.delete(clientId)
         }
@@ -1895,7 +2086,12 @@ const runWithRuntime = Effect.fnUntraced(function*(
           return sendRequestError(clientId, response.requestId, {
             code: McpSchema.INTERNAL_ERROR_CODE,
             message: "Internal error"
-          })
+          }).pipe(
+            Effect.andThen(CurrentRequestSpan),
+            Effect.map((span) => {
+              if (span !== undefined) recordErrorResponse(span, McpSchema.INTERNAL_ERROR_CODE)
+            })
+          )
         }
       }
       return protocol.send(clientId, response)
@@ -2033,6 +2229,7 @@ const runWithRuntime = Effect.fnUntraced(function*(
                     ? handler.handler(payload, {
                       rpc,
                       requestId: RpcMessage.RequestId(request.id),
+                      remoteParentSpan: undefined,
                       client: new Rpc.ServerClient(clientId),
                       headers
                     }) as any as Effect.Effect<void>
@@ -2058,17 +2255,19 @@ const runWithRuntime = Effect.fnUntraced(function*(
                   ? Effect.void
                   : sendRequestError(clientId, request.id, new InvalidParams({ message: "Invalid method parameters" }))
               }
+              const liveness = { active: true }
               if (request.isNotification !== true) {
                 const requests = activeRequests.get(clientId) ?? new Map<string, ActiveRequest>()
                 requests.set(requestKey(request.id), {
                   requestId: RpcMessage.RequestId(request.id),
                   prepared,
+                  liveness,
                   cancelled: false,
                   httpPost: httpRequest === undefined ? undefined : httpPostResponses.get(httpRequest)
                 })
                 activeRequests.set(clientId, requests)
               }
-              const handled = f(clientId, routedRequest)
+              const handled = Effect.provideService(f(clientId, routedRequest), RequestLiveness, liveness)
               return yield* prepared.requestContext === undefined
                 ? handled
                 : Effect.provideService(handled, McpRequestContext, prepared.requestContext)
@@ -2092,6 +2291,7 @@ const runWithRuntime = Effect.fnUntraced(function*(
             return f(clientId, request)
           case "Eof":
             if (!isHttp) {
+              stdioEnd?.openUnsafe()
               disconnectClient(clientId)
             }
             return f(clientId, request)
@@ -2260,6 +2460,12 @@ const runWithRuntime = Effect.fnUntraced(function*(
             return
           }
           const encoded = yield* selectedProtocol.payloadCodecs(rpc).encode(projected.payload)
+          // Projection and encoding can suspend after the request has ended.
+          if (notification._tag === "Progress") {
+            // The disconnect hook may still be scheduled when an interrupted handler resumes delivery.
+            if (!(yield* patchedProtocol.clientIds).has(clientId)) return
+            if (queued.requestLiveness?.active === false) return
+          }
           yield* patchedProtocol.send(clientId, {
             _tag: "Request",
             id: "",
@@ -2288,8 +2494,12 @@ const runWithRuntime = Effect.fnUntraced(function*(
   )
 
   return yield* RpcServer.make(runtime.clientRpcs, {
-    spanPrefix: "McpServer",
-    disableFatalDefects: true
+    disableTracing: true,
+    disableFatalDefects: true,
+    onDisconnect: (clientId) => Effect.sync(() => disconnectClient(clientId)),
+    // Wrapped so `RpcServer.make` infers the group's rpcs from `clientRpcs`
+    // rather than from `traceRequest`'s parameter type.
+    onRequest: (effect, request) => traceRequest(effect, request)
   }).pipe(
     Effect.provideService(RpcServer.Protocol, patchedProtocol),
     Effect.provideService(McpServerClientMiddleware, clientMiddleware),
@@ -2345,6 +2555,9 @@ type RegistrationServices<RR> = Exclude<McpRequest.Without<RR>, McpServer>
  * The returned layer forks `run(options)` in the layer scope and merges
  * `McpServer.layer`, so registration layers can use the `McpServer` service
  * while the server is running.
+ *
+ * Core lists return one complete page; supplying a cursor, including an empty
+ * string, fails with `InvalidParams`.
  *
  * Pass registration layers as `registrations` to build them before the server
  * reads its first request. The transport discharges the request-level
@@ -2434,6 +2647,10 @@ const layerWithRuntime = (options: {
  * dependencies it supplies (see `ProvidedServices`); any other `McpRequest`
  * marker stays in the layer's requirements and must be met by MCP middleware.
  *
+ * Each call builds its own `RpcServer.Protocol`, so several stdio servers can
+ * live in one layer graph as long as each is provided its own `Stdio`. They
+ * still share the memoized `McpServer` registry.
+ *
  * @see {@link layer} for running over an existing `RpcServer.Protocol`
  * @see {@link layerHttp} for the single-endpoint HTTP transport
  *
@@ -2466,7 +2683,11 @@ export const layerStdio = <
 > =>
   layerWithRuntime(options, "stdio").pipe(
     Layer.provide(McpRuntime.layer(options.protocols)),
-    Layer.provide(RpcServer.layerProtocolStdio),
+    // Build a fresh protocol layer per call. `RpcServer.layerProtocolStdio` is
+    // a module-level constant, and layers are memoized by reference, so two
+    // `layerStdio` servers in one layer graph would otherwise share a single
+    // protocol bound to whichever `Stdio` was built first.
+    Layer.provide(Layer.effect(RpcServer.Protocol, RpcServer.makeProtocolStdio)),
     Layer.provide(Layer.succeed(
       RpcSerialization.RpcSerialization,
       mcpStdioSerialization(options.protocols)
@@ -2483,8 +2704,8 @@ const mcpStdioSerialization = (
     contentType: serialization.contentType,
     includesFraming: true,
     codecFor: serialization.codecFor,
-    makeUnsafe: () => {
-      const frames = RpcSerialization.ndjson.makeUnsafe()
+    makeUnsafe: (options) => {
+      const frames = RpcSerialization.ndjson.makeUnsafe(options)
       const parser = serialization.makeUnsafe()
       let selectedProtocol: McpProtocol.ProtocolAdapter | undefined
       return {
@@ -3017,6 +3238,37 @@ const toolErrorResult = (message: string): CallToolResult =>
 const toolResultContent = (encoded: unknown): CallToolResult["content"] =>
   encoded === undefined ? [] : [{ type: "text", text: JSON.stringify(encoded) }]
 
+const modelOutputContent = (
+  parts: ReadonlyArray<AiPrompt.ToolModelOutputPart>,
+  protocolVersion: string
+): CallToolResult["content"] =>
+  parts.map((part) => {
+    if (part.type === "text") {
+      return { type: "text", text: part.text }
+    }
+    const { data, mediaType } = part
+    if (!(data instanceof Uint8Array) && /^https?:\/\//i.test(String(data))) {
+      const uri = String(data)
+      return protocolVersion >= "2025-06-18"
+        ? { type: "resource_link", uri, name: part.fileName ?? uri, mimeType: mediaType }
+        : { type: "text", text: uri }
+    }
+    const type = mediaType.startsWith("image/")
+      ? "image"
+      : mediaType.startsWith("audio/") && protocolVersion >= "2025-03-26"
+      ? "audio"
+      : undefined
+    if (type !== undefined) {
+      const bytes = data instanceof Uint8Array
+        ? data
+        : Result.getOrUndefined(Base64.decode(String(data).replace(/^data:[^,]*;base64,/i, "")))
+      if (bytes !== undefined) {
+        return { type, data: bytes, mimeType: mediaType }
+      }
+    }
+    return { type: "text", text: AiPrompt.toolModelOutputToText([part]) }
+  })
+
 /**
  * The requirements of a toolkit registration.
  *
@@ -3042,6 +3294,12 @@ type RegistrationRequirements<SchemaServices, RequestServices> =
   | Exclude<SchemaServices, RequestServices | McpRequestContext>
   | McpRequest.From<"Requires", Exclude<RequestServices, McpRequestContext>>
 
+type ToolkitOptions<Tools extends Record<string, Tool.Any>, Names extends keyof Tools> = {
+  readonly content?:
+    | { readonly [Name in Names]?: ((success: Tool.Success<Tools[Name]>) => CallToolResult["content"]) | undefined }
+    | undefined
+} | undefined
+
 /**
  * Registers a `Toolkit` with the `McpServer`.
  *
@@ -3050,18 +3308,41 @@ type RegistrationRequirements<SchemaServices, RequestServices> =
  * The MCP middleware in the current context, provided with
  * `Effect.provide(middleware.layer)`, runs around every call to the toolkit.
  *
+ * A tool's `toModelOutput` supplies the `content` of successful calls while
+ * `structuredContent` keeps the encoded result; parts an older protocol
+ * revision cannot carry are sent as text. A `content` mapper takes precedence
+ * over `toModelOutput`, converting the decoded success value to native MCP
+ * blocks. Mapped tools omit `outputSchema` and successful calls omit
+ * `structuredContent`. Failures bypass both. Use only block types supported by
+ * the negotiated protocol revision in a `content` mapper.
+ *
+ * **Example** (Registering an image tool)
+ *
+ * ```ts
+ * import { Schema } from "effect"
+ * import { McpServer, Tool, Toolkit } from "effect/ai"
+ *
+ * const images = Toolkit.make(Tool.make("preview", { success: Schema.Uint8ArrayFromBase64 }))
+ * const registration = McpServer.registerToolkit(images, {
+ *   content: { preview: (data) => [{ type: "image", data, mimeType: "image/png" }] }
+ * })
+ * ```
+ *
  * @see {@link ToolkitRequirements} for which services are request-level
  *
  * @stability unstable
  * @category handlers
  * @since 4.0.0
  */
-export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
-  toolkit: Toolkit.Toolkit<Tools>
+export const registerToolkit: <Tools extends Record<string, Tool.Any>, Names extends keyof Tools = keyof Tools>(
+  toolkit: Toolkit.Toolkit<Tools>,
+  options?: ToolkitOptions<Tools, Names>
 ) => Effect.Effect<void, never, ToolkitRequirements<Tools>> = Effect.fnUntraced(function*<
-  Tools extends Record<string, Tool.Any>
+  Tools extends Record<string, Tool.Any>,
+  Names extends keyof Tools
 >(
-  toolkit: Toolkit.Toolkit<Tools>
+  toolkit: Toolkit.Toolkit<Tools>,
+  options?: ToolkitOptions<Tools, Names>
 ) {
   const registry = yield* McpServer
   const built = yield* (toolkit as any as Effect.Effect<
@@ -3074,7 +3355,7 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
     for (const tool of Object.values(toolkit.tools)) {
       const handler = services.get(tool.id) as Tool.Handler<string> | undefined
       if (handler !== undefined) {
-        services.set(tool.id, { ...handler, context: omitRequestServices(handler.context) })
+        services.set(tool.id, { ...handler, context: prepareContext(handler.context).services })
       }
     }
     return Context.makeUnsafe(services)
@@ -3106,40 +3387,33 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
     const annotations = tool.annotations
     const toolMeta = Context.getOrUndefined(annotations, Tool.Meta)
     const isDeclaredFailure = Schema.is(tool.failureSchema)
-    // MCP content is JSON, so results and declared failures go through their JSON codec.
-    const encodeJson = (schema: Schema.Constraint) => {
-      const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(schema)) as (
-        value: unknown
-      ) => Effect.Effect<unknown, Schema.SchemaError, Tool.HandlerServices<Tools[keyof Tools]>>
-      return (toolResult: unknown) =>
-        Effect.mapError(encode(toolResult), (cause) =>
-          AiError.make({
-            module: "McpServer",
-            method: "registerToolkit",
-            reason: new AiError.ToolResultEncodingError({
-              toolName: tool.name,
-              toolResult,
-              description: cause.message
-            })
-          }))
-    }
-    const encodeFailure = encodeJson(tool.failureSchema)
-    // Successes and "return"-mode failures arrive already encoded by the Toolkit; only their JSON conversion runs here.
-    const encodeReturnedFailure = encodeJson(Schema.toEncoded(tool.failureSchema))
-    const encodeStructured = encodeJson(Schema.toEncoded(tool.successSchema))
+    // MCP content is JSON. Failures raised in "error" mode skip the Toolkit's encoding, so they use the JSON codec here.
+    const encodeFailureJson = Schema.encodeUnknownEffect(Schema.toCodecJson(tool.failureSchema)) as (
+      value: unknown
+    ) => Effect.Effect<unknown, Schema.SchemaError, Tool.HandlerServices<Tools[keyof Tools]>>
+    const encodeFailure = (toolResult: unknown) =>
+      Effect.mapError(encodeFailureJson(toolResult), (cause) =>
+        AiError.make({
+          module: "McpServer",
+          method: "registerToolkit",
+          reason: new AiError.ToolResultEncodingError({
+            toolName: tool.name,
+            toolResult,
+            description: cause.message
+          })
+        }))
     const failureResult = (encoded: unknown) =>
       new CallToolResult({ isError: true, content: toolResultContent(encoded) })
     const declaredFailureResult = (error: unknown) =>
       error instanceof Error && error.message !== ""
         ? Effect.succeed(toolErrorResult(error.message))
         : Effect.map(encodeFailure(error), failureResult)
-    const successResult = (result: unknown) =>
-      Effect.map(encodeStructured(result), (structuredContent) =>
-        new CallToolResult({
-          isError: false,
-          structuredContent,
-          content: toolResultContent(structuredContent)
-        }))
+    const successResult = (structuredContent: unknown) =>
+      new CallToolResult({
+        isError: false,
+        structuredContent,
+        content: toolResultContent(structuredContent)
+      })
     const handleCause = (cause: Cause.Cause<unknown>) => {
       const failure = Cause.findFail(cause)
       if (Result.isSuccess(failure)) {
@@ -3154,7 +3428,9 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
       }
       return internalToolError(cause)
     }
-    const outputSchema = yield* Schema.decodeUnknownEffect(McpSchema.ToolOutputJson)(
+    const content = options?.content
+    const mapper = content && Object.hasOwn(content, tool.name) ? content[tool.name as Names] : undefined
+    const outputSchema = mapper ? undefined : yield* Schema.decodeUnknownEffect(McpSchema.ToolOutputJson)(
       toolJsonSchema(tool.successSchema, false)
     ).pipe(Effect.orDie)
     const inputSchema = yield* Schema.decodeUnknownEffect(ToolJson)(
@@ -3170,6 +3446,7 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
               `parameters.\n\n${error.message}`
         ))
     )
+    const readOnlyHint = Context.get(tool.annotations, Tool.Readonly)
     const mcpTool = new McpTool({
       name: tool.name,
       description: Tool.getDescription(tool),
@@ -3180,8 +3457,8 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
           Option.map((title) => ({ title })),
           Option.getOrUndefined
         )),
-        readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
-        destructiveHint: Context.get(tool.annotations, Tool.Destructive),
+        readOnlyHint,
+        destructiveHint: Context.getOrUndefined(tool.annotations, Tool.Destructive) ?? !readOnlyHint,
         idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
         openWorldHint: Context.get(tool.annotations, Tool.OpenWorld)
       },
@@ -3198,17 +3475,42 @@ export const registerToolkit: <Tools extends Record<string, Tool.Any>>(
           Effect.flatMap((result): Effect.Effect<
             CallToolResult,
             unknown,
-            Tool.HandlerServices<Tools[keyof Tools]>
+            Tool.HandlerServices<Tools[keyof Tools]> | McpRequestContext
           > => {
+            // The Toolkit encodes successes and "return"-mode failures with their JSON codec.
             if (!result.isFailure) {
+              if (mapper) {
+                return Effect.sync(() =>
+                  new CallToolResult({
+                    isError: false,
+                    content: mapper(result.result as Tool.Success<Tools[keyof Tools]>)
+                  })
+                )
+              }
+              if (result.modelOutput !== undefined) {
+                const parts = result.modelOutput
+                return McpRequestContext.useSync(({ protocolVersion }) =>
+                  new CallToolResult({
+                    isError: false,
+                    // Revisions that drop string structuredContent would also unquote a matching text block.
+                    structuredContent: result.result === undefined ||
+                        (typeof result.encodedResult === "string" && protocolVersion < "2026-07-28")
+                      ? undefined
+                      : result.encodedResult,
+                    content: modelOutputContent(parts, protocolVersion)
+                  })
+                )
+              }
               // An absent result, such as `Schema.Void`, has no structured form.
-              return result.encodedResult === undefined
-                ? Effect.succeed(new CallToolResult({ isError: false, content: [] }))
-                : successResult(result.encodedResult)
+              return Effect.succeed(
+                result.result === undefined
+                  ? new CallToolResult({ isError: false, content: [] })
+                  : successResult(result.encodedResult)
+              )
             }
             // Declared failures return their encoded payload; anything else is classified by origin.
             return result.failureOrigin === "handler"
-              ? Effect.map(encodeReturnedFailure(result.encodedResult), failureResult)
+              ? Effect.succeed(failureResult(result.encodedResult))
               : Effect.failCause(Cause.annotate(
                 Cause.fail(result.result),
                 Context.make(Toolkit.FailureOrigin, result.failureOrigin ?? "result")
@@ -3254,15 +3556,36 @@ const toolJsonSchema = (schema: Schema.Constraint, strict: boolean): JsonSchema.
  * The layer requires `McpServer`. Pass it to a transport through the
  * `registrations` option, or provide the transport layer to it.
  *
+ * A tool's `toModelOutput` supplies the `content` of successful calls while
+ * `structuredContent` keeps the encoded result; parts an older protocol
+ * revision cannot carry are sent as text. A `content` mapper takes precedence
+ * over `toModelOutput`, converting the decoded success value to native MCP
+ * blocks. Mapped tools omit `outputSchema` and successful calls omit
+ * `structuredContent`. Failures bypass both. Use only block types supported by
+ * the negotiated protocol revision in a `content` mapper.
+ *
+ * **Example** (Providing an image tool as a layer)
+ *
+ * ```ts
+ * import { Schema } from "effect"
+ * import { McpServer, Tool, Toolkit } from "effect/ai"
+ *
+ * const images = Toolkit.make(Tool.make("preview", { success: Schema.Uint8ArrayFromBase64 }))
+ * const registration = McpServer.toolkit(images, {
+ *   content: { preview: (data) => [{ type: "image", data, mimeType: "image/png" }] }
+ * })
+ * ```
+ *
  * @see {@link ToolkitRequirements} for which services are request-level
  *
  * @stability unstable
  * @category layers
  * @since 4.0.0
  */
-export const toolkit = <Tools extends Record<string, Tool.Any>>(
-  toolkit: Toolkit.Toolkit<Tools>
-): Layer.Layer<never, never, ToolkitRequirements<Tools>> => Layer.effectDiscard(registerToolkit(toolkit))
+export const toolkit = <Tools extends Record<string, Tool.Any>, Names extends keyof Tools = keyof Tools>(
+  toolkit: Toolkit.Toolkit<Tools>,
+  options?: ToolkitOptions<Tools, Names>
+): Layer.Layer<never, never, ToolkitRequirements<Tools>> => Layer.effectDiscard(registerToolkit(toolkit, options))
 
 /**
  * Utility type that validates a completion-handler record against the allowed
@@ -3466,7 +3789,7 @@ export const registerResource: {
         }),
         services,
         handle: options.content.pipe(
-          Effect.map((content) => resolveResourceContent(options.uri, content)),
+          Effect.map((content) => resolveResourceContent(options.uri, options.mimeType, content)),
           Effect.catchCause(handlerFailureToInternalError)
         ),
         annotations: options.annotations ?? Context.empty()
@@ -3530,7 +3853,7 @@ export const registerResource: {
           Effect.mapError((error) => new InvalidParams({ message: error.message })),
           Effect.flatMap((params: any) =>
             options.content(uri, ...params).pipe(
-              Effect.map((content) => resolveResourceContent(uri, content)),
+              Effect.map((content) => resolveResourceContent(uri, options.mimeType, content)),
               Effect.catchCause(handlerFailureToInternalError)
             )
           )
@@ -4020,21 +4343,16 @@ const compileUriTemplate = (segments: TemplateStringsArray, ...schemas: Readonly
 
 const resolveResourceContent = (
   uri: string,
+  mimeType: string | undefined,
   content: ReadResourceResult | string | Uint8Array
 ): ReadResourceResult => {
   if (typeof content === "string") {
     return {
-      contents: [{
-        uri,
-        text: content
-      }]
+      contents: [mimeType === undefined ? { uri, text: content } : { uri, mimeType, text: content }]
     }
   } else if (content instanceof Uint8Array) {
     return {
-      contents: [{
-        uri,
-        blob: content
-      }]
+      contents: [mimeType === undefined ? { uri, blob: content } : { uri, mimeType, blob: content }]
     }
   }
   return content

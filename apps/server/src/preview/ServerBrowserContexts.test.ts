@@ -1,14 +1,19 @@
 // @effect-diagnostics nodeBuiltinImport:off - Hands a real file on disk to a real desktop browser.
 import * as NodeEvents from "node:events";
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
+import type * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import { chromium, type Browser, type BrowserContext, type BrowserType } from "playwright-core";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 
 const launches = vi.hoisted(() => ({
   launch: vi.fn<BrowserType["launch"]>(),
@@ -16,6 +21,7 @@ const launches = vi.hoisted(() => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
 }));
+const launchChromium = chromium.launch.bind(chromium);
 const launchPersistentChromium = chromium.launchPersistentContext.bind(chromium);
 vi.spyOn(chromium, "launch").mockImplementation(launches.launch);
 vi.spyOn(chromium, "launchPersistentContext").mockImplementation(launches.persistent);
@@ -61,6 +67,7 @@ const options = () => ({
   profilesDir: "/test/profiles",
   executable: vi.fn(async () => "/test/chromium"),
   env: {},
+  chrome: { version: "157.0.8103.78", platform: "linux" as NodeJS.Platform },
 });
 
 const withLauncher = () => {
@@ -358,15 +365,16 @@ describe("ServerBrowserContexts", () => {
     const userDataDir = NodePath.join(directory, "profile");
     const pool = new ServerBrowserContexts(options());
     try {
+      // Chromium can write DevToolsActivePort after Playwright's launch resolves, so the port is chosen here.
+      const reserved = NodeHttp.createServer();
+      await new Promise<void>((resolve) => reserved.listen(0, "127.0.0.1", resolve));
+      const { port } = reserved.address() as NodeNet.AddressInfo;
+      await new Promise((resolve) => reserved.close(resolve));
       const desktop = await launchPersistentChromium(userDataDir, {
         headless: true,
-        args: ["--remote-debugging-port=0"],
+        args: [`--remote-debugging-port=${port}`],
       });
       try {
-        const [port] = NodeFS.readFileSync(
-          NodePath.join(userDataDir, "DevToolsActivePort"),
-          "utf8",
-        ).split("\n");
         const { browser, page } = await pool.connectDesktopPage(`http://127.0.0.1:${port}`);
         try {
           const file = NodePath.join(directory, "large.bin");
@@ -393,4 +401,84 @@ describe("ServerBrowserContexts", () => {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  const sendsOneChromeIdentity = async (host: {
+    readonly platform: NodeJS.Platform;
+    readonly arch: string;
+  }) => {
+    // The pool's own launch options, on the browser Playwright installs for tests.
+    launches.launch.mockImplementation((launch = {}) => {
+      const { executablePath: _installed, ...bundled } = launch;
+      return launchChromium(bundled);
+    });
+    const server = NodeHttp.createServer((request, response) => {
+      const send = (type: string, body: string) =>
+        response.writeHead(200, { "content-type": type }).end(body);
+      if (request.url === "/worker.js") {
+        return send(
+          "text/javascript",
+          `addEventListener("activate", (event) => event.waitUntil(clients.claim()));
+           addEventListener("fetch", (event) => event.respondWith(fetch(event.request)));`,
+        );
+      }
+      if (request.url === "/identity") {
+        return send(
+          "application/json",
+          JSON.stringify({
+            userAgent: request.headers["user-agent"],
+            brands: request.headers["sec-ch-ua"],
+          }),
+        );
+      }
+      return send("text/html", "<!doctype html>");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      // What this browser sends on this host without any override, as the oracle.
+      const probe = await launchChromium();
+      const version = probe.version();
+      const major = version.split(".")[0];
+      const headless = await (await probe.newPage()).evaluate(() => navigator.userAgent);
+      await probe.close();
+      const pool = new ServerBrowserContexts({
+        ...options(),
+        env: { ...process.env, T3CODE_SERVER_BROWSER_SANDBOX: "0" },
+        chrome: { version, platform: host.platform },
+      });
+      try {
+        const context = await pool.contextFor(INCOGNITO_BROWSER_PROFILE_ID);
+        const page = await context.newPage();
+        await presentAsChrome(await context.newCDPSession(page), host);
+        await page.goto(`http://127.0.0.1:${(server.address() as NodeNet.AddressInfo).port}/`);
+        const [fromPage, throughWorker] = (await page.evaluate(`(async () => {
+          const identity = async () => (await fetch("/identity")).json();
+          const fromPage = await identity();
+          const controlled = new Promise((resolve) =>
+            navigator.serviceWorker.addEventListener("controllerchange", resolve, { once: true }),
+          );
+          await navigator.serviceWorker.register("/worker.js");
+          await controlled;
+          return [fromPage, await identity()];
+        })()`)) as ReadonlyArray<{ readonly userAgent: string; readonly brands: string }>;
+        expect(headless).toContain(`HeadlessChrome/${version} `);
+        expect(fromPage?.userAgent).toBe(
+          headless.replace(`HeadlessChrome/${version}`, `Chrome/${major}.0.0.0`),
+        );
+        expect(fromPage?.brands).toContain('"Google Chrome"');
+        expect(throughWorker?.userAgent).toBe(fromPage?.userAgent);
+      } finally {
+        await pool.close();
+      }
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  };
+
+  effectIt.live("sends one Chrome identity from a page and from its service worker", () =>
+    Effect.gen(function* () {
+      const host = { platform: yield* HostProcess.Platform, arch: yield* HostProcess.Architecture };
+      yield* Effect.promise(() => sendsOneChromeIdentity(host));
+    }),
+  );
 });
