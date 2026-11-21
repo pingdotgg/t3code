@@ -2,7 +2,7 @@
 
 Read `docs/status.md` and `docs/scope.md` first. `docs/status.md` says what is proven, what is in progress, and what is next; `docs/scope.md` is the locked feature cutlist defining what belongs in **Orbit**, **`conn-server`**, **`conn-gpui`**, and future **SwiftUI iOS** (and what upstream T3 Code features are intentionally dropped). Update `docs/status.md` with every landed milestone.
 
-**conn-gpui** is a native Rust + GPUI macOS desktop client for Conn + Orbit: it matches the Conn desktop shell's look and feel (`../conn`) for everything in `docs/scope.md`, talks directly to `conn-server` (`../conn-server`) using its typed Rust contract crates (`conn-wire` and `conn-contract`), integrates tightly with Orbit (nodes, workspaces, profiles, themes, tasks, schedules, `ai-router`), and adopts proven GPUI patterns from Threadbear (`.refs/threadbear`).
+**conn-gpui** is a native Rust + GPUI macOS desktop client for Conn + Orbit: it matches the Conn desktop shell's look and feel (`../conn`) for everything in `docs/scope.md`, talks directly to `conn-server` (`../conn-server`) using its typed Rust contract crates (`conn-wire` and `conn-contract`), integrates tightly with Orbit (nodes, workspaces, profiles, themes, tasks, `ai-router`), and adopts proven GPUI patterns from Threadbear (`.refs/threadbear`).
 
 Read `README.md`, `docs/scope.md`, `docs/architecture.md`, and `docs/design-spec.md` before changing code. Do **not** port features marked `Drop` or `Orbit` in `docs/scope.md` into `conn-gpui`. For tracking upstream changes from T3 Code, Threadbear, and Rune, see `docs/radar.md`. If you are running a long autonomous session, read `GOAL.md` for the phased milestone plan and sub-agent split.
 
