@@ -1456,6 +1456,8 @@ function ThreadDetailBody(
 
   const handleScrollToEnd = () => {
     void Haptics.selectionAsync();
+    // A tap does not begin a drag, so end a landing search jump here or it scrolls back.
+    finishThreadMessageJump(selectedThreadKey);
     void scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false }).catch(() => {
       freeze.set(false);
     });
