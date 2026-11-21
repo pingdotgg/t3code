@@ -168,7 +168,7 @@ export const layerDocsRedirectRoute = HttpRouter.add(
 );
 
 // Finish before the mobile client's 10 s timeout so request cancellation cannot discard unexported spans.
-const RELAY_REQUEST_DEADLINE_MS = 9_000;
+export const RELAY_REQUEST_DEADLINE_MS = 9_000;
 /** Allow body reading, upstream wait, and inbox hold; an API-sized deadline would drop held webhooks. */
 const RELAY_HOOK_REQUEST_DEADLINE_MS = 25_000;
 
