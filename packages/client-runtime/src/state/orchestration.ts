@@ -98,7 +98,7 @@ const assertSessionActive = Effect.fnUntraced(function* (
   if (Option.isNone(current) || current.value !== session) {
     return yield* new EnvironmentRpcUnavailableError({
       environmentId: supervisor.target.environmentId,
-      ...translatableMessage(msg("The environment session was replaced.")),
+      ...translatableMessage(msg("The environment has no session.")),
     });
   }
 });
