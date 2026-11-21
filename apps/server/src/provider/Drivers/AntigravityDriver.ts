@@ -680,6 +680,21 @@ export const AntigravityDriver: ProviderDriver<
             }),
       ),
     );
+    // Configured credentials, or a Google sign-in agy saved, need no sign-in click, so models
+    // load now rather than after the first thread. Only once per start: each launch unpacks
+    // about 1 GB.
+    const signedIn =
+      !antigravityAuthUsesBrowser(auth.authMethod) ||
+      (yield* fileSystem
+        .exists(path.join(profileDirectory, "antigravity-acp", "acp_token.json"))
+        .pipe(Effect.orElseSucceed(() => false)));
+    if (enabled && authConfigIssue === null && signedIn) {
+      // A fixed message: the cause can carry the agent's raw reply to the key.
+      yield* refreshModels().pipe(
+        Effect.catch(() => Effect.logWarning("Antigravity could not load models at start.")),
+        Effect.forkScoped,
+      );
+    }
 
     return {
       instanceId,
