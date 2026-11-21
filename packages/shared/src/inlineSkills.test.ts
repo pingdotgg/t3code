@@ -32,12 +32,11 @@ describe("matchInlineSkills", () => {
     ];
     expect(matches).toEqual([
       { start: 4, end: 11, skill: first, rawText: "$design" },
-      { start: 30, end: 38, skill: namespaced, rawText: "$pdf:pdf" },
       { start: 40, end: 48, skill: namespaced, rawText: "$pdf:pdf" },
       { start: 49, end: 56, skill: first, rawText: "$design" },
     ]);
     expect(matches[0]?.skill).toBe(first);
     expect(matches[1]?.skill).toBe(namespaced);
-    expect(matches[3]?.skill).toBe(first);
+    expect(matches[2]?.skill).toBe(first);
   });
 });

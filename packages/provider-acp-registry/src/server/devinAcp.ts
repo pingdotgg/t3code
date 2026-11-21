@@ -1,7 +1,7 @@
 import type * as AcpSchema from "effect-acp/compat";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import type { AcpAdapterV2SubagentUpdate } from "@t3tools/provider-acp/server/adapter";
-import { SKILL_MENTION_PATTERN, slashSkillCommand } from "@t3tools/shared/composerInlineTokens";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -58,12 +58,8 @@ export function extractDevinSubagentUpdate(
 
 // Devin invokes skills as `/name`; T3 composers insert `$name`.
 export function rewriteDevinSkillMentions(text: string, skillNames: ReadonlySet<string>): string {
-  return text.replace(
-    SKILL_MENTION_PATTERN,
-    (match, prefix: string, name: string, offset: number) =>
-      skillNames.has(name)
-        ? `${prefix}${slashSkillCommand(name, text[offset + match.length])}`
-        : match,
+  return text.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
+    skillNames.has(name) ? `${prefix}/${name}` : match,
   );
 }
 

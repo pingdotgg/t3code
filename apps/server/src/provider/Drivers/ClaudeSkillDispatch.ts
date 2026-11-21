@@ -1,11 +1,14 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { SKILL_MENTION_PATTERN, slashSkillCommand } from "@t3tools/shared/composerInlineTokens";
 
 /**
  * Claude expands one skill per message only when `/name` starts the text block.
  * Everything after the name, including newlines or a second `/x`, becomes `ARGUMENTS`.
  * https://github.com/anthropics/claude-code/issues/87113
  */
+
+/** Match packages/shared/src/composerInlineTokens.ts so displayed chips and dispatched skills accept the same tokens. */
+const SKILL_MENTION_PATTERN =
+  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
 export type ClaudeSkillTarget = Pick<ServerProviderSkill, "path" | "userInvocationOnly">;
 
@@ -27,8 +30,7 @@ export function planClaudeSkillDispatch(
     const skill = skills.get(name);
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
     if (!skill || start < mentionsFrom) return [];
-    const end = (match.index ?? 0) + match[0].length;
-    return [{ name, skill, start, end, command: slashSkillCommand(name, prompt[end]) }];
+    return [{ name, skill, start, end: (match.index ?? 0) + match[0].length }];
   });
   const last = mentions.at(-1);
   if (!last) {
@@ -41,7 +43,7 @@ export function planClaudeSkillDispatch(
   let promptWithInlineSlashes = "";
   let cursor = 0;
   for (const mention of mentions) {
-    promptWithInlineSlashes += `${prompt.slice(cursor, mention.start)}${mention.command}`;
+    promptWithInlineSlashes += `${prompt.slice(cursor, mention.start)}/${mention.name}`;
     if (mention.skill.userInvocationOnly === true && !annotated.has(mention.name)) {
       promptWithInlineSlashes += ` [The user invoked this skill. Follow the instructions at: ${mention.skill.path}]`;
       annotated.add(mention.name);
@@ -53,6 +55,6 @@ export function planClaudeSkillDispatch(
   return {
     leadingText:
       prompt.slice(0, last.start).trim().length > 0 ? promptWithInlineSlashes : undefined,
-    commandText: `${last.command}${prompt.slice(last.end)}`.trimEnd(),
+    commandText: `/${last.name}${prompt.slice(last.end)}`.trimEnd(),
   };
 }

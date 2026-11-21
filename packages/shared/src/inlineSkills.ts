@@ -1,5 +1,4 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { SKILL_MENTION_PATTERN } from "./composerInlineTokens.ts";
 
 export type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
 
@@ -9,12 +8,15 @@ export function formatProviderSkillDisplayName(
   return skill.displayName?.trim() || skill.name;
 }
 
+const SKILL_TOKEN_REGEX =
+  /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
+
 export function* matchInlineSkills<Skill extends InlineSkill>(
   text: string,
   skills: readonly Skill[],
 ) {
   const byName = new Map<string, Skill | undefined>();
-  for (const match of text.matchAll(SKILL_MENTION_PATTERN)) {
+  for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const name = match[2] ?? "";
     if (!byName.has(name)) {
       byName.set(
