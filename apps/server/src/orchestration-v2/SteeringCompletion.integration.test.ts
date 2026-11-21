@@ -998,16 +998,18 @@ it.effect.each(
         const maintenance = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
           (candidate) => candidate.userMessageId === MessageId.make(`message:${text}`),
         )!;
-        const error = yield* orchestrator
-          .dispatch({
-            type: "queued-message.promote-to-steer",
-            commandId: CommandId.make(`promote-${text}`),
-            threadId,
-            queuedRunId: maintenance.id,
-            targetRunId: run.id,
-          })
-          .pipe(Effect.flip);
-        assert.equal(error._tag, "OrchestratorDispatchError");
+        yield* orchestrator.dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make(`promote-${text}`),
+          threadId,
+          queuedRunId: maintenance.id,
+          targetRunId: run.id,
+        });
+        const promoted = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.id === maintenance.id,
+        )!;
+        assert.equal(promoted.status, "queued");
+        assert.equal(promoted.queuePosition, 1);
       }
       const command = {
         type: "queued-message.promote-to-steer" as const,
@@ -3165,15 +3167,12 @@ it.effect.each([undefined, false, true])(
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const threadId = yield* startFirstTurn;
         yield* send("queued", "queued", "queue");
-        const sending = send("goal", "/goal all tests pass", "auto");
-        if (nativeGoals === false) {
-          yield* Effect.flip(sending);
-        } else yield* sending;
+        yield* send("goal", "/goal all tests pass", "auto");
         yield* worker.drain();
 
         assert.deepEqual(steered, []);
         assert.deepEqual(yield* read(threadId), {
-          queue: ["queued"],
+          queue: nativeGoals === false ? ["queued", "/goal all tests pass"] : ["queued"],
           started: nativeGoals === false ? ["first"] : ["first", "/goal all tests pass"],
           stopRequested: nativeGoals !== false,
         });
@@ -3472,6 +3471,70 @@ it.effect("queues a goal clear without stopping work when no goal drives it", ()
   }),
 );
 
+it.effect("promoting a queued /context moves it first and does not steer", () =>
+  Effect.gen(function* () {
+    const { started, steered, layer, startFirstTurn, send, read } =
+      yield* goalHarness("slash-promote");
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      yield* send("queued", "queued", "queue");
+      yield* send("context", "/context", "queue");
+      const queuedRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.userMessageId === MessageId.make("message:context"),
+      )!;
+      yield* orchestrator.dispatch({
+        type: "queued-message.promote-to-steer",
+        commandId: CommandId.make("promote"),
+        threadId,
+        queuedRunId: queuedRun.id,
+        targetRunId: started[0]!.runId,
+      });
+      yield* worker.drain();
+
+      assert.deepEqual(steered, []);
+      assert.deepEqual(yield* read(threadId), {
+        queue: ["/context", "queued"],
+        started: ["first"],
+        stopRequested: false,
+      });
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("restarts the turn for a slash command sent as an explicit restart", () =>
+  Effect.gen(function* () {
+    const { started, steered, interrupted, layer, startFirstTurn } =
+      yield* nextTurnSelectionHarness("slash-restart", true);
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("restart-context"),
+        threadId,
+        messageId: MessageId.make("message:restart-context"),
+        text: "/context",
+        attachments: [],
+        modelSelection: runSelection,
+        dispatchMode: { type: "restart_active", targetRunId: started[0]!.runId },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* worker.drain();
+
+      assert.deepEqual(steered, []);
+      assert.lengthOf(interrupted, 1);
+      assert.deepEqual(
+        started.map((turn) => turn.message.text),
+        ["first", "/context"],
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("promotes a queued goal by stopping the running turn", () =>
   Effect.gen(function* () {
     const { started, steered, layer, startFirstTurn, send, read } =
@@ -3497,6 +3560,38 @@ it.effect("promotes a queued goal by stopping the running turn", () =>
       assert.deepEqual(steered, []);
       assert.deepEqual(yield* read(threadId), {
         queue: ["queued"],
+        started: ["first", "/goal ship it"],
+        stopRequested: true,
+      });
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("stops the running turn for a goal an agent steers into it", () =>
+  Effect.gen(function* () {
+    const { started, steered, layer, startFirstTurn, read } = yield* goalHarness("goal-raw-steer");
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      // Agent sends carry a raw steer target and no delivery intent.
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("goal"),
+        threadId,
+        messageId: MessageId.make("message:goal"),
+        text: "/goal ship it",
+        attachments: [],
+        modelSelection: runSelection,
+        dispatchMode: { type: "steer_active", targetRunId: started[0]!.runId },
+        createdBy: "agent",
+        creationSource: "server",
+      });
+      yield* worker.drain();
+
+      assert.deepEqual(steered, []);
+      assert.deepEqual(yield* read(threadId), {
+        queue: [],
         started: ["first", "/goal ship it"],
         stopRequested: true,
       });
