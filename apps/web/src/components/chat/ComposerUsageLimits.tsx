@@ -178,6 +178,8 @@ function UsageLimitsBannerBody({
                   input={resetCreditInput}
                   credits={account.limits.resetCredits}
                   now={now}
+                  provider={providerClients.get(account.driver)?.label ?? String(account.driver)}
+                  account={<AccountSummary account={account} />}
                 />
               ) : null}
             </div>
