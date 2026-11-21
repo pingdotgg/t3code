@@ -753,6 +753,32 @@ function httpRemoteHost(remoteUrl: string): string | null {
   }
 }
 
+/**
+ * Sends `host`'s provider calls to the port its checkout's HTTP remote names. The host stays
+ * portless, as saved links name it, but a CLI given it would call the default port.
+ */
+function servedAtRemotePort(
+  api: PullRequestProviderApi,
+  host: string,
+  remoteUrl: string,
+): PullRequestProviderApi {
+  const address = httpRemoteHost(remoteUrl);
+  if (address === null || !address.startsWith(`${host}:`)) return api;
+  const atAddress = (input: unknown) =>
+    typeof input === "object" && input !== null && "host" in input && input.host === host
+      ? { ...input, host: address }
+      : input;
+  return Object.fromEntries(
+    Object.entries(api).map(([name, value]) => [
+      name,
+      typeof value === "function"
+        ? (input: unknown, ...rest: ReadonlyArray<unknown>) =>
+            (value as (...args: ReadonlyArray<unknown>) => unknown)(atAddress(input), ...rest)
+        : value,
+    ]),
+  ) as unknown as PullRequestProviderApi;
+}
+
 /** Whether `expected` names `head`: the full SHA, or a hex prefix of at least 7 characters. */
 export const isHeadSha = (head: string, expected: string) => {
   const wanted = expected.toLowerCase();
@@ -1025,7 +1051,11 @@ export const make = Effect.gen(function* () {
           supported.push({
             cursorKey: key,
             project,
-            api: withRateLimitBackoff(api, host, rateLimits),
+            api: withRateLimitBackoff(
+              servedAtRemotePort(api, host, identity.locator.remoteUrl),
+              host,
+              rateLimits,
+            ),
             repository,
             host,
             remote:
