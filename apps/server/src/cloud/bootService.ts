@@ -18,6 +18,11 @@ import * as Schema from "effect/Schema";
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerConfig from "../config.ts";
+import {
+  isRuntimeStateFromAnotherMachine,
+  readPersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
 import {
   serviceLauncherIsRunning,
@@ -728,10 +733,15 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   {
     installedBaseDir: Schema.String,
     baseDir: Schema.String,
+    /** The machine recorded as owning the installed home, when it is another machine. */
+    hostname: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
+    if (this.hostname === undefined) {
+      return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
+    }
+    return `The T3 Code service on \`${this.hostname}\` serves ${this.installedBaseDir}, not ${this.baseDir}. Manage it on \`${this.hostname}\` with ${formatBootServiceBaseDirOption(this.installedBaseDir)}. Uninstalling it from this machine would remove the other machine's service.`;
   }
 
   // A refusal the user fixes by rerunning, so the CLI prints the message, not a stack trace.
@@ -771,6 +781,8 @@ export interface BootServiceStatus {
   readonly installedBaseDir?: string;
   /** Set when the installed unit serves a different T3 home than this CLI. */
   readonly otherBaseDir?: string;
+  /** The machine recorded as owning that other home, when it is another machine. */
+  readonly otherBaseDirHostname?: string;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
   readonly unitPath: string;
   readonly logPath: string;
@@ -1027,6 +1039,21 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? installedBaseDir
       : undefined;
   };
+  // The runtime record names the machine that wrote it; a foreign record means
+  // the installed home's service runs on another machine sharing this home.
+  // `status` and `install` expose no Effect context, so the services `make`
+  // already captured are provided here instead of taken from the environment.
+  const foreignHostnameFor = (dir: string) =>
+    ServerConfig.deriveServerPaths(dir, undefined, {}).pipe(
+      Effect.flatMap((paths) => readPersistedServerRuntimeState(paths.serverRuntimeStatePath)),
+      Effect.map((state) =>
+        Option.isSome(state) && isRuntimeStateFromAnotherMachine(state.value)
+          ? state.value.hostname
+          : undefined,
+      ),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(FileSystem.FileSystem, fs),
+    );
   const writeDurably = (filePath: string, contents: string | Uint8Array) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1260,9 +1287,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         ? otherBaseDirOf(existingUnit.value)
         : undefined;
       if (installedBaseDir !== undefined) {
+        const hostname = yield* foreignHostnameFor(installedBaseDir);
         return yield* new BootServiceOtherBaseDirError({
           installedBaseDir,
           baseDir: input.baseDir,
+          ...(hostname === undefined ? {} : { hostname }),
         });
       }
     });
@@ -1604,6 +1633,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
     const otherBaseDir = otherBaseDirOf(unit);
+    const otherBaseDirHostname =
+      otherBaseDir === undefined ? undefined : yield* foreignHostnameFor(otherBaseDir);
     const normalizeUnit = (contents: string) =>
       manager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
@@ -1621,6 +1652,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ...(installedVersion === undefined ? {} : { installedVersion }),
       ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
       ...(otherBaseDir === undefined ? {} : { otherBaseDir }),
+      ...(otherBaseDirHostname === undefined ? {} : { otherBaseDirHostname }),
       problems,
       current:
         problems.length === 0 &&

@@ -1287,15 +1287,32 @@ process.disconnect();
       const otherHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-other-home-" });
 
       const other = yield* makeService(undefined, "1.2.3", path.join(otherHome, ".t3"));
+      // A record from another machine sharing this home names that machine.
+      yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(baseDir, "userdata", "server-runtime.json"),
+        JSON.stringify({
+          version: 1,
+          pid: 1234,
+          hostname: "another-machine",
+          port: 3773,
+          origin: "http://127.0.0.1:3773",
+          startedAt: "2026-10-01T00:00:00.000Z",
+        }),
+      );
       commands.length = 0;
       expect(yield* other.restart).toBe("skipped");
       const refused = yield* other.install().pipe(Effect.flip);
       expect(refused._tag).toBe("BootServiceOtherBaseDirError");
+      expect(refused).toMatchObject({ hostname: "another-machine" });
+      expect(refused.message).toContain("`another-machine`");
+      expect(refused.message).not.toContain("uninstall");
       // The CLI prints a user message without a stack trace.
       expect(CliError.getUserMessage(refused)).toBe(refused.message);
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(commands).toEqual([]);
       expect((yield* other.status).otherBaseDir).toBe(baseDir);
+      expect((yield* other.status).otherBaseDirHostname).toBe("another-machine");
 
       const quoted = yield* makeService(undefined, "1.2.3", path.join(otherHome, 'T3 "Data"'));
       commands.length = 0;

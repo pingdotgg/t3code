@@ -147,10 +147,16 @@ const formatSetup = (setup: Setup, hints: Hints) => {
   const { service } = setup;
   // This home's access settings reach no service, so only the service is shown.
   if (service.otherBaseDir !== undefined) {
+    const machine =
+      service.otherBaseDirHostname === undefined ? "" : ` on \`${service.otherBaseDirHostname}\``;
+    const manage =
+      service.otherBaseDirHostname === undefined
+        ? `Pass \`${BootService.formatBootServiceBaseDirOption(service.otherBaseDir)}\` to manage it.`
+        : `Manage it on \`${service.otherBaseDirHostname}\` with \`${BootService.formatBootServiceBaseDirOption(service.otherBaseDir)}\`.`;
     return [
-      `  ${"Service".padEnd(15)}installed for another T3 home · ${service.otherBaseDir}`,
+      `  ${"Service".padEnd(15)}installed for another T3 home · ${service.otherBaseDir}${machine}`,
       "",
-      `Pass \`${BootService.formatBootServiceBaseDirOption(service.otherBaseDir)}\` to manage it.`,
+      manage,
     ].join("\n");
   }
   const rows: ReadonlyArray<readonly [string, string]> = [
@@ -236,6 +242,9 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
     return yield* new BootService.BootServiceOtherBaseDirError({
       installedBaseDir: before.service.otherBaseDir,
       baseDir,
+      ...(before.service.otherBaseDirHostname === undefined
+        ? {}
+        : { hostname: before.service.otherBaseDirHostname }),
     });
   }
   if (before.connect === null && Option.getOrElse(flags.connect, () => false)) {
@@ -516,6 +525,9 @@ const setupJson = (setup: Setup) =>
         installed: setup.service.installed,
         installedVersion: setup.service.installedVersion ?? null,
         otherBaseDir: setup.service.otherBaseDir ?? null,
+        ...(setup.service.otherBaseDirHostname === undefined
+          ? {}
+          : { otherBaseDirHostname: setup.service.otherBaseDirHostname }),
       },
       connect:
         setup.connect === null ? null : { enabled: setup.connect, revoked: setup.connectRevoked },

@@ -128,11 +128,13 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-preflight-" });
       const child = yield* liveProcess;
       assert(child.pid !== undefined);
-      for (const [name, pid, mode, rejectRunningServer] of [
-        ["stale", 2_147_483_647, "web", true],
-        ["own-pid", process.pid, "web", true],
-        ["desktop", child.pid, "desktop", true],
-        ["serve", child.pid, "web", false],
+      for (const [name, pid, mode, rejectRunningServer, hostname] of [
+        ["stale", 2_147_483_647, "web", true, undefined],
+        ["own-pid", process.pid, "web", true, undefined],
+        // A recreated container or a machine sharing the home: the ownership lock decides.
+        ["foreign-host", child.pid, "web", true, `${NodeOS.hostname()}-peer`],
+        ["desktop", child.pid, "desktop", true, undefined],
+        ["serve", child.pid, "web", false, undefined],
       ] as const) {
         const baseDir = path.join(root, name);
         const stateDir = path.join(baseDir, "userdata");
@@ -142,6 +144,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           yield* encodeUnknownJson({
             version: 1,
             pid,
+            hostname,
             port: 3773,
             origin: "http://127.0.0.1:3773",
             startedAt: "2026-10-01T00:00:00.000Z",

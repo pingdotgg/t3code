@@ -26,7 +26,11 @@ import { readBootstrapEnvelope } from "../bootstrap.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
-import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  isProcessAlive,
+  isRuntimeStateFromAnotherMachine,
+  readPersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { resolveHostCliCommand } from "./invocation.ts";
 
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
@@ -349,9 +353,11 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   // and supervisor handoff are separate; this preflight cannot arbitrate two starts.
   if (options?.rejectRunningServer && mode === "web") {
     const runtime = yield* readPersistedServerRuntimeState(derivedPaths.serverRuntimeStatePath);
-    // A killed container can leave a record with the new server's own PID.
+    // A killed container can leave a record with the new server's own PID. Another
+    // host's PID means nothing here, so its record is left to the ownership lock.
     if (
       Option.isSome(runtime) &&
+      !isRuntimeStateFromAnotherMachine(runtime.value) &&
       runtime.value.pid > 0 &&
       runtime.value.pid !== process.pid &&
       isProcessAlive(runtime.value.pid)

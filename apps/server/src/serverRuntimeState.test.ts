@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Injects a real file replacement during the native SQLite transaction.
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
@@ -34,6 +35,8 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   readonly missingServiceState?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
   readonly connected?: boolean;
+  /** The machine a runtime record in this home names, when it is another machine. */
+  readonly runtimeHostname?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -42,6 +45,17 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   const serviceHome = input.unitServesOtherHome ? path.join(root, "other") : t3Home;
   for (const home of [t3Home, serviceHome]) {
     yield* fs.makeDirectory(path.join(home, "userdata"), { recursive: true });
+  }
+  if (input.runtimeHostname !== undefined) {
+    const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+      config: { host: undefined, devUrl: undefined },
+      port: 3773,
+    });
+    yield* ServerRuntimeState.persistServerRuntimeState({
+      path: path.join(t3Home, "userdata", "server-runtime.json"),
+      // The recorded PID means nothing on this machine; only the hostname matters here.
+      state: { ...state, hostname: input.runtimeHostname, pid: 0 },
+    });
   }
   yield* fs.makeDirectory(path.join(serviceHome, "runtime"));
   const activeVersion = input.activeVersion ?? "0.0.42";
@@ -135,6 +149,29 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   return { result, t3Home };
 });
 
+describe("server runtime state machine identity", () => {
+  it.effect("stamps the writing machine and recognises records from other machines", () =>
+    Effect.gen(function* () {
+      const state = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: undefined },
+        port: 3773,
+      });
+      assert.equal(state.hostname, NodeOS.hostname());
+      assert.isFalse(ServerRuntimeState.isRuntimeStateFromAnotherMachine(state));
+      assert.isTrue(
+        ServerRuntimeState.isRuntimeStateFromAnotherMachine({
+          ...state,
+          hostname: `${NodeOS.hostname()}-peer`,
+        }),
+      );
+      // Records written before the field existed carry no hostname and stay local.
+      assert.isFalse(
+        ServerRuntimeState.isRuntimeStateFromAnotherMachine({ ...state, hostname: undefined }),
+      );
+    }),
+  );
+});
+
 describe("server ownership", () => {
   // An empty home, so no boot service unit installed on this machine is read.
   const layerOwnership = Layer.mergeAll(
@@ -168,6 +205,31 @@ describe("server ownership", () => {
       assert.equal(attempts.filter((result) => result._tag === "Success").length, 1);
       const refused = attempts.find((result) => result._tag === "Failure");
       assert.equal(refused?.failure._tag, "ServerAlreadyRunningError");
+    }).pipe(Effect.provide(layerOwnership)),
+  );
+
+  it.effect("names the other machine when the lock holder's record is foreign", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-foreign-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const state = yield* makeState;
+      const hostname = `${NodeOS.hostname()}-peer`;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const owner = yield* ServerOwnership.acquireServerOwnership(statePath);
+          yield* owner.publish({ ...state, hostname });
+          const refused = yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
+            Effect.flip,
+          );
+          assert.equal(refused._tag, "ServerAlreadyRunningError");
+          if (refused._tag !== "ServerAlreadyRunningError") return;
+          assert.equal(refused.hostname, hostname);
+          assert.include(refused.message, `\`${hostname}\``);
+          assert.include(refused.message, "do not delete it while a server is running");
+        }),
+      );
     }).pipe(Effect.provide(layerOwnership)),
   );
 
@@ -303,6 +365,29 @@ describe("server ownership", () => {
     }).pipe(Effect.provide(layerOwnership)),
   );
 
+  it.effect("names the other machine for a live pre-lock server on another machine", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-legacy-foreign-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const state = yield* makeState;
+      const hostname = `${NodeOS.hostname()}-peer`;
+      yield* ServerRuntimeState.persistServerRuntimeState({
+        path: statePath,
+        // Any record time after this process started proves the PID was not reused.
+        state: { ...state, hostname, startedAt: "2100-01-01T00:00:00.000Z" },
+      });
+      const refused = yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath)).pipe(
+        Effect.flip,
+      );
+      assert.equal(refused._tag, "ServerAlreadyRunningError");
+      if (refused._tag !== "ServerAlreadyRunningError") return;
+      assert.equal(refused.hostname, hostname);
+      assert.include(refused.message, `\`${hostname}\``);
+    }).pipe(Effect.provide(layerOwnership)),
+  );
+
   it.effect("never removes a runtime record another server published", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -374,6 +459,25 @@ describe("server ownership", () => {
           assert.include(result.failure.message, "t3 service restart");
           assert.include(result.failure.message, "No server was stopped");
         }
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    );
+
+    it.effect("names the other machine when the older service runs on another machine", () =>
+      Effect.gen(function* () {
+        const hostname = `${NodeOS.hostname()}-peer`;
+        const { result } = yield* startBesideBootService({
+          platform: "linux",
+          runtimeHostname: hostname,
+          outputs: {
+            "systemctl is-active": { code: 0, stdout: "active\n" },
+          },
+        });
+        assert.equal(result._tag, "Failure");
+        if (result._tag !== "Failure") return;
+        assert.equal(result.failure._tag, "OlderBootServiceError");
+        if (result.failure._tag !== "OlderBootServiceError") return;
+        assert.equal(result.failure.hostname, hostname);
+        assert.include(result.failure.message, `On \`${hostname}\``);
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
     );
 

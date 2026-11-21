@@ -23,6 +23,7 @@ import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
@@ -38,6 +39,7 @@ import { resolveBaseDir } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
   isProcessAlive,
+  isRuntimeStateFromAnotherMachine,
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
@@ -78,6 +80,22 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
       `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`,
+    ].join("\n");
+  }
+}
+
+export class ServerRunningOnAnotherMachineError extends Schema.TaggedError<ServerRunningOnAnotherMachineError>()(
+  "ServerRunningOnAnotherMachineError",
+  {
+    hostname: Schema.String,
+    statePath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return [
+      `The T3 Code server for this T3 home is running on another machine (\`${this.hostname}\`).`,
+      `Its record is ${this.statePath}, visible here because this machine shares that T3 home.`,
+      `Run \`t3 pair\` on \`${this.hostname}\` to pair with it. To run a separate server on this machine, give it its own --base-dir.`,
     ].join("\n");
   }
 }
@@ -292,7 +310,9 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
     }
   }
 
+  const fs = yield* FileSystem.FileSystem;
   const checkedStatePaths: Array<string> = [];
+  let foreignServer: { readonly hostname: string; readonly statePath: string } | undefined;
   for (const baseDir of new Set(bases)) {
     for (const variant of ["userdata", "dev"] as const) {
       const derivedPaths = yield* ServerConfig.deriveServerPaths(
@@ -307,20 +327,37 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
         continue;
       }
       // A dead server's port may be reused; do not mint tokens in its old database for another server.
-      if (!isProcessAlive(state.value.pid)) {
-        continue;
-      }
-      const probed = yield* probeEnvironmentDescriptor(state.value.origin);
-      if (probed._tag !== "descriptor") {
+      const probed = isProcessAlive(state.value.pid)
+        ? yield* probeEnvironmentDescriptor(state.value.origin)
+        : undefined;
+      const foreign = isRuntimeStateFromAnotherMachine(state.value);
+      // Hostnames change under running servers (DHCP), so a foreign record still pairs, but only
+      // with the server that owns this home: its recorded PID and port can be reused here.
+      const descriptor =
+        probed?._tag === "descriptor" &&
+        (!foreign ||
+          (yield* fs.readFileString(derivedPaths.environmentIdPath).pipe(
+            Effect.map((id) => id.trim()),
+            Effect.orElseSucceed(() => undefined),
+          )) === probed.descriptor.environmentId)
+          ? probed.descriptor
+          : undefined;
+      if (descriptor === undefined) {
+        if (foreign) {
+          foreignServer ??= { hostname: state.value.hostname ?? "unknown", statePath };
+        }
         continue;
       }
       return {
         baseDir,
         variant,
         state: state.value,
-        descriptor: probed.descriptor,
+        descriptor,
       } satisfies DiscoveredPairTarget;
     }
+  }
+  if (foreignServer !== undefined) {
+    return yield* new ServerRunningOnAnotherMachineError(foreignServer);
   }
   const baseDirArgs = hasExplicitBaseDir ? ["--base-dir", explicitBaseDir] : [];
   return yield* new NoRunningServerError({

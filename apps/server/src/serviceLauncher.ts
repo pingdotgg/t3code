@@ -5,6 +5,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
@@ -882,6 +883,22 @@ export async function stateDirOwned(baseDir: string): Promise<boolean> {
   return legacyOwnerStartedBeforeRecord(output, recordedAt, platform);
 }
 
+// The runtime record names the machine that wrote it; a foreign record means
+// the owner runs on another machine sharing this T3 home.
+async function foreignRuntimeHostname(baseDir: string): Promise<string | undefined> {
+  let record: unknown;
+  try {
+    record = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(baseDir, "userdata", "server-runtime.json"), "utf8"),
+    );
+  } catch {
+    return undefined;
+  }
+  if (typeof record !== "object" || record === null) return undefined;
+  const hostname = "hostname" in record ? record.hostname : undefined;
+  return typeof hostname === "string" && hostname !== NodeOS.hostname() ? hostname : undefined;
+}
+
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
 const restartPendingPath = (baseDir: string) =>
@@ -1503,8 +1520,11 @@ export class Launcher {
       }
     }
     this.#releaseServing();
+    const hostname = await foreignRuntimeHostname(this.#baseDir);
     this.#log(
-      "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n",
+      hostname === undefined
+        ? "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n"
+        : `[service-launcher] Another T3 Code server on \`${hostname}\` owns this T3 home. Stop it on \`${hostname}\`; this service starts again once it stops.\n`,
     );
     this.#stateDirFreeProbes = 0;
     // The interval also keeps Node alive: signal listeners alone do not.
