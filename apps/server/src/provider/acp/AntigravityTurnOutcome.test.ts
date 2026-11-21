@@ -50,6 +50,13 @@ const STATUS_NOT_FOUND_ERROR = Buffer.concat([
     'NOT_FOUND (code 404): Requested entity was not found.\u001a\u0080\u0001HTTP 404 Not Found\n\n{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}',
   ),
 ]);
+// A Google-account turn spanning the hourly OAuth refresh, after agy already persisted the new token.
+const STATUS_UNAUTHENTICATED_ERROR = Buffer.concat([
+  Buffer.from([0x12, 0x7f]),
+  Buffer.from(
+    "UNAUTHENTICATED (code 401): Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.",
+  ),
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -169,6 +176,25 @@ describe("watchAntigravityPromptOutcome", () => {
           },
         );
       }
+      // A 401 mid-turn, after the model answered, is agy's stale token around its hourly refresh.
+      assert.deepEqual(
+        yield* turn([
+          [USER_INPUT, input],
+          [PLANNER_RESPONSE, reply],
+          [TOOL, reply],
+          [ERROR_MESSAGE, STATUS_UNAUTHENTICATED_ERROR],
+        ]),
+        {
+          ...reusable({
+            class: "provider_error",
+            message:
+              "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.",
+            code: "UNAUTHENTICATED",
+            retryable: true,
+          }),
+          resumeWith: "continue",
+        },
+      );
       // A 404 before the model answered is an unknown or unentitled model.
       assert.equal(
         (yield* turn([
