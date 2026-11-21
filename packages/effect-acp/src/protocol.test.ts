@@ -1,4 +1,5 @@
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as AcpError from "./errors.ts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -1348,26 +1349,43 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
-  it.effect("reports the child's exit when a write fails because the child already died", () =>
+  const exited = new AcpError.AcpProcessExitedError({ signal: "SIGABRT" });
+  const transformStdoutError = new AcpError.AcpTransportError({
+    detail: "Sign in required",
+    cause: undefined,
+  });
+  it.effect.each([
+    { name: "a write fails", stdout: Sink.forEach(() => Effect.die("EPIPE")), expected: exited },
+    { name: "the writer ends early", stdout: Sink.succeed(undefined), expected: exited },
+    {
+      name: "a read fails",
+      stdin: Stream.fail(
+        PlatformError.systemError({ _tag: "UnexpectedEof", module: "Stream", method: "read" }),
+      ),
+      expected: exited,
+    },
+    {
+      name: "stdout's transform fails with its own diagnosis",
+      stdin: Stream.fail(transformStdoutError),
+      expected: transformStdoutError,
+    },
+  ])("reports the right termination when $name after the child died", (testCase) =>
     Effect.gen(function* () {
       const { stdio } = yield* makeInMemoryStdio();
       const termination = yield* Deferred.make<AcpError.AcpError>();
       const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
-        stdio: Stdio.make({
-          args: stdio.args,
-          stdin: stdio.stdin,
-          stdout: () => Sink.forEach(() => Effect.die("EPIPE")),
-          stderr: () => Sink.drain,
-        }),
-        terminationError: Effect.succeed(new AcpError.AcpProcessExitedError({ signal: "SIGABRT" })),
+        stdio: {
+          ...stdio,
+          stdin: "stdin" in testCase ? testCase.stdin : stdio.stdin,
+          stdout: () => ("stdout" in testCase ? testCase.stdout : Sink.drain),
+        },
+        terminationError: Effect.succeed(exited),
         serverRequestMethods: new Set(),
         onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
       });
 
       yield* transport.notify("x/initialize", {}).pipe(Effect.exit);
-      const error = yield* Deferred.await(termination);
-      assert.instanceOf(error, AcpError.AcpProcessExitedError);
-      assert.equal((error as AcpError.AcpProcessExitedError).signal, "SIGABRT");
+      assert.strictEqual(yield* Deferred.await(termination), testCase.expected);
     }),
   );
 
