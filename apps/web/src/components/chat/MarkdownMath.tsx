@@ -26,10 +26,11 @@ export const MarkdownMath = memo(function MarkdownMath(props: {
     const viewport = viewportRef.current;
     const content = contentRef.current;
     if (!viewport || !content || props.focusable === false) return;
-    const measure = () => setOverflows(viewport.scrollWidth > viewport.clientWidth);
-    measure();
+    // Measuring here would force a layout mid-commit; the observer's first delivery lands before paint.
     // Typesetting and streamed TeX can change content width without resizing the viewport.
-    return observeResize([viewport, content], measure);
+    return observeResize([viewport, content], () =>
+      setOverflows(viewport.scrollWidth > viewport.clientWidth),
+    );
   }, [props.focusable]);
   const scrollable = props.focusable !== false && overflows;
   const tex = props.tex.trim();
