@@ -889,6 +889,7 @@ const layerMakeRoutes = Layer.mergeAll(
     LinkThreadHttp.layer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
+    DesktopBrowserChannel.socketRouteLayer,
     PreviewTunnel.routeLayer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
@@ -915,10 +916,11 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerPullRequestService),
   Layer.provide(layerThreadIssueService),
   Layer.provide(layerIssueService),
-  // The same activity instance RunExecutionService reports to, by layer memoization.
+  // The route and browser share the channel; the browser shares agent activity with run execution.
   Layer.provide(
     ServerBrowser.layer.pipe(
-      Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
+      Layer.provide(PreviewAgentActivity.layer),
+      Layer.provideMerge(DesktopBrowserChannel.layer),
     ),
   ),
   Layer.provide(PreviewBrowser.layer),
