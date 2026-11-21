@@ -74,6 +74,26 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("leaves out Claude Code commands that only print usage or are unavailable here", () =>
+  Effect.gen(function* () {
+    const commands = ["effort", "Model", "fast", "focus", "agents", "context", "goal"];
+    const query = vi.spyOn(ClaudeSdk, "query").mockReturnValue({
+      initializationResult: async () => ({
+        commands: commands.map((name) => ({ name, description: "", argumentHint: "" })),
+      }),
+    } as unknown as ReturnType<typeof ClaudeSdk.query>);
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const capabilities = yield* probeClaudeCapabilities(
+      yield* decodeClaudeSettings({ binaryPath: "claude" }),
+      { PATH: (yield* HostProcess.Environment).PATH },
+    );
+    assert.deepEqual(
+      capabilities.slashCommands.map((command) => command.name),
+      ["context", "goal"],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
   Effect.gen(function* () {
     let abortSignal: AbortSignal | undefined;
