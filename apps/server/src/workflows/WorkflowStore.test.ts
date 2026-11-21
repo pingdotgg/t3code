@@ -271,6 +271,20 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
         again.map((wait) => [wait.run_id, wait.woke_json]),
         [["r1", JSON.stringify(woke)]],
       );
+
+      // An id is remembered as long as its signal could have been kept, so a sender's retry
+      // within a long time to live is still the same signal.
+      yield* open("r3");
+      yield* store.mailPut({
+        signalId: "long",
+        address: { runId: "r3", wait: "go" },
+        valueJson: '"yes"',
+        expiresAt: "1970-01-31T00:00:00.000Z",
+      });
+      assert.equal(yield* store.mailDeliver("long", "r3", "go", woke), "delivered");
+      yield* TestClock.adjust("10 days");
+      yield* store.mailExpire;
+      assert.isTrue(yield* store.signalSeen("long"));
     }),
   ),
 );

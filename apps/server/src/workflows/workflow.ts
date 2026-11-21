@@ -12,7 +12,6 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Activity, DurableClock, DurableDeferred, Workflow, WorkflowEngine } from "effect/workflow";
 
-import { checkOutput } from "../orchestration-v2/runOutput.ts";
 import { checkOptions } from "./options.ts";
 import {
   EngineLink,
@@ -314,20 +313,69 @@ export const jsonSchemaOf = (schema: Schema.Top): Record<string, Schema.Json> =>
 export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
   kind: "wait" | "ask",
   name: string,
-  options: {
-    readonly returns: Schema.Codec<A, I>;
-    readonly timeout?: Duration.Input | undefined;
-    readonly channel?: string | undefined;
-    readonly request?: Schema.Json | undefined;
-    /** What the engine looks at to end the wait by itself. */
-    readonly watch?: Schema.Json | undefined;
-  },
+  options: WaitOptions<A, I>,
 ): Effect.fn.Return<Option.Option<A>, StepFailed, InRun> {
-  const run = yield* claim(name);
-  const wake = wakeOf(name);
-  const token = yield* DurableDeferred.token(wake);
+  return yield* waitClaimed(yield* claim(name), kind, name, options);
+});
+
+interface WaitOptions<A, I> {
+  readonly returns: Schema.Codec<A, I>;
+  readonly timeout?: Duration.Input | undefined;
+  readonly channel?: string | undefined;
+  readonly request?: Schema.Json | undefined;
+  /** What the engine looks at to end the wait by itself. */
+  readonly watch?: Schema.Json | undefined;
+}
+
+const sameAddress = (left: WorkflowStore.SignalAddress, right: WorkflowStore.SignalAddress) =>
+  "runId" in left
+    ? "runId" in right && left.runId === right.runId && left.wait === right.wait
+    : "channel" in right && left.workflow === right.workflow && left.channel === right.channel;
+
+const waitClaimed = Effect.fnUntraced(function* <A, I>(
+  run: RunContext["Service"],
+  kind: "wait" | "ask",
+  name: string,
+  options: WaitOptions<A, I>,
+): Effect.fn.Return<Option.Option<A>, StepFailed, InRun> {
   const here: WorkflowStore.SignalAddress = { runId: run.runId, wait: name };
   const schema = jsonSchemaOf(options.returns);
+  const codec = Schema.toCodecJson(options.returns);
+  const decode = Schema.decodeEffect(codec);
+  const fits = (value: Schema.Json) => Effect.result(decode(value));
+  const addresses: ReadonlyArray<WorkflowStore.SignalAddress> =
+    options.channel === undefined
+      ? [here]
+      : [here, { workflow: run.workflow, channel: options.channel }];
+  // Whatever arrived early is delivered now, checked as this wait reads it. The mail goes only
+  // after the wake: waking twice is harmless, and losing the signal is not.
+  const deliverEarly = Effect.fnUntraced(function* (
+    wake: ReturnType<typeof wakeOf>,
+    token: DurableDeferred.Token,
+  ) {
+    const passed = new Set<string>();
+    while (true) {
+      const early = yield* run.store.mailNext(addresses, passed);
+      if (early === undefined) return;
+      const value = WorkflowStore.jsonValue(early.valueJson);
+      if (Result.isFailure(yield* fits(value))) {
+        // Kept when it went to a channel: another run, or another version, may read it.
+        if (sameAddress(early.address, here)) yield* run.store.mailDelete(early.signalId);
+        passed.add(early.signalId);
+        continue;
+      }
+      const woke = { expired: false, value };
+      const outcome = yield* run.store.mailDeliver(early.signalId, run.runId, name, woke);
+      // Another wait on the same key took that one; there may be a next.
+      if (outcome === "gone") continue;
+      // Another signal claimed this wait first: its wake, or the sweep, carries what it claimed.
+      if (outcome === "claimed") return;
+      yield* DurableDeferred.succeed(wake, { token, value: woke });
+      return;
+    }
+  });
+  const first = wakeOf(name);
+  const firstToken = yield* DurableDeferred.token(first);
   yield* Activity.make({
     name: `wait/${name}/open`,
     execute: Effect.gen(function* () {
@@ -343,56 +391,48 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
         name,
         workflow: run.workflow,
         key: options.channel,
-        token,
+        token: firstToken,
         schemaJson: WorkflowStore.jsonText(schema),
         requestJson: options.request === undefined ? null : WorkflowStore.jsonText(options.request),
         watchJson: options.watch === undefined ? null : WorkflowStore.jsonText(options.watch),
         deadline,
       });
       yield* run.store.runStatus(run.runId, "waiting", name);
-      // Whatever arrived early is delivered now, checked as a signal to an open wait is. The mail
-      // goes only after the wake: waking twice is harmless, and losing the signal is not.
-      const addresses: ReadonlyArray<WorkflowStore.SignalAddress> =
-        options.channel === undefined
-          ? [here]
-          : [here, { workflow: run.workflow, channel: options.channel }];
-      while (true) {
-        const early = yield* run.store.mailNext(addresses);
-        if (early === undefined) break;
-        const checked = yield* checkOutput(schema, early.valueJson);
-        if (Result.isFailure(checked)) {
-          yield* run.store.mailDelete(early.signalId);
-          continue;
-        }
-        const woke = { expired: false, value: checked.success };
-        const outcome = yield* run.store.mailDeliver(early.signalId, run.runId, name, woke);
-        // Another wait on the same key took that one; there may be a next.
-        if (outcome === "gone") continue;
-        // Another signal claimed this wait first: its wake, or the sweep, carries what it claimed.
-        if (outcome === "claimed") break;
-        yield* DurableDeferred.succeed(wake, { token, value: woke });
-        break;
-      }
+      yield* deliverEarly(first, firstToken);
     }),
   });
-  const woke = yield* DurableDeferred.await(wake);
-  yield* Activity.make({
-    name: `wait/${name}/close`,
-    execute: Effect.gen(function* () {
-      yield* run.store.waitClosed(run.runId, name);
-      yield* run.store.stepEnded(run.runId, name, "completed", woke.expired ? "timed out" : null);
-      if (!woke.expired) yield* run.store.stepResult(run.runId, name, woke.value);
-      yield* run.store.runResumed(run.runId);
-    }),
-  });
-  if (woke.expired) return Option.none();
-  // Checked against this schema when it was signalled, so a mismatch here is a changed schema.
-  const codec = Schema.toCodecJson(options.returns);
-  const decode = Schema.decodeEffect(codec);
-  const value = yield* decode(woke.value).pipe(
-    Effect.mapError((error) => new StepFailed({ step: name, reason: text(error) })),
-  );
-  return Option.some(value);
+  // A value that fit the wait's JSON Schema can still fail its codec. It was not for this wait,
+  // so the wait opens again under a fresh wake instead of breaking the run on every replay.
+  let wake = first;
+  for (let again = 1; ; again++) {
+    const woke = yield* DurableDeferred.await(wake);
+    const value = woke.expired ? undefined : yield* fits(woke.value);
+    if (value !== undefined && Result.isFailure(value)) {
+      const problem = `It was signalled with a value it cannot read, and waits again: ${text(value.failure)}`;
+      wake = wakeOf(`${name}/again/${again}`);
+      const token = yield* DurableDeferred.token(wake);
+      const next = wake;
+      yield* Activity.make({
+        name: `wait/${name}/again/${again}`,
+        execute: Effect.gen(function* () {
+          yield* run.store.waitReopened(run.runId, name, token);
+          yield* run.store.stepDetail(run.runId, name, problem.slice(0, 2000));
+          yield* deliverEarly(next, token);
+        }),
+      });
+      continue;
+    }
+    yield* Activity.make({
+      name: `wait/${name}/close`,
+      execute: Effect.gen(function* () {
+        yield* run.store.waitClosed(run.runId, name);
+        yield* run.store.stepEnded(run.runId, name, "completed", woke.expired ? "timed out" : null);
+        if (!woke.expired) yield* run.store.stepResult(run.runId, name, woke.value);
+        yield* run.store.runResumed(run.runId);
+      }),
+    });
+    return value === undefined ? Option.none() : Option.some(value.success);
+  }
 });
 
 /**

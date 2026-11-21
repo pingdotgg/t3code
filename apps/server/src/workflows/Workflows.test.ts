@@ -160,6 +160,13 @@ const definitions = (
           return `${a + b} checks, merge: ${verdict.value.merge}`;
         }),
     ),
+    /** Reads a number from text, which its JSON Schema cannot say: any string fits that. */
+    workflow("reading", { version: 1, payload: Schema.Struct({}), returns: Schema.Number }, () =>
+      Effect.map(
+        wait("count", { returns: Schema.FiniteFromString }),
+        Option.getOrElse(() => -1),
+      ),
+    ),
     workflow(
       "broken",
       { version: 1, payload: Schema.Struct({ how: Schema.Literals(["dies", "unstorable"]) }) },
@@ -837,6 +844,24 @@ it.effect("a wait survives a restart, checks what it is signalled with, and step
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a signal its wait cannot read leaves the wait open for one it can", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("reading", {}, { idempotencyKey: "t1" });
+        yield* workflows.waitFor(runId, status("waiting"));
+        yield* workflows.signal({ runId, wait: "count" }, "many", { id: "t-many" });
+        // Delivered straight or kept until the wait opens again: either way it is read.
+        yield* workflows.signal({ runId, wait: "count" }, "5", { id: "t-5" });
+        const done = yield* workflows.waitFor(runId, status("completed", "paused"));
+        assert.deepStrictEqual([done.status, done.result], ["completed", 5]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a signal sent before its wait opens is delivered when it does", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();
@@ -882,8 +907,8 @@ it.effect("a signal buffered as its wait opens is still delivered to that wait",
               first = false;
               return Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opened));
             }),
-          mailNext: (addresses) =>
-            Effect.tap(real.mailNext(addresses), (mail) =>
+          mailNext: (addresses, passed) =>
+            Effect.tap(real.mailNext(addresses, passed), (mail) =>
               mail === undefined && !first ? Deferred.succeed(checked, undefined) : Effect.void,
             ),
         });
@@ -1196,10 +1221,15 @@ it.effect(
 );
 
 it.effect(
-  "signals: one per wait, a retried id is not a second one, and bad early mail is dropped",
+  "signals: one per wait, a retried id is not a second one, and early mail a wait cannot read is kept",
   () =>
     Effect.gen(function* () {
-      const { boot } = yield* harness();
+      let kept: WorkflowStore.WorkflowStore["Service"] | undefined;
+      const store = Layer.effect(
+        WorkflowStore.WorkflowStore,
+        Effect.tap(WorkflowStore.make, (real) => Effect.sync(() => void (kept = real))),
+      );
+      const { boot } = yield* harness(store);
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -1214,6 +1244,8 @@ it.effect(
           );
           const done = yield* workflows.waitFor(first.runId, status("completed"));
           assert.equal(done.result, "2 checks, merge: true");
+          // Left for whichever wait on the channel reads it, another version's perhaps.
+          assert.equal((yield* kept!.mailNext([key]))?.signalId, "bad");
           // The sender retries the signal that was already delivered from the mail.
           assert.equal(yield* workflows.signal(key, { merge: true }, { id: "good" }), "delivered");
 
@@ -1244,6 +1276,52 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("signals that race for the waits on one channel each wake one of them", () =>
+  Effect.gen(function* () {
+    // All three senders look before any claims, and the two that lose look again together.
+    const barriers = [
+      { at: 3, all: Deferred.makeUnsafe<void>() },
+      { at: 5, all: Deferred.makeUnsafe<void>() },
+    ];
+    let looked = 0;
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.map(WorkflowStore.make, (real) =>
+        WorkflowStore.WorkflowStore.of({
+          ...real,
+          waitAt: (address) =>
+            Effect.tap(real.waitAt(address), () => {
+              if (!("channel" in address) || address.channel !== "k3") return Effect.void;
+              const at = ++looked;
+              const barrier = barriers.find((candidate) => at <= candidate.at);
+              if (barrier === undefined) return Effect.void;
+              return at === barrier.at
+                ? Deferred.succeed(barrier.all, undefined)
+                : Deferred.await(barrier.all);
+            }),
+        }),
+      ),
+    );
+    const { boot } = yield* harness(store);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const runs = yield* Effect.forEach(["k3a", "k3b", "k3c"], (key) =>
+          workflows.start("review", { change: "k3" }, { idempotencyKey: key }),
+        );
+        yield* Effect.forEach(runs, (run) => workflows.waitFor(run.runId, atVerdict));
+        const sent = yield* Effect.forEach(
+          ["r1", "r2", "r3"],
+          (id) => workflows.signal({ workflow: "review", channel: "k3" }, { merge: true }, { id }),
+          { concurrency: "unbounded" },
+        );
+        assert.deepStrictEqual(sent, ["delivered", "delivered", "delivered"]);
+        for (const run of runs) yield* workflows.waitFor(run.runId, status("completed"));
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect(

@@ -133,7 +133,15 @@ that takes it is the run; a start that finds a row the engine never got executes
 **One signal wakes one wait.** A wait is taken by the first signal for it; a second signal on the
 same channel is for the next run that waits on that channel, and is kept until one does or its `ttl` runs
 out (seven days by default), after which it is gone. A signal's id is remembered for seven days
-once delivered, so a sender's retry within that time is not a second signal.
+once delivered, or until its `ttl` if that is later, so a sender's retry within that time is not a
+second signal.
+
+**A wait checks a signal twice.** The engine checks a value against the wait's JSON Schema before
+it wakes the wait, but only the run has the wait's codec, and a codec can refuse what its JSON
+Schema allows (a number read from text). A value the codec refuses was not for the wait: the wait
+opens again under a fresh wake and says why, rather than failing on every replay. Kept mail on a
+channel that a wait cannot read is left for another wait there; mail addressed to that wait is
+dropped.
 
 **`signalAll` keeps nothing.** It wakes the waits open on a channel now and is not kept for one that
 opens later: a kept broadcast would wake whichever single run waited next, days on. A run that
