@@ -2575,7 +2575,10 @@ export const make = Effect.gen(function* () {
     const committed = yield* gitCore
       .commit(cwd, suggestion.subject, suggestion.body, {
         timeoutMs: COMMIT_TIMEOUT_MS,
-        stage: filePaths ? { filePaths } : {},
+        stage: {
+          ...(filePaths ? { filePaths } : {}),
+          ...(!preResolvedSuggestion && customCommit ? { unverified: true } : {}),
+        },
         ...(commitProgress ? { progress: commitProgress } : {}),
       })
       .pipe(Effect.catchTags({ GitNothingToCommitError: () => Effect.succeed(null) }));

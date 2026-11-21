@@ -186,7 +186,11 @@ export interface GitCommitProgress {
 export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
-  readonly stage?: { readonly filePaths?: readonly string[] };
+  readonly stage?: {
+    readonly filePaths?: readonly string[];
+    /** The caller has not run `prepareCommitContext`, so an empty result must keep the index. */
+    readonly unverified?: boolean;
+  };
 }
 
 export interface GitDeleteLocalBranchInput {

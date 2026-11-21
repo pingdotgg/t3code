@@ -3578,6 +3578,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(skipped.commit.status).toBe("skipped_no_changes");
       expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(head);
       expect((yield* runGit(repoDir, ["show", ":README.md"])).stdout).toBe("staged\n");
+
+      // A generated message already checked a scratch index, so staging again stays at two.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "generated\n");
+      gitCommands.length = 0;
+      const generated = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+      expect(generated.commit.status).toBe("created");
+      expect(gitCommands.filter((args) => args.endsWith("add -A"))).toHaveLength(2);
     }),
   );
 

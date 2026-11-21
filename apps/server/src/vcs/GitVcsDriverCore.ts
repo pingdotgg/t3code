@@ -3384,7 +3384,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "--no-ext-diff",
       "--no-textconv",
     ];
-    if (options?.stage !== undefined) {
+    if (options?.stage?.unverified) {
       const indexMatchesHead =
         (yield* executeGit("GitVcsDriver.commit.indexChanges", cwd, [...diffCached, "--quiet"], {
           allowNonZeroExit: true,
