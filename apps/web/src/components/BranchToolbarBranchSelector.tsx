@@ -31,6 +31,7 @@ import {
 } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import { confirmCheckoutSwitch } from "./confirmCheckoutSwitch";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
@@ -457,6 +458,38 @@ export function BranchToolbarBranchSelector({
     return resolveConfirmedSelectedRef(listedRef, result._tag === "Success" ? result.value : null);
   };
 
+  const confirmCheckoutSwitchIn = async (
+    checkout: { readonly cwd: string; readonly worktreePath: string | null },
+    nextBranch: string,
+  ) => {
+    if (activeProjectRef === null) return true;
+    // Cached status can lag a checkout made from a terminal, so read HEAD at action time.
+    const fresh = await refreshLocalStatusForPicker({
+      environmentId,
+      input: { cwd: checkout.cwd, localOnly: true },
+    });
+    if (fresh._tag !== "Success") {
+      if (!isAtomCommandInterrupted(fresh)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: gt("Failed to switch ref."),
+            description: toBranchActionErrorMessage(squashAtomCommandFailure(fresh)),
+          }),
+        );
+      }
+      return false;
+    }
+    return confirmCheckoutSwitch({
+      environmentId,
+      projectId: activeProjectRef.projectId,
+      threadId: activeThreadId ?? null,
+      worktreePath: checkout.worktreePath,
+      currentBranch: fresh.value.refName,
+      nextBranch,
+    });
+  };
+
   const selectBranch = async (listedRef: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
     const selectionId = ++latestSelectionIdRef.current;
@@ -508,6 +541,14 @@ export function BranchToolbarBranchSelector({
       : refName.name;
 
     runBranchAction(async () => {
+      if (
+        !(await confirmCheckoutSwitchIn(
+          { cwd: selectionTarget.checkoutCwd, worktreePath: selectionTarget.nextWorktreePath },
+          refName.name,
+        ))
+      ) {
+        return;
+      }
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(selectedBranchName);
       const checkoutResult = await switchRef({
@@ -577,6 +618,11 @@ export function BranchToolbarBranchSelector({
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
+      if (
+        !(await confirmCheckoutSwitchIn({ cwd: branchCwd, worktreePath: activeWorktreePath }, name))
+      ) {
+        return;
+      }
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(name);
       const createBranchResult = await createRefMutation({

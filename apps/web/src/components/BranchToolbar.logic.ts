@@ -3,6 +3,7 @@ import type {
   EnvironmentMachineKind,
   VcsRef,
   ProjectId,
+  ThreadId,
   WorktreeSubmodules,
 } from "@t3tools/contracts";
 import type { ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
@@ -322,6 +323,81 @@ export function resolveConfirmedSelectedRef(
     freshRead?.refs.some((ref) => ref.name === listedRef.name && !ref.isRemote && ref.current) ??
     false;
   return checkedOut ? listedRef : { ...listedRef, worktreePath: null };
+}
+
+/**
+ * Unsettled threads that share this checkout and expect its current branch. A ref switch moves
+ * them too, so their next turns would run on the new branch.
+ */
+export function resolveThreadsMovedByCheckoutSwitch(input: {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly threadId: ThreadId | null;
+  readonly worktreePath: string | null;
+  readonly currentBranch: string | null;
+  readonly nextBranch: string;
+  readonly threads: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: ThreadId;
+    readonly projectId: ProjectId;
+    readonly title: string;
+    readonly branch: string | null;
+    readonly worktreePath: string | null;
+    readonly archivedAt: string | null;
+    readonly settledAt: string | null;
+    readonly settledOverride: "settled" | "active" | null;
+  }>;
+}): ReadonlyArray<string> {
+  if (input.currentBranch === null || input.currentBranch === input.nextBranch) return [];
+  return input.threads
+    .filter(
+      (thread) =>
+        thread.environmentId === input.environmentId &&
+        thread.projectId === input.projectId &&
+        thread.id !== input.threadId &&
+        thread.worktreePath === input.worktreePath &&
+        thread.branch === input.currentBranch &&
+        thread.archivedAt === null &&
+        thread.settledAt === null &&
+        thread.settledOverride !== "settled",
+    )
+    .map((thread) => thread.title);
+}
+
+export function describeCheckoutSwitchImpact(input: {
+  readonly titles: ReadonlyArray<string>;
+  readonly currentBranch: string;
+  readonly nextBranch: string;
+}): string {
+  const variables = {
+    first: input.titles[0] ?? "",
+    second: input.titles[1] ?? "",
+    count: input.titles.length - 2,
+    currentBranch: input.currentBranch,
+    nextBranch: input.nextBranch,
+  };
+  if (input.titles.length === 1) {
+    return m(
+      msg(
+        '"{first}" also works on {currentBranch} in this checkout. Switching to {nextBranch} moves it too. Use a worktree to keep branches apart.\n\nSwitch anyway?',
+      ),
+      variables,
+    );
+  }
+  if (input.titles.length === 2) {
+    return m(
+      msg(
+        '"{first}" and "{second}" also work on {currentBranch} in this checkout. Switching to {nextBranch} moves them too. Use a worktree to keep branches apart.\n\nSwitch anyway?',
+      ),
+      variables,
+    );
+  }
+  return m(
+    msg(
+      '"{first}", "{second}" and {count, plural, one {{count} more} other {{count} more}} also work on {currentBranch} in this checkout. Switching to {nextBranch} moves them too. Use a worktree to keep branches apart.\n\nSwitch anyway?',
+    ),
+    variables,
+  );
 }
 
 export function resolveBranchSelectionTarget(input: {
