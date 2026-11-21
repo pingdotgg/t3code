@@ -3549,7 +3549,7 @@
   "3623415b5324335d": "Klicken, um das Konto anzuzeigen",
   "198ebc7ab395b090": "Klicken, um das Konto auszublenden",
   "6df4c22a9ae17336": "Nutzung verwalten",
-  "0469747f4bb9caac": "{additions} Hinzufügungen, {deletions} Löschungen",
+  "3920accacc91683e": "{additions, plural, one {{additions} Hinzufügung} other {{additions} Hinzufügungen}}, {deletions, plural, one {{deletions} Löschung} other {{deletions} Löschungen}}",
   "a0e0e2640219f1b0": "Projekt wählen",
   "074db680e148e829": "Projekt hinzufügen",
   "1bbfd30a652f7e0f": "oder ohne Projekt starten",

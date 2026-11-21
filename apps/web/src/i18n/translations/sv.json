@@ -3548,7 +3548,7 @@
   "3623415b5324335d": "Klicka för att visa kontot",
   "198ebc7ab395b090": "Klicka för att dölja kontot",
   "6df4c22a9ae17336": "Hantera användning",
-  "0469747f4bb9caac": "{additions} tillägg, {deletions} borttagningar",
+  "3920accacc91683e": "{additions, plural, one {{additions} tillägg} other {{additions} tillägg}}, {deletions, plural, one {{deletions} borttagning} other {{deletions} borttagningar}}",
   "a0e0e2640219f1b0": "Välj ett projekt",
   "074db680e148e829": "Lägg till ett projekt",
   "1bbfd30a652f7e0f": "eller starta utan projekt",

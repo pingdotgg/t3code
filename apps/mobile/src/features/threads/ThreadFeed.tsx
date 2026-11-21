@@ -2786,11 +2786,11 @@ function TurnDiffStat(props: {
       accessibilityLabel={
         changedIn === null
           ? gt(
-              "{files, plural, one {Review {files} file changed, {additions} additions, {deletions} deletions} other {Review {files} files changed, {additions} additions, {deletions} deletions}}",
+              "{files, plural, one {Review {files} file changed, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}} other {Review {files} files changed, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}}}",
               { files: totals.count, additions, deletions },
             )
           : gt(
-              "{files, plural, one {Review {files} file changed in {folders}, {additions} additions, {deletions} deletions} other {Review {files} files changed in {folders}, {additions} additions, {deletions} deletions}}",
+              "{files, plural, one {Review {files} file changed in {folders}, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}} other {Review {files} files changed in {folders}, {additions, plural, one {{additions} addition} other {{additions} additions}}, {deletions, plural, one {{deletions} deletion} other {{deletions} deletions}}}}",
               { files: totals.count, folders: changedIn, additions, deletions },
             )
       }
