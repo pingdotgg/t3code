@@ -858,28 +858,48 @@ const make = Effect.gen(function* () {
 
   // Clients read archive snapshots as soon as this returns; the outbox effect only backs it up.
   // A replay or a no-op (an unused-only delete that kept the thread) leaves it to that effect.
-  const cascadeBeforeReply = (
+  const cascadeBeforeReply = Effect.fn("ThreadManagementService.cascadeBeforeReply")(function* (
     command: OrchestrationV2ServerCommand,
     result: Orchestrator.OrchestratorV2DispatchResult,
-  ) =>
-    (command.type === "thread.archive" ||
-      command.type === "thread.unarchive" ||
-      command.type === "thread.delete") &&
-    result.replayed !== true &&
-    result.storedEvents.length > 0
-      ? cascadeSubagentLifecycle({
-          commandId: command.commandId,
-          threadId: command.threadId,
+    sideChatsOnly = false,
+  ) {
+    if (
+      (command.type !== "thread.archive" &&
+        command.type !== "thread.unarchive" &&
+        command.type !== "thread.delete") ||
+      result.replayed === true
+    )
+      return;
+    const eventType =
+      command.type === "thread.archive"
+        ? "thread.archived"
+        : command.type === "thread.unarchive"
+          ? "thread.unarchived"
+          : "thread.deleted";
+    yield* Effect.forEach(
+      result.storedEvents.filter(
+        ({ event }) =>
+          event.type === eventType && (!sideChatsOnly || event.threadId !== command.threadId),
+      ),
+      ({ event }) =>
+        cascadeSubagentLifecycle({
+          commandId:
+            event.threadId === command.threadId
+              ? command.commandId
+              : CommandId.make(`${command.commandId}:side-chat:${event.threadId}`),
+          threadId: event.threadId,
           operation: command.type,
         }).pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Subagent lifecycle cascade left to the effect worker", {
-              threadId: command.threadId,
+              threadId: event.threadId,
               cause,
             }),
           ),
-        )
-      : Effect.void;
+        ),
+      { discard: true },
+    );
+  });
 
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (
     input,
@@ -1827,15 +1847,15 @@ const make = Effect.gen(function* () {
         "ThreadManagementService.visitSubagentCascade",
       )(function* (thread, commandId, path) {
         if (path.length > 0 && thread.deletedAt === null) {
-          const dispatched = yield* orchestrator
-            .dispatch({ type: input.operation, commandId, threadId: thread.id })
-            .pipe(
-              Effect.provideService(EffectOutbox.SubagentCascade, { source, path }),
-              Effect.as(true),
-              Effect.catchTags({
-                OrchestratorThreadAboveModeLimitError: () => Effect.succeed(false),
-              }),
-            );
+          const command = { type: input.operation, commandId, threadId: thread.id };
+          const dispatched = yield* orchestrator.dispatch(command).pipe(
+            Effect.tap((result) => cascadeBeforeReply(command, result, true)),
+            Effect.provideService(EffectOutbox.SubagentCascade, { source, path }),
+            Effect.as(true),
+            Effect.catchTags({
+              OrchestratorThreadAboveModeLimitError: () => Effect.succeed(false),
+            }),
+          );
           if (!dispatched) return;
         }
         // Holds each thread's lock while visiting its subagents, so locks nest parent before child.
@@ -1869,7 +1889,11 @@ const make = Effect.gen(function* () {
           }),
         );
       });
-      yield* visit({ id: input.threadId, deletedAt: null }, input.commandId, []);
+      const cascade = visit({ id: input.threadId, deletedAt: null }, input.commandId, []);
+      yield* input.operation === "thread.delete" &&
+      (yield* EffectOutbox.SubagentCascade) === undefined
+        ? threadDispatch.withDeletionLock(cascade)
+        : cascade;
     });
 
   return ThreadManagementService.of({

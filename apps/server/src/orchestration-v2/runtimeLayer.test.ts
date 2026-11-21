@@ -14183,7 +14183,41 @@ describe("subagent lifecycle cascade", () => {
       Option.getOrThrow,
     );
     const drain = (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-    return { threads, now, set, run, commit, state, archived, outbox, cascade, drain };
+    const sideChat = Effect.fn("test.seedSideChat")(function* (source: ThreadId, id: ThreadId) {
+      yield* set(id, {
+        lineage: {
+          rootThreadId: parent,
+          parentThreadId: source,
+          relationshipToParent: "fork",
+          sideChat: true,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`fork:${id}`),
+        type: "context-transfer.created",
+        threadId: source,
+        occurredAt: now,
+        payload: {
+          id: ContextTransferId.make(`fork:${id}`),
+          type: "fork",
+          sourceThreadId: source,
+          targetThreadId: id,
+          sourcePoint: { threadId: source },
+          basePoint: null,
+          sourceProviderInstanceId: null,
+          targetProviderInstanceId: null,
+          targetRunId: null,
+          status: "consumed",
+          resolution: null,
+          createdBy: "user",
+          error: null,
+          createdAt: now,
+          updatedAt: now,
+          consumedAt: now,
+        },
+      });
+    });
+    return { threads, now, set, sideChat, run, commit, state, archived, outbox, cascade, drain };
   });
   const receipt = (id: string) =>
     Effect.flatMap(Receipts.CommandReceiptStoreV2, (r) => r.getByCommandId(CommandId.make(id)));
@@ -14243,6 +14277,95 @@ describe("subagent lifecycle cascade", () => {
       yield* f.run("archive");
       assert.equal(yield* f.archived(native, app), "00");
     }).pipe(Effect.provide(layerTest)),
+  );
+  it.effect("holds the deletion lock before every cascade thread lock", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const side = ThreadId.make("side");
+      const sideChild = ThreadId.make("side-child");
+      yield* f.sideChat(app, side);
+      yield* f.set(sideChild, {
+        lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+      });
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const { withLock, withDeletionLock } = executor;
+      const held = new Set<ThreadId>();
+      let deleting = false;
+      const lock: typeof withLock = (id, effect) =>
+        withLock(
+          id,
+          Effect.acquireUseRelease(
+            Effect.sync(() => {
+              assert.isTrue(deleting, "a cascade thread lock requires the deletion lock");
+              held.add(id);
+            }),
+            () => effect,
+            () => Effect.sync(() => held.delete(id)),
+          ),
+        );
+      const deletion: typeof withDeletionLock = (effect) =>
+        Effect.suspend(() => {
+          assert.equal(held.size, 0, "the deletion lock precedes all ancestor thread locks");
+          assert.isFalse(deleting, "the deletion lock must not be acquired recursively");
+          return withDeletionLock(
+            Effect.acquireUseRelease(
+              Effect.sync(() => {
+                deleting = true;
+              }),
+              () => effect,
+              () =>
+                Effect.sync(() => {
+                  deleting = false;
+                }),
+            ),
+          );
+        });
+      using _lock = vi.spyOn(executor, "withLock").mockImplementation(lock);
+      using _deletion = vi.spyOn(executor, "withDeletionLock").mockImplementation(deletion);
+      yield* f.run("delete");
+      yield* f.drain;
+      assert.equal(
+        yield* f.state("deletedAt", parent, app, native, grandchild, side, sideChild),
+        "111111",
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+  it.effect.each([
+    { source: parent, delivery: "reply" },
+    { source: parent, delivery: "worker" },
+    { source: app, delivery: "reply" },
+    { source: app, delivery: "worker" },
+  ] as const)(
+    "cascades side-chat descendants from $source through $delivery",
+    ({ source, delivery }) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const side = ThreadId.make("side");
+        const child = ThreadId.make("side-child");
+        const independent = ThreadId.make("side-independent");
+        yield* f.sideChat(source, side);
+        for (const id of [child, independent]) {
+          yield* f.set(id, {
+            lineage: {
+              rootThreadId: parent,
+              parentThreadId: side,
+              relationshipToParent: "subagent",
+            },
+          });
+        }
+        yield* f.run("archive", independent);
+        const apply = (operation: "archive" | "unarchive") =>
+          delivery === "reply"
+            ? f.run(operation)
+            : f.commit(operation).pipe(Effect.andThen(f.drain));
+        yield* apply("archive");
+        assert.equal(yield* f.archived(side, child, independent), "111");
+        yield* f.drain;
+        yield* TestClock.adjust("8 days");
+        yield* f.outbox.pruneSettled;
+        yield* apply("unarchive");
+        assert.equal(yield* f.archived(side, child, independent), "001");
+      }).pipe(Effect.provide(layerTest)),
   );
   it.effect("restores only what a parent archive cascaded, through independent archives", () =>
     Effect.gen(function* () {
@@ -14361,13 +14484,18 @@ describe("subagent lifecycle cascade", () => {
       const raised = Effect.orDie(f.threads.dispatch({ ...raise, commandId, threadId: app }));
       let requests = 0;
       const lock: typeof withLock = (id, effect) =>
-        id === app && ++requests === (alreadyArchived ? 2 : 1)
-          ? raised.pipe(Effect.andThen(withLock(id, effect)))
-          : withLock(id, effect);
+        Effect.suspend(() =>
+          id === app && ++requests === (alreadyArchived ? 2 : 1)
+            ? raised.pipe(Effect.andThen(withLock(id, effect)))
+            : withLock(id, effect),
+        );
       using _lock = vi.spyOn(executor, "withLock").mockImplementation(lock);
       yield* f.drain;
       assert.equal(yield* f.archived(native, app, grandchild), alreadyArchived ? "110" : "100");
       assert.equal((yield* f.cascade).status, "succeeded");
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { type: _type, ...mode } = raise;
+      assert.include((yield* orchestrator.getThreadRecords(app, [])).thread, mode);
     }).pipe(Effect.provide(layerTest)),
   );
 });

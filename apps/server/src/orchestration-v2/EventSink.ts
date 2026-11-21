@@ -870,6 +870,21 @@ const layerBase: Layer.Layer<
             error: null,
           };
           yield* commandReceipts.upsert(receipt);
+          // Generated side-chat cascades need archive ownership after their outbox entries are pruned.
+          for (const effect of input.effects) {
+            if (
+              effect.commandId !== input.commandId &&
+              effect.request.type === "subagent-threads.cascade" &&
+              effect.request.operation !== "thread.delete"
+            ) {
+              yield* commandReceipts.insertIfAbsent({
+                ...receipt,
+                commandId: effect.commandId,
+                threadId: effect.threadId,
+                commandType: effect.request.operation,
+              });
+            }
+          }
           const cancelledEffectIds =
             input.cancelUnsettledEffects === undefined
               ? []

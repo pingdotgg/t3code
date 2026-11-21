@@ -1906,7 +1906,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     { commandId, threadId }: { readonly commandId: CommandId; readonly threadId: ThreadId },
     operation: "thread.archive" | "thread.unarchive" | "thread.delete",
   ) {
-    if (yield* EffectOutbox.SubagentCascade) return [];
+    const cascade = yield* EffectOutbox.SubagentCascade;
+    if (cascade?.path.at(-1) === threadId) return [];
     if ((yield* projectionStore.getSubagentChildThreads(threadId)).length === 0) return [];
     // The outbox schema persists only the caller's runtime and interaction modes.
     const limit = yield* DispatchModeLimit;
@@ -16465,7 +16466,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         ),
       );
-      return yield* command.type === "thread.delete"
+      // A subagent cascade already owns the deletion lock outside its ancestor thread locks.
+      return yield* command.type === "thread.delete" &&
+      (yield* EffectOutbox.SubagentCascade) === undefined
         ? threadDispatch.withDeletionLock(cascade)
         : cascade;
     }
