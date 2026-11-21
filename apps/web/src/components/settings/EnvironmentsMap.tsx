@@ -461,7 +461,11 @@ export function EnvironmentsMap(
           ? { choice: null }
           : offer.target.kind === "machine"
             ? { choice: offer.target.environmentId }
-            : { choice: ANOTHER_ADDRESS, address: offer.target.address ?? "" },
+            : {
+                choice: ANOTHER_ADDRESS,
+                address: offer.target.address ?? "",
+                ...(offer.target.through ? { through: offer.target.through } : {}),
+              },
     }));
   };
   /** One link from `sourceId` to `targetId`, whatever is selected. */
@@ -1295,6 +1299,11 @@ function actionText(action: FleetLinkAction | null, target: string, gt: GT): str
   const { offer } = action;
   if (offer === null) return gt("Cannot link to this");
   if (offer.path === "code-less") {
+    return offer.renews
+      ? gt("Renew link to {target}", { target })
+      : gt("Link to {target}", { target });
+  }
+  if (offer.path === "through-link") {
     return offer.renews
       ? gt("Renew link to {target}", { target })
       : gt("Link to {target}", { target });
