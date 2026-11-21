@@ -2,6 +2,7 @@ import {
   type OrchestrationV2AppThread,
   OrchestrationV2ContextHandoff,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
@@ -79,6 +80,8 @@ export interface ContextHandoffServiceV2Shape {
     readonly toProviderInstanceId: ProviderInstanceId;
     readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+    /** Read for the native goals the `fromProviderThreadIds` still own. */
+    readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
     readonly strategy: Extract<
       OrchestrationV2ContextHandoff["strategy"],
       "delta_since_target_last_seen" | "full_thread_summary"
@@ -498,6 +501,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
       readonly toProviderInstanceId: ProviderInstanceId;
       readonly coveredRunOrdinals: OrchestrationV2ContextHandoff["coveredRunOrdinals"];
       readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+      readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
       readonly strategy: Extract<
         OrchestrationV2ContextHandoff["strategy"],
         "delta_since_target_last_seen" | "full_thread_summary"
@@ -528,6 +532,22 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         ...input,
         threadId: input.sourceThreadId ?? input.threadId,
       });
+      const fromProviderThreadIds = new Set(input.fromProviderThreadIds);
+      const goals = (input.providerThreads ?? []).flatMap((providerThread) =>
+        providerThread.goal == null ||
+        providerThread.goal.status === "complete" ||
+        providerThread.id === input.toProviderThreadId ||
+        !fromProviderThreadIds.has(providerThread.id)
+          ? []
+          : [
+              {
+                providerThreadId: providerThread.id,
+                providerInstanceId: providerThread.providerInstanceId,
+                providerSessionId: providerThread.providerSessionId,
+                goal: providerThread.goal,
+              },
+            ],
+      );
       const selected = selectHistory({
         messages: input.items.flatMap((item) => {
           const message = historicalMessage(item);
@@ -561,6 +581,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
           omittedItems: selected.omittedItems,
           omittedItemIds: selected.omittedItemIds,
         },
+        ...(goals.length === 0 ? {} : { goals }),
         createdByProviderInstanceId: null,
         createdAt: input.createdAt,
         updatedAt: input.createdAt,
