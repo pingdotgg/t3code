@@ -35,6 +35,7 @@ import {
   pullRequestDiffStatKey,
   pullRequestEntryKey,
   rankPullRequestMatches,
+  pullRequestStatsKeysToRequest,
   pullRequestStatsRefreshBatches,
   pullRequestStatsRequestBatches,
   retainVisiblePullRequestStatsBatches,
@@ -885,7 +886,6 @@ export function PullRequestsPage() {
   }
   const [statsTargetState, setStatsTargetState] = useState<{
     readonly key: string;
-    readonly sortKey?: string;
     readonly batches: ReadonlyArray<PullRequestStatsBatch>;
   }>({ key: filterKey, batches: [] });
   const statsBatches = statsTargetState.key === filterKey ? statsTargetState.batches : [];
@@ -943,12 +943,10 @@ export function PullRequestsPage() {
         activeBatches: batches,
         statsByRow: known,
       });
-      if (added.length === 0 && current.key === filterKey && current.sortKey === sortStatsKey) {
-        return current;
-      }
-      return { key: filterKey, sortKey: sortStatsKey, batches: [...batches, ...added] };
+      if (added.length === 0 && current.key === filterKey) return current;
+      return { key: filterKey, batches: [...batches, ...added] };
     });
-  }, [filterKey, entriesByStatsKey, statsPolicy, sortStatsKey]);
+  }, [filterKey, entriesByStatsKey, statsPolicy]);
   // The observer outlives the rows it watches, so it reads the rows held at the time it fires.
   const readStatsRows = useEffectEvent(() => entriesByStatsKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- IntersectionObserver on rows requests stats for rows that scroll into view
@@ -1024,7 +1022,15 @@ export function PullRequestsPage() {
     statsByRow,
     statsPolicy === "eager" ? statsQuery.stats : null,
     statsPolicy !== "eager" ||
-      (statsTargetState.sortKey === sortStatsKey &&
+      // Read here rather than marked by the effect, so a keystroke that needs no new counts
+      // settles in its own render instead of committing again.
+      (statsTargetState.key === filterKey &&
+        pullRequestStatsKeysToRequest(
+          entriesByStatsKey,
+          new Set(entriesByStatsKey.keys()),
+          statsTargetState.batches,
+          statsByRow,
+        ).size === 0 &&
         !statsQuery.isPending &&
         !listQuery.isPending &&
         !baselineQuery.isPending &&
