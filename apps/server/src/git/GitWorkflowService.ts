@@ -59,6 +59,7 @@ export class GitWorkflowService extends Context.Service<
         readonly refName: string;
         readonly aheadCount: number;
         readonly behindCount: number;
+        readonly details: GitVcsDriver.GitRemoteStatusDetails;
       } | null,
       GitManagerServiceError
     >;
@@ -384,6 +385,7 @@ export const make = Effect.gen(function* () {
             refName: details.branch,
             aheadCount: details.aheadCount,
             behindCount: details.behindCount,
+            details,
           }
         : null;
     }),
@@ -398,8 +400,10 @@ export const make = Effect.gen(function* () {
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
     readRefSnapshot: git.readRefSnapshot,
     invalidateStatus: gitManager.invalidateStatus,
-    headPath: Effect.fn("GitWorkflowService.headPath")(function (cwd) {
-      return git
+    headPath: Effect.fn("GitWorkflowService.headPath")(function* (cwd) {
+      // Clients keep watching threads whose worktree was removed; spawning there fails noisily.
+      if (!(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)))) return null;
+      return yield* git
         .execute({
           operation: "GitWorkflowService.headPath",
           cwd,

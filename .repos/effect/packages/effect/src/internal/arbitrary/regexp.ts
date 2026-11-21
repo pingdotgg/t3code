@@ -48,6 +48,7 @@ export interface Compiled {
     maximumLength: number
   ) => string | undefined
   readonly shrink: (value: string, minimumLength: number) => ReadonlyArray<string>
+  readonly test: (value: string) => boolean
 }
 
 const empty: Literal = { _tag: "Literal", value: "" }
@@ -850,6 +851,7 @@ export function compile(pattern: Pattern): Compiled | undefined {
       const value = generateExact(node, candidates[offset], state, cache)
       return value !== undefined && test(regExp, value) ? value : undefined
     },
-    shrink: (value, minimumLength) => structuralShrinks(node, regExp, value, minimumLength, cache)
+    shrink: (value, minimumLength) => structuralShrinks(node, regExp, value, minimumLength, cache),
+    test: (value) => test(regExp, value)
   }
 }
