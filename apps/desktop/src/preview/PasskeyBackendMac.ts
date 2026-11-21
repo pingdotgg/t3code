@@ -74,7 +74,7 @@ export const macPasskeyBackend: PasskeyBackend = {
       options,
     );
     if (!result.success) return { success: false, error: result.error };
-    // Native allow lists cover only platform passkeys; security-key responses need checking here.
+    // Defense in depth: reject a native response outside the requested allow list.
     const allowed = (Array.isArray(publicKey.allowCredentials) ? publicKey.allowCredentials : [])
       .filter((credential) => credential?.type === "public-key" && isBufferSource(credential.id))
       .map((credential) => toBase64Url(credential.id));
