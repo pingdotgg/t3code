@@ -29,6 +29,7 @@ const clientSettings: ClientSettings = {
   browserLinkTarget: "app",
   sideThreadOpenTarget: "main",
   browserAutoShowFloatingPreview: false,
+  browserFloatPreviewOnPanelClose: false,
   browserProfiles: [{ id: "work", name: "Work", kind: "persistent" }],
   browserDefaultProfileId: "work",
   confirmQuit: "double-click",
