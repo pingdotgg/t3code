@@ -49,7 +49,9 @@ pub use profile::{
     merge_appearance, merge_device_section, merge_workspaces, parse_profile_appearance,
     parse_profile_device_section, same_workspaces, to_gateway_form, workspace_matches_project,
 };
-pub use realtime::{TasksFollower, TasksLiveStatus, follow_orbit_tasks};
+pub use realtime::{
+    OrbitRealtimeEvent, TasksFollower, TasksLiveStatus, follow_orbit_tasks, orbit_realtime_event,
+};
 pub use tasks::{
     InsightsPeriod, OrbitEnvironment, TaskDetail, TaskInsights, TaskInsightsQuery, TaskLane,
     TaskSummary, TasksListQuery, TasksPage,

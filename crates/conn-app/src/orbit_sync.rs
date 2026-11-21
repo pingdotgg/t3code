@@ -799,6 +799,16 @@ pub(crate) async fn mint_orbit_pairing(
     client.mint_pairing(&server_id).await
 }
 
+/// Refreshes only the Orbit Nodes & Instances fleet from `gateway.orbit` (called on Reverb
+/// `FleetChanged` notices so waking/stopping Instances updates live without polling).
+pub(crate) async fn fetch_orbit_fleet(
+    local_node_name: Option<String>,
+) -> Result<OrbitFleet, ProfileError> {
+    let client =
+        OrbitFleetClient::live().map_err(|err| ProfileError::Unreachable(err.to_string()))?;
+    client.list_fleet(local_node_name.as_deref()).await
+}
+
 /// Requests Orbit to wake a stopped Instance (`POST /api/v1/instances/{id}/wake`).
 pub(crate) async fn wake_orbit_instance(instance_id: i64) -> Result<Option<i64>, ProfileError> {
     let client =

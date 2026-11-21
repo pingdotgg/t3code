@@ -206,6 +206,53 @@ impl RightPanel {
         self.browser.read(cx).title()
     }
 
+    /// Places an agent-provided SQL query in the Database editor without executing it.
+    pub fn set_database_sql(&mut self, sql: String, cx: &mut Context<'_, Self>) {
+        self.database
+            .update(cx, |panel, cx| panel.set_agent_sql(sql, cx));
+    }
+
+    /// Runs an agent's read-only SQL query in the Database panel and resolves with its result.
+    pub fn run_agent_database_query(
+        &mut self,
+        sql: String,
+        connection: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) -> tokio::sync::oneshot::Receiver<Result<conn_contract::AgentPanelDatabaseResult, String>>
+    {
+        self.database
+            .update(cx, |panel, cx| panel.run_agent_query(sql, connection, cx))
+    }
+
+    /// Connects an MCP server in the MCP panel for an agent and resolves with its tools list.
+    pub fn run_agent_mcp_connect(
+        &mut self,
+        spec: conn_contract::AgentPanelMcpServer,
+        cx: &mut Context<'_, Self>,
+    ) -> tokio::sync::oneshot::Receiver<Result<conn_contract::AgentPanelMcpResult, String>> {
+        self.mcp
+            .update(cx, |panel, cx| panel.run_agent_connect(spec, cx))
+    }
+
+    /// Calls an MCP tool in the MCP panel for an agent and resolves with its output.
+    pub fn run_agent_mcp_call(
+        &mut self,
+        call: conn_contract::AgentPanelMcpCall,
+        cx: &mut Context<'_, Self>,
+    ) -> tokio::sync::oneshot::Receiver<Result<conn_contract::AgentPanelMcpCallResult, String>>
+    {
+        self.mcp
+            .update(cx, |panel, cx| panel.run_agent_call(call, cx))
+    }
+
+    /// Subscribes to app-wide Orbit Gateway Reverb events from the shared Tasks WebSocket.
+    pub fn subscribe_orbit_events(
+        &self,
+        cx: &App,
+    ) -> Option<tokio::sync::broadcast::Receiver<conn_desktop::orbit::OrbitRealtimeEvent>> {
+        self.tasks.read(cx).subscribe_orbit_events()
+    }
+
     /// Updates the live `conn-server` connection across every server-backed right-panel surface.
     pub fn set_connection(&mut self, connection: Option<Connection>, cx: &mut Context<'_, Self>) {
         self.files

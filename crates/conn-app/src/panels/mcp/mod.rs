@@ -627,6 +627,346 @@ impl McpPanel {
         }
     }
 
+    /// Adds/updates an MCP server requested by an agent, connects to it in the MCP panel, loads
+    /// its tools/resources/prompts, and returns [`conn_contract::AgentPanelMcpResult`].
+    pub(crate) fn run_agent_connect(
+        &mut self,
+        spec: conn_contract::AgentPanelMcpServer,
+        cx: &mut Context<'_, Self>,
+    ) -> tokio::sync::oneshot::Receiver<Result<conn_contract::AgentPanelMcpResult, String>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let project_key = self
+            .project_key
+            .clone()
+            .unwrap_or_else(|| "default".to_owned());
+        let agent_spec = conn_desktop::mcp::servers::AgentMcpServer {
+            name: spec.name,
+            url: spec.url,
+            transport: spec.transport.map(|t| match t {
+                conn_contract::AgentPanelMcpServerTransport::Http => {
+                    conn_desktop::mcp::servers::McpTransport::Http
+                }
+                conn_contract::AgentPanelMcpServerTransport::Sse => {
+                    conn_desktop::mcp::servers::McpTransport::Sse
+                }
+            }),
+            command: spec.command,
+            headers: spec
+                .headers
+                .map(|m| conn_desktop::mcp::servers::McpPairs(m.into_iter().collect())),
+            env: spec
+                .env
+                .map(|m| conn_desktop::mcp::servers::McpPairs(m.into_iter().collect())),
+        };
+
+        let existing = self
+            .store
+            .project(&project_key)
+            .map(|p| p.servers.as_slice())
+            .unwrap_or(&[]);
+        let (draft, _is_new) =
+            conn_desktop::mcp::servers::agent_server_draft(existing, &agent_spec);
+        let project = self.store.project_mut(&project_key);
+        project.add(draft.clone());
+        project.select(&draft.id);
+        self.persist();
+        self.synced_server = None;
+        self.tab = PanelTab::Tools;
+
+        let session_key = mcp_session_key(&project_key, &draft.id);
+        let desktop_server = match to_desktop_mcp_server(&draft, self.workspace_root.as_deref()) {
+            Ok(server) => server,
+            Err(error) => {
+                self.sessions.entry(session_key).or_default().error = Some(error.clone());
+                cx.notify();
+                let _ = tx.send(Err(error));
+                return rx;
+            }
+        };
+
+        self.sessions
+            .entry(session_key.clone())
+            .or_default()
+            .begin_connect();
+        cx.notify();
+
+        let mcp = self.mcp.clone();
+        let sk_req = session_key.clone();
+        let task = crate::live::RT.spawn(async move {
+            let connect_res = mcp
+                .connect(McpConnectRequest {
+                    session_id: sk_req.clone(),
+                    server: desktop_server,
+                })
+                .await;
+            if connect_res.error.is_some() {
+                return (connect_res, None, None, None, None);
+            }
+            let (tools, resources, templates, prompts) = tokio::join!(
+                mcp.request(McpRequest {
+                    session_id: sk_req.clone(),
+                    method: McpMethod::ToolsList,
+                    params: json!({}),
+                }),
+                mcp.request(McpRequest {
+                    session_id: sk_req.clone(),
+                    method: McpMethod::ResourcesList,
+                    params: json!({}),
+                }),
+                mcp.request(McpRequest {
+                    session_id: sk_req.clone(),
+                    method: McpMethod::ResourceTemplatesList,
+                    params: json!({}),
+                }),
+                mcp.request(McpRequest {
+                    session_id: sk_req,
+                    method: McpMethod::PromptsList,
+                    params: json!({}),
+                }),
+            );
+            (
+                connect_res,
+                Some(tools),
+                Some(resources),
+                Some(templates),
+                Some(prompts),
+            )
+        });
+
+        cx.spawn(async move |this, cx| {
+            let outcome = task.await;
+            let reply = match outcome {
+                Err(join_err) => Err(join_err.to_string()),
+                Ok((connect_res, tools, resources, templates, prompts)) => {
+                    let connect_err = connect_res.error.clone();
+                    let mut result = Err("MCP panel closed.".to_owned());
+                    let _ = this.update(cx, |panel, cx| {
+                        let session = panel.sessions.entry(session_key.clone()).or_default();
+                        let ok = session.finish_connect(connect_res);
+                        if ok {
+                            if let Some(t) = tools {
+                                session.apply_list(McpListKind::Tools, &t);
+                            }
+                            if let Some(r) = resources {
+                                let tmpl = templates
+                                    .unwrap_or_else(|| McpResponse::failed(String::new(), 0.0));
+                                session.apply_resources(&r, &tmpl);
+                            }
+                            if let Some(p) = prompts {
+                                session.apply_list(McpListKind::Prompts, &p);
+                            }
+                            let summary =
+                                conn_desktop::mcp::store::agent_connect_result(&draft, session);
+                            result = Ok(conn_contract::AgentPanelMcpResult {
+                                server: summary.server,
+                                server_info: summary.server_info,
+                                tools: summary
+                                    .tools
+                                    .into_iter()
+                                    .map(|t| conn_contract::AgentPanelMcpResultToolsItem {
+                                        name: t.name,
+                                        description: t.description,
+                                    })
+                                    .collect(),
+                                resource_count: summary
+                                    .resource_count
+                                    .map(|n| conn_contract::support::JsNumber(n as f64)),
+                                prompt_count: summary
+                                    .prompt_count
+                                    .map(|n| conn_contract::support::JsNumber(n as f64)),
+                            });
+                        } else {
+                            result = Err(connect_err
+                                .unwrap_or_else(|| "Could not connect to MCP server.".to_owned()));
+                        }
+                        cx.notify();
+                    });
+                    result
+                }
+            };
+            let _ = tx.send(reply);
+        })
+        .detach();
+        rx
+    }
+
+    /// Calls a tool on a saved MCP server for an agent, populating the Playground form and live
+    /// result view in the MCP panel, and returns [`conn_contract::AgentPanelMcpCallResult`].
+    pub(crate) fn run_agent_call(
+        &mut self,
+        call: conn_contract::AgentPanelMcpCall,
+        cx: &mut Context<'_, Self>,
+    ) -> tokio::sync::oneshot::Receiver<Result<conn_contract::AgentPanelMcpCallResult, String>>
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let project_key = self
+            .project_key
+            .clone()
+            .unwrap_or_else(|| "default".to_owned());
+        let draft = match conn_desktop::mcp::store::agent_call_server(
+            self.store.project(&project_key),
+            call.server.as_deref(),
+        ) {
+            Ok(server) => server.clone(),
+            Err(error) => {
+                let _ = tx.send(Err(error));
+                return rx;
+            }
+        };
+
+        self.store.project_mut(&project_key).select(&draft.id);
+        self.persist();
+        self.synced_server = None;
+        self.tab = PanelTab::Tools;
+
+        let session_key = mcp_session_key(&project_key, &draft.id);
+        let needs_connect = self
+            .sessions
+            .get(&session_key)
+            .is_none_or(|s| s.status != McpStatus::Connected || s.tools.is_none());
+
+        let desktop_server = if needs_connect {
+            match to_desktop_mcp_server(&draft, self.workspace_root.as_deref()) {
+                Ok(server) => Some(server),
+                Err(error) => {
+                    let _ = tx.send(Err(error));
+                    return rx;
+                }
+            }
+        } else {
+            None
+        };
+
+        let mcp = self.mcp.clone();
+        let sk = session_key;
+        let tool_name = call.tool;
+        let arguments = call.arguments;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            // Connect & list tools first if disconnected.
+            if let Some(server) = desktop_server {
+                let _ = this.update(cx, |panel, cx| {
+                    panel
+                        .sessions
+                        .entry(sk.clone())
+                        .or_default()
+                        .begin_connect();
+                    cx.notify();
+                });
+                let mcp_c = mcp.clone();
+                let sk_c = sk.clone();
+                let conn_out = crate::live::RT
+                    .spawn(async move {
+                        let res = mcp_c
+                            .connect(McpConnectRequest {
+                                session_id: sk_c.clone(),
+                                server,
+                            })
+                            .await;
+                        if res.error.is_some() {
+                            return (res, None);
+                        }
+                        let tools = mcp_c
+                            .request(McpRequest {
+                                session_id: sk_c,
+                                method: McpMethod::ToolsList,
+                                params: json!({}),
+                            })
+                            .await;
+                        (res, Some(tools))
+                    })
+                    .await;
+                let connected = match conn_out {
+                    Ok((res, tools)) => {
+                        let err = res.error.clone();
+                        let mut ok_flag = false;
+                        let _ = this.update(cx, |panel, cx| {
+                            let session = panel.sessions.entry(sk.clone()).or_default();
+                            ok_flag = session.finish_connect(res);
+                            if ok_flag && let Some(t) = tools {
+                                session.apply_list(McpListKind::Tools, &t);
+                            }
+                            cx.notify();
+                        });
+                        if ok_flag {
+                            Ok(())
+                        } else {
+                            Err(err.unwrap_or_else(|| "MCP connect failed.".to_owned()))
+                        }
+                    }
+                    Err(join_err) => Err(join_err.to_string()),
+                };
+                if let Err(err) = connected {
+                    let _ = tx.send(Err(err));
+                    return;
+                }
+            }
+
+            // Prepare the Playground form + validate tool name.
+            let args_map: serde_json::Map<String, Value> = arguments.into_iter().collect();
+            let prepared = this.update(cx, |panel, cx| {
+                let session = panel.sessions.entry(sk.clone()).or_default();
+                let prep = conn_desktop::mcp::store::prepare_agent_tool_call(
+                    &draft, session, &tool_name, &args_map,
+                );
+                if let Ok((ref call_key, _)) = prep {
+                    session.start_call(call_key);
+                }
+                cx.notify();
+                prep
+            });
+            let (call_key, params) = match prepared {
+                Ok(Ok(pair)) => pair,
+                Ok(Err(err)) => {
+                    let _ = tx.send(Err(err));
+                    return;
+                }
+                Err(_) => {
+                    let _ = tx.send(Err("MCP panel closed.".to_owned()));
+                    return;
+                }
+            };
+
+            let sk_call = sk.clone();
+            let call_task = crate::live::RT.spawn(async move {
+                mcp.request(McpRequest {
+                    session_id: sk_call,
+                    method: McpMethod::ToolsCall,
+                    params,
+                })
+                .await
+            });
+            let response = match call_task.await {
+                Ok(res) => res,
+                Err(join_err) => McpResponse::failed(join_err.to_string(), 0.0),
+            };
+            let duration_ms = response.duration_ms;
+            let outcome =
+                conn_desktop::mcp::store::agent_tool_call_outcome(&draft, &tool_name, &response)
+                    .map(|res| conn_contract::AgentPanelMcpCallResult {
+                        server: res.server,
+                        tool: res.tool,
+                        is_error: res.is_error,
+                        content: res.content,
+                        structured_content: res.structured_content.map(Some),
+                        truncated: res.truncated,
+                        duration_ms: conn_contract::support::JsNumber(duration_ms),
+                    });
+            let _ = this.update(cx, |panel, cx| {
+                panel
+                    .sessions
+                    .entry(sk)
+                    .or_default()
+                    .finish_call(&call_key, response);
+                cx.notify();
+            });
+            let _ = tx.send(outcome);
+        })
+        .detach();
+        rx
+    }
+
     pub(super) fn run_call(
         &mut self,
         session_key: String,

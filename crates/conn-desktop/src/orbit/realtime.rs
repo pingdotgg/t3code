@@ -20,7 +20,7 @@ use std::time::Duration;
 use futures::{SinkExt, StreamExt};
 use serde_json::{Map, Value, json};
 use tokio::net::TcpStream;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep_until, timeout};
 use tokio_tungstenite::tungstenite::Message;
@@ -42,6 +42,35 @@ pub enum TasksLiveStatus {
     Connecting,
     Live,
     Polling,
+}
+
+/// App-wide Orbit Gateway realtime notice delivered over the shared `private-orbit` Reverb
+/// WebSocket so Nodes, Instances, and profiles stay fresh in the background without polling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OrbitRealtimeEvent {
+    /// A Node or Instance was created, updated, woken, stopped, deployed, or removed.
+    FleetChanged,
+    /// A Conn profile document changed on another device.
+    ProfileChanged,
+}
+
+/// Classifies non-task `private-orbit` Reverb events into app-wide invalidations.
+#[must_use]
+pub fn orbit_realtime_event(event: &str) -> Option<OrbitRealtimeEvent> {
+    match event {
+        "node.created"
+        | "node.updated"
+        | "node.deleted"
+        | "instance.created"
+        | "instance.updated"
+        | "instance.deleted"
+        | "conn.environment.updated"
+        | "conn.environment.registered"
+        | "conn.environment.removed" => Some(OrbitRealtimeEvent::FleetChanged),
+        "conn.profile.updated" | "profile.updated" => Some(OrbitRealtimeEvent::ProfileChanged),
+        other if other.starts_with("deployment.") => Some(OrbitRealtimeEvent::FleetChanged),
+        _ => None,
+    }
 }
 
 /// A JSON object, also from a string that holds one (Pusher double-encodes `data`).
@@ -75,6 +104,7 @@ pub fn orbit_task_notice(event: &str, data: &Value) -> Option<TasksInvalidation>
 #[derive(Debug)]
 pub struct TasksFollower {
     status: watch::Receiver<TasksLiveStatus>,
+    events: broadcast::Sender<OrbitRealtimeEvent>,
     task: JoinHandle<()>,
 }
 
@@ -82,6 +112,12 @@ impl TasksFollower {
     /// The current status, and changes to it.
     pub fn status(&self) -> watch::Receiver<TasksLiveStatus> {
         self.status.clone()
+    }
+
+    /// Subscribes to app-wide Orbit Gateway notices (`FleetChanged`, `ProfileChanged`) arriving
+    /// on the shared `private-orbit` Reverb WebSocket.
+    pub fn subscribe_events(&self) -> broadcast::Receiver<OrbitRealtimeEvent> {
+        self.events.subscribe()
     }
 }
 
@@ -91,15 +127,20 @@ impl Drop for TasksFollower {
     }
 }
 
-/// Starts following Orbit's Tasks on `runtime`. Invalidations reach every
-/// [`OrbitTasksClient::subscribe`] receiver; keep one follower per app, shared by all views.
+/// Starts following Orbit's Tasks (and app-wide Fleet/Profile notices) on `runtime`.
+/// Keep one follower per app, shared by all views.
 pub fn follow_orbit_tasks(
     runtime: &tokio::runtime::Handle,
     client: OrbitTasksClient,
 ) -> TasksFollower {
     let (sender, status) = watch::channel(TasksLiveStatus::Connecting);
-    let task = runtime.spawn(run(client, sender));
-    TasksFollower { status, task }
+    let (events, _) = broadcast::channel(64);
+    let task = runtime.spawn(run(client, sender, events.clone()));
+    TasksFollower {
+        status,
+        events,
+        task,
+    }
 }
 
 pub(super) type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -185,10 +226,13 @@ struct Follow {
     client: OrbitTasksClient,
     transport: Arc<dyn GatewayTransport>,
     status: watch::Sender<TasksLiveStatus>,
+    events: broadcast::Sender<OrbitRealtimeEvent>,
     socket: Option<Socket>,
     live: bool,
     handshake: Option<Instant>,
     batch: Option<TasksInvalidation>,
+    fleet_dirty: bool,
+    profile_dirty: bool,
     batch_at: Option<Instant>,
 }
 
@@ -208,10 +252,26 @@ impl Follow {
         }
     }
 
+    fn enqueue_orbit_event(&mut self, event: OrbitRealtimeEvent) {
+        match event {
+            OrbitRealtimeEvent::FleetChanged => self.fleet_dirty = true,
+            OrbitRealtimeEvent::ProfileChanged => self.profile_dirty = true,
+        }
+        if self.batch_at.is_none() {
+            self.batch_at = Some(Instant::now() + BATCH);
+        }
+    }
+
     fn flush(&mut self) {
         self.batch_at = None;
         if let Some(target) = self.batch.take() {
             self.client.invalidate(target);
+        }
+        if std::mem::take(&mut self.fleet_dirty) {
+            let _ = self.events.send(OrbitRealtimeEvent::FleetChanged);
+        }
+        if std::mem::take(&mut self.profile_dirty) {
+            let _ = self.events.send(OrbitRealtimeEvent::ProfileChanged);
         }
     }
 
@@ -298,22 +358,32 @@ impl Follow {
                 if let Some(target) = orbit_task_notice(event, &raw_data) {
                     self.enqueue(target);
                 }
+                if let Some(orbit_event) = orbit_realtime_event(event) {
+                    self.enqueue_orbit_event(orbit_event);
+                }
             }
             _ => {}
         }
     }
 }
 
-async fn run(client: OrbitTasksClient, status: watch::Sender<TasksLiveStatus>) {
+async fn run(
+    client: OrbitTasksClient,
+    status: watch::Sender<TasksLiveStatus>,
+    events: broadcast::Sender<OrbitRealtimeEvent>,
+) {
     let transport = client.transport();
     let mut follow = Follow {
         client,
         transport,
         status,
+        events,
         socket: None,
         live: false,
         handshake: None,
         batch: None,
+        fleet_dirty: false,
+        profile_dirty: false,
         batch_at: None,
     };
     follow.publish(TasksLiveStatus::Connecting);
@@ -351,6 +421,27 @@ mod tests {
 
     use super::super::gateway::{BoxFuture, GatewayError, GatewayResponse};
     use super::*;
+
+    #[test]
+    fn classifies_fleet_and_profile_reverb_events() {
+        assert_eq!(
+            orbit_realtime_event("node.updated"),
+            Some(OrbitRealtimeEvent::FleetChanged)
+        );
+        assert_eq!(
+            orbit_realtime_event("instance.updated"),
+            Some(OrbitRealtimeEvent::FleetChanged)
+        );
+        assert_eq!(
+            orbit_realtime_event("deployment.finished"),
+            Some(OrbitRealtimeEvent::FleetChanged)
+        );
+        assert_eq!(
+            orbit_realtime_event("conn.profile.updated"),
+            Some(OrbitRealtimeEvent::ProfileChanged)
+        );
+        assert_eq!(orbit_realtime_event("tasks.updated"), None);
+    }
 
     #[test]
     fn maps_only_task_notices_to_invalidations() {

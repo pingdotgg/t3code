@@ -383,6 +383,149 @@ impl DatabasePanel {
         .detach();
     }
 
+    /// Places an agent-provided SQL query in the editor without running it.
+    pub(crate) fn set_agent_sql(&mut self, sql: String, cx: &mut Context<'_, Self>) {
+        if let (Some(project_key), Some(connection)) =
+            (self.project_key.clone(), self.selected_connection())
+        {
+            self.store.set_sql(&project_key, &connection.id, sql);
+            save_store(&self.store);
+            self.synced_sql = None;
+            self.tab = "rows";
+            cx.notify();
+        }
+    }
+
+    /// Executes an agent's read-only SQL query in the Database panel so the user sees the live
+    /// rows, and returns the truncated [`conn_contract::AgentPanelDatabaseResult`].
+    pub(crate) fn run_agent_query(
+        &mut self,
+        sql: String,
+        connection_name: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) -> tokio::sync::oneshot::Receiver<Result<conn_contract::AgentPanelDatabaseResult, String>>
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if sql.trim().is_empty() {
+            let _ = tx.send(Err("SQL query is empty.".to_owned()));
+            return rx;
+        }
+        let connections = self.connections();
+        let wanted = connection_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty());
+        let picked = match wanted {
+            Some(name) => connections
+                .iter()
+                .find(|c| c.name.trim().eq_ignore_ascii_case(name))
+                .cloned(),
+            None => self.selected_connection(),
+        };
+        let Some(connection) = picked else {
+            let names = if connections.is_empty() {
+                "none".to_owned()
+            } else {
+                connections
+                    .iter()
+                    .map(|c| c.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let msg = match wanted {
+                Some(name) => {
+                    format!("No database connection named \"{name}\". Connections: {names}.")
+                }
+                None => format!(
+                    "No database connection configured for this project. Connections: {names}."
+                ),
+            };
+            let _ = tx.send(Err(msg));
+            return rx;
+        };
+
+        if let Some(project_key) = self.project_key.clone() {
+            self.store.set_connection(&project_key, &connection.id);
+            self.store
+                .set_sql(&project_key, &connection.id, sql.clone());
+            save_store(&self.store);
+        }
+        self.synced_sql = None;
+        self.tab = "rows";
+
+        let key = connection_key(&connection);
+        self.run_id = self.run_id.wrapping_add(1);
+        let run_id = self.run_id;
+        let previous_result = self
+            .query
+            .as_ref()
+            .filter(|q| q.key == key)
+            .and_then(|q| q.result.clone());
+        self.query = Some(QueryState {
+            key: key.clone(),
+            running: true,
+            result: previous_result,
+            error: None,
+        });
+        cx.notify();
+
+        let options = self.take_call_options();
+        let runner = self.runner.clone();
+        let db_conn = connection.connection.clone();
+        let task = crate::live::RT
+            .spawn(async move { run_read_only_query(&runner, &db_conn, &sql, options).await });
+        cx.spawn(async move |this, cx| {
+            let outcome = task.await;
+            let reply = match &outcome {
+                Ok(Ok(result)) => {
+                    let agent_res =
+                        conn_desktop::database::api::agent_query_result(&connection, result);
+                    Ok(conn_contract::AgentPanelDatabaseResult {
+                        connection: agent_res.connection,
+                        columns: agent_res.columns,
+                        row_count: conn_contract::support::JsNumber(agent_res.row_count as f64),
+                        rows: agent_res
+                            .rows
+                            .into_iter()
+                            .map(|row| row.into_iter().collect())
+                            .collect(),
+                        truncated: agent_res.truncated,
+                    })
+                }
+                Ok(Err(error)) => Err(error.to_string()),
+                Err(join_error) => Err(join_error.to_string()),
+            };
+            let _ = this.update(cx, |panel, cx| {
+                if panel.run_id == run_id {
+                    panel.query = Some(match outcome {
+                        Ok(Ok(result)) => QueryState {
+                            key,
+                            running: false,
+                            result: Some(result),
+                            error: None,
+                        },
+                        Ok(Err(error)) => QueryState {
+                            key,
+                            running: false,
+                            result: None,
+                            error: Some(error.to_string()),
+                        },
+                        Err(join_error) => QueryState {
+                            key,
+                            running: false,
+                            result: None,
+                            error: Some(join_error.to_string()),
+                        },
+                    });
+                    cx.notify();
+                }
+            });
+            let _ = tx.send(reply);
+        })
+        .detach();
+        rx
+    }
+
     fn run_sql(&mut self, statement: String, cx: &mut Context<'_, Self>) {
         if statement.trim().is_empty() {
             return;

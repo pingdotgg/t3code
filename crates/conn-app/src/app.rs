@@ -122,6 +122,7 @@ impl ConnApp {
                 let (connection, events) = Connection::start(config, crate::live::RT.handle());
                 connection.subscribe_shell();
                 Self::pump_events(1, None, events, cx);
+                Self::start_agent_panel_requests(1, connection.clone(), cx);
                 (ShellState::default(), Some(connection))
             }
             None => {
@@ -264,6 +265,9 @@ impl ConnApp {
         };
         if crate::orbit_sync::orbit_sync_enabled_by_env() {
             app.sync_orbit_profile(crate::orbit_sync::allow_startup_theme_adopt(), cx);
+            if let Some(rx) = app.right_panel.read(cx).subscribe_orbit_events(cx) {
+                Self::pump_orbit_realtime(rx, cx);
+            }
         }
         app
     }
@@ -1546,6 +1550,317 @@ impl ConnApp {
         true
     }
 
+    /// Subscribes to `conn-server`'s `panels.requests` reverse-RPC stream so agents (via
+    /// `panel_open`, `database_query`, `mcp_connect`, `mcp_call`) can drive this desktop app's
+    /// live panels over the existing `/ws` connection.
+    fn start_agent_panel_requests(
+        generation: u64,
+        connection: Connection,
+        cx: &mut Context<'_, Self>,
+    ) {
+        const RESUBSCRIBE_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+        const NOT_ON_THREAD: &str = "The user is looking at another thread, so Conn did not run this. Ask them to open your thread, then try again.";
+
+        cx.spawn(async move |this, cx| {
+            loop {
+                let device_name = this
+                    .read_with(cx, |app, _| {
+                        if app.connection_gen != generation {
+                            return None;
+                        }
+                        Some(
+                            app.orbit
+                                .node
+                                .as_ref()
+                                .map(|n| n.name.clone())
+                                .or_else(|| std::env::var("USER").ok())
+                                .unwrap_or_else(|| "Mac".to_owned()),
+                        )
+                    })
+                    .ok()
+                    .flatten();
+                let Some(device_name) = device_name else {
+                    break;
+                };
+
+                let payload = serde_json::to_value(conn_contract::AgentPanelSubscribeInput {
+                    device_name: Some(device_name.clone()),
+                })
+                .unwrap_or_else(|_| serde_json::json!({}));
+                let (stream_id, mut rx) = connection.stream_json("panels.requests", payload);
+
+                loop {
+                    let next = crate::live::RT
+                        .spawn(async move {
+                            let item = rx.recv().await;
+                            (item, rx)
+                        })
+                        .await;
+                    let Ok((Some(raw), next_rx)) = next else {
+                        break;
+                    };
+                    rx = next_rx;
+
+                    let still_active = this
+                        .read_with(cx, |app, _| app.connection_gen == generation)
+                        .unwrap_or(false);
+                    if !still_active {
+                        connection.cancel_stream(stream_id);
+                        return;
+                    }
+
+                    let Ok(request) =
+                        serde_json::from_value::<conn_contract::AgentPanelRequest>(raw)
+                    else {
+                        continue;
+                    };
+
+                    let conn_reply = connection.clone();
+                    let dev_reply = device_name.clone();
+                    let this_req = this.clone();
+                    cx.spawn(async move |cx| {
+                        let response = Self::handle_agent_panel_request(
+                            this_req,
+                            request,
+                            dev_reply,
+                            NOT_ON_THREAD,
+                            cx,
+                        )
+                        .await;
+                        let _ = crate::live::RT
+                            .spawn(async move {
+                                let _ = conn_reply
+                                    .call::<conn_contract::AgentPanelResponse, ()>(
+                                        "panels.respond",
+                                        &response,
+                                    )
+                                    .await;
+                            })
+                            .await;
+                    })
+                    .detach();
+                }
+
+                connection.cancel_stream(stream_id);
+                let still_active = this
+                    .read_with(cx, |app, _| app.connection_gen == generation)
+                    .unwrap_or(false);
+                if !still_active {
+                    break;
+                }
+                cx.background_executor().timer(RESUBSCRIBE_DELAY).await;
+            }
+        })
+        .detach();
+    }
+
+    async fn handle_agent_panel_request(
+        this: gpui_kit::WeakEntity<Self>,
+        request: conn_contract::AgentPanelRequest,
+        device_name: String,
+        not_on_thread: &str,
+        cx: &mut gpui_kit::AsyncApp,
+    ) -> conn_contract::AgentPanelResponse {
+        use conn_contract::{AgentPanelKind, AgentPanelResponse};
+
+        let mut resp = AgentPanelResponse {
+            request_id: request.request_id.clone(),
+            ok: true,
+            device_name: Some(device_name),
+            error: None,
+            database: None,
+            mcp: None,
+            mcp_call: None,
+        };
+
+        let on_thread = this
+            .read_with(cx, |app, _| {
+                app.layout.selected_thread_id.as_deref() == Some(request.thread_id.as_str())
+            })
+            .unwrap_or(false);
+
+        if !on_thread {
+            if request.panel == AgentPanelKind::Database
+                && let Some(sql) = request.sql.clone()
+            {
+                let _ = this.update(cx, |app, cx| {
+                    app.right_panel
+                        .update(cx, |panel, cx| panel.set_database_sql(sql, cx));
+                });
+                if request.run == Some(true) {
+                    resp.ok = false;
+                    resp.error = Some(format!(
+                        "{not_on_thread} The query is in its Database panel."
+                    ));
+                }
+                return resp;
+            }
+            if request.panel == AgentPanelKind::Mcp
+                && (request.mcp_server.is_some() || request.mcp_call.is_some())
+            {
+                resp.ok = false;
+                resp.error = Some(not_on_thread.to_owned());
+                return resp;
+            }
+            return resp;
+        }
+
+        let target_tab = match request.panel {
+            AgentPanelKind::Browser => RightPanelTab::Browser,
+            AgentPanelKind::Database => RightPanelTab::Database,
+            AgentPanelKind::Mcp => RightPanelTab::Mcp,
+            AgentPanelKind::Diff => RightPanelTab::Diff,
+            AgentPanelKind::Files => RightPanelTab::Files,
+        };
+
+        let _ = this.update(cx, |app, cx| {
+            app.select_right_panel_tab(target_tab, cx);
+        });
+
+        match request.panel {
+            AgentPanelKind::Database => {
+                if let Some(sql) = request.sql {
+                    if request.run == Some(true) {
+                        let rx = this.update(cx, |app, cx| {
+                            app.right_panel.update(cx, |panel, cx| {
+                                panel.run_agent_database_query(sql, request.connection, cx)
+                            })
+                        });
+                        match rx {
+                            Ok(rx) => match rx.await {
+                                Ok(Ok(db_res)) => resp.database = Some(db_res),
+                                Ok(Err(err)) => {
+                                    resp.ok = false;
+                                    resp.error = Some(err);
+                                }
+                                Err(_) => {
+                                    resp.ok = false;
+                                    resp.error = Some("Database query cancelled.".to_owned());
+                                }
+                            },
+                            Err(_) => {
+                                resp.ok = false;
+                                resp.error = Some("Conn window closed.".to_owned());
+                            }
+                        }
+                    } else {
+                        let _ = this.update(cx, |app, cx| {
+                            app.right_panel
+                                .update(cx, |panel, cx| panel.set_database_sql(sql, cx));
+                        });
+                    }
+                }
+            }
+            AgentPanelKind::Mcp => {
+                if let Some(call) = request.mcp_call {
+                    let rx = this.update(cx, |app, cx| {
+                        app.right_panel
+                            .update(cx, |panel, cx| panel.run_agent_mcp_call(call, cx))
+                    });
+                    match rx {
+                        Ok(rx) => match rx.await {
+                            Ok(Ok(call_res)) => resp.mcp_call = Some(call_res),
+                            Ok(Err(err)) => {
+                                resp.ok = false;
+                                resp.error = Some(err);
+                            }
+                            Err(_) => {
+                                resp.ok = false;
+                                resp.error = Some("MCP tool call cancelled.".to_owned());
+                            }
+                        },
+                        Err(_) => {
+                            resp.ok = false;
+                            resp.error = Some("Conn window closed.".to_owned());
+                        }
+                    }
+                } else if let Some(spec) = request.mcp_server {
+                    let rx = this.update(cx, |app, cx| {
+                        app.right_panel
+                            .update(cx, |panel, cx| panel.run_agent_mcp_connect(spec, cx))
+                    });
+                    match rx {
+                        Ok(rx) => match rx.await {
+                            Ok(Ok(mcp_res)) => resp.mcp = Some(mcp_res),
+                            Ok(Err(err)) => {
+                                resp.ok = false;
+                                resp.error = Some(err);
+                            }
+                            Err(_) => {
+                                resp.ok = false;
+                                resp.error = Some("MCP connect cancelled.".to_owned());
+                            }
+                        },
+                        Err(_) => {
+                            resp.ok = false;
+                            resp.error = Some("Conn window closed.".to_owned());
+                        }
+                    }
+                }
+            }
+            AgentPanelKind::Browser | AgentPanelKind::Diff | AgentPanelKind::Files => {}
+        }
+
+        resp
+    }
+
+    /// Listens to app-wide Orbit Gateway Reverb notices (`FleetChanged`, `ProfileChanged`) on
+    /// the shared `private-orbit` WebSocket so Nodes, Instances, and profiles refresh live.
+    fn pump_orbit_realtime(
+        mut events: tokio::sync::broadcast::Receiver<conn_desktop::orbit::OrbitRealtimeEvent>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let recv = crate::live::RT
+                    .spawn(async move {
+                        let item = events.recv().await;
+                        (item, events)
+                    })
+                    .await;
+                let Ok((item, next_rx)) = recv else {
+                    break;
+                };
+                events = next_rx;
+                let event = match item {
+                    Ok(ev) => ev,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        conn_desktop::orbit::OrbitRealtimeEvent::FleetChanged
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
+                let alive = this.update(cx, |app, cx| match event {
+                    conn_desktop::orbit::OrbitRealtimeEvent::FleetChanged => {
+                        app.refresh_orbit_fleet(cx);
+                    }
+                    conn_desktop::orbit::OrbitRealtimeEvent::ProfileChanged => {
+                        app.sync_orbit_profile(true, cx);
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Background refresh of the Orbit Nodes & Instances fleet triggered by Reverb notices.
+    fn refresh_orbit_fleet(&mut self, cx: &mut Context<'_, Self>) {
+        let local_node = self.orbit.node.as_ref().map(|n| n.name.clone());
+        cx.spawn(async move |this, cx| {
+            let task = crate::live::RT.spawn(crate::orbit_sync::fetch_orbit_fleet(local_node));
+            if let Ok(Ok(fleet)) = task.await {
+                let _ = this.update(cx, |app, cx| {
+                    app.orbit.fleet = fleet;
+                    app.refresh_settings_orbit_info(cx);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
     /// Syncs workspaces, appearance, and desktop settings from Orbit Gateway on `live::RT`.
     pub(crate) fn sync_orbit_profile(
         &mut self,
@@ -1740,6 +2055,7 @@ impl ConnApp {
         let (connection, events) = Connection::start(config, crate::live::RT.handle());
         connection.subscribe_shell();
         Self::pump_events(generation, orbit_server_id, events, cx);
+        Self::start_agent_panel_requests(generation, connection.clone(), cx);
 
         self.connection = Some(connection.clone());
         self.chat.update(cx, |chat, cx| {

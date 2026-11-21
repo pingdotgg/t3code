@@ -271,6 +271,14 @@ impl TasksPanel {
         panel
     }
 
+    /// Subscribes to app-wide Orbit Gateway Reverb events (`FleetChanged`, `ProfileChanged`)
+    /// from this panel's shared `private-orbit` WebSocket follower.
+    pub(crate) fn subscribe_orbit_events(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<conn_desktop::orbit::OrbitRealtimeEvent>> {
+        self._follower.as_ref().map(|f| f.subscribe_events())
+    }
+
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
         self.tokens = tokens;
         cx.notify();
