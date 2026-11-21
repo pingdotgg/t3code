@@ -21,6 +21,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title={gt("Beta")}>
         <BoringSidebarRow />
+        <SidebarSearchInTitleBarRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -29,6 +30,30 @@ export function LabsSettingsPanel() {
         <FastWorktreeCheckoutRow />
       </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function SidebarSearchInTitleBarRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("sidebar-search-in-title-bar")}
+      description={gt(
+        "Move thread search and the sidebar buttons into the title bar, in place of the T3 Code label and back and forward arrows. A narrow sidebar shows only the search icon.",
+      )}
+      control={
+        <Switch
+          checked={settings.sidebarSearchInTitleBar}
+          onCheckedChange={(checked) =>
+            updateSettings({ sidebarSearchInTitleBar: Boolean(checked) })
+          }
+          aria-label={gt("Search in title bar")}
+        />
+      }
+    />
   );
 }
 
