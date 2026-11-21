@@ -199,6 +199,8 @@ export interface ComposerPromptEditorProps {
     expandedCursor: number,
     cursorAdjacentToMention: boolean,
     contextIds: string[],
+    /** False when only the caret or selection moved. */
+    textChanged: boolean,
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
@@ -1092,6 +1094,7 @@ function ComposerPromptEditorTiptapInner(
       nextExpandedCursor,
       suppressTrigger,
       contextIds,
+      previousSnapshot.value !== nextValue,
     );
   };
 
@@ -1534,9 +1537,33 @@ function ComposerPromptEditorTiptapInner(
     [],
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the disabled prop into the imperative Tiptap editor via setEditable
+  const resumeEditingFocusRef = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- preserves native selection focus across temporarily making the editor read-only for dictation
   useEffect(() => {
-    editor?.setEditable(!disabled);
+    if (!editor) return;
+    if (disabled && editor.isEditable) resumeEditingFocusRef.current = editor.view.hasFocus();
+    editor.setEditable(!disabled);
+    if (!resumeEditingFocusRef.current) return;
+
+    const editorDom = editor.view.dom;
+    const ownerDocument = editorDom.ownerDocument;
+    if (disabled) {
+      const cancelFocusRestore = (event: FocusEvent) => {
+        if (!event.composedPath().includes(editorDom)) {
+          resumeEditingFocusRef.current = false;
+        }
+      };
+      ownerDocument.addEventListener("focusin", cancelFocusRestore, true);
+      return () => ownerDocument.removeEventListener("focusin", cancelFocusRestore, true);
+    }
+
+    resumeEditingFocusRef.current = false;
+    if (
+      ownerDocument.activeElement === ownerDocument.body ||
+      ownerDocument.activeElement === editorDom
+    ) {
+      editor.view.focus();
+    }
   }, [disabled, editor]);
 
   // Push attributes before layout measurements; Tiptap updates them later in a passive effect.
@@ -1744,6 +1771,7 @@ function ComposerPromptEditorTiptapInner(
       snapshotRef.current.expandedCursor,
       literalText,
       snapshotRef.current.contextIds,
+      false,
     );
   };
 
