@@ -22,11 +22,19 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
     McpToolAccess.reads((input) =>
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
-        if (input.action === "questions") return { questions: yield* workflows.questions };
-        if (input.action === "store") return { entries: yield* workflows.stored(input.key ?? "") };
+        if (input.action === "questions") {
+          return { questions: yield* workflows.questions.pipe(Effect.mapError(refused)) };
+        }
+        if (input.action === "store") {
+          return {
+            entries: yield* workflows.stored(input.key ?? "").pipe(Effect.mapError(refused)),
+          };
+        }
         if (input.action === "list") {
           return {
-            runs: yield* workflows.list(input.status === undefined ? {} : { status: input.status }),
+            runs: yield* workflows
+              .list(input.status === undefined ? {} : { status: input.status })
+              .pipe(Effect.mapError(refused)),
           };
         }
         const runId = yield* required(input.runId, "runId");
@@ -37,7 +45,9 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
         // A hook's path holds its secret, and posting to it starts a run.
-        if (input.action === "hooks") return { hooks: yield* workflows.hooks };
+        if (input.action === "hooks") {
+          return { hooks: yield* workflows.hooks.pipe(Effect.mapError(refused)) };
+        }
         if (input.action === "start") {
           const name = yield* required(input.workflow, "workflow");
           const idempotencyKey = yield* required(input.idempotencyKey, "idempotencyKey");
@@ -73,7 +83,7 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
           yield* (
             value === undefined ? workflows.storeDelete(key) : workflows.storeSet(key, value)
           ).pipe(Effect.mapError(refused));
-          return { entries: yield* workflows.stored(key) };
+          return { entries: yield* workflows.stored(key).pipe(Effect.mapError(refused)) };
         }
         const runId = yield* required(input.runId, "runId");
         yield* (

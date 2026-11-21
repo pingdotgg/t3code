@@ -101,24 +101,24 @@ export class Workflows extends Context.Service<
         readonly run: WorkflowStore.WorkflowRun;
         readonly steps: ReadonlyArray<WorkflowStore.WorkflowStep>;
       },
-      WorkflowRunNotFoundError
+      WorkflowRunNotFoundError | WorkflowInputError
     >;
     readonly list: (filter?: {
       readonly status?: WorkflowStore.WorkflowRunStatus;
-    }) => Effect.Effect<ReadonlyArray<WorkflowStore.WorkflowRun>>;
+    }) => Effect.Effect<ReadonlyArray<WorkflowStore.WorkflowRun>, WorkflowInputError>;
     /** The run once `done` holds for it. Looks now, then on every change to the run. */
     readonly waitFor: (
       runId: string,
       done: (run: WorkflowStore.WorkflowRun) => boolean,
     ) => Effect.Effect<WorkflowStore.WorkflowRun>;
     /** The questions runs are waiting on a person to answer, oldest first. */
-    readonly questions: Effect.Effect<ReadonlyArray<WorkflowQuestion>>;
+    readonly questions: Effect.Effect<ReadonlyArray<WorkflowQuestion>, WorkflowInputError>;
     /** What each run that has not ended is a run of, however many: no list limit applies. */
     readonly unfinished: Effect.Effect<
       ReadonlyArray<{ readonly workflow: string; readonly version: number }>
     >;
     /** The hook URLs of the registered workflows. */
-    readonly hooks: Effect.Effect<ReadonlyArray<WorkflowHook>>;
+    readonly hooks: Effect.Effect<ReadonlyArray<WorkflowHook>, WorkflowInputError>;
     /**
      * Start the run a request to a hook asks for. Nothing, for a hook or token that is not known.
      * `deliveryId` names the delivery when its carrier vouches for one, so its retry is one run.
@@ -132,7 +132,10 @@ export class Workflows extends Context.Service<
     /** What workflows keep in the store under keys starting with `prefix`, for a person to see. */
     readonly stored: (
       prefix: string,
-    ) => Effect.Effect<ReadonlyArray<{ readonly key: string; readonly value: Schema.Json }>>;
+    ) => Effect.Effect<
+      ReadonlyArray<{ readonly key: string; readonly value: Schema.Json }>,
+      WorkflowInputError
+    >;
     /** Set a key of the store from outside a run, as a person flipping a switch does. */
     readonly storeSet: (key: string, value: Schema.Json) => Effect.Effect<void, WorkflowInputError>;
     readonly storeDelete: (key: string) => Effect.Effect<void, WorkflowInputError>;
@@ -187,3 +190,30 @@ export const disabled = Workflows.of({
   sweep: Effect.void,
 });
 export const layerDisabled = Layer.succeed(Workflows, disabled);
+
+export const OFF =
+  'Workflows are off on this server. Turn them on in its Settings → Labs → Workflows, or without a desktop, set "workflowsEnabled": true in userdata/settings.json in its T3 home (~/.t3 by default).';
+
+const refuseOff = Effect.fn("Workflows.off")(function* () {
+  return yield* new WorkflowInputError({ problem: OFF });
+});
+
+/**
+ * The service while workflows are off: every request is refused, and a hook answers as one that
+ * is not there.
+ */
+export const off = Workflows.of({
+  ...disabled,
+  start: refuseOff,
+  signal: refuseOff,
+  answer: refuseOff,
+  resume: refuseOff,
+  cancel: refuseOff,
+  get: refuseOff,
+  list: refuseOff,
+  questions: refuseOff(),
+  hooks: refuseOff(),
+  stored: refuseOff,
+  storeSet: refuseOff,
+  storeDelete: refuseOff,
+});
