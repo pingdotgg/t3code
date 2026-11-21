@@ -1254,12 +1254,8 @@ function threadErrorIsServerRuntime(input: {
   );
 }
 
-/**
- * Resolves the displayed thread error and its session-dismissal descriptor.
- * Only server runtime errors need session-level dismissal (their errors persist
- * in server projections across remounts); local and draft errors live in component
- * state and are cleared directly on dismiss so later identical errors show again.
- */
+// Only server runtime errors get a session dismissal: they persist in projections across
+// remounts. Local and draft errors are cleared on dismiss, so a repeat shows again.
 export function resolveThreadErrorBanner(input: {
   readonly isServerThread: boolean;
   readonly localServerError: string | null;

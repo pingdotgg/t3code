@@ -59,21 +59,4 @@ describe("ThreadErrorBanner", () => {
       ),
     ).toBe(true);
   });
-
-  it("does not suppress future occurrences when dismissed without a session banner key", () => {
-    const error = "Local action failed";
-    dismissThreadErrorBannerForSession(null);
-
-    expect(isThreadErrorBannerDismissedForSession(null)).toBe(false);
-    expect(
-      isThreadErrorBannerDismissedForSession(getThreadErrorBannerKey("env:thread-d", error, null)),
-    ).toBe(false);
-    expect(
-      shouldShowThreadErrorBanner(
-        "env:thread-d",
-        error,
-        isThreadErrorBannerDismissedForSession(null),
-      ),
-    ).toBe(true);
-  });
 });

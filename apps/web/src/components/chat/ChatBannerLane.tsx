@@ -55,10 +55,8 @@ export function ChatBannerLane(props: {
         errorCode={threadErrorCode}
         onDismiss={() => {
           setThreadError(threadId, null);
-          if (threadErrorBannerKey !== null) {
-            dismissThreadErrorBannerForSession(threadErrorBannerKey);
-            setThreadErrorBannerDismissTick((tick) => tick + 1);
-          }
+          dismissThreadErrorBannerForSession(threadErrorBannerKey);
+          setThreadErrorBannerDismissTick((tick) => tick + 1);
         }}
       />
     </div>
