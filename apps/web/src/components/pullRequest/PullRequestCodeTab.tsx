@@ -81,8 +81,8 @@ import {
 } from "@t3tools/client-runtime/pull-request-editing";
 import { fileDiffRows } from "@t3tools/client-runtime/review-guide-tour";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { orderDiffFilesForReview } from "@t3tools/client-runtime/diff-file-order";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
-import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
@@ -110,13 +110,13 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { ChatMarkdownAssetImage } from "../chat/ChatMarkdownMedia";
 import { DiffPanelLoadingState } from "../DiffPanelShell";
-import { useDiffWorkerPool } from "../DiffWorkerPoolProvider";
+import { useDiffWorkerPool, useDiffWorkerPoolReady } from "../DiffWorkerPoolProvider";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
-import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
+import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -261,10 +261,9 @@ function diffModel(
   });
   const model: DiffModel = {
     parsedSlices,
-    loadedFiles: orderDiffFilesLikeTree(
-      parsedSlices.flatMap((parsed) =>
-        parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
-      ),
+    loadedFiles: orderDiffFilesForReview(
+      parsedSlices.flatMap((parsed) => (parsed?.kind === "files" ? parsed.files : [])),
+      resolveFileDiffPath,
     ),
     sourceFileStats: new Map(
       parsedSlices.flatMap((parsed) =>
@@ -454,7 +453,7 @@ function PullRequestCodeTab({
   const fixFindingLabel = requestedFixFindingLabel ?? gt("Fix in a thread");
   const resolvedTheme = useRenderedAppearance();
   // Initialize the shared tokenizer and workers while the diff request is still pending.
-  useDiffWorkerPool();
+  const workerPoolReady = useDiffWorkerPoolReady(useDiffWorkerPool());
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
@@ -1827,22 +1826,30 @@ function PullRequestCodeTab({
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
-      <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto">
+      {/* Keyed so the diff replaces this node: a reused one keeps focus without its tabIndex. */}
+      <div
+        key="status"
+        ref={scrollerRef}
+        tabIndex={-1}
+        data-workspace-focus-default
+        className="min-h-0 flex-1 overflow-auto outline-none"
+      >
         {body}
       </div>
     </div>
   );
 
   const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
+  const diffLoading = (
+    <DiffPanelLoadingState
+      label={gt(
+        "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
+        { term },
+      )}
+    />
+  );
   if (diffQuery.isPending && loadedSlices.length === 0) {
-    return withToolbar(
-      <DiffPanelLoadingState
-        label={gt(
-          "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
-          { term },
-        )}
-      />,
-    );
+    return withToolbar(diffLoading);
   }
 
   if (diffQuery.error && loadedSlices.length === 0) {
@@ -1871,6 +1878,11 @@ function PullRequestCodeTab({
           : gt("This commit has no file changes.")}
       </p>,
     );
+  }
+
+  // Wait here rather than in the viewer's own placeholder, so panel focus stays on this scroller.
+  if (!workerPoolReady) {
+    return withToolbar(diffLoading);
   }
 
   const orphanThreads = detail.reviewThreads.filter((thread) => !placedThreadIds.has(thread.id));
@@ -1973,7 +1985,11 @@ function PullRequestCodeTab({
           <FileViewedToggleContext value={fileViewedToggle}>
             <StyledDiffCodeView<ReviewAnnotationGroup>
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
-              containerRef={scrollerRef}
+              containerRef={(node) => {
+                // Pierre sets tabIndex -1 on this root and forwards no data attributes.
+                node?.setAttribute("data-workspace-focus-default", "");
+                scrollerRef(node);
+              }}
               viewerRef={codeViewReveal.attach}
               items={items}
               selectedLines={selectedLines}

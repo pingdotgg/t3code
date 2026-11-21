@@ -228,6 +228,7 @@ export function useComposerMenuItems({
           ? matchComposerEnvironmentItems(
               {
                 environments: mentionableEnvironments,
+                linkedEnvironments,
                 environmentId,
                 query: composerTrigger.query,
               },
@@ -245,8 +246,10 @@ export function useComposerMenuItems({
           path: entry.path,
           pathKind: entry.kind,
           searchTarget: workspaceEntries.searchedTarget,
-          label: basenameOfPath(entry.path),
-          description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
+          label: basenameOfPath(entry.path).normalize("NFC"),
+          description: entry.path
+            .slice(0, Math.max(0, entry.path.lastIndexOf("/")))
+            .normalize("NFC"),
         })),
       ];
     }
