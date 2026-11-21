@@ -61,6 +61,7 @@ const mocks = vi.hoisted(() => ({
   transcripts: [] as Array<string | Error>,
   committed: vi.fn(),
   draft: "",
+  appleSpeech: false,
   storedDraft: "",
 }));
 
@@ -175,44 +176,53 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       return { text: `Cleaned ${transcript}` };
     }),
 }));
-vi.mock("./browserVoiceInput", () => ({
-  createBrowserVoiceInputPlatform: (
-    input: Parameters<typeof createBrowserVoiceInputPlatform>[0],
-  ) => {
-    const environmentId = input.prepared.environmentId;
-    mocks.platforms.push(environmentId);
-    return {
-      recorder: {
-        uri: `blob:${environmentId}`,
-        prepareToRecordAsync: async () => {
-          mocks.microphoneRequests.push(environmentId);
-        },
-        record() {},
-        stop: async () => {},
-      },
-      transcriber: {
-        prepare: async () => {
-          mocks.recordingOptions.push(input.getTranscriptionOptions());
-          return {
-            locale: "en",
-            transcribe: async () => {
-              mocks.transcribeCalls.push(
-                input.cloudProvider
-                  ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
-                  : environmentId,
-              );
-              const next = mocks.transcripts.shift() ?? "dictated";
-              if (next instanceof Error) throw next;
-              return next;
-            },
-          };
-        },
-      },
-      cancelRecording() {},
-      deleteRecording() {},
-    };
-  },
+vi.mock("./appleSpeech", () => ({
+  useAppleSpeechLocales: () => (mocks.appleSpeech ? ["en-US"] : []),
 }));
+vi.mock("./browserVoiceInput", () => ({
+  createAppleSpeechVoiceInputPlatform: (
+    input: Omit<Parameters<typeof createBrowserVoiceInputPlatform>[0], "prepared">,
+  ) => mockPlatform("apple-speech", input),
+  createBrowserVoiceInputPlatform: (input: Parameters<typeof createBrowserVoiceInputPlatform>[0]) =>
+    mockPlatform(input.prepared.environmentId, input),
+}));
+
+function mockPlatform(
+  environmentId: string,
+  input: Omit<Parameters<typeof createBrowserVoiceInputPlatform>[0], "prepared">,
+) {
+  mocks.platforms.push(environmentId);
+  return {
+    recorder: {
+      uri: `blob:${environmentId}`,
+      prepareToRecordAsync: async () => {
+        mocks.microphoneRequests.push(environmentId);
+      },
+      record() {},
+      stop: async () => {},
+    },
+    transcriber: {
+      prepare: async () => {
+        mocks.recordingOptions.push(input.getTranscriptionOptions());
+        return {
+          locale: "en",
+          transcribe: async () => {
+            mocks.transcribeCalls.push(
+              input.cloudProvider
+                ? `${[input.cloudProvider, (input as { cloudModel?: string }).cloudModel].filter(Boolean).join(":")} via ${environmentId}`
+                : environmentId,
+            );
+            const next = mocks.transcripts.shift() ?? "dictated";
+            if (next instanceof Error) throw next;
+            return next;
+          },
+        };
+      },
+    },
+    cancelRecording() {},
+    deleteRecording() {},
+  };
+}
 
 const THREAD_ENV = "thread-env";
 
@@ -248,6 +258,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.transcripts = [];
   mocks.committed.mockClear();
   mocks.draft = "";
+  mocks.appleSpeech = false;
   mocks.storedDraft = "";
 }
 
@@ -387,6 +398,29 @@ it.each([
   expect(mocks.committed).not.toHaveBeenCalled();
 });
 
+it.each([true, false])(
+  "transcribes on this Mac with Apple Speech, never an environment, when available is %s",
+  async (available) => {
+    setup();
+    mocks.appleSpeech = available;
+    chooseAudioDestination({ kind: "device" });
+    await using _screen = await render(<Probe />);
+    expect(mocks.voice.transcriptionEnvironmentId).toBeNull();
+    expect(mocks.voice.available).toBe(available);
+    await act(() => mocks.voice.start());
+    if (!available) {
+      expectNoAudioSent();
+      return;
+    }
+    await act(() => mocks.voice.stop());
+    expect(new Set([...mocks.platforms, ...mocks.transcribeCalls])).toEqual(
+      new Set(["apple-speech"]),
+    );
+    expect(mocks.statusRequests).toEqual([]);
+    expect(mocks.committed).toHaveBeenCalledExactlyOnceWith("dictated", expect.anything());
+  },
+);
+
 it("retries a failed transcription on the same chosen environment", async () => {
   setup({ destination: "env-a" });
   mocks.transcripts = [new Error("inference failed"), "second try"];
@@ -401,10 +435,15 @@ it("retries a failed transcription on the same chosen environment", async () => 
 });
 
 it.each([
-  ["a stored thread draft keeps recording into it", true],
-  ["an editor-only draft is abandoned", false],
-])("when the editor switches owner mid-recording, %s", async (_name, persistent) => {
+  ["a stored thread draft keeps recording into it", true, false],
+  ["an editor-only draft is abandoned", false, false],
+  ["Apple Speech keeps recording into a stored thread draft", true, true],
+])("when the editor switches owner mid-recording, %s", async (_name, persistent, onDevice) => {
   setup({ destination: "env-a" });
+  if (onDevice) {
+    mocks.appleSpeech = true;
+    chooseAudioDestination({ kind: "device" });
+  }
   mocks.storedDraft = "Earlier text";
   const view = (ownerKey: string) => (
     <>
@@ -432,7 +471,7 @@ it.each([
   await page.getByRole("button", { name: "Finish voice input" }).click();
 
   await vi.waitFor(() => expect(mocks.storedDraft).toBe("Earlier text dictated"));
-  expect(mocks.transcribeCalls).toEqual(["env-a"]);
+  expect(mocks.transcribeCalls).toEqual([onDevice ? "apple-speech" : "env-a"]);
   expect(mocks.committed).not.toHaveBeenCalled();
 });
 
@@ -901,29 +940,26 @@ it("sends the project's vocabulary and name as hints, and the cue only with clea
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
   expect(mocks.recordingOptions.at(-1)?.speechCustomWords).toEqual([
-    { term: "Acme App", aliases: [] },
     { term: "effect", aliases: ["affect"] },
   ]);
+  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["Acme App"]);
   expect(mocks.cleanupCalls).toEqual([]);
 
   chooseTranscriptCleanup(true);
   await screen.rerender(<Probe projectId="proj-1" projectName="Acme App" />);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
-  expect(mocks.recordingOptions.at(-1)?.speechCustomWords.map(({ term }) => term)).toEqual([
-    "scratch that",
-    "Acme App",
-    "effect",
-  ]);
-  expect(mocks.cleanupOptions.at(-1)).toMatchObject({ speechCorrectionWord: "scratch that" });
+  expect(mocks.recordingOptions.at(-1)?.speechHints).toEqual(["scratch that", "Acme App"]);
+  expect(mocks.cleanupOptions.at(-1)).toMatchObject({
+    speechCorrectionWord: "scratch that",
+    speechCustomWords: [{ term: "effect", aliases: ["affect"] }],
+  });
   expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBe("scratch that");
   chooseTranscriptCleanup(false);
   await act(() => mocks.voice.start());
   await act(() => mocks.voice.stop());
   expect(mocks.recordingOptions.at(-1)?.speechCorrectionWord).toBeUndefined();
-  expect(mocks.recordingOptions.at(-1)?.speechCustomWords.map(({ term }) => term)).not.toContain(
-    "scratch that",
-  );
+  expect(mocks.recordingOptions.at(-1)?.speechHints).not.toContain("scratch that");
 });
 
 it("shares one status probe per destination across every mounted editor", async () => {

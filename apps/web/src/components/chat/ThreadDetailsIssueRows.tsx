@@ -1,7 +1,8 @@
 import { threadIssueKeyOf, type ScopedThreadRef, type ThreadIssueLink } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useGT } from "gt-react";
 import { MessageSquareIcon } from "lucide-react";
-import type { MouseEvent } from "react";
+import { useState, type MouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -19,7 +20,7 @@ import {
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
-import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import { ThreadDetailsControl, ThreadDetailsMoreButton } from "./ThreadDetailsControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 function LinkedIssueRow({
@@ -156,14 +157,30 @@ export function ThreadDetailsIssueRows({
   mountScope?: "thread-details" | "linked-items" | "sidebar-tooltip";
   onOpen?: () => void;
 }) {
-  return links.map((link) => (
-    <LinkedIssueRow
-      key={threadIssueKeyOf(link)}
-      link={link}
-      threadRef={threadRef}
-      compact={compact}
-      mountScope={mountScope}
-      onOpen={onOpen}
-    />
-  ));
+  const [expandedThread, setExpandedThread] = useState<string | null>(null);
+  const threadKey = scopedThreadKey(threadRef);
+  const expanded = expandedThread === threadKey;
+  const hasMore = compact && links.length > 1;
+  const visibleLinks = hasMore && !expanded ? links.slice(0, 1) : links;
+  return (
+    <>
+      {visibleLinks.map((link) => (
+        <LinkedIssueRow
+          key={threadIssueKeyOf(link)}
+          link={link}
+          threadRef={threadRef}
+          compact={compact}
+          mountScope={mountScope}
+          onOpen={onOpen}
+        />
+      ))}
+      {hasMore ? (
+        <ThreadDetailsMoreButton
+          expanded={expanded}
+          remaining={links.length - 1}
+          onToggle={() => setExpandedThread(expanded ? null : threadKey)}
+        />
+      ) : null}
+    </>
+  );
 }

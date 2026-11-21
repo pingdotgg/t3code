@@ -13,6 +13,7 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceAccount,
   type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
@@ -260,6 +261,32 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
 
 const hubAccountName = (account: { readonly id: string }) => account.id.replace(/\.json$/i, "");
 
+function limitAccountKeyResolver(presentations: LimitPresentations) {
+  return accountKeyResolver(
+    [...presentations.values()].flatMap((presentation) => [
+      ...(presentation.serverConfig?.providers ?? [])
+        .filter((provider) => provider.enabled)
+        .map(nativeReport),
+      ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
+    ]),
+  );
+}
+
+const nativeRowKey = (
+  resolveKey: ReturnType<typeof accountKeyResolver>,
+  environmentId: EnvironmentId,
+  provider: ServerProvider,
+) => resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`;
+
+const hubRowKey = (
+  resolveKey: ReturnType<typeof accountKeyResolver>,
+  environmentId: EnvironmentId,
+  source: UsageLimitSourceSnapshot,
+  account: UsageLimitSourceAccount,
+) =>
+  resolveKey(account) ??
+  `${hubIdentity(environmentId, source)}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+
 // Source ids are environment-local, so only a remote endpoint names the same hub across environments.
 function hubIdentity(environmentId: EnvironmentId, source: UsageLimitSourceSnapshot): string {
   // The server supplies canonical endpoints; native URL polyfills can misparse IPv6 hosts.
@@ -366,19 +393,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       },
     });
   };
-  const resolveKey = accountKeyResolver(
-    [...presentations.values()].flatMap((presentation) => [
-      ...(presentation.serverConfig?.providers ?? [])
-        .filter((provider) => provider.enabled)
-        .map(nativeReport),
-      ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
-    ]),
-  );
+  const resolveKey = limitAccountKeyResolver(presentations);
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
-      merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
+      merge(nativeRowKey(resolveKey, environmentId, provider), {
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
         displayName: provider.displayName?.trim() || null,
@@ -404,7 +424,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         // A resolved account already has an identity; its public key must stay distinct from others'.
         const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
         const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolved ?? key, {
+        merge(hubRowKey(resolveKey, environmentId, source, account), {
           key,
           driver: account.driver,
           displayName: account.email ? null : hubAccountName(account),
@@ -429,6 +449,39 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     }
   }
   return [...accounts.values()];
+}
+
+/** Hub accounts whose read failed and that no other report shows as a row, with their names. */
+export function unshownFailedHubAccounts(
+  presentations: LimitPresentations,
+): ReadonlyMap<UsageLimitSourceAccount, string> {
+  const resolveKey = limitAccountKeyResolver(presentations);
+  const shownRows = new Set<string>();
+  for (const [environmentId, presentation] of presentations) {
+    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
+      if (provider.usageLimits && limitsNotice(provider.usageLimits) === null) {
+        shownRows.add(nativeRowKey(resolveKey, environmentId, provider));
+      }
+    }
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      for (const account of source.accounts) {
+        if (limitsNotice(account.usageLimits) === null) {
+          shownRows.add(hubRowKey(resolveKey, environmentId, source, account));
+        }
+      }
+    }
+  }
+  const failed = new Map<UsageLimitSourceAccount, string>();
+  for (const [environmentId, presentation] of presentations) {
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
+      for (const account of source.accounts) {
+        if (account.usageLimits.unavailable?.reason !== "probeFailed") continue;
+        if (shownRows.has(hubRowKey(resolveKey, environmentId, source, account))) continue;
+        failed.set(account, account.email ?? hubAccountName(account));
+      }
+    }
+  }
+  return failed;
 }
 
 export interface LimitPoolMember {
@@ -838,27 +891,102 @@ export function withUsageLimitsCommands(
   });
 }
 
+/** The hubs an instance sends its requests through: those whose address is its endpoint. */
+export function instanceHubs(
+  provider: ServerProvider,
+  sources: UsageLimitSourceSnapshots,
+): UsageLimitSourceSnapshots {
+  const endpoint = provider.auth.endpoint;
+  return endpoint === undefined ? [] : sources.filter((source) => source.origin === endpoint);
+}
+
+// Antigravity meters Gemini Argon, Gemini Carbon, other Gemini, and Claude/GPT models apart.
+function antigravityQuotaFamily(id: string) {
+  if (!id.startsWith("gemini")) return "shared";
+  return id.includes("argon") ? "argon" : id.includes("carbon") ? "carbon" : "gemini";
+}
+
+/** Each Antigravity quota blocks only the models it meters. */
+export function antigravityWindowLimitsModel(
+  window: Pick<ServerProviderUsageWindow, "id">,
+  model: string | null,
+): boolean {
+  // A hub can prefix model ids, such as "ag/gemini-3.1-pro".
+  const base = model?.slice(model.lastIndexOf("/") + 1);
+  // An alias such as "fast" may route to either quota, so both hold it back.
+  if (base === undefined || !/^(gemini|claude|gpt)/.test(base)) return true;
+  return antigravityQuotaFamily(window.id) === antigravityQuotaFamily(base);
+}
+
+/** The hub accounts that serve a model: those that list it, else every account of the driver. */
+export function hubRoutes(
+  sources: UsageLimitSourceSnapshots,
+  driver: ServerProvider["driver"],
+  model: string | null,
+): (account: UsageLimitSourceAccount) => boolean {
+  // Claude Code's 1M-context suffix is not part of the model id a hub routes.
+  const full = model?.replace(/\[1m\]$/i, "");
+  // The hub routes a thinking suffix such as "gpt-5.2(high)" by its base model when one lists it.
+  const base = full?.replace(/\([^)]*\)$/, "");
+  const lists = (id: string | undefined) =>
+    sources.some((source) => source.accounts.some((account) => account.models?.includes(id ?? "")));
+  const slug = lists(base) ? base : full;
+  const listed = (account: UsageLimitSourceAccount) =>
+    slug !== undefined && account.models?.includes(slug) === true;
+  const serving = new Set(
+    sources.flatMap((source) => source.accounts.filter(listed).map((account) => account.driver)),
+  );
+  // Model ids such as "opus" are aliases no hub lists, so no listing falls back to the driver.
+  if (serving.size === 0)
+    return (account) => account.driver === driver && account.models?.length !== 0;
+  // An account whose model list was unreadable may serve the model too.
+  return (account) =>
+    account.models ? listed(account) : serving.has(account.driver) || account.driver === driver;
+}
+
 export function collectProviderUsageLimits(
   instanceId: ProviderInstanceId,
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   now: number,
+  model: string | null = null,
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
-  if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
+  if (!selected) return null;
+  // Only an instance sent to a hub is known to reach the accounts that hub routes its model to.
+  const hubs = instanceHubs(selected, sources);
+  const routes =
+    hubs.length > 0
+      ? hubRoutes(hubs, selected.driver, model)
+      : (account: UsageLimitSourceAccount) => account.driver === selected.driver;
+  const shownHubs = hubs.length > 0 ? hubs : sources;
+  const drivers = new Set(
+    shownHubs.flatMap((source) => source.accounts.filter(routes).map((account) => account.driver)),
+  );
+  if (drivers.size === 0) drivers.add(selected.driver);
+  if (![...drivers].some((driver) => hasProviderUsageLimits(driver, providers, sources))) {
+    return null;
+  }
   const resolveKey = accountKeyResolver([
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
   ]);
+  // Behind a hub, a local login counts only when it is one of the accounts the hub routes to.
+  const routedKeys =
+    hubs.length > 0
+      ? new Set(hubs.flatMap((source) => source.accounts.filter(routes).map(resolveKey)))
+      : null;
   type NativeSnapshot = { provider: ServerProvider; limits: ServerProviderUsageLimits };
   const nativeByAccount = new Map<
     string,
     { usage: NativeSnapshot; credits: NativeSnapshot | null }
   >();
   for (const provider of providersWithLimits(providers)) {
-    if (provider.driver !== selected.driver || !provider.usageLimits) continue;
+    if (!drivers.has(provider.driver) || !provider.usageLimits) continue;
+    const accountKey = resolveKey(nativeReport(provider));
+    if (routedKeys && (accountKey === null || !routedKeys.has(accountKey))) continue;
     const snapshot = { provider, limits: provider.usageLimits };
-    const key = resolveKey(nativeReport(provider)) ?? `instance:${provider.instanceId}`;
+    const key = accountKey ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
     const previousUsable = previous ? limitsNotice(previous.usage.limits) === null : false;
     const usable = limitsNotice(snapshot.limits) === null;
@@ -893,7 +1021,8 @@ export function collectProviderUsageLimits(
     credits,
   } of native) {
     const key = resolveKey(nativeReport(provider));
-    const hubCredits = sources
+    // Only a hub this instance reaches may redeem a credit for its thread.
+    const hubCredits = shownHubs
       .flatMap((source) => source.accounts.map((account) => ({ source, account })))
       .filter(
         ({ account }) =>
@@ -935,8 +1064,8 @@ export function collectProviderUsageLimits(
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }
-  for (const source of sources) {
-    const matching = source.accounts.filter((account) => account.driver === selected.driver);
+  for (const source of shownHubs) {
+    const matching = source.accounts.filter(routes);
     for (const account of matching) {
       const key = resolveKey(account);
       if (key && nativeAccountKeys.has(key)) continue;
