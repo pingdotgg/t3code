@@ -920,6 +920,15 @@ describe("ChatMarkdown copy", () => {
       htmlText: "2. Configure\n3. Test\n4. Deploy",
     },
     {
+      source: "1. [ ] Install\n2. [x] Configure\n3. [ ] Test\n4. [x] Deploy",
+      from: "Configure",
+      to: "Deploy",
+      readOnlyTaskList: true,
+      skipTo: true,
+      text: "2. [x] Configure\n3. [ ] Test",
+      htmlText: "2. Configure\n3. Test",
+    },
+    {
       source:
         "1. First\n2. [x] Outer\n   1. [ ] Setup\n   2. [ ] Configure\n   3. [x] Deploy\n\nAfter.",
       from: "Configure",
@@ -927,10 +936,10 @@ describe("ChatMarkdown copy", () => {
       htmlText: "2. 2. Configure\n   3. Deploy\n\nAfter.",
     },
   ])(
-    "copies task items with the markers its list shows: $text",
-    async ({ source, from, to, text, htmlText }) => {
+    "copies task items with the markers its list shows (read-only: $readOnlyTaskList): $text",
+    async ({ source, from, to, text, htmlText, readOnlyTaskList = false, skipTo = false }) => {
       setup();
-      await using screen = await renderText(source);
+      await using screen = await renderText(source, { readOnlyTaskList });
       const itemText = (label: string) =>
         [...screen.container.querySelectorAll("li")]
           .flatMap((item) => [...item.childNodes])
@@ -939,7 +948,7 @@ describe("ChatMarkdown copy", () => {
       const end = to ? itemText(to) : screen.container.querySelector("p")!.firstChild!;
       const range = document.createRange();
       range.setStart(start, start.textContent!.indexOf(from));
-      range.setEnd(end, end.textContent!.length);
+      range.setEnd(end, skipTo ? 0 : end.textContent!.length);
       const selection = window.getSelection()!;
       selection.removeAllRanges();
       selection.addRange(range);

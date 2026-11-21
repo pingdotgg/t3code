@@ -258,6 +258,7 @@ interface ChatMarkdownProps {
   pullRequestPanelRef?: ScopedThreadRef | undefined;
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
+  readOnlyTaskList?: boolean | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<ServerProviderSkill>;
   className?: string;
@@ -534,6 +535,7 @@ function useChatMarkdownState({
   pullRequestPanelRef,
   environmentId: explicitEnvironmentId,
   onTaskListChange,
+  readOnlyTaskList = false,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
@@ -1038,6 +1040,7 @@ function useChatMarkdownState({
     linkTargetPreference,
     markdownFileLinkMetaByHref,
     onTaskListChange,
+    readOnlyTaskList,
     onUseArtifactTemplate,
     onRunShellCommand,
     openChangeRequestLink,
@@ -1072,6 +1075,41 @@ const ChatMarkdownRendererContext = React.createContext<
 
 // Isolate streamed source text from the renderer context; only offset-based renderers need it.
 const ChatMarkdownTextContext = React.createContext("");
+
+function ReadOnlyTaskCheckbox({ checked }: { checked: boolean }) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  return (
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipTrigger
+        render={<span className="inline-flex" data-read-only-task />}
+        closeOnClick={false}
+        role="checkbox"
+        aria-checked={checked}
+        aria-readonly="true"
+        tabIndex={0}
+        aria-label={gt("Read only task")}
+        onClick={() => setOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          setOpen(true);
+        }}
+      >
+        <input
+          type="checkbox"
+          className="pointer-events-none"
+          checked={checked}
+          disabled
+          readOnly
+        />
+      </TooltipTrigger>
+      <TooltipPopup>
+        <T>Read only</T>
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 // A quote card is a block. These say nothing else shares its paragraph or list item on that side.
 const LIST_MARKER = String.raw`(?:[-*+]|\d+[.)])[ \t]+`;
@@ -1171,8 +1209,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   input: function MarkdownInput({ node: _node, type, checked, disabled: _disabled, ...props }) {
     const gt = useGT();
-    const { onTaskListChange } = use(ChatMarkdownRendererContext);
+    const { onTaskListChange, readOnlyTaskList } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
+    if (type === "checkbox" && !onTaskListChange && readOnlyTaskList) {
+      return <ReadOnlyTaskCheckbox checked={checked === true} />;
+    }
     if (type !== "checkbox" || !onTaskListChange) {
       return (
         <input

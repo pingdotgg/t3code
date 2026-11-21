@@ -3,10 +3,11 @@ import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/co
 import { AsyncResult } from "effect/reactivity";
 import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { cdp, userEvent } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
+import { shouldTypeToFocusComposer } from "../chat/composerFocusRedirect";
 import {
   createWorkspaceFocusController,
   startWorkspaceFocus,
@@ -188,14 +189,18 @@ function setup() {
   };
 }
 
-function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of this file\n") {
+function markdownPreview(
+  truncated: boolean,
+  contents = "- [ ] Keep the rest of this file\n",
+  relativePath = "tasks.md",
+) {
   state.file = {
-    relativePath: "tasks.md",
+    relativePath,
     contents,
     byteLength: truncated ? 1_200_000 : contents.length,
     truncated,
   };
-  return filePreview("tasks.md");
+  return filePreview(relativePath);
 }
 
 function filePreview(relativePath: string, workspaceMutationId: string | null = null) {
@@ -562,20 +567,59 @@ describe("source file scroll", () => {
 });
 
 describe("rendered Markdown task saves", () => {
-  it("keeps a truncated read read-only without queuing a replacement", async () => {
-    using _settings = setup();
-    await using screen = await render(markdownPreview(true));
-    using _timers = fakeTimers();
-    const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(checkbox).not.toBeNull();
-    expect(checkbox.disabled).toBe(true);
-    expect(checkbox.readOnly).toBe(true);
-    await act(async () => checkbox.click());
-    await vi.advanceTimersByTimeAsync(500);
-    expect(checkbox.checked).toBe(false);
-    expect(state.optimistic).toBeNull();
-    expect(state.writeFile).not.toHaveBeenCalled();
-  });
+  it.each([
+    { name: "truncated", truncated: true, relativePath: "tasks.md" },
+    { name: "absolute host", truncated: false, relativePath: "/outside/tasks.md" },
+    { name: "home-relative host", truncated: false, relativePath: "~/tasks.md" },
+  ])(
+    "explains a $name task is read-only without queuing a replacement",
+    async ({ truncated, relativePath }) => {
+      using _settings = setup();
+      const style = document.createElement("style");
+      style.textContent = appCss;
+      document.head.append(style);
+      using _style = { [Symbol.dispose]: () => style.remove() };
+      await using screen = await render(
+        <div className="flex h-150 w-225">
+          {markdownPreview(truncated, undefined, relativePath)}
+        </div>,
+      );
+      const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+      expect(checkbox).not.toBeNull();
+      expect(checkbox.disabled).toBe(true);
+      expect(checkbox.readOnly).toBe(true);
+      await userEvent.click(screen.getByLabelText("Read only task"));
+      await expect
+        .element(page.getByText("Read only", { exact: true }))
+        .toHaveTextContent("Read only");
+      await userEvent.keyboard("{Escape}");
+      await expect.element(page.getByText("Read only", { exact: true })).not.toBeInTheDocument();
+      await userEvent.keyboard("{Enter}");
+      await expect
+        .element(page.getByText("Read only", { exact: true }))
+        .toHaveTextContent("Read only");
+      await userEvent.keyboard("{Escape}");
+      await expect.element(page.getByText("Read only", { exact: true })).not.toBeInTheDocument();
+      const redirectTyping = (event: KeyboardEvent) => {
+        if (!shouldTypeToFocusComposer(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      window.addEventListener("keydown", redirectTyping, true);
+      using _typing = {
+        [Symbol.dispose]: () => window.removeEventListener("keydown", redirectTyping, true),
+      };
+      await userEvent.keyboard(" ");
+      await expect
+        .element(page.getByText("Read only", { exact: true }))
+        .toHaveTextContent("Read only");
+      using _timers = fakeTimers();
+      await vi.advanceTimersByTimeAsync(500);
+      expect(checkbox.checked).toBe(false);
+      expect(state.optimistic).toBeNull();
+      expect(state.writeFile).not.toHaveBeenCalled();
+    },
+  );
 
   it("still toggles and saves tasks from a complete read", async () => {
     using _settings = setup();
