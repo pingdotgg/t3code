@@ -3397,7 +3397,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   emitted: false,
                   dirty: false,
                 }
-              : { ...closed, completedAt: undefined, emitted: false, dirty: false };
+              : {
+                  ...closed,
+                  completedAt: undefined,
+                  finalAnswer: undefined,
+                  emitted: false,
+                  dirty: false,
+                };
           if (closed === undefined) stream.nextSegment += 1;
           stream.current = segment;
           return segment;
@@ -9290,7 +9296,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ? yield* flavor.hasPendingReply(context.nativeThreadId)
                       : false;
                   if (context.finalized) return;
-                  if (deferredBackgroundWork || pendingReply) {
+                  if (!context.interrupted && (deferredBackgroundWork || pendingReply)) {
                     if (status === "completed") {
                       yield* closeTextStreamsAsFinalAnswer(context);
                     } else {
@@ -9305,7 +9311,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
                     return;
                   }
-                  yield* finalizeTurn(context, status);
+                  yield* finalizeTurn(context, context.interrupted ? "interrupted" : status);
                 }),
               ).pipe(
                 Effect.andThen(() => options.testHooks?.afterPromptCallback?.() ?? Effect.void),

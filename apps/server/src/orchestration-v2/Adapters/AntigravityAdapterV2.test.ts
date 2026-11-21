@@ -1753,6 +1753,11 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       mode: "cancelled-prompt" as const,
       expectedPhase: undefined,
     },
+    {
+      name: "clears stale final_answer when a promoted named segment reopens before a new tool",
+      mode: "reopened-named-commentary" as const,
+      expectedPhase: undefined,
+    },
   ])("$name", ({ mode, expectedPhase }) =>
     Effect.gen(function* () {
       const cmd = {
@@ -1831,13 +1836,22 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
                         content: { type: "text", text: "Waiting on background pause." },
                       },
                     ]
-                  : [
-                      { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
-                      {
-                        sessionUpdate: "agent_message_chunk",
-                        content: { type: "text", text: targetText },
-                      },
-                    ];
+                  : mode === "reopened-named-commentary"
+                    ? [
+                        { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+                        {
+                          sessionUpdate: "agent_message_chunk",
+                          messageId: "msg-reopened",
+                          content: { type: "text", text: targetText },
+                        },
+                      ]
+                    : [
+                        { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+                        {
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text: targetText },
+                        },
+                      ];
       const { usage, send, startTurn, until, awaitPromptSettledWithBackgroundWork } =
         yield* openSessionWithRunningCommand({}, undefined, undefined, {
           promptUpdates,
@@ -1852,6 +1866,21 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         status: "completed",
         rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
       });
+      if (mode === "reopened-named-commentary") {
+        // Reopening the previously promoted named segment before a new tool must drop its stale final_answer phase.
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          messageId: "msg-reopened",
+          content: { type: "text", text: " Checking again." },
+        });
+        yield* send({
+          sessionUpdate: "tool_call",
+          toolCallId: "call_recheck",
+          kind: "execute",
+          title: "bin/check",
+          status: "completed",
+        });
+      }
       yield* send({
         sessionUpdate: "agent_thought_chunk",
         content: { type: "text", text: "Background command completed." },
@@ -1863,6 +1892,21 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       yield* send(usage);
       yield* TestClock.adjust("3 seconds");
       const allEvents = yield* until((event) => event.type === "turn.terminal");
+      if (mode === "reopened-named-commentary") {
+        const reopened = allEvents.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.nativeItemRef?.nativeId?.endsWith(":assistant:message:msg-reopened"),
+        );
+        assert.equal(
+          reopened?.type === "turn_item.updated" && reopened.turnItem.type === "assistant_message"
+            ? reopened.turnItem.phase
+            : null,
+          expectedPhase,
+        );
+        return;
+      }
       if (mode === "cleared-named-reply") {
         const cleared = allEvents.findLast(
           (event) =>
