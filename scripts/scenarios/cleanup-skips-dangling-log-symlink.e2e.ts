@@ -1,28 +1,36 @@
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { rpcClient, runPromise, test, WEB } from "./t3.ts";
+import { runPromise, test, WEB } from "./t3.ts";
+
+const decodeSettings = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 test(
   "Cleanup removes expired rotated logs even with a dangling symlink in the log directory",
   WEB,
   async ({ t3, app, browser, screen }) => {
     await t3.project("rotated-log-cleanup");
-    const origin = app.baseUrl ?? "";
+    const settingsPath = `${T3_HOME}/userdata/settings.json`;
     const logFixture = `${T3_HOME}/userdata/logs/00-cleanup-fixture`;
     const expiredLog = `${logFixture}/server.log.1`;
-    const originalLogsAfterDays = await runPromise(
-      Effect.gen(function* () {
-        const client = yield* rpcClient(T3_HOME, origin);
-        const original = yield* client["server.getSettings"]({});
-        yield* client["server.updateSettings"]({ patch: { storageCleanup: { logsAfterDays: 7 } } });
-        return original.storageCleanup.logsAfterDays;
-      }).pipe(Effect.scoped),
+    const original = await runPromise(
+      Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(settingsPath)),
     );
 
     try {
+      await runPromise(
+        Effect.flatMap(FileSystem.FileSystem, (fs) =>
+          fs.writeFileString(
+            settingsPath,
+            JSON.stringify({ ...decodeSettings(original), storageCleanup: { logsAfterDays: 7 } }),
+          ),
+        ),
+      );
       await t3.open("/settings/maintenance");
       await screen.getByLabel("Delete old rotated logs in days").waitFor();
 
@@ -53,22 +61,13 @@ test(
         await app.screenshot("rotated-log-cleanup-result");
       }
     } finally {
-      try {
-        await runPromise(
-          Effect.flatMap(FileSystem.FileSystem, (fs) =>
-            fs.remove(logFixture, { recursive: true, force: true }),
-          ),
-        );
-      } finally {
-        await runPromise(
-          Effect.gen(function* () {
-            const client = yield* rpcClient(T3_HOME, origin);
-            yield* client["server.updateSettings"]({
-              patch: { storageCleanup: { logsAfterDays: originalLogsAfterDays } },
-            });
-          }).pipe(Effect.scoped),
-        );
-      }
+      await runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.remove(logFixture, { recursive: true, force: true });
+          yield* fs.writeFileString(settingsPath, original);
+        }),
+      );
     }
   },
 );
