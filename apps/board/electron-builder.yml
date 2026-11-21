@@ -1,0 +1,20 @@
+appId: com.13kparkin.agentboard
+productName: Agent Board
+directories:
+  output: release
+# The renderer and the main process are bundled, so the app ships no node_modules.
+files:
+  - dist/**/*
+  - dist-electron/electron/*.cjs
+  - package.json
+  - "!node_modules/**/*"
+asar: false
+win:
+  target:
+    - target: nsis
+      arch: x64
+nsis:
+  include: installer.nsh
+  artifactName: Agent-Board-Setup-${version}.exe
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
