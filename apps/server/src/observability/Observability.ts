@@ -78,7 +78,8 @@ export const layer = Layer.unwrap(
         yield* heapAttribution.run;
 
         return Layer.mergeAll(
-          builtinSucceedLayer("t3.server")(Tracer.Tracer, heapAttribution.tracer),
+          // Every span goes through the tracer, so it stays out of the plugin kernel.
+          Layer.succeed(Tracer.Tracer, heapAttribution.tracer),
           BrowserTraceCollector.layer(sink),
         );
       }),

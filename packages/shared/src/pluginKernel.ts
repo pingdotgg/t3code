@@ -258,18 +258,15 @@ const make = Effect.fn("PluginKernel.make")(function* (
         ),
       );
     });
-  const retire = Effect.fn("PluginKernel.retire")(function* (generation: Generation) {
+  const retire = Effect.fnUntraced(function* (generation: Generation) {
     generation.retired = true;
     if (generation.leases === 0) yield* close(generation);
   });
-  const release = Effect.fn("PluginKernel.release")(function* (generation: Generation) {
+  const release = Effect.fnUntraced(function* (generation: Generation) {
     generation.leases -= 1;
     if (generation.retired && generation.leases === 0) yield* close(generation);
   });
-  const acquire = Effect.fn("PluginKernel.acquire")(function* (
-    generation: Generation,
-    alreadyPinned = false,
-  ) {
+  const acquire = Effect.fnUntraced(function* (generation: Generation, alreadyPinned = false) {
     if (generation.retired && (!alreadyPinned || generation.leases === 0))
       return yield* Effect.die(new Error("This plugin service generation has retired."));
     generation.leases += 1;
@@ -429,9 +426,7 @@ const make = Effect.fn("PluginKernel.make")(function* (
     }
     return next();
   };
-  const leaseMany = Effect.fn("PluginKernel.leaseMany")(function* (
-    owners: ReadonlyArray<Generation>,
-  ) {
+  const leaseMany = Effect.fnUntraced(function* (owners: ReadonlyArray<Generation>) {
     const releases: Effect.Effect<void>[] = [];
     const expanded = [
       ...new Set(owners.flatMap((owner) => [owner, ...(owner.dependencies ?? [])])),
