@@ -18,6 +18,7 @@ const dialog = (
   <HtmlRenderDialog
     src="https://environment.test/page.html"
     htmlRender={{ attachmentId: "html", title: "Diagram", height: 400 }}
+    formStateKey="env:html:fullscreen"
     onClose={() => {}}
   />
 );
