@@ -33,6 +33,28 @@ const RATE_LIMIT_ERROR = errorPayload(
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+const VERIFICATION_URL =
+  "https://accounts.google.com/v3/signin/continue?plt=fixture&flowName=GlifWebSignIn";
+const verificationError = (url: string | undefined) => {
+  const response = {
+    error: {
+      code: 403,
+      details: [
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          domain: "cloudcode-pa.googleapis.com",
+          metadata: { validation_url: url },
+          reason: "VALIDATION_REQUIRED",
+        },
+      ],
+      message: "Verify your account to continue.",
+      status: "PERMISSION_DENIED",
+    },
+  };
+  return errorPayload(
+    `Verification Required\u0012PERMISSION_DENIED (code 403): Verify your account to continue.\u001aHTTP 403 Forbidden\n\n${JSON.stringify(response, null, 2)}\n`,
+  );
+};
 // Vertex Claude rejects a resumed history whose saved thinking block lost its signature.
 const MISSING_SIGNATURE_ERROR = errorPayload(
   'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0.thinking.signature: Field required"},"request_id":"req_vrtx_test"}, Status: INVALID_ARGUMENT, Details: []',
@@ -177,6 +199,26 @@ describe("watchAntigravityPromptOutcome", () => {
         ]))?.failure.retryable,
         false,
       );
+      for (const url of [
+        VERIFICATION_URL,
+        undefined,
+        "https://accounts.google.com.example.invalid/v3/signin/continue?plt=fixture",
+      ]) {
+        assert.deepEqual(
+          yield* turn([
+            [USER_INPUT, input],
+            [ERROR_MESSAGE, verificationError(url)],
+          ]),
+          reusable({
+            class: "permission_error",
+            message: "Verify your Google account, then retry this turn.",
+            code: "VALIDATION_REQUIRED",
+            retryable: false,
+            ...(url === VERIFICATION_URL ? { verificationUrl: url } : {}),
+          }),
+        );
+      }
+      assert.isUndefined(yield* turn([[PLANNER_RESPONSE, verificationError(VERIFICATION_URL)]]));
       // A saved thinking block without a valid signature fails every later prompt.
       for (const error of [MISSING_SIGNATURE_ERROR, INVALID_SIGNATURE_ERROR]) {
         const outcome = yield* turn([
