@@ -42,6 +42,7 @@ import {
   type IssueTrackerApi,
   type StandaloneIssueTrackerApi,
   type TrackerIssueDetail,
+  type TrackerIssueLink,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import { parseUrl } from "@t3tools/shared/url";
 
@@ -148,6 +149,7 @@ export class IssueService extends Context.Service<
   {
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueError>;
     readonly detail: (input: IssueRef) => Effect.Effect<IssueDetail, IssueError>;
+    readonly linkMetadata: (input: IssueRef) => Effect.Effect<TrackerIssueLink, IssueError>;
     readonly comments: (
       input: IssueCommentsPageInput,
     ) => Effect.Effect<IssueCommentsPage, IssueError>;
@@ -524,6 +526,22 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const linkMetadata: IssueService["Service"]["linkMetadata"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project) => {
+        const read = project.api.getIssueLink ?? project.api.getIssue;
+        return read({
+          cwd: project.project.workspaceRoot,
+          host: project.host,
+          scope: project.scope,
+          key: input.key,
+        }).pipe(
+          Effect.map(({ title, url, displayKey }) => ({ title, url, displayKey })),
+          Effect.mapError(toIssueError("detail")),
+        );
+      }),
+    );
+
   const comments: IssueService["Service"]["comments"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project) =>
@@ -796,6 +814,7 @@ const make = Effect.gen(function* () {
   return IssueService.of({
     list,
     detail: traced("detail", detail),
+    linkMetadata: traced("linkMetadata", linkMetadata),
     comments: traced("comments", comments),
     templates: traced("templates", templates),
     candidates: interactive(traced("candidates", candidates)),
