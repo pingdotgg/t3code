@@ -83,8 +83,8 @@ function keepLastGoodReadings(
             candidate.workspaceId === account.workspaceId,
         );
         if (!last || last.usageLimits.unavailable) return account;
-        // Only the reading is lent; a fresh model list still decides routing.
-        return account.models ? { ...last, models: account.models } : last;
+        // Only the reading is lent; an unread model list stays unknown.
+        return { ...last, models: account.models };
       }),
     };
   });

@@ -488,33 +488,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const call: HubCall = (url, data) =>
       apiCall(hub, account, provider.header(account, platform, architecture), url, data);
-    const [models, reading] = yield* Effect.all(
-      [
-        // Optional, so a slow lookup must not hold back the quota reading past the refresh budget.
-        routedModels(hub, account).pipe(
-          Effect.timeoutOption("2 seconds"),
-          Effect.orElseSucceed(() => Option.none()),
-        ),
-        provider.read({ account, call, checkedAt }).pipe(
-          Effect.provideService(Digest.Digest, digest),
-          Effect.orElseSucceed(() => ({
-            ...listedIdentity(account),
-            usageLimits: makeUnavailableUsageLimits({
-              checkedAt,
-              reason: "probeFailed",
-              message: "The hub could not read this account's usage.",
-            }),
-          })),
-        ),
-      ],
-      { concurrency: 2 },
+    const reading = yield* provider.read({ account, call, checkedAt }).pipe(
+      Effect.provideService(Digest.Digest, digest),
+      Effect.orElseSucceed(() => ({
+        ...listedIdentity(account),
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "The hub could not read this account's usage.",
+        }),
+      })),
     );
-    return {
-      id: account.id,
-      driver: provider.driver,
-      ...reading,
-      ...(Option.isSome(models) ? { models: models.value } : {}),
-    };
+    return { id: account.id, driver: provider.driver, ...reading };
   });
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
@@ -527,14 +512,33 @@ export const makeCliproxyApi = Effect.gen(function* () {
           : new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
       ),
     );
-    return yield* Effect.forEach(
-      accounts.flatMap((account) => {
-        const provider = HUB_PROVIDERS.get(account.provider);
-        return provider && !account.disabled ? [{ account, provider }] : [];
-      }),
-      ({ account, provider }) => readAccount(hub, account, provider),
-      { concurrency: 4 },
+    const readable = accounts.flatMap((account) => {
+      const provider = HUB_PROVIDERS.get(account.provider);
+      return provider && !account.disabled ? [{ account, provider }] : [];
+    });
+    // Model lists are optional, so their lookups run apart from the quota reads and stop at one
+    // short deadline; a slow lookup must not push a refresh past its budget.
+    const [readings, models] = yield* Effect.all(
+      [
+        Effect.forEach(readable, ({ account, provider }) => readAccount(hub, account, provider), {
+          concurrency: 4,
+        }),
+        Effect.forEach(
+          readable,
+          ({ account }) =>
+            routedModels(hub, account).pipe(
+              Effect.timeoutOption("2 seconds"),
+              Effect.orElseSucceed(() => Option.none()),
+            ),
+          { concurrency: "unbounded" },
+        ),
+      ],
+      { concurrency: 2 },
     );
+    return readings.map((reading, index) => {
+      const listed = models[index];
+      return listed && Option.isSome(listed) ? { ...reading, models: listed.value } : reading;
+    });
   });
 
   const consume = Effect.fn("CliproxyApi.consume")(function* (
