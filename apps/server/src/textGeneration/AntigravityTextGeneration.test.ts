@@ -708,7 +708,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         {
           provider: "antigravity",
           sessionId: SESSION_ID,
-          model: "gemini-3.1-pro",
+          model: "gemini-3.1-pro-high",
           usage: {
             totals: {
               uncachedInputTokens: 600,
