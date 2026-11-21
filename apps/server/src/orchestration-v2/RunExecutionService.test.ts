@@ -72,6 +72,9 @@ const mockEventSink = (implementation: Partial<EventSink.EventSinkV2["Service"]>
         Stream.takeUntil(Boolean),
         Stream.runDrain,
       ),
+    // The run that claimed the provider thread has started its turn.
+    writeProviderThreadRosterIfUnattached: () =>
+      Effect.succeed({ unattached: false, storedEvents: [] }),
     ...implementation,
   });
 
