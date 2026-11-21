@@ -2109,6 +2109,47 @@ describe("ThreadSettlementServiceV2 worker", () => {
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
+
+  it.effect("a merge does not settle a local thread on the branch of another thread's PR", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const mergedLink = {
+        ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")),
+        snapshot: {
+          ...persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z")).snapshot!,
+          state: "merged" as const,
+          mergedAt: NOW,
+        },
+      };
+      const owner = makeThread("pr-owner", { branch: "feature", pullRequests: [mergedLink] });
+      const sibling = makeThread("local-sibling", {
+        branch: "feature",
+        createdAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+      });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([owner, sibling]),
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sidebarAutoSettleOnMerge: true,
+          sidebarAutoSettleAfterDays: null,
+        },
+        branchPullRequest: () => Effect.succeed(makeBranchPullRequest("merged")),
+      });
+
+      yield* Effect.gen(function* () {
+        const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+        yield* fixture.publishMerge;
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+
+        expect([
+          ...new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
+        ]).toEqual([owner.id]);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
 });
 
 describe("ThreadSettlementServiceV2 terminals", () => {
