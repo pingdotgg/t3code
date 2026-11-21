@@ -16,7 +16,9 @@ const sidebarRowThreadKeyAtom = Atom.family((openThreadKey: string) =>
     const openThreadRef = parseScopedThreadKey(openThreadKey);
     if (openThreadRef === null) return openThreadKey;
     const threads = get(environmentThreadShells.quietThreadShellsAtom);
-    const rowRef = resolveListedAncestorThreadRef(openThreadRef, threads);
+    const rowRef = resolveListedAncestorThreadRef(openThreadRef, threads, {
+      nestLaunchedThreads: false,
+    });
     return scopedThreadKey(rowRef.environmentId, rowRef.threadId);
   }),
 );
