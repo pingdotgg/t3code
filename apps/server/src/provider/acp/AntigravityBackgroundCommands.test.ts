@@ -530,6 +530,15 @@ describe("readAntigravityRunningCommands", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      // Valid, matching metadata padded past MAX_METADATA_BYTES so removing the size guard would match.
+      const validMatchingMeta = commandStepMetadata({
+        callId: `${SESSION_ID}:13`,
+        args: { CommandLine: "pytest -q tests/", Cwd: "/repo" },
+      });
+      const oversizedValidMeta = Uint8Array.from([
+        ...validMatchingMeta,
+        ...field(30, "x".repeat(256 * 1024)),
+      ]);
       yield* writeSessionDb({
         profileDirectory,
         rows: [
@@ -537,7 +546,7 @@ describe("readAntigravityRunningCommands", () => {
             idx: 14,
             stepType: RUN_COMMAND_STEP_TYPE,
             status: STATUS_RUNNING,
-            metadata: new Uint8Array(256 * 1024 + 1),
+            metadata: oversizedValidMeta,
             payload: null,
           },
         ],
