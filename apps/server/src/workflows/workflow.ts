@@ -298,24 +298,24 @@ const stepAs = <A, I, X, E>(
     const retry = options.retry ?? DEFAULT_RETRY;
     const resultCodec = Schema.toCodecJson(options.returns);
     const encodeResult = Schema.encodeEffect(resultCodec);
-    // Made per try, so a retry numbers its signals from the start again.
-    const execute = Effect.suspend(() => Effect.provideContext(code, run.forStep(name)));
+    // Made per try, so a retry numbers its signals from the start again and counts as an attempt.
+    const execute = Effect.andThen(
+      run.store.stepStarted(run.runId, name, "step"),
+      Effect.suspend(() => Effect.provideContext(code, run.forStep(name))),
+    );
     return journaled(
       run,
       name,
       `step/${name}`,
       options.returns,
-      run.store.stepStarted(run.runId, name, "step").pipe(
-        Effect.andThen(
-          settle(
-            retry.times === 0
-              ? execute
-              : Effect.retry(execute, {
-                  times: retry.times,
-                  ...(retry.schedule === undefined ? {} : { schedule: retry.schedule }),
-                }),
-          ),
-        ),
+      settle(
+        retry.times === 0
+          ? execute
+          : Effect.retry(execute, {
+              times: retry.times,
+              ...(retry.schedule === undefined ? {} : { schedule: retry.schedule }),
+            }),
+      ).pipe(
         // A value that does not encode fails the step, so it is never marked done first.
         Effect.tap((value) =>
           Effect.flatMap(
