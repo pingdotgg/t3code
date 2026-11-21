@@ -191,6 +191,31 @@ describe("answering a card", () => {
     );
   });
 
+  it("Given an approval that made a tracker change, when the message is worded, then the outcome follows on its own line", () => {
+    expect(
+      forYouMessage("tw-1", {
+        type: "choice",
+        choice: "approve",
+        result: 'Moved 7 to "Done"',
+      }),
+    ).toBe('For you item tw-1: approve\nResult: Moved 7 to "Done"');
+  });
+
+  it("Given a tracker_write item, when the file is merged, then it is a card with its exact change and a line without one is a problem", () => {
+    const write = { action: "comment", tracker: "github", scope: "a/b", key: "7", body: "Done." };
+    const merged = mergeForYou(
+      [
+        item("tw-1", "tracker_write", "open", "2026-11-21T10:00:00Z", { write }),
+        item("tw-2", "tracker_write", "open", "2026-11-21T10:01:00Z"),
+      ].join("\n"),
+      [],
+    );
+    expect(merged.cards.map((card) => card.id)).toEqual(["tw-1"]);
+    expect(merged.cards[0]).toMatchObject({ item: { kind: "tracker_write", write } });
+    expect(merged.problems).toHaveLength(1);
+    expect(merged.problems[0]?.line).toBe(2);
+  });
+
   const open = mergeForYou(item("a", "gate", "open", "2026-11-20T10:00:00Z"), [
     request("approval", "req", "2026-11-20T10:01:00Z"),
   ]).cards;

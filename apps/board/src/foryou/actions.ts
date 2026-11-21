@@ -23,9 +23,11 @@ import {
   type ForYouCard,
   forYouMessage,
 } from "../domain/forYou";
+import { trackerCall } from "../issues/issueLinks";
 import { failureText } from "../settings/failureText";
 import { newId } from "../state/boards";
 import { forYouSentAtom } from "../state/forYou";
+import { runTrackerCall } from "../state/issues";
 import { serverEnvironment } from "../state/server";
 import { environmentThreads, startTurn } from "../state/threads";
 
@@ -38,6 +40,8 @@ export interface ForYouTarget {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly environmentId: EnvironmentId;
   readonly boardId: string;
+  /** The project the board is in, which tracker writes are made through. */
+  readonly projectId: string;
 }
 
 type FileCard = Extract<ForYouCard, { readonly origin: "file" }>;
@@ -68,37 +72,37 @@ const setSent = (target: ForYouTarget, card: ForYouCard, choice: string, remove:
 };
 
 /**
- * Answers a `foryou.jsonl` item by messaging its orchestrator, which records the answer in the file.
- * The card reads as sent from the click, and goes back if the message does not go. Resolves to the
- * failure text, or null once sent.
+ * Sends `text` to an orchestrator as the user, with the orchestrator's own runtime mode. Resolves
+ * to the failure text, or null once sent. `beforeSend` runs once the thread has loaded, so a
+ * caller that marks a card as sent does not mark one that cannot be.
  */
-export async function answerItem(
-  target: ForYouTarget,
+export async function messageOrchestrator(
+  registry: AtomRegistry.AtomRegistry,
+  environmentId: EnvironmentId,
   orchestratorThreadId: string | null,
-  card: FileCard,
-  answer: ForYouAnswer,
+  text: () => Promise<string>,
+  beforeSend: () => void = () => undefined,
 ): Promise<string | null> {
   if (orchestratorThreadId === null) return "Start this board's orchestrator before answering.";
-  performance.mark("board:foryou-click", { detail: { id: card.id } });
   const threadId = ThreadId.make(orchestratorThreadId);
   const { data } = AsyncResult.getOrElse(
-    target.registry.get(environmentThreads.stateAtom(target.environmentId, threadId)),
+    registry.get(environmentThreads.stateAtom(environmentId, threadId)),
     () => EMPTY_ENVIRONMENT_THREAD_STATE,
   );
   const projection = Option.getOrNull(data);
   if (projection === null) return "The orchestrator has not loaded yet. Try again in a moment.";
-  setSent(target, card, answerLabel(answer), false);
+  beforeSend();
   const result = await runAtomCommand(
-    target.registry,
+    registry,
     startTurn,
     {
-      environmentId: target.environmentId,
+      environmentId,
       input: {
         threadId,
         message: {
           messageId: MessageId.make(newId()),
           role: "user",
-          text: forYouMessage(card.id, answer),
+          text: await text(),
           attachments: [],
         },
         runtimeMode: projection.thread.runtimeMode,
@@ -107,9 +111,56 @@ export async function answerItem(
     },
     { reportFailure: false },
   );
-  if (result._tag === "Success") return null;
-  setSent(target, card, "", true);
-  return failureText(result);
+  return result._tag === "Success" ? null : failureText(result);
+}
+
+/**
+ * Answers a `foryou.jsonl` item by messaging its orchestrator, which records the answer in the file.
+ * The card reads as sent from the click, and goes back if the message does not go. Approving a
+ * `tracker_write` item makes its change first, and the message carries the outcome. A change that
+ * fails leaves the card to retry. Hold changes nothing. Resolves to the failure text, or null once sent.
+ */
+export async function answerItem(
+  target: ForYouTarget,
+  orchestratorThreadId: string | null,
+  card: FileCard,
+  answer: ForYouAnswer,
+): Promise<string | null> {
+  performance.mark("board:foryou-click", { detail: { id: card.id } });
+  const { item } = card;
+  let result: string | undefined;
+  let failure: string | null;
+  try {
+    failure = await messageOrchestrator(
+      target.registry,
+      target.environmentId,
+      orchestratorThreadId,
+      async () => {
+        if (
+          item.kind === "tracker_write" &&
+          answer.type === "choice" &&
+          answer.choice === "approve"
+        ) {
+          result ??= await runTrackerCall(
+            target.registry,
+            target.environmentId,
+            trackerCall(item.write, target.projectId),
+          );
+          return forYouMessage(card.id, { ...answer, result });
+        }
+        return forYouMessage(card.id, answer);
+      },
+      () => setSent(target, card, answerLabel(answer), false),
+    );
+  } catch (error) {
+    failure = error instanceof Error ? error.message : String(error);
+  }
+  if (failure === null) return null;
+  if (result === undefined) {
+    setSent(target, card, "", true);
+    return failure;
+  }
+  return `${failure} The tracker change was already made: ${result}`;
 }
 
 /** Answers an engine approval directly. The card leaves once the engine drops the request. */

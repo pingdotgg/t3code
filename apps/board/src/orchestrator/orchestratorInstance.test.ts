@@ -16,6 +16,9 @@ import {
 const PLUGINS = "/home/me/.agent-board/pstack-t3";
 const RULES = 'Rule one.\nUse "quotes", $HOME, `ticks`, and a \\ backslash.\n';
 
+const TRACKER_ASK =
+  '--settings "{\\"permissions\\":{\\"ask\\":[\\"mcp__t3-code__create_issue\\",\\"mcp__t3-code__comment_on_issue\\",\\"mcp__t3-code__set_issue_state\\"]}}"';
+
 const claude = { instanceId: "claudeAgent", driver: "claudeAgent" };
 const claudeAlt = ProviderInstanceId.make("claude_alt");
 const claudeDriver = ProviderDriverKind.make("claudeAgent");
@@ -55,7 +58,7 @@ describe("the orchestrator instance", () => {
     expect(launchArgs.startsWith('--append-system-prompt "# Poteto mode\n')).toBe(true);
     expect(
       launchArgs.endsWith(
-        'Rule one.\nUse \\"quotes\\", \\$HOME, \\`ticks\\`, and a \\\\ backslash.\n" --disallowedTools "Task,Agent"',
+        `Rule one.\nUse \\"quotes\\", \\$HOME, \\\`ticks\\\`, and a \\\\ backslash.\n" --disallowedTools "Task,Agent" ${TRACKER_ASK}`,
       ),
     ).toBe(true);
     const at = (marker: string) => launchArgs.indexOf(marker);
@@ -163,7 +166,7 @@ describe("the orchestrator instance", () => {
     });
     const launchArgs = launchArgsOf(written(plan));
     expect(launchArgs.startsWith('--chrome --append-system-prompt "# Poteto mode\n')).toBe(true);
-    expect(launchArgs.endsWith('\n\nR" --disallowedTools "Task,Agent"')).toBe(true);
+    expect(launchArgs.endsWith(`\n\nR" --disallowedTools "Task,Agent" ${TRACKER_ASK}`)).toBe(true);
     expect(providerInstances).toEqual(before);
   });
 
@@ -208,7 +211,7 @@ describe("the orchestrator instance", () => {
     expect(agents.environment).toEqual(env);
     expect(agentsPlan.instanceId).toBe("board-agents-claudeAgent");
     expect(agentsInstanceId("claudeAgent")).toBe("board-agents-claudeAgent");
-    expect(agents.config).toEqual({});
+    expect(agents.config).toEqual({ launchArgs: TRACKER_ASK });
     expect(launchArgsOf(orchestrator)).toContain("--append-system-prompt");
     expect(isBoardInstance("board-agents-claudeAgent")).toBe(true);
     expect(isBoardInstance("board-orchestrator-claudeAgent")).toBe(true);

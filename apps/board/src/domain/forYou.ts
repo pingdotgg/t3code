@@ -8,6 +8,7 @@ export const FOR_YOU_KINDS = [
   "merge_approval",
   "question",
   "ticket_draft",
+  "tracker_write",
   "gate",
   "read",
   "resume",
@@ -69,12 +70,49 @@ const Question = Schema.Struct({
   kind: Schema.Literal("question"),
   options: optional(Schema.Array(Schema.String)),
 });
+
+const trackerScope = {
+  tracker: Schema.String.check(Schema.isNonEmpty()),
+  /** The tracker's container: `owner/repo` on GitHub, the team key on Linear. */
+  scope: Schema.String.check(Schema.isNonEmpty()),
+};
+
+/** The exact change a `tracker_write` item asks for, which Approve makes and nothing else does. */
+export const TrackerWrite = Schema.Union([
+  Schema.Struct({
+    ...trackerScope,
+    action: Schema.Literal("create"),
+    title: Schema.String.check(Schema.isNonEmpty()),
+    body: optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...trackerScope,
+    action: Schema.Literal("set_state"),
+    key: Schema.String.check(Schema.isNonEmpty()),
+    state: Schema.String.check(Schema.isNonEmpty()),
+  }),
+  Schema.Struct({
+    ...trackerScope,
+    action: Schema.Literal("comment"),
+    key: Schema.String.check(Schema.isNonEmpty()),
+    body: Schema.String.check(Schema.isNonEmpty()),
+  }),
+]);
+export type TrackerWrite = typeof TrackerWrite.Type;
+
+const TrackerWriteItem = Schema.Struct({
+  ...base,
+  kind: Schema.Literal("tracker_write"),
+  write: TrackerWrite,
+});
+export type TrackerWriteItem = typeof TrackerWriteItem.Type;
+
 const Plain = Schema.Struct({
   ...base,
   kind: Schema.Literals(["ticket_draft", "gate", "read", "resume"]),
 });
 
-export const ForYouItem = Schema.Union([MergeApproval, Question, Plain]);
+export const ForYouItem = Schema.Union([MergeApproval, Question, TrackerWriteItem, Plain]);
 export type ForYouItem = typeof ForYouItem.Type;
 
 /** A later line for an item that only moves it on: a new status, and what was done. */
@@ -229,12 +267,19 @@ export const openCards = (cards: ReadonlyArray<ForYouCard>): ReadonlyArray<ForYo
 
 /** What the user chose on a card, which `forYouMessage` words for the orchestrator. */
 export type ForYouAnswer =
-  | { readonly type: "choice"; readonly choice: "approve" | "hold" | "resume" | "read" }
+  | {
+      readonly type: "choice";
+      readonly choice: "approve" | "hold" | "resume" | "read";
+      /** What the board did on approve, such as the tracker write's outcome, which the orchestrator needs. */
+      readonly result?: string;
+    }
   | { readonly type: "text"; readonly text: string };
 
 /** The message that answers a `foryou.jsonl` item. The brief names this format to the orchestrator. */
-export const forYouMessage = (id: string, answer: ForYouAnswer): string =>
-  `For you item ${id}: ${answer.type === "choice" ? answer.choice : `answer: ${answer.text}`}`;
+export const forYouMessage = (id: string, answer: ForYouAnswer): string => {
+  if (answer.type === "text") return `For you item ${id}: answer: ${answer.text}`;
+  return `For you item ${id}: ${answer.choice}${answer.result === undefined ? "" : `\nResult: ${answer.result}`}`;
+};
 
 /** What the card is doing: waiting, answered and waiting on the orchestrator's record, or done. */
 export type CardState = "open" | "sent" | "held" | "resolved";

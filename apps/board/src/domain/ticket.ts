@@ -44,6 +44,13 @@ const Verdict = Schema.Struct({
   p3: optional(Count),
 });
 
+const TicketIssue = Schema.Struct({
+  tracker: Schema.String.check(Schema.isNonEmpty()),
+  /** The key people read: `XEO-3330` on Linear, `owner/repo#12` or `#12` on GitHub. */
+  key: Schema.String.check(Schema.isNonEmpty()),
+});
+export type TicketIssue = typeof TicketIssue.Type;
+
 export const Ticket = Schema.Struct({
   key: Schema.String.check(Schema.isNonEmpty()),
   title: Schema.String,
@@ -62,6 +69,8 @@ export const Ticket = Schema.Struct({
   threads: optional(Schema.Array(TicketThread)),
   verdicts: optional(Schema.Array(Verdict)),
   fixRounds: optional(Count),
+  /** The tracker issue this ticket works, which its frame shows. */
+  issue: optional(TicketIssue),
 });
 export type Ticket = typeof Ticket.Type;
 

@@ -1,5 +1,5 @@
-import { useAtomMount } from "@effect/atom-react";
-import { useState } from "react";
+import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
+import { useContext } from "react";
 
 import { OpenBoard } from "./board/OpenBoard";
 import { PanelHost } from "./browser/PanelHost";
@@ -10,11 +10,14 @@ import { SettingsScreen } from "./settings/SettingsScreen";
 import type { SettingsPage } from "./settings/SettingsNav";
 import { Sidebar } from "./sidebar/Sidebar";
 import { UpdateToasts } from "./sidebar/UpdateToasts";
+import { settingsPageAtom } from "./state/settingsPage";
 import { updateWatcherAtom } from "./state/updatesAtoms";
 import { UsageBar } from "./usage/UsageBar";
 
 export function App() {
-  const [settingsPage, setSettingsPage] = useState<SettingsPage | null>(null);
+  const registry = useContext(RegistryContext);
+  const settingsPage = useAtomValue(settingsPageAtom);
+  const setSettingsPage = (page: SettingsPage | null) => registry.set(settingsPageAtom, page);
   useAtomMount(updateWatcherAtom);
   return (
     <div className="grid h-full grid-rows-[var(--topbar-height)_minmax(0,1fr)_auto]">

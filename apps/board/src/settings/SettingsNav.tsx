@@ -1,13 +1,14 @@
-import { ArrowLeft, Download, GitBranch, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, GitBranch, Plug, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { SidebarRow } from "../sidebar/SidebarRow";
 
-export type SettingsPage = "worktrees" | "cleanup" | "updates";
+export type SettingsPage = "worktrees" | "cleanup" | "integrations" | "updates";
 
 const PAGES = [
   { id: "worktrees", title: "Worktrees", icon: <GitBranch className="size-3.5" /> },
   { id: "cleanup", title: "Cleanup", icon: <Trash2 className="size-3.5" /> },
+  { id: "integrations", title: "Integrations", icon: <Plug className="size-3.5" /> },
   { id: "updates", title: "Updates", icon: <Download className="size-3.5" /> },
 ] as const satisfies ReadonlyArray<{ id: SettingsPage; title: string; icon: ReactNode }>;
 
