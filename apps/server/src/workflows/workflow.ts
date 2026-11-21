@@ -465,8 +465,15 @@ export const skip = (reason: string): Effect.Effect<never, WorkflowStop> =>
   Effect.fail(new WorkflowStop({ reason, skipped: true }));
 
 /** Name the run in lists. Defaults to the workflow's name and the run's key. */
-export const title = (value: string): Effect.Effect<void, never, InRun> =>
-  Effect.flatMap(RunContext, (current) => {
+export const title = (
+  value: string,
+  ...rest: ReadonlyArray<never>
+): Effect.Effect<void, never, InRun> => {
+  // Files are not type-checked, so `title("name", text)` would title the run "name".
+  if (typeof value !== "string" || rest.length > 0) {
+    throw new Error("title takes only the text, as in title(`Release ${name}`), and no step name.");
+  }
+  return Effect.flatMap(RunContext, (current) => {
     // Numbered by how many came before in the body, which a replay walks the same way.
     let n = 0;
     while (current.names.has(`title/${n}`)) n++;
@@ -475,6 +482,7 @@ export const title = (value: string): Effect.Effect<void, never, InRun> =>
       Activity.make({ name, execute: run.store.runTitle(run.runId, value) }),
     );
   }).pipe(Effect.orDie);
+};
 
 // The defaults are every workflow: a registry holds workflows of every payload and result type.
 export interface WorkflowDefinition<P = never, A = unknown> {

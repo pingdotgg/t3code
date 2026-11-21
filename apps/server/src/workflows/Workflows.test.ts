@@ -1073,6 +1073,11 @@ it.effect("a cancelled run ends, and two steps with one name pause their run", (
           ),
           "buffered",
         );
+        // A file written for the old `title(name, text)` is refused, not titled with the name.
+        assert.throws(
+          () => (title as (...args: ReadonlyArray<string>) => unknown)("name", "Release v1"),
+          /takes only the text/,
+        );
 
         const twice = yield* workflows.start("twice", {}, { idempotencyKey: "t1" });
         const paused = yield* workflows.waitFor(twice.runId, status("paused"));
