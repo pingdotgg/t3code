@@ -336,12 +336,12 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
       ranges: [{ start: 0, end: 7 }],
     });
     expect(scoreThreadSearch("trim", subject, NOW)?.explain?.()).toBeUndefined();
-    // Nor is it in the flat t3-<hex> form used when a `t3` branch blocks nested refs.
-    const flat = thread("Add search", { branch: "t3-abcd1234" });
-    expect(scoreThreadSearch("t3", flat, NOW)).toBeNull();
-    expect(scoreThreadSearch("t3 connect", flat, NOW)).toBeNull();
+    // Nor is it in the flat lathe-<hex> form used when a `lathe` branch blocks nested refs.
+    const flat = thread("Add search", { branch: "lathe-abcd1234" });
+    expect(scoreThreadSearch("lathe", flat, NOW)).toBeNull();
+    expect(scoreThreadSearch("lathe connect", flat, NOW)).toBeNull();
     expect(scoreThreadSearch("abcd1234", flat, NOW)).not.toBeNull();
-    for (const query of ["t3-abcd", "t3-abcd1234 connect", "connect t3-abcd1234"]) {
+    for (const query of ["lathe-abcd", "lathe-abcd1234 connect", "connect lathe-abcd1234"]) {
       expect(scoreThreadSearch(query, { ...flat, projectTitle: "connect" }, NOW)).not.toBeNull();
     }
   });
