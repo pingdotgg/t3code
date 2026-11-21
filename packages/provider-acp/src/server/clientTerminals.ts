@@ -151,7 +151,10 @@ function acpTerminalCommand(input: {
   };
   const isShellSource = input.shellCommands === true && (input.request.args?.length ?? 0) === 0;
   if (isShellSource && input.posixShell !== undefined) {
-    return ChildProcess.make(input.posixShell, ["-c", input.request.command], options);
+    // Native tools write in the console code page and output is decoded as UTF-8. The spawner
+    // hides the window, so each terminal has its own console and the change stays inside it.
+    const source = `chcp.com 65001 >/dev/null 2>&1\n${input.request.command}`;
+    return ChildProcess.make(input.posixShell, ["-c", source], options);
   }
   return ChildProcess.make(input.request.command, input.request.args ?? [], {
     ...options,
