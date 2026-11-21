@@ -235,6 +235,22 @@ export const readClaudeOauthAccount = (accountConfigPath: string) =>
     Effect.orElseSucceed(() => undefined),
   );
 
+const SavedUsage = Schema.Struct({
+  cachedUsageUtilization: Schema.optional(
+    Schema.Struct({
+      fetchedAtMs: Schema.Number,
+      utilization: Schema.Record(Schema.String, Schema.Unknown),
+    }),
+  ),
+});
+
+/** Claude Code's last `/api/oauth/usage` reading, which `get_usage` serves while that endpoint is rate-limited. */
+export const readClaudeSavedUsage = (accountConfigPath: string) =>
+  readJson(SavedUsage, accountConfigPath).pipe(
+    Effect.map((config) => config.cachedUsageUtilization),
+    Effect.orElseSucceed(() => undefined),
+  );
+
 export const readClaudeOrganizationId = (accountConfigPath: string) =>
   readClaudeOauthAccount(accountConfigPath).pipe(
     Effect.map((account) => account?.organizationUuid?.trim() || undefined),
