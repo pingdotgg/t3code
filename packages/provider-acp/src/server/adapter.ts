@@ -6315,6 +6315,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           yield* closeTextStreams(context);
           const parsed = parsePermissionRequest(params);
+          const normalizedToolCall =
+            parsed.toolCall === undefined ? undefined : flavor.normalizeToolCall?.(parsed.toolCall);
+          const prompt = normalizedToolCall?.command ?? parsed.detail;
           const approvalOptions = flavor.approvalOptions?.(params);
           const nativeRequestId = params.toolCall.toolCallId;
           const requestId = yield* idAllocator.allocate.runtimeRequest({
@@ -6389,7 +6392,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             type: "approval_request",
             requestId,
             requestKind,
-            ...(parsed.detail === undefined ? {} : { prompt: parsed.detail }),
+            ...(prompt === undefined ? {} : { prompt }),
             ...(approvalOptions === undefined ? {} : { options: approvalOptions }),
           };
           yield* Ref.update(pendingRuntimeRequests, (current) => {

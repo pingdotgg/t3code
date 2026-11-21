@@ -1,3 +1,4 @@
+import { normalizeAntigravityToolCall } from "../../provider/acp/AntigravityProtocol.ts";
 import {
   extractCopilotSubagentUpdate,
   makeCopilotSubagentRouting,
@@ -6648,6 +6649,19 @@ describe("AcpAdapterV2", () => {
 
   it.effect.each([
     {
+      label: "shows Antigravity's CommandLine in an ID-only approval",
+      kind: "execute",
+      granted: true,
+      commandField: "CommandLine",
+    },
+    {
+      label: "shows Antigravity's CommandLine in a full approval",
+      kind: "execute",
+      granted: true,
+      commandField: "CommandLine",
+      fullRequest: true,
+    },
+    {
       label: "grants an ID-only execute approval its tracked command",
       kind: "execute",
       granted: true,
@@ -6687,7 +6701,12 @@ describe("AcpAdapterV2", () => {
       const makeRuntime = makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
-        environment: { T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: kind },
+        environment: {
+          T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: kind,
+          ...("commandField" in testCase
+            ? { T3_ACP_TRACKED_COMMAND_FIELD: testCase.commandField }
+            : {}),
+        },
         wrapRuntime: (runtime) => ({
           ...runtime,
           handleRequestPermission: (handler) =>
@@ -6707,6 +6726,9 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           interruptPromptOnCancel: true,
+          ...("commandField" in testCase
+            ? { normalizeToolCall: normalizeAntigravityToolCall }
+            : {}),
           makeRuntime: (input) =>
             Effect.sync(() => {
               runtimeInput = input;
@@ -6761,6 +6783,9 @@ describe("AcpAdapterV2", () => {
           sessionId: "mock-session-1",
           toolCall: {
             toolCallId: "tracked-tool-call",
+            ...("fullRequest" in testCase
+              ? { kind, title: "git status", rawInput: { CommandLine: "git status" } }
+              : {}),
             ...("requestKind" in testCase ? { kind: testCase.requestKind } : {}),
           },
           options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
