@@ -41,17 +41,9 @@ describe("the orchestrator's standing rules and board facts", () => {
     expect(ROLES.filter((role) => !rules.includes(`| \`${role.name}\` |`))).toEqual([]);
   });
 
-  it("Given a Codex orchestrator, when the rules render, then each role names the picked instance and no model", () => {
-    const roles = resolveRoles(ROLES, { instanceId: "codex", driver: "codex", offered: [] });
-    const rules = renderRules(roles);
-    expect(rules).toContain('| `{"providerInstanceId":"codex"}` |');
-    expect(rules).not.toContain('"options":{"effort"');
-  });
-
   it("Given an instance that lacks a model, when the rules render, then the fallback is stated under the table", () => {
     const roles = resolveRoles(ROLES, {
       instanceId: "claudeAgent",
-      driver: "claudeAgent",
       offered: ["claude-opus-5-5", "claude-sonnet-5-5"],
     });
     expect(renderRules(roles)).toContain(

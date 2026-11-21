@@ -42,7 +42,7 @@ The plugin loads in place from this checkout, so install from a checkout that st
 
 ## pstack skills
 
-The private repo `13kparkin/pstack-t3` holds Lauren Tan's pstack skills ported to T3, with an `upstream` branch that tracks cursor/plugins. The board loads it only on its own Claude instances. When it starts an orchestrator, the Electron main process clones the repo into `~/.agent-board/pstack-t3` in WSL, or fetches `main` into the existing clone and keeps the old checkout if the fetch fails. The app then sets `CLAUDE_CODE_PLUGIN_DIRS` to that folder on `board-orchestrator-<instance>` and on `board-agents-<instance>`, the instance every role's `target` names. Nothing is installed at user scope, so Claude Code sessions outside the board stay as they are. Codex threads do not load the skills. The repo is private, so git in WSL needs your credentials (`gh auth setup-git`). `AGENT_BOARD_PSTACK_DIR` points the app at a checkout of your own instead.
+The private repo `13kparkin/pstack-t3` holds Lauren Tan's pstack skills ported to T3, with an `upstream` branch that tracks cursor/plugins. The board loads it only on its own Claude instances. When it starts an orchestrator, the Electron main process clones the repo into `~/.agent-board/pstack-t3` in WSL, or fetches `main` into the existing clone and keeps the old checkout if the fetch fails. The app then sets `CLAUDE_CODE_PLUGIN_DIRS` to that folder on `board-orchestrator-<instance>` and on `board-agents-<instance>`, the instance every role's `target` names. Nothing is installed at user scope, so Claude Code sessions outside the board stay as they are. The repo is private, so git in WSL needs your credentials (`gh auth setup-git`). `AGENT_BOARD_PSTACK_DIR` points the app at a checkout of your own instead.
 
 Every orchestrator starts with poteto-mode and the `pstack-t3` adapter ahead of its rules in the instance's appended system prompt. `pstack/poteto-mode.md` and `pstack/pstack-t3.md` are copies of those two skills without their front matter. After a change in `pstack-t3`, run `node apps/board/scripts/vendor-pstack.mjs <pstack-t3 checkout>` and `vp fmt apps/board/pstack`, and commit the result. Every other skill the orchestrator reads on demand from the checkout.
 
@@ -82,7 +82,7 @@ The last opened board lives in `local-state.json` in the app's user data folder,
 
 ## Orchestrators
 
-Creating a board opens a dialog with the name and the **Orchestrator** picker. The picker lists the engine's Claude Code and Codex instances from the server config, each with its sign-in state and the models it offers. Type a model the instance does not list and the engine decides, as in T3.
+Creating a board opens a dialog with the name and the **Orchestrator** picker. The picker lists the engine's Claude Code instances from the server config, each with its sign-in state and the models it offers. Type a model the instance does not list and the engine decides, as in T3.
 
 On create, the app does this in order:
 
@@ -98,7 +98,7 @@ The orchestrator tab of the right sidebar streams the orchestrator thread and se
 
 Every agent the orchestrator starts is a role from `src/orchestrator/roles.ts`, started with `delegate_task`: `role` is the role's `t3Role`, `isolation` is its isolation, `target` is its model, `title` is `[<ticket key>] <role name>`, and `task` starts with `Read <board folder>/roles/<role>.md and act as that role.` T3 cannot limit a child's tools, so a read-only role stays read-only only because its file says so.
 
-The role files port omp's `task`, `scout`, `reviewer`, `security-reviewer`, and `sonic`, the `comment-sicko` and `poteto-agent` roles from pstack-omp, and the nine `egm-*` roles. The omp-only front matter (`tools`, `model`, `spawns`, `thinking-level`) is dropped, and an `output` schema became a `Return` section. The models follow Anthropic's model guide, not omp's settings: `reviewer`, `scout`, and `task` run `claude-sonnet-5-5` at `medium`, `security-reviewer` runs `claude-opus-5-5` at `high`, `sonic` runs `claude-haiku-5-5` at `low`, and every other role runs `claude-opus-5-5` at `medium`. No role uses `claude-fable-5-1` or `xhigh`. `sonic` stays off source code. A role whose Claude model the orchestrator's instance does not offer uses the orchestrator's model, and the brief says so under the registry table. A Codex orchestrator's children inherit its model.
+The role files port omp's `task`, `scout`, `reviewer`, `security-reviewer`, and `sonic`, the `comment-sicko` and `poteto-agent` roles from pstack-omp, and the nine `egm-*` roles. The omp-only front matter (`tools`, `model`, `spawns`, `thinking-level`) is dropped, and an `output` schema became a `Return` section. The models follow Anthropic's model guide, not omp's settings: `reviewer`, `scout`, and `task` run `claude-sonnet-5-5` at `medium`, `security-reviewer` runs `claude-opus-5-5` at `high`, `sonic` runs `claude-haiku-5-5` at `low`, and every other role runs `claude-opus-5-5` at `medium`. No role uses `claude-fable-5-1` or `xhigh`. `sonic` stays off source code. A role whose Claude model the orchestrator's instance does not offer uses the orchestrator's model, and the brief says so under the registry table.
 
 ### Reviews and usage
 
@@ -108,7 +108,7 @@ The launch facts carry one line per usage window of the orchestrator's provider,
 
 ### Sign-in
 
-T3 can sign in only the instances whose `setup.canAuthenticate` is true, such as a Codex instance in managed mode. **Sign in** runs `provider.auth.start` and shows the step the engine waits on: the browser page, the device code, the terminal, or the credential fields. Claude Code signs in on the machine that runs T3, so for it the picker shows the engine's own instructions and a **Refresh** button.
+T3 can sign in only the instances whose `setup.canAuthenticate` is true. **Sign in** runs `provider.auth.start` and shows the step the engine waits on: the browser page, the device code, the terminal, or the credential fields. Claude Code signs in on the machine that runs T3, so for it the picker shows the engine's own instructions and a **Refresh** button.
 
 ### Timing tokens
 
@@ -205,7 +205,7 @@ The gear in the sidebar footer opens a settings screen laid out like Orca's, wit
 
 **Cleanup** edits the automatic worktree cleanup rules (`storageCleanup` for All projects, `projectSettingsOverrides.<id>.worktreeCleanup` for a project, which is Inherit, Off, or Custom). **Delete now** runs `server.runStorageCleanup` and lists the latest `StorageCleanupReport`, which `server.getStorageCleanupReport` also pushes. A cleanup waits 60 seconds after a thread settles before it removes the worktree, even with settled retention at 0 days. **Delete a worktree** removes one worktree with `vcs.removeWorktree` after a confirm. The list comes from the thread shells, checked against `vcs.listRefs`, so a folder that is already gone is not offered.
 
-**Integrations** lists the source-control hosts the engine found and the task trackers, with a Connect Linear dialog that sends the key through `issueTrackers.connect` and a per-project team binding (`issueTrackers.bindProject`). **Add from tracker** on an orchestrator card searches GitHub or Linear issues (`issues.list`) and sends the orchestrator a ticket request that carries the issue's description and comments (`issues.detail`, `issues.comments`). A ticket whose `issue` field names a tracker issue shows its state and assignee as a chip. The orchestrator asks to change a tracker by posting a `tracker_write` For you item. Approve makes the change through the engine's issue tools, and Hold changes nothing. The board starts no Codex orchestrator, because Codex cannot ask before it changes a tracker.
+**Integrations** lists the source-control hosts the engine found and the task trackers, with a Connect Linear dialog that sends the key through `issueTrackers.connect` and a per-project team binding (`issueTrackers.bindProject`). **Add from tracker** on an orchestrator card searches GitHub or Linear issues (`issues.list`) and sends the orchestrator a ticket request that carries the issue's description and comments (`issues.detail`, `issues.comments`). A ticket whose `issue` field names a tracker issue shows its state and assignee as a chip. The orchestrator asks to change a tracker by posting a `tracker_write` For you item. Approve makes the change through the engine's issue tools, and Hold changes nothing.
 
 ## Tests
 

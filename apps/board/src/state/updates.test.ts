@@ -136,11 +136,11 @@ describe("counting active runs", () => {
         thread("running", "claudeAgent"),
         thread("waiting", "claudeAgent"),
         thread("idle", "claudeAgent"),
-        thread("completed", "codex"),
-        thread("idle", "codex", "running"),
-        thread("failed", "codex"),
+        thread("completed", "claudeAlt"),
+        thread("idle", "claudeAlt", "running"),
+        thread("failed", "claudeAlt"),
       ]),
-    ).toEqual({ total: 3, byInstance: { claudeAgent: 2, codex: 1 } });
+    ).toEqual({ total: 3, byInstance: { claudeAgent: 2, claudeAlt: 1 } });
   });
 });
 
@@ -151,26 +151,26 @@ describe("reading a provider's offer", () => {
 
   it("Given a provider that cannot update itself, when read, then it offers the command only", () => {
     const manual = provider({
-      instanceId: "codex",
-      driver: "codex",
+      instanceId: "claudeAlt",
+      driver: "claudeAgent",
       advisory: {
         status: "behind_latest",
         current: "0.8.0",
         latest: "0.9.1",
-        command: "npm i -g codex",
+        command: "npm i -g @anthropic-ai/claude-code",
       },
     });
-    expect(providerItem(manual, "Codex", 0)).toMatchObject({
+    expect(providerItem(manual, "Claude Code", 0)).toMatchObject({
       offer: { version: "0.9.1", canUpdate: false },
-      command: "npm i -g codex",
+      command: "npm i -g @anthropic-ai/claude-code",
       status: "behind",
     });
   });
 
   it("Given a current, disabled, or broken-latest provider, when read, then nothing is offered", () => {
     const current = provider({
-      instanceId: "codex",
-      driver: "codex",
+      instanceId: "claudeAlt",
+      driver: "claudeAgent",
       advisory: { status: "current", current: "0.9.1", latest: "0.9.1" },
     });
     const disabled = provider({
@@ -193,8 +193,8 @@ describe("reading a provider's offer", () => {
 describe("a provider that is not installed", () => {
   it("Given a provider missing on the host, when listed, then it is flagged and offers nothing", () => {
     const missing = decodeProvider({
-      instanceId: "codex",
-      driver: "codex",
+      instanceId: "claudeAlt",
+      driver: "claudeAgent",
       enabled: true,
       installed: false,
       version: null,
@@ -205,7 +205,7 @@ describe("a provider that is not installed", () => {
       slashCommands: [],
       skills: [],
     });
-    expect(providerItem(missing, "Codex", 0)).toMatchObject({
+    expect(providerItem(missing, "Claude Code (alt)", 0)).toMatchObject({
       missing: true,
       installed: null,
       offer: null,
@@ -282,9 +282,9 @@ describe("update everything", () => {
     const queue = updateEverythingQueue([
       row("engine", "engine"),
       row("claudeAgent", "provider"),
-      row("codex", "provider"),
+      row("claudeAlt", "provider"),
     ]);
-    expect(queue.map((entry) => entry.key)).toEqual(["claudeAgent", "codex", "engine"]);
+    expect(queue.map((entry) => entry.key)).toEqual(["claudeAgent", "claudeAlt", "engine"]);
   });
 
   it("Given a running update, a manual-only offer, and a current item, when queued, then they are skipped", () => {
@@ -302,12 +302,12 @@ describe("announcing offers", () => {
   it("Given an announced release and a newer one, when filtered, then only the new release is announced", () => {
     const rows = [
       row("claudeAgent", "provider", { offer: { version: "2.1.312", canUpdate: true } }),
-      row("codex", "provider", { offer: { version: "0.9.2", canUpdate: true } }),
+      row("claudeAlt", "provider", { offer: { version: "2.1.313", canUpdate: true } }),
       row("engine", "engine", { action: "start" }),
     ];
     expect(
-      unannounced(rows, { claudeAgent: "2.1.312", codex: "0.9.1" }).map((entry) => entry.key),
-    ).toEqual(["codex"]);
+      unannounced(rows, { claudeAgent: "2.1.312", claudeAlt: "2.1.312" }).map((entry) => entry.key),
+    ).toEqual(["claudeAlt"]);
   });
 });
 
@@ -323,18 +323,26 @@ describe("summarizing a batch of updates", () => {
   it("Given three updates, when summarized, then the toast lists them", () => {
     expect(
       summarizeResults(
-        ["Claude Code", "Codex", "Engine"].map((name) => ({ name, version: "1", failure: null })),
+        ["Claude Code", "Claude Code (alt)", "Engine"].map((name) => ({
+          name,
+          version: "1",
+          failure: null,
+        })),
       )?.title,
-    ).toBe("Updated Claude Code, Codex, and Engine");
+    ).toBe("Updated Claude Code, Claude Code (alt), and Engine");
   });
 
   it("Given a mix of results, when summarized, then the toast counts the failures and says why", () => {
     expect(
       summarizeResults([
         { name: "Claude Code", version: "2.1.312", failure: null },
-        { name: "Codex", version: null, failure: "EACCES" },
+        { name: "Claude Code (alt)", version: null, failure: "EACCES" },
       ]),
-    ).toEqual({ tone: "error", title: "1 of 2 updates failed", description: "Codex: EACCES" });
+    ).toEqual({
+      tone: "error",
+      title: "1 of 2 updates failed",
+      description: "Claude Code (alt): EACCES",
+    });
   });
 
   it("Given nothing ran, when summarized, then there is no toast", () => {

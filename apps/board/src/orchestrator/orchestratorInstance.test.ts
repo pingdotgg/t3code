@@ -78,20 +78,6 @@ describe("the orchestrator instance", () => {
     }
   });
 
-  it("Given a Codex instance, when it is planned, then the rules ride in developer_instructions as a TOML string", () => {
-    const plan = planOrchestratorInstance({
-      pluginDir: PLUGINS,
-      providerInstances: instances({}),
-      base: { instanceId: "codex", driver: "codex" },
-      rules: 'Say "hi".\nBye.',
-    });
-    const instance = written(plan);
-    expect(instance.driver).toBe("codex");
-    const launchArgs = launchArgsOf(instance);
-    expect(launchArgs.startsWith('-c "developer_instructions=\\"# Poteto mode\\\\n')).toBe(true);
-    expect(launchArgs.endsWith('Say \\\\\\"hi\\\\\\".\\\\nBye.\\""')).toBe(true);
-  });
-
   it("Given an orchestrator instance that already holds these rules, when it is planned, then nothing is written", () => {
     const first = planOrchestratorInstance({
       pluginDir: PLUGINS,
@@ -237,15 +223,5 @@ describe("the orchestrator instance", () => {
       planAgentsInstance({ providerInstances: settings, base: claude, pluginDir: "/moved" })
         .mutation,
     ).not.toBeNull();
-  });
-
-  it("Given a Codex instance, when the agents instance is planned, then children keep the picked instance and nothing is written", () => {
-    expect(
-      planAgentsInstance({
-        providerInstances: instances({}),
-        base: { instanceId: "codex", driver: "codex" },
-        pluginDir: PLUGINS,
-      }),
-    ).toEqual({ instanceId: "codex", mutation: null });
   });
 });

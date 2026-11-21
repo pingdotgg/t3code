@@ -1,4 +1,4 @@
-import { Bot, Flower2 } from "lucide-react";
+import { Bot } from "lucide-react";
 
 export function ProviderGlyph({ driver }: { driver: string }) {
   if (driver === "claudeAgent") {
@@ -8,6 +8,5 @@ export function ProviderGlyph({ driver }: { driver: string }) {
       </span>
     );
   }
-  if (driver === "codex") return <Flower2 aria-hidden className="size-3.5 text-fg" />;
   return <Bot aria-hidden className="size-3.5 text-muted" />;
 }
