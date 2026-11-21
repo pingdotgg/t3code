@@ -9,6 +9,7 @@ import {
   ProviderSessionId,
   ThreadId,
   type AntigravitySettings,
+  type ProviderInstallState,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -17,6 +18,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -29,6 +32,7 @@ import {
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -133,11 +137,28 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", { loginRequired: true });
+  const installState = yield* SubscriptionRef.make<ProviderInstallState>({
+    driver: ProviderDriverKind.make("antigravity"),
+    operationId: null,
+    phase: "idle",
+    downloadedBytes: 0,
+    totalBytes: null,
+    version: null,
+    installedVersion: first.version,
+    canRemove: true,
+    message: null,
+  });
   const controls: {
     selected: AntigravityInstallation.AntigravityExecutable;
     failResolution: boolean;
     beforeAcquire: Effect.Effect<void>;
-  } = { selected: first, failResolution: false, beforeAcquire: Effect.void };
+    latestVersion: string | null;
+  } = {
+    selected: first,
+    failResolution: false,
+    beforeAcquire: Effect.void,
+    latestVersion: null,
+  };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -156,6 +177,21 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
+    state: SubscriptionRef.get(installState),
+    changes: SubscriptionRef.changes(installState),
+    lookupLatestVersion: Effect.sync(() => controls.latestVersion),
+    start: Effect.gen(function* () {
+      const next: ProviderInstallState = {
+        ...(yield* SubscriptionRef.get(installState)),
+        operationId: "managed-update-1",
+        phase: "succeeded",
+        installedVersion: controls.latestVersion ?? controls.selected.version,
+        version: controls.latestVersion ?? controls.selected.version,
+        message: null,
+      };
+      yield* SubscriptionRef.set(installState, next);
+      return next;
+    }),
     compatibility: (version) =>
       Effect.succeed(
         resolveProviderCompatibility(
@@ -271,6 +307,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     first,
     second,
     signedOut,
+    installState,
     controls,
     acquisitions,
     releases,
@@ -305,6 +342,7 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(ProviderLatestVersions.layer),
 );
 const layerTest = ProviderHostLive.layer.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
@@ -701,6 +739,95 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(yield* fs.exists(directories.runtimeTemp)).toBe(false);
         expect(yield* fs.exists(legacyRoot)).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "advertises managed one-click updates only for managed installs, including withdrawn ones",
+    () =>
+      Effect.gen(function* () {
+        const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+        const harness = yield* makeHarness();
+        harness.controls.selected = {
+          ...harness.first,
+          source: "managed",
+          version: "1.5.14",
+        };
+        harness.controls.latestVersion = "1.5.15";
+        yield* latestVersions.invalidate("antigravity-managed");
+        const enrichedPull = yield* Stream.toPull(
+          harness.instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.versionAdvisory?.latestVersion === "1.5.15"),
+          ),
+        );
+        yield* harness.instance.snapshot.refresh;
+        const [enriched] = yield* enrichedPull;
+        expect(enriched?.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: "1.5.14",
+          latestVersion: "1.5.15",
+          canUpdate: true,
+          updateCommand: null,
+        });
+        const managedCapabilities = yield* harness.instance.snapshot.resolveMaintenance({
+          fresh: true,
+        });
+        expect(managedCapabilities.update).toBeNull();
+        expect(managedCapabilities.managedUpdate?.lockKey).toBe("antigravity-managed");
+        expect(yield* managedCapabilities.managedUpdate!.run(() => Effect.void)).toEqual({
+          status: "succeeded",
+        });
+
+        // A cold-start withdrawn managed install fails resolve() with snapshot.version=null,
+        // yet still emits an actionable update advisory — even for a lower rollback version.
+        const withdrawn = yield* makeHarness();
+        withdrawn.controls.failResolution = true;
+        withdrawn.controls.latestVersion = "1.5.13";
+        yield* SubscriptionRef.update(withdrawn.installState, (current) => ({
+          ...current,
+          installedVersion: "1.5.14",
+        }));
+        yield* latestVersions.invalidate("antigravity-managed");
+        const withdrawnEnrichedPull = yield* Stream.toPull(
+          withdrawn.instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.versionAdvisory?.latestVersion === "1.5.13"),
+          ),
+        );
+        yield* withdrawn.instance.snapshot.refresh;
+        const [withdrawnEnriched] = yield* withdrawnEnrichedPull;
+        expect(withdrawnEnriched?.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: "1.5.14",
+          latestVersion: "1.5.13",
+          canUpdate: true,
+          updateCommand: null,
+        });
+        const withdrawnCapabilities = yield* withdrawn.instance.snapshot.resolveMaintenance({
+          fresh: true,
+        });
+        expect(withdrawnCapabilities.managedUpdate?.lockKey).toBe("antigravity-managed");
+
+        // External PATH binaries remain manual-only.
+        harness.controls.failResolution = false;
+        harness.controls.selected = {
+          ...harness.first,
+          source: "path",
+          version: "1.5.14",
+          managedVersionDirectory: null,
+        };
+        const pathCapabilities = yield* harness.instance.snapshot.resolveMaintenance({
+          fresh: true,
+        });
+        expect(pathCapabilities.managedUpdate).toBeUndefined();
+        expect(pathCapabilities.update).toBeNull();
+
+        // Custom binaryPath overrides remain manual-only.
+        const custom = yield* makeHarness({ config: { binaryPath: harness.first.executablePath } });
+        const customCapabilities = yield* custom.instance.snapshot.resolveMaintenance({
+          fresh: true,
+        });
+        expect(customCapabilities.managedUpdate).toBeUndefined();
+        expect(customCapabilities.update).toBeNull();
       }),
   );
 });

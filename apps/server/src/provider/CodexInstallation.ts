@@ -162,6 +162,11 @@ interface CodexInstallationService {
    * through `state.version` when it is newer than the managed install.
    */
   readonly checkForUpdate: Effect.Effect<void>;
+  /**
+   * Fetches OpenAI's newest supported Codex release for managed installs,
+   * bypassing the hourly throttle and returning the offered version.
+   */
+  readonly lookupLatestVersion: Effect.Effect<string | null>;
   readonly remove: (
     protectedBinaryPaths?: ReadonlyArray<string>,
   ) => Effect.Effect<void, CodexInstallationError>;
@@ -351,30 +356,38 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       archiveBytes: null,
     } satisfies CodexReleaseAsset;
   });
+  const refreshUpdate = Effect.fn("CodexInstallation.refreshUpdate")(function* (explicit: boolean) {
+    const now = yield* Clock.currentTimeMillis;
+    if (
+      explicit ||
+      upstreamCheckedAt === null ||
+      now - upstreamCheckedAt >= UPDATE_CHECK_INTERVAL_MS
+    ) {
+      // A failed lookup counts too, and keeps whatever release was offered before.
+      upstreamCheckedAt = now;
+      upstream = yield* lookupUpstream.pipe(
+        Effect.timeout(UPDATE_CHECK_TIMEOUT),
+        Effect.orElseSucceed(() => upstream),
+      );
+    }
+    // A running install already published the release it is installing.
+    const next = yield* SubscriptionRef.updateAndGetEffect(state, (current) =>
+      isRunning(current)
+        ? Effect.succeed(current)
+        : keptInstall(managedVersion(current)).pipe(
+            Effect.map((kept) => ({ ...current, ...offer(kept) })),
+          ),
+    );
+    const kept = yield* keptInstall(managedVersion(next));
+    return offer(kept).version;
+  });
   // A check already in flight covers concurrent subscribers, including when it fails.
   const checkForUpdate = updateCheckGate
-    .withPermitsIfAvailable(1)(
-      Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis;
-        if (upstreamCheckedAt === null || now - upstreamCheckedAt >= UPDATE_CHECK_INTERVAL_MS) {
-          // A failed lookup counts too, and keeps whatever release was offered before.
-          upstreamCheckedAt = now;
-          upstream = yield* lookupUpstream.pipe(
-            Effect.timeout(UPDATE_CHECK_TIMEOUT),
-            Effect.orElseSucceed(() => upstream),
-          );
-        }
-        // A running install already published the release it is installing.
-        yield* SubscriptionRef.updateEffect(state, (current) =>
-          isRunning(current)
-            ? Effect.succeed(current)
-            : keptInstall(managedVersion(current)).pipe(
-                Effect.map((kept) => ({ ...current, ...offer(kept) })),
-              ),
-        );
-      }),
-    )
+    .withPermitsIfAvailable(1)(refreshUpdate(false))
     .pipe(Effect.ignore);
+  const lookupLatestVersion = updateCheckGate
+    .withPermits(1)(refreshUpdate(true))
+    .pipe(Effect.orElseSucceed(() => null));
   const resolveManaged = Effect.fn("CodexInstallation.resolveManaged")(
     function* () {
       const active = yield* readRecord(activePath, ActiveRelease);
@@ -1057,6 +1070,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     state: SubscriptionRef.get(state),
     changes: SubscriptionRef.changes(state),
     checkForUpdate,
+    lookupLatestVersion,
     remove,
   });
 });

@@ -10,6 +10,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import {
   canOneClickUpdateProviderCandidate,
+  collectOneClickProviderUpdateCandidates,
   getProviderUpdateRunToastView,
   getProviderUpdateSidebarPillView,
   hasOneClickUpdateProviderCandidate,
@@ -90,6 +91,70 @@ describe("provider update launch notification logic", () => {
         }),
       ]),
     ).toBe(false);
+  });
+
+  it("collects one-click updates for managed providers alongside CLI installs without dropping either", () => {
+    const managedA = updateCandidate({
+      driver: driver("antigravity"),
+      instanceId: instanceId("antigravity"),
+      version: "1.5.14",
+      latestVersion: "1.5.15",
+      canUpdate: true,
+      updateCommand: null,
+    });
+    const managedB = updateCandidate({
+      driver: driver("antigravity"),
+      instanceId: instanceId("antigravity_ultra"),
+      version: "1.5.14",
+      latestVersion: "1.5.15",
+      canUpdate: true,
+      updateCommand: null,
+    });
+    expect(isProviderSettingsUpdateCandidate(managedA)).toBe(true);
+    expect(canOneClickUpdateProviderCandidate(managedA, [managedA])).toBe(true);
+    expect(canOneClickUpdateProviderCandidate(managedA, [managedA, managedB])).toBe(true);
+    expect(
+      collectOneClickProviderUpdateCandidates([managedA, managedB]).map(
+        (entry) => entry.instanceId,
+      ),
+    ).toEqual([managedA.instanceId]);
+
+    const managedCodex = updateCandidate({
+      driver: driver("codex"),
+      instanceId: instanceId("codex_managed"),
+      version: "0.166.0",
+      latestVersion: "0.171.0",
+      canUpdate: true,
+      updateCommand: null,
+    });
+    const cliCodex = provider({
+      driver: driver("codex"),
+      instanceId: instanceId("codex"),
+      version: "0.166.0",
+      latestVersion: "0.171.0",
+      canUpdate: true,
+      updateCommand: "npm install -g @openai/codex@latest",
+    });
+    expect(
+      collectOneClickProviderUpdateCandidates([cliCodex, managedCodex]).map(
+        (entry) => entry.instanceId,
+      ),
+    ).toEqual([cliCodex.instanceId, managedCodex.instanceId]);
+
+    // Ambiguous CLI commands still drop the CLI group while keeping the managed group.
+    const bunCodex = provider({
+      driver: driver("codex"),
+      instanceId: instanceId("codex_bun"),
+      version: "0.166.0",
+      latestVersion: "0.171.0",
+      canUpdate: true,
+      updateCommand: "bun add -g @openai/codex@latest",
+    });
+    expect(
+      collectOneClickProviderUpdateCandidates([cliCodex, bunCodex, managedCodex]).map(
+        (entry) => entry.instanceId,
+      ),
+    ).toEqual([managedCodex.instanceId]);
   });
 
   it("keeps one-click updates enabled when sibling instances are already current", () => {

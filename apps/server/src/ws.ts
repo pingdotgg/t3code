@@ -3694,6 +3694,9 @@ export const layer = Layer.unwrap(
     const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
     const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
     const sql = yield* SqlClient.SqlClient;
+    // Share one server-lifetime runner across sockets so managed updates outlive a client
+    // disconnect and concurrent clients coordinate on the same update lock.
+    const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.make();
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3774,7 +3777,12 @@ export const layer = Layer.unwrap(
               Layer.provide(DefectReporter.layer),
               Layer.provide(AcpRegistrySessions.layer),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
-              Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(
+                Layer.succeed(
+                  ProviderMaintenanceRunner.ProviderMaintenanceRunner,
+                  providerMaintenanceRunner,
+                ),
+              ),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
