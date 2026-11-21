@@ -11,6 +11,10 @@
       "types": "./src/server/adapter.ts",
       "import": "./src/server/adapter.ts"
     },
+    "./server/antigravityElicitation": {
+      "types": "./src/server/antigravityElicitation.ts",
+      "import": "./src/server/antigravityElicitation.ts"
+    },
     "./server/clientPolicy": {
       "types": "./src/server/clientPolicy.ts",
       "import": "./src/server/clientPolicy.ts"

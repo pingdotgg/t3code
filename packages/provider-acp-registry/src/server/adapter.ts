@@ -1,3 +1,4 @@
+import { extractAntigravityElicitationForm } from "@t3tools/provider-acp/server/antigravityElicitation";
 import {
   extractClaudeSubagentUpdate,
   extractClaudeSubagentSessionEvent,
@@ -276,13 +277,15 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(isAntigravityCli ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
     promptFailure: (cause) =>
       acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
-    ...(isDroid
-      ? { extractElicitationForm: extractDroidElicitationForm }
-      : isOmp
-        ? { extractElicitationForm: extractOmpElicitationForm }
-        : isOpenCode
-          ? { extractElicitationForm: extractOpenCodeElicitationForm }
-          : {}),
+    ...(isAntigravityCli
+      ? { extractElicitationForm: extractAntigravityElicitationForm }
+      : isDroid
+        ? { extractElicitationForm: extractDroidElicitationForm }
+        : isOmp
+          ? { extractElicitationForm: extractOmpElicitationForm }
+          : isOpenCode
+            ? { extractElicitationForm: extractOpenCodeElicitationForm }
+            : {}),
     // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
     ...(isGlm ? { reportsPerTurnPromptUsage: true } : {}),
     ...(watchKimiPromptOutcome === undefined

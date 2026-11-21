@@ -12,6 +12,8 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
+export { extractAntigravityElicitationForm } from "@t3tools/provider-acp/server/antigravityElicitation";
+
 import {
   ANTIGRAVITY_EDIT_DIFF_OMITTED,
   antigravityEditPatch,

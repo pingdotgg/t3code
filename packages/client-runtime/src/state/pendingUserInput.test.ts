@@ -189,6 +189,45 @@ describe("buildPendingUserInputAnswers", () => {
       compat: "Keep the current envelope for one release window",
     });
   });
+
+  it("validates folded single- and multi-select questions with custom answers", () => {
+    const foldedQuestions = [
+      {
+        id: "q1",
+        options: [
+          { value: "1", label: "Option A" },
+          { value: "2", label: "Option B" },
+        ],
+        multiSelect: false,
+      },
+      {
+        id: "q2",
+        options: [
+          { value: "1", label: "Check A" },
+          { value: "2", label: "Check B" },
+        ],
+        multiSelect: true,
+      },
+    ];
+    expect(
+      buildPendingUserInputAnswers(foldedQuestions, {
+        q1: { customAnswer: "Neither, do C" },
+        q2: { customAnswer: "Run benchmark" },
+      }),
+    ).toEqual({
+      q1: "Neither, do C",
+      q2: "Run benchmark",
+    });
+    expect(
+      buildPendingUserInputAnswers(foldedQuestions, {
+        q1: { selectedOptionValues: ["1"] },
+        q2: { selectedOptionValues: ["1", "2"] },
+      }),
+    ).toEqual({
+      q1: "1",
+      q2: ["1", "2"],
+    });
+  });
 });
 
 it.each([
