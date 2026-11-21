@@ -8026,6 +8026,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           events: Stream.fromEffectRepeat(Queue.take(events)),
           canReuseContextUsage: canReuseCodexContextUsage,
           normalizeThreadLoadModelSelection: normalizeCodexThreadLoadModelSelection,
+          // Exec sessions, background terminals and subagents all live in the app-server process.
+          backgroundTasksEndWithProcess: true,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const items of (yield* Ref.get(runningCommandItemsByTurn)).values()) {

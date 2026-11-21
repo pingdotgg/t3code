@@ -166,6 +166,7 @@ export const layerExecutor: Layer.Layer<
               ...(effect.request.processLossCount === undefined
                 ? {}
                 : { processLossCount: effect.request.processLossCount }),
+              ...(effect.request.cause === undefined ? {} : { cause: effect.request.cause }),
             }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
