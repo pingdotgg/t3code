@@ -10,7 +10,11 @@ import {
   type PrinterSpeedProfile,
 } from "@t3tools/contracts";
 
-import { detectImageMimeType, type PrinterAdapter } from "../PrinterAdapter.ts";
+import {
+  deriveStableJobStartedAt,
+  detectImageMimeType,
+  type PrinterAdapter,
+} from "../PrinterAdapter.ts";
 import {
   buildPrinterEndpoint,
   fetchPrinterBinary,
@@ -260,7 +264,13 @@ export const moonrakerAdapter: PrinterAdapter<MoonrakerPrinterConfig> = {
         totalLayers: st.print_stats?.info?.total_layer ?? null,
         remainingSeconds,
         elapsedSeconds,
-        startedAt: null,
+        startedAt: deriveStableJobStartedAt({
+          isActive,
+          fileName,
+          elapsedSeconds,
+          previous,
+          nowMs,
+        }),
         estimatedFinishAt:
           remainingSeconds !== null
             ? DateTime.formatIso(DateTime.add(now, { seconds: remainingSeconds }))

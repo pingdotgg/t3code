@@ -8,7 +8,11 @@ import {
   type PrinterSnapshot,
 } from "@t3tools/contracts";
 
-import { detectImageMimeType, type PrinterAdapter } from "../PrinterAdapter.ts";
+import {
+  deriveStableJobStartedAt,
+  detectImageMimeType,
+  type PrinterAdapter,
+} from "../PrinterAdapter.ts";
 import {
   buildPrinterEndpoint,
   fetchPrinterBinary,
@@ -195,7 +199,16 @@ export const octoPrintAdapter: PrinterAdapter<OctoPrintPrinterConfig> = {
           isActive && typeof jobData.progress?.printTime === "number"
             ? Math.round(jobData.progress.printTime)
             : null,
-        startedAt: null,
+        startedAt: deriveStableJobStartedAt({
+          isActive,
+          fileName: jobData.job?.file?.name ?? null,
+          elapsedSeconds:
+            isActive && typeof jobData.progress?.printTime === "number"
+              ? Math.round(jobData.progress.printTime)
+              : null,
+          previous,
+          nowMs,
+        }),
         estimatedFinishAt:
           isActive && remainingSeconds !== null
             ? DateTime.formatIso(DateTime.add(now, { seconds: remainingSeconds }))

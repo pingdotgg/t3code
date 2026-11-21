@@ -4,10 +4,12 @@ import {
   PrinterId,
 } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 
 import { moonrakerAdapter } from "./adapters/MoonrakerAdapter.ts";
@@ -544,6 +546,127 @@ describe("OctoPrintAdapter", () => {
             .pipe(Effect.provide(mockClient)),
         );
         expect(Exit.isFailure(nullExit)).toBe(true);
+      }),
+  );
+
+  it.effect(
+    "derives stable startedAt during an active print and rotates it when elapsed time resets on reprint for Moonraker and OctoPrint",
+    () =>
+      Effect.gen(function* () {
+        let elapsedSec = 600;
+        const moonClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/server/info") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(JSON.stringify({ result: { klippy_state: "ready" } }), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                  }),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(
+                  JSON.stringify({
+                    result: {
+                      status: {
+                        webhooks: { state: "ready" },
+                        print_stats: {
+                          state: "printing",
+                          filename: "part.gcode",
+                          print_duration: elapsedSec,
+                        },
+                      },
+                    },
+                  }),
+                  { status: 200, headers: { "content-type": "application/json" } },
+                ),
+              ),
+            );
+          }),
+        );
+
+        yield* TestClock.adjust(Duration.seconds(1000));
+        const m1 = yield* moonrakerAdapter
+          .poll(MOONRAKER_CONFIG, "moonraker-secret", undefined, {})
+          .pipe(Effect.provide(moonClient));
+        expect(m1.snapshot.job.startedAt).not.toBeNull();
+
+        // Normal progress keeps the exact same startedAt without jitter.
+        yield* TestClock.adjust(Duration.seconds(5));
+        elapsedSec = 604;
+        const m2 = yield* moonrakerAdapter
+          .poll(MOONRAKER_CONFIG, "moonraker-secret", m1.snapshot, m1.cache)
+          .pipe(Effect.provide(moonClient));
+        expect(m2.snapshot.job.startedAt).toBe(m1.snapshot.job.startedAt);
+
+        // Same filename reprinted immediately (elapsed resets to 2s) rotates startedAt.
+        yield* TestClock.adjust(Duration.seconds(5));
+        elapsedSec = 2;
+        const m3 = yield* moonrakerAdapter
+          .poll(MOONRAKER_CONFIG, "moonraker-secret", m2.snapshot, m2.cache)
+          .pipe(Effect.provide(moonClient));
+        expect(m3.snapshot.job.startedAt).not.toBeNull();
+        expect(m3.snapshot.job.startedAt).not.toBe(m1.snapshot.job.startedAt);
+
+        // OctoPrint behaves identically using progress.printTime.
+        let octoPrintTime = 300;
+        const octoClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/printer") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify({
+                      state: { text: "Printing", flags: { operational: true, printing: true } },
+                    }),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(
+                  JSON.stringify({
+                    job: { file: { name: "part.gcode" } },
+                    progress: { printTime: octoPrintTime },
+                  }),
+                  { status: 200, headers: { "content-type": "application/json" } },
+                ),
+              ),
+            );
+          }),
+        );
+        const o1 = yield* octoPrintAdapter
+          .poll(OCTOPRINT_CONFIG, "octo-secret", undefined, {})
+          .pipe(Effect.provide(octoClient));
+        expect(o1.snapshot.job.startedAt).not.toBeNull();
+
+        yield* TestClock.adjust(Duration.seconds(5));
+        octoPrintTime = 304;
+        const o2 = yield* octoPrintAdapter
+          .poll(OCTOPRINT_CONFIG, "octo-secret", o1.snapshot, o1.cache)
+          .pipe(Effect.provide(octoClient));
+        expect(o2.snapshot.job.startedAt).toBe(o1.snapshot.job.startedAt);
+
+        yield* TestClock.adjust(Duration.seconds(5));
+        octoPrintTime = 3;
+        const o3 = yield* octoPrintAdapter
+          .poll(OCTOPRINT_CONFIG, "octo-secret", o2.snapshot, o2.cache)
+          .pipe(Effect.provide(octoClient));
+        expect(o3.snapshot.job.startedAt).not.toBeNull();
+        expect(o3.snapshot.job.startedAt).not.toBe(o1.snapshot.job.startedAt);
       }),
   );
 });

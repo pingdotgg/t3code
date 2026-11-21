@@ -234,8 +234,7 @@ const printerSessionKey = (session: PrinterServiceState["sessions"][number]) =>
 const canonicalPrinterSessionKey = (
   environmentId: EnvironmentId,
   session: PrinterServiceState["sessions"][number],
-) =>
-  `${session.threadId}:${session.proxyEnvironmentId ?? environmentId}:${session.printerId}:${session.openedAt}`;
+) => `${session.threadId}:${session.proxyEnvironmentId ?? environmentId}:${session.printerId}`;
 
 function printerSurfaceIdForSession(
   originEnvironmentId: EnvironmentId,

@@ -495,8 +495,23 @@ const executeBoundedRequest = Effect.fn("PrinterUrlGuard.executeBoundedRequest")
         } else if (isReadOnlyGet) {
           let lastError: unknown = null;
           let matched: HttpClientResponse.HttpClientResponse | undefined;
-          for (const candidate of activePin.candidates) {
-            const attempt = yield* Effect.result(executeOnce([candidate]));
+          const totalTimeoutMs = Duration.toMillis(options.timeout ?? defaultTimeout);
+          const candidateCount = activePin.candidates.length;
+          // Bound each candidate attempt inside the overall deadline so one black-holed IPv6 route
+          // still leaves budget for a healthy IPv4 fallback.
+          const perCandidateTimeout =
+            candidateCount > 1
+              ? Duration.millis(
+                  Math.max(500, Math.min(2500, Math.floor(totalTimeoutMs / candidateCount))),
+                )
+              : undefined;
+          for (let index = 0; index < candidateCount; index += 1) {
+            const candidate = activePin.candidates[index]!;
+            const attemptEffect =
+              perCandidateTimeout !== undefined && index < candidateCount - 1
+                ? executeOnce([candidate]).pipe(Effect.timeout(perCandidateTimeout))
+                : executeOnce([candidate]);
+            const attempt = yield* Effect.result(attemptEffect);
             if (attempt._tag === "Success") {
               activePin.pinned = candidate;
               matched = attempt.success;

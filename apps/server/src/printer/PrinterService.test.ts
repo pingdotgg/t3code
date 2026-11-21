@@ -26,6 +26,7 @@ import {
   fetchPrinterBinary,
   fetchPrinterJson,
   PrinterDnsLookup,
+  PrinterPinnedAddresses,
   validatePrinterBaseUrl,
 } from "./PrinterUrlGuard.ts";
 
@@ -2031,6 +2032,174 @@ describe("PrinterService safety guards & lifecycle", () => {
             ),
           ),
         );
+      }),
+  );
+
+  it.effect(
+    "does not let a slow cover fetch overwrite camera hash, and times out a stalled first DNS candidate to fall back to the second",
+    () =>
+      Effect.gen(function* () {
+        // 1. Slow cover fetch started during Frame A finishes AFTER Frame B -> subsequent identical Frame B
+        // must still be recognized as unchanged (must NOT bump cameraUpdatedAt).
+        const coverEntered = yield* Deferred.make<void>();
+        const releaseCover = yield* Deferred.make<void>();
+        let currentFrameByte = 0x0a;
+
+        const coverRaceClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/states") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify([
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: "running",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
+                      { entity_id: "camera.p1s_test_camera", state: "streaming" },
+                      { entity_id: "image.p1s_test_cover_image", state: FRESH_REPORTED_AT },
+                    ]),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            if (url.pathname.startsWith("/api/camera_proxy/")) {
+              const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, currentFrameByte, 0xff, 0xd9]);
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(jpeg, { status: 200, headers: { "content-type": "image/jpeg" } }),
+                ),
+              );
+            }
+            if (url.pathname.startsWith("/api/image_proxy/")) {
+              return Effect.gen(function* () {
+                yield* Deferred.succeed(coverEntered, undefined);
+                yield* Deferred.await(releaseCover);
+                const png = new Uint8Array([
+                  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00,
+                ]);
+                return HttpClientResponse.fromWeb(
+                  request,
+                  new Response(png, { status: 200, headers: { "content-type": "image/png" } }),
+                );
+              });
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(P1S_CONFIG.deviceId!, { status: 200 }),
+              ),
+            );
+          }),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            yield* service.list({ refresh: true });
+
+            // Fetch Frame A at t=0.
+            yield* service.fetchMedia(P1S_CONFIG.id, "camera");
+            // Start slow cover fetch while cache holds Frame A's hash.
+            const coverFiber = yield* Effect.forkChild(service.fetchMedia(P1S_CONFIG.id, "cover"));
+            yield* Deferred.await(coverEntered);
+
+            // Advance clock to t=5s and fetch new Frame B.
+            yield* TestClock.adjust(Duration.seconds(5));
+            currentFrameByte = 0x0b;
+            yield* service.fetchMedia(P1S_CONFIG.id, "camera");
+            expect((yield* service.state).printers[0]?.media.cameraUpdatedAt).toBe(
+              "1970-01-01T00:00:05.000Z",
+            );
+
+            // Release slow cover fetch -> must NOT restore Frame A's hash.
+            yield* Deferred.succeed(releaseCover, undefined);
+            yield* Fiber.join(coverFiber);
+
+            // Advance clock to t=40s with identical Frame B -> must be detected as frozen (stale=true, timestamp stays t=5s).
+            yield* TestClock.adjust(Duration.seconds(35));
+            const frozen = yield* service.fetchMedia(P1S_CONFIG.id, "camera");
+            expect(frozen.stale).toBe(true);
+            expect((yield* service.state).printers[0]?.media.cameraUpdatedAt).toBe(
+              "1970-01-01T00:00:05.000Z",
+            );
+          }).pipe(
+            Effect.provide(
+              PrinterService.layer.pipe(
+                Layer.provide(
+                  ServerSettings.layerTest({
+                    enablePrinterSupport: true,
+                    printers: [P1S_CONFIG],
+                  }),
+                ),
+                Layer.provide(mockSecretResolverLayer),
+                Layer.provide(coverRaceClient),
+              ),
+            ),
+          ),
+        );
+
+        // 2. Stalled first DNS candidate times out inside the per-candidate budget and falls back to the second candidate.
+        let attempts = 0;
+        const firstAttemptStarted = yield* Deferred.make<void>();
+        const stalledFirstClient = HttpClient.make((request) =>
+          Effect.gen(function* () {
+            attempts += 1;
+            if (attempts === 1) {
+              yield* Deferred.succeed(firstAttemptStarted, undefined);
+              return yield* Effect.never;
+            }
+            return HttpClientResponse.fromWeb(
+              request,
+              new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            );
+          }),
+        );
+        const pinMap = new Map([
+          [
+            "stalled-ipv6.lan.test",
+            {
+              candidates: [
+                { address: "2001:db8::1", family: 6 },
+                { address: "192.168.1.50", family: 4 },
+              ],
+              pinned: null as { readonly address: string; readonly family: number } | null,
+            },
+          ],
+        ]);
+        const fetchFiber = yield* Effect.forkChild(
+          fetchPrinterJson<{ readonly ok: boolean }>(
+            new URL("http://stalled-ipv6.lan.test:8123/api/states"),
+            { operation: "stalled.candidate.test" },
+          ).pipe(
+            Effect.provideService(HttpClient.HttpClient, stalledFirstClient),
+            Effect.provideService(PrinterPinnedAddresses, pinMap),
+          ),
+        );
+        yield* Deferred.await(firstAttemptStarted);
+        // Advance TestClock past per-candidate timeout (2.5s) but well under overall 8s deadline.
+        yield* TestClock.adjust(Duration.seconds(3));
+        const res = yield* Fiber.join(fetchFiber);
+        expect(res).toEqual({ ok: true });
+        expect(attempts).toBe(2);
+        expect(pinMap.get("stalled-ipv6.lan.test")?.pinned).toEqual({
+          address: "192.168.1.50",
+          family: 4,
+        });
       }),
   );
 });

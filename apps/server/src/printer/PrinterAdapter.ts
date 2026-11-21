@@ -6,8 +6,39 @@ import type {
   PrinterSnapshot,
   PrinterTestConnectionResult,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import type * as Effect from "effect/Effect";
 import type { HttpClient } from "effect/http";
+
+/** Derives a stable per-job-instance start timestamp for backends without a native job ID. */
+export function deriveStableJobStartedAt(options: {
+  readonly isActive: boolean;
+  readonly fileName: string | null;
+  readonly elapsedSeconds: number | null;
+  readonly previous: PrinterSnapshot | undefined;
+  readonly nowMs: number;
+}): string | null {
+  if (!options.isActive) return null;
+  const prevJob = options.previous?.job;
+  const prevWasActive =
+    prevJob !== undefined &&
+    (prevJob.status === "running" || prevJob.status === "pause" || prevJob.status === "prepare");
+  const elapsedReset =
+    options.elapsedSeconds !== null &&
+    prevJob?.elapsedSeconds !== null &&
+    prevJob?.elapsedSeconds !== undefined &&
+    options.elapsedSeconds + 5 < prevJob.elapsedSeconds;
+  if (
+    prevWasActive &&
+    prevJob.fileName === options.fileName &&
+    prevJob.startedAt !== null &&
+    !elapsedReset
+  ) {
+    return prevJob.startedAt;
+  }
+  const offsetMs = options.elapsedSeconds !== null ? Math.max(0, options.elapsedSeconds) * 1000 : 0;
+  return DateTime.formatIso(DateTime.makeUnsafe(Math.max(0, options.nowMs - offsetMs)));
+}
 
 export type PrinterMediaAssetKind = "camera" | "cover" | "pick";
 

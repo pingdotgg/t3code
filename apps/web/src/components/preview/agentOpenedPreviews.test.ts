@@ -481,13 +481,16 @@ describe("applyPrinterSnapshot", () => {
       [expectedSurfaceId],
     );
 
-    // Cross-env duplicate of the same canonical session does not open a duplicate tab on the owner env.
+    // Cross-env duplicate of the same canonical session (even with differing server-local openedAt timestamps)
+    // does not open a duplicate tab on the owner env.
     applyPrinterSnapshot(proxyEnvId, printerState([]), { sheetLayout: false });
     const sessionE = { ...sessionA, openedAt: "2026-11-21T01:20:00.000Z" };
     applyPrinterSnapshot(ref.environmentId, printerState([sessionE]), { sheetLayout: false });
     applyPrinterSnapshot(
       proxyEnvId,
-      printerState([{ ...sessionE, proxyEnvironmentId: undefined }]),
+      printerState([
+        { ...sessionE, proxyEnvironmentId: undefined, openedAt: "2026-11-21T01:20:03.000Z" },
+      ]),
       { sheetLayout: false },
     );
     const ownerRef = scopeThreadRef(proxyEnvId, ref.threadId);

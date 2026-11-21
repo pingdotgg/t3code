@@ -423,14 +423,49 @@ describe("PrinterPanel", () => {
     await expect.element(page.getByText("Stop active print?")).not.toBeInTheDocument();
     expect(mockRunCommand).not.toHaveBeenCalled();
 
-    // Reprinting the original filename (A -> B -> A) must NOT revive the stale Stop dialog.
+    // Reprinting the original filename (A -> B -> A with new startedAt) must NOT revive the stale Stop dialog.
+    const jobAReprint = makePrinter({
+      job: {
+        ...jobA.job,
+        startedAt: "2026-11-21T02:00:00.000Z",
+      },
+    });
     mockStateRef.current = {
       enabled: true,
       agentAccessEnabled: true,
       mediaBasePath: "/api/printer-media",
-      printers: [jobA],
+      printers: [jobAReprint],
       sessions: [],
       revision: 3,
+    };
+    await screen.rerender(
+      <div style={{ width: 480, height: 820, display: "flex" }}>
+        <PrinterPanel
+          mode="embedded"
+          threadRef={threadRef}
+          surface={{ id: "printer:p1s-studio", kind: "printer", printerId: "p1s-studio" }}
+          visible
+        />
+      </div>,
+    );
+    await expect.element(page.getByText("Stop active print?")).not.toBeInTheDocument();
+
+    // Direct same-filename reprint without an intermediate job also closes an open Stop dialog via startedAt rotation.
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await expect.element(page.getByText("Stop active print?"), { timeout: 2500 }).toBeVisible();
+    const jobAReprint2 = makePrinter({
+      job: {
+        ...jobA.job,
+        startedAt: "2026-11-21T03:00:00.000Z",
+      },
+    });
+    mockStateRef.current = {
+      enabled: true,
+      agentAccessEnabled: true,
+      mediaBasePath: "/api/printer-media",
+      printers: [jobAReprint2],
+      sessions: [],
+      revision: 4,
     };
     await screen.rerender(
       <div style={{ width: 480, height: 820, display: "flex" }}>
@@ -451,7 +486,7 @@ describe("PrinterPanel", () => {
       mediaBasePath: "/api/printer-media",
       printers: [jobB],
       sessions: [],
-      revision: 4,
+      revision: 5,
     };
     await screen.rerender(
       <div style={{ width: 480, height: 820, display: "flex" }}>
@@ -598,6 +633,9 @@ describe("PrinterPanel", () => {
         </div>,
       );
       await expect.element(screen.getByText("gone is unavailable")).not.toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("status", { name: "Loading" }), { timeout: 2500 })
+        .toBeVisible();
     } finally {
       mockStateRef.loadingEnvironmentIds = new Set();
     }

@@ -1090,47 +1090,44 @@ const make = Effect.gen(function* () {
         reason: "Printer configuration changed while fetching media.",
       });
     }
-    if (mediaSeq > (committedMediaSeqById.get(mediaKey) ?? 0)) {
+    if (kind === "camera" && mediaSeq > (committedMediaSeqById.get(mediaKey) ?? 0)) {
       committedMediaSeqById.set(mediaKey, mediaSeq);
       const prevChangedAtMs = caches.get(printerId)?.lastCameraChangedAtMs;
       const mergedCache = mergeMediaCache(printerId, nextCache);
       const frameChanged =
-        kind === "camera" &&
         mergedCache.lastCameraChangedAtMs !== undefined &&
         mergedCache.lastCameraChangedAtMs !== prevChangedAtMs;
-      if (kind === "camera") {
-        const updatedIso =
-          mergedCache.lastCameraChangedAtMs !== undefined
-            ? DateTime.formatIso(DateTime.makeUnsafe(mergedCache.lastCameraChangedAtMs))
-            : asset.capturedAt;
-        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-        const latestState = yield* Ref.get(stateRef);
-        const latestEntry = latestState.printers.find((entry) => entry.id === printerId);
-        if (latestEntry) {
-          const cameraHealthy = mergedCache.cameraEntityHealthy ?? latestEntry.online;
-          const computedStale =
-            !latestEntry.online ||
-            !cameraHealthy ||
-            (latestEntry.job.status === "running" &&
-              mergedCache.lastCameraChangedAtMs !== undefined &&
-              nowMs - mergedCache.lastCameraChangedAtMs > 30_000);
-          if (latestEntry.media.cameraStale !== computedStale || frameChanged) {
-            yield* publish((state) => ({
-              ...state,
-              printers: state.printers.map((entry) =>
-                entry.id === printerId
-                  ? {
-                      ...entry,
-                      media: {
-                        ...entry.media,
-                        cameraStale: computedStale,
-                        cameraUpdatedAt: updatedIso,
-                      },
-                    }
-                  : entry,
-              ),
-            }));
-          }
+      const updatedIso =
+        mergedCache.lastCameraChangedAtMs !== undefined
+          ? DateTime.formatIso(DateTime.makeUnsafe(mergedCache.lastCameraChangedAtMs))
+          : asset.capturedAt;
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const latestState = yield* Ref.get(stateRef);
+      const latestEntry = latestState.printers.find((entry) => entry.id === printerId);
+      if (latestEntry) {
+        const cameraHealthy = mergedCache.cameraEntityHealthy ?? latestEntry.online;
+        const computedStale =
+          !latestEntry.online ||
+          !cameraHealthy ||
+          (latestEntry.job.status === "running" &&
+            mergedCache.lastCameraChangedAtMs !== undefined &&
+            nowMs - mergedCache.lastCameraChangedAtMs > 30_000);
+        if (latestEntry.media.cameraStale !== computedStale || frameChanged) {
+          yield* publish((state) => ({
+            ...state,
+            printers: state.printers.map((entry) =>
+              entry.id === printerId
+                ? {
+                    ...entry,
+                    media: {
+                      ...entry.media,
+                      cameraStale: computedStale,
+                      cameraUpdatedAt: updatedIso,
+                    },
+                  }
+                : entry,
+            ),
+          }));
         }
       }
     }
