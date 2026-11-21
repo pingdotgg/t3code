@@ -1460,6 +1460,17 @@ const isDescendantCodexTurn = (
   return false;
 };
 
+const isCodexTurnOnThread = (
+  context: ActiveCodexTurnContext,
+  providerThreadId: OrchestrationV2ProviderThread["id"],
+): boolean => {
+  for (let turn: ActiveCodexTurnContext | undefined = context; turn !== undefined;) {
+    if (turn.providerThread.id === providerThreadId) return true;
+    turn = turn.subagent?.parentContext;
+  }
+  return false;
+};
+
 interface PendingCodexSubagentTurnStarted {
   readonly nativeTurnId: string;
   readonly startedAt: DateTime.Utc;
@@ -2228,7 +2239,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         /** Completed by thread/closed after this connection unsubscribes from the native thread. */
         const threadClosings = new Map<string, Deferred.Deferred<void>>();
         // On macOS the Computer Use service outlives its turn until the thread's MCP servers exit.
-        // Keyed by the native thread that ran it (a subagent's own), valued by the root it unloads with.
+        // Keyed by the native thread that ran it (a subagent's own), valued by its root provider thread.
         const computerUseNativeThreads = new Map<string, OrchestrationV2ProviderThread["id"]>();
         /** Codex acceptForSession covers only the exact command or patch, not future commands. */
         const sessionApprovals = new Map<
@@ -5438,6 +5449,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.gen(function* () {
             const closing = threadClosings.get(payload.threadId);
             threadClosings.delete(payload.threadId);
+            computerUseNativeThreads.delete(payload.threadId);
             if (closing !== undefined) yield* Deferred.succeed(closing, undefined);
             const completedAt = yield* DateTime.now;
             for (const context of (yield* Ref.get(settledTurns)).values()) {
@@ -8049,12 +8061,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(yield* Ref.get(activeTurns)).values(),
               ...(yield* Ref.get(settledTurns)).values(),
             ];
-            const roots = contexts.filter(
-              (context) => context.providerThread.id === providerThread.id,
-            );
             for (const context of contexts) {
-              if (!roots.some((root) => context === root || isDescendantCodexTurn(context, root)))
-                continue;
+              // Walk the lineage, so a child still running after its parent's turn settled counts.
+              if (!isCodexTurnOnThread(context, providerThread.id)) continue;
               if (yield* turnHasRetainedBackgroundWork(context.nativeTurnId)) return true;
               if (
                 context.subagent !== null &&
@@ -8062,12 +8071,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               )
                 return true;
             }
+            // A spawned child counts before its first turn/started arrives.
+            for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
+              if (
+                subagent.task.status === "running" &&
+                isCodexTurnOnThread(subagent.parentContext, providerThread.id)
+              )
+                return true;
+            }
             return false;
           }),
+          // A root stays prompt while a native subagent that used Computer Use is still loaded.
           shouldUnloadThreadPromptly: (providerThread) =>
-            Effect.sync(() =>
-              Array.from(computerUseNativeThreads.values()).includes(providerThread.id),
-            ),
+            Effect.sync(() => {
+              const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+              return (
+                (nativeThreadId != null && computerUseNativeThreads.has(nativeThreadId)) ||
+                Array.from(computerUseNativeThreads.values()).includes(providerThread.id)
+              );
+            }),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
               Effect.andThen(
@@ -8379,20 +8401,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }
                 yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
               }
-              // Unloading a parent leaves its native subagents loaded, and their Computer Use with them.
-              for (const [usedBy, root] of computerUseNativeThreads) {
-                if (root !== unloadInput.providerThread.id && usedBy !== nativeThreadId) continue;
-                computerUseNativeThreads.delete(usedBy);
-                if (usedBy === nativeThreadId) continue;
-                yield* client.request("thread/unsubscribe", { threadId: usedBy }).pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("orchestration-v2.codex-computer-use-unload-failed", {
-                      threadId: usedBy,
-                      cause,
-                    }),
-                  ),
-                );
-              }
+              computerUseNativeThreads.delete(nativeThreadId);
               // No turn/completed arrives for an unloaded thread, so a Stop Codex never
               // confirmed would otherwise keep its turn open for the life of the session.
               const interrupting = yield* Ref.get(interruptingNativeTurns);

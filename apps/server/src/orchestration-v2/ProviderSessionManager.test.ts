@@ -454,7 +454,7 @@ const makeNativeChildFixture = Effect.fnUntraced(function* () {
     modelSelection,
     runtimePolicy,
   });
-  return { manager, parent, resumeChild };
+  return { manager, parent, runtime, resumeChild };
 });
 
 function unimplemented(detail: string) {
@@ -5320,6 +5320,78 @@ it.effect(
     }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 promptly unloads an unattached native child after its parent",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloads = yield* Queue.unbounded<string>();
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const { parent, runtime } = yield* makeNativeChildFixture();
+        const now = yield* DateTime.now;
+        const providerThread = makeProviderThread({ idAllocator, ...parent, now });
+        const runId = idAllocator.derive.run({ threadId: parent.threadId, ordinal: 1 });
+        yield* runtime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(parent.threadId)).thread,
+          threadId: parent.threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({
+              threadId: parent.threadId,
+              ordinal: 1,
+            }),
+            text: "Delegate to a child that uses the computer",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        yield* Queue.offer(
+          (yield* Ref.get(state)).eventQueues.get(String(parent.providerSessionId))!,
+          {
+            type: "turn.terminal",
+            driver: CODEX_DRIVER,
+            providerThreadId: providerThread.id,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: CODEX_DRIVER,
+              nativeTurnId: "native-parent-turn",
+            }),
+            runOrdinal: 1,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          },
+        );
+        yield* subscription.events.pipe(Stream.runHead);
+
+        yield* TestClock.adjust("5 seconds");
+        assert.equal(yield* Queue.take(unloads), "unload:native-thread");
+        assert.equal(yield* Queue.take(unloads), "unload:native-child-thread");
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 30 * 60 * 1000,
+            unloads,
+            shouldUnloadThreadPromptly: true,
+            hasPendingBackgroundWork: Effect.succeed(true),
+          }),
+        ),
+        Effect.scoped,
+      );
+    }),
+);
+
 it.effect.each([
   { keptOpen: true, archive: "succeeds" },
   { keptOpen: false, archive: "succeeds" },
@@ -5483,12 +5555,13 @@ it.effect.each([
     }),
 );
 
-it.effect.each([true, false])(
-  "ProviderSessionManagerV2 unloads an idle thread after a short delay only when its runtime asks (prompt: %s)",
-  (prompt) =>
+it.effect.each(["prompt", "idle", "prompt after pending work"] as const)(
+  "ProviderSessionManagerV2 unloads an idle thread after a short delay only when its runtime asks (%s)",
+  (scenario) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const unloads = yield* Queue.unbounded<string>();
+      const pendingWork = yield* Ref.make(scenario === "prompt after pending work");
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -5551,13 +5624,13 @@ it.effect.each([true, false])(
         yield* subscription.events.pipe(Stream.runHead);
 
         yield* TestClock.adjust("5 seconds");
-        if (prompt) {
-          assert.equal(yield* Queue.take(unloads), "unload:native-thread");
-        } else {
+        if (scenario !== "prompt") {
           assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
-          yield* TestClock.adjust("30 minutes");
-          assert.equal(yield* Queue.take(unloads), "unload:native-thread");
+          yield* Ref.set(pendingWork, false);
+          // A deferred prompt unload rechecks after the short delay, not the idle timeout.
+          yield* TestClock.adjust(scenario === "idle" ? "30 minutes" : "5 seconds");
         }
+        assert.equal(yield* Queue.take(unloads), "unload:native-thread");
       });
 
       yield* effect.pipe(
@@ -5566,7 +5639,8 @@ it.effect.each([true, false])(
             state,
             idleTimeoutMs: 30 * 60 * 1000,
             unloads,
-            shouldUnloadThreadPromptly: prompt,
+            shouldUnloadThreadPromptly: scenario !== "idle",
+            hasPendingBackgroundWorkForThread: Ref.get(pendingWork),
             // Another thread's work keeps the session open, so only the thread unloads.
             hasPendingBackgroundWork: Effect.succeed(true),
           }),

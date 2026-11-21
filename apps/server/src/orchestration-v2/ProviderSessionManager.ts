@@ -1985,6 +1985,27 @@ export const layerWithOptions = (
         },
       );
 
+      const unloadsPromptly = (
+        runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+        providerThread: OrchestrationV2ProviderThread,
+      ) =>
+        runtime.shouldUnloadThreadPromptly === undefined
+          ? Effect.succeed(false)
+          : runtime
+              .shouldUnloadThreadPromptly(providerThread)
+              .pipe(Effect.catchCause(() => Effect.succeed(false)));
+
+      const idleThreadUnloadDelay = Effect.fn("ProviderSessionManager.idleThreadUnloadDelay")(
+        function* (
+          runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+          providerThread: OrchestrationV2ProviderThread,
+        ) {
+          return (yield* unloadsPromptly(runtime, providerThread))
+            ? Math.min(PROMPT_THREAD_UNLOAD_MS, idleTimeoutMs)
+            : idleTimeoutMs;
+        },
+      );
+
       const scheduleThreadUnload = Effect.fn("ProviderSessionManager.scheduleThreadUnload")(
         function* (providerSessionId: ProviderSessionId, providerThreadId: ProviderThreadId) {
           const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
@@ -1995,25 +2016,16 @@ export const layerWithOptions = (
           if (tracked === undefined) return;
           const [threadId, pending] = tracked;
           const generation = pending.generation + 1;
-          const prompt =
-            entry.runtime.shouldUnloadThreadPromptly === undefined
-              ? false
-              : yield* entry.runtime
-                  .shouldUnloadThreadPromptly(pending.providerThread)
-                  .pipe(Effect.catchCause(() => Effect.succeed(false)));
-          const delayMs = prompt ? Math.min(PROMPT_THREAD_UNLOAD_MS, idleTimeoutMs) : idleTimeoutMs;
+          const delayMs = yield* idleThreadUnloadDelay(entry.runtime, pending.providerThread);
           const fiber = yield* Effect.sleep(Duration.millis(delayMs)).pipe(
             Effect.andThen(unloadIdleThread({ providerSessionId, threadId, generation })),
             Effect.forkIn(layerScope),
           );
+          // By identity: a detach and reattach during the probe can reuse the generation number.
           const previous = yield* updateIdleThreadUnload(providerSessionId, threadId, (current) =>
-            current?.generation === pending.generation
-              ? { ...current, generation, fiber }
-              : current,
+            current === pending ? { ...current, generation, fiber } : current,
           );
-          yield* cancelIdleFiber(
-            previous?.generation === pending.generation ? previous.fiber : fiber,
-          );
+          yield* cancelIdleFiber(previous === pending ? previous.fiber : fiber);
         },
       );
 
@@ -2047,6 +2059,81 @@ export const layerWithOptions = (
         },
         (effect) => effect.pipe(Effect.orElseSucceed(() => undefined)),
       );
+
+      /** Locks each owner so a provider thread another attached app thread holds stays loaded. */
+      const unloadUnattachedProviderThreads = Effect.fn(
+        "ProviderSessionManager.unloadUnattachedProviderThreads",
+      )(function* (input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly threadId: ThreadId;
+        readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
+        readonly unloadThread: NonNullable<
+          ProviderAdapter.ProviderAdapterV2SessionRuntime["unloadThread"]
+        >;
+        readonly providerThreads: ReadonlyArray<OrchestrationV2ProviderThread>;
+        readonly failureLog: string;
+      }) {
+        const key = sessionKey(input.providerSessionId);
+        for (const providerThread of input.providerThreads) {
+          if (providerThread.nativeThreadRef === null) continue;
+          const ownerThreadId = providerThread.appThreadId ?? input.threadId;
+          yield* threadAttachment.withLock(
+            threadAttachmentKey({
+              providerSessionId: input.providerSessionId,
+              threadId: ownerThreadId,
+            }),
+            Effect.gen(function* () {
+              const entry = (yield* Ref.get(sessions)).get(key);
+              if (entry?.runtime !== input.runtime || entry.attachedThreadIds.has(ownerThreadId)) {
+                return;
+              }
+              yield* input.unloadThread({ providerThread }).pipe(
+                Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning(input.failureLog, {
+                    providerSessionId: input.providerSessionId,
+                    threadId: ownerThreadId,
+                    providerThreadId: providerThread.id,
+                    cause,
+                  }),
+                ),
+              );
+            }),
+          );
+        }
+      });
+
+      // Unloading a parent leaves its native children loaded; release those the runtime wants gone.
+      const unloadPromptNativeChildren = Effect.fn(
+        "ProviderSessionManager.unloadPromptNativeChildren",
+      )(function* (input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly threadId: ThreadId;
+        readonly parent: OrchestrationV2ProviderThread;
+        readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
+        readonly unloadThread: NonNullable<
+          ProviderAdapter.ProviderAdapterV2SessionRuntime["unloadThread"]
+        >;
+      }) {
+        if (input.runtime.shouldUnloadThreadPromptly === undefined) return;
+        const projection = yield* Effect.option(
+          projectionStore.getThreadRecords(input.threadId, ["providerThreads"]),
+        );
+        if (Option.isNone(projection)) return;
+        const providerThreads = yield* Effect.filter(projection.value.providerThreads, (thread) =>
+          thread.providerSessionId === input.providerSessionId && thread.id !== input.parent.id
+            ? unloadsPromptly(input.runtime, thread)
+            : Effect.succeed(false),
+        );
+        yield* unloadUnattachedProviderThreads({
+          providerSessionId: input.providerSessionId,
+          threadId: input.threadId,
+          runtime: input.runtime,
+          unloadThread: input.unloadThread,
+          providerThreads,
+          failureLog: "orchestration-v2.driver-session.idle-child-unload-failed",
+        });
+      });
 
       const unloadIdleThread = Effect.fn("ProviderSessionManager.unloadIdleThread")(
         function* (input: {
@@ -2144,12 +2231,32 @@ export const layerWithOptions = (
                   }),
                 ),
               );
-              return "unloaded" as const;
+              return {
+                parent: pending.providerThread,
+                runtime: entry.runtime,
+                unloadThread,
+              } as const;
             }),
           );
-          // Wait outside the lock so the next attach is not blocked.
+          // Wait and unload children outside the lock so the next attach is not blocked.
+          if (typeof outcome === "object") {
+            yield* unloadPromptNativeChildren({
+              providerSessionId: input.providerSessionId,
+              threadId: input.threadId,
+              ...outcome,
+            });
+            return;
+          }
           if (outcome === "deferred" && input.archiveOnly !== true) {
-            yield* Effect.sleep(Duration.millis(idleTimeoutMs));
+            const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+            const pending = entry?.idleThreadUnloads.get(input.threadId);
+            yield* Effect.sleep(
+              Duration.millis(
+                entry === undefined || pending === undefined
+                  ? idleTimeoutMs
+                  : yield* idleThreadUnloadDelay(entry.runtime, pending.providerThread),
+              ),
+            );
             return yield* unloadIdleThread(input);
           }
         },
@@ -3441,38 +3548,15 @@ export const layerWithOptions = (
             }
             const unloadThread = detached.value.exposedRuntime.unloadThread;
             if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
-              // The projection includes native children owned by other app threads;
-              // lock each owner so an attached child stays loaded and later attaches wait.
-              for (const providerThread of detachedProviderThreads) {
-                if (providerThread.nativeThreadRef === null) continue;
-                const ownerThreadId = providerThread.appThreadId ?? input.threadId;
-                yield* threadAttachment.withLock(
-                  threadAttachmentKey({
-                    providerSessionId: input.providerSessionId,
-                    threadId: ownerThreadId,
-                  }),
-                  Effect.gen(function* () {
-                    const entry = (yield* Ref.get(sessions)).get(key);
-                    if (
-                      entry?.runtime !== detached.value.runtime ||
-                      entry.attachedThreadIds.has(ownerThreadId)
-                    ) {
-                      return;
-                    }
-                    yield* unloadThread({ providerThread }).pipe(
-                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
-                      Effect.catchCause((cause) =>
-                        Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {
-                          providerSessionId: input.providerSessionId,
-                          threadId: ownerThreadId,
-                          providerThreadId: providerThread.id,
-                          cause,
-                        }),
-                      ),
-                    );
-                  }),
-                );
-              }
+              // The projection includes native children owned by other app threads.
+              yield* unloadUnattachedProviderThreads({
+                providerSessionId: input.providerSessionId,
+                threadId: input.threadId,
+                runtime: detached.value.runtime,
+                unloadThread,
+                providerThreads: detachedProviderThreads,
+                failureLog: "orchestration-v2.driver-session.detach-unload-failed",
+              });
             }
             yield* scheduleIdleRelease(input.providerSessionId);
           },

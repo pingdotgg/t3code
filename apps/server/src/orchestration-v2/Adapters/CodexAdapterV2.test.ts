@@ -9568,7 +9568,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }));
 
   it.effect.each(["root", "subagent"] as const)(
-    "unloads promptly, with any native subagent, once the %s thread used Computer Use",
+    "asks to unload promptly until every thread that used Computer Use (%s) is unloaded",
     (usedBy) =>
       Effect.gen(function* () {
         const unsubscribed: Array<string> = [];
@@ -9664,6 +9664,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isTrue(yield* shouldUnloadPromptly());
 
         yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        if (usedBy === "subagent") {
+          // Unloading the parent leaves the child loaded, so the manager must unload it too.
+          assert.isTrue(yield* shouldUnloadPromptly());
+          const child = harness.events.findLast(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.nativeThreadRef?.nativeId === RESUME_CHILD_THREAD,
+          );
+          assert(child?.type === "provider_thread.updated");
+          assert.isTrue(yield* harness.runtime.shouldUnloadThreadPromptly!(child.providerThread));
+          yield* harness.runtime.unloadThread!({ providerThread: child.providerThread });
+        }
         assert.isFalse(yield* shouldUnloadPromptly());
         assert.deepEqual(
           unsubscribed,
@@ -9717,12 +9729,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* harness.awaitTerminal(1);
       assert.equal(harness.terminalEvents()[0]?.status, "completed");
       assert.lengthOf(harness.continuationRequests, 0);
+      // The running child must keep the parent loaded once its own turn has settled.
+      assert.isTrue(
+        yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
+      );
 
       yield* TestClock.adjust("60 seconds");
       yield* harness.until(
         () => harness.subagentUpdates().at(-1)?.subagent.result === "NATIVE_CHILD_16900_DONE",
       );
       assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "completed");
+      assert.isFalse(
+        yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
+      );
       assert.lengthOf(harness.continuationRequests, 1);
       assert.include(harness.continuationRequests[0]?.detail, "NATIVE_CHILD_16900_DONE");
       assert.equal(harness.continuationRequests[0]?.delivery, "message_text");
