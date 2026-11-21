@@ -866,7 +866,7 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
             workflow: definition.name,
             store,
             names: new Set(),
-            forStep: (name) => forStep(keyValues, link, forge, runId, name),
+            forStep: (name) => forStep(store, keyValues, link, forge, runId, name),
             inFlight: link.inFlight,
           }),
         ),

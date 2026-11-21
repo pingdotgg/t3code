@@ -2715,7 +2715,7 @@ const makeWorkflowClient = Effect.fn("test.makeWorkflowClient")(function* (
     Layer.mock(Workflows.Workflows)({
       get: (runId) =>
         runId === workflowRun.runId
-          ? Effect.succeed({ run: workflowRun, steps: [workflowStep] })
+          ? Effect.succeed({ run: workflowRun, steps: [workflowStep], references: [] })
           : Effect.fail(new Workflows.WorkflowRunNotFoundError({ runId })),
       answer: (runId, name, value) =>
         Effect.sync(() => calls.push({ answer: [runId, name], value })),
@@ -2757,6 +2757,7 @@ it.effect("workflow RPCs read a run and pass an answer, a resume and a cancel to
     assert.deepEqual(yield* client[WS_METHODS.workflowsGet]({ runId: "run-1" }), {
       run: workflowRun,
       steps: [workflowStep],
+      references: [],
     });
     const missing = yield* client[WS_METHODS.workflowsGet]({ runId: "gone" }).pipe(Effect.flip);
     assert.deepEqual(

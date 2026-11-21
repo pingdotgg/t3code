@@ -18,6 +18,7 @@ import Migration0106 from "../persistence/Migrations/112_WorkflowStepResult.ts";
 import Migration0107 from "../persistence/Migrations/113_WorkflowWaitWatch.ts";
 import Migration0108 from "../persistence/Migrations/114_WorkflowStepTurn.ts";
 import Migration0109 from "../persistence/Migrations/115_WorkflowRunKey.ts";
+import Migration0110 from "../persistence/Migrations/116_WorkflowRunReferences.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) =>
@@ -39,6 +40,7 @@ const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) 
           Migration0107,
           Migration0108,
           Migration0109,
+          Migration0110,
         ],
         {
           discard: true,
@@ -136,6 +138,50 @@ it.effect("a key is taken by the first run started under it, whatever its versio
       }
       assert.isUndefined(yield* store.run("r2"));
       assert.equal((yield* store.runByKey("fix", "k"))?.run_id, "r1");
+    }),
+  ),
+);
+
+it.effect("keeps each thing a run touched once, with what the latest touch knew", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const issue = { kind: "issue", key: "i1", address: { scope: "me/app", key: "1" } };
+      yield* store.referenceNoted("r1", null, {
+        ...issue,
+        title: "Crash",
+        url: "https://x/1",
+        state: "open",
+      });
+      yield* store.referenceNoted("r1", "triage", { ...issue, title: "" });
+      // A kind the engine has never heard of comes back as it went in.
+      const machine = { kind: "machine", key: "m1", address: { id: [1, 2] }, title: "box" };
+      yield* store.referenceNoted("r1", "make", machine);
+      yield* store.referenceNoted("r1", "fix", {
+        ...issue,
+        title: "Crash at noon",
+        state: "closed",
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const told = yield* PubSub.subscribe(store.changes);
+          // Seen again by a step that already touched it, with nothing new: nobody is told.
+          yield* store.referenceNoted("r1", "triage", { ...issue, title: "" });
+          assert.equal(yield* PubSub.remaining(told), 0);
+        }),
+      );
+      assert.deepStrictEqual(yield* store.references("r1"), [
+        {
+          ...issue,
+          title: "Crash at noon",
+          url: "https://x/1",
+          state: "closed",
+          steps: ["triage", "fix"],
+          origin: "trigger",
+        },
+        { ...machine, url: null, state: null, steps: ["make"], origin: "step" },
+      ]);
+      assert.deepStrictEqual(yield* store.references("r2"), []);
     }),
   ),
 );

@@ -33,6 +33,7 @@ import {
   type Woke,
   type WorkflowDefinition,
 } from "./workflow.ts";
+import { issueReference, noteFor, stepReferences } from "./runReferences.ts";
 import { forStep, KeyValues, layerKeyValues, EngineLink, layerEngineLink } from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import {
@@ -41,6 +42,7 @@ import {
   type PullRequest,
   type PullRequestAddress,
   type PullRequestWatch,
+  pullRequestReferenceOf,
   standingOf,
   unavailable,
   WorkflowForge,
@@ -390,6 +392,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
                   (yield* store.runByKey(definition.name, key)) === undefined
                 ) {
                   yield* start(definition.name, entry, { idempotencyKey: key }).pipe(
+                    // What started the run is the first thing it touched.
+                    Effect.flatMap(({ runId }) =>
+                      noteFor(
+                        store,
+                        runId,
+                        null,
+                        "tracker" in entry
+                          ? issueReference(entry, entry)
+                          : pullRequestReferenceOf(entry, entry),
+                      ),
+                    ),
                     Effect.catchTags({
                       WorkflowInputError: (error) =>
                         Effect.andThen(
@@ -428,6 +441,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         wait.watch_json ?? "null",
       ) as unknown as PullRequestWatch;
       yield* forge.pullRequests.read(watch.pullRequest as PullRequestAddress).pipe(
+        // Each look keeps where the pull request stands on the wait's own step.
+        Effect.provideContext(stepReferences(store, wait.run_id, wait.name)),
         Effect.flatMap(
           Effect.fnUntraced(function* (detail) {
             const standing = standingOf(detail);
@@ -594,7 +609,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           reason: row.detail ?? undefined,
         }),
       ),
-      Effect.provideContext(forStep(keyValues, link, forge, row.run_id, END_STEP)),
+      Effect.provideContext(forStep(store, keyValues, link, forge, row.run_id, END_STEP)),
       // The sweep that runs it reads the engine's BigInts; the cleanup's own code must not.
       Effect.provideService(SqlClient.SafeIntegers, false),
       Effect.matchCauseEffect({
@@ -920,6 +935,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const steps = yield* store.steps(runId);
       return {
         run: toRun(row),
+        references: yield* store.references(runId),
         steps: steps.map((step) => ({
           name: step.name,
           kind: step.kind,

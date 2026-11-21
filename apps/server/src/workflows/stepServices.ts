@@ -11,10 +11,16 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { checkOptions } from "./options.ts";
+import { type StepReferences, stepReferences } from "./runReferences.ts";
 import type { WorkflowDefinition } from "./workflow.ts";
 import { WorkflowForge } from "./WorkflowForge.ts";
 import type { WorkflowError, WorkflowInputError } from "./Workflows.ts";
-import type { RunParent, SignalAddress, WorkflowRunStatus } from "./WorkflowStore.ts";
+import type {
+  RunParent,
+  SignalAddress,
+  WorkflowRunStatus,
+  WorkflowStore,
+} from "./WorkflowStore.ts";
 
 /** The shared store as rows of JSON text. `store` puts schemas on top. */
 export class KeyValues extends Context.Service<
@@ -93,7 +99,7 @@ export class Runs extends Context.Service<
   { readonly start: StartRun; readonly cancel: CancelRun; readonly list: ListRuns }
 >()("t3/workflows/stepServices/Runs") {}
 
-export type InStep = KeyValues | Signals | Runs | WorkflowForge;
+export type InStep = KeyValues | Signals | Runs | WorkflowForge | StepReferences;
 
 /**
  * What a step needs of the engine, which exists only once the engine does, while the workflows
@@ -169,9 +175,11 @@ const engineOf = (link: EngineLink["Service"]) =>
 
 /**
  * The services for the step `name` of `runId`. Each signal it sends is the two, where it goes,
- * and how many it sent there before, so a retry that sends the same again is not new.
+ * and how many it sent there before, so a retry that sends the same again is not new. What it
+ * touches through the forge is kept against it.
  */
 export const forStep = (
+  store: WorkflowStore["Service"],
   keyValues: KeyValues["Service"],
   link: EngineLink["Service"],
   forge: WorkflowForge["Service"],
@@ -182,6 +190,7 @@ export const forStep = (
   const sent = new Map<string, number>();
   return Context.make(KeyValues, keyValues).pipe(
     Context.add(WorkflowForge, forge),
+    Context.merge(stepReferences(store, runId, name)),
     Context.add(
       Signals,
       Signals.of({

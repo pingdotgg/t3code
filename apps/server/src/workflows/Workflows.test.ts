@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { ProjectId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -33,8 +34,16 @@ import Migration0106 from "../persistence/Migrations/112_WorkflowStepResult.ts";
 import Migration0107 from "../persistence/Migrations/113_WorkflowWaitWatch.ts";
 import Migration0108 from "../persistence/Migrations/114_WorkflowStepTurn.ts";
 import Migration0109 from "../persistence/Migrations/115_WorkflowRunKey.ts";
+import Migration0110 from "../persistence/Migrations/116_WorkflowRunReferences.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
-import { Issue, unavailable, WorkflowForge, WorkflowForgeError } from "./WorkflowForge.ts";
+import {
+  Issue,
+  pullRequestReferenceOf,
+  unavailable,
+  WorkflowForge,
+  WorkflowForgeError,
+} from "./WorkflowForge.ts";
+import { issueReference, noteReference } from "./runReferences.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
@@ -403,6 +412,8 @@ const fix = workflow(
       environment: Schema.optional(Schema.String),
       // Lands with a model of its own, which a continued thread cannot take.
       reshape: Schema.optional(Schema.Boolean),
+      /** The address of the issue the fix is for. */
+      issue: Schema.optional(Schema.String),
     }),
     returns: Schema.String,
   },
@@ -412,6 +423,9 @@ const fix = workflow(
         brief: "Write the fix.",
         project: payload.project,
         ...(payload.environment === undefined ? {} : { environment: payload.environment }),
+        ...(payload.issue === undefined
+          ? {}
+          : { issue: { project: payload.project, url: payload.issue } }),
         returns: Schema.Struct({
           branch: Schema.String,
           commits: Schema.optional(Schema.Number.check(Schema.isGreaterThan(0))),
@@ -543,6 +557,15 @@ const fakeAgents = () => {
             return yield* new WorkflowAgentError({ reason: "No project is registered there." });
           }
           yield* Deferred.succeed(turn(input.key).started, input);
+          // As the threads do: the issue a thread is linked to is what its step touched.
+          if (input.issue !== undefined && "url" in input.issue) {
+            yield* noteReference({
+              kind: "issue",
+              key: input.issue.url,
+              address: { url: input.issue.url },
+              title: "",
+            });
+          }
           return {
             threadId: input.thread ?? `thread-${++threads}`,
             turnId: input.key,
@@ -716,7 +739,23 @@ const fakeForge = () => {
       pullRequests: {
         ...unavailable.pullRequests,
         // Only what a wait looks at; the rest of a pull request is the host's business.
-        read: () => asTheServerReads(() => structuredClone(pullRequest) as never),
+        read: () =>
+          asTheServerReads(() => structuredClone(pullRequest)).pipe(
+            Effect.tap((read) =>
+              noteReference(
+                pullRequestReferenceOf(
+                  {
+                    projectId: ProjectId.make("project-1"),
+                    host: "github.com",
+                    repository: "me/app",
+                    number: 7,
+                  },
+                  { url: read.url, state: read.state },
+                ),
+              ),
+            ),
+            Effect.map((read) => read as never),
+          ),
       },
       issues: {
         ...unavailable.issues,
@@ -728,6 +767,8 @@ const fakeForge = () => {
         comment: (issue, body) =>
           asTheServerReads(
             () => void comments.push(`${"key" in issue ? issue.key : issue.url}: ${body}`),
+          ).pipe(
+            Effect.andThen("key" in issue ? noteReference(issueReference(issue)) : Effect.void),
           ),
       },
     }),
@@ -752,6 +793,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
         Migration0107,
         Migration0108,
         Migration0109,
+        Migration0110,
       ],
       {
         discard: true,
@@ -1218,7 +1260,7 @@ it.effect(
           const workflows = yield* Workflows.Workflows;
           const { runId } = yield* workflows.start(
             "fix",
-            { project: "p1" },
+            { project: "p1", issue: "https://github.com/me/app/issues/9" },
             { idempotencyKey: "f1" },
           );
 
@@ -1250,10 +1292,16 @@ it.effect(
 
           yield* workflows.waitFor(runId, (run) => run.detail === "merge");
           // A person reads what the agent said beside the data it returned.
-          const written = (yield* workflows.get(runId)).steps.find((step) => step.name === "write");
+          const detail = yield* workflows.get(runId);
+          const written = detail.steps.find((step) => step.name === "write");
           assert.deepStrictEqual(
             [written?.result, written?.said],
             [{ branch: "fix/1" }, "Pushed fix/1."],
+          );
+          // Asked three times on its issue's thread, the step touched the issue once.
+          assert.deepStrictEqual(
+            detail.references.map(({ key, steps, origin }) => ({ key, steps, origin })),
+            [{ key: "https://github.com/me/app/issues/9", steps: ["write"], origin: "step" }],
           );
           const [question] = yield* workflows.questions;
           // The agent whose work raised the question is one click from it.
@@ -2042,6 +2090,13 @@ it.effect("an issue opened after the workflow loaded starts one run, which can c
         const done = yield* workflows.waitFor(run!.runId, status("completed"));
         assert.equal(done.result, "#2");
         assert.deepStrictEqual(forge.comments, ["2: Looking at Issue 2."]);
+        // The issue that started the run is the one its step commented on.
+        assert.deepStrictEqual(
+          (yield* workflows.get(run!.runId)).references.map(
+            ({ kind, title, state, steps, origin }) => ({ kind, title, state, steps, origin }),
+          ),
+          [{ kind: "issue", title: "Issue 2", state: "open", steps: ["thank"], origin: "trigger" }],
+        );
         // A later look still lists it, and leaves the run it has alone.
         const before = starts.length;
         yield* TestClock.adjust("2 minutes");
@@ -2081,6 +2136,15 @@ it.effect("a wait on a pull request ends when its checks have, and says how", ()
         yield* workflows.sweep;
         const done = yield* workflows.waitFor(runId, status("completed"));
         assert.equal(done.result, "passing");
+        // Each look kept it on the wait's step, and the replay after the wake added nothing.
+        assert.deepStrictEqual(
+          (yield* workflows.get(runId)).references.map(({ kind, steps, state }) => ({
+            kind,
+            steps,
+            state,
+          })),
+          [{ kind: "pullRequest", steps: ["checks"], state: "open" }],
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

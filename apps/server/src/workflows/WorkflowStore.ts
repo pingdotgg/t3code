@@ -1,6 +1,7 @@
 import {
   type WorkflowCounts,
   WorkflowRun,
+  type WorkflowRunReference,
   WorkflowRunStatus,
   WorkflowStep,
 } from "@t3tools/contracts";
@@ -72,6 +73,27 @@ export interface WaitRow {
   readonly woke_json: string | null;
 }
 
+/** Something a run touched, as the one that touched it knows it. */
+export interface ReferenceInput {
+  readonly kind: string;
+  readonly key: string;
+  readonly address: Schema.Json;
+  /** Empty when the toucher does not know it; a title already kept stays. */
+  readonly title: string;
+  readonly url?: string | null | undefined;
+  readonly state?: string | null | undefined;
+}
+interface ReferenceRow {
+  readonly kind: string;
+  readonly key: string;
+  readonly address_json: string;
+  readonly title: string;
+  readonly url: string | null;
+  readonly state: string | null;
+  readonly steps_json: string;
+  readonly origin: WorkflowRunReference["origin"];
+}
+
 // Rows keep JSON as text. Everything stored was a JSON value when it was written.
 export const jsonText = (value: Schema.Json): string => JSON.stringify(value);
 export const jsonValue = (text: string): Schema.Json => JSON.parse(text) as Schema.Json;
@@ -83,6 +105,7 @@ const WAKE_REDONE_AFTER = Duration.seconds(30);
 // Enough to read what a step said; the page that shows it is not a place for a whole report.
 const STEP_RESULT_KEPT = 8_000;
 const SIGNAL_IDS_KEPT = Duration.days(7);
+const REFERENCE_TITLE_KEPT = 300;
 const idsKeptUntil = Effect.map(DateTime.now, (at) =>
   DateTime.formatIso(DateTime.addDuration(at, SIGNAL_IDS_KEPT)),
 );
@@ -300,6 +323,17 @@ export class WorkflowStore extends Context.Service<
     /** The hook's token: the one kept for it, or `fresh` from now on. */
     readonly hookToken: (hookId: string, fresh: string) => Effect.Effect<string>;
     readonly steps: (runId: string) => Effect.Effect<ReadonlyArray<StepRow>>;
+    /**
+     * Keep that the run touched something: from a step, or with no step from what started it. A
+     * later touch of the same thing keeps what it knows that is new and adds its step.
+     */
+    readonly referenceNoted: (
+      runId: string,
+      step: string | null,
+      reference: ReferenceInput,
+    ) => Effect.Effect<void>;
+    /** What the run touched, in the order it first did. */
+    readonly references: (runId: string) => Effect.Effect<ReadonlyArray<WorkflowRunReference>>;
   }
 >()("t3/workflows/WorkflowStore") {}
 
@@ -889,6 +923,79 @@ export const make = Effect.gen(function* () {
                said, started_at, ended_at
         FROM workflow_steps WHERE run_id = ${runId} ORDER BY started_at, rowid
       `.pipe(Effect.orDie);
+    }),
+    referenceNoted: Effect.fn("WorkflowStore.referenceNoted")(function* (runId, step, reference) {
+      const at = yield* now;
+      const addressJson = jsonText(reference.address);
+      const title = reference.title.slice(0, REFERENCE_TITLE_KEPT);
+      const changed = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const rows = yield* sql<ReferenceRow>`
+              SELECT kind, key, address_json, title, url, state, steps_json, origin
+              FROM workflow_run_references
+              WHERE run_id = ${runId} AND kind = ${reference.kind} AND key = ${reference.key}
+            `;
+            const row = rows[0];
+            if (row === undefined) {
+              yield* sql`
+                INSERT INTO workflow_run_references (
+                  run_id, kind, key, address_json, title, url, state, steps_json, origin, noted_at
+                ) VALUES (
+                  ${runId}, ${reference.kind}, ${reference.key}, ${addressJson}, ${title},
+                  ${reference.url ?? null}, ${reference.state ?? null},
+                  ${jsonText(step === null ? [] : [step])}, ${step === null ? "trigger" : "step"},
+                  ${at}
+                )
+              `;
+              return true;
+            }
+            const steps = jsonValue(row.steps_json) as ReadonlyArray<string>;
+            const next = {
+              address_json: addressJson,
+              title: title === "" ? row.title : title,
+              url: reference.url ?? row.url,
+              state: reference.state ?? row.state,
+              steps_json:
+                step === null || steps.includes(step) ? row.steps_json : jsonText([...steps, step]),
+            };
+            // A touch that says nothing new is no change, so a look every minute costs no list.
+            if (
+              next.address_json === row.address_json &&
+              next.title === row.title &&
+              next.url === row.url &&
+              next.state === row.state &&
+              next.steps_json === row.steps_json
+            ) {
+              return false;
+            }
+            yield* sql`
+              UPDATE workflow_run_references
+              SET address_json = ${next.address_json}, title = ${next.title}, url = ${next.url},
+                  state = ${next.state}, steps_json = ${next.steps_json}
+              WHERE run_id = ${runId} AND kind = ${reference.kind} AND key = ${reference.key}
+            `;
+            return true;
+          }),
+        )
+        .pipe(Effect.orDie);
+      if (changed) yield* PubSub.publish(changes, runId);
+    }),
+    references: Effect.fn("WorkflowStore.references")(function* (runId) {
+      const rows = yield* sql<ReferenceRow>`
+        SELECT kind, key, address_json, title, url, state, steps_json, origin
+        FROM workflow_run_references WHERE run_id = ${runId} ORDER BY rowid
+      `.pipe(Effect.orDie);
+      return rows.map((row) => ({
+        kind: row.kind,
+        key: row.key,
+        address: jsonValue(row.address_json),
+        title: row.title,
+        url: row.url,
+        state: row.state,
+        steps: jsonValue(row.steps_json) as ReadonlyArray<string>,
+        origin: row.origin,
+      }));
     }),
   });
 });

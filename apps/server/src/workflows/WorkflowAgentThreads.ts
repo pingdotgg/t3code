@@ -34,7 +34,8 @@ import {
   WorkflowAgentError,
   WorkflowAgents,
 } from "./WorkflowAgents.ts";
-import { type IssueAddress, WorkflowForge } from "./WorkflowForge.ts";
+import { noteReference } from "./runReferences.ts";
+import { type IssueAddress, linkedPullRequestReferences, WorkflowForge } from "./WorkflowForge.ts";
 
 // A turn can run for hours. Each look is bounded so a wait that lost its event is asked again.
 const WAIT_SLICE = Duration.minutes(10);
@@ -82,6 +83,18 @@ const make = Effect.gen(function* () {
             }),
           ),
         );
+  // What the agent opened or linked while it worked is part of what its step touched.
+  const noteLinked = (threadId: ThreadId, sinceMillis: number | undefined) =>
+    threads.getThreadShell(threadId).pipe(
+      Effect.flatMap((shell) =>
+        shell === null
+          ? Effect.void
+          : Effect.forEach(linkedPullRequestReferences(shell, sinceMillis), noteReference, {
+              discard: true,
+            }),
+      ),
+      Effect.ignore,
+    );
   const here = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -276,6 +289,7 @@ const make = Effect.gen(function* () {
           if (!latest.timedOut && latest.run.ordinal <= quietSince) break;
           quietSince = latest.timedOut ? quietSince : latest.run.ordinal;
         }
+        yield* noteLinked(threadId, turn.startedAt);
         if (run.status !== "completed") {
           // Interrupted or cancelled is someone stopping it; the rest is the turn dying.
           const ending = run.status === "failed" ? ("failed" as const) : ("stopped" as const);

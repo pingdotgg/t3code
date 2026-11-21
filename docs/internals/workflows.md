@@ -63,6 +63,16 @@ cancel runs, and nothing else may use them. A step's signals are numbered from t
 and where each goes, so a retried step that sends the same signal again sends no new one, and
 one that sends somewhere new is not taken for what an earlier try sent.
 
+**A run keeps what it touched.** A reference is a `kind`, a `key` naming the thing within its
+kind, and an `address` that only that kind's client reads, so a new kind is a new caller of
+[`noteReference`](../../apps/server/src/workflows/runReferences.ts) and nothing more. It is called
+from inside a step: by the forge helpers, by an agent step's thread for its `issue` and the pull
+requests linked to it while the step ran, and by the engine's look at a pull request a wait is
+on. An issue or pull request trigger notes its item with no step. There is one row per run, kind
+and key, so a retry or replay that touches the same thing adds nothing. It is only for a person
+to read: a failure to keep it is logged and never fails a step. Only a run's detail carries
+references, not the list that is sent again on every change.
+
 **A thread owes its result across turns.** An agent that waits for something ends its turn and is
 woken later, in a turn nobody asked a result of. A submission from such a turn goes to the newest
 turn that was asked and has not answered, so the result lands on the turn the step started, and a

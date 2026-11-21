@@ -25,7 +25,11 @@ import * as IssueService from "../issue/IssueService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
-import { normalizeThreadPullRequestKey } from "../sourceControl/threadPullRequests.ts";
+import {
+  normalizeThreadPullRequestKey,
+  threadPullRequestsOf,
+} from "../sourceControl/threadPullRequests.ts";
+import { issueReference, noteReference, pullRequestReference } from "./runReferences.ts";
 import { isProjectPath } from "./WorkflowAgents.ts";
 
 export class WorkflowForgeError extends Schema.TaggedError<WorkflowForgeError>()(
@@ -137,6 +141,50 @@ export interface PullRequestQuery {
   readonly query?: string | undefined;
   readonly limit?: number | undefined;
 }
+
+type PullRequestSeen = Parameters<typeof pullRequestReference>[1];
+/** A pull request as a run's reference, under the key every way of naming it shares. */
+export const pullRequestReferenceOf = (
+  ref: Pick<PullRequestRef, "projectId" | "host" | "repository" | "number">,
+  seen?: PullRequestSeen,
+) =>
+  pullRequestReference(
+    {
+      projectId: ref.projectId,
+      ...normalizeThreadPullRequestKey({
+        host: ref.host ?? "",
+        repository: ref.repository,
+        number: ref.number,
+        ...(seen?.url === undefined ? {} : { url: seen.url }),
+      }),
+    },
+    seen,
+  );
+
+/** The pull requests linked to a thread from `sinceMillis` on, as references of its step. */
+export const linkedPullRequestReferences = (
+  thread: Parameters<typeof threadPullRequestsOf>[0] & { readonly projectId: ProjectId },
+  sinceMillis: number | undefined,
+) =>
+  threadPullRequestsOf(thread)
+    .filter(
+      (link) =>
+        link.source !== "stack-dismissed" &&
+        (sinceMillis === undefined || Date.parse(link.linkedAt) >= sinceMillis),
+    )
+    .map((link) =>
+      pullRequestReferenceOf(
+        {
+          projectId: thread.projectId,
+          host: link.host,
+          repository: link.repository,
+          number: link.number,
+        },
+        link.snapshot === null
+          ? { url: link.url }
+          : { url: link.url, title: link.snapshot.title, state: link.snapshot.state },
+      ),
+    );
 
 export class WorkflowForge extends Context.Service<
   WorkflowForge,
@@ -276,6 +324,16 @@ export const layer = Layer.effect(
       } satisfies PullRequestRef;
     });
 
+    // An address that is a whole listing row already says what the item is called.
+    const seenOf = (address: object) => ({
+      ...("title" in address && typeof address.title === "string" ? { title: address.title } : {}),
+      ...("url" in address && typeof address.url === "string" ? { url: address.url } : {}),
+    });
+    const issueTouched = (ref: IssueRef, address: IssueAddress) =>
+      noteReference({ ...issueReference(ref), ...seenOf(address) });
+    const pullRequestTouched = (ref: PullRequestRef, seen: PullRequestSeen) =>
+      noteReference(pullRequestReferenceOf(ref, seen));
+
     return WorkflowForge.of({
       issues: {
         list: Effect.fn("WorkflowForge.issues.list")(function* (query) {
@@ -300,25 +358,32 @@ export const layer = Layer.effect(
           return result.entries;
         }),
         read: Effect.fn("WorkflowForge.issues.read")(function* (issue) {
-          return yield* issues
-            .detail(yield* issueRef(issue))
+          const ref = yield* issueRef(issue);
+          const detail = yield* issues
+            .detail(ref)
             .pipe(Effect.mapError(failed("Could not read the issue")));
+          yield* noteReference(issueReference(ref, detail));
+          return detail;
         }),
         comment: Effect.fn("WorkflowForge.issues.comment")(function* (issue, body) {
+          const ref = yield* issueRef(issue);
           yield* issues
-            .comment({ ...(yield* issueRef(issue)), body })
+            .comment({ ...ref, body })
             .pipe(Effect.mapError(failed("Could not comment on the issue")));
+          yield* issueTouched(ref, issue);
         }),
         setState: Effect.fn("WorkflowForge.issues.setState")(function* (issue, state) {
+          const ref = yield* issueRef(issue);
           yield* issues
-            .setState({ ...(yield* issueRef(issue)), state })
+            .setState({ ...ref, state })
             .pipe(Effect.mapError(failed("Could not change the issue's state")));
+          yield* issueTouched(ref, issue);
         }),
         create: Effect.fn("WorkflowForge.issues.create")(function* (input) {
           const scope = yield* issues
             .projectScope(yield* projectIdOf(input.project))
             .pipe(Effect.mapError(failed("Could not find the project's issue tracker")));
-          return yield* issues
+          const created = yield* issues
             .create({
               projectId: scope.projectId,
               tracker: scope.tracker,
@@ -330,6 +395,13 @@ export const layer = Layer.effect(
               assignees: [...(input.assignees ?? [])],
             })
             .pipe(Effect.mapError(failed("Could not file the issue")));
+          yield* noteReference({
+            ...issueReference({ ...scope, key: created.key }),
+            title: input.title,
+            url: created.url,
+            state: "open",
+          });
+          return created;
         }),
       },
       pullRequests: {
@@ -351,24 +423,31 @@ export const layer = Layer.effect(
           return result.entries;
         }),
         read: Effect.fn("WorkflowForge.pullRequests.read")(function* (pullRequest) {
+          const ref = yield* pullRequestRef(pullRequest);
           // Fresh, not a held copy: checks that passed before a push must not end a wait after it.
-          return yield* pullRequests
-            .detail({ ...(yield* pullRequestRef(pullRequest)), allowStale: false })
+          const detail = yield* pullRequests
+            .detail({ ...ref, allowStale: false })
             .pipe(Effect.mapError(failed("Could not read the pull request")));
+          yield* pullRequestTouched(ref, detail);
+          return detail;
         }),
         comment: Effect.fn("WorkflowForge.pullRequests.comment")(function* (pullRequest, body) {
+          const ref = yield* pullRequestRef(pullRequest);
           yield* pullRequests
-            .comment({ ...(yield* pullRequestRef(pullRequest)), body })
+            .comment({ ...ref, body })
             .pipe(Effect.mapError(failed("Could not comment on the pull request")));
+          yield* pullRequestTouched(ref, seenOf(pullRequest));
         }),
         act: Effect.fn("WorkflowForge.pullRequests.act")(function* (pullRequest, action, options) {
+          const ref = yield* pullRequestRef(pullRequest);
           yield* pullRequests
             .runAction({
-              ...(yield* pullRequestRef(pullRequest)),
+              ...ref,
               action,
               ...(options?.mergeMethod === undefined ? {} : { mergeMethod: options.mergeMethod }),
             })
             .pipe(Effect.mapError(failed(`Could not ${action} the pull request`)));
+          yield* pullRequestTouched(ref, seenOf(pullRequest));
         }),
       },
     });
