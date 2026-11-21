@@ -40,7 +40,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
   - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. R2 after L1. A1 after L1. O1 after B12, R2, and A1. X1 after O1. Y1 after O1.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 and R2 also edit the separate `13kparkin/pstack-t3` repo.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, A1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, R2, A1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -1658,43 +1658,49 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B12 to the base-branch stack and the operator lands it bottom-up.
 
-## Run the review loop from the board's orchestrator (R2)
+## Run reviews from review templates on the board's orchestrator (R2)
 
 **Depends on.** L1.
 
 **Files.**
 
-- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, and `apps/board/roles/reviewer.md`.
+- [ ] Edit `apps/board/src/orchestrator/brief.md`, `apps/board/src/orchestrator/brief.test.ts`, `apps/board/src/orchestrator/launch.ts`, `apps/board/src/orchestrator/roles.ts`, `apps/board/src/orchestrator/roles.test.ts`, `apps/board/roles/task.md`, `apps/board/roles/reviewer.md`, `apps/board/src/domain/board.ts`, `apps/board/src/store/localState.ts`, `apps/board/src/settings/SettingsNav.tsx`, and `apps/board/src/board/OrchestratorCard.tsx`.
+- [ ] Create `apps/board/src/domain/reviewTemplate.ts`, `apps/board/src/domain/reviewTemplate.test.ts`, and `apps/board/src/settings/ReviewsPage.tsx`.
 - [ ] Delete `apps/board/roles/thermo-nuclear-review-subagent.md` and `apps/board/roles/thermo-nuclear-code-quality-review-subagent.md`.
 - [ ] In `13kparkin/pstack-t3`, edit `skills/pstack-t3/SKILL.md`, then re-vendor `apps/board/pstack/` with `apps/board/scripts/vendor-pstack.mjs`.
 
 **Build.**
 
-- [ ] `brief.md` tells the orchestrator to run `skill://review-loop` on every ticket. The builder runs its author checks before it reports code-ready. The orchestrator then starts each reviewer lane that applies as its own child, collects the findings, sends the real ones back to the builder, and runs the lanes again after each fix round. After two fix rounds with findings left, it asks the operator with a For-you question. The ticket's PR body comes from `skill://pr-description`.
-- [ ] `roles/reviewer.md` runs one lane per child: `ponytail-review`, `test-evidence-review`, `security-audit` in guidance mode, or receipts. The orchestrator names the lane in the task.
+- [ ] A review template has a name, the author-check skills the builder runs before it reports code-ready, and the reviewer-lane skills the orchestrator runs after. Every template runs with the `review-loop` skill's mechanics: its finding bar, fix rounds with `git diff --shortstat`, and a For-you question to the operator after two fix rounds with findings left.
+- [ ] There is one system template, "Review loop", and it is the only one. It is the `review-loop` skill as written. Its author checks are `simplify`, `no-comments`, `unslop`, and `pre-pr-reviewer`. Its lanes are `ponytail-review`, `test-evidence-review`, `security-audit` in guidance mode, and receipts, each with the skill's runs-when rule. It cannot be edited or deleted, and every board starts on it.
+- [ ] Settings gets a Reviews page that lists the templates. New template opens an editor with a name field and the skills the board's Claude instance reports, the same list the slash menu uses. The operator marks each picked skill as an author check or a reviewer lane. Duplicate on the system template starts a custom template from its skills. Custom templates save in `localState.ts` under `reviewTemplates`, and their lanes run on every ticket.
+- [ ] The orchestrator card has a Review menu that picks the board's template. `board.json` stores the pick as `reviewTemplate`, and no value means the system template. The launch facts name the template and its skills. A pick during a run sends the orchestrator one message naming the new template, and it applies from the next ticket.
+- [ ] In `reviewTemplate.ts`, keep the pure pieces: the system template, the template schema, and the facts text a template renders.
+- [ ] `brief.md` tells the orchestrator to run the board's review template on every ticket. The builder runs the author checks before it reports code-ready. The orchestrator then starts each reviewer lane that applies as its own child, collects the findings, sends the real ones back to the builder, and runs the lanes again after each fix round. The ticket's PR body comes from the `pr-description` skill.
+- [ ] `roles/reviewer.md` runs one lane per child, with the skill the orchestrator names in the task.
 - [ ] Delete the two thermo-nuclear roles and their `roles.ts` entries. `ponytail-review` covers bugs, broken callers, and code that should not exist, and the thermo-nuclear code-quality checklist pushes for restructuring that grows code.
 - [ ] In the `pstack-t3` adapter, map every skill step that says to start a subagent, a scout, a task, or a reviewer to `delegate_task` with the matching registry role. This covers user skills such as `pre-pr-reviewer` and `no-comments`.
 - [ ] The skills come from where they already load on the board's Claude instances: `pstack-t3` for `no-comments`, `unslop`, and `swarm`, `~/.claude/skills` for `review-loop`, `simplify`, `pre-pr-reviewer`, `test-evidence-review`, `security-audit`, and `pr-description`, and the user-scope ponytail plugin for `ponytail-review`. Nothing is vendored twice.
 
 **You see.**
 
-- [ ] Every ticket on the board goes through the same review loop as this program's PRs, and the orchestrator stops and asks after two fix rounds.
+- [ ] The operator picks a review template for each board, or builds one from review skills. Every ticket goes through the board's template, and the orchestrator stops and asks after two fix rounds.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `roles.test.ts` asserts the literal registry without the two thermo-nuclear roles, and `brief.test.ts` asserts that the brief names `review-loop` and `pr-description`. Run `vp test run src/orchestrator/roles.test.ts src/orchestrator/brief.test.ts` from `apps/board`.
+- [ ] `roles.test.ts` asserts the literal registry without the two thermo-nuclear roles. `reviewTemplate.test.ts` asserts the system template's literal facts text, and decodes a fixed local-state file with one custom template into its literal value. Run `vp test run src/orchestrator/roles.test.ts src/domain/reviewTemplate.test.ts` from `apps/board`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every lane uses a real Claude orchestrator on the shared lane repo.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator hands a code-ready ticket to merge approval with no review lanes, so record that. Run a small goal at head. Save `r2-author-checks.txt`. Pass when the builder's transcript shows `simplify`, `no-comments`, `unslop`, and `pre-pr-reviewer` before code-ready.
-- [ ] Lane 2. Save `r2-lanes.txt` from the same goal. Pass when each applicable reviewer lane starts as its own `delegate_task` child with the `reviewer` role, and no Claude built-in subagent call appears.
-- [ ] Lane 3. Give a goal whose builder brief plants one real bug, a comment rendered without the markdown sanitizer. Save `r2-fix-round.txt`. Pass when a lane names it with `file:line`, the builder fixes it, and the re-run lanes pass.
+- [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator hands a code-ready ticket to merge approval with no review lanes, so record that. Run a small goal at head on the system template. Save `r2-author-checks.txt`. Pass when the builder's transcript shows `simplify`, `no-comments`, `unslop`, and `pre-pr-reviewer` before code-ready.
+- [ ] Lane 2. Save `r2-lanes.txt` from the same goal. Pass when each applicable reviewer lane starts as its own `delegate_task` child with the `reviewer` role, every skill loads with no refused Skill call, and no Claude built-in subagent call appears.
+- [ ] Lane 3. Give a goal whose builder brief plants one real bug, a comment rendered without the markdown sanitizer. Save `r2-fix-round.txt`. Pass when a lane names it with `file:line`, the builder fixes it, the re-run lanes pass, and the fix round reports its `git diff --shortstat` and adds no guard, fallback, wrapper, or test its finding did not require.
 - [ ] Lane 4. Give a goal whose builder brief asks for three tests of made-up edge cases. Save `r2-tests.txt`. Pass when `test-evidence-review` flags all three and the fix round deletes them.
-- [ ] Lane 5. Save `r2-shortstat.txt`. Pass when every fix round reports its `git diff --shortstat`, and no fix round adds a guard, fallback, wrapper, or test that its finding did not require.
-- [ ] Lane 6. Give a docs-only goal. Save `r2-docs.txt`. Pass when the security and test lanes are skipped with their reasons.
+- [ ] Lane 5. Create a template named "Security only" with `simplify` as its author check and `security-audit` as its lane, and pick it on a board. Run a small goal. Save `r2-custom.png` and `r2-custom.txt`. Pass when only those two skills run on the ticket.
+- [ ] Lane 6. Give a docs-only goal on the system template. Save `r2-docs.txt`. Pass when the security and test lanes are skipped with their reasons.
 - [ ] Lane 7. Give a goal that still has findings after two fix rounds. Save `r2-escalate.png`. Pass when a For-you question asks the operator and no third fix round starts.
 - [ ] Lane 8. Save `r2-pr-body.txt` from a merged lane PR. Pass when its body has every `pr-description` section that applies and a Mermaid graph.
-- [ ] Lane 9. Save `r2-skills.txt`. Pass when every skill the loop names loads in the orchestrator and in one child with no disk search and no refused Skill call.
+- [ ] Lane 9. Open Settings, then Reviews, and restart the app. Save `r2-templates.png`. Pass when the system template has no edit or delete, the editor lists the skills the instance reports, and the custom template and the board's pick are still there after the restart.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `r2-checks.txt`. Pass when all three exit 0.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
@@ -1704,7 +1710,11 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Baseline. Trunk runs no review. Record the head times.
 - [ ] Rule. The median stays under 15 minutes, recorded for O1.
 
-**Review gate.** None. R2 is not review-gated.
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 5 and lane 9 screenshots into `apps/board/docs/media/r2-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/r2-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
 
 **Merge.**
 
