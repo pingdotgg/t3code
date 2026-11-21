@@ -47,6 +47,7 @@ import {
   VisualStudioCode,
   VisualStudioCodeInsiders,
   VSCodium,
+  Winc,
   Zed,
 } from "../Icons";
 import {
@@ -123,6 +124,11 @@ const resolveOpenInOptions = (
     {
       Icon: Zed,
       value: "zed",
+      kind: "brand",
+    },
+    {
+      Icon: Winc,
+      value: "winc",
       kind: "brand",
     },
     {

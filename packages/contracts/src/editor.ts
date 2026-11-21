@@ -55,6 +55,12 @@ export const EDITORS = [
     remoteScheme: "zed",
   },
   {
+    id: "winc",
+    label: "Winc",
+    commands: ["winc"],
+    launchStyle: "direct-path",
+  },
+  {
     id: "antigravity",
     label: "Antigravity",
     // The IDE ships antigravity-ide; agy is the standalone CLI.
