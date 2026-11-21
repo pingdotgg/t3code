@@ -1,3 +1,8 @@
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
 import { useMessages } from "gt-react";
@@ -15,7 +20,7 @@ import {
 } from "@t3tools/contracts";
 import type { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type SetStateAction } from "react";
+import { type SetStateAction, useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
@@ -26,6 +31,7 @@ import {
 } from "../../lib/chatThreadActions";
 import {
   type DraftThreadEnvMode,
+  composerTargetKey,
   isSameModel,
   useComposerDraftStore,
 } from "../../composerDraftStore";
@@ -58,6 +64,16 @@ interface ComposerSelectionInput {
     SetStateAction<Record<string, boolean>>
   >;
   readonly scheduleComposerFocus: () => void;
+  readonly setThreadRuntimeMode: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly input: {
+      readonly threadId: ThreadId;
+      readonly runtimeMode: RuntimeMode;
+      readonly createdAt?: string;
+    };
+  }) => Promise<AtomCommandResult<unknown, unknown>>;
+  /** Providers without in-session mode switches restart the session, so a live run keeps the draft for the next send. */
+  readonly runInProgress: boolean;
 }
 
 /**
@@ -83,6 +99,8 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
+    setThreadRuntimeMode,
+    runInProgress,
   } = input;
   const messages = useMessages();
   const navigate = useNavigate();
@@ -94,11 +112,81 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const applyThreadModelPick = useApplyThreadModelPick();
 
+  const runtimeModeSelectionsRef = useRef(new Map<string, number>());
+  const [pendingRuntimeModeSaves, setPendingRuntimeModeSaves] = useState(
+    () =>
+      new Map<
+        string,
+        { readonly id: number; readonly mode: RuntimeMode; readonly threadId: ThreadId }
+      >(),
+  );
+  const shellThreadId = activeThread?.id;
+  const shellRuntimeMode = activeThread?.runtimeMode;
+  // The shell arrives after the command resolves, and the draft override hides a later change until it is cleared.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the saved runtime-mode override once this thread's shell shows that mode
+  useEffect(() => {
+    const key = composerTargetKey(composerDraftTarget);
+    const pending = pendingRuntimeModeSaves.get(key);
+    if (!pending || runtimeModeSelectionsRef.current.get(key) !== pending.id) return;
+    if (shellThreadId !== pending.threadId || shellRuntimeMode !== pending.mode) return;
+    const draftMode =
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.runtimeMode ?? null;
+    if (draftMode !== pending.mode) return;
+    setComposerDraftRuntimeMode(composerDraftTarget, null);
+  }, [
+    pendingRuntimeModeSaves,
+    shellThreadId,
+    shellRuntimeMode,
+    composerDraftTarget,
+    setComposerDraftRuntimeMode,
+  ]);
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
     if (mode === runtimeMode) return;
-    setComposerDraftRuntimeMode(composerDraftTarget, mode);
+    const target = composerDraftTarget;
+    const key = composerTargetKey(target);
+    const selection = (runtimeModeSelectionsRef.current.get(key) ?? 0) + 1;
+    runtimeModeSelectionsRef.current.set(key, selection);
+    setComposerDraftRuntimeMode(target, mode);
     if (isLocalDraftThread) {
-      setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
+      setDraftThreadContext(target, { runtimeMode: mode });
+    } else if (activeThread && !runInProgress) {
+      const threadId = activeThread.id;
+      void setThreadRuntimeMode({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId,
+          runtimeMode: mode,
+          createdAt: new Date().toISOString(),
+        },
+      }).then((result) => {
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          if (runtimeModeSelectionsRef.current.get(key) === selection) {
+            setPendingRuntimeModeSaves((current) => {
+              if (current.get(key)?.id !== selection) return current;
+              const next = new Map(current);
+              next.delete(key);
+              return next;
+            });
+            setComposerDraftRuntimeMode(target, null);
+          }
+          const error = squashAtomCommandFailure(result);
+          toastManager.add({
+            type: "error",
+            title: "Failed to update permission mode",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+          return;
+        }
+        if (result._tag !== "Success" || runtimeModeSelectionsRef.current.get(key) !== selection) {
+          return;
+        }
+        setPendingRuntimeModeSaves((current) => {
+          if (runtimeModeSelectionsRef.current.get(key) !== selection) return current;
+          const next = new Map(current);
+          next.set(key, { id: selection, mode, threadId });
+          return next;
+        });
+      });
     }
     scheduleComposerFocus();
   };
