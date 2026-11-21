@@ -4220,19 +4220,25 @@ function webSearchResultsFromClaudeOutput(
   });
 }
 
+// A code-unit slice can split a surrogate pair; drop the lone high half it leaves.
+function withoutTrailingHighSurrogate(text: string): string {
+  const last = text.charCodeAt(text.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text;
+}
+
 function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInput): string {
   const command = firstStringInputField(input, ["command", "cmd", "script"]);
   if (command !== undefined) {
-    return `${toolName}: ${command.slice(0, 400)}`;
+    return `${toolName}: ${withoutTrailingHighSurrogate(command.slice(0, 400))}`;
   }
   const path = firstStringInputField(input, ["file_path", "path", "filename", "fileName"]);
   if (path !== undefined) {
-    return `${toolName}: ${path.slice(0, 400)}`;
+    return `${toolName}: ${withoutTrailingHighSurrogate(path.slice(0, 400))}`;
   }
   const serialized = jsonStringifyForTool(claudeNativeToolInputValue(input));
   return serialized.length <= 400
     ? `${toolName}: ${serialized}`
-    : `${toolName}: ${serialized.slice(0, 397)}...`;
+    : `${toolName}: ${withoutTrailingHighSurrogate(serialized.slice(0, 397))}...`;
 }
 
 function outputFromClaudeToolResult(
@@ -4920,7 +4926,9 @@ function providerFailureFromResult(
     message.subtype === "success" &&
     message.terminal_reason === "api_error" &&
     message.result.trim().startsWith("API Error:")
-      ? makeProviderFailure({ message: message.result }).message.slice(0, 500)
+      ? withoutTrailingHighSurrogate(
+          makeProviderFailure({ message: message.result }).message.slice(0, 500),
+        )
       : undefined;
   const structuredError = isOverloadedResult(message)
     ? "Claude API is overloaded (529). Try again shortly."
@@ -7375,7 +7383,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                               results: [
                                 {
                                   ...(webFetchUrl === undefined ? {} : { url: webFetchUrl }),
-                                  snippet: outputText.slice(0, WEB_FETCH_SNIPPET_MAX_CHARS),
+                                  snippet: withoutTrailingHighSurrogate(
+                                    outputText.slice(0, WEB_FETCH_SNIPPET_MAX_CHARS),
+                                  ),
                                 },
                               ],
                             }
