@@ -1402,6 +1402,11 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const activeUsageModel =
+    [
+      composerModelSelectionApplies ? composerSelectedModelSelection : null,
+      activeThread?.modelSelection,
+    ].find((selection) => selection?.instanceId === activeProviderInstanceId)?.model ?? null;
   const conversationProviderStatus =
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
@@ -1474,6 +1479,7 @@ export default function ChatView(props: ChatViewProps) {
     threadKey: routeThreadKey,
     panelKey: usageLimitsKey,
     providerInstanceId: activeProviderInstanceId,
+    model: activeUsageModel,
     providerDriver: activeProviderStatus?.driver ?? null,
     providers: providerStatuses,
     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
@@ -2786,6 +2792,12 @@ export default function ChatView(props: ChatViewProps) {
       isInSideChatPane(document.activeElement) === embedded,
     draftThreadRoute: routeKind === "draft",
     turnRunning: phase === "running" || phase === "connecting",
+    // A queued-message edit or a question's answer owns the composer even when its text is empty.
+    composerEmpty:
+      !queuedRunEdit.isEditing &&
+      pendingUserInputs.length === 0 &&
+      !composerHasNonPromptContent &&
+      promptRef.current.trim().length === 0,
     composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, promptRef.current),
     isWeb: !isElectron,
     isDesktop: isElectron,
@@ -4041,6 +4053,7 @@ export default function ChatView(props: ChatViewProps) {
                   onDeleteProjectScript={deleteProjectScriptStable}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
+                    model: activeUsageModel,
                     providers: providerStatuses,
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,

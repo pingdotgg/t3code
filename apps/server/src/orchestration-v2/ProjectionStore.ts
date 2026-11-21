@@ -980,6 +980,8 @@ function preserveRunRecordedFields(
     current.restartCancelledBackgroundWork !== undefined
       ? { restartCancelledBackgroundWork: current.restartCancelledBackgroundWork }
       : {}),
+    // Only a submission sets the output; a lifecycle write carries it as it was when read.
+    ...(current.output !== undefined ? { output: current.output } : {}),
   };
 }
 
@@ -1102,6 +1104,13 @@ export function applyToProjection(
                 restartCancelledBackgroundWork: event.payload.restartCancelledBackgroundWork,
               }
             : run,
+        ),
+      };
+    case "run.output-submitted":
+      return {
+        ...base,
+        runs: base.runs.map((run) =>
+          run.id === event.payload.runId ? { ...run, output: event.payload.output } : run,
         ),
       };
     case "run-attempt.created":
@@ -1338,6 +1347,9 @@ const encodeThreadUpdatedAt = Schema.encodeEffect(
 const encodeRunPayload = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2RunJsonSchema));
 const encodeRestartCancelledBackgroundWork = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2RunJsonSchema.fields.restartCancelledBackgroundWork),
+);
+const encodeRunOutput = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2RunJsonSchema.fields.output),
 );
 const encodeRunAttemptPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema),
@@ -2384,6 +2396,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ELSE ${payload}
       END
     `;
+    // Only a submission sets the output; a lifecycle write carries it as it was when read.
+    const keepRecordedRunOutput = (payload: Statement.Fragment) => sql`
+      CASE
+        WHEN json_type(orchestration_v2_projection_runs.payload_json, '$.output') IS NOT NULL
+        THEN json_set(
+          ${payload},
+          '$.output',
+          json_extract(orchestration_v2_projection_runs.payload_json, '$.output')
+        )
+        ELSE ${payload}
+      END
+    `;
 
     type TimelineIndexItem = Pick<
       OrchestrationV2TurnItem,
@@ -2578,9 +2602,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
-                payload_json = ${keepRecordedRunField(
-                  keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
-                  "$.restartCancelledBackgroundWork",
+                payload_json = ${keepRecordedRunOutput(
+                  keepRecordedRunField(
+                    keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                    "$.restartCancelledBackgroundWork",
+                  ),
                 )}
             `;
               break;
@@ -2597,6 +2623,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 '$.restartCancelledBackgroundWork',
                 json(${workJson})
               )
+              WHERE run_id = ${event.payload.runId} AND thread_id = ${event.threadId}
+            `;
+              break;
+            }
+            case "run.output-submitted": {
+              // Only this field changes, so a concurrent lifecycle write is never regressed.
+              const outputJson = yield* encodeRunOutput(event.payload.output);
+              yield* sql`
+              UPDATE orchestration_v2_projection_runs
+              SET payload_json = json_set(payload_json, '$.output', json(${outputJson}))
               WHERE run_id = ${event.payload.runId} AND thread_id = ${event.threadId}
             `;
               break;
