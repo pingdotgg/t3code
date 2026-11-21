@@ -15,8 +15,8 @@ const decodeLinkedThreads = Schema.decodeUnknownEffect(IssueLinkedThreadsResult)
 export const listLinkedIssueThreads = Effect.fn("listLinkedIssueThreads")(
   function* (key: ThreadIssueKey) {
     const sql = yield* SqlClient.SqlClient;
-    // Check the side-chat flag only once a link matches, so SQLite doesn't parse
-    // every thread's payload separately from the link scan.
+    // The CASE stops SQLite hoisting the side-chat check out of the link loop,
+    // where it would re-parse every thread's payload, not just matching ones.
     const rows = yield* sql<{
       id: string;
       projectId: string;
