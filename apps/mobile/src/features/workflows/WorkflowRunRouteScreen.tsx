@@ -5,6 +5,7 @@ import {
   readWorkflowQuestion,
   workflowAgentSummary,
   workflowAnswer,
+  workflowPausedBeat,
   workflowRunNow,
   workflowResultLines,
   workflowRunState,
@@ -370,7 +371,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
       onOpenThread={openThread}
     />
   );
-  const failedAtStep = beats.some((beat) => beat.status === "failed");
+  const pausedAt = feed === null ? null : workflowPausedBeat(feed, run.status);
   const pause = (
     <Card tone="failed">
       <Text className="font-t3-medium text-sm text-danger-foreground">
@@ -378,14 +379,16 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
       </Text>
       <Text className="text-sm text-foreground">{run.detail ?? gt("A step failed.")}</Text>
       <Text className="text-xs text-foreground-muted">
-        {run.resumesAt === null
-          ? gt("It waits for you to resume it.")
-          : gt("It tries again by itself, or resume it now.")}
+        {run.retired
+          ? gt("It cannot go on until its workflow version is registered again.")
+          : run.resumesAt === null
+            ? gt("It waits for you to resume it.")
+            : gt("It tries again by itself, or resume it now.")}
       </Text>
       <Button
         label={gt("Resume now")}
         tone="primary"
-        disabled={busy || !canOperate}
+        disabled={busy || !canOperate || run.retired}
         loading={busy}
         onPress={() => void resumeRun()}
       />
@@ -395,7 +398,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   const stop = (beat: WorkflowBeat) => {
     const asked = questionOf(beat);
     if (asked !== null) return question(asked);
-    const failedHere = beat.status === "failed" && run.status === "paused";
+    const failedHere = beat === pausedAt;
     const flowNode = (
       <FlowNode
         beat={beat}
@@ -517,7 +520,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
               {question(asked)}
             </View>
           ))}
-          {run.status === "paused" && !failedAtStep ? (
+          {run.status === "paused" && pausedAt === null ? (
             <View>
               <Wire />
               {pause}

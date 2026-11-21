@@ -559,6 +559,25 @@ const beatsOf = (rows: ReadonlyArray<WorkflowFeedRow>) =>
   rows.flatMap((row) => (row.kind === "quick" ? [] : row.kind === "together" ? row.beats : [row]));
 
 /**
+ * The step a paused run stopped at: the last that failed, unless the run went on after it, since
+ * then the workflow caught that failure. Null when the run is not paused at a step.
+ */
+export function workflowPausedBeat(
+  rows: ReadonlyArray<WorkflowFeedRow>,
+  status: WorkflowRun["status"],
+): WorkflowBeat | null {
+  if (status !== "paused") return null;
+  const failed = beatsOf(rows).findLast((beat) => beat.status === "failed");
+  if (failed === undefined) return null;
+  const wentOn = rows.some((row) =>
+    row.kind === "together"
+      ? row.beats.some((beat) => beat !== failed && beat.startMs >= failed.endMs)
+      : row !== failed && row.startMs >= failed.endMs,
+  );
+  return wentOn ? null : failed;
+}
+
+/**
  * Which part of a run's flow to open on: what waits on a person, then where it failed, then how
  * it ended, then what is under way. Keys are `step:<name>`, `question:<name>`, `pause` and `end`.
  */
@@ -579,8 +598,8 @@ export function workflowFlowFocus(input: {
     return at === undefined ? `question:${asked}` : `step:${at.name}`;
   }
   if (input.status === "paused") {
-    const failed = beats.findLast((beat) => beat.status === "failed");
-    return failed === undefined ? "pause" : `step:${failed.name}`;
+    const failed = workflowPausedBeat(input.rows, input.status);
+    return failed === null ? "pause" : `step:${failed.name}`;
   }
   if (input.ended) return "end";
   const last = beats.findLast((beat) => beat.status === "running") ?? beats.at(-1);

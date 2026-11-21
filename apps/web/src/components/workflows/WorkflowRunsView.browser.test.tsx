@@ -273,8 +273,19 @@ describe("WorkflowRunsView", () => {
       },
       {
         sync: [
-          step({ name: "fetch", kind: "step" }),
-          step({ name: "apply", kind: "step", status: "failed", attempts: 3, detail: "503" }),
+          // A failure the workflow caught and went on from is not where it paused.
+          step({ name: "lint", kind: "step", status: "failed", endedAt: at(1), detail: "lint" }),
+          step({ name: "fetch", kind: "step", startedAt: at(1), endedAt: at(1) }),
+          step({
+            name: "apply",
+            kind: "agent",
+            status: "failed",
+            attempts: 3,
+            detail: "503",
+            threadId: "thread-apply",
+            startedAt: at(2),
+            endedAt: at(3),
+          }),
         ],
       },
     );
@@ -284,6 +295,9 @@ describe("WorkflowRunsView", () => {
     const why = screen.getByRole("region", { name: "Why it paused" });
     await expect.element(why).toMatchTextContent(/Paused at apply.*3rd try.*waits for you/);
     await expect.element(why).toMatchTextContent("503");
+    // The failed agent's transcript is there to read before choosing.
+    await expect.element(screen.getByRole("button", { name: "Transcript" })).toBeVisible();
+    await expect.element(screen.getByText("Paused at lint")).not.toBeInTheDocument();
     await why.getByRole("button", { name: "Resume now" }).click();
 
     await vi.waitFor(() =>
