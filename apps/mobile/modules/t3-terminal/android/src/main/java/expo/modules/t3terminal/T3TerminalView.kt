@@ -32,7 +32,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? =
       super.onCreateInputConnection(outAttrs)?.let { connection ->
         TerminalInputConnection(connection, sentText, { !readOnly }) { count ->
-          if (!readOnly) onInput(mapOf("data" to "\u007F".repeat(count)))
+          if (!readOnly) emitUserInput("\u007F".repeat(count))
         }
       }
   }
@@ -284,10 +284,10 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     inputView.setOnEditorActionListener(
       TerminalEnterListener({ readOnly }) {
         // Enter must send CR: raw-mode TUIs treat LF as Ctrl+J (insert newline).
-        onInput(mapOf("data" to "\r"))
+        emitUserInput("\r")
       },
     )
-    val navigationKeys = TerminalNavigationKeyListener { onInput(mapOf("data" to it)) }
+    val navigationKeys = TerminalNavigationKeyListener { emitUserInput(it) }
     inputView.setOnKeyListener { _, keyCode, event ->
       if (readOnly) return@setOnKeyListener true
       if (navigationKeys.onKey(inputView, keyCode, event)) return@setOnKeyListener true
@@ -295,13 +295,11 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       when {
         keyCode == KeyEvent.KEYCODE_DEL -> {
           sentText.removeCodePoints(1)
-          onInput(mapOf("data" to "\u007F"))
+          emitUserInput("\u007F")
           true
         }
         event.isCtrlPressed && keyCode in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> {
-          onInput(
-            mapOf("data" to (keyCode - KeyEvent.KEYCODE_A + 1).toChar().toString()),
-          )
+          emitUserInput((keyCode - KeyEvent.KEYCODE_A + 1).toChar().toString())
           true
         }
         else -> false
@@ -318,7 +316,7 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
           if (start < end) {
             val insertedText = s.subSequence(start, end).toString()
             sentText.append(insertedText)
-            onInput(mapOf("data" to insertedText))
+            emitUserInput(insertedText)
           }
         }
 
@@ -468,6 +466,14 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
     TerminalFrame.decode(
       GhosttyBridge.nativeSnapshot(terminalHandle)
     )?.let(terminalCanvas::setFrame)
+  }
+
+  // Typing while scrolled into history jumps back to the prompt.
+  private fun emitUserInput(data: String) {
+    if (terminalHandle != 0L && GhosttyBridge.nativeScrollToBottom(terminalHandle)) {
+      renderSnapshot()
+    }
+    onInput(mapOf("data" to data))
   }
 
   private fun emitResponse(response: ByteArray) {

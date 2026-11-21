@@ -34,6 +34,9 @@ internal object GhosttyBridge {
 
   @JvmStatic external fun nativeScroll(handle: Long, rows: Int)
 
+  /** Returns whether the viewport moved. */
+  @JvmStatic external fun nativeScrollToBottom(handle: Long): Boolean
+
   @JvmStatic
   external fun nativeSetTheme(
     handle: Long,
