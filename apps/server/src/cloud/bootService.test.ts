@@ -1307,6 +1307,52 @@ process.disconnect();
     }),
   );
 
+  it.effect("names another server that owns this T3 home while the service waits", () =>
+    Effect.gen(function* () {
+      const { service, fs } = yield* makeHarness();
+      const plan = yield* service.install();
+      const path = yield* Path.Path;
+      const stateDir = path.join(plan.baseDir, "userdata");
+      const recordPath = path.join(stateDir, "server-runtime.json");
+      yield* fs.makeDirectory(stateDir, { recursive: true });
+      expect((yield* service.status).homeOwner).toBeUndefined();
+
+      using owner = new NodeSqlite.DatabaseSync(path.join(stateDir, "server-owner.sqlite"));
+      owner.exec("BEGIN EXCLUSIVE;");
+      expect((yield* service.status).homeOwner).toEqual({});
+
+      const record = {
+        version: 1,
+        pid: process.pid,
+        ownerId: "desktop",
+        port: 3773,
+        origin: "http://127.0.0.1:3773",
+        startedAt: "2026-01-01T00:00:00Z",
+        serverVersion: "0.2.0-nightly",
+        desktopManaged: true,
+      };
+      yield* fs.writeFileString(recordPath, JSON.stringify(record));
+      const status = yield* service.status;
+      expect(status.homeOwner).toEqual({
+        pid: process.pid,
+        serverVersion: "0.2.0-nightly",
+        desktop: true,
+      });
+      expect(status.current).toBe(true);
+
+      // The service's own server is not another owner.
+      yield* fs.writeFileString(
+        recordPath,
+        JSON.stringify({ ...record, desktopManaged: undefined, serviceManaged: true }),
+      );
+      expect((yield* service.status).homeOwner).toBeUndefined();
+
+      owner.close();
+      yield* fs.writeFileString(recordPath, JSON.stringify(record));
+      expect((yield* service.status).homeOwner).toBeUndefined();
+    }),
+  );
+
   it.effect("hands the whole install to systemd without changing the running service", () =>
     Effect.gen(function* () {
       const { fs, commands, invocations, control, makeService } = yield* makeHarness();

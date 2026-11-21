@@ -159,7 +159,7 @@ const formatSetup = (setup: Setup, hints: Hints) => {
       !service.supported
         ? "unavailable"
         : service.installed
-          ? `installed · t3@${service.installedVersion ?? packageJson.version}`
+          ? `${BootService.bootServiceWaitsForHomeOwner(service) ? "waiting" : "installed"} · t3@${service.installedVersion ?? packageJson.version}`
           : "not installed",
     ],
     ...(setup.connect === null
@@ -186,6 +186,11 @@ const formatSetup = (setup: Setup, hints: Hints) => {
     ],
   ];
   const notes = [
+    ...(service.homeOwner === undefined
+      ? []
+      : [
+          `The service is not serving: ${BootService.formatBootServiceHomeOwner(service.homeOwner, service.installedBaseDir)}.${BootService.bootServiceWaitsForHomeOwner(service) ? ` ${BootService.BOOT_SERVICE_HOME_OWNER_NEXT}` : ""}`,
+        ]),
     ...(setup.host === undefined && setup.lan
       ? ["Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock."]
       : []),
@@ -516,6 +521,7 @@ const setupJson = (setup: Setup) =>
         installed: setup.service.installed,
         installedVersion: setup.service.installedVersion ?? null,
         otherBaseDir: setup.service.otherBaseDir ?? null,
+        homeOwner: setup.service.homeOwner ?? null,
       },
       connect:
         setup.connect === null ? null : { enabled: setup.connect, revoked: setup.connectRevoked },

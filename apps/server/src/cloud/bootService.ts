@@ -21,10 +21,13 @@ import * as ProcessRunner from "../processRunner.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
 import {
   serviceLauncherIsRunning,
+  serviceLauncherIsServing,
   serviceLauncherLockPath,
   serviceTaskName,
+  stateDirOwned,
   waitForServiceLauncherExit,
 } from "../serviceLauncher.ts";
+import { readLiveServerRuntimeState } from "../serverRuntimeState.ts";
 import {
   ensurePinnedRuntimeInstalled,
   launcherOwnsVersionsDir,
@@ -772,9 +775,34 @@ export interface BootServiceStatus {
   /** Set when the installed unit serves a different T3 home than this CLI. */
   readonly otherBaseDir?: string;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
+  /** Set when a server the service did not start owns this T3 home, so the service waits. */
+  readonly homeOwner?: BootServiceHomeOwner;
   readonly unitPath: string;
   readonly logPath: string;
 }
+
+/** What the owner's server-runtime.json says; empty when it published none. */
+export interface BootServiceHomeOwner {
+  readonly pid?: number;
+  readonly serverVersion?: string;
+  readonly desktop?: boolean;
+}
+
+export const formatBootServiceHomeOwner = (owner: BootServiceHomeOwner, baseDir?: string) => {
+  const details = [
+    owner.desktop ? "desktop app" : undefined,
+    owner.pid === undefined ? undefined : `pid ${owner.pid}`,
+    owner.serverVersion === undefined ? undefined : `t3@${owner.serverVersion}`,
+  ].filter((detail) => detail !== undefined);
+  return `another T3 Code server owns ${baseDir ?? "this T3 home"}${details.length === 0 ? "" : ` (${details.join(", ")})`}`;
+};
+
+/** A stopped service has no launcher to take the home back once its owner stops. */
+export const bootServiceWaitsForHomeOwner = (status: BootServiceStatus) =>
+  status.homeOwner !== undefined && status.problems?.includes("service-stopped") !== true;
+
+export const BOOT_SERVICE_HOME_OWNER_NEXT =
+  "Quit that server and the service starts on its own. To run both, give one of them a separate T3 home with `--base-dir`.";
 
 export class BootService extends Context.Service<
   BootService,
@@ -1584,6 +1612,27 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     return true;
   }).pipe(Effect.withSpan("cloud.boot_service.uninstall"));
 
+  // Reporting only: the launcher waits on the same lock (serviceLauncher.ts idleWhileStateDirOwned).
+  const readHomeOwner = Effect.gen(function* () {
+    if (!(yield* Effect.promise(() => stateDirOwned(input.baseDir)))) return undefined;
+    const owner = yield* readLiveServerRuntimeState(
+      path.join(input.baseDir, "userdata", "server-runtime.json"),
+    ).pipe(Effect.provideService(FileSystem.FileSystem, fs));
+    if (Option.isNone(owner)) {
+      // A starting service child holds the lock before it publishes its record.
+      return (yield* Effect.promise(() => serviceLauncherIsServing(input.baseDir)))
+        ? undefined
+        : ({} satisfies BootServiceHomeOwner);
+    }
+    const { pid, serverVersion, serviceManaged, desktopManaged } = owner.value;
+    if (serviceManaged === true) return undefined;
+    return {
+      pid,
+      ...(serverVersion === undefined ? {} : { serverVersion }),
+      ...(desktopManaged === true ? { desktop: true } : {}),
+    } satisfies BootServiceHomeOwner;
+  });
+
   const status: BootService["Service"]["status"] = Effect.gen(function* () {
     const manager = detectedManager;
     if (manager === undefined) {
@@ -1615,6 +1664,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           ? [...(yield* readSchtasksProblems(Option.some(unit)))]
           : [];
     if (yield* fs.exists(restartPendingPath)) problems.push("restart-pending");
+    const homeOwner = otherBaseDir === undefined ? yield* readHomeOwner : undefined;
     return {
       supported: true,
       installed: true,
@@ -1622,6 +1672,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
       ...(otherBaseDir === undefined ? {} : { otherBaseDir }),
       problems,
+      ...(homeOwner === undefined ? {} : { homeOwner }),
       current:
         problems.length === 0 &&
         !(manager.kind === "systemd" && systemdUnsafeValue(planForUnit(unit))) &&
