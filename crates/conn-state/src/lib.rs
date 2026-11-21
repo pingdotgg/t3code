@@ -26,4 +26,7 @@ pub use crate::layout::{
     SIDEBAR_MIN_WIDTH,
 };
 pub use crate::shell::{ShellChange, ShellState, ThreadActivity};
-pub use crate::thread::{ItemStatus, ThreadState, TimelineEntry};
+pub use crate::thread::{
+    EntryTiming, ItemStatus, RunTiming, ThreadState, TimelineEntry, TurnCheckpointSummary,
+    parse_iso8601_epoch_ms,
+};
