@@ -165,6 +165,8 @@ function ProviderHeader(props: {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
+  /** The section's selected model, named while collapsed so it stays visible. */
+  readonly activeModel?: string | undefined;
   readonly onToggle: () => void;
 }) {
   const gt = useGT();
@@ -185,9 +187,15 @@ function ProviderHeader(props: {
         <>
           <View className="flex-1" />
           {props.collapsed ? (
-            <Text className="text-2xs font-t3-medium text-foreground-muted">
-              {props.modelCount}
-            </Text>
+            props.activeModel ? (
+              <Text numberOfLines={1} className="shrink text-xs font-t3-medium text-foreground">
+                {props.activeModel}
+              </Text>
+            ) : (
+              <Text className="text-2xs font-t3-medium text-foreground-muted">
+                {props.modelCount}
+              </Text>
+            )
           ) : null}
           <SymbolView
             name={props.collapsed ? "chevron.down" : "chevron.up"}
@@ -212,6 +220,9 @@ function ProviderHeader(props: {
         )}
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
+        accessibilityValue={
+          props.collapsed && props.activeModel ? { text: props.activeModel } : undefined
+        }
         className="mx-4 mt-1 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60"
         style={{ minHeight: ROW_MIN_HEIGHT.control }}
         onPress={props.onToggle}
@@ -738,6 +749,7 @@ type ThreadSettingsProviderCatalog = {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
+  readonly activeModel: string | undefined;
   readonly models: ReadonlyArray<ModelOption>;
 };
 
@@ -755,6 +767,7 @@ type ThreadSettingsCatalogItem =
       readonly detail: string | undefined;
       readonly collapsed: boolean;
       readonly modelCount: number;
+      readonly activeModel: string | undefined;
     }
   | {
       readonly kind: "model";
@@ -819,6 +832,7 @@ function ThreadSettingsProviderListHeader(props: {
       iconUrl={props.provider.iconUrl}
       label={props.provider.label}
       modelCount={props.provider.modelCount}
+      activeModel={props.provider.activeModel}
       onToggle={onToggle}
     />
   );
@@ -840,6 +854,7 @@ function ThreadSettingsSubProviderListHeader(props: {
       iconUrl={undefined}
       label={props.item.label}
       modelCount={props.item.modelCount}
+      activeModel={props.item.activeModel}
       onToggle={onToggle}
     />
   );
@@ -896,6 +911,7 @@ function subProviderCatalogItems(
           detail: subProvider.unavailableReason,
           collapsed,
           modelCount: backendModels.length,
+          activeModel: collapsed ? backendModels.find(session.isDisplayed)?.label : undefined,
         },
         // The heading names the backend, so rows drop it.
         ...(collapsed
@@ -971,6 +987,7 @@ function buildThreadSettingsCatalogItems(
       collapsible,
       collapsed,
       modelCount: visibleModels.length,
+      activeModel: collapsed ? group.models.find(session.isDisplayed)?.label : undefined,
       models: collapsed ? [] : visibleModels,
     };
     return [
