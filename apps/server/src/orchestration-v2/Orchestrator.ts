@@ -12717,6 +12717,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: input.command.threadId,
           commandId: input.command.commandId,
         });
+      const emitEvent = emit(input.events, input.command);
       const dying = [...input.dying];
       const { childThreadIds } = input;
       for (const { projection, subagent } of dying) {
@@ -12739,11 +12740,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         childThreadIds.add(childThreadId);
         const child = yield* projectionStore
-          .getThreadRecords(childThreadId, ["nodes", "providerTurns", "subagents", "turnItems"], {
-            // Runless items are the subagent's; any run there is the user's own.
-            turnItemRunIds: [null],
-            turnItemStatuses: ["pending", "running", "waiting"],
-          })
+          .getThreadRecords(
+            childThreadId,
+            ["nodes", "providerTurns", "subagents", "turnItems", "runtimeRequests"],
+            {
+              runtimeRequestStatuses: ["pending"],
+              // Runless items are the subagent's; any run there is the user's own.
+              turnItemRunIds: [null],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            },
+          )
           .pipe(
             Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
             mapDispatchError(input.command),
@@ -12759,6 +12765,76 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           allocateEventId,
         }).pipe(mapDispatchError(input.command));
         yield* Ref.update(input.events, (events) => [...events, ...childEnded]);
+        const parentThreadId =
+          projection.subagents.find((candidate) => candidate.id === subagent.subagentId)
+            ?.threadId ??
+          projection.turnItems.find(
+            (item) => item.type === "subagent" && item.subagentId === subagent.subagentId,
+          )?.threadId;
+        const parent =
+          parentThreadId === undefined
+            ? null
+            : yield* projectionStore
+                .getThreadRecords(parentThreadId, ["nodes", "runtimeRequests", "turnItems"], {
+                  runtimeRequestStatuses: ["pending"],
+                  turnItemTypes: ["approval_request"],
+                  turnItemStatuses: ["waiting"],
+                })
+                .pipe(mapDispatchError(input.command));
+        for (const owner of parent === null ? [child] : [child, parent]) {
+          for (const request of owner.runtimeRequests) {
+            if (request.status !== "pending") continue;
+            const node = owner.nodes.find((candidate) => candidate.id === request.nodeId);
+            if (node === undefined) continue;
+            // Codex puts child approvals on the parent; runs on the child belong to the user.
+            if (owner === child ? node.runId !== null : node.parentNodeId !== subagent.subagentId)
+              continue;
+            const scope = {
+              threadId: node.threadId,
+              nodeId: node.id,
+              providerInstanceId: subagent.providerInstanceId,
+              occurredAt: input.now,
+            };
+            yield* emitEvent({
+              ...scope,
+              type: "runtime-request.updated",
+              payload: {
+                ...request,
+                status: "cancelled",
+                resolvedAt: input.now,
+                responseCapability: {
+                  type: "not_resumable",
+                  reason: "The subagent was interrupted.",
+                },
+              },
+            });
+            if (isOrchestrationV2WorkActive(node.status)) {
+              yield* emitEvent({
+                ...scope,
+                type: "node.updated",
+                payload: { ...node, status: "interrupted", completedAt: input.now },
+              });
+            }
+            for (const card of owner.turnItems) {
+              if (
+                (card.type !== "approval_request" && card.type !== "user_input_request") ||
+                card.requestId !== request.id ||
+                card.status !== "waiting"
+              )
+                continue;
+              yield* emitEvent({
+                ...scope,
+                type: "turn-item.updated",
+                payload: {
+                  ...card,
+                  status: "interrupted",
+                  completedAt: input.now,
+                  updatedAt: input.now,
+                },
+              });
+            }
+          }
+        }
         for (const nested of child.turnItems) {
           if (nested.type === "subagent") dying.push({ projection: child, subagent: nested });
         }
@@ -12856,6 +12932,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command: input.command,
         events: input.events,
         dying: [{ projection: input.projection, subagent: item }],
+        childThreadIds,
+        now: input.now,
+      });
+    }
+    // Native task records and their timeline items can settle in either order.
+    for (const subagent of input.projection.subagents) {
+      if (
+        subagent.origin !== "provider_native" ||
+        (!isOrchestrationV2WorkActive(subagent.status) && subagent.status !== "interrupted")
+      )
+        continue;
+      const run = input.projection.runs.find((candidate) => candidate.id === subagent.runId);
+      if (
+        run === undefined ||
+        run.ordinal > input.throughRunOrdinal ||
+        run.providerThreadId !== input.stoppedProviderThreadId
+      )
+        continue;
+      yield* endNativeSubagentTrees({
+        command: input.command,
+        events: input.events,
+        dying: [{ projection: input.projection, subagent: nativeSubagentRef(subagent) }],
         childThreadIds,
         now: input.now,
       });

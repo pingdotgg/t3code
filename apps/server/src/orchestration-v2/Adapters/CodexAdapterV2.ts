@@ -8450,6 +8450,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 activeTurnContexts.find(
                   (candidate) => candidate.providerTurnId === turnInput.providerTurnId,
                 ) ??
+                activeTurnContexts
+                  .map((context) => approvalOwnerCodexTurn(context).owner)
+                  .find((candidate) => candidate.providerTurnId === turnInput.providerTurnId) ??
                 (turnInput.requestRuntimeRestart === true
                   ? settledTurnContexts.find(
                       (candidate) => candidate.providerThread.id === turnInput.providerThread.id,

@@ -7577,77 +7577,124 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
   };
 
-  it.effect("contains descendant commands and keeps Stop authoritative", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeCodexReplayHarness(interruptSubagentCommandTranscript);
-      const now = yield* DateTime.now;
+  it.effect.each([false, true])(
+    "contains descendant commands after parent completion=%s",
+    (parentCompleted) =>
+      Effect.gen(function* () {
+        const entries = [...interruptSubagentCommandTranscript.entries];
+        if (parentCompleted) {
+          const stopIndex = entries.findIndex(
+            (entry) => entry.type === "expect_outbound" && entry.label === "turn/interrupt/root",
+          );
+          entries.splice(stopIndex, 0, {
+            type: "emit_inbound",
+            label: "turn/completed/parent-before-stop",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: INTERRUPT_NATIVE_THREAD,
+                turn: makeCodexReplayTurn({ id: INTERRUPT_NATIVE_TURN, status: "completed" }),
+              },
+            },
+          });
+        }
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-interrupt-subagent-command",
+            entries: parentCompleted
+              ? entries
+                  .filter(
+                    (entry) =>
+                      !("label" in entry) ||
+                      (entry.label !== "turn/interrupt/root" &&
+                        entry.label !== "turn/completed/root"),
+                  )
+                  .map((entry) =>
+                    "frame" in entry &&
+                    typeof entry.frame === "object" &&
+                    entry.frame !== null &&
+                    "id" in entry.frame &&
+                    typeof entry.frame.id === "number" &&
+                    entry.frame.id >= 5
+                      ? { ...entry, frame: { ...entry.frame, id: entry.frame.id - 1 } }
+                      : entry,
+                  )
+              : entries,
+          }),
+        );
+        const now = yield* DateTime.now;
 
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
-          threadId: harness.threadId,
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-codex-interrupt-subagent-command"),
+            text: INTERRUPT_PROMPT,
+          }),
+        );
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM &&
+              event.turnItem.status === "running",
+          ),
+        );
+        const providerTurnId = harness.events.find(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "provider_turn.updated" }
+          > => event.type === "provider_turn.updated" && event.threadId === harness.threadId,
+        )?.providerTurn.id;
+        assert.isDefined(providerTurnId);
+        if (parentCompleted) yield* harness.awaitTerminal(1);
+
+        yield* harness.runtime.interruptTurn({
           providerThread: harness.providerThread,
-          now,
-          attemptId: RunAttemptId.make("attempt-codex-interrupt-subagent-command"),
-          text: INTERRUPT_PROMPT,
-        }),
-      );
-      yield* harness.until(() =>
-        harness.events.some(
-          (event) =>
+          providerTurnId,
+        });
+
+        yield* harness.awaitTerminal(1);
+        assert.equal(
+          harness.terminalEvents()[0]?.status,
+          parentCompleted ? "completed" : "interrupted",
+        );
+        const childCommandUpdates = harness.events.filter(
+          (
+            event,
+          ): event is Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "turn_item.updated" }
+          > =>
             event.type === "turn_item.updated" &&
             event.turnItem.type === "command_execution" &&
-            event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM &&
-            event.turnItem.status === "running",
-        ),
-      );
-      const providerTurnId = harness.events.find(
-        (
-          event,
-        ): event is Extract<
-          ProviderAdapter.ProviderAdapterV2Event,
-          { type: "provider_turn.updated" }
-        > => event.type === "provider_turn.updated" && event.threadId === harness.threadId,
-      )?.providerTurn.id;
-      assert.isDefined(providerTurnId);
-
-      yield* harness.runtime.interruptTurn({
-        providerThread: harness.providerThread,
-        providerTurnId,
-      });
-
-      yield* harness.awaitTerminal(1);
-      assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
-      const childCommandUpdates = harness.events.filter(
-        (
-          event,
-        ): event is Extract<
-          ProviderAdapter.ProviderAdapterV2Event,
-          { type: "turn_item.updated" }
-        > =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "command_execution" &&
-          event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM,
-      );
-      assert.equal(childCommandUpdates.at(-1)?.turnItem.status, "interrupted");
-      assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
-      assert.isDefined(
-        harness
-          .subagentUpdates()
-          .find((event) => event.subagent.status === "running" && event.subagent.progress),
-        "a running native subagent reports its child's current command as progress",
-      );
-      assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
-      assert.isFalse(yield* harness.hasPendingBackgroundWork);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+            event.turnItem.nativeItemRef?.nativeId === INTERRUPT_CHILD_COMMAND_ITEM,
+        );
+        assert.equal(childCommandUpdates.at(-1)?.turnItem.status, "interrupted");
+        assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "interrupted");
+        assert.isDefined(
+          harness
+            .subagentUpdates()
+            .find((event) => event.subagent.status === "running" && event.subagent.progress),
+          "a running native subagent reports its child's current command as progress",
+        );
+        if (!parentCompleted)
+          assertChildProviderTerminalBeforeRoot(harness.events, harness.threadId);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   const rootCompletionIndex = interruptSubagentCommandTranscript.entries.findIndex(
