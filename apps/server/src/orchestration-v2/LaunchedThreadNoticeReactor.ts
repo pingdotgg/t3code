@@ -47,6 +47,14 @@ const OUTCOMES: Partial<
   interrupted: { outcome: "cancelled", verb: "was interrupted" },
 };
 
+const CARRYING_ON: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
+
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -73,7 +81,7 @@ const make = Effect.gen(function* () {
       const run = event.payload;
       const child = yield* projections.getThreadRecords(
         event.threadId,
-        ["messages", "turnItems", "providerTurns"],
+        ["runs", "messages", "turnItems", "providerTurns"],
         {
           messageRunIds: [run.id],
           turnItemRunIds: [run.id],
@@ -85,6 +93,13 @@ const make = Effect.gen(function* () {
       // the launcher did not ask for it.
       const wake = child.messages.find((message) => message.id === run.userMessageId);
       if (wake?.createdBy === "user" || wake?.notification?.source.kind === "monitor") return;
+      // A queued message stopped it to carry on the work (a restart, /goal); that run reports.
+      if (
+        run.status === "interrupted" &&
+        child.runs.some((other) => other.id !== run.id && CARRYING_ON.has(other.status))
+      ) {
+        return;
+      }
       const label = `Launched thread ${child.thread.id} (${child.thread.title}) [${run.status}]`;
       const result = subagentResultForRun(child, run).text;
       const text =
