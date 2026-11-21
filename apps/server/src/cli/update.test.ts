@@ -75,6 +75,34 @@ it.effect("authenticates each release page until the requested channel is found"
   }),
 );
 
+it.effect("says why listing releases failed", () =>
+  Effect.gen(function* () {
+    const failure = (status: number, headers: Record<string, string> = {}) =>
+      resolveNewestVersion("stable").pipe(
+        Effect.flip,
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("", { status, headers })),
+            ),
+          ),
+        ),
+      );
+
+    const rateLimited = yield* failure(403, { "x-ratelimit-remaining": "0" });
+    assert.include(rateLimited.reason, "HTTP 403");
+    assert.include(rateLimited.reason, "rate limit");
+    assert.include(rateLimited.reason, "GH_TOKEN");
+    assert.isDefined(rateLimited.cause);
+    const forbidden = yield* failure(403, { "x-ratelimit-remaining": "12" });
+    assert.notInclude(forbidden.reason, "rate limit");
+    const serverError = yield* failure(500);
+    assert.equal(serverError.reason, "Could not list t3 releases (HTTP 500).");
+  }),
+);
+
 it.effect("reads the newest version from the update feed file a mirror publishes", () =>
   Effect.gen(function* () {
     const requested: string[] = [];

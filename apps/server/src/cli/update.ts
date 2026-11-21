@@ -18,7 +18,13 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag, Prompt } from "effect/cli";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -71,6 +77,17 @@ const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(Rele
 const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
 const RELEASE_INDEX_MAX_PAGES = 10;
 
+const releaseIndexFailure = (error: HttpClientError.HttpClientError): string => {
+  const response = error.response;
+  if (response === undefined) return "Could not list t3 releases.";
+  const rateLimited =
+    (response.status === 403 || response.status === 429) &&
+    response.headers["x-ratelimit-remaining"] === "0";
+  return rateLimited
+    ? `Could not list t3 releases (HTTP ${response.status}): GitHub's API rate limit was reached. Set GH_TOKEN to raise it.`
+    : `Could not list t3 releases (HTTP ${response.status}).`;
+};
+
 export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
 ) {
@@ -88,7 +105,7 @@ export const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(funct
     const body = yield* httpClient.execute(authenticatedRequest).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((response) => response.text),
-      Effect.mapError(() => new CliUpdateError({ reason: "Could not list t3 releases." })),
+      Effect.mapError((cause) => new CliUpdateError({ reason: releaseIndexFailure(cause), cause })),
       Effect.timeoutOrElse({
         duration: RELEASE_INDEX_TIMEOUT,
         orElse: () => Effect.fail(new CliUpdateError({ reason: "Timed out listing t3 releases." })),
