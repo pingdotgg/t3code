@@ -160,27 +160,15 @@ const vocabularyKey = (value: string) => value.trim().normalize("NFC").toLocaleL
 
 /**
  * Project spellings win over personal ones. Hint terms, such as the project name or the
- * correction cue, come first so the 100-entry wire limit cannot drop them.
+ * correction cue, only steer recognition, so they travel apart from the dictionary.
  */
 export function resolveSpeechVocabulary(input: {
   readonly personal: SpeechCustomWords;
   readonly project: SpeechCustomWords;
   readonly hints?: ReadonlyArray<string>;
-}): SpeechCustomWords {
-  const known = new Set(
-    [...input.project, ...input.personal].flatMap(({ term, aliases }) =>
-      [term, ...aliases].map(vocabularyKey),
-    ),
-  );
-  // A hint that is already a dictionary entry keeps that entry and its aliases in place.
-  const hints = (input.hints ?? []).flatMap((hint) => {
-    const term = hint.replace(/\s+/g, " ").trim();
-    return term.length > 0 && term.length <= 50 && !known.has(vocabularyKey(term))
-      ? [{ term, aliases: [] }]
-      : [];
-  });
+}): { readonly speechCustomWords: SpeechCustomWords; readonly speechHints: string[] } {
   const seen = new Set<string>();
-  return [...hints, ...input.project, ...input.personal]
+  const speechCustomWords = [...input.project, ...input.personal]
     .flatMap(({ term, aliases }) => {
       if (seen.has(vocabularyKey(term))) return [];
       seen.add(vocabularyKey(term));
@@ -192,6 +180,17 @@ export function resolveSpeechVocabulary(input: {
       return [{ term, aliases: uniqueAliases }];
     })
     .slice(0, 100);
+  const known = new Set(
+    speechCustomWords.flatMap(({ term, aliases }) => [term, ...aliases].map(vocabularyKey)),
+  );
+  // A hint that is already a dictionary entry keeps that entry and its aliases in place.
+  const speechHints = (input.hints ?? []).flatMap((hint) => {
+    const term = hint.replace(/\s+/g, " ").trim();
+    if (term.length === 0 || term.length > 50 || known.has(vocabularyKey(term))) return [];
+    known.add(vocabularyKey(term));
+    return [term];
+  });
+  return { speechCustomWords, speechHints };
 }
 
 /** Binary requests contain a four-byte JSON length, UTF-8 options, then unencoded PCM. */

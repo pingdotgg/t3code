@@ -666,6 +666,18 @@ describe("runsGitWithoutConsole", () => {
 
   it.each([
     [["rev-parse", "--git-path", "index"], true],
+    [["rev-parse", "--git-common-dir", "--show-toplevel"], true],
+    [
+      [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "index",
+        "--git-common-dir",
+        "--show-toplevel",
+      ],
+      true,
+    ],
     [["--git-dir", "C:\\repo\\.git", "symbolic-ref", "refs/remotes/origin/HEAD"], true],
     [["remote", "get-url", "--", "origin"], true],
     [["config", "--get", "branch.main.pushRemote"], true],

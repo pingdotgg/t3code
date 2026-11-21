@@ -7,7 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import type { AtomCommand } from "./runtime.ts";
 import {
@@ -34,8 +34,8 @@ type RemoveCommand = AtomCommand<
 function makeCreateUploadUrl(attachmentId: string): CreateUploadUrlCommand {
   return {
     label: "test:create-upload-url",
-    run: async () =>
-      AsyncResult.success<AttachmentCreateUploadUrlResult, never>({
+    run: () =>
+      Effect.succeed({
         attachmentId,
         relativeUrl: `/api/attachments/upload/${attachmentId}`,
         expiresAt: 1,
@@ -46,10 +46,10 @@ function makeCreateUploadUrl(attachmentId: string): CreateUploadUrlCommand {
 const removeCalls: string[] = [];
 const remove: RemoveCommand = {
   label: "test:remove",
-  run: async (_registry, input) => {
-    removeCalls.push(input.input.attachmentId);
-    return AsyncResult.success(undefined);
-  },
+  run: (_registry, input) =>
+    Effect.sync(() => {
+      removeCalls.push(input.input.attachmentId);
+    }),
 };
 
 const uploadInput: AttachmentCreateUploadUrlInput = {
