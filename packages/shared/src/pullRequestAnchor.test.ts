@@ -9,6 +9,7 @@ import {
 } from "./pullRequestAnchor.ts";
 
 const gitlab = "https://gitlab.com/group/repo/-/merge_requests/7";
+const forgejo = "https://codeberg.org/owner/repo/pulls/7";
 
 const url = "https://github.com/owner/repo/pull/7";
 it.each(["discussion_r123", "r123", "discussion-diff-123R5-L9", "discussion-diff-123"])(
@@ -107,6 +108,7 @@ it("handles encoded hashes and rejects invalid line numbers and URLs", () => {
 it("keeps the commit scope of a PR diff permalink", () => {
   const sha = "a".repeat(40);
   expect(pullRequestLinkCommit(`${url}/commits/${sha}#diff-abcR5`)).toBe(sha);
+  expect(pullRequestLinkCommit(`${forgejo}/commits/${sha}#diff-abcR5`)).toBe(sha);
   expect(pullRequestLinkCommit(`${url}/files#diff-abcR5`)).toBeNull();
   expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=${sha}#${"b".repeat(40)}`)).toBe(sha);
   expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=main`)).toBeNull();
@@ -153,6 +155,7 @@ it.each([
   [`${url}/commits/${"a".repeat(40)}`, "code"],
   [`${url}/commits`, "commits"],
   [`${url}/checks?check_run_id=1`, "checks"],
+  [`${forgejo}/files`, "code"],
   [`${gitlab}/diffs`, "code"],
   [`${gitlab}/commits`, "commits"],
   [`${gitlab}/pipelines`, "checks"],
