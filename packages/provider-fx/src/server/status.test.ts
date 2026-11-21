@@ -129,6 +129,7 @@ describe("checkFxProviderStatus", () => {
         "status --json",
         "status --json",
         "models --json",
+        "credits --json",
       ],
     },
     {
@@ -172,8 +173,13 @@ describe("checkFxProviderStatus", () => {
             model: "gpt-5.5",
             model_source: "Codex subscription",
           }),
-          "gateway status --json": status("fx login"),
+          "gateway status --json": status("fx login", { team: "example-team" }),
           "gateway models --json": GATEWAY_MODELS,
+          "gateway credits --json": JSON.stringify({
+            kind: "credits",
+            balance: "12.50",
+            token_pass: { remaining: "75", resets_at: "2026-12-05T08:00:00.000Z" },
+          }),
           "codex status --json": status("chatgpt subscription"),
           "codex models --json": models(["gpt-5.5", "gpt-5.4-mini"]),
           "grok status --json": status("missing"),
@@ -183,19 +189,25 @@ describe("checkFxProviderStatus", () => {
         },
         ["local"],
       );
-      // Never `fx acp`, which saves a session; signed-out backends list nothing.
+      // Never `fx acp`, which saves a session; signed-out backends list nothing, and only the
+      // gateway has Token Pass credit, whichever backend is fx's default.
       assert.deepEqual(invoked.map(({ backend, args }) => `${backend ?? ""} ${args}`).toSorted(), [
         " --version",
         " status --json",
         "codex models --json",
         "codex status --json",
+        "gateway credits --json",
         "gateway models --json",
         "gateway status --json",
         "grok status --json",
         "local status --json",
       ]);
       assert.equal(draft.status, "ready");
-      assert.deepEqual(draft.auth, { status: "authenticated", label: "chatgpt subscription" });
+      assert.deepEqual(draft.auth, {
+        status: "authenticated",
+        label: "chatgpt subscription",
+        workspaceId: "example-team",
+      });
       assert.deepEqual(
         draft.models.map((model) => [model.slug, model.name, model.subProvider]),
         [
@@ -219,6 +231,16 @@ describe("checkFxProviderStatus", () => {
         },
         { name: "local", unavailableReason: "The configured provider credential is unavailable." },
       ]);
+      assert.deepEqual(draft.usageLimits?.windows, [
+        {
+          id: "token_pass",
+          kind: "monthly",
+          label: "Token Pass",
+          usedPercent: 50,
+          resetsAt: "2026-12-05T08:00:00.000Z",
+        },
+      ]);
+      assert.equal(draft.usageLimits?.credentialFingerprint, "vercel-team:example-team");
       assert.isDefined(draft.versionAdvisory);
     }),
   );
@@ -249,7 +271,7 @@ describe("checkFxProviderStatus", () => {
 
   it.effect("stays usable while fx's default backend is signed out", () =>
     Effect.gen(function* () {
-      const { draft } = yield* check({
+      const { draft, invoked } = yield* check({
         " status --json": status("missing", { model: "spacexai/grok-4.7" }),
         "gateway status --json": status("missing"),
         "gateway models --json": GATEWAY_MODELS,
@@ -268,6 +290,9 @@ describe("checkFxProviderStatus", () => {
         draft.models.map((model) => model.slug),
         ["default", "codex:gpt-5.5"],
       );
+      // A signed-out gateway has no credit to read, so Limits shows no fx row.
+      assert.isFalse(invoked.some(({ args }) => args === "credits --json"));
+      assert.isUndefined(draft.usageLimits);
 
       // An earlier backend whose sign-in fx could not report does not hide Codex's.
       const unreadable = yield* check({
