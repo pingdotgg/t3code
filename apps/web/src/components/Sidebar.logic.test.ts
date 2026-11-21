@@ -35,7 +35,10 @@ import {
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
+  sameSidebarProviderEntries,
   sidebarFolderExpansionKeys,
+  type SidebarProviderEntry,
+  type SidebarProviderModel,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -44,7 +47,14 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1702,5 +1712,65 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("sameSidebarProviderEntries", () => {
+  const baseModel: SidebarProviderModel = {
+    slug: "gpt-5.5",
+    name: "GPT-5.5",
+    shortName: "5.5",
+    subProvider: "OpenAI",
+  };
+  const entry = (
+    models: ReadonlyArray<SidebarProviderModel> = [{ ...baseModel }],
+    overrides: Partial<SidebarProviderEntry> = {},
+  ): ReadonlyMap<string, SidebarProviderEntry> =>
+    new Map([
+      [
+        "codex",
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          driverKind: ProviderDriverKind.make("codex"),
+          enabled: true,
+          displayName: "Codex",
+          accentColor: "#112233",
+          acpRegistryAgentId: undefined,
+          acpRegistryIconUrl: undefined,
+          models,
+          ...overrides,
+        },
+      ],
+    ]);
+
+  // regression: #39933 provider pushes rebuilt models arrays, re-rendering every sidebar row
+  it("compares provider model arrays by displayed content", () => {
+    const left = entry();
+
+    expect(sameSidebarProviderEntries(left, entry([{ ...baseModel }]))).toBe(true);
+    expect(sameSidebarProviderEntries(left, entry([{ ...baseModel, slug: "gpt-5.6" }]))).toBe(
+      false,
+    );
+    expect(sameSidebarProviderEntries(left, entry([{ ...baseModel, name: "GPT-5.5 Pro" }]))).toBe(
+      false,
+    );
+    expect(sameSidebarProviderEntries(left, entry([{ ...baseModel, shortName: "5.5 Pro" }]))).toBe(
+      false,
+    );
+    expect(sameSidebarProviderEntries(left, entry([{ ...baseModel, subProvider: "Azure" }]))).toBe(
+      false,
+    );
+    expect(
+      sameSidebarProviderEntries(left, entry([baseModel, { slug: "gpt-5.4", name: "GPT-5.4" }])),
+    ).toBe(false);
+    expect(
+      sameSidebarProviderEntries(
+        entry([baseModel, { slug: "gpt-5.4", name: "GPT-5.4" }]),
+        entry([{ slug: "gpt-5.4", name: "GPT-5.4" }, baseModel]),
+      ),
+    ).toBe(false);
+    expect(sameSidebarProviderEntries(left, entry(undefined, { displayName: "Codex Work" }))).toBe(
+      false,
+    );
   });
 });

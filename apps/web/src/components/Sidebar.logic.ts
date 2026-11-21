@@ -23,8 +23,10 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type ServerProviderModel,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { ProviderInstanceEntry } from "../providerInstances";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import {
@@ -1459,4 +1461,72 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+export type SidebarProviderModel = Pick<
+  ServerProviderModel,
+  "slug" | "name" | "shortName" | "subProvider"
+>;
+
+// The fields thread rows show. Provider status pushes refresh `checkedAt`,
+// status and auth on every provider; leaving those out keeps each
+// environment's map, and every memoized row, stable across them.
+export type SidebarProviderEntry = Pick<
+  ProviderInstanceEntry,
+  | "instanceId"
+  | "driverKind"
+  | "enabled"
+  | "displayName"
+  | "accentColor"
+  | "acpRegistryAgentId"
+  | "acpRegistryIconUrl"
+> & {
+  readonly models: ReadonlyArray<SidebarProviderModel>;
+};
+
+function sameSidebarProviderModels(
+  left: ReadonlyArray<SidebarProviderModel>,
+  right: ReadonlyArray<SidebarProviderModel>,
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < right.length; index++) {
+    const leftModel = left[index]!;
+    const rightModel = right[index]!;
+    if (
+      leftModel !== rightModel &&
+      (leftModel.slug !== rightModel.slug ||
+        leftModel.name !== rightModel.name ||
+        leftModel.shortName !== rightModel.shortName ||
+        leftModel.subProvider !== rightModel.subProvider)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function sameSidebarProviderEntries(
+  left: ReadonlyMap<string, SidebarProviderEntry>,
+  right: ReadonlyMap<string, SidebarProviderEntry>,
+): boolean {
+  if (left === right) return true;
+  if (left.size !== right.size) return false;
+  for (const [instanceId, entry] of right) {
+    const other = left.get(instanceId);
+    if (
+      other === undefined ||
+      other.instanceId !== entry.instanceId ||
+      other.driverKind !== entry.driverKind ||
+      other.enabled !== entry.enabled ||
+      other.displayName !== entry.displayName ||
+      other.accentColor !== entry.accentColor ||
+      other.acpRegistryAgentId !== entry.acpRegistryAgentId ||
+      other.acpRegistryIconUrl !== entry.acpRegistryIconUrl ||
+      !sameSidebarProviderModels(other.models, entry.models)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
