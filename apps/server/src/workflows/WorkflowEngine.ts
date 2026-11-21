@@ -62,6 +62,15 @@ const RESUME_LOOK_EVERY = Duration.millis(25);
 const RESUME_LOOKS = 80;
 const WATCH_SETTLE = Duration.millis(100);
 const END_TRIES = 5;
+// Delivery ids that common senders put on a request and keep when they send it again.
+const DELIVERY_HEADERS = [
+  "x-github-delivery",
+  "x-gitea-delivery",
+  "x-gitlab-event-uuid",
+  "linear-delivery",
+  "webhook-id",
+  "idempotency-key",
+];
 const CANCEL_WAITS = Duration.seconds(30);
 // Times of day are the server's own, as they are for scheduled tasks.
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
@@ -410,8 +419,20 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           Effect.orElseSucceed(() => false),
         ));
       if (!known) return Option.none();
+      const authored = yield* Effect.try({
+        try: () => hook.trigger.key?.(delivery.request),
+        catch: (error) =>
+          new WorkflowInputError({
+            problem: `The key of hook ${hook.name} could not be read from the request: ${text(error)}`,
+          }),
+      });
+      // A sender's own delivery id is kept on its retry, so the retry is the same run.
+      const sent = DELIVERY_HEADERS.find((header) => delivery.request.headers[header]);
       const key =
-        hook.trigger.key?.(delivery.request) ?? delivery.deliveryId ?? (yield* random.uuidV4());
+        authored ??
+        (sent === undefined ? undefined : `${sent}:${delivery.request.headers[sent]}`) ??
+        delivery.deliveryId ??
+        (yield* random.uuidV4());
       return Option.some(
         yield* start(hook.workflow, delivery.request, {
           idempotencyKey: `hook:${hook.hookId}:${key}`,

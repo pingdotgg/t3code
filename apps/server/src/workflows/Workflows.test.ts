@@ -529,7 +529,13 @@ const triggered = [
     {
       version: 1,
       payload: WebhookRequest,
-      triggers: [webhook("push", { key: (request) => request.headers["x-delivery"] })],
+      triggers: [
+        webhook("push", {
+          key: (request) =>
+            request.headers["x-delivery"] ??
+            (JSON.parse(request.body) as { readonly delivery?: string }).delivery,
+        }),
+      ],
     },
     (request) => (request.body === "ping" ? skip("only a ping") : Effect.succeed(request.body)),
   ),
@@ -1674,6 +1680,20 @@ it.effect("a request to a hook starts a run, its retry is the same run, and a ba
         const ping = Option.getOrThrow(yield* deliver("ping", "d2"));
         const skipped = yield* workflows.waitFor(ping.runId, status("skipped"));
         assert.equal(skipped.detail, "only a ping");
+
+        const send = (headers: Record<string, string>, body: string) =>
+          workflows.deliver({
+            hookId: hookId!,
+            token: token!,
+            request: { method: "POST", headers, query: "", body },
+          });
+        // With no key from the workflow, the id the sender keeps on its retry makes it one run.
+        const github = { "x-github-delivery": "g1" };
+        const sent = Option.getOrThrow(yield* send(github, "{}"));
+        assert.deepStrictEqual(Option.getOrThrow(yield* send(github, "{}")), sent);
+        // A key the workflow cannot read off the request turns the request down.
+        const unreadable = yield* send({}, "not json").pipe(Effect.flip);
+        assert.equal(unreadable._tag, "WorkflowInputError");
         return token;
       }),
     );
