@@ -83,6 +83,9 @@ const EMPTY_LAST_VISITED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
 const EMPTY_ENTRY_PINS_ATOM = Atom.make<ReadonlyArray<OrchestrationV2ThreadEntryPin>>([]).pipe(
   Atom.withLabel("web-thread-entry-pins:empty"),
 );
+const EMPTY_THREAD_ERROR_ATOM = Atom.make<string | null>(null).pipe(
+  Atom.withLabel("web-thread-error:empty"),
+);
 const EMPTY_UPDATED_AT_ATOM = Atom.make<DateTime.Utc | null>(null).pipe(
   Atom.withLabel("web-thread-updated-at:empty"),
 );
@@ -223,6 +226,12 @@ export function useThreadUpdatedAt(ref: ScopedThreadRef | null): DateTime.Utc | 
 export function useThreadStatus(ref: ScopedThreadRef | null): EnvironmentThreadStatus {
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STATUS_ATOM : environmentThreadDetails.statusAtom(ref),
+  );
+}
+
+export function useThreadError(ref: ScopedThreadRef | null): string | null {
+  return useAtomValue(
+    ref === null ? EMPTY_THREAD_ERROR_ATOM : environmentThreadDetails.errorAtom(ref),
   );
 }
 

@@ -1,4 +1,6 @@
 import { T, useGT, useMessages } from "gt-react";
+import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isTerminalSubagentStatus,
@@ -40,7 +42,7 @@ function scriptMarkdown(script: string) {
 export function WorkflowOpeningBlock(props: {
   readonly opening: WorkflowOpening;
   readonly environmentId: EnvironmentId;
-  readonly onOpenThread: (threadId: string) => void;
+  readonly onOpenThread: (threadId: string, intent?: SideThreadOpenIntent) => void;
 }) {
   const gt = useGT();
   const { opening } = props;
@@ -114,9 +116,10 @@ function WorkflowMemberRow(props: {
   readonly providerInstanceId: ProviderInstanceId;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly driver: ProviderDriverKind | undefined;
-  readonly onOpenThread: (threadId: string) => void;
+  readonly onOpenThread: (threadId: string, intent?: SideThreadOpenIntent) => void;
 }) {
   const gt = useGT();
+  const trigger = useSideThreadTrigger();
   const { member } = props;
   const threadId = member.childThreadId;
   const failed = member.status === "failed";
@@ -143,7 +146,7 @@ function WorkflowMemberRow(props: {
                 type="button"
                 aria-label={gt("Open {title}", { title: member.title })}
                 aria-description={member.status}
-                onClick={() => props.onOpenThread(threadId)}
+                {...trigger((intent) => props.onOpenThread(threadId, intent))}
                 className={cn(
                   className,
                   "cursor-pointer transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",

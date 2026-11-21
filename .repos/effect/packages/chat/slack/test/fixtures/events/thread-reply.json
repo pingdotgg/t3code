@@ -1,0 +1,36 @@
+{
+  "case": "A thread reply that mentions the bot",
+  "provenance": {
+    "source": "Slack Events API deliveries to the janitor2 app (A0CCHBHDK7X), logged by janitor production's EFF-3709 fixture capture (Effect-TS/janitor a751115)",
+    "channel": "chat-testing-123 (C0CH1LGJ4F3), a private channel",
+    "author": "the janitor2 bot user (U0CCLMD4S1L), through the bot token",
+    "recordedAt": "2026-11-12T20:54:52.189Z",
+    "body": "The delivered JSON string, verbatim apart from the envelope token member, which the capture removes, and the members listed in a delivery's scrubbed, whose URLs are replaced",
+    "headers": "The capture's allowlist. The signature is never logged"
+  },
+  "actions": [
+    {
+      "action": "chat.postMessage",
+      "ts": "1794516867.999329",
+      "request": {
+        "thread_ts": "1794516865.426549",
+        "markdown_text": "reply to <@U0CCLMD4S1L> [EFF-3694 20:54:24]"
+      }
+    }
+  ],
+  "deliveries": [
+    {
+      "loggedAt": "2026-11-12T20:54:29.606Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794516868",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"message\",\"user\":\"U0CCLMD4S1L\",\"ts\":\"1794516867.999329\",\"bot_id\":\"B0CCQH77VA5\",\"app_id\":\"A0CCHBHDK7X\",\"text\":\"reply to <@U0CCLMD4S1L> [EFF-3694 20:54:24]\",\"team\":\"T05479Z6JBW\",\"bot_profile\":{\"id\":\"B0CCQH77VA5\",\"deleted\":false,\"name\":\"Janitor\",\"updated\":1793135255,\"app_id\":\"A0CCHBHDK7X\",\"user_id\":\"U0CCLMD4S1L\",\"icons\":{\"image_36\":\"https:\\/\\/scrubbed.invalid\\/image_36\",\"image_48\":\"https:\\/\\/scrubbed.invalid\\/image_48\",\"image_72\":\"https:\\/\\/scrubbed.invalid\\/image_72\"},\"team_id\":\"T05479Z6JBW\"},\"thread_ts\":\"1794516865.426549\",\"parent_user_id\":\"U0CCLMD4S1L\",\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"nx\\/ZVl\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"reply to \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"},{\"type\":\"text\",\"text\":\" [EFF-3694 20:54:24]\"}]}]}],\"channel\":\"C0CH1LGJ4F3\",\"event_ts\":\"1794516867.999329\",\"channel_type\":\"group\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CGUNNJ3U7\",\"event_time\":1794516867,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6Im1lc3NhZ2UiLCJ0aWQiOiJUMDU0NzlaNkpCVyIsImFpZCI6IkEwQ0NIQkhESzdYIiwiY2lkIjoiQzBDSDFMR0o0RjMifQ\"}",
+      "scrubbed": [
+        "image_36",
+        "image_48",
+        "image_72"
+      ]
+    }
+  ]
+}

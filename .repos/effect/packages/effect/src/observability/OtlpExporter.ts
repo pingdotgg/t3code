@@ -242,7 +242,7 @@ export const make: (
       if (disabledUntil !== undefined) return Effect.void
       disabledUntil = clock.currentTimeMillisUnsafe() + 60_000
       buffer = []
-      return Effect.logDebug("Disabling exporter for 60 seconds", cause)
+      return Effect.logWarning("Disabling exporter for 60 seconds", cause)
     }),
     Effect.annotateLogs({
       package: "@effect/opentelemetry",
@@ -275,15 +275,17 @@ export const make: (
     wake.openUnsafe()
   })
   // Forked after the shutdown finalizer, so the loop stops before the shutdown flush.
-  yield* Effect.gen(function*() {
-    while (true) {
-      wake.closeUnsafe()
-      yield* armed.await
-      yield* Effect.race(Effect.sleep(exportInterval), wake.await)
-      yield* Fiber.await(yield* FiberSet.run(exportFibers, runExport))
-      yield* disarmIfEmpty
-    }
-  }).pipe(Effect.forkIn(scope))
+  if (Duration.isFinite(exportInterval)) {
+    yield* Effect.gen(function*() {
+      while (true) {
+        wake.closeUnsafe()
+        yield* armed.await
+        yield* Effect.race(Effect.sleep(exportInterval), wake.await)
+        yield* Fiber.await(yield* FiberSet.run(exportFibers, runExport))
+        yield* disarmIfEmpty
+      }
+    }).pipe(Effect.forkIn(scope))
+  }
   const exportNow = Effect.andThen(runExport, disarmIfEmpty)
 
   const flusher = yield* Flusher
