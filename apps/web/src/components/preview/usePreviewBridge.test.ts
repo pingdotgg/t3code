@@ -66,6 +66,26 @@ describe("buildReportInput", () => {
 });
 
 describe("projectDesktopState", () => {
+  it("keeps the native load failure details for the panel", () => {
+    expect(
+      projectDesktopState(
+        state({
+          kind: "LoadFailed",
+          url: "https://example.com/",
+          title: "",
+          code: -105,
+          description: "failed",
+        }),
+      ).navStatus,
+    ).toEqual({
+      _tag: "LoadFailed",
+      url: "https://example.com/",
+      title: "",
+      code: -105,
+      description: "failed",
+    });
+  });
+
   it("shows a retained icon only while the current document has the captured origin", () => {
     expect(
       projectDesktopState(
