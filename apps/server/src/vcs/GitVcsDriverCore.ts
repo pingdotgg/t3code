@@ -3380,49 +3380,54 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       options?.stage !== undefined
         ? yield* stageCommitChanges(cwd, options.stage.filePaths)
         : undefined;
-    // Preserved unselected conflicts always show as index changes; `commit --only` checks itself.
-    if (!partialCommitPaths) {
-      const staged = yield* executeGit(
-        "GitVcsDriver.commit.stagedChanges",
-        cwd,
-        [
-          "-c",
-          "diff.relative=false",
-          "diff",
-          "--cached",
-          "--quiet",
-          "--no-ext-diff",
-          "--no-textconv",
-        ],
-        { allowNonZeroExit: true },
+    const diffCached = [
+      "-c",
+      "diff.relative=false",
+      "diff",
+      "--cached",
+      "--no-ext-diff",
+      "--no-textconv",
+    ];
+    // Preserved unselected conflicts always show as index changes, so only selected paths count.
+    const selectedPaths = partialCommitPaths && new Set(options?.stage?.filePaths);
+    const hasStagedChanges = selectedPaths
+      ? (yield* runGitStdoutWithOptions(
+          "GitVcsDriver.commit.stagedChanges",
+          cwd,
+          [...diffCached, "--no-renames", "--name-only", "-z"],
+          { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+        ))
+          .split("\0")
+          .some((file) => file.length > 0 && selectedPaths.has(file))
+      : (yield* executeGit("GitVcsDriver.commit.stagedChanges", cwd, [...diffCached, "--quiet"], {
+          allowNonZeroExit: true,
+        })).exitCode !== 0;
+    if (!hasStagedChanges) {
+      // Like git commit, a merge resolved to HEAD's tree still records its merge commit.
+      const mergeHeadPath = yield* runGitStdout("GitVcsDriver.commit.mergeHead", cwd, [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "MERGE_HEAD",
+      ]);
+      const merging = yield* fileSystem.exists(mergeHeadPath.trim()).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitCommandError({
+              operation: "GitVcsDriver.commit.mergeHead",
+              command: "git commit",
+              cwd,
+              detail: "Could not check whether a merge is in progress.",
+              cause,
+            }),
+        ),
       );
-      if (staged.exitCode === 0) {
-        // Like git commit, a merge resolved to HEAD's tree still records its merge commit.
-        const mergeHeadPath = yield* runGitStdout("GitVcsDriver.commit.mergeHead", cwd, [
-          "rev-parse",
-          "--path-format=absolute",
-          "--git-path",
-          "MERGE_HEAD",
-        ]);
-        const merging = yield* fileSystem.exists(mergeHeadPath.trim()).pipe(
-          Effect.mapError(
-            (cause) =>
-              new GitCommandError({
-                operation: "GitVcsDriver.commit.mergeHead",
-                command: "git commit",
-                cwd,
-                detail: "Could not check whether a merge is in progress.",
-                cause,
-              }),
-          ),
-        );
-        if (!merging) {
-          return yield* new GitVcsDriver.GitNothingToCommitError({
-            operation: "GitVcsDriver.commit",
-            cwd,
-            detail: "Staging found no changes.",
-          });
-        }
+      if (!merging) {
+        return yield* new GitVcsDriver.GitNothingToCommitError({
+          operation: "GitVcsDriver.commit",
+          cwd,
+          detail: "Staging found no changes.",
+        });
       }
     }
     const args = ["commit", "-m", subject];
