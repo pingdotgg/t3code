@@ -371,6 +371,10 @@
       "types": "./src/managedPolicyFile.ts",
       "import": "./src/managedPolicyFile.ts"
     },
+    "./managedPolicySchema": {
+      "types": "./src/managedPolicySchema.ts",
+      "import": "./src/managedPolicySchema.ts"
+    },
     "./HostProcess": {
       "types": "./src/HostProcess.ts",
       "import": "./src/HostProcess.ts"
