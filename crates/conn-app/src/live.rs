@@ -5,7 +5,7 @@
 //! - `CONN_GPUI_SERVER`: server base URL, such as `http://127.0.0.1:3891`. Unset: demo fixture.
 //! - `CONN_GPUI_TOKEN` or `CONN_GPUI_TOKEN_FILE`: a bearer token (`conn-server auth session issue
 //!   --token-only`). Else `CONN_GPUI_PAIRING_URL` (`http://host:port/pair#token=CODE`).
-//! - `CONN_GPUI_THEME`: a built-in theme id (default `dark-ocean`).
+//! - `CONN_GPUI_THEME`: a built-in theme id (default `dark-mono`, Nick's dark theme).
 
 use std::sync::LazyLock;
 
@@ -52,9 +52,9 @@ pub(crate) fn server_config_from_env() -> Option<ServerConfig> {
     })
 }
 
-/// The theme to start with: `CONN_GPUI_THEME`, else Dark Ocean.
+/// The theme to start with: `CONN_GPUI_THEME`, else Dark Mono.
 pub(crate) fn initial_theme() -> ThemeDefinition {
-    let id = std::env::var("CONN_GPUI_THEME").unwrap_or_else(|_| "dark-ocean".to_owned());
+    let id = std::env::var("CONN_GPUI_THEME").unwrap_or_else(|_| "dark-mono".to_owned());
     conn_theme::theme_by_id(&id)
         .or_else(|| conn_theme::builtin_themes().into_iter().next())
         .unwrap_or_else(|| ThemeDefinition {

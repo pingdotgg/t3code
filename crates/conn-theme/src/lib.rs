@@ -88,7 +88,7 @@ pub struct ThemeDefinition {
     pub roles: BTreeMap<String, Rgba>,
 }
 
-/// A built-in theme by id (`dark-ocean`, `t3-code-light`, `t3-code-dark`, ...).
+/// A built-in theme by id (`dark-mono`, `dark-ocean`, `t3-code-light`, `t3-code-dark`, ...).
 #[must_use]
 pub fn theme_by_id(id: &str) -> Option<ThemeDefinition> {
     builtin_themes().into_iter().find(|t| t.id == id)
@@ -338,11 +338,9 @@ mod tests {
             "expected at least 13 built-in themes, got {}",
             themes.len()
         );
-        assert_eq!(themes[0].id, "dark-ocean", "Dark Ocean must be first");
-        assert_eq!(
-            themes[1].id, "t3-code-light",
-            "T3 Code Light must be second"
-        );
+        assert_eq!(themes[0].id, "dark-mono", "Dark Mono must be first");
+        assert_eq!(themes[1].id, "dark-ocean", "Dark Ocean second");
+        assert_eq!(themes[2].id, "t3-code-light", "T3 Code Light third");
 
         for theme in &themes {
             let tokens = Tokens::derive(theme);

@@ -20,7 +20,7 @@ fi
 (cd "$ROOT" && cargo build -p conn-app --features automation ${CARGO_FLAGS:-})
 rm -f "$DEV/automation-port"
 CONN_GPUI_SERVER="http://127.0.0.1:$PORT" CONN_GPUI_TOKEN_FILE="$DEV/bearer" \
-  CONN_GPUI_AUTOMATION="$DEV/automation-port" CONN_GPUI_THEME="${CONN_GPUI_THEME:-dark-ocean}" \
+  CONN_GPUI_AUTOMATION="$DEV/automation-port" CONN_GPUI_THEME="${CONN_GPUI_THEME:-dark-mono}" \
   nohup "$ROOT/target/debug/conn-app" > "$DEV/app.log" 2>&1 &
 echo $! > "$DEV/app.pid"
 for _ in $(seq 1 100); do [[ -s "$DEV/automation-port" ]] && break; sleep 0.1; done

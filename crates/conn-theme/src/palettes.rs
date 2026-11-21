@@ -13,6 +13,8 @@ use crate::palette_data::{
 use crate::{Appearance, Rgba, ThemeDefinition, ThemeError};
 
 const DARK_OCEAN_JSON: &str = include_str!("../themes/dark-ocean.json");
+/// Nick's current dark theme (Orbit profile "Nick", as the Conn UI lab seeds it).
+const DARK_MONO_JSON: &str = include_str!("../themes/dark-mono.json");
 
 #[derive(Deserialize)]
 struct RawThemeFile {
@@ -71,11 +73,14 @@ pub(crate) fn default_roles_for_appearance(appearance: Appearance) -> BTreeMap<S
     parse_static_roles(table)
 }
 
-/// Every built-in theme, Dark Ocean first, then T3 Code Light, then the remaining palettes.
+/// Every built-in theme: Dark Mono (Nick's default dark), Dark Ocean, T3 Code Light, then the rest.
 #[must_use]
 pub fn builtin_themes() -> Vec<ThemeDefinition> {
-    let mut themes = Vec::with_capacity(13);
+    let mut themes = Vec::with_capacity(14);
 
+    if let Ok(dark_mono) = parse_theme_json("dark-mono", DARK_MONO_JSON) {
+        themes.push(dark_mono);
+    }
     if let Ok(dark_ocean) = parse_theme_json("dark-ocean", DARK_OCEAN_JSON) {
         themes.push(dark_ocean);
     }
