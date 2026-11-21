@@ -2,25 +2,28 @@ export const SKILL_CHIP_ICON_SVG = `<svg width="100%" height="100%" viewBox="0 0
 
 const attachmentNameSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-const EMOJI_GRAPHEME = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator})/u;
-const WIDE_GRAPHEME =
-  /^[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6\u{20000}-\u{3FFFD}]/u;
+// Chip labels are 14px medium text capped at max-w-72 (288px); 8px is an average Latin glyph.
+const LABEL_WIDTH = 288;
+const AVERAGE_GLYPH_WIDTH = 8;
+let measureContext: CanvasRenderingContext2D | null | undefined;
 
-// Rendered width in average Latin glyphs of the chip font, so the budget matches its max-w-72 label.
-function attachmentGraphemeWidth(grapheme: string): number {
-  if (EMOJI_GRAPHEME.test(grapheme)) return 2.3;
-  if (WIDE_GRAPHEME.test(grapheme)) return 1.75;
-  return 1;
+function attachmentNameMeasure(): (text: string) => number {
+  measureContext ??=
+    typeof document === "undefined" ? null : document.createElement("canvas").getContext("2d");
+  const context = measureContext;
+  if (!context) return () => AVERAGE_GLYPH_WIDTH;
+  const fontFamily = getComputedStyle(document.documentElement).getPropertyValue("--font-sans");
+  context.font = `500 14px ${fontFamily || "sans-serif"}`;
+  return (text) => context.measureText(text).width;
 }
 
-export function middleTruncateAttachmentName(name: string, maxWidth = 36): string {
+export function middleTruncateAttachmentName(name: string): string {
+  const measure = attachmentNameMeasure();
   const graphemes = Array.from(attachmentNameSegmenter.segment(name), (part) => part.segment);
-  const widths = graphemes.map(attachmentGraphemeWidth);
-  if (widths.reduce((total, width) => total + width, 0) <= maxWidth) return name;
-  if (maxWidth <= 0) return "";
-  if (maxWidth === 1) return "…";
-  const available = maxWidth - 1;
-  const suffixBudget = Math.min(available - 1, available >= 18 ? 14 : Math.ceil(available / 2));
+  const widths = graphemes.map(measure);
+  if (widths.reduce((total, width) => total + width, 0) <= LABEL_WIDTH) return name;
+  const available = LABEL_WIDTH - measure("…");
+  const suffixBudget = 14 * AVERAGE_GLYPH_WIDTH;
   const prefixBudget = available - suffixBudget;
   let suffixStart = graphemes.length;
   let suffixWidth = 0;
