@@ -2050,20 +2050,6 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
-    homeNotes: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:home:notes",
-      tag: WS_METHODS.homeNotesRead,
-      idleTtlMs: 0,
-    }),
-    writeHomeNotes: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:home:write-notes",
-      tag: WS_METHODS.homeNotesWrite,
-      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
-    }),
-    homeWatches: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:server:home:watches",
-      tag: WS_METHODS.homeWatchesList,
-    }),
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,

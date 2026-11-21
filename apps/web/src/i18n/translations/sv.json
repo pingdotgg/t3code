@@ -3224,7 +3224,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "på datorn som öppnade den här sidan"]
+      "c": [
+        " ",
+        "på datorn som öppnade den här sidan"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3236,7 +3239,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· den som kör den får den här åtkomsten"]
+      "c": [
+        " ",
+        "· den som kör den får den här åtkomsten"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
@@ -5926,8 +5932,6 @@
   "4d64e4af81c19972": "Välj en modell för Home först.",
   "ae6762c8039a2013": "Home:s tråd kunde inte startas.",
   "c4fcdd67ef8fc4ad": "Home:s inställningar kunde inte läsas eller sparas.",
-  "592be61f10a4887b": "Home:s anteckningar kunde inte läsas eller sparas.",
-  "2920f1e4b163517e": "Den här tråden är inte längre Home.",
   "94ab4591ce101233": "Kommentaren kunde inte publiceras",
   "92d0d4eab2596772": "Ärendehanteraren nekade.",
   "33591d9596fb7cb7": "Lägg till en kommentar",
@@ -8679,7 +8683,6 @@
   "e8622c39abe68f9d": "standard",
   "5383ef2d2c09cdf7": "Sök teckensnitt…",
   "ea08337bcadd35b4": "Inga teckensnitt hittades.",
-  "efc5c263b67d0c01": "Börja om med Home? Ett nytt samtal startar. Anteckningar och bevakningar finns kvar, och den gamla tråden behålls.",
   "538f9f1292ad5fdc": "En agent i den här miljön som arbetar över dina projekt och länkade miljöer.",
   "d6ad43bc4b700a88": "Det finns inga webbläsarprofildata att rensa.",
   "ad8efd437b301a37": "System",
@@ -9167,15 +9170,6 @@
   "7f15dd3afd2bd8fc": "Modell",
   "31a5a3e95ec36b30": "Modellen som Home körs med.",
   "b0d038fc0511ad65": "Börja om",
-  "40b75d6399b63b55": "Starta ett nytt Home-samtal. Anteckningar och bevakningar följer med.",
-  "d2716dad8821792c": "notes.md",
-  "20db88ef6068cc35": "Det Home minns mellan samtal. Home redigerar det också.",
-  "19cd0b48201dbc93": "Anteckningar för Home",
-  "31698074d1a46be8": "Inget bevakas",
-  "ecae3a9b121e2e27": "Trådar som Home startar eller ombeds följa visas här tills de är klara.",
-  "4a4872ce4711f3ae": "Startad av Home",
-  "9e4197e0c51966dd": "Följs av Home",
-  "07d0135060a7e6ce": "Arbetsflödeskörning {id}",
   "5fc35138b0ff1aea": "Börja om",
   "bd85846f8b382b9d": "Modell för nya trådar i det här projektet.",
   "2600e0994b8b82f1": "Standardmodell för nya trådar, vald automatiskt. Projekt kan åsidosätta den.",
@@ -12010,9 +12004,6 @@
   "f2b07faba1229ce7": "Intervall för hälsokontroll",
   "5c9dc9970db79fe2": "uppdatera tillgänglighet versioner autentiseringsstatus modeller bakgrundskontroller sekunder av",
   "62d80d69a2524884": "koordinator agent projekt länkade miljöer slå på av modell",
-  "203f934b3a5e7174": "notes.md minne komma ihåg börja om",
-  "c8df729c82ff88d9": "Bevakas av Home",
-  "da4a6863448b4a69": "bevakningar följer trådar arbetsflödeskörningar",
   "056ba6a180d114b5": "tillåt inaktivera aktivera öppna styr förhandsvisning verktyg sessioner projekt åsidosätt",
   "345075be6cacc171": "enhetsvärdar ssh fjärr mac mini identitet nyckel anslutning eas expo moln simlock pool gateway lokala simulatorer",
   "a6b742430b05d6cc": "Agenter kan använda enheter",
@@ -13053,5 +13044,7 @@
       "v": "v"
     },
     " till i Länkade objekt"
-  ]
+  ],
+  "04c311eddac83b4e": "Börja om Home? En ny konversation startar. Anteckningar, preferenser och crew följer med, och den gamla tråden sparas.",
+  "4aa5ad6099942650": "Börja en ny Home-konversation. Anteckningar, preferenser och crew följer med."
 }

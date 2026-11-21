@@ -14,8 +14,6 @@ const HOME_ERROR_MESSAGES = {
   "no-model": msg("Choose a model for Home first."),
   "launch-failed": msg("Home's thread could not be started."),
   "settings-unavailable": msg("Home's settings could not be read or saved."),
-  "notes-unavailable": msg("Home's notes could not be read or saved."),
-  "not-home": msg("This thread is no longer Home."),
 } satisfies Record<HomeErrorReason, string>;
 
 const isHomeError = Schema.is(HomeError);

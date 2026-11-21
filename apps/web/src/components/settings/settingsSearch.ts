@@ -1140,18 +1140,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("coordinator agent across projects linked environments turn on off model")],
   },
   {
-    id: "home-notes",
-    title: msg("Home notes"),
-    to: "/settings/home",
-    searchTerms: [msg("notes.md memory remember start fresh")],
-  },
-  {
-    id: "home-watches",
-    title: msg("Watched by Home"),
-    to: "/settings/home",
-    searchTerms: [msg("watches follows threads workflow runs")],
-  },
-  {
     id: "agent-browser-access",
     title: msg("Agent browser access"),
     to: "/settings/browser",

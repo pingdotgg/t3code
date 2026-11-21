@@ -3435,7 +3435,7 @@ const make = Effect.gen(function* () {
                   branch: parent.thread.branch,
                   worktreePath: parent.thread.worktreePath,
                   ...(parent.thread.linkOrigin === undefined
-                    ? {}
+                    ? { groupedUnderThreadId: parent.thread.id }
                     : { linkOrigin: parent.thread.linkOrigin }),
                   ...(initialMessage === undefined ? {} : { initialMessage }),
                 })

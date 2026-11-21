@@ -3224,7 +3224,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
+      "c": [
+        " ",
+        "sur l’ordinateur qui a ouvert cette page"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3236,7 +3239,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· quiconque l’exécute obtient cet accès"]
+      "c": [
+        " ",
+        "· quiconque l’exécute obtient cet accès"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -5926,8 +5932,6 @@
   "4d64e4af81c19972": "Choisissez d'abord un modèle pour Home.",
   "ae6762c8039a2013": "Impossible de démarrer le fil de Home.",
   "c4fcdd67ef8fc4ad": "Impossible de lire ou d'enregistrer les réglages de Home.",
-  "592be61f10a4887b": "Impossible de lire ou d'enregistrer les notes de Home.",
-  "2920f1e4b163517e": "Ce fil n'est plus Home.",
   "94ab4591ce101233": "Le commentaire n’a pas pu être publié",
   "92d0d4eab2596772": "Le gestionnaire de tickets l’a refusé.",
   "33591d9596fb7cb7": "Ajouter un commentaire",
@@ -8672,7 +8676,6 @@
   "e8622c39abe68f9d": "par défaut",
   "5383ef2d2c09cdf7": "Rechercher des polices…",
   "ea08337bcadd35b4": "Aucune police trouvée.",
-  "efc5c263b67d0c01": "Repartir de zéro avec Home ? Une nouvelle conversation commence. Ses notes et suivis restent, et l'ancien fil est conservé.",
   "538f9f1292ad5fdc": "Un agent sur cet environnement qui travaille sur l'ensemble de vos projets et environnements liés.",
   "d6ad43bc4b700a88": "Aucune donnée de profil de navigateur à effacer.",
   "ad8efd437b301a37": "Système",
@@ -9161,15 +9164,6 @@
   "7f15dd3afd2bd8fc": "Modèle",
   "31a5a3e95ec36b30": "Le modèle utilisé par Home.",
   "b0d038fc0511ad65": "Repartir de zéro",
-  "40b75d6399b63b55": "Commencer une nouvelle conversation Home. Les notes et les suivis sont conservés.",
-  "d2716dad8821792c": "notes.md",
-  "20db88ef6068cc35": "Ce dont Home se souvient d'une conversation à l'autre. Home le modifie aussi.",
-  "19cd0b48201dbc93": "Notes de Home",
-  "31698074d1a46be8": "Rien n'est suivi",
-  "ecae3a9b121e2e27": "Les fils que Home lance ou doit suivre apparaissent ici jusqu'à ce qu'ils se terminent.",
-  "4a4872ce4711f3ae": "Lancé par Home",
-  "9e4197e0c51966dd": "Suivi par Home",
-  "07d0135060a7e6ce": "Exécution de workflow {id}",
   "5fc35138b0ff1aea": "Repartir de zéro",
   "bd85846f8b382b9d": "Modèle des nouveaux fils de ce projet.",
   "2600e0994b8b82f1": "Modèle par défaut des nouveaux fils, sélectionné automatiquement. Les projets peuvent le remplacer.",
@@ -12002,9 +11996,6 @@
   "f2b07faba1229ce7": "Intervalle de vérification de l’état",
   "5c9dc9970db79fe2": "actualiser disponibilité versions état d’authentification modèles sondes en arrière-plan secondes désactivé",
   "62d80d69a2524884": "coordinateur agent projets environnements liés activer désactiver modèle",
-  "203f934b3a5e7174": "notes.md mémoire se souvenir repartir de zéro",
-  "c8df729c82ff88d9": "Suivi par Home",
-  "da4a6863448b4a69": "suivis suit fils exécutions de workflows",
   "056ba6a180d114b5": "autoriser désactiver activer ouvrir piloter aperçu outils sessions remplacement par projet",
   "345075be6cacc171": "appareil hôtes ssh distant mac mini identité clé connexion eas expo cloud simlock pool passerelle simulateurs locaux",
   "a6b742430b05d6cc": "Les agents peuvent utiliser les appareils",
@@ -13046,5 +13037,7 @@
       "v": "v"
     },
     " de plus dans Éléments associés"
-  ]
+  ],
+  "04c311eddac83b4e": "Repartir de zéro avec Home ? Une nouvelle conversation commence. Ses notes, préférences et son équipe sont conservées, et l'ancien fil est gardé.",
+  "4aa5ad6099942650": "Commencer une nouvelle conversation Home. Les notes, préférences et l'équipe sont conservées."
 }

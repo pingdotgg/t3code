@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
-import { HomeToolkit } from "./toolkits/home/tools.ts";
+import { BotToolkit } from "./toolkits/bot/tools.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 
 it("drops JSON noise, merges tagged unions, and keeps null where it is required", () => {
@@ -61,8 +61,8 @@ it("advertises only string enum values, which Gemini requires", () => {
   expect(enumValues.filter((value) => typeof value !== "string")).toEqual([]);
 });
 
-it("advertises Home tool inputs as top-level objects, which MCP clients require", () => {
-  for (const tool of Object.values(HomeToolkit.tools)) {
+it("advertises Bot tool inputs as top-level objects, which MCP clients require", () => {
+  for (const tool of Object.values(BotToolkit.tools)) {
     expect(advertisedJsonSchema(tool)).toMatchObject({ type: "object" });
   }
 });

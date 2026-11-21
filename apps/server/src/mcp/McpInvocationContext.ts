@@ -34,6 +34,11 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
+  /**
+   * The thread was created as a Bot (Home among them). Fixed for its life, so it decides what is
+   * listed; Bot tools still check on every call that it is a live Bot right now.
+   */
+  readonly bot?: boolean;
 }
 
 export interface McpClientCaller {
@@ -222,11 +227,34 @@ export const hiddenWithoutBackgroundWait = (): boolean => {
   );
 };
 
+const isBotCaller = (thread: McpThreadCaller | undefined) =>
+  thread?.bot === true && thread.subagent !== true;
+
+/**
+ * `McpSchema.EnabledWhen` for a Bot's own tools: only a Bot thread lists them, so ordinary
+ * threads pay nothing for them. Discovery only; the handlers check the Bot on every call.
+ */
+export const hiddenFromNonBots = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return isBotCaller(scope?.thread);
+};
+
 /** `McpSchema.EnabledWhen` for tools only a client outside a thread drives, such as the CLI. */
 export const hiddenFromThreads = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.thread === undefined;
+};
+
+/**
+ * `McpSchema.EnabledWhen` for workflow tools: outside clients and the CLI see them, and so do Bots
+ * while Workflows are on. No other thread does.
+ */
+export const hiddenFromThreadsExceptBots = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.thread === undefined || (isBotCaller(scope.thread) && scope.workflows === true);
 };
 
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */

@@ -3284,3 +3284,100 @@ it.each([
     assert.isAtMost(reads.count, 2 * (size + size));
   },
 );
+
+it.effect("keeps thread groups one level deep without bumping activity", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const projectId = ProjectId.make("project:groups");
+    const [leader, crew, other, launched, bot, elsewhere] = [
+      "leader",
+      "crew",
+      "other",
+      "launched",
+      "bot",
+      "elsewhere",
+    ].map((name) => ThreadId.make(`thread:group-${name}`)) as [
+      ThreadId,
+      ThreadId,
+      ThreadId,
+      ThreadId,
+      ThreadId,
+      ThreadId,
+    ];
+    const create = (
+      threadId: ThreadId,
+      options: {
+        readonly groupedUnderThreadId?: ThreadId;
+        readonly botConfig?: { readonly enabled: true; readonly muteChildren: boolean };
+        readonly projectId?: ProjectId;
+      } = {},
+    ) =>
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create:${threadId}`),
+        threadId,
+        projectId: options.projectId ?? projectId,
+        title: threadId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "agent",
+        creationSource: "mcp",
+        ...(options.groupedUnderThreadId === undefined
+          ? {}
+          : { groupedUnderThreadId: options.groupedUnderThreadId }),
+        ...(options.botConfig === undefined ? {} : { botConfig: options.botConfig }),
+      });
+    const group = (threadId: ThreadId, groupedUnderThreadId: ThreadId | null, suffix = "") =>
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`group:${threadId}:${groupedUnderThreadId}${suffix}`),
+        threadId,
+        groupedUnderThreadId,
+      });
+    yield* create(leader);
+    yield* create(crew);
+    yield* create(other);
+    yield* TestClock.adjust("1 minute");
+
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(group(crew, crew))));
+    yield* group(crew, leader);
+    const grouped = yield* projections.getThread(crew);
+    assert.equal(grouped.groupedUnderThreadId, leader);
+    assert.deepEqual(grouped.updatedAt, grouped.createdAt);
+    // Crew never leads, and a leader is never crew.
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(group(other, crew))));
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(group(leader, other))));
+
+    // A launch from crew joins the crew's leader.
+    yield* create(launched, { groupedUnderThreadId: crew });
+    assert.equal((yield* projections.getThread(launched)).groupedUnderThreadId, leader);
+
+    // Crew of a Bot may work in another project; only a Bot's crew can be muted.
+    yield* create(bot, { botConfig: { enabled: true, muteChildren: false } });
+    yield* create(elsewhere, {
+      groupedUnderThreadId: bot,
+      projectId: ProjectId.make("project:elsewhere"),
+    });
+    assert.equal((yield* projections.getThread(elsewhere)).groupedUnderThreadId, bot);
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(group(bot, leader))));
+    const mute = (threadId: ThreadId) =>
+      orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`mute:${threadId}`),
+        threadId,
+        botMuteChildren: true,
+      });
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(mute(leader))));
+    yield* mute(bot);
+    const muted = yield* projections.getThread(bot);
+    assert.deepEqual(muted.botConfig, { enabled: true, muteChildren: true });
+    assert.deepEqual(muted.updatedAt, muted.createdAt);
+
+    yield* group(crew, null);
+    assert.isNull((yield* projections.getThread(crew)).groupedUnderThreadId);
+  }).pipe(Effect.provide(layerTest)),
+);

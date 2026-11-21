@@ -848,6 +848,22 @@ function metadataUpdateContinuation(
       };
 }
 
+const ORGANIZE_ONLY_METADATA_KEYS: ReadonlySet<string> = new Set([
+  "type",
+  "commandId",
+  "threadId",
+  "groupedUnderThreadId",
+  "botMuteChildren",
+]);
+
+function isOrganizeOnlyMetadataUpdate(
+  command: Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }>,
+): boolean {
+  return Object.entries(command).every(
+    ([key, value]) => value === undefined || ORGANIZE_ONLY_METADATA_KEYS.has(key),
+  );
+}
+
 // A later command for the first message would leave the new thread committed with no run,
 // and every client would show it idle until that command landed.
 function threadCreateInitialMessage(
@@ -4103,6 +4119,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { concurrency: 1, discard: true },
     );
 
+  // Best effort: a launch never fails over its group, so an unusable leader drops the grouping.
+  const resolveCreatedThreadGroupLeader = Effect.fn(
+    "orchestrationV2.dispatch.resolveCreatedThreadGroupLeader",
+  )(function* (requestedId: ThreadId, projectId: ProjectId) {
+    const requested = yield* findThread(requestedId);
+    const root =
+      requested === null || requested.lineage.parentThreadId === null
+        ? requested
+        : yield* findThread(requested.lineage.rootThreadId);
+    if (root === null || root.lineage.parentThreadId !== null) return null;
+    const leader =
+      root.groupedUnderThreadId == null ? root : yield* findThread(root.groupedUnderThreadId);
+    if (
+      leader === null ||
+      leader.deletedAt !== null ||
+      // A Bot's crew may work in any project; Home's always does.
+      (leader.projectId !== projectId && leader.botConfig == null) ||
+      leader.lineage.parentThreadId !== null ||
+      leader.groupedUnderThreadId != null
+    ) {
+      return null;
+    }
+    return leader.id;
+  });
+
   const dispatchThreadCreate = Effect.fn("orchestrationV2.dispatch.threadCreate")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "thread.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -4125,6 +4166,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const now = yield* DateTime.now;
     const emitEvent = emit(events, command);
+    const groupedUnderThreadId =
+      command.groupedUnderThreadId === undefined || command.botConfig !== undefined
+        ? null
+        : yield* resolveCreatedThreadGroupLeader(command.groupedUnderThreadId, command.projectId);
     const thread: OrchestrationV2AppThread = {
       createdBy: command.createdBy,
       creationSource: command.creationSource,
@@ -4146,6 +4191,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? {}
         : { delegatedFrom: command.delegatedFrom }),
       ...(command.workflowRun === undefined ? {} : { workflowRun: command.workflowRun }),
+      ...(groupedUnderThreadId === null ? {} : { groupedUnderThreadId }),
+      ...(command.botConfig === undefined ? {} : { botConfig: command.botConfig }),
       lineage: {
         parentThreadId: null,
         relationshipToParent: null,
@@ -4599,6 +4646,51 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
+    }
+    if (command.type === "thread.metadata.update") {
+      const refuse = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      if (command.botMuteChildren !== undefined && thread.botConfig == null) {
+        return yield* refuse(`Thread ${command.threadId} is not a Bot.`);
+      }
+      const leaderId = command.groupedUnderThreadId;
+      if (leaderId != null && leaderId !== thread.groupedUnderThreadId) {
+        if (leaderId === command.threadId) {
+          return yield* refuse(`Thread ${command.threadId} cannot be grouped under itself.`);
+        }
+        if (thread.lineage.parentThreadId !== null) {
+          return yield* refuse(
+            `Thread ${command.threadId} is not a top-level thread, so it cannot be grouped.`,
+          );
+        }
+        if (thread.botConfig != null) {
+          return yield* refuse(`Thread ${command.threadId} is a Bot; a Bot is never crew.`);
+        }
+        const leader = yield* projectionStore.findThread(leaderId).pipe(mapDispatchError(command));
+        if (leader === null || leader.deletedAt !== null) {
+          return yield* refuse(
+            `Thread ${leaderId} does not exist, so nothing can be grouped under it.`,
+          );
+        }
+        // Groups stay one level deep: a leader is never crew, and crew never leads.
+        if (leader.lineage.parentThreadId !== null || leader.groupedUnderThreadId != null) {
+          return yield* refuse(`Thread ${leaderId} is not a top-level group leader.`);
+        }
+        if (leader.projectId !== thread.projectId && leader.botConfig == null) {
+          return yield* refuse(`Thread ${leaderId} is in another project.`);
+        }
+        if (
+          (yield* projectionStore
+            .listGroupedCrewIds(command.threadId)
+            .pipe(mapDispatchError(command))).length > 0
+        ) {
+          return yield* refuse(`Thread ${command.threadId} leads a group; ungroup its crew first.`);
+        }
+      }
     }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
@@ -5271,7 +5363,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : command.regenerateTitle === false || command.title !== undefined
                 ? { titleRegeneration: null }
                 : {}),
-            updatedAt: now,
+            ...(command.groupedUnderThreadId === undefined
+              ? {}
+              : { groupedUnderThreadId: command.groupedUnderThreadId }),
+            ...(command.botMuteChildren === undefined || thread.botConfig == null
+              ? {}
+              : { botConfig: { ...thread.botConfig, muteChildren: command.botMuteChildren } }),
+            // Grouping and crew muting arrange the sidebar; they are not activity on the thread.
+            updatedAt: isOrganizeOnlyMetadataUpdate(command) ? thread.updatedAt : now,
           };
         }
         case "thread.pull-request.link":

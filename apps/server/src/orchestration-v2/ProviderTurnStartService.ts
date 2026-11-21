@@ -70,6 +70,7 @@ import {
   isSlashCommandMessage,
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
+import { withBotInstructions } from "../bots/botInstructions.ts";
 import { isProviderCommand, outputInstructions } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1198,10 +1199,15 @@ export const layer: Layer.Layer<
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
       const goalCommand = goalDriver && parseGoalCommand(providerMessage) !== null;
       // Part of the user text, so every way a turn starts carries it, after the user's own words.
-      const userText =
-        run.outputSchema === undefined || goalCommand || isProviderCommand(providerMessage)
+      const plainCommand = goalCommand || isProviderCommand(providerMessage);
+      const promptText =
+        run.outputSchema === undefined || plainCommand
           ? messageText
           : `${messageText}\n\n${outputInstructions(run.outputSchema)}`;
+      const userText =
+        projection.thread.botConfig != null && !plainCommand
+          ? withBotInstructions(projection.thread.id, promptText)
+          : promptText;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,

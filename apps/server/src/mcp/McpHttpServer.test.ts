@@ -60,6 +60,7 @@ import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
 import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import * as BotService from "../bots/BotService.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { FEEDBACK_CLI_CLIENT_LABEL } from "../feedback/FeedbackReport.ts";
@@ -2264,6 +2265,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
           threadId: ThreadId.make(`thread-${token}`),
           providerSessionId: token,
           providerInstanceId: ProviderInstanceId.make("copilot"),
+          bot: token.startsWith("bot"),
         },
         client: undefined,
         capabilities: new Set(["orchestration"]),
@@ -2376,6 +2378,132 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
       expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("lists and runs Bot tools only for a Bot thread, deferred or not", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const scopeFor = (token: string): McpInvocationContext.McpThreadInvocationScope => ({
+        environmentId,
+        requestNamespace: token,
+        thread: {
+          threadId: ThreadId.make(`thread-${token}`),
+          providerSessionId: token,
+          providerInstanceId: ProviderInstanceId.make("copilot"),
+          bot: token.startsWith("bot"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      });
+      const tokens = ["bot", "botDeferred", "plain", "plainDeferred"];
+      const scopes = new Map(tokens.map((token) => [token, scopeFor(token)]));
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        Layer.mergeAll(McpHttpServer.layerBotTools, McpHttpServer.layerToolSearch),
+      ).pipe(
+        Layer.provide(
+          Layer.mock(BotService.BotService)({
+            isBot: (threadId) => Effect.succeed(threadId.startsWith("thread-bot")),
+            readFiles: () => Effect.succeed({ notes: "Ship on Fridays.", preferences: "" }),
+            watches: () => Effect.succeed([]),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (token) => Effect.succeed(scopes.get(token)),
+          }),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const session = (token: string) =>
+        Effect.gen(function* () {
+          const headers = {
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token}`,
+            ...(token.endsWith("Deferred") ? { "t3-tool-exposure": "deferred" } : {}),
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          const rpc = (method: string, params: object) =>
+            httpClient
+              .post("/mcp", {
+                headers: {
+                  ...headers,
+                  "mcp-session-id": initialize.headers["mcp-session-id"]!,
+                  "mcp-protocol-version": "2025-06-18",
+                },
+                body: HttpBody.text(
+                  JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+                  "application/json",
+                ),
+              })
+              .pipe(
+                Effect.flatMap((response) => response.text),
+                Effect.map((text) =>
+                  text
+                    .split("\n")
+                    .filter((line) => line.startsWith("data: ") || line.startsWith("{"))
+                    .map(
+                      (line) =>
+                        JSON.parse(line.replace(/^data: /u, "")) as {
+                          id?: number;
+                          result?: {
+                            tools?: ReadonlyArray<{ name: string }>;
+                            structuredContent?: unknown;
+                          };
+                          error?: unknown;
+                        },
+                    )
+                    .find((message) => message.id === 2)!,
+                ),
+              );
+          return {
+            listed: rpc("tools/list", {}).pipe(
+              Effect.map((body) => body.result!.tools!.map((listed) => listed.name).sort()),
+            ),
+            call: (name: string, args: object) => rpc("tools/call", { name, arguments: args }),
+          };
+        });
+
+      const botTools = [
+        "t3_bot_memory_read",
+        "t3_bot_notes_write",
+        "t3_bot_preferences_append",
+        "t3_bot_watch_add",
+        "t3_bot_watch_remove",
+      ];
+      const bot = yield* session("bot");
+      const botDeferred = yield* session("botDeferred");
+      const plain = yield* session("plain");
+      const plainDeferred = yield* session("plainDeferred");
+      expect(yield* bot.listed).toEqual(botTools);
+      expect(yield* botDeferred.listed).toEqual([...botTools, "tool_search"]);
+      expect(yield* plain.listed).toEqual([]);
+      expect(yield* plainDeferred.listed).toEqual(["tool_search"]);
+      expect(
+        (yield* plainDeferred.call("tool_search", { query: "bot notes" })).result
+          ?.structuredContent,
+      ).toEqual({ tools: [] });
+
+      expect((yield* bot.call("t3_bot_memory_read", {})).result?.structuredContent).toEqual({
+        notes: "Ship on Fridays.",
+        preferences: "",
+        watches: [],
+      });
+      const refused = yield* plain.call("t3_bot_memory_read", {});
+      expect(refused.result?.structuredContent).toBeUndefined();
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

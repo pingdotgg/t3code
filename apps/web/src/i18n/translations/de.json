@@ -3225,7 +3225,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "auf dem Computer, der diese Seite geöffnet hat"]
+      "c": [
+        " ",
+        "auf dem Computer, der diese Seite geöffnet hat"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3237,7 +3240,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· wer es ausführt, erhält diesen Zugriff"]
+      "c": [
+        " ",
+        "· wer es ausführt, erhält diesen Zugriff"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "Genehmige nur eine Anmeldung, die du gerade selbst gestartet hast.",
@@ -5926,8 +5932,6 @@
   "4d64e4af81c19972": "Wähle zuerst ein Modell für Home.",
   "ae6762c8039a2013": "Der Thread von Home konnte nicht gestartet werden.",
   "c4fcdd67ef8fc4ad": "Die Einstellungen von Home konnten nicht gelesen oder gespeichert werden.",
-  "592be61f10a4887b": "Die Notizen von Home konnten nicht gelesen oder gespeichert werden.",
-  "2920f1e4b163517e": "Dieser Thread ist nicht mehr Home.",
   "94ab4591ce101233": "Der Kommentar konnte nicht gepostet werden",
   "92d0d4eab2596772": "Der Tracker hat es abgelehnt.",
   "33591d9596fb7cb7": "Kommentar hinzufügen",
@@ -8673,7 +8677,6 @@
   "e8622c39abe68f9d": "Standard",
   "5383ef2d2c09cdf7": "Schriften suchen…",
   "ea08337bcadd35b4": "Keine Schriften gefunden.",
-  "efc5c263b67d0c01": "Home neu beginnen? Es startet eine neue Unterhaltung. Notizen und Beobachtungen bleiben, und der alte Thread wird behalten.",
   "538f9f1292ad5fdc": "Ein Agent in dieser Umgebung, der über deine Projekte und verknüpften Umgebungen hinweg arbeitet.",
   "d6ad43bc4b700a88": "Es sind keine Browser-Profildaten zum Löschen verfügbar.",
   "ad8efd437b301a37": "System",
@@ -9161,15 +9164,6 @@
   "7f15dd3afd2bd8fc": "Modell",
   "31a5a3e95ec36b30": "Das Modell, mit dem Home läuft.",
   "b0d038fc0511ad65": "Neu beginnen",
-  "40b75d6399b63b55": "Eine neue Home-Unterhaltung beginnen. Notizen und Beobachtungen bleiben erhalten.",
-  "d2716dad8821792c": "notes.md",
-  "20db88ef6068cc35": "Was sich Home zwischen Unterhaltungen merkt. Home bearbeitet es auch selbst.",
-  "19cd0b48201dbc93": "Home-Notizen",
-  "31698074d1a46be8": "Nichts beobachtet",
-  "ecae3a9b121e2e27": "Threads, die Home startet oder verfolgen soll, erscheinen hier, bis sie abgeschlossen sind.",
-  "4a4872ce4711f3ae": "Von Home gestartet",
-  "9e4197e0c51966dd": "Von Home verfolgt",
-  "07d0135060a7e6ce": "Workflow-Lauf {id}",
   "5fc35138b0ff1aea": "Neu beginnen",
   "bd85846f8b382b9d": "Modell für neue Threads in diesem Projekt.",
   "2600e0994b8b82f1": "Standardmodell für neue Threads, automatisch ausgewählt. Projekte können es überschreiben.",
@@ -12004,9 +11998,6 @@
   "f2b07faba1229ce7": "Intervall der Zustandsprüfung",
   "5c9dc9970db79fe2": "aktualisieren verfügbarkeit versionen anmeldestatus modelle hintergrund prüfungen sekunden aus",
   "62d80d69a2524884": "Koordinator Agent über Projekte verknüpfte Umgebungen ein aus Modell",
-  "203f934b3a5e7174": "notes.md Gedächtnis merken neu beginnen",
-  "c8df729c82ff88d9": "Von Home beobachtet",
-  "da4a6863448b4a69": "Beobachtungen verfolgt Threads Workflow-Läufe",
   "056ba6a180d114b5": "erlauben deaktivieren aktivieren öffnen steuern vorschau tools sitzungen projekt überschreiben",
   "345075be6cacc171": "gerät hosts ssh remote mac mini identität schlüssel verbindung eas expo cloud simlock pool gateway lokale simulatoren",
   "a6b742430b05d6cc": "Agenten können Geräte nutzen",
@@ -13046,5 +13037,7 @@
       "v": "v"
     },
     " weitere unter Verknüpfte Elemente"
-  ]
+  ],
+  "04c311eddac83b4e": "Home neu beginnen? Es startet eine neue Unterhaltung. Notizen, Vorlieben und Crew bleiben, und der alte Thread wird behalten.",
+  "4aa5ad6099942650": "Eine neue Home-Unterhaltung beginnen. Notizen, Vorlieben und Crew bleiben erhalten."
 }

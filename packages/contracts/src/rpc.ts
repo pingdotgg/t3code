@@ -196,6 +196,14 @@ import {
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
 } from "./provider.ts";
+import {
+  BotError,
+  BotFilesReadInput,
+  BotFilesReadResult,
+  BotFileWriteInput,
+  BotStartInput,
+  BotStartResult,
+} from "./bots.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   IssueCandidates,
@@ -414,14 +422,7 @@ import {
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
-import {
-  HomeEnableInput,
-  HomeError,
-  HomeNotes,
-  HomeSetModelInput,
-  HomeThreadResult,
-  HomeWatchesResult,
-} from "./home.ts";
+import { HomeEnableInput, HomeError, HomeSetModelInput, HomeThreadResult } from "./home.ts";
 import {
   StorageCleanupReport,
   DatabaseReclaimError,
@@ -531,6 +532,10 @@ export const WS_METHODS = {
   mcpAppsToolInfo: "mcpApps.toolInfo",
   mcpAppsReadResource: "mcpApps.readResource",
   mcpAppsUpdateModelContext: "mcpApps.updateModelContext",
+
+  botFilesRead: "bot.files.read",
+  botFilesWrite: "bot.files.write",
+  botStart: "bot.start",
 
   providerUploadFeedback: "provider.uploadFeedback",
   providerMcpSignInStart: "provider.mcpSignIn.start",
@@ -681,9 +686,6 @@ export const WS_METHODS = {
   homeDisable: "home.disable",
   homeReset: "home.reset",
   homeSetModel: "home.setModel",
-  homeNotesRead: "home.notes.read",
-  homeNotesWrite: "home.notes.write",
-  homeWatchesList: "home.watches.list",
 
   pullRequestsList: "pullRequests.list",
   pullRequestsListStats: "pullRequests.listStats",
@@ -1838,6 +1840,23 @@ const WsMcpAppsReadResourceRpc = Rpc.make(WS_METHODS.mcpAppsReadResource, {
   error: Schema.Union([McpAppRequestError, EnvironmentAuthorizationError]),
 });
 
+const WsBotFilesReadRpc = Rpc.make(WS_METHODS.botFilesRead, {
+  payload: BotFilesReadInput,
+  success: BotFilesReadResult,
+  error: Schema.Union([BotError, EnvironmentAuthorizationError]),
+});
+
+const WsBotFilesWriteRpc = Rpc.make(WS_METHODS.botFilesWrite, {
+  payload: BotFileWriteInput,
+  error: Schema.Union([BotError, EnvironmentAuthorizationError]),
+});
+
+const WsBotStartRpc = Rpc.make(WS_METHODS.botStart, {
+  payload: BotStartInput,
+  success: BotStartResult,
+  error: Schema.Union([BotError, EnvironmentAuthorizationError]),
+});
+
 const WsProviderUploadFeedbackRpc = Rpc.make(WS_METHODS.providerUploadFeedback, {
   payload: ProviderUploadFeedbackInput,
   success: ProviderUploadFeedbackResult,
@@ -2398,23 +2417,6 @@ const WsHomeSetModelRpc = Rpc.make(WS_METHODS.homeSetModel, {
   error: HomeRpcError,
 });
 
-const WsHomeNotesReadRpc = Rpc.make(WS_METHODS.homeNotesRead, {
-  payload: Schema.Struct({}),
-  success: HomeNotes,
-  error: HomeRpcError,
-});
-
-const WsHomeNotesWriteRpc = Rpc.make(WS_METHODS.homeNotesWrite, {
-  payload: HomeNotes,
-  error: HomeRpcError,
-});
-
-const WsHomeWatchesListRpc = Rpc.make(WS_METHODS.homeWatchesList, {
-  payload: Schema.Struct({}),
-  success: HomeWatchesResult,
-  error: HomeRpcError,
-});
-
 const WsWorkflowsGetRpc = Rpc.make(WS_METHODS.workflowsGet, {
   payload: WorkflowRunGetInput,
   success: WorkflowRunDetail,
@@ -2640,9 +2642,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsHomeDisableRpc,
   WsHomeResetRpc,
   WsHomeSetModelRpc,
-  WsHomeNotesReadRpc,
-  WsHomeNotesWriteRpc,
-  WsHomeWatchesListRpc,
   WsWorkflowsSubscribeRpc,
   WsWorkflowsCountsRpc,
   WsWorkflowsGetRpc,
@@ -2743,6 +2742,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsMcpAppsToolInfoRpc,
   WsMcpAppsReadResourceRpc,
   WsMcpAppsUpdateModelContextRpc,
+  WsBotFilesReadRpc,
+  WsBotFilesWriteRpc,
+  WsBotStartRpc,
   WsProviderUploadFeedbackRpc,
   WsProviderMcpSignInStartRpc,
   WsProviderMcpSignInCompleteRpc,

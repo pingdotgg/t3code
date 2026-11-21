@@ -21,6 +21,7 @@ export interface McpCredentialRequest {
   readonly browserToolsAvailable?: boolean;
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
   readonly subagent?: boolean;
+  readonly bot?: boolean;
 }
 
 export interface McpIssuedCredential {
@@ -134,6 +135,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
           subagent: request.subagent === true,
+          bot: request.bot === true,
         },
         client: undefined,
         capabilities: new Set<McpInvocationContext.McpCapability>([

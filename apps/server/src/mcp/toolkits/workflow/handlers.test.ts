@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 
+import * as BotService from "../../../bots/BotService.ts";
 import * as Workflows from "../../../workflows/Workflows.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -36,6 +37,7 @@ const handlersWith = (
           ...scope,
         }),
         Layer.mock(Workflows.Workflows)(workflows),
+        Layer.mock(BotService.BotService)({}),
       ),
     ),
   );
@@ -346,6 +348,7 @@ it.effect(
                   Effect.sync(() => (named.push(options.answeredBy), "delivered" as const)),
               }),
             ),
+            Layer.provide(Layer.mock(BotService.BotService)({})),
           ),
         ),
       );

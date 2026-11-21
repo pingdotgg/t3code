@@ -5,6 +5,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   isHomeThreadId,
   CommandId,
+  type ThreadBotConfig,
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
@@ -132,6 +133,10 @@ export interface ThreadLaunchInput {
   readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
   /** The workflow run this thread is an agent step of. */
   readonly workflowRun?: OrchestrationV2WorkflowOrigin;
+  /** The thread that launched this one, whose group it joins as crew. */
+  readonly groupedUnderThreadId?: ThreadId;
+  /** Starts the thread as a Bot. */
+  readonly botConfig?: ThreadBotConfig;
 }
 
 type PreparationInput = Pick<
@@ -1597,6 +1602,10 @@ const make = Effect.gen(function* () {
                   ? {}
                   : { delegatedFrom: input.delegatedFrom }),
                 ...(input.workflowRun === undefined ? {} : { workflowRun: input.workflowRun }),
+                ...(input.groupedUnderThreadId === undefined
+                  ? {}
+                  : { groupedUnderThreadId: input.groupedUnderThreadId }),
+                ...(input.botConfig === undefined ? {} : { botConfig: input.botConfig }),
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
                 ...(initialMessage === undefined

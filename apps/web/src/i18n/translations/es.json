@@ -3224,7 +3224,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "en el ordenador que abrió esta página"]
+      "c": [
+        " ",
+        "en el ordenador que abrió esta página"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3236,7 +3239,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· quien lo ejecute obtiene este acceso"]
+      "c": [
+        " ",
+        "· quien lo ejecute obtiene este acceso"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "Aprueba solo un inicio de sesión que acabes de iniciar.",
@@ -5925,8 +5931,6 @@
   "4d64e4af81c19972": "Elige primero un modelo para Home.",
   "ae6762c8039a2013": "No se pudo iniciar el hilo de Home.",
   "c4fcdd67ef8fc4ad": "No se pudieron leer ni guardar los ajustes de Home.",
-  "592be61f10a4887b": "No se pudieron leer ni guardar las notas de Home.",
-  "2920f1e4b163517e": "Este hilo ya no es Home.",
   "94ab4591ce101233": "No se pudo publicar el comentario",
   "92d0d4eab2596772": "El gestor de issues lo rechazó.",
   "33591d9596fb7cb7": "Añadir un comentario",
@@ -8671,7 +8675,6 @@
   "e8622c39abe68f9d": "predeterminada",
   "5383ef2d2c09cdf7": "Buscar fuentes…",
   "ea08337bcadd35b4": "No se encontraron fuentes.",
-  "efc5c263b67d0c01": "¿Empezar Home de cero? Comienza una conversación nueva. Sus notas y seguimientos se mantienen, y el hilo anterior se conserva.",
   "538f9f1292ad5fdc": "Un agente en este entorno que trabaja en todos tus proyectos y entornos vinculados.",
   "d6ad43bc4b700a88": "No hay datos del perfil del navegador que borrar.",
   "ad8efd437b301a37": "Sistema",
@@ -9159,15 +9162,6 @@
   "7f15dd3afd2bd8fc": "Modelo",
   "31a5a3e95ec36b30": "El modelo con el que funciona Home.",
   "b0d038fc0511ad65": "Empezar de cero",
-  "40b75d6399b63b55": "Comienza una conversación nueva de Home. Las notas y los seguimientos se mantienen.",
-  "d2716dad8821792c": "notes.md",
-  "20db88ef6068cc35": "Lo que Home recuerda entre conversaciones. Home también lo edita.",
-  "19cd0b48201dbc93": "Notas de Home",
-  "31698074d1a46be8": "Nada en seguimiento",
-  "ecae3a9b121e2e27": "Los hilos que Home inicia o a los que se le pide seguir aparecen aquí hasta que terminan.",
-  "4a4872ce4711f3ae": "Iniciado por Home",
-  "9e4197e0c51966dd": "Seguido por Home",
-  "07d0135060a7e6ce": "Ejecución de flujo de trabajo {id}",
   "5fc35138b0ff1aea": "Empezar de cero",
   "bd85846f8b382b9d": "Modelo para los nuevos hilos de este proyecto.",
   "2600e0994b8b82f1": "Modelo predeterminado para los nuevos hilos, seleccionado automáticamente. Los proyectos pueden anularlo.",
@@ -11997,9 +11991,6 @@
   "f2b07faba1229ce7": "Intervalo de comprobación de estado",
   "5c9dc9970db79fe2": "actualizar disponibilidad versiones estado de autenticación modelos sondeos en segundo plano segundos desactivado",
   "62d80d69a2524884": "coordinador agente proyectos entornos vinculados activar desactivar modelo",
-  "203f934b3a5e7174": "notes.md memoria recordar empezar de cero",
-  "c8df729c82ff88d9": "En seguimiento por Home",
-  "da4a6863448b4a69": "seguimientos sigue hilos ejecuciones de flujos de trabajo",
   "056ba6a180d114b5": "permitir desactivar activar abrir controlar herramientas de vista previa sesiones proyecto anulación",
   "345075be6cacc171": "hosts de dispositivos ssh remoto mac mini identidad clave conexión eas expo nube simlock grupo gateway simuladores locales",
   "a6b742430b05d6cc": "Los agentes pueden usar dispositivos",
@@ -13041,5 +13032,7 @@
       "v": "v"
     },
     " más en Elementos vinculados"
-  ]
+  ],
+  "04c311eddac83b4e": "¿Reiniciar Home? Empieza una conversación nueva. Sus notas, preferencias y equipo se conservan, y el hilo anterior se guarda.",
+  "4aa5ad6099942650": "Empieza una conversación nueva de Home. Las notas, preferencias y el equipo se conservan."
 }

@@ -2,6 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
+import * as BotService from "../../../bots/BotService.ts";
 import * as Workflows from "../../../workflows/Workflows.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -65,6 +66,13 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
           const { runId } = yield* workflows
             .start(name, input.input === undefined ? {} : input.input, { idempotencyKey })
             .pipe(Effect.mapError(refused));
+          // A Bot hears how the runs it starts go, as it does its crew.
+          const caller = (yield* McpInvocationContext.McpInvocationContext).thread;
+          if (caller?.bot === true && caller.subagent !== true) {
+            yield* (yield* BotService.BotService)
+              .addWatch(caller.threadId, { workflowRunId: runId, reason: "launched" })
+              .pipe(Effect.ignoreCause({ log: true }));
+          }
           return yield* workflows.get(runId).pipe(Effect.mapError(refused));
         }
         if (input.action === "signal") {

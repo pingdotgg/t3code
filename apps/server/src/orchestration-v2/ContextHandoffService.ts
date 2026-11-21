@@ -270,6 +270,43 @@ function makeForkDeltaSummary(input: {
   ].join("\n");
 }
 
+function historicalMessages(
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">> | undefined,
+) {
+  const runStatuses = new Map(runs?.map((run) => [run.id, run.status]));
+  return items.flatMap((item) => {
+    const message = historicalMessage(item);
+    return message === null
+      ? []
+      : [
+          {
+            ...message,
+            ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
+          },
+        ];
+  });
+}
+
+/** A thread's history as a `full_thread_summary` handoff in plain text, for a new thread's prompt. */
+export function renderThreadSummaryHandoff(input: {
+  readonly sourceThreadId: ThreadId;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>;
+  readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly budget: number;
+}): string {
+  const selected = selectHistory({
+    messages: historicalMessages(input.items, input.runs),
+    coverage: handoffCoverage({
+      threadId: input.sourceThreadId,
+      coveredRunOrdinals: visibleDeltaRunOrdinals(input, input.items),
+      items: input.items,
+    }),
+    budget: input.budget,
+  });
+  return `Context handoff (full_thread_summary):\n${renderHistory(selected.messages, selected.context)}`;
+}
+
 const SIDE_CHAT_CONTEXT_MAX_CHARS = 8_000;
 
 /** Oldest first; raw parent items are summarized only until the context cap is reached. */
@@ -547,23 +584,12 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
               }),
           ),
         );
-      const runStatuses = new Map(input.runs?.map((run) => [run.id, run.status]));
       const coverage = handoffCoverage({
         ...input,
         threadId: input.sourceThreadId ?? input.threadId,
       });
       const selected = selectHistory({
-        messages: input.items.flatMap((item) => {
-          const message = historicalMessage(item);
-          return message === null
-            ? []
-            : [
-                {
-                  ...message,
-                  ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
-                },
-              ];
-        }),
+        messages: historicalMessages(input.items, input.runs),
         coverage,
         budget: tokenCap,
       });

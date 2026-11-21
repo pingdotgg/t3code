@@ -1,68 +1,41 @@
 import { assert, it } from "@effect/vitest";
-import { ClientServerSettingsPatch, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import { ClientServerSettingsPatch, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as BotService from "../bots/BotService.ts";
+import { makeOrchestration, model, provideBots } from "../bots/BotTestkit.ts";
 import * as ServerConfig from "../config.ts";
-import { hiddenFromNonHomeThreads, requireHomeCaller } from "../mcp/homeAccess.ts";
-import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as HomeService from "./HomeService.ts";
-import { makeOrchestration, model, provideHome } from "./HomeTestkit.ts";
 
 const decodeClientPatch = Schema.decodeUnknownSync(ClientServerSettingsPatch);
 
-const callerScope = (threadId: string): McpInvocationContext.McpInvocationScope => ({
-  environmentId: "env:test" as never,
-  capabilities: new Set(["orchestration"]),
-  issuedAt: 0,
-  requestNamespace: "test",
-  thread: {
-    threadId: ThreadId.make(threadId),
-    providerSessionId: "session",
-    providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-  },
-  client: undefined,
+it.effect("enables Home as a Bot in its own folder, with no stale instructions file left", () => {
+  const orchestration = makeOrchestration();
+  return Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const agents = path.join(config.baseDir, "home", "AGENTS.md");
+    yield* fileSystem.makeDirectory(path.dirname(agents), { recursive: true });
+    yield* fileSystem.writeFileString(agents, "Use home_notes_read.");
+
+    const home = yield* HomeService.HomeService;
+    const { threadId } = yield* home.enable({ modelSelection: model });
+    assert.isTrue(threadId.startsWith("home:"));
+    assert.deepStrictEqual(orchestration.threads.get(threadId)?.botConfig, {
+      enabled: true,
+      muteChildren: false,
+    });
+    // Enabling again returns the running Home.
+    assert.strictEqual((yield* home.enable({})).threadId, threadId);
+    assert.deepStrictEqual(yield* home.read, { enabled: true, threadId, modelSelection: model });
+    assert.isFalse(yield* fileSystem.exists(agents));
+  }).pipe(provideBots(orchestration));
 });
-
-const asHome = (threadId: ThreadId) =>
-  requireHomeCaller().pipe(
-    Effect.provideService(McpInvocationContext.McpInvocationContext, callerScope(threadId)),
-    Effect.exit,
-  );
-
-it.effect(
-  "enables Home in its own folder as a full-access home: thread and seeds its files",
-  () => {
-    const orchestration = makeOrchestration();
-    return Effect.gen(function* () {
-      const home = yield* HomeService.HomeService;
-      const { threadId } = yield* home.enable({ modelSelection: model });
-      assert.isTrue(threadId.startsWith("home:"));
-      // Enabling again returns the running Home.
-      assert.strictEqual((yield* home.enable({})).threadId, threadId);
-      assert.deepStrictEqual(yield* home.read, {
-        enabled: true,
-        threadId,
-        modelSelection: model,
-        watches: [],
-      });
-
-      const config = yield* ServerConfig.ServerConfig;
-      const path = yield* Path.Path;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const instructions = yield* fileSystem.readFileString(
-        path.join(config.baseDir, "home", "AGENTS.md"),
-      );
-      assert.include(instructions, "t3_environment_links");
-      yield* home.writeNotes("remember the release train");
-      assert.strictEqual(yield* home.readNotes, "remember the release train");
-    }).pipe(provideHome(orchestration));
-  },
-);
 
 it.effect("needs a model when neither the request nor the environment names one", () => {
   const orchestration = makeOrchestration();
@@ -71,79 +44,67 @@ it.effect("needs a model when neither the request nor the environment names one"
     const exit = yield* home.enable({}).pipe(Effect.exit);
     assert.isTrue(Exit.isFailure(exit));
     assert.deepStrictEqual((yield* home.read).enabled, false);
-  }).pipe(provideHome(orchestration));
+  }).pipe(provideBots(orchestration));
 });
 
-it.effect("disable and Start fresh revoke the old grant at once and stop its run", () => {
-  const orchestration = makeOrchestration();
-  return Effect.gen(function* () {
-    const home = yield* HomeService.HomeService;
-    const first = (yield* home.enable({ modelSelection: model })).threadId;
-    yield* home.addWatch(first, { threadId: ThreadId.make("thread:watched"), reason: "manual" });
-    assert.isTrue(Exit.isSuccess(yield* asHome(first)));
-    orchestration.shells.get(first)!.activeRunId = RunId.make("run:busy");
+it.effect(
+  "Start fresh moves the Bot grant, crew and memory to the new Home; disable ends the grant",
+  () => {
+    const orchestration = makeOrchestration();
+    return Effect.gen(function* () {
+      const home = yield* HomeService.HomeService;
+      const bots = yield* BotService.BotService;
+      const first = (yield* home.enable({ modelSelection: model })).threadId;
+      orchestration.addThread("thread:crew", {
+        projectId: "project:elsewhere" as never,
+        groupedUnderThreadId: first,
+      });
+      yield* bots.addWatch(first, { workflowRunId: "run:watched", reason: "manual" });
+      yield* bots.writeFile({ threadId: first, file: "notes", contents: "release train" });
+      orchestration.threads.get(first)!.activeRunId = RunId.make("run:busy");
 
-    const second = (yield* home.reset).threadId;
-    assert.notStrictEqual(second, first);
-    assert.isTrue(Exit.isFailure(yield* asHome(first)));
-    assert.isTrue(Exit.isSuccess(yield* asHome(second)));
-    assert.deepStrictEqual((yield* home.read).watches, []);
-    assert.deepStrictEqual(
-      orchestration.dispatched.map((command) => [command.type, command.threadId]),
-      [
-        ["run.interrupt", first],
-        ["thread.settle", first],
-      ],
-    );
-    // A replaced Home cannot touch the new Home's watches.
-    const stale = yield* home
-      .addWatch(first, { threadId: ThreadId.make("thread:x"), reason: "manual" })
-      .pipe(Effect.exit);
-    assert.isTrue(Exit.isFailure(stale));
-
-    orchestration.shells.get(second)!.activeRunId = RunId.make("run:second");
-    yield* home.disable;
-    assert.isTrue(Exit.isFailure(yield* asHome(second)));
-    assert.deepStrictEqual(orchestration.dispatched.at(-1), {
-      ...orchestration.dispatched.at(-1)!,
-      type: "run.interrupt",
-      threadId: second,
-    });
-    const after = yield* home.read;
-    assert.deepStrictEqual(
-      [after.enabled, after.threadId, after.modelSelection],
-      [false, null, model],
-    );
-  }).pipe(provideHome(orchestration));
-});
-
-it.effect("Home's tools are listed and callable only by the active Home thread", () => {
-  const orchestration = makeOrchestration();
-  return Effect.gen(function* () {
-    const home = yield* HomeService.HomeService;
-    const homeThread = (yield* home.enable({ modelSelection: model })).threadId;
-    const listed = (threadId: string) =>
-      Effect.sync(hiddenFromNonHomeThreads).pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, callerScope(threadId)),
+      const second = (yield* home.reset).threadId;
+      assert.notStrictEqual(second, first);
+      assert.isFalse(yield* bots.isBot(first));
+      assert.isTrue(yield* bots.isBot(second));
+      // A `home:` id is not the grant: only the current Home thread is.
+      assert.isFalse(yield* bots.isBot(ThreadId.make("home:someone-else")));
+      assert.deepStrictEqual(yield* bots.watches(first), []);
+      assert.strictEqual(
+        orchestration.threads.get(ThreadId.make("thread:crew"))?.groupedUnderThreadId,
+        second,
       );
-    assert.isFalse(yield* listed("thread:ordinary"));
-    assert.isTrue(yield* listed(homeThread));
-    const denied = yield* asHome(ThreadId.make("thread:ordinary"));
-    assert.isTrue(
-      Exit.isFailure(denied) &&
-        Exit.findErrorOption(denied).pipe(
-          Option.exists((error) => error.code === "capability_denied"),
-        ),
-    );
-    // A `home:` id is not the grant: only the current Home thread is.
-    assert.isTrue(Exit.isFailure(yield* asHome(ThreadId.make("home:someone-else"))));
-  }).pipe(provideHome(orchestration));
-});
+      assert.strictEqual((yield* bots.readFiles({ threadId: second })).notes, "release train");
+      assert.deepStrictEqual(
+        orchestration.dispatched
+          .filter((command) => command.type !== "thread.metadata.update")
+          .map((command) => [command.type, command.threadId]),
+        [
+          ["run.interrupt", first],
+          ["thread.settle", first],
+        ],
+      );
+      // The replaced Home cannot change Home's memory any more.
+      const stale = yield* bots
+        .writeFile({ threadId: first, file: "notes", contents: "x" })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(stale));
+
+      yield* home.disable;
+      assert.isFalse(yield* bots.isBot(second));
+      const after = yield* home.read;
+      assert.deepStrictEqual(
+        [after.enabled, after.threadId, after.modelSelection],
+        [false, null, model],
+      );
+    }).pipe(provideBots(orchestration));
+  },
+);
 
 it("drops `home` from client settings patches", () => {
   const patch = decodeClientPatch({
     defaultRuntimeMode: "full-access",
-    home: { enabled: true, threadId: "home:forged", modelSelection: null, watches: [] },
+    home: { enabled: true, threadId: "home:forged", modelSelection: null },
   });
   assert.deepStrictEqual(patch, { defaultRuntimeMode: "full-access" });
 });

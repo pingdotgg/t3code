@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
+import * as BotService from "../../../bots/BotService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as Workflows from "../../../workflows/Workflows.ts";
 import { WorkflowRun, WorkflowRunStatus, WorkflowStep } from "../../../workflows/WorkflowStore.ts";
@@ -66,14 +67,15 @@ const WorkflowTool = Tool.make("t3_workflow", {
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     Workflows.Workflows,
+    BotService.BotService,
     ThreadManagementService.ThreadManagementService,
     SecureRandom.SecureRandom,
   ],
 })
   .annotate(Tool.Title, "Workflow runs")
   .annotate(Tool.Destructive, true)
-  // Outside clients and the CLI drive workflows. An agent in a thread reaches them through the
-  // CLI, so the tool costs no thread any context.
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromThreads);
+  // Outside clients, the CLI and Bots drive workflows. Other threads reach them through the CLI,
+  // so the tool costs them no context.
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromThreadsExceptBots);
 
 export const WorkflowToolkit = Toolkit.make(WorkflowTool);

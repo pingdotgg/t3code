@@ -64,6 +64,54 @@ it.effect("refuses thread-owned capabilities to a caller signed in from outside 
   });
 });
 
+it.effect.each([
+  {
+    caller: "an outside client",
+    thread: undefined,
+    workflows: false,
+    events: true,
+    workflow: true,
+  },
+  { caller: "a plain thread", thread: {}, workflows: true, events: false, workflow: false },
+  { caller: "a Bot", thread: { bot: true }, workflows: true, events: false, workflow: true },
+  { caller: "a Bot", thread: { bot: true }, workflows: false, events: false, workflow: false },
+  {
+    caller: "a Bot's subagent",
+    thread: { bot: true, subagent: true },
+    workflows: true,
+    events: false,
+    workflow: false,
+  },
+] as const)(
+  "lists MCP events to $caller: $events, and t3_workflow with Workflows $workflows: $workflow",
+  ({ thread, workflows, events, workflow }) => {
+    const invocation: McpInvocationContext.McpInvocationScope = {
+      environmentId: EnvironmentId.make("environment-1"),
+      requestNamespace: "provider-session-1",
+      thread:
+        thread === undefined
+          ? undefined
+          : {
+              threadId: ThreadId.make("thread-1"),
+              providerSessionId: "provider-session-1",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              ...thread,
+            },
+      client: undefined,
+      capabilities: new Set(),
+      issuedAt: 1,
+      workflows,
+    };
+    return Effect.sync(() => [
+      McpInvocationContext.hiddenFromThreads(),
+      McpInvocationContext.hiddenFromThreadsExceptBots(),
+    ]).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+      Effect.map((listed) => expect(listed).toEqual([events, workflow])),
+    );
+  },
+);
+
 it("acts at an administrator's ceiling for a client approved above it", () => {
   const scope = (
     access: McpInvocationContext.McpClientCaller["access"],

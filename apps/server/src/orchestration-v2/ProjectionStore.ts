@@ -579,6 +579,10 @@ export interface ProjectionStoreV2Shape {
     limit: number,
   ) => Effect.Effect<number, ProjectionStoreV2Error>;
   readonly getSubagentCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
+  /** Live threads grouped as crew under this one. Scans thread rows; only grouping uses it. */
+  readonly listGroupedCrewIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getRunCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Child threads of the thread's app-owned tasks, in task order, without decoding the tasks. */
   readonly listAppOwnedChildThreadIds: (
@@ -2039,6 +2043,10 @@ export function threadShellFromProjection(
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     ...(projection.thread.tags?.length ? { tags: projection.thread.tags } : {}),
+    ...(projection.thread.groupedUnderThreadId == null
+      ? {}
+      : { groupedUnderThreadId: projection.thread.groupedUnderThreadId }),
+    ...(projection.thread.botConfig == null ? {} : { botConfig: projection.thread.botConfig }),
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -2344,6 +2352,10 @@ function shellFromState(input: {
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     ...(input.state.thread.tags?.length ? { tags: input.state.thread.tags } : {}),
+    ...(input.state.thread.groupedUnderThreadId == null
+      ? {}
+      : { groupedUnderThreadId: input.state.thread.groupedUnderThreadId }),
+    ...(input.state.thread.botConfig == null ? {} : { botConfig: input.state.thread.botConfig }),
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
@@ -6821,6 +6833,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => rows[0]?.count ?? 0),
         Effect.mapError(controlReadError(threadId)),
       );
+    const listGroupedCrewIds: ProjectionStoreV2Shape["listGroupedCrewIds"] = Effect.fn(
+      "ProjectionStore.listGroupedCrewIds",
+    )((threadId) =>
+      sql<{ readonly threadId: string }>`SELECT thread_id AS "threadId"
+        FROM orchestration_v2_projection_threads
+        WHERE deleted_at IS NULL
+          AND json_extract(payload_json, '$.groupedUnderThreadId') = ${threadId}`.pipe(
+        Effect.map((rows) => rows.map((row) => ThreadId.make(row.threadId))),
+        Effect.mapError(controlReadError(threadId)),
+      ),
+    );
     const listAppOwnedChildThreadIds: ProjectionStoreV2Shape["listAppOwnedChildThreadIds"] = (
       threadId,
     ) =>
@@ -10005,6 +10028,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getMessageCount: readOnReader(getMessageCount),
       getTranscriptByteFloor: readOnReader(getTranscriptByteFloor),
       getSubagentCount: readOnReader(getSubagentCount),
+      listGroupedCrewIds: readOnReader(listGroupedCrewIds),
       getRunCount: readOnReader(getRunCount),
       listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),
       hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),

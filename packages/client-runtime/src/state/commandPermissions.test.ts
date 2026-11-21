@@ -235,7 +235,6 @@ describe("command permissions", () => {
     WS_METHODS.homeDisable,
     WS_METHODS.homeReset,
     WS_METHODS.homeSetModel,
-    WS_METHODS.homeNotesWrite,
   ])("uses the target grant for both availability and execution of %s", (method) =>
     Effect.gen(function* () {
       const registry = yield* setup;

@@ -3224,7 +3224,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "on the computer that opened this page"]
+      "c": [
+        " ",
+        "on the computer that opened this page"
+      ]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3236,7 +3239,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "· whoever runs it gets this access"]
+      "c": [
+        " ",
+        "· whoever runs it gets this access"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "Only approve a sign-in you just started.",
@@ -5927,8 +5933,6 @@
   "4d64e4af81c19972": "Choose a model for Home first.",
   "ae6762c8039a2013": "Home's thread could not be started.",
   "c4fcdd67ef8fc4ad": "Home's settings could not be read or saved.",
-  "592be61f10a4887b": "Home's notes could not be read or saved.",
-  "2920f1e4b163517e": "This thread is no longer Home.",
   "94ab4591ce101233": "The comment could not be posted",
   "92d0d4eab2596772": "The tracker refused it.",
   "33591d9596fb7cb7": "Add a comment",
@@ -8681,7 +8685,6 @@
   "e8622c39abe68f9d": "default",
   "5383ef2d2c09cdf7": "Search fonts…",
   "ea08337bcadd35b4": "No fonts found.",
-  "efc5c263b67d0c01": "Start Home fresh? It begins a new conversation. Its notes and watches stay, and the old thread is kept.",
   "538f9f1292ad5fdc": "One agent on this environment that works across your projects and linked environments.",
   "d6ad43bc4b700a88": "Browser profile data is not available to clear.",
   "ad8efd437b301a37": "System",
@@ -9169,15 +9172,6 @@
   "7f15dd3afd2bd8fc": "Model",
   "31a5a3e95ec36b30": "The model Home runs on.",
   "b0d038fc0511ad65": "Start fresh",
-  "40b75d6399b63b55": "Begin a new Home conversation. Notes and watches carry over.",
-  "d2716dad8821792c": "notes.md",
-  "20db88ef6068cc35": "What Home remembers between conversations. Home edits it too.",
-  "19cd0b48201dbc93": "Home notes",
-  "31698074d1a46be8": "Nothing watched",
-  "ecae3a9b121e2e27": "Threads Home starts or is asked to follow show here until they settle.",
-  "4a4872ce4711f3ae": "Started by Home",
-  "9e4197e0c51966dd": "Followed by Home",
-  "07d0135060a7e6ce": "Workflow run {id}",
   "5fc35138b0ff1aea": "Start fresh",
   "bd85846f8b382b9d": "Model for new threads in this project.",
   "2600e0994b8b82f1": "Default model for new threads, selected automatically. Projects can override it.",
@@ -12012,9 +12006,6 @@
   "f2b07faba1229ce7": "Health check interval",
   "5c9dc9970db79fe2": "refresh availability versions auth state models background probes seconds off",
   "62d80d69a2524884": "coordinator agent across projects linked environments turn on off model",
-  "203f934b3a5e7174": "notes.md memory remember start fresh",
-  "c8df729c82ff88d9": "Watched by Home",
-  "da4a6863448b4a69": "watches follows threads workflow runs",
   "056ba6a180d114b5": "allow disable enable open drive preview tools sessions project override",
   "345075be6cacc171": "device hosts ssh remote mac mini identity key connection eas expo cloud simlock pool gateway local simulators",
   "a6b742430b05d6cc": "Agents can use devices",
@@ -13055,5 +13046,7 @@
       "v": "v"
     },
     " more in Linked items"
-  ]
+  ],
+  "04c311eddac83b4e": "Start Home fresh? It begins a new conversation. Its notes, preferences and crew carry over, and the old thread is kept.",
+  "4aa5ad6099942650": "Begin a new Home conversation. Notes, preferences and crew carry over."
 }
