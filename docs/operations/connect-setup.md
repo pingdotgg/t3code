@@ -130,6 +130,29 @@ codesign --verify --deep --strict "/Applications/T3 Code (Alpha).app"
 codesign -d --entitlements :- "/Applications/T3 Code (Alpha).app"
 ```
 
+## A fork's own Connect
+
+A [standalone fork](./standalone-migration.md) can run its own relay and Clerk instance. Standalone
+builds refuse only T3's relay and hosted app, so the fork's own URLs pass.
+
+- **Relay deploys:** `deploy-relay.yml` also runs on a fork whose repository variable
+  `RELAY_DEPLOY_ENABLED` is `true`. Put the variables and secrets it reads in the fork's
+  `production` environment. Set `APNS_ENABLED=false` until the relay has an APNs key.
+- **Releases:** `fork-release.yml` bakes the repository variables `T3CODE_CLERK_PUBLISHABLE_KEY`,
+  `T3CODE_CLERK_JWT_TEMPLATE`, `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID`, and `T3CODE_RELAY_URL` into the
+  CLI, the server, the web client, and the desktop app. Unset leaves Connect off.
+- **Mobile:** set `T3CODE_CLERK_PUBLISHABLE_KEY`, `T3CODE_CLERK_JWT_TEMPLATE`, and `T3CODE_RELAY_URL`
+  in the EAS environment the build uses. A standalone app declares no `webcredentials` domain, so
+  passkeys are unavailable there; other sign-in methods work.
+- **Hosted app:** `t3 connect` opens `/connect` on `T3CODE_HOSTED_APP_URL`. That origin must serve
+  the fork's web build with the same Clerk values, be reachable by everyone who signs in, and, with a
+  production Clerk key, belong to the Clerk instance's domain.
+- **Clerk redirects:** use the fork's scheme and bundle ID in place of T3's in the sections above:
+  `<scheme>://app/` for desktop SSO and `<scheme>://app` in `allowed_origins`,
+  `clerk://<bundle id>.callback` (with `.dev` or `.preview` before `.callback` for those variants)
+  for Android, and the fork's Apple Team ID and bundle ID under Native applications for iOS and
+  macOS.
+
 ## Restricting sign-ups
 
 Use Clerk's allowlist for permitted email addresses or domains, or Restricted mode for invitation-only

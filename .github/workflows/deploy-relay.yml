@@ -26,8 +26,9 @@ jobs:
   deploy_relay:
     name: Deploy production relay
     # A manual run from another branch would deploy that branch to production.
-    if: github.repository == 'pingdotgg/t3code' && github.ref == 'refs/heads/main'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # A fork opts in with the repository variable RELAY_DEPLOY_ENABLED=true.
+    if: (github.repository == 'pingdotgg/t3code' || vars.RELAY_DEPLOY_ENABLED == 'true') && github.ref == 'refs/heads/main'
+    runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
     timeout-minutes: 15
     environment:
       name: production
@@ -44,6 +45,8 @@ jobs:
       RELAY_WARNING_NOTIFIER_ID: ${{ vars.RELAY_WARNING_NOTIFIER_ID }}
       CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
       CLERK_JWT_AUDIENCE: ${{ vars.CLERK_JWT_AUDIENCE }}
+      # A fork without an APNs key sets APNS_ENABLED=false.
+      APNS_ENABLED: ${{ vars.APNS_ENABLED || 'true' }}
       APNS_ENVIRONMENT: ${{ vars.APNS_ENVIRONMENT }}
       APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
       APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}

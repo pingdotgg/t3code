@@ -66,12 +66,17 @@ describe("loadRepoEnv in a standalone build", () => {
   it("passes the fork's own config through and normalizes the switch", () => {
     expect(
       loadRepoEnv({
-        baseEnv: { ...fork, T3CODE_HOSTED_APP_URL: "https://app.fork.example" },
+        baseEnv: {
+          ...fork,
+          T3CODE_HOSTED_APP_URL: "https://app.fork.example",
+          T3CODE_RELAY_URL: "https://relay.fork.example",
+        },
         repoRoot: makeTemporaryDirectory(),
       }),
     ).toMatchObject({
       T3CODE_STANDALONE: "1",
       VITE_HOSTED_APP_URL: "https://app.fork.example",
+      VITE_T3CODE_RELAY_URL: "https://relay.fork.example",
     });
   });
 

@@ -37,6 +37,11 @@ jobs:
       T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
       T3CODE_APP_NAME: ${{ vars.T3CODE_APP_NAME }}
       T3CODE_HOSTED_APP_URL: ${{ vars.T3CODE_HOSTED_APP_URL }}
+      # T3 Connect's public values; unset leaves Connect off, as in every build without them.
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
+      T3CODE_RELAY_URL: ${{ vars.T3CODE_RELAY_URL }}
       RELEASE_REPOSITORY: ${{ github.repository }}
     steps:
       - name: Checkout
@@ -129,6 +134,11 @@ jobs:
       T3CODE_APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
       T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
       T3CODE_HOSTED_APP_URL: ${{ vars.T3CODE_HOSTED_APP_URL }}
+      # The server, web client and Electron main bake these in here; packaging reuses this bundle.
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
+      T3CODE_RELAY_URL: ${{ vars.T3CODE_RELAY_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -198,10 +208,10 @@ jobs:
       ref: ${{ github.ref }}
       release_channel: stable
       relay_client_tracing: false
-      clerk_publishable_key: ""
-      clerk_jwt_template: ""
-      clerk_cli_oauth_client_id: ""
-      relay_url: ""
+      clerk_publishable_key: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
+      clerk_jwt_template: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
+      clerk_cli_oauth_client_id: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
+      relay_url: ${{ vars.T3CODE_RELAY_URL }}
       standalone: true
 
   desktop_mac:
@@ -245,10 +255,10 @@ jobs:
       ref: ${{ github.ref }}
       release_channel: stable
       relay_client_tracing: false
-      clerk_publishable_key: ""
-      clerk_jwt_template: ""
-      clerk_cli_oauth_client_id: ""
-      relay_url: ""
+      clerk_publishable_key: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
+      clerk_jwt_template: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
+      clerk_cli_oauth_client_id: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
+      relay_url: ${{ vars.T3CODE_RELAY_URL }}
       standalone: true
 
   release:
