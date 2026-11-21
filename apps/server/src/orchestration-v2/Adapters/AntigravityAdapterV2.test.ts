@@ -2801,10 +2801,11 @@ describe("AntigravityAdapterV2 prompt suggestions", () => {
   );
 
   it.effect(
-    "cancels an in-flight suggestion on next turn, rollback, or admitted continuation",
+    "cancels an in-flight suggestion on next turn, rollback, forced session replacement, or admitted continuation",
     () =>
       Effect.gen(function* () {
         const started = [
+          yield* Deferred.make<void>(),
           yield* Deferred.make<void>(),
           yield* Deferred.make<void>(),
           yield* Deferred.make<void>(),
@@ -2813,32 +2814,39 @@ describe("AntigravityAdapterV2 prompt suggestions", () => {
           yield* Deferred.make<void>(),
           yield* Deferred.make<void>(),
           yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
         ] as const;
         const continuationOffered =
           yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
         let callCount = 0;
-        const { providerThread, session, until, makeTurn, emitSessionUpdate } =
-          yield* makePromptSuggestionSession({
-            promptSuggestions: Effect.succeed(true),
-            continuationRequests: {
-              offer: (request) =>
-                Deferred.succeed(continuationOffered, request).pipe(Effect.asVoid),
-            },
-            samplePromptSuggestion: () =>
-              Effect.gen(function* () {
-                const index = callCount;
-                callCount += 1;
-                if (index < 3) {
-                  yield* Deferred.succeed(started[index]!, undefined);
-                  return yield* Effect.never.pipe(
-                    Effect.onInterrupt(() =>
-                      Deferred.succeed(interrupted[index]!, undefined).pipe(Effect.asVoid),
-                    ),
-                  );
-                }
-                return "run the test suite";
-              }),
-          });
+        const {
+          threadId,
+          modelSelection,
+          providerThread,
+          session,
+          until,
+          makeTurn,
+          emitSessionUpdate,
+        } = yield* makePromptSuggestionSession({
+          promptSuggestions: Effect.succeed(true),
+          continuationRequests: {
+            offer: (request) => Deferred.succeed(continuationOffered, request).pipe(Effect.asVoid),
+          },
+          samplePromptSuggestion: () =>
+            Effect.gen(function* () {
+              const index = callCount;
+              callCount += 1;
+              if (index < 4) {
+                yield* Deferred.succeed(started[index]!, undefined);
+                return yield* Effect.never.pipe(
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(interrupted[index]!, undefined).pipe(Effect.asVoid),
+                  ),
+                );
+              }
+              return "run the test suite";
+            }),
+        });
 
         // 1. Next turn cancels the first in-flight suggestion.
         yield* session.startTurn(makeTurn(1, { text: "First turn" }));
@@ -2862,11 +2870,29 @@ describe("AntigravityAdapterV2 prompt suggestions", () => {
         });
         yield* Deferred.await(interrupted[1]);
 
-        // 3. Admitting a late continuation cancels the third in-flight suggestion and suppresses
-        //    sampling while the continuation remains pending.
+        // 3. Forced session replacement cancels the third in-flight suggestion before starting the new runtime.
         yield* session.startTurn(makeTurn(3, { text: "Third turn" }));
         yield* until((event) => event.type === "turn.terminal");
         yield* Deferred.await(started[2]);
+
+        yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+          }),
+          forceNewNativeThread: true,
+          existingProviderThread: providerThread,
+        });
+        yield* Deferred.await(interrupted[2]);
+
+        // 4. Admitting a late continuation cancels the fourth in-flight suggestion and suppresses
+        //    sampling while the continuation remains pending.
+        yield* session.startTurn(makeTurn(4, { text: "Fourth turn" }));
+        yield* until((event) => event.type === "turn.terminal");
+        yield* Deferred.await(started[3]);
 
         yield* emitSessionUpdate({
           sessionId: "mock-suggestion-session",
@@ -2876,25 +2902,25 @@ describe("AntigravityAdapterV2 prompt suggestions", () => {
           },
         });
         const offeredRequest = yield* Deferred.await(continuationOffered);
-        yield* Deferred.await(interrupted[2]);
+        yield* Deferred.await(interrupted[3]);
 
-        yield* session.startTurn(makeTurn(4, { text: "Fourth turn while continuation pending" }));
+        yield* session.startTurn(makeTurn(5, { text: "Fifth turn while continuation pending" }));
         yield* until((event) => event.type === "turn.terminal");
-        assert.equal(callCount, 3);
+        assert.equal(callCount, 4);
 
-        // 4. Once the pending continuation clears, a subsequent normal turn emits its suggestion.
+        // 5. Once the pending continuation clears, a subsequent normal turn emits its suggestion.
         yield* offeredRequest.clearIfCurrent?.() ?? Effect.void;
-        const turn5 = makeTurn(5, { text: "Fifth turn" });
-        yield* session.startTurn(turn5);
-        const events5 = yield* until((event) => event.type === "prompt_suggestion.updated");
+        const turn6 = makeTurn(6, { text: "Sixth turn" });
+        yield* session.startTurn(turn6);
+        const events6 = yield* until((event) => event.type === "prompt_suggestion.updated");
         assert.deepEqual(
-          events5.filter((event) => event.type === "prompt_suggestion.updated"),
+          events6.filter((event) => event.type === "prompt_suggestion.updated"),
           [
             {
               type: "prompt_suggestion.updated",
               driver: "antigravity",
-              threadId: turn5.threadId,
-              runId: turn5.runId,
+              threadId: turn6.threadId,
+              runId: turn6.runId,
               text: "run the test suite",
             },
           ],

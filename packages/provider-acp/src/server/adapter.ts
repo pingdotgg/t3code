@@ -10021,6 +10021,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           "Cannot replace ACP session while a turn or background work is active",
                       });
                     yield* awaitRuntimeTeardown();
+                    yield* cancelPromptSuggestion();
                     const previousItemIdentityVersion = itemIdentityVersion;
                     itemIdentityVersion = 2;
                     prepareTerminalEnvironment(yield* readMcpContext(threadInput.threadId));
