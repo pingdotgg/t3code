@@ -121,6 +121,37 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     );
   });
 
+  it.effect("resolves the configured Scratch directory relative to the host cwd", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-scratch-config-" });
+      const homeDir = yield* HostProcess.HomeDirectory;
+      for (const [value, expected] of [
+        [undefined, undefined],
+        ["", undefined],
+        ["   ", undefined],
+        ["~/projectless", path.join(homeDir, "projectless")],
+        ["./projectless", path.resolve("projectless")],
+        [path.join(baseDir, "chats"), path.join(baseDir, "chats")],
+      ] as const) {
+        const config = yield* resolveServerConfig(minimalDesktopFlags(baseDir), Option.none()).pipe(
+          Effect.provide(
+            Layer.merge(
+              NetService.layer,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: value === undefined ? {} : { T3CODE_SCRATCH_DIR: value },
+                }),
+              ),
+            ),
+          ),
+        );
+        expect(config.scratchDir).toBe(expected);
+      }
+    }),
+  );
+
   it.effect("keeps stale records and supervised startup out of the manual launch preflight", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

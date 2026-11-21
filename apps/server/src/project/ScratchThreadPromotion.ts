@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import * as ServerConfig from "../config.ts";
 import { threadHasUnfinishedWork } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -45,6 +46,7 @@ export class ScratchThreadPromotion extends Context.Service<
 >()("t3/project/ScratchThreadPromotion") {}
 
 const make = Effect.gen(function* () {
+  const config = yield* ServerConfig.ServerConfig;
   const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const projects = yield* ProjectService.ProjectService;
   const threads = yield* ThreadManagementService.ThreadManagementService;
@@ -77,10 +79,13 @@ const make = Effect.gen(function* () {
     // A thread already rooted at its folder is a partial earlier promotion; finish it.
     const alreadyPromoted =
       Option.isSome(project) && project.value.workspaceRoot === folder && !isScratch;
+    const scratchParents: ReadonlyArray<string> =
+      scratchRoot === undefined
+        ? []
+        : yield* Effect.forEach(ManagedProjectFolders.scratchThreadParents(config, path), realPath);
     if (
       folder === undefined ||
-      scratchRoot === undefined ||
-      (yield* realPath(path.dirname(folder))) !== (yield* realPath(scratchRoot)) ||
+      !scratchParents.includes(yield* realPath(path.dirname(folder))) ||
       !(isScratch || alreadyPromoted)
     ) {
       return yield* new ScratchThreadPromotionError({

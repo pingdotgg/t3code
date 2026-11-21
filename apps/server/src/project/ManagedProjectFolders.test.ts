@@ -61,6 +61,7 @@ const layerEnrichment = ProjectEnrichmentService.layer.pipe(
 const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
+  readonly scratchDir?: string;
   readonly vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>;
   readonly git?: typeof layerRealGit;
   readonly projects?: (
@@ -85,7 +86,14 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(options?.git ?? layerRealGit),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
-    Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
+    Layer.provideMerge(
+      Layer.effect(
+        ServerConfig.ServerConfig,
+        ServerConfig.ServerConfig.pipe(
+          Effect.map((config) => ({ ...config, scratchDir: options?.scratchDir })),
+        ),
+      ).pipe(Layer.provide(ServerConfig.layerTest(baseDir, baseDir))),
+    ),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
@@ -329,6 +337,56 @@ it.effect("gives each Scratch thread its own folder, named from its message", ()
       assert.match(path.basename(accented), /^\d{4}-\d{2}-\d{2}-tim-kiem-skill-/);
     }),
   ),
+);
+
+it.effect("uses a configured directory without changing the Scratch project", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-scratch-custom-" });
+    const baseDir = path.join(root, "data");
+    const scratchDir = path.join(root, "custom", "chats");
+    yield* Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const { projectId } = yield* scratch.ensureScratchProject;
+      const project = Option.getOrThrow(yield* projects.getById(projectId));
+      assert.equal(project.workspaceRoot, path.join(baseDir, "scratch"));
+      assert.isTrue(yield* scratch.isScratchProject(projectId));
+      const folders = yield* Effect.forEach(
+        ["thread:a:12345678", "thread:b:12345678"],
+        (threadId) =>
+          scratch.folderForThread({ projectId, threadId: ThreadId.make(threadId), text: "Hello" }),
+      );
+      const paths = folders.map(Option.getOrThrow);
+      assert.equal(new Set(paths).size, 2);
+      for (const folder of paths) {
+        assert.equal(path.dirname(folder), scratchDir);
+        assert.isTrue(yield* fs.exists(folder));
+      }
+      assert.deepEqual(yield* fs.readDirectory(project.workspaceRoot), []);
+    }).pipe(Effect.provide(layer(baseDir, { scratchDir })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects a configured Scratch directory inside a Git checkout", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-scratch-custom-repo-" });
+    const checkout = path.join(root, "repo");
+    yield* fs.makeDirectory(checkout);
+    yield* git(checkout, ["init", "--quiet"]);
+    const scratchDir = path.join(checkout, "missing", "chats");
+    yield* Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+      const failure = yield* Effect.flip(scratch.ensureScratchProject);
+      assert.equal(failure._tag, "ScratchUnavailableError");
+      assert.include(failure.message, `T3CODE_SCRATCH_DIR ${scratchDir}`);
+      assert.isFalse(yield* fs.exists(scratchDir));
+    }).pipe(Effect.provide(layer(path.join(root, "data"), { scratchDir })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("leaves threads in other projects alone", () =>

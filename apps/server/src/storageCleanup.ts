@@ -45,7 +45,7 @@ import * as ServerConfig from "./config.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
-import { scratchFolderRoot } from "./project/ManagedProjectFolders.ts";
+import { scratchFolderRoot, scratchThreadParents } from "./project/ManagedProjectFolders.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -664,6 +664,7 @@ const make = Effect.gen(function* () {
         }).pipe(Effect.orElseSucceed(() => undefined));
       }
     }
+    // Only the default root: T3CODE_SCRATCH_DIR may be shared with other tools' folders.
     if (scratchRoot !== null)
       for (const folder of yield* directories(scratchRoot, null)) yield* report(folder, true);
 
@@ -1127,6 +1128,11 @@ const make = Effect.gen(function* () {
     const scratchRoot = yield* fs
       .realPath(scratchFolderRoot(config.baseDir, path))
       .pipe(Effect.orElseSucceed(() => null));
+    const scratchParentKeys = new Set(
+      (yield* Effect.forEach(scratchThreadParents(config, path), (parent) =>
+        fs.realPath(parent).pipe(Effect.option),
+      )).flatMap((parent) => (Option.isSome(parent) ? [pathKey(parent.value)] : [])),
+    );
     // Nothing can bring a scratch folder's files back, so these hold whatever the retention says.
     const scratchKeepReason = Effect.fn("StorageCleanup.scratchKeepReason")(function* (
       folder: string,
@@ -1287,11 +1293,9 @@ const make = Effect.gen(function* () {
       const worktreeKey = yield* canonical(worktreePath);
       const worktreePaths = [worktreePath, worktreeKey];
       const group = groups.get(worktreeKey) ?? [];
-      // No project threads have no branch; their folders sit directly in the scratch root.
+      // No project threads have no branch; their folders sit directly in a scratch parent.
       const scratch =
-        thread.branch === null &&
-        scratchRoot !== null &&
-        pathKey(path.dirname(worktreeKey)) === pathKey(scratchRoot);
+        thread.branch === null && scratchParentKeys.has(pathKey(path.dirname(worktreeKey)));
       const activityAt = Math.max(...group.map(storageCleanupActivityAt));
       const deleted = "workspaceRoot" in thread;
       const settlementChain = deleted
