@@ -15090,8 +15090,12 @@ describe("subagent lifecycle cascade", () => {
     "legacy rejection",
     "legacy late acceptance",
     "legacy late rejection",
+    "legacy renamed rejection",
+    "legacy deeper rejection",
+    "legacy dispatched rejection",
     "legacy expired rejection",
     "legacy direct archive",
+    "legacy planning move",
   ] as const)("resumes an archive past a skipped intermediate with a %s", (scenario) =>
     Effect.gen(function* () {
       const f = yield* fixture;
@@ -15099,6 +15103,7 @@ describe("subagent lifecycle cascade", () => {
       yield* f.run("unarchive", grandchild);
       const leaf = ThreadId.make("leaf");
       yield* f.set(leaf, {
+        ...(scenario === "legacy planning move" ? { projectId: ProjectId.make("foreign") } : {}),
         lineage: {
           rootThreadId: parent,
           parentThreadId: grandchild,
@@ -15111,10 +15116,41 @@ describe("subagent lifecycle cascade", () => {
         threadId: leaf,
         title: "Leaf",
       });
+      const deepest = ThreadId.make("deepest");
+      if (scenario === "legacy deeper rejection") {
+        yield* f.set(deepest, {
+          lineage: {
+            rootThreadId: parent,
+            parentThreadId: leaf,
+            relationshipToParent: "subagent",
+          },
+        });
+        yield* f.threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("rename:deepest"),
+          threadId: deepest,
+          title: "Deepest",
+        });
+        yield* f.threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("witness:leaf"),
+          threadId: leaf,
+          title: "Leaf before archiving",
+        });
+      }
+      yield* f.threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("witness:grandchild"),
+        threadId: grandchild,
+        title: "Grandchild before archiving",
+      });
       const skippedId = CommandId.make("archive:parent:subagent:app");
       const receipts = yield* Receipts.CommandReceiptStoreV2;
       const created = Option.getOrThrow(yield* receipt("create:parent"));
-      const rejected = scenario.endsWith("rejection") || scenario === "legacy direct archive";
+      const rejected =
+        scenario.endsWith("rejection") ||
+        scenario === "legacy direct archive" ||
+        scenario === "legacy planning move";
       const collision = {
         ...created,
         commandId: skippedId,
@@ -15133,19 +15169,57 @@ describe("subagent lifecycle cascade", () => {
       }
       if (scenario === "legacy rejection") yield* receipts.upsert(collision);
       const prefix = scenario === "legacy rejection" ? `${skippedId}:retry:1` : skippedId;
-      const childId = `${prefix}:subagent:${grandchild}`;
-      if (scenario === "legacy direct archive") {
+      const childBase = `${prefix}:subagent:${grandchild}`;
+      const childId =
+        scenario === "legacy dispatched rejection" ? `${childBase}:retry:1` : childBase;
+      const acceptedOccupant = { ...created, commandId: CommandId.make(childBase) };
+      if (scenario === "legacy dispatched rejection") yield* receipts.upsert(acceptedOccupant);
+      if (scenario === "legacy direct archive" || scenario === "legacy planning move") {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const { projectId } = yield* store.getThread(parent);
+        const children = store.getSubagentChildThreads;
+        using _move = vi.spyOn(store, "getSubagentChildThreads").mockImplementation((threadId) =>
+          children(threadId).pipe(
+            Effect.tap((found) =>
+              scenario === "legacy planning move" && threadId === grandchild && found.length === 0
+                ? store.getThread(leaf).pipe(
+                    Effect.flatMap((thread) =>
+                      sink.write({
+                        events: [
+                          {
+                            id: EventId.make("move:leaf"),
+                            type: "thread.metadata-updated",
+                            threadId: leaf,
+                            occurredAt: f.now,
+                            payload: { ...thread, projectId },
+                          },
+                        ],
+                      }),
+                    ),
+                    Effect.orDie,
+                  )
+                : Effect.void,
+            ),
+          ),
+        );
         yield* f.commit("archive", grandchild, childId);
         const { archiveSourceCommandId: _source, ...legacy } = Option.getOrThrow(
           yield* receipt(childId),
         );
         yield* receipts.upsert(legacy);
         yield* receipts.upsert(collision);
-        yield* f.threads.cascadeSubagentLifecycle({
+        const recovery = f.threads.cascadeSubagentLifecycle({
           operation: "thread.archive",
           threadId: parent,
           commandId: CommandId.make("archive:parent"),
         });
+        if (scenario === "legacy planning move") {
+          const error = yield* recovery.pipe(Effect.as(null), Effect.catch(Effect.succeed));
+          assert.equal(error?._tag, "OrchestratorDispatchError");
+          if (error?._tag === "OrchestratorDispatchError")
+            assert.include(String(error.cause), "Cannot verify the archive or restore");
+        } else yield* recovery;
         assert.equal(yield* f.archived(app, grandchild, leaf), "110");
         assert.deepEqual(Option.getOrThrow(yield* receipt(childId)), legacy);
         return;
@@ -15154,7 +15228,8 @@ describe("subagent lifecycle cascade", () => {
       const dispatch = orchestrator.dispatch;
       let failLeaf = true;
       using _failLeaf = vi.spyOn(orchestrator, "dispatch").mockImplementation((command) => {
-        if (command.type === "thread.archive" && command.threadId === leaf && failLeaf) {
+        const interrupted = scenario === "legacy deeper rejection" ? deepest : leaf;
+        if (command.type === "thread.archive" && command.threadId === interrupted && failLeaf) {
           failLeaf = false;
           return Effect.fail(
             new Orchestrator.OrchestratorDispatchError({
@@ -15170,11 +15245,32 @@ describe("subagent lifecycle cascade", () => {
         .spyOn(f.outbox, "retry")
         .mockImplementationOnce(() => Effect.succeed(true));
       yield* f.drain;
-      assert.equal(yield* f.archived(app, grandchild, leaf), "110");
+      assert.equal(
+        yield* f.archived(app, grandchild, leaf),
+        scenario === "legacy deeper rejection" ? "111" : "110",
+      );
       const committed = Option.getOrThrow(yield* receipt(childId));
       const { archiveSourceCommandId: _source, ...legacy } = committed;
-      const childReceipt = scenario === "late collision" ? committed : legacy;
+      const childReceipt =
+        scenario === "late collision" || scenario === "legacy dispatched rejection"
+          ? committed
+          : legacy;
       if (childReceipt === legacy) yield* receipts.upsert(legacy);
+      const leafId = `${childId}:subagent:${leaf}`;
+      if (scenario === "legacy deeper rejection") {
+        const { archiveSourceCommandId: _source, ...legacyLeaf } = Option.getOrThrow(
+          yield* receipt(leafId),
+        );
+        yield* receipts.upsert(legacyLeaf);
+      }
+      if (scenario === "legacy renamed rejection") {
+        yield* f.threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("rename:grandchild:after-archive"),
+          threadId: grandchild,
+          title: "Grandchild after archiving",
+        });
+      }
       if (scenario !== "legacy rejection") yield* receipts.upsert(collision);
       if (scenario === "legacy expired rejection") yield* TestClock.adjust("8 days");
       assert.equal((yield* f.outbox.reconcileAfterProcessLoss).requeued, 1);
@@ -15188,8 +15284,32 @@ describe("subagent lifecycle cascade", () => {
         assert.equal(recovered.status, "succeeded");
         assert.equal(yield* f.archived(app, grandchild, leaf), "111");
       }
-      assert.deepEqual(Option.getOrThrow(yield* receipt(childId)), childReceipt);
+      const { archiveSourceCommandId: recoveredSource, ...recoveredReceipt } = Option.getOrThrow(
+        yield* receipt(childId),
+      );
+      assert.deepEqual(recoveredReceipt, legacy);
       assert.deepEqual(Option.getOrThrow(yield* receipt(skippedId)), collision);
+      if (scenario === "legacy dispatched rejection") {
+        assert.equal(recoveredSource, committed.archiveSourceCommandId);
+        assert.deepEqual(Option.getOrThrow(yield* receipt(childBase)), acceptedOccupant);
+      }
+      if (scenario === "legacy late rejection" || scenario === "legacy deeper rejection")
+        assert.equal(recoveredSource, "archive:parent");
+      if (scenario === "legacy deeper rejection") {
+        assert.equal(yield* f.archived(deepest), "1");
+        yield* TestClock.adjust("8 days");
+        assert.isAbove(yield* f.outbox.pruneSettled, 0);
+        yield* f.run("unarchive");
+        yield* f.drain;
+        assert.equal(yield* f.archived(app, grandchild, leaf, deepest), "1000");
+      }
+      if (scenario === "legacy late rejection") {
+        yield* TestClock.adjust("8 days");
+        assert.isAbove(yield* f.outbox.pruneSettled, 0);
+        yield* f.run("unarchive");
+        yield* f.drain;
+        assert.equal(yield* f.archived(app, grandchild, leaf), "100");
+      }
     }).pipe(Effect.provide(Layer.merge(layerTest, SqlitePersistence.layerMemory))),
   );
 

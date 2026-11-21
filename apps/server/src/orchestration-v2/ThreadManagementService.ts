@@ -1858,7 +1858,11 @@ const make = Effect.gen(function* () {
         cutoff: sideChat?.cutoff ?? receipt.resultSequence,
         archiveCommandId: sideChat?.archiveCommandId,
       };
-      type LegacyPath = { readonly anchorId: CommandId; readonly depth: number };
+      type LegacyPath = {
+        readonly anchorId: CommandId;
+        readonly depth: number;
+        readonly verified?: true;
+      };
       const dispatchChild = Effect.fn("ThreadManagementService.dispatchCascadeChild")(function* (
         threadId: ThreadId,
         baseId: CommandId,
@@ -1885,7 +1889,10 @@ const make = Effect.gen(function* () {
           if (result === undefined) return;
           if (!result.cascadeIdOccupied)
             return result.replayed || result.storedEvents.length > 0
-              ? (result.cascadeReplayedCommandId ?? commandId)
+              ? {
+                  commandId: result.cascadeReplayedCommandId ?? commandId,
+                  verified: result.cascadeReplayedCommandId !== undefined,
+                }
               : null;
         }
         return yield* new Orchestrator.OrchestratorDispatchError({
@@ -1912,13 +1919,14 @@ const make = Effect.gen(function* () {
           path.length === 0
             ? parentCommandId
             : CommandId.make(`${parentCommandId}:subagent:${thread.id}`);
-        const ownCommandId =
+        const dispatched =
           path.length === 0
-            ? baseId
+            ? { commandId: baseId, verified: false }
             : thread.deletedAt === null
               ? yield* dispatchChild(thread.id, baseId, path, parentArchiveCommandId, legacyPath)
               : null;
-        if (ownCommandId === undefined) return;
+        if (dispatched === undefined) return;
+        const ownCommandId = dispatched?.commandId ?? null;
         // Holds each thread's lock while visiting its subagents, so locks nest parent before child.
         yield* threadDispatch.withLock(
           thread.id,
@@ -1971,15 +1979,16 @@ const make = Effect.gen(function* () {
                 ? yield* CommandReceiptStore.legacyCascadeCommandId(receipts, baseId)
                 : baseId;
             const prefix = ownCommandId ?? legacyPrefix ?? baseId;
-            const skippedPath =
-              ownCommandId === null
+            const childLegacyPath = dispatched?.verified
+              ? { anchorId: prefix, depth: path.length, verified: true as const }
+              : ownCommandId === null
                 ? (legacyPath ??
                   (source && legacyPrefix !== baseId
                     ? { anchorId: parentCommandId, depth: path.length - 1 }
                     : undefined))
                 : undefined;
             const [, failures] = yield* Effect.partition(children, (child) =>
-              visit(child, prefix, [...path, child.id], archiveCommandId, skippedPath),
+              visit(child, prefix, [...path, child.id], archiveCommandId, childLegacyPath),
             );
             // Finish healthy siblings before reporting a failure to the durable worker.
             if (failures[0] !== undefined) return yield* failures[0];

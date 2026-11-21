@@ -261,6 +261,11 @@ export interface EventSinkV2Shape {
   readonly latestSequence: (input?: {
     readonly threadId?: ThreadId;
   }) => Effect.Effect<number, EventSinkV2Error>;
+  readonly readRetainedThreadHistory: (input: {
+    readonly threadId: ThreadId;
+    readonly throughSequence: number;
+    readonly limit: number;
+  }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent> | null, EventSinkV2Error>;
   readonly readByCommandId: (input: {
     readonly commandId: CommandId;
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
@@ -1334,6 +1339,24 @@ const layerBase: Layer.Layer<
               }),
           ),
         ),
+      readRetainedThreadHistory: Effect.fn("EventSink.readRetainedThreadHistory")(
+        function* ({ threadId, throughSequence, limit }) {
+          const prunedThrough = yield* eventStore.prunedThroughSequence;
+          const events = yield* eventStore
+            .read({
+              threadId,
+              afterSequence: prunedThrough,
+              throughSequence,
+              limit: limit + 1,
+            })
+            .pipe(Stream.runCollect);
+          if (events.length > limit || (yield* eventStore.prunedThroughSequence) !== prunedThrough)
+            return null;
+          return Array.from(events);
+        },
+        (effect, { threadId }) =>
+          effect.pipe(Effect.mapError((cause) => new EventSinkStreamError({ threadId, cause }))),
+      ),
       readByCommandId: (input) =>
         eventStore.readByCommandId(input).pipe(
           Stream.mapError(

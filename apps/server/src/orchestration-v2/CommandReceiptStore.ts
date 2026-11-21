@@ -86,6 +86,11 @@ export interface CommandReceiptStoreV2Shape {
   readonly upsert: (
     receipt: AnyCommandReceiptV2,
   ) => Effect.Effect<void, CommandReceiptStoreV2Error>;
+  readonly setArchiveSourceIfMissing: (
+    input: Parameters<
+      OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository["Service"]["setArchiveSourceIfMissing"]
+    >[0],
+  ) => Effect.Effect<boolean, CommandReceiptStoreV2Error>;
   readonly getAnyByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<Option.Option<AnyCommandReceiptV2>, CommandReceiptStoreV2Error>;
@@ -205,6 +210,16 @@ const layerBase: Layer.Layer<
               }),
           ),
         ),
+      setArchiveSourceIfMissing: Effect.fn("CommandReceiptStore.setArchiveSourceIfMissing")(
+        (input) =>
+          receipts
+            .setArchiveSourceIfMissing(input)
+            .pipe(
+              Effect.mapError(
+                (cause) => new CommandReceiptStoreWriteError({ commandId: input.commandId, cause }),
+              ),
+            ),
+      ),
       getAnyByCommandId: Effect.fn("CommandReceiptStore.getAnyByCommandId")((commandId) =>
         receipts.getByCommandId({ commandId }).pipe(
           Effect.flatMap((receipt) => {
@@ -278,10 +293,11 @@ export const matchesLegacyCascadePath = Effect.fn("CommandReceiptStore.matchesLe
     anchorId: CommandId,
     path: ReadonlyArray<ThreadId>,
     completedId: CommandId,
+    occupiesDispatchedId: (receipt: AnyCommandReceiptV2) => boolean,
   ) {
-    const retries: Array<{ baseId: CommandId; retry: number }> = [];
+    const retries: Array<{ baseId: CommandId; retry: number; dispatched: boolean }> = [];
     let id: string = completedId;
-    for (const threadId of path.toReversed()) {
+    for (const [offset, threadId] of path.toReversed().entries()) {
       const segment = `:subagent:${threadId}`;
       if (!id.endsWith(segment)) {
         const suffix = /:retry:([1-9][0-9]*)$/.exec(id);
@@ -289,18 +305,24 @@ export const matchesLegacyCascadePath = Effect.fn("CommandReceiptStore.matchesLe
         const retry = Number(suffix[1]);
         if (retry >= cascadeCommandIdLimit) return false;
         id = id.slice(0, suffix.index);
-        retries.push({ baseId: CommandId.make(id), retry });
+        retries.push({ baseId: CommandId.make(id), retry, dispatched: offset === 0 });
       }
       if (!id.endsWith(segment)) return false;
       id = id.slice(0, -segment.length);
     }
     if (id !== anchorId) return false;
 
-    // Legacy selection could only reach a suffix after rejecting every earlier ID.
-    for (const { baseId, retry } of retries) {
+    for (const { baseId, retry, dispatched } of retries) {
       for (let previous = 0; previous < retry; previous++) {
-        const receipt = yield* receipts.getByCommandId(cascadeCommandIdAt(baseId, previous));
-        if (Option.isNone(receipt) || receipt.value.status !== "rejected") return false;
+        const commandId = cascadeCommandIdAt(baseId, previous);
+        const receipt = yield* dispatched
+          ? receipts.getAnyByCommandId(commandId)
+          : receipts.getByCommandId(commandId);
+        if (
+          Option.isNone(receipt) ||
+          (dispatched ? !occupiesDispatchedId(receipt.value) : receipt.value.status !== "rejected")
+        )
+          return false;
       }
     }
     return true;

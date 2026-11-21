@@ -55,7 +55,13 @@ export const SubagentCascade = Context.Reference<
         | undefined;
       readonly path: ReadonlyArray<ThreadId>;
       readonly parentArchiveCommandId: CommandId;
-      readonly legacyPath?: { readonly anchorId: CommandId; readonly depth: number } | undefined;
+      readonly legacyPath?:
+        | {
+            readonly anchorId: CommandId;
+            readonly depth: number;
+            readonly verified?: true;
+          }
+        | undefined;
     }
   | undefined
 >("t3/orchestration-v2/SubagentCascade", { defaultValue: () => undefined });

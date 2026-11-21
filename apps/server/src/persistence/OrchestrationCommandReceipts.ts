@@ -53,6 +53,13 @@ export class OrchestrationCommandReceiptRepository extends Context.Service<
       receipt: OrchestrationCommandReceipt,
     ) => Effect.Effect<void, OrchestrationCommandReceiptRepositoryError>;
 
+    readonly setArchiveSourceIfMissing: (input: {
+      readonly commandId: CommandId;
+      readonly threadId: ThreadId;
+      readonly resultSequence: number;
+      readonly sourceCommandId: CommandId;
+    }) => Effect.Effect<boolean, OrchestrationCommandReceiptRepositoryError>;
+
     readonly getLatestLifecycle: (
       input: typeof GetLatestLifecycleInput.Type,
     ) => Effect.Effect<
@@ -198,6 +205,26 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
     );
 
   return {
+    setArchiveSourceIfMissing: Effect.fn(
+      "OrchestrationCommandReceiptRepository.setArchiveSourceIfMissing",
+    )(({ commandId, threadId, resultSequence, sourceCommandId }) =>
+      sql<{ readonly command_id: string }>`
+          UPDATE orchestration_command_receipts
+          SET archive_source_command_id = ${sourceCommandId}
+          WHERE command_id = ${commandId}
+            AND aggregate_kind = 'thread' AND aggregate_id = ${threadId}
+            AND status = 'accepted' AND command_type = 'thread.archive'
+            AND result_sequence = ${resultSequence} AND archive_source_command_id IS NULL
+          RETURNING command_id
+        `.pipe(
+        Effect.map((rows) => rows.length === 1),
+        Effect.mapError(
+          toPersistenceSqlError(
+            "OrchestrationCommandReceiptRepository.setArchiveSourceIfMissing:query",
+          ),
+        ),
+      ),
+    ),
     getLatestLifecycle: (input) =>
       findLatestLifecycle(input).pipe(
         Effect.mapError(
