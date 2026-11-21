@@ -142,7 +142,9 @@ it.effect("expires credentials once their session stops showing signs of life", 
       capabilities: new Set(["preview"]),
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
-    timestamp += 101;
+    timestamp += 99;
+    expect(yield* registry.resolve(token)).toBeDefined();
+    timestamp += 2;
     expect(yield* registry.resolve(token)).toBeUndefined();
     // Once a request found it expired, clocks moving back don't bring it back; a provider turn does.
     timestamp = 1_000;
