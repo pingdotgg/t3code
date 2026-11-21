@@ -9693,6 +9693,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 generation,
                 Effect.gen(function* () {
                   if (context.finalized || context.interrupted) return false;
+                  // `agy acp` rejects a prompt while the running one waits on a question or
+                  // approval, so the message waits as a follow-up until the user answers. Checked
+                  // under the callback permit, which also guards registering those requests.
+                  if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) {
+                    return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+                      driver,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId: turnInput.providerTurnId,
+                    });
+                  }
                   // The steer prompt carries the turn on, also past a prompt that already settled.
                   const released = context.foregroundIdle;
                   context.foregroundIdle = yield* Deferred.make<void>();
@@ -10091,7 +10101,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (effect, turnInput) =>
               effect.pipe(
                 Effect.mapError((cause) =>
-                  cause._tag === "ProviderAdapterSteerRunUnsupportedError"
+                  cause._tag === "ProviderAdapterSteerRunUnsupportedError" ||
+                  cause._tag === "ProviderAdapterSteerDeclinedError"
                     ? cause
                     : new ProviderAdapter.ProviderAdapterSteerRunError({
                         driver,
