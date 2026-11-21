@@ -1,7 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { readMerged } from "./tanStackSourceListing.ts";
+import { decodeCursor, encodeCursor, readMerged } from "./tanStackSourceListing.ts";
 
 type Row = { readonly createdAt: number; readonly number: number };
 const row = (createdAt: number): Row => ({ createdAt, number: createdAt });
@@ -93,5 +93,18 @@ describe("readMerged", () => {
         [90, 80],
       );
     });
+  });
+
+  it("writes cursors the pull request service accepts, and reads them back", () => {
+    // `resumeAfter`'s alphabet in apps/server PullRequestService's LIST_CURSOR_PATTERN.
+    const allowed = /^[\w.:~+-]{1,128}$/u;
+    for (const cursor of [
+      { after: { createdAt: 1795239489187, number: 2221 }, pages: { open: "2047", closed: null } },
+      { after: null, pages: { open: "", closed: "a/b=c?" } },
+    ]) {
+      const written = encodeCursor(cursor);
+      assert.match(written, allowed);
+      assert.deepStrictEqual(decodeCursor(written), cursor);
+    }
   });
 });

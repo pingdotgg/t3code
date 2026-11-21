@@ -337,24 +337,31 @@ export const make = Effect.gen(function* () {
         if (input.filters?.draft !== undefined)
           filters.set("draft", input.filters.draft === "only" ? "true" : "false");
         const limit = Math.max(1, input.limit);
-        const listing = yield* Listing.readMerged({
-          states: listState(input.state),
-          cursor: input.cursor?.resumeAfter,
-          limit,
-          maxPages: PAGE_LIMIT,
-          readPage: (state, page) => {
-            const query = new URLSearchParams(filters);
-            query.set("state", state);
-            if (page !== null) query.set("cursor", page);
-            return read(
-              "listChangeRequests",
-              input,
-              { path: `${base}/pulls?${query}` },
-              Json.SourcePulls,
-            );
-          },
-          keep: (pull) => input.state !== "merged" || pull.state === "merged",
-        });
+        const readListing = (cursor: string | undefined) =>
+          Listing.readMerged({
+            states: listState(input.state),
+            cursor,
+            limit,
+            maxPages: PAGE_LIMIT,
+            readPage: (state, page) => {
+              const query = new URLSearchParams(filters);
+              query.set("state", state);
+              if (page !== null) query.set("cursor", page);
+              return read(
+                "listChangeRequests",
+                input,
+                { path: `${base}/pulls?${query}` },
+                Json.SourcePulls,
+              );
+            },
+            keep: (pull) => input.state !== "merged" || pull.state === "merged",
+          });
+        // The service ends a listing at a page without rows, so a page a filter emptied reads on.
+        let listing = yield* readListing(input.cursor?.resumeAfter);
+        for (let scans = 1; listing.items.length === 0 && listing.next !== null; scans++) {
+          if (scans >= PAGE_LIMIT) break;
+          listing = yield* readListing(listing.next);
+        }
         // List rows name no base, which the list shows, so each delivered row is read in full.
         const details = yield* Effect.forEach(
           listing.items,

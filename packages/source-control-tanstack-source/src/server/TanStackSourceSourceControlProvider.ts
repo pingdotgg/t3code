@@ -552,27 +552,36 @@ export const make = Effect.gen(function* () {
             args: ["fetch", "--no-tags", remoteName, `+refs/pull/${pull.number}/head:${tracking}`],
           });
           const exists = branches.includes(localBranch);
-          // An existing `pr-<n>` moves only when it holds nothing the pull request lacks, so an
-          // unrelated branch of that name, or local commits, are never switched to or lost.
-          const behind =
-            exists &&
-            input.force !== true &&
-            (yield* git
-              .execute({
-                operation,
-                cwd: input.cwd,
-                args: ["merge-base", "--is-ancestor", `refs/heads/${localBranch}`, tracking],
-              })
-              .pipe(
-                Effect.as(true),
-                Effect.orElseSucceed(() => false),
-              ));
-          if (exists && input.force !== true && !behind)
-            return yield* error(
-              "checkoutChangeRequest",
-              input.cwd,
-              `Local branch ${localBranch} has commits pull request #${pull.number} does not. Rename it, or check out with force to replace it.`,
-            );
+          // T3 records which pull request it made `pr-<n>` for, and reuses only that branch, and
+          // only while it holds nothing the pull request lacks: an unrelated branch of the name,
+          // or local commits, are never switched to, moved or lost.
+          const ownerKey = `branch.${localBranch}.t3TanstackSourcePull`;
+          const owner = `${pullRepository ?? ""}#${pull.number}`;
+          if (exists && input.force !== true) {
+            const recorded = yield* git
+              .readConfigValue(input.cwd, ownerKey)
+              .pipe(Effect.orElseSucceed(() => null));
+            const behind =
+              recorded === owner &&
+              (yield* git
+                .execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: ["merge-base", "--is-ancestor", `refs/heads/${localBranch}`, tracking],
+                })
+                .pipe(
+                  Effect.as(true),
+                  Effect.orElseSucceed(() => false),
+                ));
+            if (!behind)
+              return yield* error(
+                "checkoutChangeRequest",
+                input.cwd,
+                recorded === owner
+                  ? `Local branch ${localBranch} has commits pull request #${pull.number} does not. Rename it, or check out with force to replace it.`
+                  : `Local branch ${localBranch} was not made for pull request #${pull.number}. Rename it, or check out with force to replace it.`,
+              );
+          }
           if (exists)
             yield* git.execute({
               operation,
@@ -581,6 +590,7 @@ export const make = Effect.gen(function* () {
             });
           else
             yield* git.createBranch({ cwd: input.cwd, branch: localBranch, startPoint: tracking });
+          yield* git.writeConfigValue({ cwd: input.cwd, key: ownerKey, value: owner });
           yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
         }).pipe(
           Effect.mapError((cause) =>

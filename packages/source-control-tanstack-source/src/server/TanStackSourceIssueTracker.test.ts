@@ -107,7 +107,8 @@ describe("TanStackSourceIssueTracker", () => {
           { id: 7, comment: "On it.", author: "bob", at: 4_000, moderation: "visible" },
           { id: 8, comment: null, author: "spam", at: 5_000, moderation: "quarantined" },
         ],
-        next: null,
+        // Older conversation carries on past this first page.
+        next: "t2",
         fixedBy: [{ number: 2221, title: "fix(ai-mcp): follow the spec", state: "open" }],
       },
     });
@@ -130,6 +131,7 @@ describe("TanStackSourceIssueTracker", () => {
       );
       assert.strictEqual(issue.updatedAt, "1970-01-01T00:00:05.000Z");
       assert.strictEqual(issue.commentCount, 12);
+      assert.strictEqual(issue.commentsCursor, "t2");
       assert.deepStrictEqual(issue.linkedPullRequests, [
         {
           repository: "TanStack/ai",

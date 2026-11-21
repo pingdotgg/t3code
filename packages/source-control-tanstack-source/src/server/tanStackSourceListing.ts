@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Result from "effect/Result";
 
 /** A row of a Source listing, which comes newest first by creation within one state. */
 export interface ListedRow {
@@ -13,15 +13,50 @@ export interface ListedRow {
  * from next. A state's page is re-read from where its first undelivered row was, so nothing
  * between pages is skipped; `""` is the first page and `null` means the state has nothing more.
  */
-const ListCursor = Schema.Struct({
-  after: Schema.NullOr(Schema.Struct({ createdAt: Schema.Finite, number: Schema.Int })),
-  pages: Schema.Record(Schema.String, Schema.NullOr(Schema.String)),
-});
-type ListCursor = typeof ListCursor.Type;
-const decodeCursor = Schema.decodeUnknownOption(Schema.fromJsonString(ListCursor));
-const encodeCursor = Schema.encodeSync(Schema.fromJsonString(ListCursor));
-
 const FIRST_PAGE = "";
+
+interface ListCursor {
+  readonly after: { readonly createdAt: number; readonly number: number } | null;
+  readonly pages: Readonly<Record<string, string | null>>;
+}
+
+/**
+ * Written in the alphabet pull request list cursors allow (`[\w.:~+-]`, which the service checks)
+ * as `<createdAt>.<number>` or `_`, then `~<state>:<page>` per state: `-` for ended, `0` for the
+ * first page, else `p` and the Source page token in base64url.
+ */
+export function encodeCursor(cursor: ListCursor): string {
+  const after = cursor.after === null ? "_" : `${cursor.after.createdAt}.${cursor.after.number}`;
+  const pages = Object.entries(cursor.pages).map(
+    ([state, page]) =>
+      `~${state}:${page === null ? "-" : page === FIRST_PAGE ? "0" : `p${Base64Url.encode(page)}`}`,
+  );
+  return `${after}${pages.join("")}`;
+}
+
+export function decodeCursor(raw: string): ListCursor | null {
+  const [head, ...states] = raw.split("~");
+  const position = /^(\d+)\.(\d+)$/u.exec(head ?? "");
+  if (head !== "_" && position === null) return null;
+  const pages: Record<string, string | null> = {};
+  for (const entry of states) {
+    const match = /^([a-z]+):(-|0|p[\w-]*)$/u.exec(entry);
+    if (match === null) return null;
+    const value = match[2]!;
+    if (value === "-") pages[match[1]!] = null;
+    else if (value === "0") pages[match[1]!] = FIRST_PAGE;
+    else {
+      const decoded = Base64Url.decodeString(value.slice(1));
+      if (Result.isFailure(decoded)) return null;
+      pages[match[1]!] = decoded.success;
+    }
+  }
+  return {
+    after:
+      position === null ? null : { createdAt: Number(position[1]), number: Number(position[2]) },
+    pages,
+  };
+}
 
 const newer = (a: ListedRow, b: ListedRow) =>
   a.createdAt > b.createdAt || (a.createdAt === b.createdAt && a.number > b.number);
@@ -46,8 +81,7 @@ export const readMerged = Effect.fn("TanStackSourceListing.readMerged")(function
   /** Rows a host-side filter could not exclude. Dropped rows still move the cursor. */
   readonly keep?: (row: A) => boolean;
 }) {
-  const resumed: ListCursor | null =
-    input.cursor === undefined ? null : Option.getOrNull(decodeCursor(input.cursor));
+  const resumed: ListCursor | null = input.cursor === undefined ? null : decodeCursor(input.cursor);
   const after = resumed?.after ?? null;
   const isNew = (row: A) => after === null || newer(after, row);
   const reads = yield* Effect.forEach(
