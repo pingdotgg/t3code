@@ -1021,25 +1021,37 @@ it.effect("pauses background reads after a 429 until Bitbucket's retry-after pas
 });
 
 it.effect("reports a missing credential, not a rate limit, when anonymous reads get 429", () => {
+  const sent = Deferred.makeUnsafe<void>();
+  const answered = Deferred.makeUnsafe<void>();
   const { layer } = makeLayer({
     env: { T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0" },
     response: () =>
       new Response("Rate limit exceeded", { status: 429, headers: { "retry-after": "60" } }),
+    answer: (response) =>
+      Deferred.succeed(sent, undefined).pipe(
+        Effect.andThen(Deferred.await(answered)),
+        Effect.as(response),
+      ),
   });
 
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
     const read = bitbucket.getPullRequest({ cwd: "/repo", reference: "#42" });
 
+    // A token saved while an anonymous read is in flight does not make its 429 a rate limit.
+    const anonymous = yield* Effect.flip(read).pipe(Effect.forkChild);
+    yield* Deferred.await(sent);
+    yield* settings.update({
+      sourceControlHosts: { bitbucket: { accessToken: "saved-access-token" } },
+    });
+    yield* Deferred.succeed(answered, undefined);
     // A missing credential is permanent: a watch that only ever sees "rate-limited" waits forever.
     assert.strictEqual(
-      bitbucketProviderFailure(yield* Effect.flip(read)).reason,
+      bitbucketProviderFailure(yield* Fiber.join(anonymous)).reason,
       "unauthenticated",
     );
-    assert.strictEqual(
-      bitbucketProviderFailure(yield* Effect.flip(read)).reason,
-      "unauthenticated",
-    );
+    assert.strictEqual(bitbucketProviderFailure(yield* Effect.flip(read)).reason, "rate-limited");
   }).pipe(Effect.provide(layer));
 });
 

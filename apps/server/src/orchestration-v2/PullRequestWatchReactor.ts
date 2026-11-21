@@ -75,6 +75,13 @@ const providerFailureReason = (cause: Cause.Cause<PullRequestService.PullRequest
         : null,
   });
 
+/** Missing tools and credentials wait on the user, so retrying them would only delay saying so. */
+const unavailableDetail = (cause: Cause.Cause<PullRequestService.PullRequestError>) =>
+  Option.match(Cause.findErrorOption(cause), {
+    onNone: () => null,
+    onSome: (error) => (error._tag === "PullRequestUnavailableError" ? error.message : null),
+  });
+
 const logFailure =
   (message: string, fields: Record<string, unknown>) =>
   <E>(cause: Cause.Cause<E>): Effect.Effect<void> =>
@@ -358,13 +365,19 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const giveUp = (target: WatchTarget) =>
+  const giveUp = (target: WatchTarget, unavailable: string | null) =>
     record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request only if it is still open.`,
+      text:
+        unavailable === null
+          ? `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request only if it is still open.`
+          : `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it cannot read the host: ${unavailable} Tell the user, and call watch_pull_request again once that is fixed.`,
       notification: {
         source: { kind: "monitor" },
         outcome: "failed",
-        summary: `#${target.link.number}: stopped watching, could not read it`,
+        summary:
+          unavailable === null
+            ? `#${target.link.number}: stopped watching, could not read it`
+            : `#${target.link.number}: stopped watching, the host needs setup`,
       },
     }).pipe(
       Effect.tap(() => woke(target)),
@@ -668,9 +681,13 @@ export const make = Effect.gen(function* () {
         readFailures.delete(group.key);
         return yield* Effect.failCause(detailRead.cause);
       }
-      const failures = (readFailures.get(group.key) ?? 0) + 1;
+      const unavailable = unavailableDetail(detailRead.cause);
+      const failures = unavailable === null ? (readFailures.get(group.key) ?? 0) + 1 : Infinity;
       readFailures.set(group.key, failures);
-      if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(unended, giveUp))) {
+      if (
+        failures >= READ_FAILURE_LIMIT &&
+        (yield* eachTarget(unended, (target) => giveUp(target, unavailable)))
+      ) {
         readFailures.delete(group.key);
       }
       return yield* Effect.failCause(detailRead.cause);
