@@ -348,11 +348,11 @@ it.effect("answers Grok's MCP elicitation request with the user's form answer", 
     };
     const context = { requestId: "7", method: "_x.ai/mcp/elicit" };
     assert.deepStrictEqual(yield* elicit!(params, context), {
-      action: "accept",
+      outcome: "accept",
       content: { choice: "allow_once" },
     });
     assert.lengthOf(askedQuestions, 1);
     answers = null;
-    assert.deepStrictEqual(yield* elicit!(params, context), { action: "cancel" });
+    assert.deepStrictEqual(yield* elicit!(params, context), { outcome: "cancel" });
   }),
 );

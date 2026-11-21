@@ -262,7 +262,7 @@ const XAiMcpElicitRequest = Schema.Struct({
   requestedSchema: Schema.optional(Schema.Unknown),
 });
 
-// Grok forwards MCP `elicitation/create` here and relays the reply to the server as an MCP ElicitResult.
+// Grok forwards MCP `elicitation/create` here; its reply is tagged by `outcome`, not MCP's `action`.
 const registerGrokMcpElicitExtensions = ({
   runtime,
   requestUserInput,
@@ -275,7 +275,7 @@ const registerGrokMcpElicitExtensions = ({
           params.mode === "form"
             ? parseElicitationForm(params.requestedSchema, params.message)
             : undefined;
-        if (form === undefined) return Effect.succeed({ action: "decline" } as const);
+        if (form === undefined) return Effect.succeed({ outcome: "decline" } as const);
         const nativeRequestId = `${params.sessionId}:xai-mcp-elicit:${requestContext.requestId}`;
         return requestUserInput(
           { nativeItemId: nativeRequestId, nativeRequestId, questions: form.questions },
@@ -285,8 +285,8 @@ const registerGrokMcpElicitExtensions = ({
             const content = answers === null ? undefined : form.content(answers);
             return Effect.succeed(
               content === undefined
-                ? ({ action: "cancel" } as const)
-                : ({ action: "accept", content } as const),
+                ? ({ outcome: "cancel" } as const)
+                : ({ outcome: "accept", content } as const),
             ).pipe(Effect.tap(() => acknowledgeNativeResponse));
           }),
         );
