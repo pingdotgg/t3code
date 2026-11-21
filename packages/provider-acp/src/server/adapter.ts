@@ -41,6 +41,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import {
   compactDynamicToolOutput,
@@ -2381,85 +2382,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const nextElicitationOrdinal = yield* Ref.make(0);
         const providerTurns = yield* Ref.make(new Map<string, OrchestrationV2ProviderTurn>());
         const snapshot = yield* Ref.make(emptySnapshotState());
-        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
-        const promptSuggestionHandle = yield* FiberHandle.make();
-        let promptSuggestionGeneration = 0;
-        const cancelPromptSuggestion = Effect.fnUntraced(function* () {
-          promptSuggestionGeneration += 1;
-          yield* FiberHandle.clear(promptSuggestionHandle);
-        });
-        const samplePromptSuggestion = Effect.fn("AcpAdapterV2.samplePromptSuggestion")(function* (
-          context: ActiveAcpTurn,
-        ) {
-          const sampler = flavor.samplePromptSuggestion;
-          if (
-            sampler === undefined ||
-            isDelegatedAppThread(context.input.appThread) ||
-            acpIsProviderContinuationMessage(context.input.message) ||
-            isCompactCommand(context.input.message) ||
-            !(yield* promptSuggestionsEnabled)
-          ) {
-            return;
-          }
-          const state = yield* Ref.get(snapshot);
-          const messages: Array<AcpPromptSuggestionMessage> = [];
-          for (const key of state.order) {
-            const message = state.messages.get(key);
-            if (
-              message === undefined ||
-              state.reasoningIds.has(message.id) ||
-              (message.role !== "user" && message.role !== "assistant") ||
-              (message.role === "user" && acpIsProviderContinuationMessage(message))
-            ) {
-              continue;
-            }
-            const rawText =
-              message.id === context.input.message.messageId &&
-              context.input.inlineContextLength !== undefined
-                ? message.text.slice(context.input.inlineContextLength)
-                : message.text;
-            const text = rawText.trim();
-            if (text.length === 0) continue;
-            messages.push({ role: message.role, text });
-          }
-          if (!messages.some((message) => message.role === "assistant")) {
-            return;
-          }
-          const generation = ++promptSuggestionGeneration;
-          yield* FiberHandle.run(
-            promptSuggestionHandle,
-            sampler({
-              modelSelection: context.input.modelSelection,
-              messages,
-            }).pipe(
-              Effect.flatMap((raw) => {
-                const suggestion = raw?.trim() ?? "";
-                // Delegated completion wakes arrive as user input, so samples can imitate one.
-                if (suggestion.length === 0 || suggestion.startsWith("Delegated task")) {
-                  return Effect.void;
-                }
-                return Effect.gen(function* () {
-                  if (
-                    (yield* Ref.get(activeTurn)) !== null ||
-                    promptSuggestionGeneration !== generation
-                  ) {
-                    return;
-                  }
-                  yield* emitProviderEvent({
-                    type: "prompt_suggestion.updated",
-                    driver,
-                    threadId: context.input.threadId,
-                    runId: context.input.runId,
-                    text: suggestion,
-                  });
-                });
-              }),
-              Effect.catchCause((cause) =>
-                Effect.logDebug("orchestration-v2.acp-prompt-suggestion-failed", { driver, cause }),
-              ),
-            ),
-          );
-        });
 
         const awaitRuntimeTeardown = Effect.fnUntraced(function* () {
           const state = yield* Ref.get(runtimeTeardownState);
@@ -2695,6 +2617,90 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const continuationGeneration = yield* Ref.make(0);
         const continuationPermit = yield* Semaphore.make(1);
         const continuationClosed = yield* Ref.make(false);
+        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
+        const promptSuggestionHandle = yield* FiberHandle.make();
+        let promptSuggestionGeneration = 0;
+        const cancelPromptSuggestion = Effect.fnUntraced(function* () {
+          promptSuggestionGeneration += 1;
+          yield* FiberHandle.clear(promptSuggestionHandle);
+        });
+        const samplePromptSuggestion = Effect.fn("AcpAdapterV2.samplePromptSuggestion")(function* (
+          context: ActiveAcpTurn,
+        ) {
+          const sampler = flavor.samplePromptSuggestion;
+          if (
+            sampler === undefined ||
+            isDelegatedAppThread(context.input.appThread) ||
+            acpIsProviderContinuationMessage(context.input.message) ||
+            isCompactCommand(context.input.message) ||
+            (yield* Ref.get(continuationRequested)) ||
+            !(yield* promptSuggestionsEnabled)
+          ) {
+            return;
+          }
+          const state = yield* Ref.get(snapshot);
+          const messages: Array<AcpPromptSuggestionMessage> = [];
+          for (const key of state.order) {
+            const message = state.messages.get(key);
+            if (
+              message === undefined ||
+              state.reasoningIds.has(message.id) ||
+              (message.role !== "user" && message.role !== "assistant") ||
+              (message.role === "user" && acpIsProviderContinuationMessage(message))
+            ) {
+              continue;
+            }
+            const rawText =
+              message.id === context.input.message.messageId &&
+              context.input.inlineContextLength !== undefined
+                ? message.text.slice(context.input.inlineContextLength)
+                : message.text;
+            const text = rawText.trim();
+            if (text.length === 0) continue;
+            messages.push({ role: message.role, text });
+          }
+          if (!messages.some((message) => message.role === "assistant")) {
+            return;
+          }
+          const generation = ++promptSuggestionGeneration;
+          yield* FiberHandle.run(
+            promptSuggestionHandle,
+            sampler({
+              modelSelection: context.input.modelSelection,
+              messages,
+            }).pipe(
+              Effect.flatMap((raw) => {
+                const suggestion = raw?.trim() ?? "";
+                // Delegated completion wakes arrive as user input, so samples can imitate one.
+                if (suggestion.length === 0 || suggestion.startsWith("Delegated task")) {
+                  return Effect.void;
+                }
+                return Effect.gen(function* () {
+                  if (
+                    (yield* Ref.get(activeTurn)) !== null ||
+                    (yield* Ref.get(continuationRequested)) ||
+                    promptSuggestionGeneration !== generation
+                  ) {
+                    return;
+                  }
+                  yield* emitProviderEvent({
+                    type: "prompt_suggestion.updated",
+                    driver,
+                    threadId: context.input.threadId,
+                    runId: context.input.runId,
+                    text: suggestion,
+                  });
+                });
+              }),
+              Effect.catchCause((cause) =>
+                Effect.logDebug("orchestration-v2.acp-prompt-suggestion-failed", {
+                  driver,
+                  errorTag: causeErrorTag(cause),
+                }),
+              ),
+            ),
+          );
+        });
         // Quarantine stopped-run events so they cannot wake or attach to later runs.
         const stoppedRunQuarantine = yield* Ref.make(false);
         // Native subagents can outlive interrupts; carry lineage forward to finish their original turn items.
@@ -5304,6 +5310,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }),
           );
           if (Option.isNone(pending)) return false;
+          yield* cancelPromptSuggestion();
           const { route, generation, reports } = pending.value;
           const notification = backgroundWorkNotification([...reports.values()]);
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
@@ -10701,6 +10708,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
                     });
                   }
+                  yield* cancelPromptSuggestion();
                   yield* awaitRuntimeTeardown();
                   itemIdentityVersion = 2;
                   prepareTerminalEnvironment(

@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatFileAttachment,
+  CheckpointId,
   MessageId,
   NodeId,
   ProjectId,
@@ -2514,6 +2515,7 @@ describe("AntigravityAdapterV2 prompt suggestions", () => {
     >;
     readonly assistantText?: string;
     readonly holdPrompt?: Deferred.Deferred<void>;
+    readonly continuationRequests?: AntigravityAdapterV2Options["continuationRequests"];
   }) {
     type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
     const instanceId = ProviderInstanceId.make("antigravity-prompt-suggestion-test");
@@ -2641,6 +2643,9 @@ describe("AntigravityAdapterV2 prompt suggestions", () => {
       withProcess: (_stop, task) => task,
       defaultModel: Effect.undefined,
       samplePromptSuggestion: options.samplePromptSuggestion,
+      ...(options.continuationRequests !== undefined
+        ? { continuationRequests: options.continuationRequests }
+        : {}),
     });
     const session = yield* adapter.openSession({
       threadId,
@@ -2712,7 +2717,17 @@ describe("AntigravityAdapterV2 prompt suggestions", () => {
         },
       };
     };
-    return { threadId, modelSelection, session, until, makeTurn };
+    const emitSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
+      sessionUpdate === undefined ? Effect.void : sessionUpdate(notification);
+    return {
+      threadId,
+      modelSelection,
+      providerThread,
+      session,
+      until,
+      makeTurn,
+      emitSessionUpdate,
+    };
   });
 
   it.effect(
@@ -2785,48 +2800,105 @@ describe("AntigravityAdapterV2 prompt suggestions", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
-  it.effect("cancels an in-flight suggestion when the next turn starts", () =>
-    Effect.gen(function* () {
-      const firstStarted = yield* Deferred.make<void>();
-      const firstInterrupted = yield* Deferred.make<void>();
-      let callCount = 0;
-      const { session, until, makeTurn } = yield* makePromptSuggestionSession({
-        promptSuggestions: Effect.succeed(true),
-        samplePromptSuggestion: () =>
-          Effect.gen(function* () {
-            callCount += 1;
-            if (callCount === 1) {
-              yield* Deferred.succeed(firstStarted, undefined);
-              return yield* Effect.never.pipe(
-                Effect.onInterrupt(() =>
-                  Deferred.succeed(firstInterrupted, undefined).pipe(Effect.asVoid),
-                ),
-              );
-            }
-            return "run the test suite";
-          }),
-      });
+  it.effect(
+    "cancels an in-flight suggestion on next turn, rollback, or admitted continuation",
+    () =>
+      Effect.gen(function* () {
+        const started = [
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+        ] as const;
+        const interrupted = [
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+          yield* Deferred.make<void>(),
+        ] as const;
+        const continuationOffered =
+          yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+        let callCount = 0;
+        const { providerThread, session, until, makeTurn, emitSessionUpdate } =
+          yield* makePromptSuggestionSession({
+            promptSuggestions: Effect.succeed(true),
+            continuationRequests: {
+              offer: (request) =>
+                Deferred.succeed(continuationOffered, request).pipe(Effect.asVoid),
+            },
+            samplePromptSuggestion: () =>
+              Effect.gen(function* () {
+                const index = callCount;
+                callCount += 1;
+                if (index < 3) {
+                  yield* Deferred.succeed(started[index]!, undefined);
+                  return yield* Effect.never.pipe(
+                    Effect.onInterrupt(() =>
+                      Deferred.succeed(interrupted[index]!, undefined).pipe(Effect.asVoid),
+                    ),
+                  );
+                }
+                return "run the test suite";
+              }),
+          });
 
-      yield* session.startTurn(makeTurn(1, { text: "First turn" }));
-      yield* until((event) => event.type === "turn.terminal");
-      yield* Deferred.await(firstStarted);
+        // 1. Next turn cancels the first in-flight suggestion.
+        yield* session.startTurn(makeTurn(1, { text: "First turn" }));
+        yield* until((event) => event.type === "turn.terminal");
+        yield* Deferred.await(started[0]);
 
-      const turn2 = makeTurn(2, { text: "Second turn" });
-      yield* session.startTurn(turn2);
-      yield* Deferred.await(firstInterrupted);
-      const events2 = yield* until((event) => event.type === "prompt_suggestion.updated");
-      assert.deepEqual(
-        events2.filter((event) => event.type === "prompt_suggestion.updated"),
-        [
-          {
-            type: "prompt_suggestion.updated",
-            driver: "antigravity",
-            threadId: turn2.threadId,
-            runId: turn2.runId,
-            text: "run the test suite",
+        yield* session.startTurn(makeTurn(2, { text: "Second turn" }));
+        yield* Deferred.await(interrupted[0]);
+        yield* until((event) => event.type === "turn.terminal");
+        yield* Deferred.await(started[1]);
+
+        // 2. Rollback cancels the second in-flight suggestion before replacing the session.
+        yield* session.rollbackThread({
+          providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-before-first-run"),
+            appRunOrdinal: 0,
           },
-        ],
-      );
-    }).pipe(Effect.provide(layerSession)),
+          providerThreadTurns: [],
+        });
+        yield* Deferred.await(interrupted[1]);
+
+        // 3. Admitting a late continuation cancels the third in-flight suggestion and suppresses
+        //    sampling while the continuation remains pending.
+        yield* session.startTurn(makeTurn(3, { text: "Third turn" }));
+        yield* until((event) => event.type === "turn.terminal");
+        yield* Deferred.await(started[2]);
+
+        yield* emitSessionUpdate({
+          sessionId: "mock-suggestion-session",
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Late background wake" },
+          },
+        });
+        const offeredRequest = yield* Deferred.await(continuationOffered);
+        yield* Deferred.await(interrupted[2]);
+
+        yield* session.startTurn(makeTurn(4, { text: "Fourth turn while continuation pending" }));
+        yield* until((event) => event.type === "turn.terminal");
+        assert.equal(callCount, 3);
+
+        // 4. Once the pending continuation clears, a subsequent normal turn emits its suggestion.
+        yield* offeredRequest.clearIfCurrent?.() ?? Effect.void;
+        const turn5 = makeTurn(5, { text: "Fifth turn" });
+        yield* session.startTurn(turn5);
+        const events5 = yield* until((event) => event.type === "prompt_suggestion.updated");
+        assert.deepEqual(
+          events5.filter((event) => event.type === "prompt_suggestion.updated"),
+          [
+            {
+              type: "prompt_suggestion.updated",
+              driver: "antigravity",
+              threadId: turn5.threadId,
+              runId: turn5.runId,
+              text: "run the test suite",
+            },
+          ],
+        );
+      }).pipe(Effect.provide(layerSession)),
   );
 });
