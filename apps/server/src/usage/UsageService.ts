@@ -193,6 +193,8 @@ export const make = Effect.gen(function* () {
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
+  // Old live files stay warm without enlarging persisted history or normal-window cache walks.
+  const historicalFileCache: ScanCache = new Map();
   // Reads from concurrent windows can still hold the original record after it is corrected.
   const resolvedRecords = new WeakMap<UsageRecord, UsageRecord>();
   const correctedRecord = (record: UsageRecord) => resolvedRecords.get(record) ?? record;
@@ -568,7 +570,7 @@ export const make = Effect.gen(function* () {
     readonly failed?: true;
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
   }> {
-    const cached = fileCache.get(filePath);
+    const cached = fileCache.get(filePath) ?? historicalFileCache.get(filePath);
     // Provider is part of the identity: if both providers were ever pointed
     // at one directory, a hit parsed by the other parser must not be reused.
     if (
@@ -698,6 +700,7 @@ export const make = Effect.gen(function* () {
   const scanTranscriptDir = Effect.fn("UsageService.scanTranscriptDir")(function* (
     source: TranscriptSource,
     windowStartMs: number,
+    retentionCutoffMs: number,
     fromMemory: boolean,
   ) {
     const { provider, format, dir, volumeId, physicalSourceId, fileName } = source;
@@ -719,6 +722,17 @@ export const make = Effect.gen(function* () {
     const { files, walked, failedPaths } = yield* Effect.promise(() =>
       listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
     );
+    if (windowStartMs < retentionCutoffMs && failedPaths === 0) {
+      const livePaths = new Set(files.map((file) => file.path));
+      for (const [filePath, entry] of historicalFileCache) {
+        if (
+          entry.mtimeMs >= windowStartMs &&
+          isWithinDirectory(filePath, dir) &&
+          !livePaths.has(filePath)
+        )
+          historicalFileCache.delete(filePath);
+      }
+    }
     const read = yield* Effect.forEach(
       files,
       (file) =>
@@ -728,20 +742,31 @@ export const make = Effect.gen(function* () {
       { concurrency: TRANSCRIPT_READ_CONCURRENCY },
     );
     const parsedFiles = read.map(({ path, records, malformedRecords, update }) => {
-      if (update === undefined) return { path, records, malformedRecords };
       // A scan of another window may have cached its own read of this file
       // meanwhile. Then keep whichever read saw the later file, so a slower
       // scan never replaces newer usage with older.
-      const current = fileCache.get(path);
+      const current = fileCache.get(path) ?? historicalFileCache.get(path);
       if (
-        current === update.replaces ||
-        current === undefined ||
-        isLaterRead(update.entry, current)
+        update !== undefined &&
+        (current === update.replaces || current === undefined || isLaterRead(update.entry, current))
       ) {
-        fileCache.set(path, {
+        const cache = update.entry.mtimeMs < retentionCutoffMs ? historicalFileCache : fileCache;
+        if (cache === fileCache) historicalFileCache.delete(path);
+        else if (fileCache.delete(path)) cacheDirty = true;
+        cache.set(path, {
           ...update.entry,
           records: correctedBatch(update.entry.records),
           tailRecords: correctedBatch(update.entry.tailRecords),
+        });
+        if (cache === fileCache) cacheDirty = true;
+      }
+      const historical = historicalFileCache.get(path);
+      if (historical !== undefined && historical.mtimeMs >= retentionCutoffMs) {
+        historicalFileCache.delete(path);
+        fileCache.set(path, {
+          ...historical,
+          records: correctedBatch(historical.records),
+          tailRecords: correctedBatch(historical.tailRecords),
         });
         cacheDirty = true;
       }
@@ -815,7 +840,12 @@ export const make = Effect.gen(function* () {
 
     // Scan independent sources together, directories sequentially to bound open files; keep order, since the first copy decides a duplicate's bucket.
     const [transcripts, scanDirs] = yield* Effect.all(
-      [Effect.forEach(dirs, (dir) => scanTranscriptDir(dir, windowStartMs, fromMemory)), scans],
+      [
+        Effect.forEach(dirs, (dir) =>
+          scanTranscriptDir(dir, windowStartMs, retentionCutoffMs, fromMemory),
+        ),
+        scans,
+      ],
       { concurrency: "unbounded" },
     );
     const scanned: readonly ScannedDir[] = [...transcripts, ...pending, ...scanDirs.flat()];
@@ -883,8 +913,10 @@ export const make = Effect.gen(function* () {
       );
       // A window no complete scan has read would show partial totals, so every directory must cover it.
       // Saved files are keyed by path, so two providers reading one directory keep only one parse.
+      // Windows reaching past retention need the in-memory historical files, which a saved snapshot lacks.
       const fromMemory =
         provisional &&
+        windowStartMs >= retentionCutoffMs &&
         resolved.dirs.length > 0 &&
         new Set(resolved.dirs.map((source) => source.dir)).size === resolved.dirs.length &&
         resolved.dirs.every(

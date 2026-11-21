@@ -23,6 +23,24 @@ const NONE_LOADING: ReadonlySet<UsageProviderKind> = new Set();
 
 export type UsageChartMetric = "tokens" | "cost";
 
+const yearDayFormatters = new Map<string, Intl.DateTimeFormat>();
+
+export function formatChartDay(day: string, days: readonly string[], locale?: string): string {
+  if (days[0]?.slice(0, 4) === days.at(-1)?.slice(0, 4)) return formatDayShort(day, locale);
+  const intlLocale = locale === undefined || locale === "en" ? "en-US" : locale;
+  let formatter = yearDayFormatters.get(intlLocale);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat(intlLocale, {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+    yearDayFormatters.set(intlLocale, formatter);
+  }
+  return formatter.format(new Date(`${day}T00:00:00Z`));
+}
+
 interface UsageProviderChartProps {
   readonly providers: readonly UsageProviderKind[];
   readonly loadingProviders?: ReadonlySet<UsageProviderKind>;
@@ -202,14 +220,13 @@ function buildChart(
   const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
   const paths = providers.map((provider) => {
     const slot = PROVIDER_ORDER.indexOf(provider);
-    const line = curvePath(
-      smoothCurve(
-        columns.map((column, periodIndex) => ({
-          x: periodIndex * stepX,
-          y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
-        })),
-      ),
-    );
+    const points = columns.map((column, periodIndex) => ({
+      x: periodIndex * stepX,
+      y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
+    }));
+    const first = points[0];
+    if (points.length === 1 && first !== undefined) points.push({ ...first, x: VIEW_WIDTH });
+    const line = curvePath(smoothCurve(points));
     return {
       provider,
       loading: loadingProviders.has(provider),
@@ -441,7 +458,7 @@ export function UsageProviderChart({
   const formatPeriod = (period: string) =>
     resolution === "hour"
       ? formatHourShort(period, timeZone, hour12, locale)
-      : formatDayShort(period, locale);
+      : formatChartDay(period, days, locale);
   const formatTooltipPeriod = (period: string) =>
     resolution === "hour" && referenceTime !== undefined
       ? formatRelativeHourShort(period, referenceTime, timeZone, hour12, m, locale)

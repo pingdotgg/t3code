@@ -793,11 +793,12 @@ describe("UsageService", () => {
     }),
   );
 
-  it.effect(
-    "repairs initial Codex prices after unchanged-file retries, persists evidence and corrections, and honors later native tiers",
-    () =>
+  it.effect.each([false, true])(
+    "repairs initial Codex prices after unchanged-file retries, persists evidence and corrections, and honors later native tiers (historical: %s)",
+    (historical) =>
       Effect.gen(function* () {
         const { home, settings } = yield* setup;
+        if (historical) yield* TestClock.setTime(Date.parse("2027-02-01T12:00:00Z"));
         const sessions = NodePath.join(home, "codex", "sessions");
         const fastPath = NodePath.join(sessions, "fast.jsonl");
         const ultraPath = NodePath.join(sessions, "ultra.jsonl");
@@ -842,6 +843,15 @@ describe("UsageService", () => {
             lines([meta("ultra-session"), context("ultra-turn"), usage(4)]),
           );
         });
+        if (historical) {
+          yield* Effect.promise(() =>
+            Promise.all(
+              [fastPath, ultraPath].map((path) =>
+                NodeFSP.utimes(path, CURSOR_NOW / 1000, CURSOR_NOW / 1000),
+              ),
+            ),
+          );
+        }
         yield* Effect.gen(function* () {
           const first = yield* UsageService.make;
           verify(yield* first.readSummary(WINDOW), 7, 7);
@@ -863,6 +873,11 @@ describe("UsageService", () => {
           yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
           // History repair must touch both the committed record and tentative tail.
           verify(yield* retry.readSummary(WINDOW), 7, 30);
+          if (historical) {
+            const config = yield* ServerSettings.ServerSettingsService;
+            yield* config.updateSettings({ usageHistoryRetentionDays: "unlimited" });
+            verify(yield* retry.readSummary(WINDOW), 7, 30);
+          }
           yield* retry.awaitPersisted;
           yield* sql`ALTER TABLE orchestration_events RENAME TO resolved_events`;
           verify(yield* retry.readSummary(WINDOW), 7, 30);
@@ -3746,53 +3761,85 @@ describe("UsageService", () => {
       }),
   );
 
-  it.effect("keeps retained history when an obsolete scan finishes after retention widens", () =>
-    Effect.gen(function* () {
-      const { transcript, settings, home } = yield* setup;
-      yield* TestClock.setTime(CURSOR_NOW);
-      const timestamp = CURSOR_NOW - 180 * 24 * HOUR_MS;
-      yield* Effect.promise(async () => {
-        await NodeFSP.writeFile(
-          transcript,
-          claudeLine(1, 11).replace(
-            "2026-08-01T10:00:00Z",
-            DateTime.formatIso(DateTime.makeUnsafe(timestamp)),
-          ),
-        );
-        await NodeFSP.utimes(transcript, timestamp / 1000, timestamp / 1000);
-      });
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      let scans = 0;
-      yield* Effect.gen(function* () {
-        const config = yield* ServerSettings.ServerSettingsService;
-        const service = yield* UsageService.make.pipe(
-          Effect.provideService(CursorUsageAccounts.CursorUsageAccounts, {
-            scan: () =>
-              Effect.gen(function* () {
-                if (++scans === 1) {
-                  yield* Deferred.succeed(started, undefined);
-                  yield* Deferred.await(release);
-                }
-                return [];
-              }),
-            awaitPersisted: Effect.void,
-          }),
-        );
-        const window = { ...WINDOW, sinceDay: UsageDay.make("2024-01-01") };
-        const oldScan = yield* service.readSummary(window).pipe(Effect.forkChild);
-        yield* Deferred.await(started);
-        yield* config.updateSettings({ usageHistoryRetentionDays: "unlimited" });
-        assert.strictEqual(totalOutputTokens(yield* service.readSummary(window)), 11);
-        yield* service.awaitPersisted;
-        yield* Effect.promise(() => NodeFSP.rm(transcript));
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(oldScan);
-        yield* service.awaitPersisted;
-        const restarted = yield* UsageService.make;
-        assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(window)), 11);
-      }).pipe(Effect.provide(layerService({ prefix: "usage-retention-race", home, settings })));
-    }),
+  it.effect.each([false, true])(
+    "keeps retained history when an obsolete scan finishes after retention widens (cold overlap: %s)",
+    (coldOverlap) =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* TestClock.setTime(CURSOR_NOW);
+        const timestamp = CURSOR_NOW - 180 * 24 * HOUR_MS;
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(
+            transcript,
+            claudeLine(1, 11).replace(
+              "2026-08-01T10:00:00Z",
+              DateTime.formatIso(DateTime.makeUnsafe(timestamp)),
+            ),
+          );
+          await NodeFSP.utimes(transcript, timestamp / 1000, timestamp / 1000);
+        });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let scans = 0;
+        yield* Effect.gen(function* () {
+          const realFs = yield* Effect.promise(() =>
+            vi.importActual<typeof NodeFSP>("node:fs/promises"),
+          );
+          const originalOpen = realFs.open;
+          const firstOpened = Promise.withResolvers<void>();
+          const secondOpened = Promise.withResolvers<void>();
+          const releaseFirst = Promise.withResolvers<void>();
+          const releaseSecond = Promise.withResolvers<void>();
+          let opens = 0;
+          using _open = vi.spyOn(NodeFSP, "open").mockImplementation(async (...args) => {
+            if (coldOverlap && args[0] === transcript) {
+              if (++opens === 1) {
+                firstOpened.resolve();
+                await releaseFirst.promise;
+              } else if (opens === 2) {
+                secondOpened.resolve();
+                await releaseSecond.promise;
+              }
+            }
+            return originalOpen(...args);
+          });
+          const config = yield* ServerSettings.ServerSettingsService;
+          const service = yield* UsageService.make.pipe(
+            Effect.provideService(CursorUsageAccounts.CursorUsageAccounts, {
+              scan: () =>
+                Effect.gen(function* () {
+                  if (++scans === 1) {
+                    yield* Deferred.succeed(started, undefined);
+                    yield* Deferred.await(release);
+                  }
+                  return [];
+                }),
+              awaitPersisted: Effect.void,
+            }),
+          );
+          const window = { ...WINDOW, sinceDay: UsageDay.make("2024-01-01") };
+          const oldScan = yield* service.readSummary(window).pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          if (coldOverlap) yield* Effect.promise(() => firstOpened.promise);
+          yield* config.updateSettings({ usageHistoryRetentionDays: "unlimited" });
+          const newScan = yield* service.readSummary(window).pipe(Effect.forkChild);
+          if (coldOverlap) {
+            yield* Effect.promise(() => secondOpened.promise);
+            releaseFirst.resolve();
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(oldScan);
+            releaseSecond.resolve();
+          }
+          assert.strictEqual(totalOutputTokens(yield* Fiber.join(newScan)), 11);
+          yield* service.awaitPersisted;
+          yield* Effect.promise(() => NodeFSP.rm(transcript));
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(oldScan);
+          yield* service.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(window)), 11);
+        }).pipe(Effect.provide(layerService({ prefix: "usage-retention-race", home, settings })));
+      }),
   );
 
   it.effect("credits the same copy of a duplicate after its transcripts are deleted", () =>
@@ -3965,6 +4012,96 @@ describe("UsageService", () => {
           ),
         );
       }),
+  );
+
+  it.effect(
+    "reuses old live transcripts across all-time refreshes without retaining deleted history",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-12-01T00:00:00Z"));
+        const { transcript, settings, home } = yield* setup;
+        const lastWrite = Date.parse("2026-08-01T10:00:00Z") / 1000;
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+          await NodeFSP.utimes(transcript, lastWrite, lastWrite);
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          const allTime = {
+            ...WINDOW,
+            sinceDay: UsageDay.make("1970-01-01"),
+            untilDay: UsageDay.make("2026-12-01"),
+          };
+          const open = vi.spyOn(NodeFSP, "open");
+          yield* Effect.addFinalizer(() => Effect.sync(() => open.mockRestore()));
+          open.mockClear();
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(allTime)), 5);
+          assert.isTrue(open.mock.calls.some(([path]) => path === transcript));
+          open.mockClear();
+          for (const sinceDay of ["2026-11-02", "2026-09-03"]) {
+            const recent = { ...allTime, sinceDay: UsageDay.make(sinceDay) };
+            assert.deepStrictEqual((yield* service.readSummary(recent)).buckets, []);
+          }
+          assert.strictEqual(
+            totalOutputTokens(yield* service.readSummary({ ...allTime, awaitRefresh: true })),
+            5,
+          );
+          assert.isFalse(open.mock.calls.some(([path]) => path === transcript));
+
+          yield* Effect.promise(async () => {
+            await NodeFSP.appendFile(transcript, claudeLine(2, 7));
+            await NodeFSP.utimes(transcript, lastWrite + 86400, lastWrite + 86400);
+          });
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(allTime)), 12);
+          yield* Effect.promise(async () => {
+            await NodeFSP.writeFile(transcript, claudeLine(3, 9));
+            await NodeFSP.utimes(transcript, lastWrite + 172800, lastWrite + 172800);
+          });
+          assert.strictEqual(totalOutputTokens(yield* service.readSummary(allTime)), 9);
+
+          yield* Effect.promise(() => NodeFSP.rm(transcript));
+          assert.deepStrictEqual((yield* service.readSummary(allTime)).buckets, []);
+          yield* service.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          assert.deepStrictEqual((yield* restarted.readSummary(allTime)).buckets, []);
+        }).pipe(
+          Effect.provide(layerService({ prefix: "usage-service-all-time-test", home, settings })),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("answers a provisional all-time read with old and recent transcripts", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-12-01T00:00:00Z"));
+      const { transcript, settings, home } = yield* setup;
+      const recent = NodePath.join(NodePath.dirname(transcript), "recent.jsonl");
+      yield* Effect.promise(async () => {
+        const oldWrite = Date.parse("2026-08-01T10:00:00Z") / 1000;
+        const recentWrite = Date.parse("2026-11-30T10:00:00Z") / 1000;
+        await NodeFSP.writeFile(transcript, claudeLine(1, 5));
+        await NodeFSP.utimes(transcript, oldWrite, oldWrite);
+        await NodeFSP.writeFile(recent, claudeLine(2, 3));
+        await NodeFSP.utimes(recent, recentWrite, recentWrite);
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const allTime = {
+          ...WINDOW,
+          sinceDay: UsageDay.make("1970-01-01"),
+          untilDay: UsageDay.make("2026-12-01"),
+        };
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(allTime)), 8);
+        // The recent file keeps the source refreshing, so this read cannot fall back to an exact scan.
+        assert.strictEqual(
+          totalOutputTokens(yield* service.readSummary({ ...allTime, provisional: true })),
+          8,
+        );
+      }).pipe(
+        Effect.provide(
+          layerService({ prefix: "usage-service-all-time-provisional", home, settings }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("reports saved usage of a removed directory only for windows it reaches", () =>

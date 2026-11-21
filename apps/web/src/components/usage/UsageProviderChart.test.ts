@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildPeriodColumns } from "./UsageProviderChart";
+import { buildPeriodColumns, formatChartDay } from "./UsageProviderChart";
+
+describe("formatChartDay", () => {
+  it.each([
+    { days: ["2026-01-01", "2026-12-31"], label: "Jan 1" },
+    { days: ["2025-12-31", "2026-01-01"], label: "Jan 1, 2026" },
+    { days: ["2024-01-01", "2026-01-01"], label: "Jan 1, 2026" },
+    { days: ["2026-01-01"], label: "Jan 1" },
+    { days: ["2025-12-31", "2026-01-01"], locale: "ja", label: "2026年1月1日" },
+  ])("formats dates across $days", ({ days, label, locale }) => {
+    expect(formatChartDay("2026-01-01", days, locale)).toBe(label);
+  });
+});
 
 describe("buildPeriodColumns", () => {
   const days = ["2026-08-01", "2026-08-02", "2026-08-03"];
