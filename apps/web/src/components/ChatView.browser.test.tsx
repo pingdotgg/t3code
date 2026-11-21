@@ -1,5 +1,9 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   IssueTrackerKind,
@@ -755,6 +759,74 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
   await userEvent.keyboard("{Control>}t{/Control}");
   await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
   await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
+});
+
+it("keeps the same editable composer over a maximized browser and sends without restoring it", async () => {
+  const style = document.createElement("style");
+  style.textContent = stylesheet;
+  document.head.append(style);
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  await page.viewport(1280, 800);
+  const thread = threadWithHistory("browser-composer", 1);
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const editor = page.getByTestId("composer-editor");
+  await editor.click();
+  await insertText("Change the page");
+  const originalEditor = editor.element();
+  await act(() => useRightPanelStore.getState().openBrowser(threadRef, null));
+  await page.getByRole("button", { name: "Maximize panel", exact: true }).click();
+
+  await expect.element(editor).toBeVisible();
+  expect(editor.element()).toBe(originalEditor);
+  expect(editor.element().textContent).toContain("Change the page");
+  await editor.click();
+  await expect.element(editor).toHaveFocus();
+  const panel = document.querySelector('[data-preview-panel-maximized="true"]')!;
+  const panelBounds = panel.getBoundingClientRect();
+  const editorBounds = editor.element().getBoundingClientRect();
+  expect(editorBounds.left).toBeGreaterThanOrEqual(panelBounds.left);
+  expect(editorBounds.right).toBeLessThanOrEqual(panelBounds.right);
+  expect(editorBounds.bottom).toBeLessThanOrEqual(panelBounds.bottom);
+  expect(
+    document
+      .elementFromPoint(panelBounds.left + 20, panelBounds.top + 100)
+      ?.closest("[data-browser-composer-overlay]"),
+  ).toBeNull();
+
+  await act(() => useRightPanelStore.getState().openFile(threadRef, "package.json"));
+  await vi.waitFor(() => expect(editor.element().closest("[inert]")).not.toBeNull());
+  await act(() => useRightPanelStore.getState().openBrowser(threadRef, null));
+  await expect.element(editor).toBeVisible();
+  await editor.click();
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() =>
+    expect(dispatchedCommands()).toContainEqual(
+      expect.objectContaining({
+        type: "message.dispatch",
+        threadId: thread.id,
+        text: "Change the page",
+      }),
+    ),
+  );
+  expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.maximized).toBe(
+    true,
+  );
+  await page.getByRole("button", { name: "Restore panel size", exact: true }).click();
+  await expect.element(editor).toBeVisible();
+  expect(editor.element()).toBe(originalEditor);
 });
 
 it("selecting a side-chat tab focuses that side chat's composer", async () => {

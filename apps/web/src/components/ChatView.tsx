@@ -1168,6 +1168,8 @@ export default function ChatView(props: ChatViewProps) {
   // An embedded side chat has no panel; a stale maximized flag would hide its own column.
   const rightPanelMaximized =
     !embedded && canMaximizeRightPanel && rightPanelState.maximized === true;
+  const browserComposerOverlay =
+    rightPanelMaximized && activeRightPanelSurface?.kind === "preview" && !isProviderSubagent;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);
@@ -3477,18 +3479,24 @@ export default function ChatView(props: ChatViewProps) {
       {rightPanelControlsAtRoot && !embedded ? panelLayoutControls : null}
       <div
         className={cn(
-          "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
-          rightPanelMaximized ? "w-0 flex-none" : "flex-1",
+          "flex min-h-0 min-w-0 flex-col",
+          browserComposerOverlay
+            ? "pointer-events-none invisible absolute inset-0 z-40"
+            : cn("overflow-x-hidden", rightPanelMaximized ? "w-0 flex-none" : "flex-1"),
         )}
-        data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        data-chat-column-maximized-away={
+          rightPanelMaximized && !browserComposerOverlay ? "true" : "false"
+        }
+        data-browser-composer-overlay={browserComposerOverlay || undefined}
         data-chat-column
-        inert={rightPanelMaximized}
+        inert={rightPanelMaximized && !browserComposerOverlay}
         onMouseUp={preventMiddleClickPasteOutsideEditable}
       >
         {embedded ? null : (
           <header
             ref={threadPanelPopoverAnchorRef}
             data-chat-header
+            inert={rightPanelMaximized}
             className={cn(
               "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
               isElectron
@@ -3569,6 +3577,8 @@ export default function ChatView(props: ChatViewProps) {
             />
             <div
               {...conversationArea}
+              inert={rightPanelMaximized}
+              data-chat-column-maximized-away={browserComposerOverlay ? "true" : undefined}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
@@ -3699,18 +3709,20 @@ export default function ChatView(props: ChatViewProps) {
               }}
               inert={isRevertingCheckpoint}
               data-chat-composer-overlay="true"
-              className={
-                isDraftHeroState
+              className={cn(
+                browserComposerOverlay &&
+                  "visible [--chat-lane-inset-start:0px] [--chat-lane-inset-end:0px] [--chat-timeline-gutter:0px]",
+                isDraftHeroState && !browserComposerOverlay
                   ? "pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"
-                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
-              }
+                  : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2",
+              )}
             >
               <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">
                 <div
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
                 >
-                  {isDraftHeroState ? (
+                  {isDraftHeroState && !browserComposerOverlay ? (
                     <div className="absolute inset-x-0 bottom-full">
                       <div
                         className="pb-4 group-has-data-[composer-shoulder-tab]/composer-stack:pb-0"
@@ -4120,18 +4132,20 @@ export default function ChatView(props: ChatViewProps) {
         </div>
 
         {embedded ? null : (
-          <ChatTerminalDrawers
-            activeThreadKey={activeThreadKey}
-            activeTerminalOpen={Boolean(terminalUiState.terminalOpen)}
-            composerHeight={composerReservedHeight}
-            launchContext={activeTerminalLaunchContext ?? null}
-            splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
-            splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
-            newShortcutLabel={newTerminalShortcutLabel ?? undefined}
-            closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-            keybindings={keybindings}
-            onAddTerminalContext={addTerminalContextToDraftStable}
-          />
+          <div className={browserComposerOverlay ? "hidden" : "contents"}>
+            <ChatTerminalDrawers
+              activeThreadKey={activeThreadKey}
+              activeTerminalOpen={Boolean(terminalUiState.terminalOpen)}
+              composerHeight={composerReservedHeight}
+              launchContext={activeTerminalLaunchContext ?? null}
+              splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
+              splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
+              newShortcutLabel={newTerminalShortcutLabel ?? undefined}
+              closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
+              keybindings={keybindings}
+              onAddTerminalContext={addTerminalContextToDraftStable}
+            />
+          </div>
         )}
       </div>
 
