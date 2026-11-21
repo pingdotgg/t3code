@@ -248,6 +248,10 @@ paired can sign in with Google instead of needing a pairing link from another
 device. The pairing page shows **Sign in with Google**; after you sign in on
 Cloudflare's page, the browser pairs like it would with a `t3 pair` link.
 
+The desktop and mobile apps offer the same button when you add an environment
+and type the server's `https://` address. Sign-in opens in a window of its own
+and returns to the app, which pairs with the address you typed.
+
 1. In Cloudflare Zero Trust, add Google under **Settings → Authentication**.
 2. Under **Access → Applications**, add a **Self-hosted** application for your
    hostname with the path `api/auth/cloudflare-access` only, and an **Allow**
@@ -269,8 +273,7 @@ The server checks Cloudflare's signature and accepts only the listed emails
 hidden and the server logs a warning. A Google sign-in gets the same full access
 as a pairing link, terminal included, so the Access policy and the email list
 are what keep everyone else out. Each sign-in appears in **Settings → Sharing &
-access** as `Google: <email>`, where you can revoke it. The desktop and mobile
-apps still pair with a link or QR code.
+access** as `Google: <email>`, where you can revoke it.
 
 ## Desktop-managed SSH
 

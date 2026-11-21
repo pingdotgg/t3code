@@ -68,6 +68,7 @@ import {
   parseRemotePairingFields,
   formatDesktopSshConnectionError,
 } from "./ConnectionsSettings.logic";
+import { useCloudflareAccessLoginOrigin } from "./useCloudflareAccessLoginOrigin";
 
 const SSH_PROTOCOL_NAME = "SSH";
 const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
@@ -135,6 +136,12 @@ export function AddEnvironmentDialog({
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
   const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
   const savedBackendSessionRef = useRef(0);
+  const signInWithCloudflareAccess = desktopBridge?.signInWithCloudflareAccess;
+  // Only the desktop app can catch the sign-in's return; a browser pairs on the server's own page.
+  const cloudflareAccessOrigin = useCloudflareAccessLoginOrigin(
+    savedBackendHost,
+    open && savedBackendMode === "remote" && signInWithCloudflareAccess !== undefined,
+  );
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
   const desktopSshHosts = useEnvironmentQuery(
     isSshDiscoveryActive ? desktopSshHostsStateAtom : null,
@@ -207,8 +214,11 @@ export function AddEnvironmentDialog({
     setIsAddingSavedBackend(false);
   };
 
-  const handleAddSavedBackend = async () => {
-    if (savedBackendMode === "ssh") {
+  const handleAddSavedBackend = async (signedIn?: {
+    readonly host: string;
+    readonly pairingCode: string;
+  }) => {
+    if (savedBackendMode === "ssh" && signedIn === undefined) {
       let target: DesktopSshEnvironmentTarget;
       try {
         target = parseManualDesktopSshTarget({
@@ -229,10 +239,12 @@ export function AddEnvironmentDialog({
     onErrorChange(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
     try {
-      remotePairingInput = parseRemotePairingFields({
-        host: savedBackendHost,
-        pairingCode: savedBackendPairingCode,
-      });
+      remotePairingInput =
+        signedIn ??
+        parseRemotePairingFields({
+          host: savedBackendHost,
+          pairingCode: savedBackendPairingCode,
+        });
     } catch (error) {
       const message =
         error instanceof Error
@@ -292,6 +304,30 @@ export function AddEnvironmentDialog({
           },
     );
     setIsAddingSavedBackend(false);
+  };
+
+  const handleCloudflareAccessSignIn = async () => {
+    // Pair with the host the sign-in started from, whatever the field holds by the time it returns.
+    const origin = cloudflareAccessOrigin;
+    if (signInWithCloudflareAccess === undefined || origin === null) return;
+    const session = savedBackendSessionRef.current;
+    setIsAddingSavedBackend(true);
+    onErrorChange(null);
+    let pairingCode: string | null;
+    try {
+      pairingCode = await signInWithCloudflareAccess(origin);
+    } catch {
+      if (session === savedBackendSessionRef.current) {
+        onErrorChange(gt("Could not sign in. Try again."));
+      }
+      setIsAddingSavedBackend(false);
+      return;
+    }
+    if (pairingCode === null || session !== savedBackendSessionRef.current) {
+      setIsAddingSavedBackend(false);
+      return;
+    }
+    await handleAddSavedBackend({ host: origin, pairingCode });
   };
 
   const handleSavedBackendSshFieldKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -453,6 +489,16 @@ export function AddEnvironmentDialog({
           <T>Paste a full pairing URL here to fill both fields automatically.</T>
         </span>
       </div>
+      {cloudflareAccessOrigin !== null ? (
+        <Button
+          variant="outline"
+          className="w-full"
+          disabled={isAddingSavedBackend}
+          onClick={() => void handleCloudflareAccessSignIn()}
+        >
+          <T>Sign in with Google</T>
+        </Button>
+      ) : null}
     </div>
   );
   const relayRouteOffer =

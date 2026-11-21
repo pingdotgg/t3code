@@ -1,3 +1,7 @@
+import {
+  CLOUDFLARE_ACCESS_APP_CALLBACK_URL,
+  CLOUDFLARE_ACCESS_LOGIN_PATH,
+} from "@t3tools/shared/cloudflareAccessLogin";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -25,17 +29,27 @@ const refused = (status: number, body: string, error: { readonly _tag: string })
     ...("email" in error ? { email: error.email } : {}),
   }).pipe(Effect.as(refusal(status, body)));
 
+// Only this build's own app scheme or the relative /pair page; nothing in the request picks the
+// destination beyond choosing between the two.
+const credentialDestination = (request: HttpServerRequest.HttpServerRequest) => {
+  const client = new URL(request.url, "http://localhost").searchParams.get("client");
+  return client === "app" ? CLOUDFLARE_ACCESS_APP_CALLBACK_URL : "/pair";
+};
+
 export const makeCloudflareAccessLoginHandler =
   (service: CloudflareAccessLogin.CloudflareAccessLogin["Service"]) =>
   (request: HttpServerRequest.HttpServerRequest) =>
     service.login(request.headers[ASSERTION_HEADER]).pipe(
       Effect.map(({ credential }) =>
-        // Relative, so no Host or forwarded header decides where the credential goes; the fragment
-        // keeps it out of server logs, and /pair strips it after reading.
-        HttpServerResponse.redirect(`/pair#${new URLSearchParams([["token", credential]])}`, {
-          status: 302,
-          headers: RESPONSE_HEADERS,
-        }),
+        // Never built from Host or forwarded headers; the fragment keeps the credential out of
+        // server logs, and /pair strips it after reading.
+        HttpServerResponse.redirect(
+          `${credentialDestination(request)}#${new URLSearchParams([["token", credential]])}`,
+          {
+            status: 302,
+            headers: RESPONSE_HEADERS,
+          },
+        ),
       ),
       Effect.catchTags({
         CloudflareAccessLoginDisabledError: () => Effect.succeed(refusal(404, "Not Found")),
@@ -60,7 +74,7 @@ export const layer = HttpRouter.use(
     const service = yield* CloudflareAccessLogin.CloudflareAccessLogin;
     yield* router.add(
       "GET",
-      "/api/auth/cloudflare-access",
+      CLOUDFLARE_ACCESS_LOGIN_PATH,
       makeCloudflareAccessLoginHandler(service),
     );
   }),

@@ -8,6 +8,7 @@ import {
 } from "../../app/CodexAuthCallback.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import { signInWithCloudflareAccess } from "../../window/CloudflareAccessLoginWindow.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
 
@@ -51,4 +52,29 @@ export const cancelProviderAuthCallback = DesktopIpc.makeIpcMethod({
       try: () => cancelCodexAuthCallback(authorizationUrl),
       catch: () => new CodexAuthCallbackError({ detail: "Invalid ChatGPT sign-in request." }),
     }),
+});
+
+export class CloudflareAccessSignInError extends Schema.TaggedError<CloudflareAccessSignInError>()(
+  "CloudflareAccessSignInError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not open the sign-in window.";
+  }
+}
+
+export const signInWithCloudflareAccessWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.CLOUDFLARE_ACCESS_SIGN_IN_CHANNEL,
+  payload: Schema.String.check(Schema.isMaxLength(2048)),
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.providerAuth.cloudflareAccessSignIn")(function* (host) {
+    const windows = yield* ElectronWindow.ElectronWindow;
+    const parent = yield* windows.focusedMainOrFirst;
+    const token = yield* Effect.tryPromise({
+      try: () => signInWithCloudflareAccess(host, Option.getOrNull(parent)),
+      catch: (cause) => new CloudflareAccessSignInError({ cause }),
+    });
+    if (Option.isSome(parent)) yield* windows.reveal(parent.value);
+    return token;
+  }),
 });

@@ -7383,6 +7383,7 @@
   "7fe508061821950a": "{environment} can now be reached over SSH {host}.",
   "4170d9655b26518a": "{host} is ready over an SSH-managed tunnel.",
   "83c244095d10045d": "{environment} now has another way to connect.",
+  "b0958d57470a023e": "Could not sign in. Try again.",
   "38fedf9df8ac5394": "PAIRCODE",
   "77ae65e250a4f558": "Could not add the route.",
   "53c162d8868a1d0e": "Add environment",

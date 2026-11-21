@@ -19,6 +19,8 @@ export function shouldHandleAppLink(url: string, cloudConfigured: boolean): bool
   return (
     !route.includes("expo-development-client") &&
     !route.includes("://expo-sharing") &&
+    // A sign-in callback belongs to the auth session that asked for it, never to navigation.
+    !/^[a-z][\w+.-]*:\/\/cloudflare-access\/*$/i.test(route) &&
     !/^[a-z][\w+.-]*:\/*$/i.test(url) &&
     (cloudConfigured || !CLOUD_ONLY_LINK_PATH.test(route))
   );

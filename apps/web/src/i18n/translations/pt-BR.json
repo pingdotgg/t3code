@@ -7376,6 +7376,7 @@
   "7fe508061821950a": "{environment} agora pode ser acessado via SSH em {host}.",
   "4170d9655b26518a": "{host} está pronto por um túnel gerenciado via SSH.",
   "83c244095d10045d": "{environment} agora tem outra forma de conexão.",
+  "b0958d57470a023e": "Não foi possível entrar. Tente novamente.",
   "38fedf9df8ac5394": "CODIGO",
   "77ae65e250a4f558": "Não foi possível adicionar a rota.",
   "53c162d8868a1d0e": "Adicionar ambiente",

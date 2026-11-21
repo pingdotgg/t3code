@@ -1200,6 +1200,11 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   receiveProviderAuthCallback: (authorizationUrl: string) => Promise<string>;
   cancelProviderAuthCallback: (authorizationUrl: string) => Promise<void>;
+  /**
+   * Signs in to the https server at `host` through Cloudflare Access in an app window and returns
+   * its one-time pairing credential, or null when the user closes the window.
+   */
+  signInWithCloudflareAccess?: (host: string) => Promise<string | null>;
   startFileDrag: (input: { environmentId: EnvironmentId; path: string }) => Promise<boolean>;
   openExternal: (url: string) => Promise<boolean>;
   /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
