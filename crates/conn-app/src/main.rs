@@ -5,6 +5,7 @@ mod app;
 mod automation;
 mod colour_space;
 mod commands;
+mod file_icons;
 mod fixture;
 mod fonts;
 mod header;

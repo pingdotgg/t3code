@@ -31,6 +31,13 @@ struct Drawings;
 #[include = "*.svg"]
 struct Brands;
 
+/// File-type icons Conn shows in the Files tree, file tabs, and chips, served as `files/<name>.svg`.
+#[derive(RustEmbed)]
+#[folder = "assets/icons/files"]
+#[prefix = "files/"]
+#[include = "*.svg"]
+struct FileIcons;
+
 /// Lucide names gpui-conn uses that the Conn manifest does not list.
 const EXTRA_LUCIDE: &[(&str, &str)] = &[
     ("git-pull-request", "pull-request"),
@@ -103,11 +110,16 @@ impl AssetSource for AppAssets {
         if let Some(file) = Brands::get(path) {
             return Ok(Some(file.data));
         }
+        if let Some(file) = FileIcons::get(path) {
+            return Ok(Some(file.data));
+        }
         gpui_kit::assets::AllAssets.load(path)
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
         let mut out: Vec<SharedString> = Drawings::iter()
+            .chain(Brands::iter())
+            .chain(FileIcons::iter())
             .filter(|name| name.starts_with(path))
             .map(SharedString::from)
             .collect();
