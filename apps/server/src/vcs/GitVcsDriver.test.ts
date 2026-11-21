@@ -67,6 +67,7 @@ const makeCaptureStore = Effect.fn("test.makeCaptureStore")(function* (
     Effect.provideService(VcsDriverRegistry.VcsDriverRegistry, {
       get: () => Effect.succeed(driver),
       detect: () => Effect.succeed(handle),
+      detectOrFail: () => Effect.succeed(handle),
       resolve: () => Effect.succeed(handle),
     }),
   );
