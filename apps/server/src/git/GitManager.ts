@@ -2257,7 +2257,7 @@ export const make = Effect.gen(function* () {
       result.action === "commit"
         ? null
         : yield* gitCore
-            .statusDetailsRemote(cwd, { refreshUpstream: false })
+            .statusDetailsRemote(cwd, { refreshUpstream: false, includeAheadOfDefault: false })
             .pipe(Effect.orElseSucceed(() => null));
     if (finalStatus?.branch) {
       finalBranchContext = {

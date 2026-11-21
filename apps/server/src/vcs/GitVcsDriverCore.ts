@@ -2525,6 +2525,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const readStatusDetailsRemote = Effect.fn("readStatusDetailsRemote")(function* (
     cwd: string,
     refreshUpstream: boolean,
+    includeAheadOfDefault = true,
   ) {
     const branchResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.statusDetailsRemote.branch",
@@ -2624,7 +2625,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       (branch === defaultBranch ||
         (defaultBranch === null && (branch === "main" || branch === "master")));
     const aheadOfDefaultCount =
-      branch && !isDefaultBranch
+      branch && !isDefaultBranch && includeAheadOfDefault
         ? upstreamRef === null
           ? aheadCount
           : yield* computeAheadCountAgainstBase(cwd, branch).pipe(Effect.orElseSucceed(() => 0))
@@ -2996,7 +2997,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const statusDetailsRemote: GitVcsDriver.GitVcsDriver["Service"]["statusDetailsRemote"] =
     Effect.fn("statusDetailsRemote")(function* (cwd, options) {
-      return yield* readStatusDetailsRemote(cwd, options?.refreshUpstream !== false);
+      return yield* readStatusDetailsRemote(
+        cwd,
+        options?.refreshUpstream !== false,
+        options?.includeAheadOfDefault !== false,
+      );
     });
 
   const status: GitVcsDriver.GitVcsDriver["Service"]["status"] = (input) =>
@@ -3564,7 +3569,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(
     "pushCurrentBranch",
   )(function* (cwd, fallbackBranch, options) {
-    const details = yield* readStatusDetailsRemote(cwd, true);
+    const details = yield* readStatusDetailsRemote(cwd, true, false);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
       return yield* new GitCommandError({
