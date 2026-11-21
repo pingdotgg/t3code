@@ -12,6 +12,7 @@ import {
   CloudSpeechError,
   DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
   SPEECH_MAX_OPTIONS_BYTES,
+  TextGenerationError,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
@@ -376,4 +377,63 @@ effectIt.effect.each([
         reason,
       });
     }),
+);
+
+effectIt.effect("tells the client why transcript cleanup failed", () =>
+  Effect.gen(function* () {
+    const detail = "OpenCode returned invalid structured output.";
+    const failingCleanup = Layer.mergeAll(
+      dependencies,
+      Layer.succeed(
+        TextGeneration.TextGeneration,
+        TextGeneration.TextGeneration.of({
+          generateCommitMessage: () => Effect.die("not used"),
+          generatePrContent: () => Effect.die("not used"),
+          generateBranchName: () => Effect.die("not used"),
+          generateThreadTitle: () => Effect.die("not used"),
+          generateReviewGuide: () => Effect.die("not used"),
+          generateTranscriptionPostProcessing: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateTranscriptionPostProcessing",
+                detail,
+              }),
+            ),
+        }),
+      ),
+    );
+    const { handler, dispose } = HttpRouter.toWebHandler(
+      HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+        Layer.provide(speechHttpApiLayer),
+        Layer.provide(principal(AuthOrchestrationOperateScope)),
+        Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+        Layer.provide(failingCleanup),
+        // Cleanup makes a real temporary directory; the HTTP services only carry a no-op filesystem.
+        Layer.provide(NodeServices.layer),
+        Layer.provide(HttpServer.layerServices),
+      ),
+      { disableLogger: true },
+    );
+    yield* Effect.addFinalizer(() => Effect.promise(dispose));
+    const context = yield* Layer.build(Layer.mergeAll(failingCleanup, NodeServices.layer));
+    const response = yield* Effect.promise(() =>
+      handler(
+        new Request("http://localhost/api/voice/post-process", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            options: {
+              speechCustomWords: [],
+              speechPostProcessingPrompt: { mode: "default", customInstructions: "" },
+            },
+            transcript: "um so hello world",
+            draft: { text: "", selection: { start: 0, end: 0 } },
+          }),
+        }),
+        context,
+      ),
+    );
+    expect(response.ok).toBe(false);
+    expect(yield* Effect.promise(() => response.text())).toContain(detail);
+  }),
 );

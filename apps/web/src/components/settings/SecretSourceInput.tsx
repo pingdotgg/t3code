@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
 import { invalidSecretReferenceText } from "@t3tools/client-runtime/secret-request";
+import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -14,7 +15,6 @@ import { useGT, useMessages } from "gt-react";
 import { AlertTriangleIcon, CheckIcon, KeyRoundIcon, RefreshCwIcon, TypeIcon } from "lucide-react";
 import { useState, type ComponentProps, type ComponentType, type ReactNode } from "react";
 
-import { isSecretsFeatureEnabled } from "../../env";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { OnePasswordIcon } from "../Icons";
 import { serverEnvironment } from "../../state/server";
@@ -42,9 +42,9 @@ export function useSecretSources(environmentId: EnvironmentId): ReadonlyArray<Se
   const providers = useEnvironmentSettings(environmentId, (settings) => settings.secretProviders);
   const supported = useAtomValue(
     serverEnvironment.configValueAtom(environmentId),
-    (config) => config?.secretReferences === true,
+    (config) => hasFeatureFlag(config, "secretProviders") && config?.secretReferences === true,
   );
-  if (!isSecretsFeatureEnabled || !supported) return NO_SECRET_SOURCES;
+  if (!supported) return NO_SECRET_SOURCES;
   return (Object.entries(providers) as Array<[SecretProviderId, SecretProviderConfig]>)
     .filter(([, config]) => classifySecretProvider(config).kind !== "unsupported")
     .map(([id, config]) => ({ id, kind: config.kind, label: config.label }));
@@ -151,7 +151,8 @@ function SecretCheckButton(props: {
   const state = check?.secretKey === secretKey ? check.state : undefined;
 
   const run = async () => {
-    setCheck({ secretKey, state: { status: "checking" } });
+    const pending = { secretKey, state: { status: "checking" } } as const;
+    setCheck(pending);
     const response = await checkSecretSource({ environmentId, input: { source: secret } });
     const next: SecretCheck =
       response._tag !== "Success"
@@ -159,9 +160,7 @@ function SecretCheckButton(props: {
         : response.value._tag === "Resolved"
           ? { status: "resolved" }
           : { status: "failed", detail: response.value.detail };
-    setCheck((previous) =>
-      previous?.secretKey === secretKey ? { secretKey, state: next } : previous,
-    );
+    setCheck((previous) => (previous === pending ? { secretKey, state: next } : previous));
   };
 
   if (!supported) return null;
