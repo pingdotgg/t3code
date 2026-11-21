@@ -123,6 +123,10 @@ record, or it would resume a run the engine does not yet consider stopped and do
 puts back a run that still says it goes on while the engine holds it as failed, held for a person if
 it was, and leaves alone one a resume is under way for.
 
+**A paused run is not woken.** The engine replays a run for any wake, and the replay runs the failed
+step again as a resume would, though nobody resumed it. A signal, timeout or child's end for a
+paused run's other wait is only claimed; the resume sends the wakes its run has claimed.
+
 **A step in flight cannot be interrupted.** The engine runs a step's body to its end. `cancel`
 therefore ends the run's row first, so nothing the step still does is recorded as the outcome, and
 stops the step's own turn, which is what makes a long agent step return. Only that turn: someone

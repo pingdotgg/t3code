@@ -162,13 +162,21 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     if (row === undefined) return yield* new WorkflowRunNotFoundError({ runId });
     return row;
   });
-  const wake = (wait: WorkflowStore.WaitRow, value: typeof Woke.Type) =>
+  const send = (wait: WorkflowStore.WaitRow, value: typeof Woke.Type) =>
     withEngine(
       DurableDeferred.succeed(wakeOf(wait.name), {
         token: wait.token as DurableDeferred.Token,
         value,
       }),
     );
+  // Runs being resumed now: until the engine has them, the sweep must not take them for paused.
+  const resuming = new Set<string>();
+  // The engine would replay a paused run for the wake and run its failed step again unasked. The
+  // claim keeps the value, and the resume sends it.
+  const wake = Effect.fnUntraced(function* (wait: WorkflowStore.WaitRow, value: typeof Woke.Type) {
+    if (resuming.has(wait.run_id) || (yield* store.run(wait.run_id))?.status === "paused") return;
+    yield* send(wait, value);
+  });
 
   const start: Workflows["Service"]["start"] = Effect.fn("Workflows.start")(
     function* (name, input, options) {
@@ -496,8 +504,6 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     },
   );
 
-  // Runs being resumed now: until the engine has them, the sweep must not take them for paused.
-  const resuming = new Set<string>();
   /** With `pause`, the sweep's own resume, which only resumes that pause and not a later one. */
   const resumeRun = Effect.fn("WorkflowEngine.resumeRun")(function* (
     runId: string,
@@ -510,7 +516,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }
     if (row.ended_at !== null) return;
     resuming.add(runId);
-    yield* Effect.gen(function* () {
+    const resumed = yield* Effect.gen(function* () {
       // Marked first: once the engine is resumed, the step may fail again and pause the run, and
       // that must be the last word. A crash in between leaves `running`, which the sweep corrects.
       if (row.status === "paused") {
@@ -520,7 +526,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             ? undefined
             : { pauses: Number(pause.pauses), updatedAt: pause.updated_at },
         );
-        if (!unpaused && pause !== undefined) return;
+        if (!unpaused && pause !== undefined) return false;
       }
       // The step marks its run paused from inside the engine, a moment before the engine records
       // the failure. Resuming in that moment would do nothing, so the record is waited for.
@@ -533,7 +539,13 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       );
       yield* withEngine(engine.resume(runId));
       yield* store.runUnheld(runId);
+      return true;
     }).pipe(Effect.ensuring(Effect.sync(() => resuming.delete(runId))));
+    // Read once `resuming` is clear, so a wake held back meanwhile is among them.
+    if (!resumed) return;
+    for (const wait of yield* store.waitsClaimed(runId)) {
+      yield* send(wait, WorkflowStore.jsonValue(wait.woke_json ?? "null") as typeof Woke.Type);
+    }
   });
   const resume: Workflows["Service"]["resume"] = (runId) => resumeRun(runId);
 

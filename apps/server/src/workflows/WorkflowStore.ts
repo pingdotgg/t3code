@@ -177,6 +177,8 @@ export class WorkflowStore extends Context.Service<
     ) => Effect.Effect<boolean>;
     /** Waits claimed a while ago whose runs are still not past them: their wake is redone. */
     readonly waitsToWake: Effect.Effect<ReadonlyArray<WaitRow>>;
+    /** The run's waits that were claimed and are still open, whose wakes a resume sends. */
+    readonly waitsClaimed: (runId: string) => Effect.Effect<ReadonlyArray<WaitRow>>;
     /**
      * Hands one buffered signal to one wait, or to none: the claim and the removal happen
      * together. `gone` when another wait took the signal, `claimed` when the wait was already woken.
@@ -527,6 +529,11 @@ export const make = Effect.gen(function* () {
         SELECT ${waitColumns} FROM workflow_waits
         WHERE woke_json IS NOT NULL AND signalled_at <= ${before}
           AND run_id IN (SELECT run_id FROM workflow_runs WHERE ended_at IS NULL)
+      `.pipe(Effect.orDie);
+    }),
+    waitsClaimed: Effect.fn("WorkflowStore.waitsClaimed")(function* (runId) {
+      return yield* sql<WaitRow>`
+        SELECT ${waitColumns} FROM workflow_waits WHERE run_id = ${runId} AND woke_json IS NOT NULL
       `.pipe(Effect.orDie);
     }),
     mailDeliver: Effect.fn("WorkflowStore.mailDeliver")(function* (signalId, runId, name, woke) {
