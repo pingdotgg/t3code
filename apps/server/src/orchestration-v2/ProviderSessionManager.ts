@@ -3302,7 +3302,9 @@ export const layerWithOptions = (
                 // Runs, not the shell's activeRunId: the shell omits silent runs such as idle
                 // compaction. Background work outlives its run and still needs the process.
                 Effect.zipWith(
-                  projectionStore.getThreadRecords(threadId, ["runs"]),
+                  projectionStore.getThreadRecords(threadId, ["runs"], {
+                    runStatuses: ["preparing", "starting", "running", "waiting"],
+                  }),
                   projectionStore.getThreadShell(threadId),
                   ({ runs }, shell) =>
                     runs.some((run) => WORKING_RUN_STATUSES.has(run.status)) ||

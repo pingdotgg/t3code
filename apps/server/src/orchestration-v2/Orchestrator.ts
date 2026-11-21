@@ -3418,6 +3418,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadId,
       ["runs", "messages", "turnItems"],
       {
+        runStatuses: ["failed", "interrupted"],
+        includeLatestExecutedRun: true,
         messageIds: held.map((run) => run.userMessageId),
         turnItemTypes: ["run_interrupt_request"],
         turnItemRunIds: [completedRunId],
@@ -3470,6 +3472,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     if (unread.length === 0) return;
     const projection = yield* projectionStore.getThreadRecords(threadId, ["runs", "messages"], {
+      runIds: [...new Set(unread.flatMap((item) => (item.runId === null ? [] : [item.runId])))],
       messageIds: unread.flatMap((item) => (item.type === "user_message" ? [item.messageId] : [])),
     });
     const placed = [];
@@ -4423,7 +4426,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.link?.source === "agent"
     ) {
       const { runs } = yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs"])
+        .getThreadRecords(command.threadId, ["runs"], {
+          runStatuses: [],
+          includeLatestExecutedRun: true,
+        })
         .pipe(mapDispatchError(command));
       const latest = latestExecutedRun(runs);
       if (latest !== null && (yield* stopReachedRun(command, command.threadId, latest.id))) {
@@ -4458,7 +4464,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (command.type === "thread.metadata.update" && command.expectedEmpty === true) {
       const records = yield* projectionStore
-        .getThreadRecords(command.threadId, ["runs"])
+        .getThreadRecords(command.threadId, ["runs"], { latestRunLimit: 1 })
         .pipe(mapDispatchError(command));
       const messageCount = yield* projectionStore
         .getMessageCount(command.threadId)
@@ -4479,7 +4485,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     if (command.type === "thread.archive") {
       const records = yield* projectionStore
-        .getThreadRecords(command.threadId, ["subagents"])
+        .getThreadRecords(command.threadId, ["subagents"], { omitSettledSubagents: true })
         .pipe(mapDispatchError(command));
       if (hasRunningDelegatedTasks(records.subagents)) {
         return yield* new OrchestratorDispatchError({

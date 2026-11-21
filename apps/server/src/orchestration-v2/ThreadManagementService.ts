@@ -1468,23 +1468,27 @@ const make = Effect.gen(function* () {
       // counts. An unreadable thread counts as one, so its sessions are kept.
       const throughRunOrdinal = target?.ordinal ?? 0;
       const laterRunActive = (providerSessionId: ProviderSessionId) =>
-        orchestrator.getThreadRecords(input.threadId, ["runs", "providerThreads"]).pipe(
-          Effect.map(({ runs, providerThreads }) => {
-            const onSession = new Set(
-              providerThreads.flatMap((providerThread) =>
-                providerThread.providerSessionId === providerSessionId ? [providerThread.id] : [],
-              ),
-            );
-            return runs.some(
-              (run) =>
-                run.ordinal > throughRunOrdinal &&
-                isActiveRun(run) &&
-                run.providerThreadId !== null &&
-                onSession.has(run.providerThreadId),
-            );
-          }),
-          Effect.orElseSucceed(() => true),
-        );
+        orchestrator
+          .getThreadRecords(input.threadId, ["runs", "providerThreads"], {
+            runStatuses: ACTIVE_RUN_STATUSES,
+          })
+          .pipe(
+            Effect.map(({ runs, providerThreads }) => {
+              const onSession = new Set(
+                providerThreads.flatMap((providerThread) =>
+                  providerThread.providerSessionId === providerSessionId ? [providerThread.id] : [],
+                ),
+              );
+              return runs.some(
+                (run) =>
+                  run.ordinal > throughRunOrdinal &&
+                  isActiveRun(run) &&
+                  run.providerThreadId !== null &&
+                  onSession.has(run.providerThreadId),
+              );
+            }),
+            Effect.orElseSucceed(() => true),
+          );
       const detach = (providerSessionId: ProviderSessionId) =>
         sessions
           .detach({ providerSessionId, threadId: input.threadId, detail: FORCE_STOP_REASON })
@@ -1564,7 +1568,7 @@ const make = Effect.gen(function* () {
   )(
     function* (input) {
       const records = yield* orchestrator
-        .getThreadRecords(input.threadId, ["subagents", "runs", "providerThreads"])
+        .getThreadRecords(input.threadId, ["subagents"], { subagentIds: [input.subagentId] })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -1603,14 +1607,43 @@ const make = Effect.gen(function* () {
       }
       const providerThreadId =
         task.providerThreadId ??
-        records.runs.find((run) => run.id === task.runId)?.providerThreadId;
-      const providerThread = records.providerThreads.find(
-        (candidate) =>
-          candidate.id === providerThreadId &&
-          candidate.appThreadId === input.threadId &&
-          candidate.providerInstanceId === task.providerInstanceId &&
-          candidate.driver === task.driver,
-      );
+        (task.runId === null
+          ? undefined
+          : (yield* orchestrator
+              .getThreadRecords(input.threadId, ["runs"], { runIds: [task.runId] })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2StopWorkflowError({
+                      ...input,
+                      reason: "unavailable",
+                      cause,
+                    }),
+                ),
+              )).runs.find((run) => run.id === task.runId)?.providerThreadId);
+      const providerThread =
+        providerThreadId == null
+          ? undefined
+          : (yield* orchestrator
+              .getThreadRecords(input.threadId, ["providerThreads"], {
+                providerThreadIds: [providerThreadId],
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2StopWorkflowError({
+                      ...input,
+                      reason: "unavailable",
+                      cause,
+                    }),
+                ),
+              )).providerThreads.find(
+              (candidate) =>
+                candidate.id === providerThreadId &&
+                candidate.appThreadId === input.threadId &&
+                candidate.providerInstanceId === task.providerInstanceId &&
+                candidate.driver === task.driver,
+            );
       const taskId = task.nativeTaskRef?.nativeId;
       if (providerThread?.providerSessionId == null || taskId == null || taskId.length === 0) {
         return yield* new OrchestrationV2StopWorkflowError({ ...input, reason: "unavailable" });
