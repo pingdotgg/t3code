@@ -419,6 +419,18 @@ describe("AntigravityAdapterV2 client file system", () => {
       const outside = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-antigravity-outside-",
       });
+      const gitDir = path.join(outside, "worktrees", "linked");
+      yield* fileSystem.makeDirectory(gitDir, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(workspace, ".git"),
+        `gitdir: ${path.relative(workspace, gitDir)}\n`,
+      );
+      yield* fileSystem.writeFileString(
+        path.join(gitDir, "gitdir"),
+        `${path.relative(gitDir, path.join(workspace, ".git"))}\n`,
+      );
+      const head = path.join(gitDir, "HEAD");
+      yield* fileSystem.writeFileString(head, "ref: refs/heads/linked\n");
       const outsideFile = path.join(outside, "secret.txt");
       yield* fileSystem.writeFileString(outsideFile, "secret");
       const attachment = path.join(host.paths.attachmentsDir, "pasted.txt");
@@ -468,6 +480,11 @@ describe("AntigravityAdapterV2 client file system", () => {
         return yield* Effect.die("Antigravity sessions must serve client file reads");
       }
       const context = (method: string) => ({ requestId: `test-${method}`, method });
+      const linkedHead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: head },
+        context("fs/read_text_file"),
+      );
+      assert.equal(linkedHead.content, "ref: refs/heads/linked\n");
 
       const insidePath = path.join(workspace, "src", "inside.ts");
       yield* fileSystem.makeDirectory(path.dirname(insidePath), { recursive: true });
@@ -547,8 +564,9 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
+        makeRuntime: (input) => {
+          assert.isUndefined(input.additionalDirectories);
+          return makeAntigravityAcpRuntime({
             ...input,
             childProcessSpawner,
             spawn: {
@@ -583,13 +601,17 @@ describe("AntigravityAdapterV2 workspace changes", () => {
                   readTextFile = handler;
                 }).pipe(Effect.andThen(runtime.handleReadTextFile(handler))),
             })),
-          ),
+          );
+        },
         withProcess: (_stop, task) => task,
         defaultModel: Effect.undefined,
       });
       const workspaceA = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-a-" });
       const workspaceB = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-b-" });
-      yield* fileSystem.writeFileString(path.join(workspaceA, "a.txt"), "from a");
+      const gitDirA = path.join(workspaceA, ".git");
+      yield* fileSystem.makeDirectory(gitDirA);
+      yield* fileSystem.writeFileString(path.join(gitDirA, "gitdir"), `${gitDirA}\n`);
+      yield* fileSystem.writeFileString(path.join(workspaceB, ".git"), `gitdir: ${gitDirA}\n`);
       yield* fileSystem.writeFileString(path.join(workspaceB, "b.txt"), "from b");
       const policyFor = (cwd: string) =>
         ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -682,10 +704,13 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       );
       assert.equal(fromB.content, "from b");
       const fromA = yield* readTextFile(
-        { sessionId: "mock-session-1", path: path.join(workspaceA, "a.txt") },
+        { sessionId: "mock-session-1", path: path.join(gitDirA, "gitdir") },
         context,
       ).pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(fromA), "the previous workspace is no longer readable");
+      assert.isTrue(
+        Exit.isFailure(fromA),
+        "a mismatched backlink cannot add the previous workspace's Git directory",
+      );
     }).pipe(Effect.provide(layerSession)),
   );
 });

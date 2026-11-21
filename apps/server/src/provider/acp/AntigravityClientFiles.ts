@@ -6,6 +6,63 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
+const GIT_POINTER_MAX_BYTES = 4096;
+
+const readGitPointer = Effect.fn("AntigravityClientFiles.readGitPointer")(function* (
+  fileSystem: FileSystem.FileSystem,
+  filePath: string,
+  info: FileSystem.File.Info,
+) {
+  if (info.type !== "File" || Number(info.size) > GIT_POINTER_MAX_BYTES) return undefined;
+  return yield* fileSystem.readFileString(filePath);
+});
+
+export const resolveGitWorktreeDirectory = Effect.fn(
+  "AntigravityClientFiles.resolveGitWorktreeDirectory",
+)(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly path: Path.Path;
+    readonly cwd: string | null | undefined;
+  }) {
+    const { fileSystem, path } = input;
+    const cwd = input.cwd?.trim();
+    if (!cwd) return undefined;
+    let dir = path.resolve(cwd);
+    while (true) {
+      const dotGit = path.join(dir, ".git");
+      const info = yield* fileSystem.lstat(dotGit).pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.undefined,
+        ),
+      );
+      if (info === undefined) {
+        const parent = path.dirname(dir);
+        if (parent === dir) return undefined;
+        dir = parent;
+        continue;
+      }
+      const pointer = yield* readGitPointer(fileSystem, dotGit, info);
+      const gitdir = pointer?.match(/^gitdir:\s*(.+?)\s*$/mu)?.[1]?.trim();
+      if (!gitdir) return undefined;
+
+      const realDotGit = yield* fileSystem.realPath(dotGit);
+      const gitDirectory = yield* fileSystem.realPath(
+        path.resolve(path.dirname(realDotGit), gitdir),
+      );
+      if ((yield* fileSystem.stat(gitDirectory)).type !== "Directory") return undefined;
+
+      const backlinkPath = path.join(gitDirectory, "gitdir");
+      const backlinkInfo = yield* fileSystem.lstat(backlinkPath);
+      const backlink = (yield* readGitPointer(fileSystem, backlinkPath, backlinkInfo))?.trim();
+      if (!backlink) return undefined;
+      const target = yield* fileSystem.realPath(path.resolve(gitDirectory, backlink));
+      return target === realDotGit ? gitDirectory : undefined;
+    }
+  },
+  Effect.orElseSucceed(() => undefined),
+);
 
 function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
