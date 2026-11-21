@@ -7,17 +7,21 @@ import type {
   StandaloneIssueTrackerDescriptor,
 } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
-import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { useRef, useState } from "react";
+import { Pressable, ScrollView, type TextInputInstance, View } from "react-native";
 
 import { AppText as Text } from "../../../components/ui/AppText";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { Button } from "../../../components/ui/Button";
 import { Chip } from "../../../components/ui/Chip";
+import { ListActionRow } from "../../../components/ui/ListActionRow";
 import { Menu } from "../../../components/ui/Menu";
+import { SearchField } from "../../../components/ui/SearchField";
+import { Sheet } from "../../../components/ui/Sheet";
 import { ThemedSwitch } from "../../../components/ui/ThemedSwitch";
 import { uuidv4 } from "../../../lib/uuid";
 import { issueTrackerEnvironment } from "../../../state/issueTrackers";
+import { useDebouncedValue } from "../../../state/queries";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { SettingsSection } from "./SettingsSection";
@@ -41,70 +45,141 @@ export function IssueAutomationSection({
   const query = useEnvironmentQuery(
     issueTrackerEnvironment.automation({ environmentId, input: {} }),
   );
-  const catalog = useEnvironmentQuery(
-    issueTrackerEnvironment.automationCatalog({ environmentId, input: { tracker } }),
-  );
   const allowed = useAtomValue(
     issueTrackerEnvironment.saveAutomation.permissionAtom(environmentId),
   );
   const [draft, setDraft] = useState<IssueAutomationRule | null>(null);
+  // A Jira site can hold hundreds of boards, so the tracker is searched a page at a time.
+  const [adding, setAdding] = useState(false);
+  const [search, setSearch] = useState("");
+  const [cursor, setCursor] = useState<string | undefined>();
+  const searchRef = useRef<TextInputInstance | null>(null);
+  const debouncedSearch = useDebouncedValue(search.trim(), 250);
+  const searching = search.trim() !== debouncedSearch;
+  const catalog = useEnvironmentQuery(
+    adding && !searching
+      ? issueTrackerEnvironment.automationCatalog({
+          environmentId,
+          input: {
+            tracker,
+            ...(debouncedSearch ? { query: debouncedSearch } : {}),
+            ...(cursor ? { cursor } : {}),
+          },
+        })
+      : null,
+  );
   const rules = (query.data?.rules ?? []).filter((rule) => rule.tracker === tracker);
   const available = (catalog.data?.containers ?? []).filter(
     (option) => !rules.some((rule) => rule.containerId === option.id),
   );
+  const nextCursor = catalog.data?.nextCursor ?? null;
+  const loading = searching || catalog.isPending;
   const team = container === "team";
   const addLabel = team ? gt("Add team") : gt("Add board");
+  const searchLabel = team ? gt("Search teams") : gt("Search boards");
   return (
     <SettingsSection
       title={team ? gt("Teams") : gt("Boards")}
       footer={gt("Wake, snooze, or settle threads when a linked issue's status changes.")}
       trailing={
-        <Menu
-          title={addLabel}
-          actions={
-            available.length > 0
-              ? available.map((option) => ({ id: option.id, title: option.name }))
-              : [
-                  {
-                    id: "retry",
-                    title: catalog.isPending
-                      ? gt("Loading…")
-                      : catalog.error
-                        ? gt("Retry")
-                        : team
-                          ? gt("Every team already has a rule.")
-                          : gt("Every board already has a rule."),
-                    attributes: { disabled: catalog.error === null },
-                  },
-                ]
-          }
-          onPressAction={({ nativeEvent }) => {
-            const option = available.find((candidate) => candidate.id === nativeEvent.event);
-            if (option !== undefined && catalog.data !== null)
-              setDraft({
-                id: uuidv4(),
-                enabled: true,
-                tracker,
-                workspace: catalog.data.workspace,
-                containerId: option.id,
-                containerName: option.name,
-                mappings: {},
-              });
-            else if (nativeEvent.event === "retry") catalog.refresh();
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={addLabel}
+          disabled={!allowed || draft !== null}
+          onPress={() => {
+            setSearch("");
+            setCursor(undefined);
+            setAdding(true);
           }}
+          className="min-h-9 flex-row items-center gap-1 px-2 active:opacity-70"
         >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={addLabel}
-            disabled={!allowed || draft !== null}
-            className="min-h-9 flex-row items-center gap-1 px-2 active:opacity-70"
-          >
-            <SymbolView name="plus" size={14} tintColorClassName="accent-primary-text" />
-            <Text className="text-sm text-primary-text">{addLabel}</Text>
-          </Pressable>
-        </Menu>
+          <SymbolView name="plus" size={14} tintColorClassName="accent-primary-text" />
+          <Text className="text-sm text-primary-text">{addLabel}</Text>
+        </Pressable>
       }
     >
+      {adding ? (
+        <Sheet title={addLabel} onClose={() => setAdding(false)}>
+          <ScrollView
+            contentInsetAdjustmentBehavior="automatic"
+            keyboardShouldPersistTaps="handled"
+          >
+            <View className="gap-3 p-4">
+              <View className="flex-row">
+                <SearchField
+                  inputRef={searchRef}
+                  accessibilityLabel={searchLabel}
+                  placeholder={searchLabel}
+                  clearAccessibilityLabel={gt("Clear search")}
+                  value={search}
+                  onChangeText={(value) => {
+                    setSearch(value);
+                    setCursor(undefined);
+                  }}
+                />
+              </View>
+              {loading ? (
+                <Text className="text-sm text-foreground-muted">{gt("Loading…")}</Text>
+              ) : null}
+              <View className="overflow-hidden rounded-xl">
+                {available.map((option) => (
+                  <ListActionRow
+                    key={option.id}
+                    label={option.name}
+                    onPress={() => {
+                      if (catalog.data === null) return;
+                      setDraft({
+                        id: uuidv4(),
+                        enabled: true,
+                        tracker,
+                        workspace: catalog.data.workspace,
+                        containerId: option.id,
+                        containerName: option.name,
+                        mappings: {},
+                      });
+                      setAdding(false);
+                    }}
+                  />
+                ))}
+              </View>
+              {catalog.error ? (
+                <>
+                  <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
+                    {catalog.error}
+                  </Text>
+                  <Button label={gt("Retry")} size="compact" onPress={catalog.refresh} />
+                </>
+              ) : null}
+              {!loading && !catalog.error && available.length === 0 && nextCursor === null ? (
+                <Text className="text-sm text-foreground-muted">
+                  {debouncedSearch
+                    ? team
+                      ? gt("No matching teams.")
+                      : gt("No matching boards.")
+                    : team
+                      ? gt("Every team already has a rule.")
+                      : gt("Every board already has a rule.")}
+                </Text>
+              ) : null}
+              {!loading && nextCursor !== null ? (
+                <Button
+                  label={gt("Next page")}
+                  size="compact"
+                  onPress={() => setCursor(nextCursor)}
+                />
+              ) : null}
+              {cursor ? (
+                <Button
+                  label={gt("First page")}
+                  size="compact"
+                  tone="text"
+                  onPress={() => setCursor(undefined)}
+                />
+              ) : null}
+            </View>
+          </ScrollView>
+        </Sheet>
+      ) : null}
       {query.error ? (
         <Text accessibilityRole="alert" className="px-4 py-3 text-sm text-danger-foreground">
           {query.error}

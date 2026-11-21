@@ -388,10 +388,15 @@ Writing to a tracker over a remote connection requires the `source-control:write
 ### Organize threads by issue status
 
 Threads can follow the status of the issues linked to them. Open the connected tracker under
-**Settings → Source control & issues**, choose **Add team**, and use the **+** buttons to put the
-team's statuses in **Wake**, **Snooze**, or **Settle**. The rule applies to every thread linked
-to one of the team's issues, in any project. It changes threads, never issues. Linear is the
-supported tracker.
+**Settings → Source control & issues**, choose **Add team** for Linear or **Add board** for Jira,
+and use the **+** buttons to put the team's or board's statuses in **Wake**, **Snooze**, or
+**Settle**. The rule applies to every thread linked to one of its issues, in any project. It
+changes threads, never issues.
+
+Search Jira boards by name, or by a project key to find that project's boards. A Jira Service
+Management project without a board is offered as itself when you search for its key, with the
+statuses of all its issue types. A board's rule covers the issues of the projects the board
+shows, on the connected site.
 
 The server checks linked issues about once a minute while it runs, with or without a client
 open. Only a status change counts: saving a rule records the current statuses first, and a thread

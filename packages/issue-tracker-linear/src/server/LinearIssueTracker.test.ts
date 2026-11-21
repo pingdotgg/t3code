@@ -537,9 +537,16 @@ describe("LinearIssueTracker", () => {
         },
       });
       const automation = (yield* tracker).automation;
-      expect(yield* automation.listContainers()).toEqual({
+      expect(yield* automation.listContainers({})).toEqual({
         workspace: "acme",
         containers: [{ id: "team_eng", name: "Engineering (ENG)" }],
+        nextCursor: null,
+      });
+      expect((yield* automation.listContainers({ query: "ENGIN" })).containers).toHaveLength(1);
+      expect((yield* automation.listContainers({ query: "Support" })).containers).toEqual([]);
+      expect(yield* automation.getContainer("team_ops")).toEqual({
+        workspace: "acme",
+        container: null,
       });
       expect(
         (yield* automation.listStates({ workspace: "acme", containerId: "team_eng" })).map(

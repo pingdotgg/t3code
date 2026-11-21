@@ -673,12 +673,18 @@ export type IssueAutomationRule = typeof IssueAutomationRule.Type;
 export const IssueAutomationCatalogInput = Schema.Struct({
   tracker: IssueTrackerKind,
   containerId: Schema.optional(TrimmedNonEmptyString),
+  /** Part of a container's name; a site can hold more boards than one list should. */
+  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
+  /** Where the previous page of containers stopped, as `nextCursor` gave it. */
+  cursor: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
 });
 export type IssueAutomationCatalogInput = typeof IssueAutomationCatalogInput.Type;
 
 export const IssueAutomationCatalog = Schema.Struct({
   workspace: TrimmedNonEmptyString,
   containers: Schema.Array(IssueAutomationOption),
+  /** Null when `containers` is the last page. */
+  nextCursor: Schema.NullOr(TrimmedNonEmptyString),
   states: Schema.Array(IssueAutomationOption),
 });
 export type IssueAutomationCatalog = typeof IssueAutomationCatalog.Type;

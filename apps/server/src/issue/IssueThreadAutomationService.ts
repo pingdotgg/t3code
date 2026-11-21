@@ -1,7 +1,8 @@
 /**
- * Issue status automation: rules map a tracker container's statuses (a Linear team's workflow) to
- * wake, snooze, or settle. A sweep reads the status of every issue linked to an active thread and
- * acts only on a change since the last read, so the first read and any manual organizing stand.
+ * Issue status automation: rules map a tracker container's statuses (a Linear team's workflow, a
+ * Jira board's columns) to wake, snooze, or settle. A sweep reads the status of every issue linked
+ * to an active thread and acts only on a change since the last read, so the first read and any
+ * manual organizing stand.
  */
 import {
   CommandId,
@@ -130,18 +131,24 @@ const make = Effect.gen(function* () {
           operation: "catalog",
           detail: "This tracker has no status rules.",
         });
-      const listed = yield* found.automation.listContainers();
-      if (input.containerId === undefined) return { ...listed, states: [] };
-      if (!listed.containers.some((container) => container.id === input.containerId))
+      if (input.containerId === undefined) {
+        const listed = yield* found.automation.listContainers({
+          query: input.query,
+          cursor: input.cursor,
+        });
+        return { ...listed, states: [] };
+      }
+      const { workspace, container } = yield* found.automation.getContainer(input.containerId);
+      if (container === null)
         return yield* new IssueAutomationError({
           operation: "catalog",
           detail: "The connected account cannot reach this team or board.",
         });
       const states = yield* found.automation.listStates({
-        workspace: listed.workspace,
-        containerId: input.containerId,
+        workspace,
+        containerId: container.id,
       });
-      return { ...listed, states };
+      return { workspace, containers: [container], nextCursor: null, states };
     },
     Effect.mapError(wrap("catalog")),
   );

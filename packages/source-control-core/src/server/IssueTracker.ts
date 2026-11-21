@@ -223,11 +223,24 @@ export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
    * tracker's workspaces, or the tracker must refuse a workspace other than the credential's.
    */
   readonly automation?: {
-    readonly listContainers: () => Effect.Effect<
+    /** One page of the containers the credential reaches, whose names hold `query`. */
+    readonly listContainers: (input: {
+      readonly query?: string | undefined;
+      readonly cursor?: string | undefined;
+    }) => Effect.Effect<
       {
         /** The credential's workspace, as `parseIssueUrl` names it. */
         readonly workspace: string;
         readonly containers: ReadonlyArray<IssueAutomationOption>;
+        readonly nextCursor: string | null;
+      },
+      IssueTrackerError
+    >;
+    /** The container by id, or null when the credential cannot reach it. */
+    readonly getContainer: (containerId: string) => Effect.Effect<
+      {
+        readonly workspace: string;
+        readonly container: IssueAutomationOption | null;
       },
       IssueTrackerError
     >;

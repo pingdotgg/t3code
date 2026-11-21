@@ -147,11 +147,15 @@ function setup(
     getIssue: () => Effect.die("unused"),
     getComments: () => Effect.die("unused"),
     automation: {
-      listContainers: () =>
+      listContainers: () => Effect.die("unused"),
+      getContainer: (containerId) =>
         state.beforeCatalog.pipe(
           Effect.as({
             workspace: "acme",
-            containers: rules.map((item) => ({ id: item.containerId, name: item.containerName })),
+            container:
+              rules
+                .filter((item) => item.containerId === containerId)
+                .map((item) => ({ id: item.containerId, name: item.containerName }))[0] ?? null,
           }),
         ),
       listStates: () =>

@@ -121,6 +121,15 @@ const CONTENT_BY_EMOJI = new Map(
   ),
 );
 
+const teamOption = (team: {
+  readonly id: string;
+  readonly key: string;
+  readonly name: string;
+}) => ({
+  id: team.id,
+  name: `${team.name} (${team.key})`,
+});
+
 /** Linear filters issues by number, at most this many per read. */
 const STATUS_READ_BATCH = 250;
 
@@ -443,15 +452,31 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
 
       // Team ids are unique across workspaces, so another workspace's credential finds none.
       automation: {
-        listContainers: Effect.fn("LinearIssueTracker.listContainers")(() =>
+        // One read holds every team, so a search filters it and there is no next page.
+        listContainers: Effect.fn("LinearIssueTracker.listContainers")(({ query }) =>
           linear.viewer().pipe(
             Effect.map((data) => ({
               workspace: data.workspace,
-              containers: data.teams.map((team) => ({
-                id: team.id,
-                name: `${team.name} (${team.key})`,
-              })),
+              containers: data.teams
+                .map(teamOption)
+                .filter(
+                  (team) =>
+                    query === undefined ||
+                    team.name.toLowerCase().includes(query.trim().toLowerCase()),
+                ),
+              nextCursor: null,
             })),
+          ),
+        ),
+        getContainer: Effect.fn("LinearIssueTracker.getContainer")((containerId) =>
+          linear.viewer().pipe(
+            Effect.map((data) => {
+              const team = data.teams.find((candidate) => candidate.id === containerId);
+              return {
+                workspace: data.workspace,
+                container: team === undefined ? null : teamOption(team),
+              };
+            }),
           ),
         ),
         listStates: Effect.fn("LinearIssueTracker.listStates")(({ containerId }) =>

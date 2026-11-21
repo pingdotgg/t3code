@@ -13,11 +13,12 @@ import { useState } from "react";
 
 import { randomUUID } from "~/lib/utils";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
+import { useDebouncedValue } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSearchInput, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
 
 type Container = NonNullable<StandaloneIssueTrackerDescriptor["automationContainer"]>;
@@ -44,15 +45,29 @@ export function IssueAutomationSettings({
   );
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<IssueAutomationRule | null>(null);
+  // A Jira site can hold hundreds of boards, so the tracker is searched a page at a time.
+  const [search, setSearch] = useState("");
+  const [cursor, setCursor] = useState<string | undefined>();
+  const debouncedSearch = useDebouncedValue(search.trim(), 250);
+  const searching = search.trim() !== debouncedSearch;
   const catalog = useEnvironmentQuery(
-    adding
-      ? issueTrackerEnvironment.automationCatalog({ environmentId, input: { tracker } })
+    adding && !searching
+      ? issueTrackerEnvironment.automationCatalog({
+          environmentId,
+          input: {
+            tracker,
+            ...(debouncedSearch ? { query: debouncedSearch } : {}),
+            ...(cursor ? { cursor } : {}),
+          },
+        })
       : null,
   );
   const rules = (query.data?.rules ?? []).filter((rule) => rule.tracker === tracker);
   const available = (catalog.data?.containers ?? []).filter(
     (option) => !rules.some((rule) => rule.containerId === option.id),
   );
+  const nextCursor = catalog.data?.nextCursor ?? null;
+  const loading = searching || catalog.isPending;
   const team = container === "team";
   return (
     <div className="space-y-3 pt-3">
@@ -63,14 +78,32 @@ export function IssueAutomationSettings({
             {gt("Wake, snooze, or settle threads when a linked issue's status changes.")}
           </p>
         </div>
-        <Menu open={adding && draft === null} onOpenChange={setAdding}>
+        <Menu
+          open={adding && draft === null}
+          onOpenChange={(open) => {
+            setAdding(open);
+            setSearch("");
+            setCursor(undefined);
+          }}
+        >
           <MenuTrigger
             render={<Button size="xs" variant="outline" disabled={!allowed || draft !== null} />}
           >
             <PlusIcon />
             {team ? gt("Add team") : gt("Add board")}
           </MenuTrigger>
-          <MenuPopup align="end">
+          <MenuPopup align="end" className="w-80">
+            <MenuSearchInput
+              autoFocus
+              aria-label={team ? gt("Search teams") : gt("Search boards")}
+              placeholder={team ? gt("Search teams") : gt("Search boards")}
+              value={search}
+              busy={loading}
+              onChange={(event) => {
+                setSearch(event.currentTarget.value);
+                setCursor(undefined);
+              }}
+            />
             {available.map((option) => (
               <MenuItem
                 key={option.id}
@@ -91,13 +124,31 @@ export function IssueAutomationSettings({
                 {option.name}
               </MenuItem>
             ))}
-            {catalog.isPending ? <MenuItem disabled>{gt("Loading…")}</MenuItem> : null}
-            {catalog.error ? <MenuItem onClick={catalog.refresh}>{gt("Retry")}</MenuItem> : null}
-            {!catalog.isPending && !catalog.error && available.length === 0 ? (
+            {loading ? <MenuItem disabled>{gt("Loading…")}</MenuItem> : null}
+            {catalog.error ? (
+              <MenuItem closeOnClick={false} onClick={catalog.refresh}>
+                {gt("Retry")}
+              </MenuItem>
+            ) : null}
+            {!loading && !catalog.error && available.length === 0 && nextCursor === null ? (
               <MenuItem disabled>
-                {team
-                  ? gt("Every team already has a rule.")
-                  : gt("Every board already has a rule.")}
+                {debouncedSearch
+                  ? team
+                    ? gt("No matching teams.")
+                    : gt("No matching boards.")
+                  : team
+                    ? gt("Every team already has a rule.")
+                    : gt("Every board already has a rule.")}
+              </MenuItem>
+            ) : null}
+            {!loading && nextCursor !== null ? (
+              <MenuItem closeOnClick={false} onClick={() => setCursor(nextCursor)}>
+                {gt("Next page")}
+              </MenuItem>
+            ) : null}
+            {cursor ? (
+              <MenuItem closeOnClick={false} onClick={() => setCursor(undefined)}>
+                {gt("First page")}
               </MenuItem>
             ) : null}
           </MenuPopup>

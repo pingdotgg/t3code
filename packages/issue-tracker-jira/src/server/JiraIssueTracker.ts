@@ -39,6 +39,7 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
       { key: "email", label: "Account email", placeholder: "you@example.com" },
     ],
   },
+  automationContainer: "board",
 };
 
 /** No reactions or development panel: Jira Cloud's public API serves neither. */
@@ -65,6 +66,12 @@ const EVERYTHING: IssueViewerPermissions = {
 
 const COMMENTS_PAGE = 50;
 const CATEGORY_ORDER = ["new", "indeterminate", "done"];
+/** Keys per status search, which keeps each JQL query and its answer to one page. */
+const STATUS_READ_BATCH = 50;
+const ISSUE_KEY = /^[A-Z][A-Z0-9_]*-[1-9]\d*$/u;
+const PROJECT_KEY = /^[A-Z][A-Z0-9_]*$/iu;
+/** A rule on a project rather than a board: a Service Management project has no board. */
+const PROJECT_CONTAINER = "project:";
 
 /** Jira writes `+0000` where ISO 8601 has `+00:00`. */
 function iso(value: string): string {
@@ -218,6 +225,25 @@ function involvementClause(involvement: IssueInvolvement): string | null {
   }
 }
 
+/** A board, named with its project's key when it lives in one, since board names repeat. */
+function boardOption(board: JiraApi.JiraBoard) {
+  const project = board.location?.projectKey?.trim();
+  return { id: String(board.id), name: project ? `${board.name} (${project})` : board.name };
+}
+
+/** `https://<site>/browse/<KEY>`, the workspace being the site. */
+function parseIssueUrl(url: URL) {
+  if (url.protocol !== "https:" || url.username || url.password) return null;
+  const key = /^\/browse\/([A-Z][A-Z0-9_]*-[1-9]\d*)\/?$/iu.exec(url.pathname)?.[1]?.toUpperCase();
+  if (key === undefined) return null;
+  return {
+    host: DESCRIPTOR.host,
+    workspace: url.host.toLowerCase(),
+    scope: key.slice(0, key.lastIndexOf("-")),
+    key,
+  };
+}
+
 const sameText = (a: string | null | undefined, b: string) =>
   a != null && a.trim().toLowerCase() === b.trim().toLowerCase();
 
@@ -299,10 +325,154 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
           : Effect.succeed(label.trim()),
       );
 
+    const site = jira.origin.pipe(Effect.map((origin) => new URL(origin).host.toLowerCase()));
+
+    /** Board ids are only unique on one site, so a rule saved on another is refused. */
+    const requireSite = Effect.fn("JiraIssueTracker.requireSite")(function* (workspace: string) {
+      if ((yield* site) !== workspace.toLowerCase())
+        return yield* JiraApi.fail(
+          "automation",
+          "failed",
+          "The connected Jira site is not the one this rule was made on.",
+        );
+    });
+
+    const whenFound = <A>(effect: Effect.Effect<A, IssueTrackerError>) =>
+      effect.pipe(
+        Effect.map((value): A | null => value),
+        Effect.catchIf(
+          (error) => error.reason === "not-found",
+          () => Effect.succeed(null),
+        ),
+      );
+
+    /** A project key's boards, or the project itself when it has none. */
+    const projectContainers = Effect.fn("JiraIssueTracker.projectContainers")(function* (
+      key: string,
+    ) {
+      const project = yield* whenFound(jira.project(key));
+      if (project === null) return [];
+      const { boards } = yield* jira.boards({ projectKey: key, startAt: 0 });
+      return boards.length > 0
+        ? boards.map(boardOption)
+        : [{ id: `${PROJECT_CONTAINER}${key}`, name: `${project.name} (${key})` }];
+    });
+
+    /** The status id of each key, read in batches; a key Jira says does not exist is left out. */
+    const readKeyStatuses = Effect.fn("JiraIssueTracker.readKeyStatuses")(function* (
+      keys: ReadonlyArray<string>,
+    ) {
+      const statuses: Array<{ readonly key: string; readonly stateId: string }> = [];
+      for (let start = 0; start < keys.length; start += STATUS_READ_BATCH) {
+        let batch = keys.slice(start, start + STATUS_READ_BATCH);
+        while (batch.length > 0) {
+          const read = yield* jira
+            .issueStatuses({ jql: `key in (${batch.map(quoted).join(", ")})`, limit: batch.length })
+            .pipe(Effect.result);
+          if (read._tag === "Success") {
+            statuses.push(...read.success.map((row) => ({ key: row.key, stateId: row.statusId })));
+            break;
+          }
+          // JQL refuses the whole query over one key it cannot find, naming that key.
+          const missing = batch.filter((key) => read.failure.detail.includes(`'${key}'`));
+          if (read.failure.reason !== "failed" || missing.length === 0) return yield* read.failure;
+          batch = batch.filter((key) => !missing.includes(key));
+        }
+      }
+      return statuses;
+    });
+
     const api: StandaloneIssueTrackerApi = {
       kind: JiraApi.KIND,
       capabilities: CAPABILITIES,
       standalone: DESCRIPTOR,
+      parseIssueUrl,
+
+      automation: {
+        listContainers: Effect.fn("JiraIssueTracker.listContainers")(function* (input) {
+          const startAt = input.cursor === undefined ? 0 : Number(input.cursor);
+          if (!Number.isSafeInteger(startAt) || startAt < 0)
+            return yield* JiraApi.fail("listContainers", "failed", "Invalid Jira board page.");
+          const query = input.query?.trim() || undefined;
+          const [workspace, page, byKey] = yield* Effect.all(
+            [
+              site,
+              jira.boards({ name: query, startAt }),
+              // A project key also finds the project's boards, whatever they are named.
+              startAt === 0 && query !== undefined && PROJECT_KEY.test(query)
+                ? projectContainers(query.toUpperCase())
+                : Effect.succeed([]),
+            ],
+            { concurrency: "unbounded" },
+          );
+          const containers = [
+            ...new Map(
+              [...byKey, ...page.boards.map(boardOption)]
+                .filter((option) => option.name.trim().length > 0)
+                .map((option) => [option.id, option]),
+            ).values(),
+          ];
+          return {
+            workspace,
+            containers,
+            nextCursor:
+              page.isLast || page.boards.length === 0 ? null : String(startAt + page.boards.length),
+          };
+        }),
+        getContainer: Effect.fn("JiraIssueTracker.getContainer")(function* (containerId) {
+          const workspace = yield* site;
+          if (containerId.startsWith(PROJECT_CONTAINER)) {
+            const key = containerId.slice(PROJECT_CONTAINER.length).toUpperCase();
+            const project = PROJECT_KEY.test(key) ? yield* whenFound(jira.project(key)) : null;
+            return {
+              workspace,
+              container:
+                project === null
+                  ? null
+                  : { id: `${PROJECT_CONTAINER}${key}`, name: `${project.name} (${key})` },
+            };
+          }
+          const board = /^[1-9]\d*$/u.test(containerId)
+            ? yield* whenFound(jira.board(containerId))
+            : null;
+          return { workspace, container: board === null ? null : boardOption(board) };
+        }),
+        listStates: Effect.fn("JiraIssueTracker.listStates")(function* (input) {
+          yield* requireSite(input.workspace);
+          if (input.containerId.startsWith(PROJECT_CONTAINER)) {
+            // Service Management workflows are set per issue type; each lists its own statuses.
+            const types = yield* jira.projectStatuses(
+              input.containerId.slice(PROJECT_CONTAINER.length),
+            );
+            return [...new Map(types.flat().map((status) => [status.id, status])).values()].map(
+              ({ id, name }) => ({ id, name }),
+            );
+          }
+          const ids = yield* jira.boardStatusIds(input.containerId);
+          return yield* Effect.forEach(ids, jira.status, { concurrency: 4 }).pipe(
+            Effect.map((statuses) => statuses.map(({ id, name }) => ({ id, name }))),
+          );
+        }),
+        readStatuses: Effect.fn("JiraIssueTracker.readStatuses")(function* (input) {
+          yield* requireSite(input.workspace);
+          const projects = new Set(
+            input.containerId.startsWith(PROJECT_CONTAINER)
+              ? [input.containerId.slice(PROJECT_CONTAINER.length).toUpperCase()]
+              : (yield* jira.boardProjects(input.containerId)).map((key) => key.toUpperCase()),
+          );
+          // Only the board's projects' issues are on it; any other key is left out unread.
+          const keys = [
+            ...new Set(
+              input.keys
+                .map((key) => key.trim().toUpperCase())
+                .filter(
+                  (key) => ISSUE_KEY.test(key) && projects.has(key.slice(0, key.lastIndexOf("-"))),
+                ),
+            ),
+          ];
+          return yield* readKeyStatuses(keys);
+        }),
+      },
 
       probeCredential: (credential) =>
         Effect.all([jira.myself(credential), jira.projects(credential)], {
