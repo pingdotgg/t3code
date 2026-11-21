@@ -12235,6 +12235,7 @@ describe("AcpAdapterV2", () => {
       let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
       let elicitationHandler: Parameters<RuntimeService["handleElicitation"]>[0] | undefined;
       let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
+      let firstRuntimeScope: Scope.Scope | undefined;
       const promptStarted = yield* Deferred.make<void>();
       const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
       const lifecycleEvents: Array<{
@@ -12280,9 +12281,12 @@ describe("AcpAdapterV2", () => {
             : {}),
           onUrlElicitation: options.onUrlElicitation,
           makeRuntime: (input) =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
+              const scope = yield* Scope.Scope;
+              firstRuntimeScope ??= scope;
               runtimeInput = input;
-            }).pipe(Effect.andThen(baseMakeRuntime(input))),
+              return yield* baseMakeRuntime(input);
+            }),
         },
         selfInvocation,
         ...(options.holdAgentRequest ? { continuationRequests: { offer: () => Effect.void } } : {}),
@@ -12341,7 +12345,8 @@ describe("AcpAdapterV2", () => {
       if (
         sessionUpdateHandler === undefined ||
         elicitationHandler === undefined ||
-        runtimeInput?.onOutgoingResponse === undefined
+        runtimeInput?.onOutgoingResponse === undefined ||
+        firstRuntimeScope === undefined
       ) {
         return yield* Effect.die("ACP runtime must register update and elicitation handlers");
       }
@@ -12351,7 +12356,11 @@ describe("AcpAdapterV2", () => {
       });
       return {
         runtime,
+        threadId,
+        modelSelection,
+        runtimePolicy,
         sessionScope,
+        runtimeScope: firstRuntimeScope,
         providerThread,
         providerTurnId,
         events,
@@ -12710,6 +12719,65 @@ describe("AcpAdapterV2", () => {
         ),
       );
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live(
+    "commits force-new-thread replacement while previous runtime scope owns a pending URL elicitation under holdingAgentRequest",
+    () =>
+      Effect.gen(function* () {
+        const urlStarted = yield* Deferred.make<void>();
+        const urlConsent = yield* Deferred.make<boolean>();
+        const session = yield* openUrlElicitationSession({
+          id: "replacement-closes-pending-url-scope",
+          hardInterrupt: true,
+          holdAgentRequest: true,
+          onUrlElicitation: () =>
+            Deferred.succeed(urlStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(urlConsent)),
+            ),
+        });
+
+        // Own the in-flight elicitation fiber inside the first runtimeScope, as RpcServer does
+        // (its scope finalizer interrupts and awaits in-flight request fibers before closing).
+        const elicitationFiber = yield* session
+          .elicitationHandler(
+            {
+              mode: "url",
+              url: "https://example.com/auth",
+              elicitationId: "url-auth-scope-close",
+              sessionId: "mock-session-1",
+              message: "Sign in to continue",
+            },
+            { requestId: "url-elicit-scope-close", method: "elicitation/create" },
+          )
+          .pipe(Effect.forkScoped);
+        yield* Scope.addFinalizer(session.runtimeScope, Fiber.interrupt(elicitationFiber));
+        yield* Deferred.await(urlStarted);
+
+        const interrupted = yield* session.runtime
+          .interruptTurn({
+            providerThread: session.providerThread,
+            providerTurnId: session.providerTurnId,
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.timeoutOption("1 second"));
+        assert.isTrue(Option.isSome(interrupted));
+
+        // Replacement holds runtimeCallbackPermit while closing previousScope, which interrupts
+        // the pending URL elicitation fiber and runs holdingAgentRequest's release finalizer.
+        const replaced = yield* session.runtime
+          .ensureThread({
+            threadId: session.threadId,
+            modelSelection: session.modelSelection,
+            runtimePolicy: session.runtimePolicy,
+            forceNewNativeThread: true,
+          })
+          .pipe(Effect.timeoutOption("2 seconds"));
+        assert.isTrue(
+          Option.isSome(replaced),
+          "replacement commit must complete while previous runtime scope owns a pending URL consent handler",
+        );
+      }).pipe(Effect.provide(layerTest)),
   );
 });
 

@@ -2333,16 +2333,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           generation: number,
           effect: Effect.Effect<A, E, R>,
         ) =>
-          runtimeCallbackPermit.withPermit(
-            Effect.gen(function* () {
-              if ((yield* Ref.get(runtimeTeardownState))._tag !== "Idle") {
-                return Option.none<A>();
-              }
-              if ((yield* Ref.get(runtimeCallbackGeneration)) !== generation) {
-                return Option.none<A>();
-              }
-              return Option.some(yield* effect);
-            }),
+          // Generations are strictly monotonic: once retired, a callback can never
+          // become current again, so skip taking runtimeCallbackPermit (which a
+          // replacement closing the retired runtime scope may currently hold).
+          Ref.get(runtimeCallbackGeneration).pipe(
+            Effect.flatMap((currentGeneration) =>
+              currentGeneration > generation
+                ? Effect.succeed(Option.none<A>())
+                : runtimeCallbackPermit.withPermit(
+                    Effect.gen(function* () {
+                      if ((yield* Ref.get(runtimeTeardownState))._tag !== "Idle") {
+                        return Option.none<A>();
+                      }
+                      if ((yield* Ref.get(runtimeCallbackGeneration)) !== generation) {
+                        return Option.none<A>();
+                      }
+                      return Option.some(yield* effect);
+                    }),
+                  ),
+            ),
           );
         const registerNativeResponseAcknowledgement =
           /* Provider events include streaming deltas; avoid a span for each update. */
