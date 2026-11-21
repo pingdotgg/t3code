@@ -1182,6 +1182,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "image",
+ "libc",
  "markdown",
  "objc2 0.6.5",
  "objc2-core-graphics",

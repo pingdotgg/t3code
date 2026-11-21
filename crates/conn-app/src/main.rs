@@ -57,6 +57,8 @@ impl gpui_kit::AssetSource for AppAssets {
     }
 }
 
+mod panels;
+
 fn main() {
     let application = gpui_kit::application().with_assets(AppAssets);
     application.run(|cx| {
