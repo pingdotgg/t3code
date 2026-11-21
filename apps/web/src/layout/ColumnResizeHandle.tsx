@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 
+import { flushSync } from "react-dom";
 import { settleStripCamera } from "../motion/stripCamera";
 import {
   LAYOUT_COLUMN_WIDTH_PRESETS,
@@ -171,6 +172,7 @@ export function LayoutResizeHandles({
   const dragRef = useRef<ActiveDrag | null>(null);
   const baseLayoutRef = useRef<LayoutState>(layout);
   const frameRef = useRef<number | null>(null);
+  const shownDragRef = useRef<ActiveDrag | null>(null);
   const pointerRef = useRef({ x: 0, y: 0, scrollLeft: 0 });
   const heldStripPxRef = useRef(0);
 
@@ -250,16 +252,24 @@ export function LayoutResizeHandles({
     const next = dragAtPointer(active, event);
     if (next.value === active.value) return;
     dragRef.current = next;
-    // Pointer streams can outpace paint. Lay out the strip once per frame,
-    // always using the latest pointer, without dropping the release position.
+    // Committed now, before the frame's rAF callbacks, so the frame's first layout read lays
+    // out the new widths once; a commit left to the scheduler lands after paint. Pointer
+    // streams can outpace paint: a later move in the same frame waits for this frame's rAF.
     if (frameRef.current !== null) return;
+    showDrag(next);
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null;
       const latest = dragRef.current;
-      if (!latest) return;
-      setDrag(latest);
+      if (latest && latest !== shownDragRef.current) showDrag(latest);
+    });
+  };
+
+  const showDrag = (shown: ActiveDrag) => {
+    shownDragRef.current = shown;
+    flushSync(() => {
+      setDrag(shown);
       onPreview({
-        layout: applyDrag(baseLayoutRef.current, latest),
+        layout: applyDrag(baseLayoutRef.current, shown),
         heldStripPx: heldStripPxRef.current,
       });
     });
