@@ -90,6 +90,7 @@ const WSL_FORWARDED_ENV_NAMES = [
   "ANTHROPIC_API_KEY",
   "T3CODE_TELEMETRY_ENABLED",
   "T3CODE_GITHUB_APP_CLIENT_ID",
+  "T3CODE_TANSTACK_SOURCE",
   // Otherwise the WSL server keeps exporting to endpoints from the bootstrap.
   "T3CODE_OTEL_SDK_DISABLED",
   "OTEL_SDK_DISABLED",
@@ -293,6 +294,7 @@ interface WslPreflightSuccess {
   readonly windowsEntryPath: string;
   readonly runtime: WslPreflightRuntime;
   readonly resolvedPath: string;
+  readonly t3Home: string | null;
   readonly runtimeId?: string;
 }
 
@@ -412,7 +414,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       : ({ ok: true, windowsEntryPath, linuxAppRoot: mountedAppRoot.value } as const);
   });
 
-  let stagedFailure: { readonly runtimeId?: string; readonly reason: string } | undefined;
+  let stagedFailure: { readonly reason: string } | undefined;
   const failedStaged = (failure: { readonly reason: string }) =>
     ({
       _tag: "Failed",
@@ -421,11 +423,16 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
     }) as const;
 
   if (input.runtimeArchive !== null) {
-    const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
-    if (runtime.ok) {
-      // Staged runtimes bundle Node and node-pty; provider PATH discovery must not require them.
-      const stagedProbe = yield* wslEnv.probeRuntime(runningDistro);
-      if (stagedProbe.ok) {
+    // Staged runtimes bundle Node and node-pty; provider PATH discovery must not require them.
+    // Probe first: the runtime cache lives under the login shell's T3CODE_HOME.
+    const stagedProbe = yield* wslEnv.probeRuntime(runningDistro);
+    if (stagedProbe.ok) {
+      const runtime = yield* wslEnv.prepareRuntime(
+        runningDistro,
+        input.runtimeArchive,
+        stagedProbe.t3Home,
+      );
+      if (runtime.ok) {
         yield* wslServerTree.cleanupLegacy;
         return {
           _tag: "Ready",
@@ -433,20 +440,21 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
           windowsEntryPath: environment.backendEntryPath,
           runtime: { kind: "executable", entryPath: `${runtime.linuxAppRoot}/t3` },
           resolvedPath: stagedProbe.resolvedPath,
+          t3Home: stagedProbe.t3Home,
           runtimeId: input.runtimeArchive.runtimeId,
         } as const;
       }
-      yield* Effect.logWarning(
-        "The staged WSL runtime probe failed; retrying from the mounted server tree.",
-        { reason: stagedProbe.reason },
-      );
-      stagedFailure = { runtimeId: input.runtimeArchive.runtimeId, reason: stagedProbe.reason };
-    } else {
       stagedFailure = { reason: runtime.reason };
       yield* Effect.logWarning(
         "Could not stage the WSL runtime; launching from the mounted server tree instead.",
         { reason: runtime.reason },
       );
+    } else {
+      yield* Effect.logWarning(
+        "The staged WSL runtime probe failed; retrying from the mounted server tree.",
+        { reason: stagedProbe.reason },
+      );
+      stagedFailure = { reason: stagedProbe.reason };
     }
   }
 
@@ -469,10 +477,6 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       : failedNodePty(nodePtyResult);
   }
 
-  if (stagedFailure?.runtimeId) {
-    yield* wslEnv.invalidateRuntime(runningDistro, stagedFailure.runtimeId);
-  }
-
   return {
     _tag: "Ready",
     runningDistro,
@@ -483,6 +487,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
       linuxEntryPath: `${mounted.linuxAppRoot}/apps/server/dist/bin.mjs`,
     },
     resolvedPath: nodePtyResult.resolvedPath,
+    t3Home: nodePtyResult.t3Home,
   } as const;
 });
 
@@ -745,13 +750,16 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
       "--exec",
       "env",
       `PATH=${launchPath}`,
+      ...(preflight.t3Home === null ? [] : [`T3CODE_HOME=${preflight.t3Home}`]),
       ...command,
       "--bootstrap-fd",
       "0",
       ...devUrlArgs,
     ],
     preflightFailure: Option.none(),
-    ...(preflight.runtimeId === undefined ? {} : { wslRuntimeId: preflight.runtimeId }),
+    ...(preflight.runtimeId === undefined
+      ? {}
+      : { wslRuntimeId: preflight.runtimeId, wslT3Home: preflight.t3Home }),
   } satisfies DesktopBackendManager.DesktopBackendStartConfig;
 });
 

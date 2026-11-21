@@ -35,6 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
@@ -64,6 +65,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
@@ -147,6 +149,8 @@ const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 // A model can stay silent this long before the first token of a reply the agent started itself.
 const ACP_OPEN_REPLY_QUIET_LIMIT: Duration.Input = "2 minutes";
 const ACP_BUSY_PROMPT_RETRY_INTERVAL: Duration.Input = "1 second";
+// Agents such as omp advertise a loaded session's commands shortly after answering session/load.
+const ACP_LOADED_COMMANDS_WAIT: Duration.Input = "2 seconds";
 const ACP_PROMPT_INACTIVITY_SLICE_MILLIS = 60_000;
 const ACP_HOST_SLEEP_TOLERANCE_MILLIS = 10_000;
 
@@ -210,6 +214,7 @@ const ACP_PROMPT_ACTIVITY_UPDATES: ReadonlySet<string> = new Set([
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly extraRoots?: ReadonlyArray<string>;
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
@@ -340,9 +345,7 @@ export function acpPerTurnPromptUsage(
   const inputTokens = geminiUsage
     ? usage.inputTokens + (usage.cachedReadTokens ?? 0)
     : usage.inputTokens;
-  const outputTokens = geminiUsage
-    ? usage.outputTokens + (usage.thoughtTokens ?? 0)
-    : usage.outputTokens;
+  const outputTokens = usage.outputTokens;
   // TurnTokenUsage contract: input includes cache read + write and reasoning
   // is a subset of output, so clamp counters that exceed their parent and
   // drop the ones the agent left unset. Cache writes are capped at whatever
@@ -370,6 +373,8 @@ export function acpPerTurnPromptUsage(
 interface AcpPromptOutcomeFailure {
   readonly failure: OrchestrationV2ProviderFailure;
   readonly threadDisposition: "reusable" | "broken";
+  /** The native session can carry on: the turn resends this prompt once before failing. */
+  readonly resumeWith?: string;
 }
 
 export interface AcpAdapterV2Flavor {
@@ -640,6 +645,13 @@ export interface AcpAdapterV2Flavor {
    * open. A turn that ends on the deferred finalize waits for it instead of the short debounce.
    */
   readonly replyEndsWithUsageUpdate?: boolean;
+  /**
+   * True when the agent has a queued wake or in-flight reply that has not streamed yet (for
+   * example, a second background task finished while the first wake's reply was running).
+   * Checked before finalizing a settled prompt or its deferred debounce, so the turn waits
+   * through `ACP_OPEN_REPLY_QUIET_LIMIT` instead of closing early.
+   */
+  readonly hasPendingReply?: (sessionId: string) => Effect.Effect<boolean>;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
   readonly interruptPromptOnCancel?: boolean;
@@ -657,7 +669,7 @@ export interface AcpAdapterV2Flavor {
    * leaves usage semantics open, so this stays unset until proven live.
    */
   readonly reportsPerTurnPromptUsage?: boolean;
-  /** Gemini-style usage: inputTokens leaves out cachedReadTokens, outputTokens leaves out thoughtTokens. */
+  /** Antigravity 1.5+ usage: inputTokens leaves out cachedReadTokens, while outputTokens already includes thoughtTokens. */
   readonly geminiPromptUsage?: boolean;
   /**
    * Fails a dispatched prompt after this long with no update for its session while no
@@ -993,11 +1005,45 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
+// A GUI-subsystem executable (packaged Windows desktop) does not hold the console, so PowerShell
+// neither waits for it nor captures its output or exit code; cmd.exe running a batch file does.
+// cmd.exe decodes batch files with the console code page, so paths come from the (UTF-16) environment.
+const ACP_MCP_CALL_LAUNCHER = [
+  "@echo off",
+  "setlocal EnableExtensions DisableDelayedExpansion",
+  'set "ELECTRON_RUN_AS_NODE=1"',
+  "if not defined T3_ACP_MCP_ENTRYPOINT goto packaged",
+  '"%T3_ACP_MCP_NODE%" "%T3_ACP_MCP_ENTRYPOINT%" acp-mcp-call %*',
+  "exit /b %errorlevel%",
+  ":packaged",
+  '"%T3_ACP_MCP_NODE%" acp-mcp-call %*',
+  "",
+].join("\r\n");
+
+const writeAcpMcpCallLauncher = Effect.fn("AcpAdapterV2.writeAcpMcpCallLauncher")(function* (
+  stateDir: string,
+) {
+  if (!(yield* HostProcess.isWindows)) return undefined;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const dir = `${stateDir}\\acp`;
+  const launcherPath = `${dir}\\acp-mcp-call.cmd`;
+  return yield* fileSystem.makeDirectory(dir, { recursive: true }).pipe(
+    Effect.andThen(fileSystem.writeFileString(launcherPath, ACP_MCP_CALL_LAUNCHER)),
+    Effect.as(launcherPath),
+    Effect.catch((error) =>
+      Effect.logWarning("Could not write the ACP terminal tool launcher.", error).pipe(
+        Effect.as(undefined),
+      ),
+    ),
+  );
+});
+
 function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
   deferMcpTools: boolean | undefined,
+  callLauncher: string | undefined,
 ): AcpMcpContext {
   if (session === undefined) {
     return { servers: [], acpServers: [], httpServers: [] };
@@ -1045,6 +1091,7 @@ function acpMcpContext(
       T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
       T3_ACP_MCP_NODE: self.command,
       ...(self.entrypoint === undefined ? {} : { T3_ACP_MCP_ENTRYPOINT: self.entrypoint }),
+      ...(callLauncher === undefined ? {} : { T3_ACP_MCP_CALL: callLauncher }),
     },
   };
 }
@@ -1672,6 +1719,8 @@ interface ActiveAcpTurn {
   foregroundIdle: Deferred.Deferred<void>;
   /** Counts the turn's prompts; only the latest one settles the turn. */
   promptSequence: number;
+  /** The turn already resent a prompt after a resumable outcome failure. */
+  outcomeResumed: boolean;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
   promptSentAt: number | null;
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
@@ -1976,14 +2025,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
+  const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
-      ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools))
+      ? Effect.succeed(
+          acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools, callLauncher),
+        )
       : mcpSessions
           .read(threadId)
           .pipe(
             Effect.map((session) =>
-              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.deferMcpTools),
+              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.deferMcpTools, callLauncher),
             ),
           );
   const driver = flavor.driver;
@@ -2280,7 +2332,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             new Map(current).set(sessionId, Symbol()),
           );
         });
-        const advertisedCommandNames = yield* Ref.make(new Map<string, ReadonlySet<string>>());
+        const advertisedCommandNames = yield* SubscriptionRef.make(
+          new Map<string, ReadonlySet<string>>(),
+        );
         const compactsContext =
           flavor.supportsCompaction === true ||
           flavor.compactSession !== undefined ||
@@ -2766,6 +2820,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             runtimePolicy: input.runtimePolicy,
+            ...(input.runtimePolicy.workspace === undefined
+              ? {}
+              : { extraRoots: input.runtimePolicy.workspace.extraRoots }),
             mcpServers: mcpContext.servers,
             acpMcpServers: mcpContext.acpServers,
             httpMcpServers: mcpContext.httpServers,
@@ -4803,7 +4860,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 turnItem = {
                   ...base,
                   type: "command_execution",
-                  input: toolCall.command ?? monitorCommand ?? toolCall.title ?? "Command",
+                  input: toolCall.command ?? monitorCommand ?? "",
                   ...(textFromUnknown(rawOutput) === undefined
                     ? {}
                     : { output: textFromUnknown(rawOutput) }),
@@ -4852,11 +4909,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   turnItem = {
                     ...base,
                     type: "command_execution",
-                    input:
-                      toolCall.command ??
-                      monitorCommand ??
-                      toolCall.title ??
-                      (inputVariant === "monitor" ? "Monitor" : "Command"),
+                    input: toolCall.command ?? monitorCommand ?? "",
                     ...(textFromUnknown(rawOutput) === undefined
                       ? {}
                       : { output: textFromUnknown(rawOutput) }),
@@ -5681,6 +5734,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 type: "provider_thread.updated",
                 driver,
                 providerThread,
+                // Agents like Kimi report usage after the prompt settles, when no run receives it.
+                ...(context === null ? { sessionScoped: true } : {}),
               });
             }
             return;
@@ -6991,7 +7046,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (notification.update.sessionUpdate === "available_commands_update") {
                 const sessionId = rawNotification.sessionId;
                 const advertisedCommands = notification.update.availableCommands;
-                yield* Ref.update(advertisedCommandNames, (current) => {
+                yield* SubscriptionRef.update(advertisedCommandNames, (current) => {
                   const updated = new Map(current);
                   updated.set(
                     sessionId,
@@ -8678,19 +8733,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (hasDeferredBackgroundWork(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
-          const debounce = context.replyOpen
-            ? ACP_OPEN_REPLY_QUIET_LIMIT
-            : ACP_DEFERRED_FINALIZE_DEBOUNCE;
+          const replyOpen = context.replyOpen;
+          const debounce = replyOpen ? ACP_OPEN_REPLY_QUIET_LIMIT : ACP_DEFERRED_FINALIZE_DEBOUNCE;
           yield* Effect.gen(function* () {
             yield* Effect.sleep(debounce);
-            if (
-              context.finalized ||
-              context.interrupted ||
-              context.backgroundFinalizeGeneration !== generation
-            ) {
+            const stillCurrent = () =>
+              !context.finalized &&
+              !context.interrupted &&
+              context.backgroundFinalizeGeneration === generation &&
+              !hasDeferredBackgroundWork(context);
+            if (!stillCurrent()) return;
+            const pendingReply =
+              !replyOpen && flavor.hasPendingReply !== undefined
+                ? yield* flavor.hasPendingReply(context.nativeThreadId)
+                : false;
+            if (!stillCurrent()) return;
+            if (pendingReply) {
+              context.replyOpen = true;
+              yield* scheduleDeferredFinalize(context);
               return;
             }
-            if (hasDeferredBackgroundWork(context)) return;
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
@@ -8905,6 +8967,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const runtimeInstructions = buildRuntimeInstructions({
             harness: flavor.runtimeHarness ?? driver,
             model: turnInput.modelSelection.model,
+            runtimePolicy: turnInput.runtimePolicy,
             pullRequestLinking:
               sessionSetup === null ||
               flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
@@ -8969,7 +9032,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             readonly promptParts: Effect.Success<ReturnType<typeof resolvePromptParts>> | null;
             readonly compactSession: AcpAdapterV2Flavor["compactSession"];
           },
-        ) => {
+        ): Effect.Effect<void> => {
           const sequence = ++context.promptSequence;
           const superseded = () => context.promptSequence !== sequence;
           return prompt(superseded).pipe(
@@ -9036,6 +9099,43 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     result.stopReason === "cancelled"
                       ? undefined
                       : yield* settle.checkPromptOutcome(result);
+                  const resumeWith = hiddenFailure?.resumeWith;
+                  if (
+                    hiddenFailure !== undefined &&
+                    resumeWith !== undefined &&
+                    steersWithPrompt &&
+                    !context.outcomeResumed
+                  ) {
+                    context.outcomeResumed = true;
+                    yield* reportProviderRetry({
+                      sessionId: context.nativeThreadId,
+                      failure: hiddenFailure.failure,
+                    });
+                    yield* steerWithPrompt({
+                      threadId: context.input.threadId,
+                      runId: context.input.runId,
+                      providerThread: context.input.providerThread,
+                      providerTurnId: context.providerTurnId,
+                      message: { ...context.input.message, text: resumeWith, attachments: [] },
+                    }).pipe(
+                      Effect.catchCause(() =>
+                        runRuntimeCallbackAtGeneration(
+                          settle.generation,
+                          Effect.gen(function* () {
+                            if (context.finalized || context.interrupted) return;
+                            yield* Ref.set(runtimeRestartRequired, true);
+                            yield* terminalizeOpenForegroundTools(context, "failed");
+                            yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
+                              childTurnsContinue: hasSurvivingBackgroundWork(context),
+                              threadDisposition: hiddenFailure.threadDisposition,
+                            });
+                          }),
+                        ),
+                      ),
+                      Effect.forkIn(sessionScope),
+                    );
+                    return;
+                  }
                   if (hiddenFailure !== undefined) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
@@ -9074,12 +9174,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   yield* idleReportedSubagents(context);
                   if (context.finalized) return;
-                  if (
+                  const deferredBackgroundWork =
                     defersFinalizeForBackgroundWork &&
                     !context.interrupted &&
-                    hasDeferredBackgroundWork(context)
-                  ) {
+                    hasDeferredBackgroundWork(context);
+                  const pendingReply =
+                    !deferredBackgroundWork &&
+                    defersFinalizeForBackgroundWork &&
+                    status === "completed" &&
+                    !context.interrupted &&
+                    flavor.hasPendingReply !== undefined
+                      ? yield* flavor.hasPendingReply(context.nativeThreadId)
+                      : false;
+                  if (context.finalized) return;
+                  if (deferredBackgroundWork || pendingReply) {
                     yield* closeTextStreams(context);
+                    if (pendingReply) {
+                      context.replyOpen = true;
+                      yield* scheduleDeferredFinalize(context);
+                    }
                     yield* (
                       options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
                     );
@@ -9106,7 +9219,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       error.success._tag === "AcpRequestError" &&
                       error.success.code === -32800);
                   const failure = Cause.squash(cause);
-                  if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
+                  // A resumed prompt stands in for an outcome failure, which always restarts.
+                  if (
+                    !interrupted &&
+                    (context.outcomeResumed ||
+                      flavor.restartRuntimeAfterPromptError?.(failure) === true)
+                  ) {
                     yield* Ref.set(runtimeRestartRequired, true);
                   }
                   // An agent that answered with an error may still finish tools it started,
@@ -9198,11 +9316,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             // Checked after activation: a loaded session advertises its own commands.
             const compactionSetup = yield* Ref.get(activeSessionSetup);
+            const sessionCommandNames =
+              flavor.compactViaAdvertisedCommand === true && isCompactionMessage(turnInput.message)
+                ? yield* SubscriptionRef.changes(advertisedCommandNames).pipe(
+                    Stream.map((names) => names.get(requestedSessionId)),
+                    Stream.filter((names) => names !== undefined),
+                    Stream.runHead,
+                    Effect.timeoutOption(ACP_LOADED_COMMANDS_WAIT),
+                    Effect.map(Option.flatten),
+                  )
+                : Option.none<ReadonlySet<string>>();
             if (
               isCompactionMessage(turnInput.message) &&
               ((flavor.compactViaAdvertisedCommand === true &&
-                (yield* Ref.get(advertisedCommandNames)).get(requestedSessionId)?.has("compact") !==
-                  true) ||
+                !Option.exists(sessionCommandNames, (names) => names.has("compact"))) ||
                 (flavor.compactSession !== undefined &&
                   (compactionSetup === null ||
                     !flavor.compactSession.supported(compactionSetup.initializeResult))))
@@ -9314,6 +9441,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptDispatched,
               foregroundIdle: yield* Deferred.make<void>(),
               promptSequence: 0,
+              outcomeResumed: false,
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
@@ -9541,7 +9669,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             text,
             turnInput.message.attachments,
           );
-          const dispatched = yield* runtimeTransitionPermit.withPermit(
+          const [dispatched, context] = yield* runtimeTransitionPermit.withPermit(
             Effect.gen(function* () {
               const context = yield* Ref.get(activeTurn);
               if (
@@ -9553,14 +9681,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver,
                   detail: `Provider turn ${turnInput.providerTurnId} is not active and cannot be steered.`,
-                });
-              }
-              // A wake turn has no prompt of its own to steer; its reply ends the run soon.
-              if (context.promptSequence === 0) {
-                return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
-                  driver,
-                  providerThreadId: turnInput.providerThread.id,
-                  providerTurnId: turnInput.providerTurnId,
                 });
               }
               const generation = yield* Ref.get(runtimeCallbackGeneration);
@@ -9626,10 +9746,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   detail: `Provider turn ${turnInput.providerTurnId} ended before it could be steered.`,
                 });
               }
-              return dispatched;
+              return [dispatched, context] as const;
             }),
           );
           yield* Deferred.await(dispatched);
+          // A wake run sent no prompt, so its inactivity watchdog waits for this one.
+          yield* Deferred.succeed(context.promptDispatched, undefined);
         });
 
         yield* Effect.addFinalizer(() =>
@@ -9969,8 +10091,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (effect, turnInput) =>
               effect.pipe(
                 Effect.mapError((cause) =>
-                  cause._tag === "ProviderAdapterSteerRunUnsupportedError" ||
-                  cause._tag === "ProviderAdapterSteerDeclinedError"
+                  cause._tag === "ProviderAdapterSteerRunUnsupportedError"
                     ? cause
                     : new ProviderAdapter.ProviderAdapterSteerRunError({
                         driver,

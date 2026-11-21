@@ -50,6 +50,8 @@ function enrichedStyle(
   fontScale: number,
 ): MarkdownStyle {
   const monospace = Platform.OS === "ios" ? "Menlo" : "monospace";
+  // Android only bolds fallback glyphs when the bold family is asked for at a bold weight (app.config.ts).
+  const boldFontWeight = Platform.OS === "android" ? "bold" : undefined;
   // Keep the radius modest: iOS clips square table-cell borders without stroking the corner arcs.
   const block = {
     marginTop: 4,
@@ -72,6 +74,7 @@ function enrichedStyle(
       ...body,
       color: style.strongColor,
       fontFamily: style.headingFontFamily,
+      fontWeight: boldFontWeight,
       fontSize,
       lineHeight: fontSize * 1.35,
       marginTop: 8,
@@ -94,7 +97,11 @@ function enrichedStyle(
     h4: heading(4),
     h5: heading(5),
     h6: heading(6),
-    strong: { color: style.strongColor, fontFamily: style.boldFontFamily, fontWeight: "normal" },
+    strong: {
+      color: style.strongColor,
+      fontFamily: style.boldFontFamily,
+      fontWeight: boldFontWeight ?? "normal",
+    },
     link: { color: style.linkColor, underline: false },
     code: {
       fontFamily: monospace,

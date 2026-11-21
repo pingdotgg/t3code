@@ -377,6 +377,34 @@ describe("Tracer", () => {
         spanProcessor: [new SimpleSpanProcessor(exporter)]
       }))))
     })
+
+    it.effect.each([
+      { name: "success", effect: Effect.void, status: undefined },
+      { name: "failure without errors", effect: Effect.failCause(Cause.empty), status: undefined },
+      { name: "success with an application Ok", effect: Effect.void, status: OtelApi.SpanStatusCode.OK },
+      { name: "success with an application Error", effect: Effect.void, status: OtelApi.SpanStatusCode.ERROR },
+      {
+        name: "failure without errors with an application Error",
+        effect: Effect.failCause(Cause.empty),
+        status: OtelApi.SpanStatusCode.ERROR
+      }
+    ])("keeps the status of $name", ({ effect, status }) => {
+      const exporter = new InMemorySpanExporter()
+      return Effect.gen(function*() {
+        yield* Effect.gen(function*() {
+          const span = yield* OtelTracer.currentOtelSpan
+          if (status !== undefined) span.setStatus({ code: status })
+          yield* effect
+        }).pipe(Effect.withSpan("test"), Effect.exit)
+        assert.deepStrictEqual(exporter.getFinishedSpans()[0].status, {
+          code: status ?? OtelApi.SpanStatusCode.UNSET
+        })
+      }).pipe(Effect.provide(NodeSdk.layer(() => ({
+        resource: { serviceName: "test" },
+        spanProcessor: [new SimpleSpanProcessor(exporter)]
+      }))))
+    })
+
     it.effect("exports homogeneous primitive arrays as array attributes", () =>
       Effect.gen(function*() {
         const exporter = new InMemorySpanExporter()
