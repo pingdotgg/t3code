@@ -323,6 +323,20 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
+describe("ClientSettings settled section position", () => {
+  it("keeps older clients at the end of the main list and round-trips either choice", () => {
+    expect(decodeClientSettings({}).sidebarSettledShelfFixed).toBe(false);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("sidebarSettledShelfFixed");
+    for (const fixed of [true, false]) {
+      const patch = { sidebarSettledShelfFixed: fixed };
+      expect(decodeClientSettingsPatch(patch)).toEqual(patch);
+      expect(encodeClientSettings(decodeClientSettings(patch)).sidebarSettledShelfFixed).toBe(
+        fixed,
+      );
+    }
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");

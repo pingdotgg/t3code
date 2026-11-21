@@ -139,9 +139,14 @@ Threads that are working or waiting on work they will resume from move into a co
 **Working** section below the active list.
 That includes subagents, watched pull requests with checks still running, Claude monitors,
 and background commands or other monitors the agent says it is waiting on. A dev server or other process an agent leaves running does not keep a thread
-there. A thread returns to the top of the active list when it finishes, fails, or needs an approval or
-answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
-the pinned section.
+there. A thread returns to the active list when it finishes or fails. The Working section lists
+the thread you last sent work to first. Pinned threads stay in the pinned section.
+
+On web and desktop, threads that need an answer, an approval, or a plan review move into
+**Input**, above Working. Both sections stay available while you scroll the active list.
+Find **Settled** at the end of that list. Enable **Settings → General → Keep Settled at bottom**
+to keep it visible below Working and Snoozed instead. Each device remembers its choice.
+On native mobile, requests return to the active list.
 
 This is on by default. Turn it off with **Settings → General → Working section** on web and desktop,
 or **Settings → General → Working section** on iOS and Android. Each device keeps its own
@@ -160,7 +165,7 @@ close it. A closed folder shows how many threads it holds, and a dot when one of
 needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
 Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
 can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
-section is off. Each device keeps its own choice.
+and Input sections are off. Each device keeps its own choice.
 
 ## Settle finished work
 

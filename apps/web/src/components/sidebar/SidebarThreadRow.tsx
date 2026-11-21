@@ -556,6 +556,17 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
   ),
 };
 
+export function SidebarDropVerbBadge({ verb }: { verb: SidebarDropVerb }) {
+  return (
+    <span
+      role="status"
+      className="pointer-events-none ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-2xs font-medium text-primary"
+    >
+      {dropVerbBadge[verb]}
+    </span>
+  );
+}
+
 const TOP_STATUS_ICONS = {
   working: CircleDashedIcon,
   waiting: CircleDotDashedIcon,
@@ -1039,7 +1050,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           // A zero-height boundary also makes dnd-kit scale the source to
           // zero. Only projected peers use scaleY as a visibility sentinel.
           visibility:
-            !sortable.isDragging && sortable.transform?.scaleY === 0
+            sortable.isDragging || sortable.transform?.scaleY === 0
               ? ("hidden" as const)
               : undefined,
         },
@@ -1052,14 +1063,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ? "wake"
       : props.sweepAction;
   const dragDestination =
-    destinationVerb !== null ? (
-      <span
-        role="status"
-        className="pointer-events-none ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-2xs font-medium text-primary"
-      >
-        {dropVerbBadge[destinationVerb]}
-      </span>
-    ) : null;
+    destinationVerb !== null ? <SidebarDropVerbBadge verb={destinationVerb} /> : null;
 
   const accessibility = resolveSidebarRowAccessibility({
     title: thread.title,

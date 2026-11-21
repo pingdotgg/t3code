@@ -16,6 +16,7 @@ import {
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
   resolveSidebarRowStatus,
+  resolveSidebarInboxSection,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWindowTitleThreadStatus,
@@ -62,6 +63,46 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("sidebar Input grouping", () => {
+  it.each([
+    { hasPendingUserInput: true },
+    { hasPendingApprovals: true },
+    { pendingSubagentRequest: "user_input" },
+    { pendingSubagentRequest: "approval" },
+    { pendingGuestMessageCount: 1 },
+  ] satisfies ThreadFixtureOverrides[])(
+    "groups attention requests before work: %o",
+    (overrides) => {
+      const thread = makeThreadFixture(overrides);
+      expect(resolveSidebarInboxSection(thread, true, true)).toBe("input");
+      expect(resolveSidebarInboxSection(thread, true, false)).toBe("input");
+      expect(resolveSidebarInboxSection(thread, false, true)).toBe("active");
+    },
+  );
+
+  it.each(["completed", "failed", "running"] as const)(
+    "groups only actionable plans after a successful run, not %s work",
+    (status) => {
+      const thread = makeThreadFixture({
+        interactionMode: "plan",
+        hasActionableProposedPlan: true,
+        latestRun: { ...makeLatestRun(), status },
+        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      });
+      expect(resolveSidebarInboxSection(thread, true, false)).toBe(
+        status === "completed" ? "input" : "active",
+      );
+    },
+  );
+
+  it("keeps finished work in the inbox and groups work only when enabled", () => {
+    const thread = makeThreadFixture();
+    expect(resolveSidebarInboxSection(thread, true, true)).toBe("working");
+    expect(resolveSidebarInboxSection(thread, true, false)).toBe("active");
+    expect(resolveSidebarInboxSection(thread, false, true)).toBe("active");
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
@@ -1187,6 +1228,8 @@ describe("Working shelf (beta)", () => {
       marker("pinned-divider"),
       row("a1", "active"),
       row("a2", "active"),
+      marker("input-header"),
+      row("i1", "input"),
       marker("working-header"),
       row("w1", "working"),
       marker("settled-header"),
@@ -1195,6 +1238,8 @@ describe("Working shelf (beta)", () => {
 
     it("never drops into the Working shelf, and keeps it out of the inbox order", () => {
       expect(resolveSidebarDropTarget(items, "a1", "w1")).toBeNull();
+      expect(resolveSidebarDropTarget(items, "a1", "i1")).toBeNull();
+      expect(resolveSidebarDropVerb("active", "input")).toBeNull();
       expect(resolveSidebarDropTarget(items, "p1", "a2")).toEqual({
         section: "active",
         pinnedOrder: [],
