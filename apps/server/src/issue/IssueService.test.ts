@@ -283,6 +283,22 @@ describe("IssueService", () => {
         yield* enterprise.resolveUrl("https://code.acme.test/acme/web/issues/7"),
       ).toMatchObject({ projectId: "ghes", host: "code.acme.test", key: "7", writable: true });
 
+      // So need a self-hosted Forgejo's.
+      const forgejo = yield* makeService({
+        projects: [
+          project({
+            id: "forgejo",
+            repository: "acme/web",
+            provider: "forgejo",
+            host: "git.example.test",
+          }),
+        ],
+        trackers: [fakeTracker({ kind: IssueTrackerKind.make("forgejo") })],
+      });
+      expect(yield* forgejo.resolveUrl("https://git.example.test/acme/web/issues/4")).toMatchObject(
+        { projectId: "forgejo", host: "git.example.test", key: "4", writable: true },
+      );
+
       // A fork lists its upstream's issues and its own, counted once, and may write to both.
       const fork = project({ id: "fork", repository: "acme/web" });
       const forked = yield* makeService({
