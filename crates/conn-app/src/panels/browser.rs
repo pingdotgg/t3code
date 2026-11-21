@@ -166,10 +166,6 @@ impl BrowserPanel {
 
     /// Navigates the embedded browser to `url`, lazily installing and starting
     /// the CEF runtime on first use when compiled with feature `cef`.
-    #[expect(
-        dead_code,
-        reason = "automation-friendly navigation entry point for orchestrator wiring"
-    )]
     pub(crate) fn navigate(&mut self, url: impl Into<String>, cx: &mut Context<'_, Self>) {
         let target = normalize_url(&url.into());
         self.url = target;
@@ -183,11 +179,33 @@ impl BrowserPanel {
         }
     }
 
+    /// Diagnostic state for the automation hook.
+    #[cfg(feature = "automation")]
+    pub(crate) fn automation_state(&self) -> serde_json::Value {
+        #[cfg(feature = "cef")]
+        {
+            let view = self.view.borrow();
+            serde_json::json!({
+                "phase": format!("{:?}", self.phase),
+                "hasView": view.is_some(),
+                "target": self.url,
+                "url": view.as_ref().map(BrowserView::url),
+                "title": view.as_ref().map(BrowserView::title),
+                "parent": self.parent_view.get().is_some(),
+                "bounds": self.last_bounds.get().map(|b| [b.x, b.y, b.width, b.height]),
+            })
+        }
+        #[cfg(not(feature = "cef"))]
+        {
+            serde_json::json!({ "cef": false, "target": self.url })
+        }
+    }
+
     /// Returns the active document title reported by CEF, or an empty string
     /// when no page is loaded or feature `cef` is disabled.
-    #[expect(
-        dead_code,
-        reason = "automation-friendly title accessor for orchestrator wiring"
+    #[cfg_attr(
+        not(feature = "automation"),
+        expect(dead_code, reason = "read by the automation hook")
     )]
     #[must_use]
     pub(crate) fn title(&self) -> String {
@@ -608,7 +626,7 @@ impl Render for BrowserPanel {
                     // the panel toggle), verify on the next frame whether BrowserPanel was
                     // still painted; if not, hide the native child NSView immediately.
                     let view_slot = view_for_mouse.clone();
-                    let paint_gen = gen_for_mouse.clone();
+                    let paint_gen = gen_for_mouse;
                     window.on_mouse_event(move |_: &MouseDownEvent, _phase, window, _| {
                         schedule_visibility_check(window, view_slot.clone(), paint_gen.clone());
                     });

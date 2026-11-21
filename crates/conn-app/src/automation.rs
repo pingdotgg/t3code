@@ -14,6 +14,7 @@
 //! - `{"cmd":"select","title":"..."}` or `{"cmd":"select","id":"..."}`
 //! - `{"cmd":"send","text":"..."}` (to the selected thread), `{"cmd":"stop"}`
 //! - `{"cmd":"palette"}`, `{"cmd":"settings"}`: toggle the overlays
+//! - `{"cmd":"browse","url":"..."}`, `{"cmd":"browser-title"}` (CEF builds)
 //! - `{"cmd":"sidebar"}`, `{"cmd":"panel","tab":"files"}`, `{"cmd":"close-panel"}`
 //! - `{"cmd":"resize","width":1440,"height":900}`
 
@@ -146,6 +147,26 @@ async fn run(
                 .map_err(|e| e.to_string())?;
             Ok(json!("ok"))
         }
+        "browse" => {
+            let url = text(cmd, "url").to_owned();
+            app.update(cx, |app, cx| app.browse(url, cx))
+                .map_err(|e| err(e.into()))?;
+            // The native view is created at paint time, and a covered window gets no system
+            // frames: draw one now so the browser appears without waiting for focus.
+            window
+                .update(cx, |_, window, cx| {
+                    window.refresh();
+                    window.draw(cx).clear(cx);
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!("ok"))
+        }
+        "browser-state" => app
+            .read_with(cx, |app, cx| app.browser_state(cx))
+            .map_err(|e| err(e.into())),
+        "browser-title" => app
+            .read_with(cx, |app, cx| json!(app.browser_title(cx)))
+            .map_err(|e| err(e.into())),
         "sidebar" => app
             .update(cx, |app, cx| {
                 app.toggle_sidebar(cx);

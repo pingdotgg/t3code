@@ -360,6 +360,26 @@ impl ConnApp {
         .detach();
     }
 
+    /// Opens the Browser tab and loads `url`.
+    #[cfg(feature = "automation")]
+    pub(crate) fn browse(&mut self, url: String, cx: &mut Context<'_, Self>) {
+        self.select_right_panel_tab(RightPanelTab::Browser, cx);
+        self.right_panel
+            .update(cx, |panel, cx| panel.navigate_browser(url, cx));
+    }
+
+    /// Diagnostic state of the Browser tab.
+    #[cfg(feature = "automation")]
+    pub(crate) fn browser_state(&self, cx: &App) -> serde_json::Value {
+        self.right_panel.read(cx).browser_state(cx)
+    }
+
+    /// The Browser tab's page title.
+    #[cfg(feature = "automation")]
+    pub(crate) fn browser_title(&self, cx: &App) -> String {
+        self.right_panel.read(cx).browser_title(cx)
+    }
+
     /// State read-out for the automation hook.
     #[cfg(feature = "automation")]
     pub(crate) fn automation_dump(&self) -> serde_json::Value {

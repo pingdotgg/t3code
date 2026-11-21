@@ -20,7 +20,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, Entity, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    AnyElement, App, Context, Entity, InteractiveElement, IntoElement, MouseButton, ParentElement,
     Render, SharedString, Styled, Window, div, px,
 };
 
@@ -115,6 +115,30 @@ impl RightPanel {
     pub fn set_embedded(&mut self, embedded: bool, cx: &mut Context<'_, Self>) {
         self.chrome = !embedded;
         cx.notify();
+    }
+
+    /// Loads `url` in the Browser tab (starting the CEF runtime on first use).
+    #[cfg_attr(
+        not(feature = "automation"),
+        expect(dead_code, reason = "driven by the automation hook")
+    )]
+    pub fn navigate_browser(&mut self, url: String, cx: &mut Context<'_, Self>) {
+        self.browser.update(cx, |b, cx| b.navigate(url, cx));
+    }
+
+    /// Diagnostic state of the Browser tab.
+    #[cfg(feature = "automation")]
+    pub fn browser_state(&self, cx: &App) -> serde_json::Value {
+        self.browser.read(cx).automation_state()
+    }
+
+    /// The Browser tab's page title (empty before a page loads).
+    #[cfg_attr(
+        not(feature = "automation"),
+        expect(dead_code, reason = "driven by the automation hook")
+    )]
+    pub fn browser_title(&self, cx: &App) -> String {
+        self.browser.read(cx).title()
     }
 
     /// Updates theme tokens across the tab strip and every right-panel surface.
