@@ -1957,7 +1957,7 @@ describe("cached pull request detail", () => {
 
   // regression: #12168 cached PR details were missed across entry points on custom ports
   it.each(["github", "gitlab"] as const)(
-    "retains portless %s snapshot identities for custom web ports",
+    "recovers legacy %s snapshot keys only for a matching explicit authority",
     (providerName) => {
       const provider = SourceControlProviderKind.make(providerName);
       const storage = makeStorage();
@@ -1968,7 +1968,27 @@ describe("cached pull request detail", () => {
         url: `https://${host}:8443/acme/web/${provider === "github" ? "pull" : "-/merge_requests"}/7`,
       });
       writePullRequestDetailSnapshot(storage, "env-1", hosted, cached);
-      expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)?.title).toBe(cached.title);
+      expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)).toBeNull();
+      expect(
+        readPullRequestDetailSnapshot(storage, "env-1", { ...hosted, host: `${host}:8443` })?.title,
+      ).toBe(cached.title);
+      expect(
+        readPullRequestDetailSnapshot(storage, "env-1", { ...hosted, host: `${host}:9443` }),
+      ).toBeNull();
+      expect(
+        resolveDisplayedPullRequestDetail({
+          live: null,
+          cached,
+          reference: { ...reference, host: `${host}:8443` },
+        }),
+      ).toBe(cached);
+      expect(
+        resolveDisplayedPullRequestDetail({
+          live: null,
+          cached,
+          reference: { ...reference, host: `${host}:9443` },
+        }),
+      ).toBeNull();
     },
   );
 
@@ -2026,6 +2046,15 @@ describe("cached pull request detail", () => {
     expect(readPullRequestDetailSnapshot(storage, "env-1", reference)).toBeNull();
     expect(readPullRequestDetailSnapshot(undefined, "env-1", reference)).toBeNull();
     const hosted = { ...reference, host: "github.com" };
+    const ported = detail({
+      provider: SourceControlProviderKind.make("github"),
+      url: "https://github.com:8443/acme/web/pull/7",
+    });
+    writePullRequestDetailSnapshot(storage, "env-1", hosted, ported);
+    expect(
+      readPullRequestDetailSnapshot(storage, "env-1", { ...reference, host: "github.com:8443" })
+        ?.title,
+    ).toBe(ported.title);
     writePullRequestDetailSnapshot(storage, "env-1", hosted, detail({ url: "invalid url" }));
     expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)).toBeNull();
   });

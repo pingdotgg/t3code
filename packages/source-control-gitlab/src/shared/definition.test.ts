@@ -1,3 +1,4 @@
+import type { ChangeRequestProjectIdentity } from "@t3tools/source-control-core/shared/definition";
 import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -18,6 +19,32 @@ describe("GitLab change request URLs", () => {
       repository: "team/project",
       number: 9,
     });
+  });
+
+  it("matches a merge request's explicit HTTP port before choosing a project", () => {
+    const link = parse("https://gitlab.example.test:9443/team/project/-/merge_requests/9")!;
+    const identity = (remoteUrl: string): ChangeRequestProjectIdentity => ({
+      canonicalKey: "gitlab.example.test/team/project",
+      displayName: "team/project",
+      locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+    });
+    const matching = identity("https://gitlab.example.test:9443/team/project.git");
+    expect(definition.isChangeRequestInRepository(matching, link)).toBe(true);
+    expect(definition.canReadChangeRequestOnHost(matching, link)).toBe(true);
+    for (const remote of [
+      "https://gitlab.example.test:8443/team/project.git",
+      "https://gitlab.example.test/team/project.git",
+    ]) {
+      expect(definition.isChangeRequestInRepository(identity(remote), link), remote).toBe(false);
+      expect(definition.canReadChangeRequestOnHost(identity(remote), link), remote).toBe(false);
+    }
+    expect(link).toMatchObject({
+      host: "gitlab.example.test",
+      authority: "gitlab.example.test:9443",
+      repositoryUrl: "https://gitlab.example.test:9443/team/project",
+    });
+    const ssh = identity("ssh://git@gitlab.example.test:2222/team/project.git");
+    expect(definition.isChangeRequestInRepository(ssh, link)).toBe(true);
   });
 
   it("keeps pull-like segments inside nested repository paths", () => {
