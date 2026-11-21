@@ -12,9 +12,19 @@ use conn_theme::Tokens;
 use gpui_kit::component::h_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Bounds, BoxShadow, FontWeight, Hsla, MouseMoveEvent, PathBuilder, Pixels,
-    Point, Window, canvas, div, fill, point, px, size,
+    AnyElement, App, Background, Bounds, BoxShadow, FontWeight, Hsla, MouseMoveEvent, PathBuilder, Pixels,
+    Point, Window, canvas, div, fill, linear_color_stop, linear_gradient, point, px, size,
 };
+
+/// SVG `linearGradient x1=0 x2=0 y1=0 y2=1` from `color` at `opacity` to transparent, as a
+/// GPUI background (CSS angle 180° runs top to bottom).
+fn vertical_fade(color: Hsla, opacity: f32) -> Background {
+    linear_gradient(
+        180.0,
+        linear_color_stop(color.opacity(opacity), 0.0),
+        linear_color_stop(color.opacity(0.0), 1.0),
+    )
+}
 
 use super::format::{TasksSurfaceColors, format_chart_date_label};
 use crate::panels::chrome::{UI_LINE_HEIGHT_PX, UI_TEXT_PX};
@@ -72,8 +82,8 @@ pub(super) fn x_axis_indices(count: usize) -> Vec<usize> {
 pub(super) fn render_sparkline(points: Vec<TrendPoint>, tokens: &Tokens) -> AnyElement {
     let base = to_hsla(tokens.muted_foreground);
     let stroke_color = base.opacity(0.70);
-    // Approximates SVG `linearGradient` 22%→0% fade cleanly with a single GPU path fill.
-    let area_color = base.opacity(0.11);
+    // Conn's `<Fade opacity={0.22}>`: a vertical 22%→0% gradient under the line.
+    let area_color = vertical_fade(base, 0.22);
 
     let inner: AnyElement = if points.len() < 2 {
         div().size_full().into_any_element()
@@ -100,7 +110,7 @@ fn paint_sparkline(
     bounds: Bounds<Pixels>,
     points: &[TrendPoint],
     stroke_color: Hsla,
-    area_color: Hsla,
+    area_color: Background,
     window: &mut Window,
 ) {
     let width = f32::from(bounds.size.width);
@@ -182,7 +192,8 @@ pub(super) fn render_trend_chart(
     let margin_left = label_col_w + 10.0;
 
     let series_color = to_hsla(tokens.info);
-    let area_color = series_color.opacity(0.12);
+    // Conn's `<Fade opacity={0.18}>` per series.
+    let area_color = vertical_fade(series_color, 0.18);
     let grid_color = to_hsla(surface.shell_chart_grid);
     let crosshair_color = to_hsla(tokens.muted_foreground).opacity(0.50);
     let ring_color = to_hsla(tokens.shell_card);
@@ -387,7 +398,7 @@ fn paint_trend_chart(
     margin_left: f32,
     hover_index: Option<usize>,
     series_color: Hsla,
-    area_color: Hsla,
+    area_color: Background,
     grid_color: Hsla,
     crosshair_color: Hsla,
     ring_color: Hsla,
