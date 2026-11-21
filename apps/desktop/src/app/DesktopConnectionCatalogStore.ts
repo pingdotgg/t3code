@@ -40,6 +40,7 @@ const decodeEncryptedConnectionCatalogDocumentJson = Schema.decodeEffect(
 const encodeEncryptedConnectionCatalogDocumentJson = Schema.encodeEffect(
   EncryptedConnectionCatalogDocumentJson,
 );
+const textEncoder = new TextEncoder();
 const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
   RuntimeConnectionCatalogDocument,
 );
@@ -251,7 +252,14 @@ const writeDocument = Effect.fn("desktop.connectionCatalogStore.writeDocument")(
     ),
   );
   yield* Effect.gen(function* () {
-    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`).pipe(
+    // Flush before the rename: otherwise a power cut can publish a zero-filled catalog.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* input.fileSystem.open(tempPath, { flag: "w" });
+        yield* file.writeAll(textEncoder.encode(`${encoded}\n`));
+        yield* file.sync;
+      }),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreWriteError({
@@ -476,6 +484,21 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // An undecodable document can never be read back, so set it aside and treat the
+  // catalog as missing; keeping it in place would fail every read until removed by hand.
+  const quarantineDocument = Effect.fn("desktop.connectionCatalogStore.quarantineDocument")(
+    function* (error: DesktopConnectionCatalogStoreDocumentDecodeError) {
+      const suffix = (yield* random.uuidV4()).replace(/-/g, "");
+      const quarantinePath = `${catalogPath}.corrupt-${suffix}`;
+      yield* fileSystem.rename(catalogPath, quarantinePath).pipe(Effect.mapError(() => error));
+      yield* Effect.logWarning("Set aside an unreadable desktop connection catalog.", {
+        quarantinePath,
+        error: error.cause,
+      });
+      return Option.none<EncryptedConnectionCatalogDocument>();
+    },
+  );
+
   const migrateLegacyCatalog = Effect.gen(function* () {
     if (!(yield* encryptionAvailable)) {
       return Option.none<string>();
@@ -519,7 +542,9 @@ export const make = Effect.gen(function* () {
 
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
-      const document = yield* readDocument(fileSystem, catalogPath);
+      const document = yield* readDocument(fileSystem, catalogPath).pipe(
+        Effect.catchTags({ DesktopConnectionCatalogStoreDocumentDecodeError: quarantineDocument }),
+      );
       if (Option.isNone(document)) {
         return yield* migrateLegacyCatalog;
       }
