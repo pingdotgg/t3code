@@ -23,6 +23,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { IssueAutomationSection } from "./components/IssueAutomationSection";
 import {
   IssueTrackerCredentialForm,
   IssueTrackerProjectRows,
@@ -212,6 +213,13 @@ export function SettingsIssueTrackerRouteScreen({
                 disabled={disabled}
               />
             </SettingsSection>
+          ) : null}
+          {usable && tracker.automationContainer !== undefined ? (
+            <IssueAutomationSection
+              environmentId={environmentId}
+              tracker={tracker.tracker}
+              container={tracker.automationContainer}
+            />
           ) : null}
         </>
       )}

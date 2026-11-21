@@ -601,7 +601,7 @@ export function buildThreadListV2ListItems(input: {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
-      item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
+      item.snoozed && input.snoozeLabelNow !== undefined
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow }, resolve)
         : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
@@ -865,10 +865,10 @@ export function buildThreadListV2Items(input: {
     ? sortInboxThreadsByReturn(active, input.inboxReturnAt)
     : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);
   const orderedWorking = sortWorkingThreadsBySend(working);
-  const orderedSnoozed = [...snoozed].sort(
-    (left, right) =>
-      parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
-  );
+  // A snooze with no wake time wakes last.
+  const wakeOrder = (thread: (typeof snoozed)[number]) =>
+    thread.snoozedUntil == null ? Number.POSITIVE_INFINITY : parseTimestampMs(thread.snoozedUntil);
+  const orderedSnoozed = [...snoozed].sort((left, right) => wakeOrder(left) - wakeOrder(right));
   const selectedThreadKey = input.selectedThreadKey ?? null;
   const visibleWorking =
     input.workingShelfExpanded === true

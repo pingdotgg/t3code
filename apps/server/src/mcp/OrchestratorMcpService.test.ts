@@ -5270,7 +5270,11 @@ describe("OrchestratorMcpService thread list", () => {
       : [],
   });
   const shells = [
-    shell("thread:a-snoozed", "project:a", true),
+    // Snoozed with no wake time: it holds until something wakes it.
+    {
+      ...shell("thread:a-snoozed", "project:a", false),
+      snoozedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
+    },
     shell("thread:a-awake", "project:a", false),
     shell("thread:b-snoozed", "project:b", true, true, true),
     {
@@ -5358,6 +5362,7 @@ describe("OrchestratorMcpService thread list", () => {
         snoozed: true,
       });
       assert.equal(listed.projectId, null);
+      assert.deepInclude(listed.threads[0], { snoozed: true, snoozedUntil: null });
       assert.deepStrictEqual(
         listed.threads.map((thread) => [thread.threadId, thread.projectId]),
         [

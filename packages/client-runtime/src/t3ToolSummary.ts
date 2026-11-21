@@ -800,6 +800,40 @@ export function summarizeT3ToolCalls(
       }
       break;
     }
+    case "list-issue-rules": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Checked issue status rules {count} time} other {Checked issue status rules {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to check issue status rules {count} time} other {Tried to check issue status rules {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "set-issue-rule": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Changed issue status rules {count} time} other {Changed issue status rules {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to change issue status rules {count} time} other {Tried to change issue status rules {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "html-preview": {
       const count = selected.length;
       label = done
