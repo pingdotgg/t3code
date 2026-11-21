@@ -196,6 +196,21 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
         description: "Shows the current state of active T3 Code agents.",
         android: null,
         ios: {
+          configuration: {
+            title: "Agent Activity",
+            description: "The medium widget can also start a new thread.",
+            parameters: {
+              smallTap: {
+                title: "Small widget opens",
+                type: "enum",
+                default: "agent",
+                values: [
+                  { name: "Top agent", value: "agent" },
+                  { name: "New thread", value: "new" },
+                ],
+              },
+            },
+          },
           supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
           // Embeds the layout so the gallery preview and a new widget render
           // before the app has run once; the app replaces it on publish.
