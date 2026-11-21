@@ -1411,26 +1411,27 @@ it("cli-review-threads' raw arm binds each thread id to its own reply", () => {
   const expect = testCase.expectRaw;
   assert.isDefined(expect);
   // The tools arm's replies have to say what will change, not just "OK".
-  const replied = (...bodies: ReadonlyArray<string>) =>
+  const replied = (bodies: ReadonlyArray<string>, failed = false) =>
     gradeSample(testCase.expect, {
       calls: ["PRRT_kwDOA1", "PRRT_kwDOA2"].map((reviewThreadId, step) => ({
         step,
         tool: "pull_request_respond",
         input: { reviewThreadId, body: bodies[step] ?? bodies[0] },
-        failed: false,
+        failed,
         output: "",
       })),
       text: "",
       stopReason: "end_turn",
     }).every((check) => check.pass);
-  assert.isFalse(replied("OK"));
-  assert.isFalse(replied("I'll review this and get back to you soon."));
-  assert.isTrue(
-    replied(
-      "I'll cap the backoff at 30 s.",
-      "I'll reset the attempt counter after a successful connect.",
-    ),
-  );
+  const plan = [
+    "I'll cap the backoff at 30 s.",
+    "I'll reset the attempt counter after a successful connect.",
+  ];
+  assert.isFalse(replied(["OK"]));
+  assert.isFalse(replied(["I'll review this and get back to you soon."]));
+  assert.isTrue(replied(plan));
+  // A reply that failed to post does not count, whatever it said.
+  assert.isFalse(replied(plan, true));
   const passes = (...commands: ReadonlyArray<string>) =>
     gradeSample(expect!, {
       calls: commands.map((command, step) => ({
