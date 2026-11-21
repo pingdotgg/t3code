@@ -9234,6 +9234,95 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("session/load replay does not leave post-settle background work pending", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const instanceId = ProviderInstanceId.make("acp-test");
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          enablePostSettleContinuation: true,
+          normalizeToolCall: normalizeXAiAcpToolCallState,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            }),
+          }),
+        },
+        continuationRequests: { offer: () => Effect.void },
+      });
+      const threadId = ThreadId.make("thread-acp-load-replay-background");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-load-replay-background"),
+        modelSelection,
+        runtimePolicy,
+      });
+      if (runtime.hasPendingBackgroundWork === undefined) {
+        return yield* Effect.die("ACP runtime must expose hasPendingBackgroundWork.");
+      }
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork);
+      assert.isDefined(sessionUpdateHandler, "session update handler must be wired");
+
+      // A large session/load replays its tail after the session is active.
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        _meta: { isReplay: true },
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "old reply from history" },
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        _meta: { isReplay: true },
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "replayed-tool-1",
+          title: "run_command",
+          kind: "execute",
+          status: "completed",
+          rawInput: { command: "echo old" },
+        },
+      });
+      yield* Effect.yieldNow;
+
+      assert.isFalse(
+        yield* runtime.hasPendingBackgroundWork,
+        "replayed history must not pin background work",
+      );
+      const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.deepEqual(
+        snapshot.messages.map((message) => message.text),
+        ["old reply from history"],
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("projects completed-root carryover eagerly and drain cannot resurrect it", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -11677,6 +11766,97 @@ describe("AcpAdapterV2", () => {
       assert.equal(row?.status, "failed");
       assert.equal(row?.runId, harness.runId);
       assert.equal(row?.type === "command_execution" ? row.output : undefined, "EADDRINUSE\n");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("persists context usage the agent reports after its prompt settles", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const promptStarted = yield* Deferred.make<void>();
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const instanceId = ProviderInstanceId.make("acp-test");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Deferred.succeed(promptStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(promptGate)),
+                ),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("thread-acp-late-usage");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-late-usage"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(promptStarted);
+      const update = (update: EffectAcpSchema.SessionUpdate) =>
+        sessionUpdateHandler!({ sessionId: "mock-session-1", update });
+      yield* update({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "OK" },
+      });
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+      while ((yield* Queue.take(events)).type !== "turn.terminal");
+
+      // Kimi Code 2.6.2 sends its usage_update just after answering session/prompt.
+      yield* update({ sessionUpdate: "usage_update", used: 13101, size: 1048576 });
+      let late: ProviderAdapter.ProviderAdapterV2Event;
+      do late = yield* Queue.take(events);
+      while (late.type !== "provider_thread.updated");
+      assert.deepInclude(late.providerThread.contextUsage, { usedTokens: 13101 });
+      // With no run left to receive it, only a session-scoped update reaches the projection.
+      assert.isTrue(late.sessionScoped);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

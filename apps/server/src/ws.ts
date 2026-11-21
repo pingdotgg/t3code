@@ -1,4 +1,4 @@
-import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
+import { GitCommandError, OrchestrationDispatchCommandError } from "@t3tools/contracts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -124,6 +124,7 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+import * as McpSignIn from "./mcpApps/McpSignIn.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
@@ -213,6 +214,8 @@ import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
@@ -1462,6 +1465,7 @@ export const layerWsRpc = (
 
       const providerSessionsV2 = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const mcpAppRequests = yield* McpAppRequests.McpAppRequests;
+      const mcpSignIn = yield* McpSignIn.McpSignIn;
       const analytics = yield* AnalyticsService.AnalyticsService;
       const originProps = clientAnalyticsProps;
       const recordClientCommandAnalytics = (command: OrchestrationV2Command) => {
@@ -1566,6 +1570,8 @@ export const layerWsRpc = (
       const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
+      const taskFolders = yield* TaskFolders.TaskFolders;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -2319,6 +2325,13 @@ export const layerWsRpc = (
                         message: cause.message,
                         cause,
                       }),
+                    TaskFolderError: (cause) =>
+                      new OrchestrationV2ThreadLaunchError({
+                        commandId: input.commandId,
+                        projectId: input.projectId,
+                        message: cause.message,
+                        cause,
+                      }),
                   }),
                 ),
             ),
@@ -2584,6 +2597,8 @@ export const layerWsRpc = (
         [WS_METHODS.mcpAppsToolInfo]: (input) => mcpAppRequests.toolInfo(input),
         [WS_METHODS.mcpAppsUpdateModelContext]: (input) => mcpAppRequests.updateModelContext(input),
         [WS_METHODS.mcpAppsReadResource]: (input) => mcpAppRequests.readResource(input),
+        [WS_METHODS.providerMcpSignInStart]: (input) => mcpSignIn.start(input),
+        [WS_METHODS.providerMcpSignInComplete]: (input) => mcpSignIn.complete(input),
         [WS_METHODS.providerUploadFeedback]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(
@@ -2724,6 +2739,8 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.peerLinksPairClient]: (input) =>
           peerClientPairing.request(input, currentSession),
+        [WS_METHODS.peerLinksPairLink]: (input) =>
+          peerClientPairing.requestForLink(input, currentSession),
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(peerLinkRequests.answer(input)),
@@ -3079,6 +3096,11 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.workspaceListFolders]: (input) => workspaceFolders.list(input),
+        [WS_METHODS.workspaceScanFolders]: (input) => workspaceFolders.scan(input),
+        [WS_METHODS.workspaceTaskFolder]: (input) =>
+          taskFolders.find(input.worktreePath).pipe(Effect.map((taskFolder) => ({ taskFolder }))),
+        [WS_METHODS.workspaceAddTaskFolderRepository]: (input) => taskFolders.addRepository(input),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,
@@ -3206,11 +3228,16 @@ export const layerWsRpc = (
                       ? Effect.void
                       : linkCreatedPullRequest({
                           threadId: input.threadId,
+                          cwd: input.cwd,
                           result,
                           commandId: serverCommandId("pr-created-link"),
                         }).pipe(
                           Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
                           Effect.provideService(ProjectService.ProjectService, projectService),
+                          Effect.provideService(
+                            RepositoryIdentityResolver.RepositoryIdentityResolver,
+                            repositoryIdentityResolver,
+                          ),
                         )
                     ).pipe(
                       Effect.andThen(
@@ -3236,10 +3263,40 @@ export const layerWsRpc = (
             .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
-          gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-        [WS_METHODS.vcsRemoveWorktree]: (input) =>
-          gitWorkflow.removeWorktree(input).pipe(
+          // A project that tracks repositories gets a task folder, as its new worktree threads do.
+          taskFolders.createForProjectFolder(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "TaskFolders.create",
+                  command: "git worktree add",
+                  cwd: input.cwd,
+                  detail: cause.detail,
+                }),
+            ),
+            Effect.filterOrElse(
+              (created) => created !== null,
+              () => gitWorkflow.createWorktree(input),
+            ),
             Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
+        [WS_METHODS.vcsRemoveWorktree]: (input) =>
+          // A thread's worktree may be a task folder: its repositories' worktrees go with it.
+          taskFolders.removeIfTaskFolder({ path: input.path, force: input.force === true }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "TaskFolders.remove",
+                  command: "git worktree remove",
+                  cwd: input.cwd,
+                  detail: cause.detail,
+                }),
+            ),
+            Effect.flatMap((removed) =>
+              removed ? Effect.void : gitWorkflow.removeWorktree(input),
+            ),
+            // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
+            // second refresh would queue behind this one and reread an unchanged repository.
             // Subscribers of the removed checkout learn it is no longer a repository.
             Effect.tap(() =>
               vcsStatusBroadcaster

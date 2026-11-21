@@ -299,6 +299,7 @@ export const make = Effect.gen(function* () {
       linkFence: true,
       linkThreadStream: true,
       linkClientPairing: true,
+      linkPairingForLink: true,
       mcpApprovalCodes: true,
       peerLinkPairingCodes: true,
       mcpHostedApproval: true,
