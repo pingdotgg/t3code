@@ -3,7 +3,10 @@ import type {
   ScopedThreadRef,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import {
+  threadContextRecord,
+  toKindScopedComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 import { hostedThreadLink } from "@t3tools/shared/threadLinks";
 
 import { resolveThreadCurrentPullRequestLink } from "./threadPullRequests.ts";
@@ -23,6 +26,11 @@ export interface ThreadReferenceCopyTarget {
   readonly failureTitle: string;
 }
 
+interface ThreadChip {
+  readonly threadRef: ScopedThreadRef;
+  readonly title: string;
+}
+
 /**
  * A link that opens the thread from anywhere, through `hostedAppUrl`, this build's hosted app. It
  * pastes back as a chip into any composer whose agent reads that thread's machine.
@@ -33,15 +41,43 @@ export function threadChipCopyTarget(
   hostedAppUrl?: string,
   resolve: MFunctionType = mFallback,
 ): ThreadReferenceCopyTarget {
-  const record = threadContextRecord(threadRef, title);
+  return threadChipsCopyTarget([{ threadRef, title }], hostedAppUrl, resolve);
+}
+
+/** Each chip carries its own machine, so a selection may span environments. */
+export function threadChipsCopyTarget(
+  threads: readonly [ThreadChip, ...ThreadChip[]],
+  hostedAppUrl?: string,
+  resolve: MFunctionType = mFallback,
+): ThreadReferenceCopyTarget {
+  const records = threads.map(({ threadRef, title }) => ({
+    ...threadContextRecord(threadRef, title),
+    ...(threads.length > 1
+      ? {
+          contextId: toKindScopedComposerContextId(
+            "thread",
+            JSON.stringify([threadRef.environmentId, threadRef.threadId]),
+          ),
+        }
+      : {}),
+  }));
+  const single = records.length === 1;
   return {
     kind: "thread",
-    value: hostedThreadLink(threadRef, hostedAppUrl),
-    description: record.title,
-    fragment: { version: 1, source: { environmentId: threadRef.environmentId }, records: [record] },
-    clipboardTarget: "thread",
-    successTitle: resolve(msg("Thread copied")),
-    failureTitle: resolve(msg("Failed to copy thread")),
+    value: threads.map(({ threadRef }) => hostedThreadLink(threadRef, hostedAppUrl)).join("\n"),
+    description: records.map((record) => record.title).join(", "),
+    fragment: {
+      version: 1,
+      source: { environmentId: threads[0].threadRef.environmentId },
+      records,
+    },
+    clipboardTarget: single ? "thread" : "threads",
+    successTitle: single
+      ? resolve(msg("Thread copied"))
+      : resolve(msg("{count} threads copied", { count: records.length })),
+    failureTitle: single
+      ? resolve(msg("Failed to copy thread"))
+      : resolve(msg("Failed to copy threads")),
   };
 }
 

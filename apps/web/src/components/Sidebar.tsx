@@ -12,6 +12,7 @@ import {
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
+import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
@@ -185,8 +186,10 @@ import {
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
+  buildBulkCopyContextMenuItem,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
+  bulkThreadCopyText,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
@@ -242,7 +245,10 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { titleRegenerationToast } from "./threadTitleRegenerationToast";
 import { copyThreadReference } from "../lib/copyThreadReference";
-import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import {
+  threadChipCopyTarget,
+  threadChipsCopyTarget,
+} from "@t3tools/client-runtime/thread-reference";
 import { Button } from "./ui/button";
 import { isProjectPinShortcut, ProjectPinButton } from "./ProjectPinButton";
 import {
@@ -985,6 +991,40 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         stackedThreadToast({
           type: "error",
           title: gt("Failed to copy thread ID"),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+        }),
+      );
+    },
+  });
+  const { copyToClipboard: copyLinesToClipboard } = useCopyToClipboard<{
+    count: number;
+    noun: string;
+  }>({
+    onCopy: ({ count, noun }) => {
+      toastManager.add({
+        type: "success",
+        title:
+          noun === "paths"
+            ? gt("{count} paths copied", { count })
+            : noun === "branches"
+              ? gt("{count} branches copied", { count })
+              : noun === "titles"
+                ? gt("{count} titles copied", { count })
+                : gt("{count} thread IDs copied", { count }),
+      });
+    },
+    onError: (error, { noun }) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title:
+            noun === "paths"
+              ? gt("Failed to copy paths")
+              : noun === "branches"
+                ? gt("Failed to copy branches")
+                : noun === "titles"
+                  ? gt("Failed to copy titles")
+                  : gt("Failed to copy thread IDs"),
           description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
         }),
       );
@@ -2348,6 +2388,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
       });
+      const copyEntries = selectedThreads.map((thread) => ({
+        id: thread.id,
+        title: thread.title,
+        branch: thread.branch,
+        path:
+          thread.worktreePath ??
+          projectByKey.get(`${thread.environmentId}:${thread.projectId}`)?.workspaceRoot ??
+          null,
+      }));
       // Presets sync across environments, so the first selected thread's stand for all.
       const menuOpenedAt = new Date();
       const snoozePresets = resolveSnoozePresets(
@@ -2400,6 +2449,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 ]
               : []),
             { id: "mark-unread", label: gt("Mark unread ({count})", { count }) },
+            buildBulkCopyContextMenuItem(copyEntries),
+
             {
               id: "delete",
               label: gt("Delete ({count})", { count }),
@@ -2412,6 +2463,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         ),
       );
       if (clicked._tag === "Failure" || clicked.value === null) return;
+      switch (clicked.value) {
+        case "copy-thread": {
+          const chips = selectedThreads.map((thread) => ({
+            threadRef: scopeThreadRef(thread.environmentId, thread.id),
+            title: thread.title,
+          }));
+          if (Arr.isReadonlyArrayNonEmpty(chips))
+            void copyThreadReference(threadChipsCopyTarget(chips, configuredHostedAppUrl(), m));
+          return;
+        }
+        case "copy-path":
+        case "copy-branch":
+        case "copy-title":
+        case "copy-thread-id": {
+          const copy = bulkThreadCopyText(copyEntries, clicked.value);
+          if (copy) copyLinesToClipboard(copy.text, copy);
+          return;
+        }
+      }
       const actionTargets =
         clicked.value === "unpin"
           ? pinnedSelectedThreads
