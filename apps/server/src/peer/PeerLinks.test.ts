@@ -432,6 +432,7 @@ it.effect(
         yield* Ref.set(b.bearers, []);
         yield* probe(a).pipe(Effect.flip);
         expect(yield* Ref.get(b.bearers)).toEqual([]);
+        expect((yield* a.links.list).map((link) => link.status)).toEqual(["unreachable"]);
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

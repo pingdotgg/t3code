@@ -641,7 +641,11 @@ const make = Effect.gen(function* () {
     if (link.urls.length === 0) return { ...link, status: "unreachable" };
     const answered = yield* Effect.raceAll(
       link.urls.map((url) =>
-        answersAs(url, link.environmentId).pipe(Effect.flatMap(Effect.fromOption)),
+        // Listed as reachable only where resolve would still use it.
+        peerOrigin(url).pipe(
+          Effect.flatMap((origin) => answersAs(origin, link.environmentId)),
+          Effect.flatMap(Effect.fromOption),
+        ),
       ),
     ).pipe(Effect.timeoutOption(LIST_PROBE_TIMEOUT), Effect.orElseSucceed(Option.none));
     if (Option.isNone(answered)) return { ...link, status: "unreachable" };
