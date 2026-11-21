@@ -307,19 +307,25 @@ export const make = Effect.gen(function* () {
     const silent = input.repositories.filter(
       (repository) => !answered.has(repository.trim().toLowerCase()),
     );
-    // A truncated first slice can be silent about a covered repository whose rows are just
-    // older than the cut, so it vouches for none. Past the first slice silence from a covered
-    // repository means its rows are older rather than absent.
-    if (input.cursor === undefined && batch.truncated) return silent;
-    return yield* Effect.filter(
+    const covered = yield* Effect.filter(
       silent,
       (repository) =>
         Cache.get(searchCoverage, coverageOf(input, repository)).pipe(
-          Effect.map((covered) => !covered),
-          Effect.orElseSucceed(() => true),
+          Effect.orElseSucceed(() => false),
         ),
       { concurrency: SEARCH_COVERAGE_CONCURRENCY },
     );
+    // A truncated first slice can be silent about a covered repository whose rows are just
+    // older than the cut, so each silent repository is still read on its own; a covered one is
+    // quiet, nothing of it newer than the cut, so a recent read of it still holds. Past the first
+    // slice silence from a covered repository means its rows are older rather than absent.
+    if (input.cursor === undefined && batch.truncated)
+      return { unresolved: silent, quiet: covered };
+    const held = new Set(covered.map((repository) => repository.trim().toLowerCase()));
+    return {
+      unresolved: silent.filter((repository) => !held.has(repository.trim().toLowerCase())),
+      quiet: [],
+    };
   });
 
   const fail = (operation: string) => (error: GitHubPullRequestApi.GitHubPullRequestApiError) =>
@@ -456,13 +462,14 @@ export const make = Effect.gen(function* () {
         .pipe(
           Effect.mapError(fail("listChangeRequestsAcross")),
           Effect.flatMap((batch) =>
-            Effect.map(unresolvedBySearch(input, batch), (unresolved) => ({
+            Effect.map(unresolvedBySearch(input, batch), ({ unresolved, quiet }) => ({
               truncated: batch.truncated,
               items: batch.items.map((item) => ({
                 ...item,
                 author: withAvatar(item.author, new Map<string, string>(), input.host),
               })),
               unresolved,
+              quiet,
             })),
           ),
         ),

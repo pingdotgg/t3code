@@ -144,6 +144,10 @@ const VIEWER_CACHE_TTL = Duration.minutes(10);
 const STALE_DETAIL_WINDOW = Duration.minutes(10);
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
 const LIST_CACHE_CAPACITY = 64;
+// A quiet repository's own read: see `quietRead` in `listUncached`.
+const QUIET_READ_TTL = Duration.minutes(10);
+const QUIET_READ_CAPACITY = 512;
+const encodeQuietReadKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const LIST_STATS_CACHE_CAPACITY = 32;
 const DETAIL_CACHE_CAPACITY = 128;
 const DIFF_CACHE_CAPACITY = 128;
@@ -1380,6 +1384,22 @@ export const make = Effect.gen(function* () {
     };
   };
 
+  // Reads of quiet repositories, reused by `quietRead` while their epoch holds, and how many times
+  // search has returned rows of each repository (a repository with newer rows is not quiet).
+  const quietReads = new Map<
+    string,
+    {
+      readonly at: number;
+      readonly epoch: number;
+      readonly searched: number;
+      readonly batch: RepositoryBatch;
+    }
+  >();
+  const quietSearchedRows = new Map<string, number>();
+  // Turns by repository, whichever of its projects ran them: the list keeps one project of a
+  // repository, and a listing loads only the projects it selects.
+  const quietTurnsByRepository = new Map<string, number>();
+
   const listUncached: PullRequestService["Service"]["list"] = Effect.fn(
     "PullRequestService.listUncached",
   )(function* (input) {
@@ -1581,6 +1601,57 @@ export const make = Effect.gen(function* () {
       return readSlice(project, cursorOf(project)).pipe(Effect.flatMap((batch) => fill(batch, 1)));
     };
 
+    // A quiet repository has nothing newer than the search page, so its own read is reused until
+    // search rows from it, a push, PR action or refresh through T3, or a turn in it. Only the
+    // unconstrained listing: a PR can leave a narrower search without bringing a newer row.
+    const reusesQuietReads =
+      input.state === "all" &&
+      involvement === "all" &&
+      input.filters === undefined &&
+      (input.query?.trim() ?? "") === "";
+    const quietRead = Effect.fn("PullRequestService.quietRead")(function* (
+      project: SupportedProject,
+    ) {
+      const key = encodeQuietReadKey([
+        project.cursorKey,
+        project.project.id,
+        viewers[project.host] ?? null,
+        limit,
+      ]);
+      const repositoryKey = project.project.repositoryIdentity?.canonicalKey.toLowerCase();
+      const epochOf = () =>
+        Math.max(listingsEpoch, projectEpochs.get(project.project.id) ?? projectEpochFloor) +
+        (repositoryKey === undefined ? 0 : (quietTurnsByRepository.get(repositoryKey) ?? 0));
+      const epoch = epochOf();
+      const searched = quietSearchedRows.get(project.cursorKey) ?? 0;
+      const now = yield* Clock.currentTimeMillis;
+      const held = quietReads.get(key);
+      if (
+        held !== undefined &&
+        held.epoch === epoch &&
+        held.searched === searched &&
+        now - held.at <= Duration.toMillis(QUIET_READ_TTL)
+      ) {
+        return { ...held.batch, key: project.cursorKey };
+      }
+      const batch = yield* readRepository(project);
+      // Kept only if clean and nothing ended the reuse while it was read.
+      if (
+        batch.errors.length === 0 &&
+        epochOf() === epoch &&
+        (quietSearchedRows.get(project.cursorKey) ?? 0) === searched
+      ) {
+        quietReads.delete(key);
+        quietReads.set(key, { at: now, epoch, searched, batch });
+        while (quietReads.size > QUIET_READ_CAPACITY) {
+          const oldest = quietReads.keys().next().value;
+          if (oldest === undefined) break;
+          quietReads.delete(oldest);
+        }
+      }
+      return batch;
+    });
+
     const readTogether = (
       chunk: ReadonlyArray<SupportedProject>,
     ): Effect.Effect<ReadonlyArray<RepositoryBatch>> => {
@@ -1628,6 +1699,9 @@ export const make = Effect.gen(function* () {
           const unresolved = new Set(
             (page.unresolved ?? []).map((repository) => repository.trim().toLowerCase()),
           );
+          const quiet = new Set(
+            (page.quiet ?? []).map((repository) => repository.trim().toLowerCase()),
+          );
           const boundary = page.items.reduce<string | null>(
             (oldest, item) =>
               oldest === null || item.updatedAt < oldest ? item.updatedAt : oldest,
@@ -1638,7 +1712,17 @@ export const make = Effect.gen(function* () {
             (project): Effect.Effect<RepositoryBatch> => {
               const key = project.repository.trim().toLowerCase();
               const fetched = rows.get(key) ?? [];
-              if (fetched.length === 0 && unresolved.has(key)) return readRepository(project);
+              if (fetched.length > 0) {
+                quietSearchedRows.set(
+                  project.cursorKey,
+                  (quietSearchedRows.get(project.cursorKey) ?? 0) + 1,
+                );
+              }
+              if (fetched.length === 0 && unresolved.has(key)) {
+                return quiet.has(key) && reusesQuietReads && cursorOf(project) === undefined
+                  ? quietRead(project)
+                  : readRepository(project);
+              }
               const cursorHere = cursorOf(project);
               const items =
                 cursorHere === undefined
@@ -3814,6 +3898,24 @@ export const make = Effect.gen(function* () {
     // change request reached through another repository, and no epoch may move until those
     // reads are gone, or a reader in between keeps the old one under the new epoch.
     yield* forgetProviderReads();
+    const shell = yield* projects
+      .getShell(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationProjectShell>()));
+    // A shell's identity can still be on its way; the list resolves it the same way. A project with
+    // no repository has no listing to refresh.
+    const turnShell = Option.getOrUndefined(shell);
+    const turnIdentity =
+      turnShell === undefined
+        ? null
+        : (turnShell.repositoryIdentity ??
+          (yield* repositoryIdentities
+            .resolve(turnShell.workspaceRoot)
+            .pipe(Effect.orElseSucceed(() => null))));
+    const turnRepository = turnIdentity?.canonicalKey;
+    if (turnRepository !== undefined) {
+      const key = turnRepository.toLowerCase();
+      quietTurnsByRepository.set(key, (quietTurnsByRepository.get(key) ?? 0) + 1);
+    }
     const epoch = ++epochCounter;
     // A push can open or move a PR; a plain turn waits for the listing TTL to spare the API quota.
     if (options?.pushed === true) listingsEpoch = epoch;
