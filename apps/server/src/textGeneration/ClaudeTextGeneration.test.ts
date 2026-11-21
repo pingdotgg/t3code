@@ -65,19 +65,24 @@ function withFakeClaudeEnv<A, E, R>(
     expectedTools?: string;
     argsMustNotContain?: string;
     stdinMustContain?: string;
-    rejectsImages?: boolean;
+    rejectsImages?: string;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
-  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  effectFn: (
+    textGeneration: TextGeneration.TextGeneration["Service"],
+    cliCalls: Effect.Effect<ReadonlyArray<string>>,
+  ) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
     const binDir = yield* makeFakeClaudeBinary(tempDir, input.lifecyclePort);
     const pathDelimiter = (yield* HostProcess.isWindows) ? ";" : ":";
     const hostEnv = yield* HostProcess.Environment;
+    const callLog = path.join(tempDir, "calls.log");
     const fakeClaudeEnv: Record<string, string | undefined> = {
       T3_FAKE_CLAUDE_OUTPUT: input.output,
       T3_FAKE_CLAUDE_REJECTS_NO_SESSION_PERSISTENCE: input.rejectsNoSessionPersistence
@@ -89,7 +94,8 @@ function withFakeClaudeEnv<A, E, R>(
       T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
       T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN: input.argsMustNotContain,
       T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
-      T3_FAKE_CLAUDE_REJECTS_IMAGES: input.rejectsImages ? "1" : undefined,
+      T3_FAKE_CLAUDE_REJECTS_IMAGES: input.rejectsImages,
+      T3_FAKE_CLAUDE_CALL_LOG: callLog,
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
     };
@@ -109,7 +115,13 @@ function withFakeClaudeEnv<A, E, R>(
       environment,
       Effect.succeed(SYNTHETIC_CLAUDE_MODEL_CATALOG),
     );
-    return yield* effectFn(textGeneration);
+    return yield* effectFn(
+      textGeneration,
+      fs.readFileString(callLog).pipe(
+        Effect.map((log) => log.trim().split("\n")),
+        Effect.orElseSucceed(() => []),
+      ),
+    );
   }).pipe(Effect.scoped);
 }
 
@@ -270,13 +282,29 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
-  it.effect("still generates text when a text-only model rejects image attachments", () =>
+  it.effect.each([
+    {
+      label: "stops sending images to a model that takes no image input",
+      rejection: "API Error: 400 Image inputs are not supported by this model",
+      expectedCalls: ["images", "text", "text"],
+    },
+    {
+      label: "keeps sending images to a model that rejected one image",
+      rejection: "API Error: 400 image exceeds 5 MB maximum: 6291456 bytes > 5242880 bytes",
+      expectedCalls: ["images", "text", "images", "text"],
+    },
+    {
+      label: "keeps sending images to a model that rejected one image format",
+      rejection: "API Error: 400 The provided image format is not supported",
+      expectedCalls: ["images", "text", "images", "text"],
+    },
+  ])("still generates text and $label", ({ rejection, expectedCalls }) =>
     withFakeClaudeEnv(
       {
         output: JSON.stringify({ structured_output: { branch: "fix/login-button" } }),
-        rejectsImages: true,
+        rejectsImages: rejection,
       },
-      (textGeneration) =>
+      (textGeneration, cliCalls) =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -286,27 +314,32 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           yield* fs.makeDirectory(attachmentsDir, { recursive: true });
           yield* fs.writeFile(imagePath, Buffer.from("hello"));
 
-          const result = yield* textGeneration
-            .generateBranchName({
-              cwd: process.cwd(),
-              message: "fix this",
-              attachments: [
-                {
-                  type: "image",
-                  id: attachmentId,
-                  name: "screen.png",
-                  mimeType: "image/png",
-                  sizeBytes: 5,
-                },
-              ],
-              modelSelection: {
-                instanceId: ProviderInstanceId.make("claudeAgent"),
-                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+          const generate = textGeneration.generateBranchName({
+            cwd: process.cwd(),
+            message: "fix this",
+            attachments: [
+              {
+                type: "image",
+                id: attachmentId,
+                name: "screen.png",
+                mimeType: "image/png",
+                sizeBytes: 5,
               },
-            })
-            .pipe(Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)));
+            ],
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            },
+          });
+          const results = yield* Effect.all([generate, generate]).pipe(
+            Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)),
+          );
 
-          expect(result.branch).toBe("fix/login-button");
+          expect(results.map((result) => result.branch)).toEqual([
+            "fix/login-button",
+            "fix/login-button",
+          ]);
+          expect(yield* cliCalls).toEqual(expectedCalls);
         }),
     ),
   );

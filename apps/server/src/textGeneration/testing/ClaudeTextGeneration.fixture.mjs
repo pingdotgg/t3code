@@ -68,14 +68,21 @@ if (stdinMustContain && !stdinContent.includes(stdinMustContain)) {
   fail("stdin missing expected content", 4);
 }
 
-if (process.env.T3_FAKE_CLAUDE_REJECTS_IMAGES === "1" && stdinContent.includes('"type":"image"')) {
+const hasImages = stdinContent.includes('"type":"image"');
+const callLog = process.env.T3_FAKE_CLAUDE_CALL_LOG;
+if (callLog) {
+  NodeFS.appendFileSync(callLog, (hasImages ? "images" : "text") + "\n");
+}
+
+const imageRejection = process.env.T3_FAKE_CLAUDE_REJECTS_IMAGES;
+if (imageRejection && hasImages) {
   process.stdout.write(
     JSON.stringify({
       type: "result",
       subtype: "success",
       is_error: true,
       api_error_status: 400,
-      result: "API Error: 400 Image inputs are not supported by this model",
+      result: imageRejection,
     }) + "\n",
   );
   process.exit(1);

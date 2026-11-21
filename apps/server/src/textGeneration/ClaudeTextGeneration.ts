@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -56,6 +57,10 @@ const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"
 const NO_SESSION_PERSISTENCE = "--no-session-persistence";
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
+// Matches a model that takes no images, not one refused image (size, format). Wording differs by
+// endpoint; a rejection this misses is retried on every call.
+const IMAGE_INPUT_UNSUPPORTED =
+  /image inputs? (?:is|are) not supported|(?:does not|doesn't) support image(?:s| inputs?)\b/i;
 
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
@@ -98,6 +103,12 @@ function claudeErrorResult(stdout: string): string | undefined {
     .findLast((result) => result.length > 0);
 }
 
+function claudeFailureDetail({ stdout, stderr }: { stdout: string; stderr: string }): string {
+  const stderrDetail = stderr.trim();
+  const stdoutDetail = stdout.trim();
+  return claudeErrorResult(stdoutDetail) ?? (stderrDetail.length > 0 ? stderrDetail : stdoutDetail);
+}
+
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
@@ -115,6 +126,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
+  // Models whose endpoint refused image input. Kept per instance, so a settings change, which
+  // rebuilds the instance, asks again.
+  const textOnlyModels = yield* Ref.make<ReadonlySet<string>>(new Set());
 
   const readStreamAsString = <E>(
     operation: string,
@@ -260,8 +274,11 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       "Failed to encode Claude CLI settings.",
     );
 
+    const apiModelId = resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection);
     // `claude -p` accepts images only as content blocks of a stream-json user message.
-    const imageBlocks = yield* readImageBlocks(attachments);
+    const imageBlocks = (yield* Ref.get(textOnlyModels)).has(apiModelId)
+      ? []
+      : yield* readImageBlocks(attachments);
     const imageStdin =
       imageBlocks.length > 0
         ? `${yield* encodeJsonForOperation(
@@ -291,7 +308,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--json-schema",
           jsonSchemaStr,
           "--model",
-          resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
+          apiModelId,
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
           settingsJson,
@@ -367,15 +384,18 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       // Text-only models (custom models behind Anthropic-compatible endpoints) reject image blocks.
       Effect.filterOrElse(
         (result) => result.exitCode === 0 || imageStdin === undefined,
-        () => runClaudeAttempt(false),
+        (rejected) =>
+          runClaudeAttempt(false).pipe(
+            Effect.tap((retried) =>
+              retried.exitCode === 0 && IMAGE_INPUT_UNSUPPORTED.test(claudeFailureDetail(rejected))
+                ? Ref.update(textOnlyModels, (models) => new Set(models).add(apiModelId))
+                : Effect.void,
+            ),
+          ),
       ),
       Effect.flatMap(({ stdout, stderr, exitCode }) => {
         if (exitCode === 0) return Effect.succeed(stdout);
-        const stderrDetail = stderr.trim();
-        const stdoutDetail = stdout.trim();
-        const detail =
-          claudeErrorResult(stdoutDetail) ??
-          (stderrDetail.length > 0 ? stderrDetail : stdoutDetail);
+        const detail = claudeFailureDetail({ stdout, stderr });
         return Effect.fail(
           new TextGenerationError({
             operation,
