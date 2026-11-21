@@ -117,7 +117,7 @@ NodeFS.writeFileSync(vars, "{}");
 
 const macbook = await startEnvironment(NodePath.join(root, "macbook"), {
   web: true,
-  env: { T3_DEV_REPLAY_VARS: vars },
+  env: { FAKE_CLAUDE_VARS: vars },
 });
 console.log(`MacBook: ${macbook.label} ${macbook.environmentId} web ${macbook.webOrigin}`);
 const devbox = await startEnvironment(NodePath.join(root, "devbox"), {

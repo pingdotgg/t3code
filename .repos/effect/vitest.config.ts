@@ -56,6 +56,15 @@ export const exclude = [
   "**/vitest.*"
 ]
 
+// These suites install schema compilers into the global registry, which
+// cannot be undone, so each file needs its own module graph.
+const effectIsolatedTests = [
+  "test/schema/HMR.test.ts",
+  "test/schema/SchemaAOTCompiler*.test.ts",
+  "test/schema/SchemaCompiler*.test.ts",
+  "test/schema/SchemaJITCompiler*.test.ts"
+]
+
 const shared: ViteUserConfig = {
   optimizeDeps: {
     exclude: ["bun:sqlite"]
@@ -92,31 +101,47 @@ export default defineConfig({
     ...(mssqlIntegrationTestsDisabled ? { testNamePattern: /^(?!.*SqlMessageStorage > mssql > )/ } : {}),
     projects: [
       ...project("scripts", "scripts", true, {}, undefined, ["codemods/jsdoc.test.ts"]),
+      // Node reuses workers across effect test files, which skips re-importing
+      // the effect module graph for every file.
       ...project(
         "effect",
         "packages/effect",
         true,
-        {},
-        isBun
-          ? [
-            ...exclude,
-            // These tests assert Node-specific Web API or stack trace behavior.
-            "test/reactivity/Atom.test.ts",
-            "test/schema/Schema.test.ts",
-            "test/schema/SchemaGetter.test.ts",
-            "test/schema/toCodec.test.ts",
-            "test/schema/toDifferJsonPatch.test.ts",
-            "test/http/HttpEffect.test.ts",
-            "test/http/HttpServerRequest.test.ts"
-          ]
-          : undefined
+        { test: { isolate: !isNode } },
+        [
+          ...exclude,
+          ...effectIsolatedTests,
+          ...(isBun
+            ? [
+              // These tests assert Node-specific Web API or stack trace behavior.
+              "test/reactivity/Atom.test.ts",
+              "test/schema/Schema.test.ts",
+              "test/schema/SchemaGetter.test.ts",
+              "test/schema/toCodec.test.ts",
+              "test/schema/toDifferJsonPatch.test.ts",
+              "test/http/HttpEffect.test.ts",
+              "test/http/HttpServerRequest.test.ts"
+            ]
+            : [])
+        ]
       ),
+      ...project("effect-isolated", "packages/effect", true, {}, undefined, effectIsolatedTests),
+      ...project("@effect/ai-amazon-bedrock", "packages/ai/amazon-bedrock"),
       ...project("@effect/ai-anthropic", "packages/ai/anthropic"),
       ...project("@effect/ai-cloudflare", "packages/ai/cloudflare"),
       ...project("@effect/ai-openai", "packages/ai/openai"),
       ...project("@effect/ai-typesafe", "packages/ai/typesafe"),
       ...project("@effect/ai-openai-compat", "packages/ai/openai-compat"),
       ...project("@effect/ai-openrouter", "packages/ai/openrouter"),
+      ...project("@effect/chat-slack", "packages/chat/slack"),
+      ...project("@effect/chat-whatsapp", "packages/chat/whatsapp"),
+      // dfx imports `effect`, which has to be the same instance as the tests'
+      // for things like `Redacted` to work, so vite resolves it too.
+      ...project("@effect/chat-discord", "packages/chat/discord", true, {
+        test: { server: { deps: { inline: ["dfx"] } } }
+      }),
+      ...project("@effect/chat-teams", "packages/chat/teams"),
+      ...project("@effect/chat-telegram", "packages/chat/telegram"),
       ...project("@effect/atom-react", "packages/atom/react", true, {
         test: {
           environment: "jsdom",
@@ -152,6 +177,11 @@ export default defineConfig({
         }
       }),
       ...project("@effect/platform-bun", "packages/platform/bun", isBun),
+      ...project("@effect/platform-cloudflare", "packages/platform/cloudflare", !isDeno, {
+        test: {
+          setupFiles: [path.join(import.meta.dirname, "packages/platform/cloudflare/vitest.setup.ts")]
+        }
+      }),
       ...project("@effect/platform-deno", "packages/platform/deno", isDeno),
       ...project("@effect/platform-node", "packages/platform/node", isNode),
       ...project(
