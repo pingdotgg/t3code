@@ -12514,15 +12514,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 },
               },
               parent_tool_use_id: null,
+              error: "server_error",
               uuid: "retry-notice",
               session_id: WAKE_NATIVE_SESSION,
             }),
           );
-          yield* harness.until(() =>
-            harness.events.some(
-              (event) =>
-                event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
-            ),
+          // The frame emits nothing, so a later retry frame marks that it was processed.
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "api_retry",
+              attempt: 1,
+              max_retries: 10,
+              retry_delay_ms: 600,
+              error_status: 503,
+              error: "server_error",
+              uuid: "00000000-0000-4000-8000-000000000212",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.until(
+            () =>
+              harness.events.filter(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "error" &&
+                  event.turnItem.status === "running",
+              ).length >= 2,
           );
         }
         yield* TestClock.adjust("9 minutes");
