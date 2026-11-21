@@ -5098,7 +5098,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               payload.turnId,
               payload.tokenUsage,
             );
-            const context = yield* awaitActiveTurn(payload.turnId);
+            // Usage comes after turn/started, so a missing turn cannot register while this read loop waits;
+            // it is usually an earlier turn's report, which Codex restores on resume and fork.
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
             if (context === undefined) {
               return;
             }

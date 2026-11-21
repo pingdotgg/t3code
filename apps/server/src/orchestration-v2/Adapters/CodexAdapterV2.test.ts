@@ -52,6 +52,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -3246,6 +3247,134 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
     ),
+  );
+
+  it.effect(
+    "routes the next turn's start without waiting on an earlier turn's usage report",
+    () => {
+      const base = new Scheduler.MixedScheduler();
+      let scheduledTasks = 0;
+      const countingScheduler: Scheduler.Scheduler = {
+        executionMode: base.executionMode,
+        shouldYield: (fiber) => base.shouldYield(fiber),
+        makeDispatcher: () => {
+          const dispatcher = base.makeDispatcher();
+          return {
+            scheduleTask: (task, priority) => {
+              scheduledTasks += 1;
+              dispatcher.scheduleTask(task, priority);
+            },
+            flush: () => dispatcher.flush(),
+          };
+        },
+      };
+      return Effect.gen(function* () {
+        const nativeThreadId = "earlier-usage-thread";
+        const prompt = "work";
+        const usage = {
+          totalTokens: 15,
+          inputTokens: 10,
+          cachedInputTokens: 2,
+          outputTokens: 5,
+          reasoningOutputTokens: 1,
+        };
+        const usageReport = (nativeTurnId: string): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          label: `${nativeTurnId} usage`,
+          frame: {
+            method: "thread/tokenUsage/updated",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              tokenUsage: { total: usage, last: usage, modelContextWindow: 200_000 },
+            },
+          },
+        });
+        const completed = (nativeTurnId: string): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          label: `${nativeTurnId} completed`,
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+            },
+          },
+        });
+        const second = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "usage-turn-2",
+          prompt,
+        });
+        const notified: Array<readonly [method: string, scheduledTasks: number]> = [];
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-earlier-turn-usage",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "usage-turn-1", prompt }),
+              completed("usage-turn-1"),
+              // Codex restores a resumed or forked thread's usage under its last turn.
+              ...second.slice(5, 6).map((entry) => withReplayRequestId(entry, 4)),
+              usageReport("usage-turn-1"),
+              ...second.slice(6, 7).map((entry) => withReplayRequestId(entry, 4)),
+              ...second.slice(7),
+              usageReport("usage-turn-2"),
+              completed("usage-turn-2"),
+            ],
+          }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          (method) => Effect.sync(() => notified.push([method, scheduledTasks])),
+        );
+        const turn = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("usage-attempt-1"),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn(turn);
+        yield* harness.awaitTerminal(1);
+        yield* harness.runtime.startTurn({
+          ...turn,
+          runId: RunId.make("usage-run-2"),
+          attemptId: RunAttemptId.make("usage-attempt-2"),
+          rootNodeId: NodeId.make("usage-root-2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+        });
+        yield* harness.awaitTerminal(2);
+        const earlierUsage = notified.findIndex(
+          ([method]) => method === "thread/tokenUsage/updated",
+        );
+        const nextStart = notified.findIndex(
+          ([method], index) => index > earlierUsage && method === "turn/started",
+        );
+        assert.isBelow(notified[nextStart]![1] - notified[earlierUsage]![1], 10);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined
+              ? [event.providerTurn.nativeTurnRef?.nativeId]
+              : [],
+          ),
+          ["usage-turn-2"],
+        );
+      }).pipe(
+        Effect.provideService(Scheduler.Scheduler, countingScheduler),
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      );
+    },
   );
 
   it.effect("returns a Codex question's answer under its native question id", () =>
