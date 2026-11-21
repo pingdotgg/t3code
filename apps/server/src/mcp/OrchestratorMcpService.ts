@@ -56,6 +56,7 @@ import {
   ProviderRequestKind,
   type RuntimeMode,
   type ScheduledTask,
+  ScheduledTaskId,
   type ScheduledTaskUpsertInput,
   scheduledTaskThreadMode,
   type ServerProvider,
@@ -2363,11 +2364,23 @@ const make = Effect.gen(function* () {
     if (task === undefined) {
       return yield* failure("task_not_found", `Scheduled task ${scheduledTaskId} was not found.`);
     }
+    yield* assertScheduledTaskWithinLimits(task, limits);
+    return task;
+  });
+
+  const assertScheduledTaskWithinLimits = Effect.fn(
+    "OrchestratorMcpService.assertScheduledTaskWithinLimits",
+  )(function* (
+    task: ScheduledTask,
+    limits: {
+      readonly runtimeMode: RuntimeMode;
+      readonly interactionMode: ProviderInteractionMode;
+    },
+  ) {
     for (const modes of yield* scheduledTaskRunModes(task)) {
       yield* resolveRuntimeMode(limits.runtimeMode, modes.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, modes.interactionMode);
     }
-    return task;
   });
 
   return OrchestratorMcpService.of({
@@ -2394,6 +2407,33 @@ const make = Effect.gen(function* () {
         .slice(0, 80)
         .replace(/[\uD800-\uDBFF]$/, "");
       const title = input.title ?? (derivedTitle.length > 0 ? derivedTitle : "Scheduled task");
+      // Scope the idempotency key by provider session so two callers
+      // reusing the same clientRequestId cannot collide on one task row.
+      const commandId =
+        input.clientRequestId === undefined
+          ? undefined
+          : stableCommandId({
+              scope,
+              requestKey: input.clientRequestId,
+              operation: "schedule-task",
+            });
+      const replay =
+        commandId === undefined
+          ? undefined
+          : { id: ScheduledTaskId.make(`scheduled-task:${commandId}`), commandId };
+      if (replay !== undefined) {
+        // A replay saves over the task it created, which the user may have
+        // since raised above this caller's modes.
+        const { tasks } = yield* scheduledTasks
+          .list()
+          .pipe(
+            Effect.mapError((error) =>
+              failure("orchestration_error", `Could not load scheduled task: ${error.message}`),
+            ),
+          );
+        const replayed = tasks.find((task) => task.id === replay.id);
+        if (replayed !== undefined) yield* assertScheduledTaskWithinLimits(replayed, limits);
+      }
       const upsertInput: ScheduledTaskUpsertInput = {
         title,
         prompt: input.prompt,
@@ -2412,17 +2452,7 @@ const make = Effect.gen(function* () {
         interactionMode: limits.interactionMode,
         createdBy: "agent",
         creationSource: "mcp",
-        // Scope the idempotency key by provider session so two callers
-        // reusing the same clientRequestId cannot collide on one task row.
-        ...(input.clientRequestId === undefined
-          ? {}
-          : {
-              commandId: stableCommandId({
-                scope,
-                requestKey: input.clientRequestId,
-                operation: "schedule-task",
-              }),
-            }),
+        ...replay,
       };
       const { task } = yield* scheduledTasks
         .upsert(upsertInput)

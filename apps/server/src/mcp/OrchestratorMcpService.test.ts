@@ -4046,6 +4046,81 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
+    it.effect("refuses a replayed create over a task the user raised", () =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+        const upserted = yield* Ref.make(0);
+        const project = {
+          id: projectId,
+          workspaceRoot: "/repo/scheduled",
+          defaultModelSelection: task({}).modelSelection,
+        } as Project;
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            OrchestratorMcpService.layer.pipe(
+              Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+              Layer.provide(
+                Layer.mock(GitVcsDriver.GitVcsDriver)({
+                  resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+                  resolveDefaultBranchName: () => Effect.succeed("main"),
+                  resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
+                }),
+              ),
+              Layer.provide(
+                Layer.mergeAll(
+                  NodeServices.layer,
+                  NodeCrypto.layer,
+                  Layer.mock(ThreadManagementService.ThreadManagementService)({
+                    getThreadShell: () => Effect.succeed(null),
+                  }),
+                  ServerSettings.layerTest(),
+                  Layer.mock(ProviderRegistry.ProviderRegistry)({
+                    getProviders: Effect.succeed([]),
+                  }),
+                  Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                    list: () => Effect.succeed([]),
+                  }),
+                  Layer.mock(ProjectService.ProjectService)({
+                    getById: () => Effect.succeedSome(project),
+                  }),
+                  Layer.mock(SecretRequests.SecretRequests)({}),
+                  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                    list: () => Effect.map(Ref.get(saved), (tasks) => ({ tasks })),
+                    upsert: (input) =>
+                      Effect.gen(function* () {
+                        yield* Ref.update(upserted, (count) => count + 1);
+                        const saving = task({
+                          ...(input.id === undefined ? {} : { id: input.id }),
+                          prompt: input.prompt,
+                          runtimeMode: input.runtimeMode,
+                          interactionMode: input.interactionMode,
+                        });
+                        yield* Ref.set(saved, [saving]);
+                        return { task: saving };
+                      }),
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
+        const request = {
+          projectId,
+          prompt: "Check in",
+          schedule: { type: "interval", everyMs: 3_600_000 },
+          clientRequestId: "schedule-retry",
+        } as const;
+        yield* mcp.scheduleTask(supervisedClient, request);
+        yield* Ref.update(saved, (tasks) =>
+          tasks.map((task) => ({ ...task, runtimeMode: "full-access" as const })),
+        );
+        const error = yield* mcp.scheduleTask(supervisedClient, request).pipe(Effect.flip);
+        assert.equal(error.code, "runtime_mode_escalation_denied");
+        assert.equal(yield* Ref.get(upserted), 1);
+      }),
+    );
+
     it.effect("reports a saved task even when its bound thread cannot be read", () =>
       Effect.gen(function* () {
         const upserted = yield* Ref.make(0);
