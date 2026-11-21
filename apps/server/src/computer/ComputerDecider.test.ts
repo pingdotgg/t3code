@@ -3,8 +3,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ComputerAnswer, ComputerQuestions } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { FetchHttpClient } from "effect/http";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as ComputerDecider from "./ComputerDecider.ts";
@@ -255,15 +257,6 @@ it.effect("with no grounder configured there is nothing to ask", () => {
         ),
       { _tag: "not_configured" },
     );
-    assert.deepStrictEqual(
-      yield* decider
-        .judge({ state: {} })
-        .pipe(
-          Effect.provideService(FetchHttpClient.Fetch, upstream),
-          Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-        ),
-      { _tag: "not_configured" },
-    );
   });
 });
 
@@ -282,20 +275,27 @@ it.effect("a grounder that fails is reported so the task can fall back", () => {
   });
 });
 
-it.effect("judge turns the noul's probability into a judgment", () => {
-  const upstream = async () => chatReply('{"consequential":{"answer":"no","confidence":"high"}}');
-  return Effect.gen(function* () {
-    const decider = yield* deciderWith({});
-    const judged = yield* decider
-      .judge({ state: { goal: "search" } })
-      .pipe(
-        Effect.provideService(FetchHttpClient.Fetch, upstream),
-        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      );
-    assert.strictEqual(judged._tag, "judged");
-    if (judged._tag === "judged") assert.closeTo(judged.probability, 0.1, 1e-9);
-  });
-});
+it.effect(
+  "a grounder silent for ten seconds is reported failed, so the step goes to the planner",
+  () => {
+    const upstream = () => new Promise<Response>(() => {});
+    return Effect.gen(function* () {
+      const decider = yield* deciderWith({});
+      const asked = yield* decider
+        .ask({ state: {}, questions })
+        .pipe(
+          Effect.provideService(FetchHttpClient.Fetch, upstream),
+          Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          Effect.forkScoped,
+        );
+      yield* TestClock.adjust("10 seconds");
+      assert.deepStrictEqual(yield* Fiber.join(asked), {
+        _tag: "failed",
+        detail: "The decision model did not answer in time.",
+      });
+    });
+  },
+);
 
 it.effect(
   "answers are checked again: wrong kind, duplicate, unknown question and out of range",

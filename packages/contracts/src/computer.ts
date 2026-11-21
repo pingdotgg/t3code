@@ -17,10 +17,10 @@ export const ComputerControlKind = Schema.Literals(COMPUTER_CONTROL_KINDS);
 export type ComputerControlKind = typeof ComputerControlKind.Type;
 
 /**
- * Nothing (`auto`), a person's tap on this exact step (`tap`), a judgment from the decision provider first
- * (`judge`), or nothing at all because it is not a step computer use offers (`refused`).
+ * Nothing (`auto`), a person's tap on this exact step (`tap`), or nothing at all because it is not a step
+ * computer use offers (`refused`).
  */
-export const ComputerVerdict = Schema.Literals(["auto", "tap", "judge", "refused"]);
+export const ComputerVerdict = Schema.Literals(["auto", "tap", "refused"]);
 export type ComputerVerdict = typeof ComputerVerdict.Type;
 
 /** A verdict and, for the approval card and the audit, why it asked or refused. */
@@ -340,12 +340,12 @@ export const ComputerAct = Schema.Struct({
   /** `click`: a control's label, when no ref is at hand. */
   label: Schema.optionalKey(Schema.String),
   /** `click`: a screen point, when the control is not in the look. */
-  x: Schema.optionalKey(Schema.Number),
-  y: Schema.optionalKey(Schema.Number),
+  x: Schema.optionalKey(Schema.Finite),
+  y: Schema.optionalKey(Schema.Finite),
   key: Schema.optionalKey(ComputerKey),
   direction: Schema.optionalKey(Schema.Literals(["up", "down", "top", "bottom"])),
   /** `scroll` up or down: how many screens, 1 to 10; one when left out. */
-  amount: Schema.optionalKey(Schema.Number),
+  amount: Schema.optionalKey(Schema.Finite),
   url: Schema.optionalKey(Schema.String),
   /** `choose_file`: the absolute path (or ~/…) of the file to pick in the open panel. */
   path: Schema.optionalKey(Schema.String),
@@ -355,10 +355,10 @@ export const ComputerAct = Schema.Struct({
 export type ComputerAct = typeof ComputerAct.Type;
 
 export const ComputerRect = Schema.Struct({
-  x: Schema.Number,
-  y: Schema.Number,
-  w: Schema.Number,
-  h: Schema.Number,
+  x: Schema.Finite,
+  y: Schema.Finite,
+  w: Schema.Finite,
+  h: Schema.Finite,
 });
 export type ComputerRect = typeof ComputerRect.Type;
 
@@ -587,7 +587,7 @@ export type ComputerHostAccess = typeof ComputerHostAccess.Type;
 export const ComputerHostConnectInput = Schema.Struct({
   /** The name a person sees, such as "JJ's MacBook". */
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
-  /** The paired device this host belongs to; one host a device. */
+  /** The device's name, for people; the server keys a host by the session that connected it. */
   device: Schema.String.check(Schema.isMaxLength(200)),
   platform: Schema.String.check(Schema.isMaxLength(40)),
   version: Schema.String.check(Schema.isMaxLength(40)),

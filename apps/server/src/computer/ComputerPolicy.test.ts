@@ -10,10 +10,6 @@ interface Golden {
     readonly action: ComputerAction;
     readonly verdict: ComputerVerdict;
   }>;
-  readonly after_judge: ReadonlyArray<{
-    readonly p: number | null;
-    readonly verdict: ComputerVerdict;
-  }>;
 }
 
 const cases = golden as Golden;
@@ -36,17 +32,6 @@ const screenRows = cases.screen.map(({ action, verdict }) => {
 
 it.each(screenRows)("%s is %s", (_name, action, verdict) => {
   assert.strictEqual(ComputerPolicy.screen(action).verdict, verdict);
-});
-
-it.each(cases.after_judge.map(({ p, verdict }) => [p, verdict] as const))(
-  "a judgment of %s is %s",
-  (p, verdict) => {
-    assert.strictEqual(ComputerPolicy.afterJudge(p).verdict, verdict);
-  },
-);
-
-it("a judgment that is not a number asks", () => {
-  assert.strictEqual(ComputerPolicy.afterJudge(Number.NaN).verdict, "tap");
 });
 
 it("an over-long label is refused rather than clipped past its consequential word", () => {

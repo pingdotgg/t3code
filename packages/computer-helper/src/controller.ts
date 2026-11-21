@@ -1,5 +1,6 @@
 // Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, apps/desktop-helper/src/computer/controller.ts), modified for Ada.
 // LocalRouter ported it from Sidebud (github.com/jayleaton/sidebud @70da540); both notices ship in LICENSE.localrouter.
+import { navigationText } from "./navigation.ts";
 import type { Logger } from "./log.ts";
 import { choiceProbability } from "./decisions.ts";
 import type { Answers, Decider, Question } from "./decisions.ts";
@@ -169,10 +170,17 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 const HIDDEN = "[typed text]";
 const MIN_HIDDEN = 3;
 /** `value` with the task's typed text replaced wherever it appears: that text only ever leaves in the type action's own binding. */
-function without<T>(value: T, secret: string | null): T {
+export function without<T>(value: T, secret: string | null): T {
   if (!secret || secret.length < MIN_HIDDEN) return value;
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // `clip` cuts a described value or label, so its cut forms are hidden too; case can differ in an echo.
+  const forms = [
+    secret,
+    ...[90, 60].filter((max) => secret.length > max).map((max) => `${secret.slice(0, max)}…`),
+  ];
+  const pattern = new RegExp(forms.map(escape).join("|"), "gi");
   const walk = (node: unknown): unknown => {
-    if (typeof node === "string") return node.split(secret).join(HIDDEN);
+    if (typeof node === "string") return node.replace(pattern, HIDDEN);
     if (Array.isArray(node)) return node.map(walk);
     if (node && typeof node === "object")
       return Object.fromEntries(Object.entries(node).map(([key, entry]) => [key, walk(entry)]));
@@ -279,7 +287,12 @@ export class ComputerUse {
         ms: this.now() - run.started,
         waited_ms: run.waited,
       });
-      return { status, reason: without(reason, run.secret), steps: run.steps, surface: where };
+      return {
+        status,
+        reason: without(reason, run.secret),
+        steps: run.steps,
+        surface: without(where, run.secret),
+      };
     };
     try {
       this.checkpoint(run);
@@ -405,7 +418,12 @@ export class ComputerUse {
         status,
         ms: this.now() - run.started,
       });
-      return { status, reason: without(reason, run.secret), steps: run.steps, surface: where };
+      return {
+        status,
+        reason: without(reason, run.secret),
+        steps: run.steps,
+        surface: without(where, run.secret),
+      };
     };
     try {
       this.checkpoint(run);
@@ -1387,33 +1405,12 @@ export function navigationUnmet(goal: string, screen: Observation): boolean {
   return !(have === want || have.endsWith(`.${want}`));
 }
 
-/**
- * The address a navigation goal names, exactly as written: "go to example.com" → "example.com", "open
- * https://example.com/a in Chrome" → that URL. Null for anything else (the decider never writes text: this is the
- * request's own words).
- */
-export function navigationText(goal: string): string | null {
-  // Never an address inside an email address ("bob@example.com").
-  // Any top-level domain, but not a file name ("notes.txt"), plus localhost and an IPv4 address, with a port.
-  const host = String.raw`(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?!${FILE_EXTENSIONS}\b)[a-z]{2,24}\b)`;
-  const address = String.raw`(?<![@\w.-])(?:https?:\/\/[^\s"“”'‘’<>]+|${host}(?::\d{2,5})?(?:\/[^\s"“”'‘’<>]*)?)`;
-  // The address right after the verb: "go to example.com", "navigate Chrome to x.com", "take me to x.com"; not "open the
-  // email from x.com" (the address is not what is opened).
-  const toVerb = String.raw`\b(?:go|navigate|browse|head|get|take\s+me|bring\s+me|switch)(?:\s+\S+){0,3}?\s+to\s+`;
-  const openVerb = String.raw`\b(?:open|visit|load|pull\s+up|bring\s+up|show\s+me|launch)\s+`;
-  const what = String.raw`(?:the\s+)?(?:(?:web)?site\s+|page\s+|url\s+|address\s+)?`;
-  const found = new RegExp(`(?:${toVerb}|${openVerb})${what}(${address})`, "i").exec(goal)?.[1];
-  return found ? found.replace(/[.,;:!?)]+$/, "") : null;
-}
-
 /** An address as a goal wrote it, made into a URL a browser opens: "example.com" → "https://example.com". */
 function webAddress(written: string | null): string | null {
   if (!written) return null;
   if (/^https?:\/\//i.test(written)) return written;
   return `${/^(?:localhost|\d)/i.test(written) ? "http" : "https"}://${written}`;
 }
-
-const FILE_EXTENSIONS = String.raw`(?:txt|md|pdf|png|jpe?g|gif|svg|webp|heic|docx?|xlsx?|pptx?|csv|json|ya?ml|toml|js|ts|tsx|jsx|mjs|py|rb|go|rs|sh|zip|dmg|pkg|mov|mp3|mp4|wav|log|key|pages|numbers|html?|css|swift|java)`;
 
 /** What a screen shows, for telling whether an action changed it: title, page, controls and text. */
 export function screenKey(screen: Observation): string {

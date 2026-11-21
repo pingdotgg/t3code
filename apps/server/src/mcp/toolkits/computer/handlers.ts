@@ -125,14 +125,14 @@ const firstChange = Effect.fn("computerTools.firstChange")(function* (
   service: ComputerService.ComputerService["Service"],
   task: ComputerTaskView,
 ) {
-  const stream = yield* service.subscribe;
+  const stream = yield* service.subscribe({ revealTypedText: false });
   yield* stream.pipe(
     Stream.filter((snapshot) => settled(task)(snapshot) !== undefined),
     Stream.runHead,
     Effect.timeoutOption(FIRST_CHANGE_WAIT),
   );
   // The stream is the clients' view, without the planner's questions: read the agent's.
-  return progressForTask(taskIn(yield* service.status, task.taskId) ?? task);
+  return progressForTask(taskIn(yield* service.status(task.threadId), task.taskId) ?? task);
 });
 
 /** An act returns once it has ended or waits for the user; the bound is the safety net for a silent helper. */
@@ -142,7 +142,7 @@ const actEnded = Effect.fn("computerTools.actEnded")(function* (
   service: ComputerService.ComputerService["Service"],
   task: ComputerTaskView,
 ) {
-  const stream = yield* service.subscribe;
+  const stream = yield* service.subscribe({ revealTypedText: false });
   yield* stream.pipe(
     Stream.filter((snapshot) => {
       const current = taskIn(snapshot, task.taskId);
@@ -153,7 +153,7 @@ const actEnded = Effect.fn("computerTools.actEnded")(function* (
     Stream.runHead,
     Effect.timeoutOption(ACT_WAIT),
   );
-  const current = taskIn(yield* service.status, task.taskId) ?? task;
+  const current = taskIn(yield* service.status(task.threadId), task.taskId) ?? task;
   return {
     task: current,
     next:
@@ -182,9 +182,9 @@ const controlOf = (input: {
 const handlers = {
   computer_status: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      yield* requireComputerUse;
+      const scope = yield* requireComputerUse;
       const service = yield* ComputerService.ComputerService;
-      return statusForTool(yield* service.status, input?.hostId);
+      return statusForTool(yield* service.status(scope.thread.threadId), input?.hostId);
     }),
   ),
   computer_control: McpToolAccess.actsAsCaller((input) =>
@@ -221,7 +221,7 @@ const handlers = {
             taskId: input.taskId,
           });
         }
-        const snapshot = yield* service.status;
+        const snapshot = yield* service.status(scope.thread.threadId);
         const task = taskIn(snapshot, input.taskId);
         if (task === undefined) {
           return yield* new ComputerError({
@@ -271,9 +271,10 @@ const handlers = {
       const service = yield* ComputerService.ComputerService;
       yield* service.stop({
         by: requesterFor(scope),
+        threadId: scope.thread.threadId,
         ...(input?.taskId === undefined ? {} : { taskId: input.taskId }),
       });
-      return statusForTool(yield* service.status, undefined);
+      return statusForTool(yield* service.status(scope.thread.threadId), undefined);
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof ComputerToolkit.tools>;

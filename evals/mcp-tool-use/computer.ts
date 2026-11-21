@@ -302,7 +302,7 @@ export const makeComputerTools = Effect.fn("evaluateMcpToolUse.makeComputerTools
       }));
       return keepValid(asked, plannerAnswers(asked, input.answers));
     }),
-    status: snapshot,
+    status: Effect.fn("ComputerService.status")(() => snapshot),
     stop: Effect.fn("ComputerService.stop")(() =>
       Ref.update(state, (current) => ({
         next: current.next,
@@ -315,7 +315,9 @@ export const makeComputerTools = Effect.fn("evaluateMcpToolUse.makeComputerTools
         ),
       })),
     ),
-    subscribe: Effect.map(snapshot, (current) => Stream.make(current)),
+    subscribe: Effect.fn("ComputerService.subscribe")(() =>
+      Effect.map(snapshot, (current) => Stream.make(current)),
+    ),
     // The toolkit's calls above are the whole surface these cases use.
     stopForThread: Effect.fn("ComputerService.stopForThread")(() => Effect.void),
     respondToApproval: Effect.fn("ComputerService.respondToApproval")(() => Effect.void),

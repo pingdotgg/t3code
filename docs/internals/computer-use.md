@@ -52,12 +52,35 @@ Mac has one helper.
 ## Threat model
 
 Approvals guard against mistakes and prompt injection from screen text, which
-is data and never instructions. The party that chose a click has read the
-page, so it never judges whether that click is safe: a click the policy cannot
-settle goes to the configured decision endpoint, which sees only the goal, the
-window and the control, and otherwise becomes a tap. Only the `text` a task was
-started with is ever typed, and it never reaches the decision endpoint, a log,
-an error or the audit file.
+is data and never instructions. Every model that reads the screen can be
+steered by it, so no model's verdict grants a step: a click the deterministic
+policy cannot show is safe always becomes a tap. No accessibility role clears a
+click on an untrusted surface, since a `tab`, `row` or `textbox` can still send. The decision endpoint only
+chooses the next step, and the server sends it an allowlisted, capped state,
+never what the host put there beyond it. The goal goes with it as the agent's
+words: it refers to the task's `text` as `{text}`, which everyone but the helper
+reads as a marker. Text of three characters or more is replaced in the goal
+wherever it appears, in any case. Shorter text may appear only in a quoted label
+of a goal that uses `{text}`, so a task typing "OK" can still click the "OK"
+button; anywhere else the goal is refused. Only that `text` is ever typed
+(without one, only the exact address the helper's navigation parser reads from
+the goal). It is kept out of the decision endpoint, read-only snapshots, logs,
+errors and the audit file. A field value the helper echoes (`containing “…”`) is
+dropped when it holds the text, and text of three characters or more is
+replaced wherever else it appears. Shorter text cannot be told apart from
+ordinary words, so it never changes a label, and screen text is kept whole until
+a `type` step is granted; after that, a screen region that holds it is left out.
+A read-only client's approval is redacted when the approval is made, so it stays
+redacted after its task is gone.
+
+A host is bound to the authenticated session that connected it. Host calls
+from any other session are refused, and only that session's reconnect
+replaces it. A stopped task keeps its host reserved until the host reports
+the task finished, and a control keeps it until the control's reply, since a
+fixed control cannot be cancelled. A reply that arrives after its wait timed
+out still frees the host. A host that has not let go within the reply
+timeout of a stop is disconnected, which for a standalone server stops the
+helper so its session can start again.
 
 Approvals do not stop a full-access agent with a shell on the same machine as
 the helper: it can run `osascript` itself. The boundary is real only when the

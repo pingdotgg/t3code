@@ -1,5 +1,5 @@
-// Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, src/computer/decide.zig,
-// src/tool/systemone.zig and the judge in src/computer/hub.zig), Apache-2.0, Copyright 2026 Jay Leaton.
+// Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, src/computer/decide.zig and
+// src/tool/systemone.zig), Apache-2.0, Copyright 2026 Jay Leaton.
 // Modified for Ada: the grounder is configured in Ada's settings and fails into the planner instead of a
 // second endpoint.
 import type {
@@ -70,19 +70,6 @@ export type GrounderAnswer =
   /** A grounder is configured but did not answer; this task's steps go to the planner. */
   | { readonly _tag: "failed"; readonly detail: string };
 
-export type JudgeAnswer =
-  | { readonly _tag: "judged"; readonly probability: number }
-  | { readonly _tag: "not_configured" }
-  | { readonly _tag: "failed"; readonly detail: string };
-
-const JUDGE_QUESTION = {
-  consequential: {
-    type: "noul" as const,
-    instructions:
-      "If the program does this action on this screen, could it send a message or email, post or publish something, buy or pay for something, delete or remove something, or submit a form? Answer yes if it could, or if you cannot tell.",
-  },
-};
-
 export class ComputerDecider extends Context.Service<
   ComputerDecider,
   {
@@ -90,8 +77,6 @@ export class ComputerDecider extends Context.Service<
       readonly state: unknown;
       readonly questions: ComputerQuestions;
     }) => Effect.Effect<GrounderAnswer>;
-    /** The provider's yes/no for one click: the probability it is consequential (0 to 1). */
-    readonly judge: (input: { readonly state: unknown }) => Effect.Effect<JudgeAnswer>;
   }
 >()("t3/computer/ComputerDecider") {}
 
@@ -322,20 +307,7 @@ const make = Effect.gen(function* () {
     return { _tag: "answers", answers: keepValid(input.questions, raw) } as const;
   });
 
-  const judge: ComputerDecider["Service"]["judge"] = Effect.fn("ComputerDecider.judge")(
-    function* (input) {
-      const decided = yield* answers({ state: input.state, questions: JUDGE_QUESTION });
-      if (decided._tag === "not_configured") return decided;
-      if (decided._tag === "failed") return decided;
-      const answer = decided.answers.consequential;
-      if (answer?.type !== "noul") {
-        return { _tag: "failed", detail: "The decision model did not judge the step." } as const;
-      }
-      return { _tag: "judged", probability: answer.probability } as const;
-    },
-  );
-
-  return ComputerDecider.of({ ask: answers, judge });
+  return ComputerDecider.of({ ask: answers });
 });
 
 /** The first chat choice's content; a reply without one answered nothing. */
