@@ -87,6 +87,57 @@ describe("createGitDiffFileContentsLoader", () => {
     await expect(loader(partialFileDiff())).rejects.toThrow("changed since the diff was loaded");
   });
 
+  it.each([
+    {
+      name: "a renamed file",
+      patch: [
+        "diff --git a/ leading.txt b/renamed.txt ",
+        "similarity index 100%",
+        "rename from  leading.txt",
+        "rename to renamed.txt ",
+        "",
+      ],
+      oldPath: " leading.txt",
+      newPath: "renamed.txt ",
+    },
+    {
+      name: "a modified file",
+      patch: [
+        "diff --git a/trailing.txt  b/trailing.txt ",
+        "index 422c2b7..55dce13 100644",
+        "--- a/trailing.txt \t",
+        "+++ b/trailing.txt \t",
+        "@@ -1,2 +1,2 @@",
+        " a",
+        "-b",
+        "+B",
+        "",
+      ],
+      oldPath: "trailing.txt ",
+      newPath: "trailing.txt ",
+    },
+  ])("requests the exact whitespace-edged paths of $name", async ({ patch, oldPath, newPath }) => {
+    const requested: Array<{ oldPath: string; newPath: string }> = [];
+    const loader = createGitDiffFileContentsLoader(
+      async ({ input }) => {
+        requested.push({ oldPath: input.oldPath, newPath: input.newPath });
+        return AsyncResult.success({ oldContents: "a\nb\n", newContents: "a\nB\n" });
+      },
+      {
+        environmentId: EnvironmentId.make("environment-diff-contents-test"),
+        cwd: "/repo",
+        sourceKind: "working-tree",
+        baseRef: null,
+        headRef: null,
+        cacheKey: "diff-hash",
+      },
+    );
+
+    await loader(parsePartialFileDiff(patch.join("\n")));
+
+    expect(requested).toEqual([{ oldPath, newPath }]);
+  });
+
   it("loads a whitespace-ignored patch whose context shows one side's whitespace", async () => {
     const patch = [
       "diff --git a/src/file01.ts b/src/file01.ts",

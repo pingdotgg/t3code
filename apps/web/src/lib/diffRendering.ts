@@ -1,6 +1,9 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
 
 // Light mode uses a darker pierre-light so syntax stays readable on every code surface.
@@ -158,6 +161,7 @@ export function getRenderablePatch(
   patch: string | undefined,
   cacheScope = "diff-panel",
   options: RenderablePatchOptions = {},
+  resolve: MessageResolver = m,
 ): RenderablePatch | null {
   if (!patch?.trim()) return null;
 
@@ -177,15 +181,51 @@ export function getRenderablePatch(
     return {
       kind: "raw",
       text: patch,
-      reason: "Unsupported diff format. Showing raw patch.",
+      reason: resolve(msg("Unsupported diff format. Showing raw patch.")),
     };
   } catch {
     return {
       kind: "raw",
       text: patch,
-      reason: "Failed to parse patch. Showing raw patch.",
+      reason: resolve(msg("Failed to parse patch. Showing raw patch.")),
     };
   }
+}
+
+/**
+ * Several patches as one file list. Each file is named from the folder the patches share, so the
+ * same path in two repositories stays two files.
+ */
+export function getRenderablePatchSections(
+  sections: ReadonlyArray<{
+    readonly key: string;
+    readonly relativePath: string;
+    readonly diff: string;
+  }>,
+  cacheScope = "diff-panel",
+  options: RenderablePatchOptions = {},
+): RenderablePatch | null {
+  const files: FileDiffMetadata[] = [];
+  const sourceFiles: FileDiffMetadata[] = [];
+  for (const section of sections) {
+    const patch = getRenderablePatch(section.diff, `${cacheScope}:${section.key}`, options);
+    if (patch === null) continue;
+    if (patch.kind === "raw") {
+      return { ...patch, text: sections.map((entry) => entry.diff).join("\n") };
+    }
+    const prefix = section.relativePath === "" ? "" : `${section.relativePath}/`;
+    const inFolder = (file: FileDiffMetadata): FileDiffMetadata =>
+      prefix === ""
+        ? file
+        : {
+            ...file,
+            name: `${prefix}${file.name}`,
+            ...(file.prevName === undefined ? {} : { prevName: `${prefix}${file.prevName}` }),
+          };
+    files.push(...patch.files.map(inFolder));
+    sourceFiles.push(...patch.sourceFiles.map(inFolder));
+  }
+  return files.length === 0 ? null : { kind: "files", files, sourceFiles };
 }
 
 /** Uses the parser-decoded filename, including Git's quoted and escaped names. */
@@ -266,6 +306,30 @@ export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number 
   return hash;
 }
 
+const fileEntryCache = new WeakMap<
+  FileDiffMetadata,
+  { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number }
+>();
+
+/** Give repeated blocks independent viewer state without tying identity to patch content. */
+export function buildFileDiffEntries(files: ReadonlyArray<FileDiffMetadata>) {
+  const occurrences = new Map<string, number>();
+  return files.map((fileDiff) => {
+    let entry = fileEntryCache.get(fileDiff);
+    if (!entry) {
+      entry = {
+        fileDiff,
+        fileKey: buildFileDiffIdentityKey(fileDiff),
+        fileVersion: buildFileDiffContentVersion(fileDiff),
+      };
+      fileEntryCache.set(fileDiff, entry);
+    }
+    const occurrence = occurrences.get(entry.fileKey) ?? 0;
+    occurrences.set(entry.fileKey, occurrence + 1);
+    return occurrence === 0 ? entry : { ...entry, fileKey: `${entry.fileKey}\u0000${occurrence}` };
+  });
+}
+
 export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
 [data-diffs-header],
 [data-diff],
@@ -293,37 +357,37 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   --diffs-bg-buffer-override: color-mix(in srgb, var(--code-background) 90%, var(--code-foreground));
 
   --diffs-bg-addition-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--diff-addition)),
-    color-mix(in srgb, var(--code-background) 70%, var(--diff-addition))
+    color-mix(in srgb, var(--code-background) calc(50% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition)),
+    color-mix(in srgb, var(--code-background) calc(70% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition))
   );
   --diffs-bg-addition-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--diff-addition)),
-    color-mix(in srgb, var(--code-background) 60%, var(--diff-addition))
+    color-mix(in srgb, var(--code-background) calc(35% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition)),
+    color-mix(in srgb, var(--code-background) calc(60% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition))
   );
   --diffs-bg-addition-hover-override: color-mix(in srgb, var(--code-background) 85%, var(--diff-addition));
-  --diffs-bg-addition-emphasis-override: color-mix(
-    in srgb,
-    var(--code-background) 80%,
-    var(--diff-addition)
+  /* Pierre resolves emphasis on the host, before the diff's overrides can inherit. */
+  /* Light emphasis stays above t3-light's readable syntax luminance floor. */
+  --diffs-bg-addition-emphasis: light-dark(
+    rgb(from var(--diffs-addition-base) r g b / 15%),
+    rgb(from var(--diffs-addition-base) r g b / calc(20% + var(--appearance-contrast-boost, 0%) / 4))
   );
 
   --diffs-bg-deletion-override: light-dark(
-    color-mix(in srgb, var(--code-background) 50%, var(--diff-deletion)),
-    color-mix(in srgb, var(--code-background) 70%, var(--diff-deletion))
+    color-mix(in srgb, var(--code-background) calc(50% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion)),
+    color-mix(in srgb, var(--code-background) calc(70% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion))
   );
   --diffs-bg-deletion-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) 35%, var(--diff-deletion)),
-    color-mix(in srgb, var(--code-background) 60%, var(--diff-deletion))
+    color-mix(in srgb, var(--code-background) calc(35% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion)),
+    color-mix(in srgb, var(--code-background) calc(60% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion))
   );
   --diffs-bg-deletion-hover-override: color-mix(
     in srgb,
     var(--code-background) 85%,
     var(--diff-deletion)
   );
-  --diffs-bg-deletion-emphasis-override: color-mix(
-    in srgb,
-    var(--code-background) 80%,
-    var(--diff-deletion)
+  --diffs-bg-deletion-emphasis: light-dark(
+    rgb(from var(--diffs-deletion-base) r g b / 15%),
+    rgb(from var(--diffs-deletion-base) r g b / calc(20% + var(--appearance-contrast-boost, 0%) / 4))
   );
 
   background-color: var(--diffs-bg) !important;

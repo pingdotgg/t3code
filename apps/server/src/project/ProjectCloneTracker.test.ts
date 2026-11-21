@@ -343,6 +343,9 @@ describe("parseGitCloneProgressLine", () => {
     expect(
       parseGitCloneProgressLine("Receiving objects:  45% (4500/10000), 12.30 MiB | 5.00 MiB/s"),
     ).toEqual({ stage: "receiving", percent: 45, detail: "12.30 MiB | 5.00 MiB/s" });
+    expect(
+      parseGitCloneProgressLine("Receiving objects: 100% (5/5), 40.00 MiB | 1.40 MiB/s, done."),
+    ).toEqual({ stage: "receiving", percent: 100, detail: "40.00 MiB | 1.40 MiB/s" });
     expect(parseGitCloneProgressLine("Resolving deltas: 100% (700/700), done.")).toEqual({
       stage: "resolving",
       percent: 100,
@@ -358,6 +361,9 @@ describe("parseGitCloneProgressLine", () => {
       percent: 78,
       detail: null,
     });
+    expect(
+      parseGitCloneProgressLine("Filtering content:  66% (2/3), 11.92 MiB | 1009.00 KiB/s"),
+    ).toEqual({ stage: "checkout", percent: 66, detail: "11.92 MiB | 1009.00 KiB/s" });
     expect(parseGitCloneProgressLine("remote: Enumerating objects: 10, done.")).toEqual({
       stage: "counting",
       percent: null,
