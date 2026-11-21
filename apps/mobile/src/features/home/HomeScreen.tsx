@@ -806,7 +806,10 @@ export function HomeScreen(props: HomeScreenProps) {
                     />
                   ) : null
                 }
-                ListEmptyComponent={v2ListEmpty}
+                // Rows inset their own content, so the card needs the same inset to clear the edges.
+                ListEmptyComponent={
+                  <View className={sidebarSurface ? "px-3" : "px-5"}>{v2ListEmpty}</View>
+                }
                 style={{ flex: 1 }}
                 automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
                 contentInsetAdjustmentBehavior="never"
