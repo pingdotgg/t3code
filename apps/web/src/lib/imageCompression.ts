@@ -174,6 +174,114 @@ async function readHeicMetadata(file: File): Promise<HeicMetadataResult> {
   return { ok: true, displayP3 };
 }
 
+async function inflateIccProfile(deflated: Uint8Array<ArrayBuffer>): Promise<Uint8Array | null> {
+  const reader = new Blob([deflated])
+    .stream()
+    .pipeThrough(new DecompressionStream("deflate"))
+    .getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.length;
+      // A real profile is a few KiB; refuse to inflate a compression bomb.
+      if (length > MAX_HEIC_METADATA_BYTES) return null;
+      chunks.push(value);
+    }
+  } catch {
+    return null;
+  } finally {
+    void reader.cancel().catch(() => undefined);
+  }
+  const profile = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    profile.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return profile;
+}
+
+function iccProfileBytesAreDisplayP3(profile: Uint8Array): boolean {
+  return iccProfileIsDisplayP3(
+    new DataView(profile.buffer, profile.byteOffset, profile.byteLength),
+    0,
+    profile.byteLength,
+  );
+}
+
+async function pngIsDisplayP3(bytes: Uint8Array<ArrayBuffer>, view: DataView): Promise<boolean> {
+  for (let offset = 8; offset + 8 <= bytes.length;) {
+    const length = view.getUint32(offset);
+    const type = view.getUint32(offset + 4);
+    const data = offset + 8;
+    if (type === 0x49444154 || data + length > bytes.length) return false;
+    if (type === 0x63494350) return length >= 1 && bytes[data] === 12;
+    if (type === 0x69434350) {
+      const nameEnd = bytes.subarray(data, data + Math.min(length, 80)).indexOf(0);
+      if (nameEnd < 0) return false;
+      const profile = await inflateIccProfile(bytes.slice(data + nameEnd + 2, data + length));
+      return profile !== null && iccProfileBytesAreDisplayP3(profile);
+    }
+    offset = data + length + 4;
+  }
+  return false;
+}
+
+const JPEG_ICC_SIGNATURE = "ICC_PROFILE\0";
+
+function jpegIsDisplayP3(bytes: Uint8Array, view: DataView): boolean {
+  const segments: Uint8Array[] = [];
+  for (let offset = 2; offset + 4 <= bytes.length && bytes[offset] === 0xff;) {
+    const marker = bytes[offset + 1]!;
+    if (marker === 0xda || marker === 0xd9) break;
+    const length = view.getUint16(offset + 2);
+    const end = offset + 2 + length;
+    if (length < 2 || end > bytes.length) break;
+    const signature = String.fromCharCode(...bytes.subarray(offset + 4, offset + 16));
+    if (marker === 0xe2 && signature === JPEG_ICC_SIGNATURE) {
+      segments.push(bytes.subarray(offset + 18, end));
+    }
+    offset = end;
+  }
+  if (segments.length === 0) return false;
+  const profile = new Uint8Array(segments.reduce((total, segment) => total + segment.length, 0));
+  let offset = 0;
+  for (const segment of segments) {
+    profile.set(segment, offset);
+    offset += segment.length;
+  }
+  return iccProfileBytesAreDisplayP3(profile);
+}
+
+function webpIsDisplayP3(bytes: Uint8Array, view: DataView): boolean {
+  if (view.getUint32(8) !== 0x57454250) return false;
+  for (let offset = 12; offset + 8 <= bytes.length;) {
+    const type = view.getUint32(offset);
+    const length = view.getUint32(offset + 4, true);
+    const data = offset + 8;
+    if (data + length > bytes.length) return false;
+    if (type === 0x49434350) return iccProfileIsDisplayP3(view, data, data + length);
+    offset = data + length + (length % 2);
+  }
+  return false;
+}
+
+/** Re-encode on a canvas in the source's own color space, so it keeps its gamut and profile. */
+async function readImageColorSpace(file: Blob): Promise<PredefinedColorSpace> {
+  const bytes = new Uint8Array(await file.slice(0, MAX_HEIC_METADATA_BYTES).arrayBuffer());
+  if (bytes.length < 16) return "srgb";
+  const view = new DataView(bytes.buffer);
+  const signature = view.getUint32(0);
+  let displayP3 = false;
+  if (signature === 0x89504e47) displayP3 = await pngIsDisplayP3(bytes, view);
+  else if (signature >>> 16 === 0xffd8) displayP3 = jpegIsDisplayP3(bytes, view);
+  else if (signature === 0x52494646) displayP3 = webpIsDisplayP3(bytes, view);
+  return displayP3 ? "display-p3" : "srgb";
+}
+
 export function readFileAsDataUrl(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -226,11 +334,10 @@ interface Canvas2D {
   context: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
 }
 
-// Display P3 contains sRGB, so wide-gamut sources keep their colors and encoders embed the profile.
 function createCanvas(
   width: number,
   height: number,
-  colorSpace: PredefinedColorSpace = "display-p3",
+  colorSpace: PredefinedColorSpace,
 ): Canvas2D | null {
   if (typeof OffscreenCanvas === "function") {
     const canvas = new OffscreenCanvas(width, height);
@@ -308,8 +415,9 @@ async function renderComposerImageThumbnail(file: File): Promise<string | null> 
   if (!canRecompress() || file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) return null;
   let bitmap: ImageBitmap | undefined;
   try {
+    const colorSpace = await readImageColorSpace(file);
     bitmap = await createImageBitmap(file);
-    return await renderComposerImageThumbnailFromBitmap(bitmap);
+    return await renderComposerImageThumbnailFromBitmap(bitmap, colorSpace);
   } catch {
     return null;
   } finally {
@@ -317,12 +425,15 @@ async function renderComposerImageThumbnail(file: File): Promise<string | null> 
   }
 }
 
-async function renderComposerImageThumbnailFromBitmap(bitmap: ImageBitmap): Promise<string | null> {
+async function renderComposerImageThumbnailFromBitmap(
+  bitmap: ImageBitmap,
+  colorSpace: PredefinedColorSpace,
+): Promise<string | null> {
   try {
     const side = Math.min(bitmap.width, bitmap.height);
     if (side <= 0) return null;
     const dimension = Math.min(256, side);
-    const surface = createCanvas(dimension, dimension);
+    const surface = createCanvas(dimension, dimension, colorSpace);
     if (!surface) return null;
     surface.context.drawImage(
       bitmap,
@@ -344,6 +455,7 @@ async function renderComposerImageThumbnailFromBitmap(bitmap: ImageBitmap): Prom
 
 async function encodeWithinBudget(
   bitmap: ImageBitmap,
+  colorSpace: PredefinedColorSpace,
   maxDimension: number,
   budgetChars: number,
   preferredMimeType?: "image/jpeg",
@@ -351,7 +463,7 @@ async function encodeWithinBudget(
   const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
   const width = Math.max(1, Math.round(bitmap.width * scale));
   const height = Math.max(1, Math.round(bitmap.height * scale));
-  const target = createCanvas(width, height);
+  const target = createCanvas(width, height, colorSpace);
   if (!target) return null;
 
   // Probe the codec before drawing; JPEG needs a white matte because it has no alpha.
@@ -391,7 +503,9 @@ async function reencodeWithinBudget(
   }
 
   let bitmap: ImageBitmap;
+  let colorSpace: PredefinedColorSpace;
   try {
+    colorSpace = await readImageColorSpace(file);
     bitmap = await createImageBitmap(file);
   } catch {
     return { ok: false, reason: "unreadable" };
@@ -405,7 +519,13 @@ async function reencodeWithinBudget(
       const targetDimension = Math.max(1, Math.round(baseDimension * dimensionScale));
       let encoded: Awaited<ReturnType<typeof encodeWithinBudget>>;
       try {
-        encoded = await encodeWithinBudget(bitmap, targetDimension, budgetChars, preferredMimeType);
+        encoded = await encodeWithinBudget(
+          bitmap,
+          colorSpace,
+          targetDimension,
+          budgetChars,
+          preferredMimeType,
+        );
       } catch {
         encodeFailed = true;
         continue;
@@ -473,7 +593,7 @@ async function fitImageToMaxEdge(file: File): Promise<{ file: File; imageSize: I
     bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
     const imageSize = fitImageAttachmentSize(bitmap);
     if (!imageSize) return null;
-    const target = createCanvas(imageSize.width, imageSize.height);
+    const target = createCanvas(imageSize.width, imageSize.height, await readImageColorSpace(file));
     if (!target) return null;
     target.context.imageSmoothingQuality = "high";
     target.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
@@ -595,12 +715,13 @@ async function convertHeicImage(
       source.close();
       if (!bitmap) return { ok: false, reason: "unreadable" };
     }
-    const surface = createCanvas(imageSize.width, imageSize.height);
+    const colorSpace = metadata.displayP3 ? "display-p3" : "srgb";
+    const surface = createCanvas(imageSize.width, imageSize.height, colorSpace);
     if (!surface) return { ok: false, reason: "unreadable" };
     surface.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
     const [converted] = await Promise.all([
       encodeCanvas(surface.canvas, QUALITY_STEPS[0], "image/jpeg"),
-      renderComposerImageThumbnailFromBitmap(bitmap).then(onThumbnail),
+      renderComposerImageThumbnailFromBitmap(bitmap, colorSpace).then(onThumbnail),
     ]);
     if (!converted) return { ok: false, reason: "unreadable" };
     return {

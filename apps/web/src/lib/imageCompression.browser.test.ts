@@ -1,32 +1,48 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import heicUrl from "../../test/fixtures/images/photo.heic?url";
-import { prepareImageForAttachment } from "./imageCompression";
+import {
+  compressImageForStash,
+  dataUrlToFile,
+  prepareImageForAttachment,
+  readFileAsDataUrl,
+} from "./imageCompression";
 
-// Pure Display P3 green, outside sRGB: an sRGB round trip clamps it to color(display-p3 0.46 0.98 0.33).
-const P3_GREEN = "color(display-p3 0 1 0)";
-
-async function makeDisplayP3Png(width: number, height: number): Promise<File> {
-  const canvas = new OffscreenCanvas(width, height);
-  const context = canvas.getContext("2d", { colorSpace: "display-p3" });
+async function makeImage(
+  colorSpace: PredefinedColorSpace,
+  fill: string,
+  type: string,
+): Promise<File> {
+  const canvas = new OffscreenCanvas(2400, 1600);
+  const context = canvas.getContext("2d", { colorSpace });
   if (!context) throw new Error("no 2d context");
-  context.fillStyle = P3_GREEN;
-  context.fillRect(0, 0, width, height);
-  const blob = await canvas.convertToBlob({ type: "image/png" });
-  return new File([blob], "p3-shot.png", { type: "image/png" });
+  context.fillStyle = fill;
+  context.fillRect(0, 0, 2400, 1600);
+  const blob = await canvas.convertToBlob({ type, quality: 0.95 });
+  return new File([blob], `shot.${type.slice(6)}`, { type });
 }
 
-async function readDisplayP3Pixel(
-  file: Blob,
-  colorSpace: PredefinedColorSpace = "display-p3",
-): Promise<number[]> {
-  const bitmap = await createImageBitmap(file);
+/** `raw` ignores any embedded profile, as a reader without color management would. */
+async function readPixel(file: Blob, raw = false): Promise<number[]> {
+  const bitmap = await createImageBitmap(file, { colorSpaceConversion: raw ? "none" : "default" });
+  const colorSpace = raw ? "srgb" : "display-p3";
   const canvas = new OffscreenCanvas(1, 1);
   const context = canvas.getContext("2d", { colorSpace });
   if (!context) throw new Error("no 2d context");
   context.drawImage(bitmap, 0, 0, 1, 1);
   bitmap.close();
-  return Array.from(context.getImageData(0, 0, 1, 1, { colorSpace }).data);
+  return Array.from(context.getImageData(0, 0, 1, 1, { colorSpace }).data.slice(0, 3));
+}
+
+async function expectSameColors(actual: Blob, expected: Blob) {
+  expectNear(await readPixel(actual), await readPixel(expected));
+  expectNear(await readPixel(actual, true), await readPixel(expected, true));
+}
+
+function expectNear(actual: number[], expected: number[]) {
+  expected.forEach((channel, index) =>
+    expect(Math.abs(actual[index]! - channel)).toBeLessThanOrEqual(2),
+  );
 }
 
 async function readChromiumDisplayP3Profile(): Promise<Uint8Array> {
@@ -78,17 +94,33 @@ function replaceHeicColorWithProfile(heic: Uint8Array, profile: Uint8Array) {
 }
 
 describe("prepareImageForAttachment color", () => {
-  it("keeps Display P3 colors when it downscales a wide-gamut screenshot", async () => {
-    const source = await makeDisplayP3Png(2400, 1600);
-    expect(await readDisplayP3Pixel(source)).toEqual([0, 255, 0, 255]);
+  // P3 green lies outside sRGB, so an sRGB canvas clips it; a P3 canvas would turn sRGB red's
+  // stored (255,0,0) into P3 values.
+  it.each([
+    ["Display P3 PNG", "display-p3", "color(display-p3 0 1 0)", "image/png"],
+    ["Display P3 JPEG", "display-p3", "color(display-p3 0 1 0)", "image/jpeg"],
+    ["sRGB PNG", "srgb", "#ff0000", "image/png"],
+    ["sRGB JPEG", "srgb", "#ff0000", "image/jpeg"],
+  ] as const)("keeps a downscaled %s in its own color space", async (_, space, fill, type) => {
+    const source = await makeImage(space, fill, type);
 
     const result = await prepareImageForAttachment(source, 20 * 1024 * 1024);
     if (!result.ok) throw new Error(result.reason);
     expect(result.recompressed).toBe(true);
     expect(result.imageSize).toEqual({ width: 2000, height: 1333 });
+    await expectSameColors(result.file, source);
+  });
 
-    const [red, green, blue] = await readDisplayP3Pixel(result.file);
-    expect({ red, green, blue }).toEqual({ red: 0, green: 255, blue: 0 });
+  it("keeps Display P3 colors when the stash re-encodes a WebP", async () => {
+    const source = await makeImage("display-p3", "color(display-p3 0 1 0)", "image/webp");
+    const result = await compressImageForStash(
+      source,
+      (await readFileAsDataUrl(source)).length - 1,
+    );
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.image.recompressed).toBe(true);
+    const stored = dataUrlToFile(result.image.dataUrl, "stash", result.image.mimeType);
+    await expectSameColors(stored, source);
   });
 
   it("keeps Display P3 colors when it converts a P3-tagged HEIC that the browser cannot decode", async () => {
@@ -99,7 +131,7 @@ describe("prepareImageForAttachment color", () => {
     );
     if (!fixtureResult.ok) throw new Error(fixtureResult.reason);
     // The fixture declares unspecified primaries, so it decodes as sRGB.
-    const decoded = await readDisplayP3Pixel(fixtureResult.file, "srgb");
+    const decoded = await readPixel(fixtureResult.file, true);
 
     const nclx = fixture.slice();
     const nclxOffset = nclx.findIndex(
@@ -116,10 +148,7 @@ describe("prepareImageForAttachment color", () => {
         20 * 1024 * 1024,
       );
       if (!result.ok) throw new Error(result.reason);
-      const pixel = await readDisplayP3Pixel(result.file);
-      pixel.forEach((channel, index) =>
-        expect(Math.abs(channel - decoded[index]!)).toBeLessThanOrEqual(2),
-      );
+      expectNear(await readPixel(result.file), decoded);
     }
   });
 });
