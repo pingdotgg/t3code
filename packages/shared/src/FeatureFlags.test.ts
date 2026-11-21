@@ -21,7 +21,9 @@ it.effect("resolves T3CODE_FEATURE_FLAGS lists", () =>
     ];
     for (const [list, expected] of cases) {
       assert.deepStrictEqual(yield* FeatureFlags.resolve(list), {
-        ...FeatureFlags.DEFAULTS,
+        secretProviders: false,
+        tanstackSource: false,
+        githubAppClientId: Option.none(),
         ...expected,
       });
     }
