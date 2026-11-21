@@ -105,12 +105,22 @@ function resolveSpawnExecutableWithNode(
     return candidates.find(isExecutable);
   }
 
-  for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
-    const normalizedPathEntry = normalizePathEntry(pathEntry, platform);
+  const pathValue = readEnvPath(env) ?? "";
+  for (const pathEntry of pathValue.split(pathDelimiterForPlatform(platform))) {
+    // A raw empty component of a nonempty POSIX PATH is the current directory.
+    const emptyComponent = pathEntry === "" && pathValue !== "" && platform !== "win32";
+    const normalizedPathEntry = emptyComponent ? "." : normalizePathEntry(pathEntry, platform);
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
-      if (isExecutable(candidatePath)) return candidatePath;
+      if (!isExecutable(candidatePath)) continue;
+      if (!emptyComponent) return candidatePath;
+      // Anchored, because callers may launch it from another cwd or through a wrapper.
+      try {
+        return path.resolve(candidatePath);
+      } catch {
+        continue;
+      }
     }
   }
   return undefined;
@@ -663,6 +673,40 @@ const isExecutableFile = Effect.fnUntraced(function* (
   return canExecuteFile(filePath);
 });
 
+// Keep case variants: Windows can make PATH directories case-sensitive.
+function pathEntriesForPlatform(pathValue: string, platform: NodeJS.Platform): string[] {
+  const pathEntries: string[] = [];
+  const seenPathEntries = new Set<string>();
+  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
+    // A raw empty component of a nonempty POSIX PATH is the current directory.
+    const pathEntry =
+      entry === "" && pathValue !== "" && platform !== "win32"
+        ? "."
+        : normalizePathEntry(entry, platform);
+    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
+
+    seenPathEntries.add(pathEntry);
+    pathEntries.push(pathEntry);
+  }
+  return pathEntries;
+}
+
+// Relative POSIX PATH entries resolve against the working directory, so caches keyed by them include it.
+// null: a relative entry is present but the working directory cannot be read, so nothing is cached.
+function pathSearchCwd(pathValue: string, platform: NodeJS.Platform): string | null | undefined {
+  if (platform === "win32") return undefined;
+  if (
+    pathEntriesForPlatform(pathValue, platform).every((entry) => NodePath.posix.isAbsolute(entry))
+  ) {
+    return undefined;
+  }
+  try {
+    return process.cwd();
+  } catch {
+    return null;
+  }
+}
+
 // Called within the traced command resolvers.
 const findOnPath = Effect.fnUntraced(function* (
   pathValue: string,
@@ -672,31 +716,39 @@ const findOnPath = Effect.fnUntraced(function* (
   isLast: (match: string) => boolean,
 ): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
-  // Keep case variants: Windows can make PATH directories case-sensitive.
-  const pathEntries: string[] = [];
-  const seenPathEntries = new Set<string>();
-  for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = normalizePathEntry(entry, platform);
-    if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
+  const pathEntries = pathEntriesForPlatform(pathValue, platform);
+  const cwd = pathSearchCwd(pathValue, platform);
 
-    seenPathEntries.add(pathEntry);
-    pathEntries.push(pathEntry);
-  }
+  // A match through an empty component is anchored: callers may launch it from another cwd or
+  // through a wrapper. A literal "." keeps its relative spelling; the first of the two wins, as
+  // in the deduplicated walk.
+  const anchorsCwd =
+    typeof cwd === "string" &&
+    pathValue
+      .split(pathDelimiterForPlatform(platform))
+      .find((entry) => entry === "" || entry === ".") === "";
 
   const listings = yield* PathDirectoryListings;
   const matches: string[] = [];
   for (const pathEntry of pathEntries) {
-    let listing = listings && (yield* Cache.get(listings, pathEntry));
-    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
-      yield* Cache.invalidate(listings, pathEntry);
-      listing = yield* Cache.get(listings, pathEntry);
+    const directory = cwd === undefined || cwd === null ? pathEntry : path.resolve(cwd, pathEntry);
+    // Without a readable cwd a relative entry has no stable directory, so it skips the listing cache.
+    const uncached = cwd === null && !NodePath.posix.isAbsolute(pathEntry);
+    let listing = listings && !uncached ? yield* Cache.get(listings, directory) : undefined;
+    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(directory))) {
+      yield* Cache.invalidate(listings, directory);
+      listing = yield* Cache.get(listings, directory);
     }
     for (const candidate of commandCandidates) {
       if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
       const candidatePath = path.join(pathEntry, candidate);
-      if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        matches.push(candidatePath);
-        if (isLast(candidatePath)) return matches;
+      // Probe where the listing looked, even if the process changes directory meanwhile.
+      const probePath = typeof cwd === "string" ? path.join(directory, candidate) : candidatePath;
+      if (yield* isExecutableFile(probePath, platform, windowsPathExtensions)) {
+        const match =
+          anchorsCwd && pathEntry === "." ? path.join(directory, candidate) : candidatePath;
+        matches.push(match);
+        if (isLast(match)) return matches;
         break;
       }
     }
@@ -733,12 +785,17 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     return null;
   }
 
-  const cacheKey = [platform, pathValue, windowsPathExtensions.join(";"), command].join(
-    COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR,
-  );
+  const cwd = pathSearchCwd(pathValue, platform);
+  const cacheKey = [
+    platform,
+    pathValue,
+    windowsPathExtensions.join(";"),
+    command,
+    ...(cwd === undefined ? [] : [cwd]),
+  ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const cache = yield* CommandResolutionCache;
   const nowNanos = yield* Clock.monotonicTimeNanos;
-  const cached = cache.get(cacheKey);
+  const cached = cwd === null ? undefined : cache.get(cacheKey);
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     return cached.resolvedPath;
   }
@@ -750,7 +807,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     windowsPathExtensions,
     () => true,
   );
-  cacheCommandResolution(cache, cacheKey, resolvedPath, nowNanos);
+  if (cwd !== null) cacheCommandResolution(cache, cacheKey, resolvedPath, nowNanos);
   return resolvedPath;
 });
 
@@ -890,15 +947,18 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 ) {
   const locateXcodeGit = yield* XcodeGitLocation;
   const cache = yield* CommandResolutionCache;
+  const pathValue = resolvePathEnvironmentVariable(env);
+  const cwd = pathSearchCwd(pathValue, "darwin");
   const cacheKey = [
     "xcode-git",
     String(spawnResolverCacheId(resolveExecutable)),
     String(spawnResolverCacheId(locateXcodeGit)),
-    resolvePathEnvironmentVariable(env),
+    pathValue,
     env.DEVELOPER_DIR ?? "",
+    ...(cwd === undefined ? [] : [cwd]),
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const nowNanos = yield* Clock.currentTimeNanos;
-  const cached = cache.get(cacheKey);
+  const cached = cwd === null ? undefined : cache.get(cacheKey);
   // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
   if (
     cached !== undefined &&
@@ -914,7 +974,7 @@ const resolveMacosGit = Effect.fnUntraced(function* (
     located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
       ? located
       : null;
-  cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
+  if (cwd !== null) cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
   return realGit ?? "git";
 });
 
