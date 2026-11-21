@@ -466,7 +466,8 @@ const FILESYSTEM_DESTINATION_START = new RegExp(HAS_FILESYSTEM_DESTINATION.sourc
 // Bounds the scan from each start so a long line stays linear; real paths are far shorter.
 const MAX_FILESYSTEM_DESTINATION_LENGTH = 1024;
 const CODE_FENCE = /^ {0,3}(`{3,}|~{3,})/;
-const INLINE_CODE = /(`+)[^`]*?\1/g;
+const CLOSING_CODE_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+const ASCII_PUNCTUATION = /[!-/:-@[-`{-~]/;
 
 const isBlank = (char: string | undefined) => char === " " || char === "\t";
 
@@ -487,7 +488,8 @@ function parsesAsLink(text: string, start: number, limit: number): boolean {
   let index = start;
   let depth = 0;
   while (index < limit && !isBlank(text[index])) {
-    if (text[index] === "\\") index += 1;
+    // A backslash escapes only punctuation, so `C:\repo\ shots` keeps its space.
+    if (text[index] === "\\" && ASCII_PUNCTUATION.test(text[index + 1] ?? "")) index += 1;
     else if (text[index] === "(") depth += 1;
     else if (text[index] === ")" && depth-- === 0) return true;
     index += 1;
@@ -539,12 +541,52 @@ function rewriteInSegment(segment: string, rewrite: DestinationRewrite): string 
   return result + segment.slice(cursor);
 }
 
+// Code spans in one line as [start, end) pairs. An escaped backtick cannot open one, and a span
+// closes on the next run of the same length, where backslashes are literal.
+function inlineCodeSpans(line: string): Array<readonly [number, number]> {
+  const runsByLength = new Map<number, number[]>();
+  for (const run of line.matchAll(/`+/g)) {
+    const starts = runsByLength.get(run[0].length) ?? [];
+    starts.push(run.index);
+    runsByLength.set(run[0].length, starts);
+  }
+  // Openers only move forward, so each length's closer search resumes where it stopped.
+  const nextRun = new Map<number, number>();
+  const spans: Array<readonly [number, number]> = [];
+  let index = 0;
+  while (index < line.length) {
+    const char = line[index];
+    if (char === "\\") {
+      index += 2;
+      continue;
+    }
+    if (char !== "`") {
+      index += 1;
+      continue;
+    }
+    let length = 1;
+    while (line[index + length] === "`") length += 1;
+    const starts = runsByLength.get(length) ?? [];
+    let next = nextRun.get(length) ?? 0;
+    while (next < starts.length && starts[next]! < index + length) next += 1;
+    nextRun.set(length, next);
+    const close = starts[next];
+    if (close === undefined) {
+      index += length;
+      continue;
+    }
+    spans.push([index, close + length]);
+    index = close + length;
+  }
+  return spans;
+}
+
 function rewriteOutsideInlineCode(line: string, rewrite: DestinationRewrite): string {
   let result = "";
   let cursor = 0;
-  for (const code of line.matchAll(INLINE_CODE)) {
-    result += rewriteInSegment(line.slice(cursor, code.index), rewrite) + code[0];
-    cursor = code.index + code[0].length;
+  for (const [start, end] of inlineCodeSpans(line)) {
+    result += rewriteInSegment(line.slice(cursor, start), rewrite) + line.slice(start, end);
+    cursor = end;
   }
   return result + rewriteInSegment(line.slice(cursor), rewrite);
 }
@@ -563,11 +605,13 @@ export function rewriteSpacedFilesystemDestinations(
   return markdown
     .split("\n")
     .map((line) => {
-      const marker = CODE_FENCE.exec(line)?.[1];
       if (fence !== null) {
-        if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+        // Only blanks may follow a closing fence; "```md" inside a block does not close it.
+        const closing = CLOSING_CODE_FENCE.exec(line)?.[1];
+        if (closing && closing[0] === fence[0] && closing.length >= fence.length) fence = null;
         return line;
       }
+      const marker = CODE_FENCE.exec(line)?.[1];
       if (marker) {
         fence = marker;
         return line;
@@ -578,6 +622,8 @@ export function rewriteSpacedFilesystemDestinations(
 }
 
 export function protectSpacedWindowsDestinations(markdown: string): string {
+  // Restoring could not tell the document's own U+E020 from a placeholder, so leave it alone.
+  if (markdown.includes(DESTINATION_SPACE)) return markdown;
   return rewriteSpacedFilesystemDestinations(markdown, (destination) =>
     destination.replaceAll(" ", DESTINATION_SPACE),
   );
@@ -616,7 +662,7 @@ export function extractMarkdownLinkHrefs(source: string): string[] {
     if (!destination) continue;
     cursor = destination.end;
     const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
-    if (href) hrefs.push(restoreWindowsDestinationSpaces(href));
+    if (href) hrefs.push(markdown === source ? href : restoreWindowsDestinationSpaces(href));
   }
   return hrefs;
 }

@@ -186,6 +186,14 @@ describe("extractMarkdownLinkHrefs", () => {
       ],
     ],
     [`See ${serializeComposerFileLink("pages/posts/[id].tsx")} now`, ["pages/posts/%5Bid%5D.tsx"]],
+    [
+      String.raw`[a](C:\Program Files (x86)\a b\balance.html)`,
+      [String.raw`C:\Program Files (x86)\a b\balance.html`],
+    ],
+    [String.raw`[a](C:\repo\ shots\a.png)`, [String.raw`C:\repo\ shots\a.png`]],
+    [String.raw`\`[a](C:/Jo Doe/a.png)\``, ["C:/Jo Doe/a.png"]],
+    ["```md\n```example\n```\n[a](C:/Jo Doe/a.png)", ["C:/Jo Doe/a.png"]],
+    ["[a](C:/a\uE020b.png)", ["C:/a\uE020b.png"]],
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });
