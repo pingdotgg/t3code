@@ -12,16 +12,16 @@ use std::collections::HashSet;
 use std::fmt;
 
 use conn_state::{ItemStatus, ThreadState, TimelineEntry};
-use conn_theme::{ShellGeometry, Tokens};
+use conn_theme::Tokens;
 use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight, InteractiveElement,
     IntoElement, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
-    Styled, Subscription, Window, div, px,
+    Styled, Subscription, Window, div, px, relative,
 };
 
-use self::cache::{CachedRow, RowCache};
-use self::color::{hsla, hsla_alpha};
+use self::cache::{CachedRow, RowCache, TimelineItem, group_rows};
+use self::color::{hsla, message_highlight, muted_icon, prose_foreground};
 use self::composer::{COMPOSER_MAX_LINES, COMPOSER_MIN_LINES, COMPOSER_PLACEHOLDER};
 use self::spinner::TurningArc;
 
@@ -29,8 +29,15 @@ use self::spinner::TurningArc;
 const CHAT_CONTENT_MAX_WIDTH_PX: f32 = 736.0;
 /// Horizontal lane padding matching `.chat-composer-lane` / `.messages-timeline-scroll` (`3rem`).
 const CHAT_LANE_PADDING_X_PX: f32 = 48.0;
+/// User bubble radius matching Conn's `--radius-bubble: calc(var(--radius) + 6px)` (`8px + 6px`).
+const BUBBLE_RADIUS_PX: f32 = 14.0;
+/// Tight corner radius where consecutive user bubbles meet (`rounded-tr-md` / `rounded-br-md`).
+const BUBBLE_GROUPED_RADIUS_PX: f32 = 6.0;
 /// Distance from the bottom edge (in px) within which auto-follow stays engaged.
 const STICK_TO_BOTTOM_THRESHOLD_PX: f32 = 24.0;
+/// Body text typography matching Conn's `text-sm leading-relaxed` (`14px` / `22.75px`).
+const BODY_FONT_PX: f32 = 14.0;
+const BODY_LINE_HEIGHT_PX: f32 = 22.75;
 /// Standard panel chrome typography (`text-ui`: `13px` / `20px`).
 const UI_FONT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
@@ -291,19 +298,191 @@ impl ChatView {
             .into_any_element()
     }
 
-    fn render_row(&self, row: &CachedRow, cx: &mut Context<'_, Self>) -> AnyElement {
-        match &row.entry {
-            TimelineEntry::User { text, .. } => self.render_user_bubble(text),
-            TimelineEntry::Assistant { id, .. } => {
-                let blocks = row.blocks.as_deref().unwrap_or(&[]);
-                markdown::render_blocks(
-                    id,
-                    blocks,
-                    &self.tokens,
-                    self.copied_code_key.as_deref(),
-                    cx,
-                )
+    fn render_timeline_item(
+        &self,
+        item: &TimelineItem<'_>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        match item {
+            TimelineItem::User {
+                row,
+                grouped_with_previous,
+                grouped_with_next,
+            } => {
+                if let TimelineEntry::User { text, .. } = &row.entry {
+                    self.render_user_bubble(text, *grouped_with_previous, *grouped_with_next)
+                } else {
+                    div().into_any_element()
+                }
             }
+            TimelineItem::Assistant {
+                row,
+                followed_by_work,
+            } => {
+                if let TimelineEntry::Assistant { id, .. } = &row.entry {
+                    let blocks = row.blocks.as_deref().unwrap_or(&[]);
+                    // Conn `AssistantTimelineRow`: `px-1 py-0.5`, row spacing `pb-2` before work or `pb-4`.
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .pb(px(if *followed_by_work { 8.0 } else { 16.0 }))
+                        .child(div().w_full().min_w_0().px(px(4.0)).py(px(2.0)).child(
+                            markdown::render_blocks(
+                                id,
+                                blocks,
+                                &self.tokens,
+                                self.copied_code_key.as_deref(),
+                                cx,
+                            ),
+                        ))
+                        .into_any_element()
+                } else {
+                    div().into_any_element()
+                }
+            }
+            TimelineItem::WorkGroup {
+                id,
+                rows,
+                has_active,
+            } => self.render_work_group(id, rows, *has_active, cx),
+            TimelineItem::Approval(row) => {
+                if let TimelineEntry::Approval { id, title, detail } = &row.entry {
+                    self.render_approval_row(id, title, detail.as_deref())
+                } else {
+                    div().into_any_element()
+                }
+            }
+            TimelineItem::Notice(row) => {
+                if let TimelineEntry::Notice { text, is_error, .. } = &row.entry {
+                    self.render_notice_row(text, *is_error)
+                } else {
+                    div().into_any_element()
+                }
+            }
+        }
+    }
+
+    fn render_user_bubble(
+        &self,
+        text: &str,
+        grouped_with_previous: bool,
+        grouped_with_next: bool,
+    ) -> AnyElement {
+        // Conn `TimelineUserMessageRow`: `max-w-[80%] rounded-bubble border-t border-t-(--message-highlight)!
+        // bg-message text-message-foreground px-4 pt-2.5 pb-3 text-sm leading-relaxed`.
+        let mut bubble = div()
+            .max_w(relative(0.8))
+            .min_w_0()
+            .rounded(px(BUBBLE_RADIUS_PX))
+            .bg(hsla(self.tokens.message_surface))
+            .border_t_1()
+            .border_color(message_highlight(&self.tokens))
+            .px(px(16.0))
+            .pt(px(10.0))
+            .pb(px(12.0))
+            .text_size(px(BODY_FONT_PX))
+            .line_height(px(BODY_LINE_HEIGHT_PX))
+            .text_color(hsla(self.tokens.message_foreground))
+            .child(text.to_owned());
+
+        if grouped_with_previous {
+            bubble = bubble.rounded_tr(px(BUBBLE_GROUPED_RADIUS_PX));
+        }
+        if grouped_with_next {
+            bubble = bubble.rounded_br(px(BUBBLE_GROUPED_RADIUS_PX));
+        }
+
+        div()
+            .flex()
+            .flex_row()
+            .justify_end()
+            .w_full()
+            .pb(px(if grouped_with_next { 4.0 } else { 16.0 }))
+            .child(bubble)
+            .into_any_element()
+    }
+
+    /// Renders a turn's grouped thinking/tool work entries.
+    ///
+    /// Settled groups collapse under Conn's `"Worked"` toggle header with a chevron and
+    /// full-width divider (`TurnFoldTimelineRow`). Active groups render their rows live.
+    fn render_work_group(
+        &self,
+        group_id: &str,
+        rows: &[CachedRow],
+        has_active: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let expanded = has_active || self.expanded_ids.contains(group_id);
+        let toggle_id = group_id.to_owned();
+
+        let mut container = div().flex().flex_col().w_full().min_w_0();
+
+        if !has_active {
+            // Conn `TurnFoldTimelineRow`: `border-b border-(--shell-divider)! pb-2 pt-1`,
+            // button `flex items-center gap-1 rounded-md px-1 text-sm leading-relaxed
+            // text-muted-foreground hover:text-foreground`, `size-3.5` (14px) chevron.
+            // `TimelineEntry` carries no timestamps yet, so we show Conn's durationless `"Worked"` label.
+            let fold_btn = div()
+                .id(SharedString::from(format!("fold-{group_id}")))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .px(px(4.0))
+                .rounded(px(6.0))
+                .cursor_pointer()
+                .text_size(px(BODY_FONT_PX))
+                .line_height(px(BODY_LINE_HEIGHT_PX))
+                .text_color(hsla(self.tokens.muted_foreground))
+                .hover(|s| s.text_color(hsla(self.tokens.foreground)))
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    view.toggle_expanded(&toggle_id, cx);
+                }))
+                .child("Worked")
+                .child(icons::icon(
+                    if expanded {
+                        icons::CARET_DOWN
+                    } else {
+                        icons::CARET_RIGHT
+                    },
+                    14.0,
+                    hsla(self.tokens.muted_foreground),
+                ));
+
+            let header = div()
+                .w_full()
+                .min_w_0()
+                .pt(px(4.0))
+                .pb(px(8.0))
+                .border_b_1()
+                .border_color(hsla(self.tokens.shell_divider))
+                .child(div().flex().flex_row().items_center().child(fold_btn));
+
+            container = container.child(header);
+        }
+
+        if expanded {
+            let mut list = div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .min_w_0()
+                .pt(px(if has_active { 0.0 } else { 4.0 }));
+            for row in rows {
+                list = list.child(self.render_work_entry(row, cx));
+            }
+            container = container.pb(px(8.0)).child(list);
+        } else {
+            // Conn `turn-fold` row spacing: `pb-1.5` (6px).
+            container = container.pb(px(6.0));
+        }
+
+        container.into_any_element()
+    }
+
+    fn render_work_entry(&self, row: &CachedRow, cx: &mut Context<'_, Self>) -> AnyElement {
+        match &row.entry {
             TimelineEntry::Thinking {
                 id,
                 text,
@@ -319,34 +498,8 @@ impl ChatView {
                 let title = self.relative_title(title);
                 self.render_tool_row(id, kind, &title, detail.as_deref(), *status, cx)
             }
-            TimelineEntry::Approval { id, title, detail } => {
-                self.render_approval_card(id, title, detail.as_deref())
-            }
-            TimelineEntry::Notice { text, is_error, .. } => self.render_notice_row(text, *is_error),
+            _ => div().into_any_element(),
         }
-    }
-
-    fn render_user_bubble(&self, text: &str) -> AnyElement {
-        let radius = ShellGeometry::default().bubble_radius_px;
-        div()
-            .flex()
-            .flex_row()
-            .justify_end()
-            .w_full()
-            .child(
-                div()
-                    .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX * 0.8))
-                    .rounded(px(radius))
-                    .bg(hsla(self.tokens.message_surface))
-                    .px(px(16.0))
-                    .pt(px(10.0))
-                    .pb(px(12.0))
-                    .text_size(px(14.0))
-                    .line_height(px(22.0))
-                    .text_color(hsla(self.tokens.message_foreground))
-                    .child(text.to_owned()),
-            )
-            .into_any_element()
     }
 
     fn render_thinking_row(
@@ -358,61 +511,99 @@ impl ChatView {
     ) -> AnyElement {
         let expanded = self.expanded_ids.contains(id);
         let toggle_id = id.to_owned();
-        let has_body = !text.trim().is_empty();
-        let label = if streaming { "Thinking..." } else { "Thought" };
+        let trimmed = text.trim();
+        let has_body = !trimmed.is_empty();
+        let preview_line = trimmed
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .map(str::trim);
+        let label = if expanded || preview_line.is_none() {
+            if streaming { "Thinking" } else { "Thought" }.to_owned()
+        } else {
+            preview_line.unwrap_or("Thought").to_owned()
+        };
 
-        let mut header = div()
+        let leading: AnyElement = if streaming {
+            TurningArc::new(14.0, hsla(self.tokens.muted_foreground)).into_any_element()
+        } else {
+            icons::icon(icons::BRAIN, 16.0, muted_icon(&self.tokens)).into_any_element()
+        };
+
+        // Conn `WorkLogRow`: `min-h-6` (24px), `gap-1.5` (6px), `px-0.5`, `24px` icon box, `text-sm leading-relaxed`.
+        let mut line = div()
             .id(SharedString::from(format!("thinking-{id}")))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.0))
-            .py(px(4.0))
-            .px(px(6.0))
-            .rounded(px(8.0))
+            .gap(px(6.0))
+            .w_full()
+            .min_w_0()
+            .min_h(px(24.0))
+            .px(px(2.0))
+            .rounded(px(6.0))
             .cursor_pointer()
-            .text_size(px(UI_FONT_PX))
-            .line_height(px(UI_LINE_HEIGHT_PX))
-            .text_color(hsla(self.tokens.muted_foreground))
-            .hover(|s| s.bg(hsla(self.tokens.shell_highlight)))
+            .text_size(px(BODY_FONT_PX))
+            .line_height(px(BODY_LINE_HEIGHT_PX))
+            .text_color(if streaming {
+                prose_foreground(&self.tokens)
+            } else {
+                hsla(self.tokens.muted_foreground)
+            })
+            .hover(|s| s.text_color(hsla(self.tokens.foreground)))
             .on_click(cx.listener(move |view, _, _, cx| {
                 view.toggle_expanded(&toggle_id, cx);
             }))
-            .child(icons::icon(
-                icons::BRAIN,
-                14.0,
-                hsla(self.tokens.muted_foreground),
-            ))
-            .child(label);
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .flex_none()
+                    .child(leading),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(label),
+            );
 
-        if streaming {
-            header = header.child(TurningArc::new(13.0, hsla(self.tokens.muted_foreground)));
-        }
         if has_body {
-            header = header.child(icons::icon(
-                if expanded {
-                    icons::CARET_DOWN
-                } else {
-                    icons::CARET_RIGHT
-                },
-                12.0,
-                hsla(self.tokens.muted_foreground),
-            ));
+            line = line.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(16.0))
+                    .flex_none()
+                    .child(icons::icon(
+                        if expanded {
+                            icons::CARET_DOWN
+                        } else {
+                            icons::CARET_RIGHT
+                        },
+                        12.0,
+                        muted_icon(&self.tokens),
+                    )),
+            );
         }
 
-        let mut container = div().flex().flex_col().gap(px(4.0)).w_full().child(header);
+        let mut container = div().flex().flex_col().w_full().min_w_0().child(line);
         if expanded && has_body {
+            // Conn `WorkLogDetails kind="text"`: `ms-7` (28px), `px-0.5 py-1`.
             container = container.child(
                 div()
-                    .ml(px(22.0))
-                    .pl(px(10.0))
+                    .ml(px(28.0))
+                    .px(px(2.0))
                     .py(px(4.0))
-                    .border_l_2()
-                    .border_color(hsla(self.tokens.shell_divider))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(hsla(self.tokens.muted_foreground))
-                    .child(text.to_owned()),
+                    .text_size(px(BODY_FONT_PX))
+                    .line_height(px(BODY_LINE_HEIGHT_PX))
+                    .text_color(prose_foreground(&self.tokens))
+                    .child(trimmed.to_owned()),
             );
         }
         container.into_any_element()
@@ -433,45 +624,45 @@ impl ChatView {
 
         let (icon_color, title_color) = match status {
             ItemStatus::Failed => (hsla(self.tokens.destructive), hsla(self.tokens.destructive)),
-            ItemStatus::Running => (
-                hsla(self.tokens.muted_foreground),
-                hsla(self.tokens.foreground),
-            ),
-            ItemStatus::Completed => (
-                hsla(self.tokens.muted_foreground),
-                hsla(self.tokens.muted_foreground),
-            ),
+            ItemStatus::Running => (muted_icon(&self.tokens), prose_foreground(&self.tokens)),
+            ItemStatus::Completed => (muted_icon(&self.tokens), hsla(self.tokens.muted_foreground)),
         };
 
         let leading: AnyElement = match status {
             ItemStatus::Running => {
                 TurningArc::new(14.0, hsla(self.tokens.muted_foreground)).into_any_element()
             }
-            ItemStatus::Failed => icons::icon(icons::WARNING, 14.0, icon_color).into_any_element(),
+            ItemStatus::Failed => {
+                icons::icon(icons::ERROR_CIRCLE, 16.0, icon_color).into_any_element()
+            }
             ItemStatus::Completed => {
-                icons::icon(icons::tool_icon_path(kind), 14.0, icon_color).into_any_element()
+                icons::icon(icons::tool_icon_path(kind), 16.0, icon_color).into_any_element()
             }
         };
 
-        let mut header = div()
+        // Conn `WorkLogRow`: `min-h-6` (24px), `gap-1.5` (6px), `px-0.5`, `24px` icon box, `text-sm leading-relaxed`.
+        let mut line = div()
             .id(SharedString::from(format!("tool-{id}")))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(6.0))
             .w_full()
             .min_w_0()
-            .py(px(4.0))
-            .px(px(6.0))
-            .rounded(px(8.0))
-            .cursor_pointer()
-            .text_size(px(UI_FONT_PX))
-            .line_height(px(UI_LINE_HEIGHT_PX))
-            .hover(|s| s.bg(hsla(self.tokens.shell_highlight)))
-            .on_click(cx.listener(move |view, _, _, cx| {
-                view.toggle_expanded(&toggle_id, cx);
-            }))
-            .child(leading)
+            .min_h(px(24.0))
+            .px(px(2.0))
+            .rounded(px(6.0))
+            .text_size(px(BODY_FONT_PX))
+            .line_height(px(BODY_LINE_HEIGHT_PX))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(24.0))
+                    .flex_none()
+                    .child(leading),
+            )
             .child(
                 div()
                     .flex_1()
@@ -484,64 +675,71 @@ impl ChatView {
             );
 
         if has_detail {
-            header = header.child(icons::icon(
-                if expanded {
-                    icons::CARET_DOWN
-                } else {
-                    icons::CARET_RIGHT
-                },
-                12.0,
-                hsla(self.tokens.muted_foreground),
-            ));
+            line = line
+                .cursor_pointer()
+                .hover(|s| s.text_color(hsla(self.tokens.foreground)))
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    view.toggle_expanded(&toggle_id, cx);
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(16.0))
+                        .flex_none()
+                        .child(icons::icon(
+                            if expanded {
+                                icons::CARET_DOWN
+                            } else {
+                                icons::CARET_RIGHT
+                            },
+                            12.0,
+                            muted_icon(&self.tokens),
+                        )),
+                );
         }
 
-        let mut container = div()
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .w_full()
-            .min_w_0()
-            .child(header);
+        let mut container = div().flex().flex_col().w_full().min_w_0().child(line);
         if expanded && let Some(detail_text) = detail.filter(|d| !d.trim().is_empty()) {
+            // Conn `WorkLogDetails kind="panel"` + `toolCallExpandedBodyClassName`:
+            // indented under label (`30px`), monospace `11.5px` / `18px`, `muted_foreground`.
             container = container.child(
                 div()
-                    .ml(px(22.0))
-                    .px(px(12.0))
+                    .ml(px(30.0))
+                    .mt(px(2.0))
+                    .mb(px(6.0))
+                    .px(px(10.0))
                     .py(px(8.0))
-                    .rounded(px(10.0))
+                    .rounded(px(8.0))
                     .bg(hsla(self.tokens.code_background))
                     .border_1()
                     .border_color(hsla(self.tokens.shell_divider))
                     .font_family(MONO_FONT_FAMILY)
-                    .text_size(px(12.0))
+                    .text_size(px(11.5))
                     .line_height(px(18.0))
-                    .text_color(hsla(self.tokens.code_foreground))
+                    .text_color(hsla(self.tokens.muted_foreground))
                     .child(detail_text.to_owned()),
             );
         }
         container.into_any_element()
     }
 
-    fn render_approval_card(&self, id: &str, title: &str, detail: Option<&str>) -> AnyElement {
-        let mut body = div()
+    /// Renders Conn's `TimelinePendingApprovalRow`: a `WorkLogRow` with monospace command/title,
+    /// muted detail, warning `"Waiting for approval"` status, and inline Approve / Decline actions.
+    fn render_approval_row(&self, id: &str, title: &str, detail: Option<&str>) -> AnyElement {
+        let mut meta = div()
+            .ml(px(30.0))
             .flex()
             .flex_col()
             .gap(px(4.0))
-            .flex_1()
-            .min_w_0()
-            .child(
-                div()
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(hsla(self.tokens.foreground))
-                    .child(title.to_owned()),
-            );
+            .pb(px(4.0))
+            .text_size(px(12.0))
+            .line_height(px(16.0));
+
         if let Some(detail_text) = detail.filter(|d| !d.trim().is_empty()) {
-            body = body.child(
+            meta = meta.child(
                 div()
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
                     .text_color(hsla(self.tokens.muted_foreground))
                     .child(detail_text.to_owned()),
             );
@@ -550,124 +748,211 @@ impl ChatView {
         let actions = div()
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
-            .gap(px(8.0))
-            .pt(px(8.0))
+            .gap_x(px(8.0))
+            .gap_y(px(4.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .text_color(hsla(self.tokens.warning))
+                    .child(icons::icon(icons::SHIELD, 12.0, hsla(self.tokens.warning)))
+                    .child("Waiting for approval"),
+            )
+            .child(
+                div()
+                    .text_color(hsla(self.tokens.muted_foreground))
+                    .child("·"),
+            )
             .child(
                 div()
                     .id(SharedString::from(format!("approve-{id}")))
-                    .px(px(12.0))
-                    .py(px(5.0))
-                    .rounded(px(8.0))
-                    .bg(hsla(self.tokens.primary))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .cursor_pointer()
                     .font_weight(FontWeight::MEDIUM)
-                    .text_color(hsla(self.tokens.primary_foreground))
+                    .text_color(hsla(self.tokens.foreground))
+                    .hover(|s| s.underline())
                     .child("Approve"),
             )
             .child(
                 div()
                     .id(SharedString::from(format!("deny-{id}")))
-                    .px(px(12.0))
-                    .py(px(5.0))
-                    .rounded(px(8.0))
-                    .bg(hsla(self.tokens.shell_control))
-                    .border_1()
-                    .border_color(hsla(self.tokens.shell_divider_header))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(hsla(self.tokens.foreground))
-                    .child("Deny"),
+                    .cursor_pointer()
+                    .text_color(hsla(self.tokens.muted_foreground))
+                    .hover(|s| s.text_color(hsla(self.tokens.foreground)).underline())
+                    .child("Decline"),
             );
+
+        meta = meta.child(actions);
 
         div()
             .w_full()
-            .rounded(px(12.0))
-            .bg(hsla(self.tokens.shell_raised))
-            .border_1()
-            .border_color(hsla(self.tokens.shell_divider_header))
-            .p(px(12.0))
+            .min_w_0()
+            .pb(px(8.0))
             .child(
                 div()
                     .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap(px(10.0))
-                    .child(div().pt(px(2.0)).child(icons::icon(
-                        icons::SHIELD_WARNING,
-                        16.0,
-                        hsla(self.tokens.warning),
-                    )))
+                    .flex_col()
+                    .w_full()
+                    .min_w_0()
+                    .px(px(2.0))
+                    .py(px(2.0))
                     .child(
                         div()
                             .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w_0()
-                            .child(body)
-                            .child(actions),
-                    ),
+                            .flex_row()
+                            .items_start()
+                            .gap(px(6.0))
+                            .min_h(px(24.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size(px(24.0))
+                                    .flex_none()
+                                    .child(icons::icon(
+                                        icons::SHIELD_WARNING,
+                                        16.0,
+                                        muted_icon(&self.tokens),
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .pt(px(2.0))
+                                    .font_family(MONO_FONT_FAMILY)
+                                    .text_size(px(12.0))
+                                    .line_height(px(20.0))
+                                    .text_color(hsla(self.tokens.foreground))
+                                    .child(title.to_owned()),
+                            ),
+                    )
+                    .child(meta),
             )
             .into_any_element()
     }
 
     fn render_notice_row(&self, text: &str, is_error: bool) -> AnyElement {
-        let (bg, fg, icon_path) = if is_error {
-            (
-                hsla_alpha(self.tokens.destructive, 0.10),
-                hsla(self.tokens.destructive),
-                icons::WARNING,
-            )
-        } else {
-            (
-                hsla_alpha(self.tokens.info, 0.10),
-                hsla(self.tokens.info_foreground),
-                icons::INFO,
-            )
-        };
+        if is_error {
+            // Conn `WorkEntryLogRow` error: `WorkLogRow` with `CircleAlertIcon` + destructive `text-sm font-medium`.
+            return div()
+                .w_full()
+                .min_w_0()
+                .pb(px(8.0))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_start()
+                        .gap(px(6.0))
+                        .min_h(px(24.0))
+                        .px(px(2.0))
+                        .py(px(2.0))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(24.0))
+                                .flex_none()
+                                .child(icons::icon(
+                                    icons::ERROR_CIRCLE,
+                                    16.0,
+                                    hsla(self.tokens.destructive),
+                                )),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(BODY_FONT_PX))
+                                .line_height(px(BODY_LINE_HEIGHT_PX))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(hsla(self.tokens.destructive))
+                                .child(text.to_owned()),
+                        ),
+                )
+                .into_any_element();
+        }
+
+        // Conn `TimelineSystemDivider`: centered pill between 1px `--shell-divider` hairlines.
         div()
             .w_full()
-            .px(px(4.0))
+            .min_w_0()
+            .pb(px(8.0))
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap(px(8.0))
-                    .px(px(12.0))
                     .py(px(8.0))
-                    .rounded(px(10.0))
-                    .bg(bg)
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(fg)
-                    .child(icons::icon(icon_path, 15.0, fg))
-                    .child(div().flex_1().min_w_0().child(text.to_owned())),
+                    .text_size(px(12.0))
+                    .line_height(px(16.0))
+                    .text_color(hsla(self.tokens.muted_foreground))
+                    .child(
+                        div()
+                            .flex_1()
+                            .h(px(1.0))
+                            .bg(hsla(self.tokens.shell_divider)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .px(px(8.0))
+                            .py(px(4.0))
+                            .child(icons::icon(
+                                icons::INFO,
+                                12.0,
+                                hsla(self.tokens.muted_foreground),
+                            ))
+                            .child(text.to_owned()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .h(px(1.0))
+                            .bg(hsla(self.tokens.shell_divider)),
+                    ),
             )
             .into_any_element()
     }
 
+    /// Renders Conn's `WorkingTimelineRow`: `border-b border-(--shell-divider)! pb-2 pt-1`,
+    /// `h-6 px-1 text-sm leading-relaxed text-muted-foreground`.
     fn render_working_row(&self) -> AnyElement {
         div()
             .w_full()
-            .pt(px(4.0))
-            .pb(px(8.0))
-            .border_b_1()
-            .border_color(hsla(self.tokens.shell_divider_header))
+            .min_w_0()
+            .pb(px(6.0))
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .px(px(4.0))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(hsla(self.tokens.muted_foreground))
-                    .child(TurningArc::new(14.0, hsla(self.tokens.muted_foreground)))
-                    .child("Working..."),
+                    .w_full()
+                    .pt(px(4.0))
+                    .pb(px(8.0))
+                    .border_b_1()
+                    .border_color(hsla(self.tokens.shell_divider))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.0))
+                            .h(px(24.0))
+                            .px(px(4.0))
+                            .text_size(px(BODY_FONT_PX))
+                            .line_height(px(BODY_LINE_HEIGHT_PX))
+                            .text_color(hsla(self.tokens.muted_foreground))
+                            .child(TurningArc::new(14.0, hsla(self.tokens.muted_foreground)))
+                            .child("Working..."),
+                    ),
             )
             .into_any_element()
     }
@@ -687,51 +972,55 @@ impl Render for ChatView {
 
         let has_text = !self.textarea.read(cx).value().trim().is_empty();
 
+        // Conn `.chat-content-lane`: centered `max-w-(--chat-content-max-width)` (736px),
+        // `TIMELINE_LIST_HEADER` (`h-4` = 16px) at top, `h-4` (16px) at bottom; each row owns its `pb-*`.
         let mut lane = div()
             .flex()
             .flex_col()
-            .gap(px(14.0))
             .w_full()
             .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
             .mx_auto()
-            .pt(px(20.0))
-            .pb(px(24.0));
+            .pt(px(16.0))
+            .pb(px(16.0));
 
         if self.cache.rows().is_empty() && !self.working {
-            let empty_title = self
-                .thread_title
-                .as_deref()
-                .filter(|t| !t.trim().is_empty())
-                .unwrap_or("New thread");
-            lane = lane.child(
+            // Conn `MessagesTimeline` empty state: centered muted `text-sm` prompt.
+            lane = lane.flex_1().items_center().justify_center().child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(6.0))
                     .py(px(64.0))
-                    .child(
-                        div()
-                            .text_size(px(15.0))
-                            .line_height(px(22.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(hsla(self.tokens.foreground))
-                            .child(empty_title.to_owned()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(UI_FONT_PX))
-                            .line_height(px(UI_LINE_HEIGHT_PX))
-                            .text_color(hsla(self.tokens.muted_foreground))
-                            .child("Send a message below to start the conversation."),
-                    ),
+                    .text_size(px(BODY_FONT_PX))
+                    .line_height(px(BODY_LINE_HEIGHT_PX))
+                    .text_color(hsla(self.tokens.muted_foreground))
+                    .child("Send a message to start the conversation."),
             );
         } else {
-            for row in self.cache.rows() {
-                lane = lane.child(self.render_row(row, cx));
+            let items = group_rows(self.cache.rows());
+            // When the active turn already has a trailing active work group, place Conn's
+            // `"Working..."` divider above those live work rows; otherwise place it at the end.
+            let working_before_idx = if self.working {
+                items
+                    .last()
+                    .filter(|item| {
+                        matches!(
+                            item,
+                            TimelineItem::WorkGroup {
+                                has_active: true,
+                                ..
+                            }
+                        )
+                    })
+                    .map(|_| items.len() - 1)
+            } else {
+                None
+            };
+
+            for (idx, item) in items.iter().enumerate() {
+                if working_before_idx == Some(idx) {
+                    lane = lane.child(self.render_working_row());
+                }
+                lane = lane.child(self.render_timeline_item(item, cx));
             }
-            if self.working {
+            if self.working && working_before_idx.is_none() {
                 lane = lane.child(self.render_working_row());
             }
         }

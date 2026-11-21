@@ -4,7 +4,7 @@
 use std::ops::Range;
 use std::sync::LazyLock;
 
-use conn_theme::{ShellGeometry, Tokens};
+use conn_theme::{Appearance, Tokens};
 use gpui_kit::{
     AnyElement, ClipboardItem, Context, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
     IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled, StyledText,
@@ -15,15 +15,19 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 use syntect::util::LinesWithEndings;
 
 use super::ChatView;
-use super::color::{SyntaxRole, hsla, hsla_alpha};
+use super::color::{SyntaxRole, hsla, hsla_alpha, prose_foreground};
 use super::icons;
 
 /// Body text size matching Conn's `text-sm` (`14px`) with relaxed (`1.625`) leading.
 const BODY_FONT_PX: f32 = 14.0;
 const BODY_LINE_HEIGHT_PX: f32 = 22.75;
-/// Monospace code size inside fenced blocks and inline code chips.
+/// Vertical spacing between Markdown blocks matching `.chat-markdown` (`0.65rem`).
+const BLOCK_GAP_PX: f32 = 10.4;
+/// Rounded corners for fenced code blocks matching Conn's `--radius-bubble` (`calc(0.5rem + 6px)`).
+const CODE_BLOCK_RADIUS_PX: f32 = 14.0;
+/// Monospace code size inside fenced blocks (`leading-1.625`).
 const CODE_FONT_PX: f32 = 12.5;
-const CODE_LINE_HEIGHT_PX: f32 = 20.0;
+const CODE_LINE_HEIGHT_PX: f32 = 20.3;
 const MONO_FONT_FAMILY: &str = "JetBrains Mono";
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
@@ -415,10 +419,22 @@ pub(super) fn render_blocks(
     copied_key: Option<&str>,
     cx: &mut Context<'_, ChatView>,
 ) -> AnyElement {
-    let mut container = div().flex().flex_col().gap(px(10.0)).w_full().min_w_0();
+    let mut container = div()
+        .flex()
+        .flex_col()
+        .gap(px(BLOCK_GAP_PX))
+        .w_full()
+        .min_w_0();
     for (idx, block) in blocks.iter().enumerate() {
         let block_id = format!("{entry_id}-b{idx}");
-        container = container.child(render_block(&block_id, block, tokens, copied_key, cx));
+        container = container.child(render_block(
+            &block_id,
+            block,
+            idx == 0,
+            tokens,
+            copied_key,
+            cx,
+        ));
     }
     container.into_any_element()
 }
@@ -426,6 +442,7 @@ pub(super) fn render_blocks(
 fn render_block(
     block_id: &str,
     block: &MarkdownBlock,
+    is_first: bool,
     tokens: &Tokens,
     copied_key: Option<&str>,
     cx: &mut Context<'_, ChatView>,
@@ -436,7 +453,7 @@ fn render_block(
             .min_w_0()
             .text_size(px(BODY_FONT_PX))
             .line_height(px(BODY_LINE_HEIGHT_PX))
-            .text_color(hsla(tokens.foreground))
+            .text_color(prose_foreground(tokens))
             .child(render_inline_spans(block_id, spans, tokens, BODY_FONT_PX))
             .into_any_element(),
 
@@ -444,20 +461,23 @@ fn render_block(
             let (font_px, line_px, text_color) = match level {
                 1 => (20.0, 26.0, hsla(tokens.foreground)),
                 2 => (18.0, 23.4, hsla(tokens.foreground)),
-                3 => (16.0, 21.0, hsla(tokens.foreground)),
-                6 => (14.0, 19.0, hsla(tokens.muted_foreground)),
-                _ => (14.0, 19.0, hsla(tokens.foreground)),
+                3 => (16.0, 20.8, hsla(tokens.foreground)),
+                6 => (14.0, 18.2, hsla(tokens.muted_foreground)),
+                _ => (14.0, 18.2, hsla(tokens.foreground)),
             };
-            div()
+            let mut el = div()
                 .w_full()
                 .min_w_0()
-                .pt(px(6.0))
                 .text_size(px(font_px))
                 .line_height(px(line_px))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(text_color)
-                .child(render_inline_spans(block_id, spans, tokens, font_px))
-                .into_any_element()
+                .child(render_inline_spans(block_id, spans, tokens, font_px));
+            if !is_first {
+                // `.chat-markdown h1..h6 { margin: 1.25rem 0 0.5rem }` (20px top total with 10.4px gap).
+                el = el.pt(px(9.6));
+            }
+            el.into_any_element()
         }
 
         MarkdownBlock::CodeBlock {
@@ -479,31 +499,28 @@ fn render_block(
             start,
             items,
         } => {
+            // `.chat-markdown li + li { margin-top: 0.25rem }` (4px).
             let mut list_el = div().flex().flex_col().gap(px(4.0)).w_full().min_w_0();
             for (idx, item) in items.iter().enumerate() {
-                let marker = if let Some(checked) = item.checked {
-                    if checked {
-                        "☑".to_owned()
-                    } else {
-                        "☐".to_owned()
-                    }
-                } else if *ordered {
-                    format!("{}.", start.saturating_add(idx as u32))
-                } else {
-                    "•".to_owned()
-                };
                 let mut body = div().flex().flex_col().gap(px(4.0)).flex_1().min_w_0();
                 for (b_idx, inner) in item.blocks.iter().enumerate() {
                     let inner_id = format!("{block_id}-i{idx}-{b_idx}");
-                    body = body.child(render_block(&inner_id, inner, tokens, copied_key, cx));
+                    body = body.child(render_block(
+                        &inner_id,
+                        inner,
+                        b_idx == 0,
+                        tokens,
+                        copied_key,
+                        cx,
+                    ));
                 }
-                list_el = list_el.child(
+
+                let row = if let Some(checked) = item.checked {
                     div()
                         .flex()
                         .flex_row()
                         .items_start()
-                        .gap(px(8.0))
-                        .pl(px(4.0))
+                        .gap(px(6.0))
                         .w_full()
                         .min_w_0()
                         .child(
@@ -513,40 +530,90 @@ fn render_block(
                                 .text_size(px(BODY_FONT_PX))
                                 .line_height(px(BODY_LINE_HEIGHT_PX))
                                 .text_color(hsla(tokens.muted_foreground))
-                                .child(marker),
+                                .child(if checked { "☑" } else { "☐" }),
                         )
-                        .child(body),
-                );
+                        .child(body)
+                } else if *ordered {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_start()
+                        .gap(px(6.0))
+                        .w_full()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .flex_none()
+                                .min_w(px(18.0))
+                                .text_size(px(BODY_FONT_PX))
+                                .line_height(px(BODY_LINE_HEIGHT_PX))
+                                .text_color(hsla(tokens.muted_foreground))
+                                .child(format!("{}.", start.saturating_add(idx as u32))),
+                        )
+                        .child(body)
+                } else {
+                    // Conn `.chat-markdown > ul > li`: 5px circle sitting 1px from the paragraph
+                    // edge, vertically centered on the first line, item text hanging at 16px.
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_start()
+                        .w_full()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .flex_none()
+                                .w(px(16.0))
+                                .pl(px(1.0))
+                                .pt(px((BODY_LINE_HEIGHT_PX - 5.0) * 0.5))
+                                .child(
+                                    div()
+                                        .size(px(5.0))
+                                        .rounded_full()
+                                        .bg(hsla_alpha(tokens.foreground, 0.85)),
+                                ),
+                        )
+                        .child(body)
+                };
+                list_el = list_el.child(row);
             }
             list_el.into_any_element()
         }
 
         MarkdownBlock::Blockquote(inner) => {
+            // `.chat-markdown blockquote`: 2px left border at 35% currentColor, 0.8rem (12.8px) inset.
             let mut inner_col = div()
                 .flex()
                 .flex_col()
                 .gap(px(6.0))
                 .w_full()
                 .min_w_0()
-                .pl(px(12.0))
+                .pl(px(12.8))
                 .border_l_2()
-                .border_color(hsla(tokens.shell_divider_header))
-                .text_color(hsla(tokens.muted_foreground));
+                .border_color(hsla_alpha(tokens.foreground, 0.35))
+                .text_color(prose_foreground(tokens));
             for (idx, b) in inner.iter().enumerate() {
                 let inner_id = format!("{block_id}-q{idx}");
-                inner_col = inner_col.child(render_block(&inner_id, b, tokens, copied_key, cx));
+                inner_col =
+                    inner_col.child(render_block(&inner_id, b, idx == 0, tokens, copied_key, cx));
             }
             inner_col.into_any_element()
         }
 
         MarkdownBlock::Table { headers, rows } => render_table(block_id, headers, rows, tokens),
 
-        MarkdownBlock::ThematicBreak => div()
-            .w_full()
-            .h(px(1.0))
-            .my(px(4.0))
-            .bg(hsla(tokens.shell_divider))
-            .into_any_element(),
+        MarkdownBlock::ThematicBreak => {
+            let hr_color = match tokens.appearance {
+                Appearance::Dark => hsla(tokens.muted_foreground),
+                Appearance::Light => hsla(tokens.shell_divider),
+            };
+            div()
+                .w_full()
+                .h(px(1.0))
+                .my(px(4.0))
+                .bg(hr_color)
+                .into_any_element()
+        }
     }
 }
 
@@ -559,8 +626,10 @@ fn render_code_block(
     copied_key: Option<&str>,
     cx: &mut Context<'_, ChatView>,
 ) -> AnyElement {
-    let radius = ShellGeometry::default().bubble_radius_px;
-    let lang_label = language.unwrap_or("text").to_owned();
+    let lang_label = match language {
+        None | Some("text") => "Text".to_owned(),
+        Some(other) => other.to_owned(),
+    };
     let is_copied = copied_key == Some(block_id);
     let copy_code = code.to_owned();
     let copy_key = block_id.to_owned();
@@ -581,60 +650,61 @@ fn render_code_block(
 
     let styled_code = StyledText::new(SharedString::from(code.to_owned())).with_highlights(runs);
 
+    // Conn `MarkdownCodeBlock`: icon-only `size="icon-xs"` (24px) button with 12px (`size-3`) glyph.
     let copy_btn = div()
         .id(SharedString::from(format!("copy-{block_id}")))
         .flex()
         .items_center()
-        .gap(px(4.0))
-        .px(px(8.0))
-        .py(px(4.0))
+        .justify_center()
+        .size(px(24.0))
         .rounded(px(6.0))
         .cursor_pointer()
-        .text_size(px(12.0))
-        .text_color(hsla(tokens.muted_foreground))
-        .hover(|s| {
-            s.bg(hsla(tokens.shell_highlight))
-                .text_color(hsla(tokens.foreground))
-        })
+        .hover(|s| s.bg(hsla(tokens.shell_highlight)))
         .on_click(cx.listener(move |view, _, _, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(copy_code.clone()));
             view.mark_code_copied(copy_key.clone(), cx);
         }))
         .child(icons::icon(
             if is_copied { icons::CHECK } else { icons::COPY },
-            13.0,
+            12.0,
             if is_copied {
                 hsla(tokens.success)
             } else {
-                hsla(tokens.muted_foreground)
+                hsla_alpha(tokens.code_foreground, 0.72)
             },
-        ))
-        .child(if is_copied { "Copied" } else { "Copy" });
+        ));
 
+    // Conn `MarkdownCodeBlockFrame`: `rounded-bubble` (14px), no header divider,
+    // `pt-1.5 pr-1.5 pb-0 pl-3` header, `0.8rem 0.9rem` code body padding.
+    let border_color = match tokens.appearance {
+        Appearance::Dark => hsla(tokens.border),
+        Appearance::Light => hsla_alpha(tokens.border, 0.70),
+    };
     div()
         .w_full()
         .min_w_0()
         .overflow_hidden()
-        .rounded(px(radius))
+        .rounded(px(CODE_BLOCK_RADIUS_PX))
         .bg(hsla(tokens.code_background))
         .border_1()
-        .border_color(hsla(tokens.shell_divider))
+        .border_color(border_color)
         .child(
             div()
                 .flex()
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .pl(px(12.0))
+                .gap(px(8.0))
+                .pt(px(6.0))
                 .pr(px(6.0))
-                .py(px(5.0))
-                .border_b_1()
-                .border_color(hsla(tokens.shell_divider))
+                .pb(px(0.0))
+                .pl(px(12.0))
                 .child(
                     div()
                         .font_family(MONO_FONT_FAMILY)
-                        .text_size(px(12.0))
-                        .text_color(hsla(tokens.muted_foreground))
+                        .text_size(px(11.0))
+                        .line_height(px(16.0))
+                        .text_color(hsla_alpha(tokens.code_foreground, 0.72))
                         .child(lang_label),
                 )
                 .child(copy_btn),
@@ -643,8 +713,8 @@ fn render_code_block(
             div()
                 .w_full()
                 .min_w_0()
-                .px(px(12.0))
-                .py(px(10.0))
+                .px(px(14.4))
+                .py(px(12.8))
                 .font_family(MONO_FONT_FAMILY)
                 .text_size(px(CODE_FONT_PX))
                 .line_height(px(CODE_LINE_HEIGHT_PX))
@@ -654,46 +724,44 @@ fn render_code_block(
         .into_any_element()
 }
 
+/// Renders Conn's diagnostics-style table: row bottom borders only, no outer card border,
+/// outer columns flush with surrounding prose.
 fn render_table(
     block_id: &str,
     headers: &[Vec<InlineSpan>],
     rows: &[Vec<Vec<InlineSpan>>],
     tokens: &Tokens,
 ) -> AnyElement {
-    let mut table = div()
-        .w_full()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .rounded(px(10.0))
-        .border_1()
-        .border_color(hsla(tokens.shell_divider))
-        .overflow_hidden();
+    let row_border = hsla_alpha(tokens.border, 0.60);
+    let mut table = div().w_full().min_w_0().flex().flex_col();
 
     if !headers.is_empty() {
+        let col_count = headers.len();
         let mut header_row = div()
             .flex()
             .flex_row()
             .w_full()
-            .bg(hsla_alpha(tokens.shell_highlight, 0.5))
             .border_b_1()
-            .border_color(hsla(tokens.shell_divider));
+            .border_color(row_border);
         for (c_idx, cell) in headers.iter().enumerate() {
+            let pl = if c_idx == 0 { 0.0 } else { 12.0 };
+            let pr = if c_idx + 1 == col_count { 0.0 } else { 12.0 };
             header_row = header_row.child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .px(px(10.0))
-                    .py(px(6.0))
-                    .text_size(px(13.0))
+                    .pl(px(pl))
+                    .pr(px(pr))
+                    .py(px(8.8))
+                    .text_size(px(BODY_FONT_PX))
                     .line_height(px(20.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(hsla(tokens.foreground))
+                    .text_color(prose_foreground(tokens))
                     .child(render_inline_spans(
                         &format!("{block_id}-th{c_idx}"),
                         cell,
                         tokens,
-                        13.0,
+                        BODY_FONT_PX,
                     )),
             );
         }
@@ -701,25 +769,31 @@ fn render_table(
     }
 
     for (r_idx, row) in rows.iter().enumerate() {
-        let mut row_el = div().flex().flex_row().w_full();
-        if r_idx + 1 < rows.len() {
-            row_el = row_el.border_b_1().border_color(hsla(tokens.shell_divider));
-        }
+        let col_count = row.len();
+        let mut row_el = div()
+            .flex()
+            .flex_row()
+            .w_full()
+            .border_b_1()
+            .border_color(row_border);
         for (c_idx, cell) in row.iter().enumerate() {
+            let pl = if c_idx == 0 { 0.0 } else { 12.0 };
+            let pr = if c_idx + 1 == col_count { 0.0 } else { 12.0 };
             row_el = row_el.child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .px(px(10.0))
-                    .py(px(6.0))
-                    .text_size(px(13.0))
+                    .pl(px(pl))
+                    .pr(px(pr))
+                    .py(px(7.2))
+                    .text_size(px(BODY_FONT_PX))
                     .line_height(px(20.0))
-                    .text_color(hsla(tokens.foreground))
+                    .text_color(prose_foreground(tokens))
                     .child(render_inline_spans(
                         &format!("{block_id}-td{r_idx}-{c_idx}"),
                         cell,
                         tokens,
-                        13.0,
+                        BODY_FONT_PX,
                     )),
             );
         }
@@ -758,10 +832,11 @@ fn render_inline_spans(
                 plain_buf.clear();
             }
             let target_url = url.clone();
+            // Conn `.chat-markdown a`: `color: var(--info-foreground)`, no default underline.
             let link_el = div()
                 .id(SharedString::from(format!("link-{span_id}-{idx}")))
                 .cursor_pointer()
-                .text_color(hsla(tokens.primary))
+                .text_color(hsla(tokens.info_foreground))
                 .hover(|s| s.underline())
                 .on_click(move |_, _, cx| {
                     cx.open_url(&target_url);
@@ -798,7 +873,7 @@ fn build_styled_text(spans: &[InlineSpan], tokens: &Tokens) -> StyledText {
         let mut style = HighlightStyle::default();
         let mut styled = false;
         if span.style.bold {
-            style.font_weight = Some(FontWeight::SEMIBOLD);
+            style.font_weight = Some(FontWeight::BOLD);
             styled = true;
         }
         if span.style.italic {
@@ -819,10 +894,10 @@ fn build_styled_text(spans: &[InlineSpan], tokens: &Tokens) -> StyledText {
             styled = true;
         }
         if span.link.is_some() {
-            style.color = Some(hsla(tokens.primary));
+            style.color = Some(hsla(tokens.info_foreground));
             style.underline = Some(UnderlineStyle {
                 thickness: px(1.0),
-                color: Some(hsla(tokens.primary)),
+                color: Some(hsla(tokens.info_foreground)),
                 wavy: false,
             });
             styled = true;

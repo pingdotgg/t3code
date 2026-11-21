@@ -1,7 +1,7 @@
 //! Color conversions from `conn_theme::Rgba` to GPUI `Hsla` and theme-derived
 //! syntax highlight colors. No hex literals belong in chat views.
 
-use conn_theme::{Rgba, Tokens};
+use conn_theme::{Rgba, Tokens, color_mix_oklab};
 use gpui_kit::{Hsla, Rgba as GpuiRgba};
 
 /// Converts a `conn_theme::Rgba` into a GPUI `Hsla`.
@@ -18,6 +18,26 @@ pub(super) fn hsla(color: Rgba) -> Hsla {
 /// Converts a `conn_theme::Rgba` into a GPUI `Hsla` with an overridden alpha.
 pub(super) fn hsla_alpha(color: Rgba, alpha: f32) -> Hsla {
     hsla(color.with_alpha(alpha))
+}
+
+/// Top-edge highlight of the user's chat bubble matching Conn's `--message-highlight`:
+/// `color-mix(in oklab, var(--message-surface) 90%, var(--foreground))`.
+pub(super) fn message_highlight(tokens: &Tokens) -> Hsla {
+    hsla(color_mix_oklab(
+        tokens.message_surface,
+        0.90,
+        tokens.foreground,
+    ))
+}
+
+/// Assistant prose foreground matching Conn's `text-foreground/90`.
+pub(super) fn prose_foreground(tokens: &Tokens) -> Hsla {
+    hsla_alpha(tokens.foreground, 0.90)
+}
+
+/// Muted work-log icon color matching Conn's `text-icon-muted opacity-70`.
+pub(super) fn muted_icon(tokens: &Tokens) -> Hsla {
+    hsla_alpha(tokens.muted_foreground, 0.70)
 }
 
 /// Semantic syntax-highlighting role mapped onto active theme tokens at paint time.
