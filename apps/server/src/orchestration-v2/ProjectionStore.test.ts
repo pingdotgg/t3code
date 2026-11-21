@@ -1299,6 +1299,10 @@ it.effect("a compacted thread reads every run, but records and prompts only for 
     const window = {
       sinceLastCompaction: { keepRunIds: [runId(3)], keepMessageId: messageId(6) },
     };
+    const withoutMessage = yield* readWithTasks({
+      sinceLastCompaction: { keepRunIds: [runId(3)] },
+    });
+    assert.deepEqual(withoutMessage.messages, ["11", "12", "13", "14", "15", "2", "3", "4"]);
     const windowed = yield* readWithTasks(window);
     const unsettled = yield* readWithTasks({ omitSettledSubagentRecords: true });
     const both = yield* readWithTasks({ ...window, omitSettledSubagentRecords: true });

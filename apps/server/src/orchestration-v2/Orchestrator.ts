@@ -2467,7 +2467,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
-      let projection = yield* readCommandProjection(threadId);
+      const recentRuns: ProjectionRecordFilter["sinceLastCompaction"] = {
+        keepRunIds: [options?.failedRunId, options?.endedRunId, options?.queuedRunId].flatMap(
+          (runId) => (runId === undefined ? [] : [runId]),
+        ),
+      };
+      let projection = yield* readCommandProjection(threadId, recentRuns);
       if (
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
@@ -2477,7 +2482,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
 
       if (yield* cancelStaleQuestionWakes(projection)) {
-        projection = yield* readCommandProjection(threadId);
+        projection = yield* readCommandProjection(threadId, recentRuns);
       }
       let storedQueuedRun =
         options?.queuedRunId === undefined
@@ -2492,7 +2497,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* writeSystemEvents(
           queuedRunCancellationEvents(projection, storedQueuedRun, yield* DateTime.now),
         );
-        projection = yield* readCommandProjection(threadId);
+        projection = yield* readCommandProjection(threadId, recentRuns);
         storedQueuedRun = nextQueuedRun(projection);
       }
       // A wake that outlived some of its pull requests tells only the current ones.
@@ -2514,7 +2519,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         ]);
         const runId = storedQueuedRun.id;
-        projection = yield* readCommandProjection(threadId);
+        projection = yield* readCommandProjection(threadId, recentRuns);
         storedQueuedRun = projection.runs.find((run) => run.id === runId);
       }
       if (storedQueuedRun === undefined) {
@@ -2736,6 +2741,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         followsCurrent &&
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
+      // Another provider is handed what ran since it last saw the thread, which can be older than
+      // the compaction, so a provider switch reads the whole history.
+      if (
+        switchFromActiveProvider ||
+        (activeProviderThread !== undefined &&
+          activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId)
+      ) {
+        projection = yield* readCommandProjection(threadId);
+      }
       const switchPlan =
         selectionChanged || switchFromActiveProvider
           ? yield* providerSwitchService
