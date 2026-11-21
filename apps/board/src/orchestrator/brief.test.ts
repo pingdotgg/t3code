@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { SYSTEM_TEMPLATE } from "../domain/reviewTemplate";
 import { orchestratorStats, renderFacts, renderRules } from "./brief";
 import { resolveRoles, ROLES } from "./roles";
 
@@ -8,6 +9,8 @@ const FACTS = {
   builderCap: 2,
   project: "slugkit",
   projectDir: "/p",
+  reviewTemplate: SYSTEM_TEMPLATE,
+  usage: [],
 };
 
 describe("the orchestrator's standing rules and board facts", () => {
@@ -49,10 +52,10 @@ describe("the orchestrator's standing rules and board facts", () => {
     const roles = resolveRoles(ROLES, {
       instanceId: "claudeAgent",
       driver: "claudeAgent",
-      offered: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+      offered: ["claude-opus-5-5", "claude-sonnet-5-5"],
     });
     expect(renderRules(roles)).toContain(
-      "- claude-fable-5-1 is not offered by claudeAgent, so it uses the orchestrator's model.",
+      "- claude-haiku-5-5 is not offered by claudeAgent, so it uses the orchestrator's model.",
     );
   });
 
@@ -64,6 +67,25 @@ describe("the orchestrator's standing rules and board facts", () => {
     expect(rules).toContain("<its worktree>/.omp/artifacts/<ticket key>/");
     expect(rules).toContain("<board folder>/artifacts/<ticket key>/");
     expect(rules).toContain("`met`, `evidence`, and `note` are all required");
+  });
+});
+
+describe("the review template and usage rules", () => {
+  it("Given a board, when the facts render, then they name the template and one line per usage window", () => {
+    const facts = renderFacts({
+      ...FACTS,
+      usage: [{ id: "weekly", percent: 82, line: "Claude weekly 82%, resets in 5d" }],
+    });
+    expect(facts).toContain("- The review template is `Review loop`.");
+    expect(facts).toContain("  - Claude weekly 82%, resets in 5d");
+  });
+
+  it("Given the rules, when they render, then they run the template, escalate one tier, and bound usage", () => {
+    const rules = renderRules();
+    expect(rules).toContain("## Reviewing a ticket");
+    expect(rules).toContain("If findings remain after two fix rounds, start no third round.");
+    expect(rules).toContain("Never retry on the same tier.");
+    expect(rules).toContain("Above 95 percent, finish the work in flight");
   });
 });
 

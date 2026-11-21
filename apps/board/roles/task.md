@@ -17,5 +17,7 @@ MUST hyperfocus assigned task; NEVER deviate.
 - SHOULD prefer editing existing files over creating new files.
 - NEVER create documentation files (`*.md`) unless explicitly requested.
 - MUST follow assignment and instructions.
+- When the task names author checks, run each skill on your diff in order, apply what it finds, and only then report the branch as code-ready with its head SHA.
+- A review finding sent back to you gets the smallest change that removes its case, and a reply with `git diff --shortstat <previous head> HEAD`.
 - `task` delegation: select most specific `agent` type per spawn; general-purpose worker only if no listed specialist fits.
 </directives>

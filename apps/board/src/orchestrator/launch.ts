@@ -3,7 +3,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { BOARDS_DIR, type Board } from "../domain/board";
+import type { ReviewTemplate } from "../domain/reviewTemplate";
 import { type ProjectFiles, writeBoard } from "../store/boardFiles";
+import type { UsageReading } from "../usage/usageNotice";
 import { renderFacts } from "./brief";
 import { type OrchestratorModel, ROLES, roleFiles } from "./roles";
 
@@ -94,10 +96,13 @@ export async function launchOrchestrator(
     readonly board: Board;
     /** The project's title. */
     readonly project: string;
+    /** The board's review template, which `board.reviewTemplate` names. */
+    readonly reviewTemplate: ReviewTemplate;
+    readonly usage: ReadonlyArray<UsageReading>;
   },
   selection: OrchestratorSelection,
 ): Promise<Board> {
-  const { cwd, folder, board, project } = target;
+  const { cwd, folder, board, project, reviewTemplate, usage } = target;
   const boardPath = `${BOARDS_DIR}/${folder}`;
   for (const role of ROLES) {
     const text = roleFiles.get(role.file);
@@ -113,6 +118,8 @@ export async function launchOrchestrator(
       builderCap: board.builderCap,
       project,
       projectDir: cwd,
+      reviewTemplate,
+      usage,
     }),
     instanceId,
     model: selection.model,

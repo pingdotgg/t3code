@@ -44,6 +44,26 @@ describe("local state", () => {
     });
   });
 
+  it("Given a saved file with one custom template, when read, then the template decodes to its literal value", async () => {
+    const saved = JSON.stringify({
+      lastOpenedBoard: null,
+      reviewTemplates: [
+        {
+          name: "Security only",
+          authorChecks: ["simplify"],
+          lanes: [{ skill: "security-audit", runsWhen: "on every ticket" }],
+        },
+      ],
+    });
+    expect((await createLocalState(fakeStorage(saved).storage).read()).reviewTemplates).toEqual([
+      {
+        name: "Security only",
+        authorChecks: ["simplify"],
+        lanes: [{ skill: "security-audit", runsWhen: "on every ticket" }],
+      },
+    ]);
+  });
+
   it("Given two updates at once, when both finish, then both changes are kept", async () => {
     const local = createLocalState(fakeStorage().storage);
     await Promise.all([

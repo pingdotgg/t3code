@@ -6,29 +6,37 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveRoles, ROLES } from "./roles";
 
 const rolesDir = NodePath.resolve(import.meta.dirname, "../../roles");
-const byName = (name: string) => {
-  const role = ROLES.find((entry) => entry.name === name);
-  if (role === undefined) throw new Error(`no role ${name}`);
-  return role;
-};
 
 describe("the role registry", () => {
-  it.each([
-    ["task", "implementation", "worktree", "claude-sonnet-5-5", "high"],
-    ["scout", "research", "shared", "claude-sonnet-5-5", "medium"],
-    ["reviewer", "review", "shared", "claude-fable-5-1", "xhigh"],
-    ["security-reviewer", "review", "shared", "claude-opus-5-5", "high"],
-    ["sonic", "implementation", "worktree", "claude-haiku-5-5", "low"],
-  ])(
-    "Given the role %s, when it is looked up, then it is %s in %s isolation on %s at %s",
-    (name, t3Role, isolation, slug, effort) => {
-      expect(byName(name)).toMatchObject({ t3Role, isolation, model: { slug, effort } });
-    },
-  );
-
-  it("Given the registry, when it is counted, then it has 18 roles with unique names", () => {
-    expect(ROLES).toHaveLength(18);
-    expect(new Set(ROLES.map((role) => role.name)).size).toBe(18);
+  it("Given the registry, when it is read, then it is these 16 roles on these models", () => {
+    const SONNET = ["claude-sonnet-5-5", "medium"];
+    const OPUS = ["claude-opus-5-5", "medium"];
+    expect(
+      ROLES.map((role) => [
+        role.name,
+        role.t3Role,
+        role.isolation,
+        role.model.slug,
+        role.model.effort,
+      ]),
+    ).toEqual([
+      ["task", "implementation", "worktree", ...SONNET],
+      ["scout", "research", "shared", ...SONNET],
+      ["reviewer", "review", "shared", ...SONNET],
+      ["security-reviewer", "review", "shared", "claude-opus-5-5", "high"],
+      ["sonic", "implementation", "worktree", "claude-haiku-5-5", "low"],
+      ["comment-sicko", "review", "shared", ...OPUS],
+      ["poteto-agent", "general", "worktree", ...OPUS],
+      ["egm-bootstrap-orchestrator", "general", "worktree", ...OPUS],
+      ["egm-codebase-details", "review", "shared", ...OPUS],
+      ["egm-comprehension", "review", "shared", ...OPUS],
+      ["egm-design", "design", "shared", ...OPUS],
+      ["egm-implementation-readiness", "review", "shared", ...OPUS],
+      ["egm-structural", "review", "shared", ...OPUS],
+      ["egm-style", "review", "shared", ...OPUS],
+      ["egm-synthesizer", "general", "shared", ...OPUS],
+      ["egm-zoom-out", "design", "shared", ...OPUS],
+    ]);
   });
 
   it("Given every registry file, when roles/ is read, then each exists and names its own role", () => {
@@ -55,24 +63,24 @@ describe("the role registry", () => {
       driver: "claudeAgent",
       offered: ROLES.map((role) => role.model.slug),
     });
-    expect(resolved.find((role) => role.name === "reviewer")).toMatchObject({
-      target: { providerInstanceId: "claudeAgent", model: "claude-fable-5-1", effort: "xhigh" },
+    expect(resolved.find((role) => role.name === "security-reviewer")).toMatchObject({
+      target: { providerInstanceId: "claudeAgent", model: "claude-opus-5-5", effort: "high" },
       fallback: null,
     });
   });
 
-  it("Given an instance without claude-fable-5-1, when the roles resolve, then only the reviewer falls back and says why", () => {
+  it("Given an instance without claude-haiku-5-5, when the roles resolve, then only sonic falls back and says why", () => {
     const resolved = resolveRoles(ROLES, {
       instanceId: "claudeAgent",
       driver: "claudeAgent",
-      offered: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+      offered: ["claude-opus-5-5", "claude-sonnet-5-5"],
     });
     const fallen = resolved.filter((role) => role.fallback !== null);
-    expect(fallen.map((role) => role.name)).toEqual(["reviewer"]);
+    expect(fallen.map((role) => role.name)).toEqual(["sonic"]);
     expect(fallen[0]).toMatchObject({
       target: { providerInstanceId: "claudeAgent" },
       fallback:
-        "claude-fable-5-1 is not offered by claudeAgent, so it uses the orchestrator's model",
+        "claude-haiku-5-5 is not offered by claudeAgent, so it uses the orchestrator's model",
     });
   });
 

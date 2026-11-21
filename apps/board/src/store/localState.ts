@@ -2,6 +2,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { ReviewTemplate } from "../domain/reviewTemplate";
+
 const LocalState = Schema.Struct({
   lastOpenedBoard: Schema.NullOr(
     Schema.Struct({ projectId: Schema.String, folder: Schema.String }),
@@ -28,6 +30,10 @@ const LocalState = Schema.Struct({
     Schema.String,
     Schema.Struct({ version: Schema.String, at: Schema.String }),
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  /** The templates the user built on the Reviews page. The system template is not stored. */
+  reviewTemplates: Schema.Array(ReviewTemplate).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type LocalState = typeof LocalState.Type;
 
@@ -38,6 +44,7 @@ export const EMPTY_LOCAL_STATE: LocalState = {
   announcedUpdates: {},
   automaticUpdates: {},
   lastEditor: null,
+  reviewTemplates: [],
 };
 
 const decode = Schema.decodeUnknownOption(Schema.fromJsonString(LocalState));
