@@ -73,9 +73,6 @@ export default function VirtualTablePreview(props: {
   const offset = (column: number) => offsets[column]!;
   const tableWidth = props.source ? "100%" : Math.max(width, offset(props.columns) + rowHeader);
   const hasHorizontalOverflow = !props.source && offset(props.columns) + rowHeader > width;
-  const sizesKey = hasHorizontalOverflow
-    ? `${props.columns}:${columnWidth}:${measured ? measured.join(",") : ""}`
-    : "";
   return (
     <div
       ref={ref}
@@ -165,7 +162,6 @@ export default function VirtualTablePreview(props: {
             {...props}
             columnsVisible={columns}
             sizes={sizes}
-            sizesKey={sizesKey}
             hasHorizontalOverflow={hasHorizontalOverflow}
             rowHeader={rowHeader}
             firstColumn={firstColumn}
@@ -266,7 +262,6 @@ function RowPage(
 
 function ScaledRows(
   props: Omit<Parameters<typeof RowPage>[0], "page" | "rowHeights"> & {
-    sizesKey: string;
     hasHorizontalOverflow: boolean;
   },
 ) {
@@ -370,6 +365,7 @@ function ScaledRows(
   }, []);
   const page = Math.floor(first / PREVIEW_PAGE_ROWS);
   const visibleEnd = (first % PREVIEW_PAGE_ROWS) + Math.ceil(position.height / 29) + 1;
+  const sizesKey = props.sizes.join(",");
   const pageCount = Math.min(
     Math.ceil(visibleEnd / PREVIEW_PAGE_ROWS),
     Math.ceil(props.count / PREVIEW_PAGE_ROWS) - page,
@@ -378,8 +374,8 @@ function ScaledRows(
   useLayoutEffect(() => {
     const probe = rowProbeRef.current;
     if (!props.hasHorizontalOverflow || !probe) return;
-    if (rowHeightCacheRef.current.key !== props.sizesKey) {
-      rowHeightCacheRef.current = { key: props.sizesKey, heights: new WeakMap() };
+    if (rowHeightCacheRef.current.key !== sizesKey) {
+      rowHeightCacheRef.current = { key: sizesKey, heights: new WeakMap() };
     }
     const cache = rowHeightCacheRef.current.heights;
     const mounted: (readonly string[])[] = [];
@@ -414,15 +410,13 @@ function ScaledRows(
       if (height && height > BASE_ROW_HEIGHT) next.set(row, height);
     }
     setRowHeights((old) =>
-      old.key === props.sizesKey && sameRowHeightMap(old.heights, next)
+      old.key === sizesKey && sameRowHeightMap(old.heights, next)
         ? old
-        : { key: props.sizesKey, heights: next },
+        : { key: sizesKey, heights: next },
     );
   });
   const activeRowHeights =
-    props.hasHorizontalOverflow && rowHeights.key === props.sizesKey
-      ? rowHeights.heights
-      : undefined;
+    props.hasHorizontalOverflow && rowHeights.key === sizesKey ? rowHeights.heights : undefined;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure mounted row offsets and observe content resizes to position the virtual rows against the scroll track.
   useLayoutEffect(() => {
     if (atStart) return;
