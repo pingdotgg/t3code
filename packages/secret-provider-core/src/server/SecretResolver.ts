@@ -130,7 +130,7 @@ export const make = Effect.fn("SecretResolver.make")(function* (options: {
           const values = yield* plan.driver.read(plan.config, [...byReference.keys()]);
           [...byReference.values()].forEach((sameReference, index) => {
             const value = values[index];
-            const readable = value !== undefined && value.trim() !== "";
+            const readable = value !== undefined && value !== "";
             for (const reference of sameReference) {
               answered.set(cacheKey(reference), value);
               if (!fresh || readable || !isCached(reference, plan)) {
