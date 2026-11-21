@@ -36,6 +36,7 @@
         "prepare-server-compile-cache.cjs",
         "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
+        "fork-i18n-rekey.ts",
         "fork-rename-codemod.ts",
         "fork-rename-report.ts",
       ],
