@@ -458,6 +458,13 @@ export const PullRequestReviewerCandidatesInput = Schema.Struct({
 });
 export type PullRequestReviewerCandidatesInput = typeof PullRequestReviewerCandidatesInput.Type;
 
+/** `query` asks the host for labels past the first page of candidates. */
+export const PullRequestLabelCandidatesInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type PullRequestLabelCandidatesInput = typeof PullRequestLabelCandidatesInput.Type;
+
 export const PullRequestRoutingIdentityInput = Schema.Struct({
   host: TrimmedNonEmptyString,
 });

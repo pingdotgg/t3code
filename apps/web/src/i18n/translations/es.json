@@ -6832,7 +6832,7 @@
   "6c5251845bcff2ac": "El host lo rechazó. Comprueba que tienes acceso de triaje en este repositorio.",
   "426560419bdace55": "Cambiar etiquetas requiere acceso de triaje en este repositorio",
   "36b7fbe31bde05f3": "Este repositorio no tiene etiquetas.",
-  "2764eab1d2853980": "Este repositorio tiene más etiquetas de las que aparecen aquí. Aplica el resto en el host.",
+  "f31176fefda25884": "Este repositorio tiene más etiquetas de las que se muestran aquí. Busca para encontrar el resto.",
   "5e5917c3b907c7d6": "Aplicada",
   "404ee0e0134b60ae": "Buscando «{query}» en todos los hosts",
   "ca612a0074954046": "Comprobando...",

@@ -2091,6 +2091,7 @@ it.effect("updates cached labels after successful edits without rereading the ho
     let failDetail = false;
     const existing = { name: "existing", color: "111111" };
     const addedLabel = { name: "new", color: "abcdef" };
+    const farLabel = { name: "past the first page", color: "fedcba" };
     const detailRefreshStarted = yield* Latch.make();
     const releaseDetailRefresh = yield* Latch.make();
     const client = {
@@ -2105,15 +2106,20 @@ it.effect("updates cached labels after successful edits without rereading the ho
           }
           return { title: "keep this title", labels: [existing] };
         }),
-      [WS_METHODS.pullRequestsLabelCandidates]: () =>
+      [WS_METHODS.pullRequestsLabelCandidates]: (input: { readonly query?: string }) =>
         Effect.sync(() => {
+          if (input.query !== undefined)
+            return {
+              candidates: [{ ...farLabel, description: null, isApplied: false }],
+              truncated: false,
+            };
           candidateReads++;
           return {
             candidates: [
               { ...existing, description: null, isApplied: true },
               { ...addedLabel, description: "description", isApplied: false },
             ],
-            truncated: false,
+            truncated: true,
           };
         }),
       [WS_METHODS.pullRequestsSetLabels]: () =>
@@ -2195,6 +2201,21 @@ it.effect("updates cached labels after successful edits without rereading the ho
       (yield* AtomRegistry.getResult(registry, detail, { suspendOnWaiting: true })).labels,
     ).toEqual([existing]);
     expect(detailReads).toBe(3);
+
+    refuse = false;
+    const search = atoms.labelSearch({ ...target, input: { ...target.input, query: "past" } });
+    registry.mount(search);
+    yield* AtomRegistry.getResult(registry, search, { suspendOnWaiting: true });
+    yield* atoms.setLabels.run(registry, {
+      ...target,
+      input: { ...target.input, labels: [farLabel.name], applied: true },
+    });
+    expect((yield* AtomRegistry.getResult(registry, detail)).labels).toEqual([existing, farLabel]);
+    expect((yield* AtomRegistry.getResult(registry, candidates)).candidates[0]).toEqual({
+      ...farLabel,
+      description: null,
+      isApplied: true,
+    });
   }),
 );
 

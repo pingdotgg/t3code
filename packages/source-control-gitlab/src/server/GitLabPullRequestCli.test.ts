@@ -2111,6 +2111,19 @@ layer("GitLabPullRequestCli.layer", (it) => {
           ],
           truncated: false,
         });
+
+        mockedExecute.mockClear();
+        yield* cli.listLabelCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          query: "ready",
+        });
+        expect(
+          mockedExecute.mock.calls
+            .map(([call]) => call.args[1])
+            .find((path) => path?.includes("/labels?")),
+        ).toBe("projects/acme%2Fweb/labels?per_page=100&include_ancestor_groups=true&search=ready");
       }),
   );
 

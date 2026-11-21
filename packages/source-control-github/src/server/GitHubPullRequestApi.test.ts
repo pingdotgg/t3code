@@ -4567,6 +4567,45 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("asks GitHub to search every label when the label menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  labels: {
+                    pageInfo: { hasNextPage: false },
+                    nodes: [{ name: "ready to merge", color: "00aa00", description: null }],
+                  },
+                  pullRequest: { labels: { nodes: [] } },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const list = yield* cli.listLabelCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        query: "ready to merge",
+      });
+
+      expect(varsAt(0)).toMatchObject({
+        owner: "acme",
+        name: "web",
+        number: 7,
+        query: "ready to merge",
+      });
+      expect(list.candidates.map((candidate) => candidate.name)).toEqual(["ready to merge"]);
+    }),
+  );
+
   it.effect("takes labels off one at a time, naming each in the path encoded", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(Effect.succeed(output("[]")));

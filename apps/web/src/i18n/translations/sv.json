@@ -6838,7 +6838,7 @@
   "6c5251845bcff2ac": "Värden nekade. Kontrollera att du har triage-åtkomst till det här repot.",
   "426560419bdace55": "Att ändra etiketter kräver triage-åtkomst till det här repot",
   "36b7fbe31bde05f3": "Det här repot har inga etiketter.",
-  "2764eab1d2853980": "Det här repot har fler etiketter än som listas här. Lägg till resten på värden.",
+  "f31176fefda25884": "Det här repot har fler etiketter än som listas här. Sök för att hitta resten.",
   "5e5917c3b907c7d6": "Tillagd",
   "404ee0e0134b60ae": "Söker på alla värdar efter ”{query}”",
   "ca612a0074954046": "Kontrollerar...",

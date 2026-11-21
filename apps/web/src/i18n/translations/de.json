@@ -6832,7 +6832,7 @@
   "6c5251845bcff2ac": "Der Host hat es abgelehnt. Prüfe, ob du Triage-Zugriff auf dieses Repository hast.",
   "426560419bdace55": "Zum Ändern von Labels ist Triage-Zugriff auf dieses Repository nötig",
   "36b7fbe31bde05f3": "Dieses Repository hat keine Labels.",
-  "2764eab1d2853980": "Dieses Repository hat mehr Labels, als hier aufgelistet sind. Wende die übrigen auf dem Host an.",
+  "f31176fefda25884": "Dieses Repository hat mehr Labels, als hier aufgelistet sind. Suche, um die übrigen zu finden.",
   "5e5917c3b907c7d6": "Angewendet",
   "404ee0e0134b60ae": "Alle Hosts werden nach „{query}“ durchsucht",
   "ca612a0074954046": "Wird geprüft...",

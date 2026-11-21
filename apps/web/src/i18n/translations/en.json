@@ -6839,7 +6839,7 @@
   "6c5251845bcff2ac": "The host refused it. Check that you have triage access on this repository.",
   "426560419bdace55": "Changing labels needs triage access on this repository",
   "36b7fbe31bde05f3": "This repository has no labels.",
-  "2764eab1d2853980": "This repository has more labels than are listed here. Apply the rest on the host.",
+  "f31176fefda25884": "This repository has more labels than are listed here. Search to find the rest.",
   "5e5917c3b907c7d6": "Applied",
   "404ee0e0134b60ae": "Searching every host for “{query}”",
   "ca612a0074954046": "Checking...",
