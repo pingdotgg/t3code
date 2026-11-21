@@ -11907,6 +11907,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         threadId,
         commandId: CommandId.make("runtime-layer-owed-output-submit"),
         json: '{"head":"abc"}',
+        callerRunId: asked.id,
       });
       assert.equal(accepted.runId, asked.id);
       const after = yield* orchestrator.getThreadProjection(threadId);
@@ -12075,6 +12076,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           threadId,
           commandId: CommandId.make("runtime-layer-stopped-output-submit"),
           json: "{}",
+          callerRunId: run.id,
         })
         .pipe(Effect.flip);
       assert.equal(rejected._tag, "ThreadManagementRunOutputRejectedError");
@@ -12186,6 +12188,17 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
             },
           ],
         });
+
+        // A caller that names no run cannot be told from a stopped run's late call.
+        const anonymous = yield* threadManagement
+          .submitRunOutput({
+            threadId,
+            commandId: CommandId.make("runtime-layer-anonymous-run-output"),
+            json: '{"from":"anonymous"}',
+          })
+          .pipe(Effect.flip);
+        assert.equal(anonymous._tag, "ThreadManagementRunOutputRejectedError");
+        assert.include(anonymous.message, "runId");
 
         const lateFromA = yield* threadManagement
           .submitRunOutput({

@@ -1012,7 +1012,7 @@ export const layer: Layer.Layer<
       const userText =
         run.outputSchema === undefined || goalCommand || isProviderCommand(providerMessage)
           ? messageText
-          : `${messageText}\n\n${outputInstructions(run.outputSchema)}`;
+          : `${messageText}\n\n${outputInstructions(run.outputSchema, run.id)}`;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,

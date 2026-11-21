@@ -2231,9 +2231,18 @@ export const layerWithOptions = (
               yield* recordMcpTurnChecked(input.providerSessionId, input.threadId, turnKey);
               return;
             }
-            // This runtime cannot take a new credential: keep it unbound so later typed turns still
-            // submit, leaving the late-submission race open only where rotation is impossible.
-            if (input.runtime.mcpCredentialRotation === "none" && current !== undefined) {
+            // A runtime that cannot take a new credential now (no way to deliver one, or a reload that
+            // would end background work) keeps it unbound; the agent then names its run in the call.
+            const cannotRotate =
+              input.runtime.mcpCredentialRotation === "none" ||
+              (input.runtime.mcpCredentialRotation !== "live" &&
+                (yield* (input.runtime.hasPendingBackgroundWork ?? Effect.succeed(false)).pipe(
+                  Effect.catchCauseIf(
+                    (cause) => !Cause.hasInterruptsOnly(cause),
+                    () => Effect.succeed(true),
+                  ),
+                )));
+            if (cannotRotate && current !== undefined) {
               if (current.runId !== undefined || current.attemptId !== undefined) {
                 yield* mcpSessionRegistry.releaseRunBinding(
                   McpProviderSession.mcpCredentialIdOf(current),
@@ -2688,56 +2697,52 @@ export const layerWithOptions = (
                         ),
                       );
               // Keep the loaded thread on its credential and never mutate an issued bearer's run identity.
-              const rollBack = (detail: string) =>
-                mcpPrepareLock
-                  .withLock(
-                    input.threadId,
-                    Effect.gen(function* () {
-                      const staged = yield* mcpSessions.read(input.threadId);
-                      // A later open published its own credential; that one stays.
-                      if (
-                        staged === undefined ||
-                        McpProviderSession.mcpCredentialIdOf(staged) !== currentCredentialId
-                      ) {
-                        return;
-                      }
-                      // Capability removals revoke immediately, so restore only a still-valid credential.
-                      const loadedRawToken = loadedCredential.authorizationHeader.replace(
-                        /^Bearer\s+/,
-                        "",
-                      );
-                      if ((yield* mcpSessionRegistry.resolve(loadedRawToken)) !== undefined) {
-                        yield* mcpSessions.set(loadedCredential);
-                      } else {
-                        yield* mcpSessions.clear(input.threadId);
-                      }
-                      yield* mcpSessionRegistry.revokeCredential(currentCredentialId);
-                      yield* removeSessionMcpCredential(
-                        input.providerSessionId,
-                        input.threadId,
-                        currentCredentialId,
-                      );
+              // Without a reload the thread keeps its loaded credential, unbound so the turn's own
+              // run can still submit through it; the agent then names its run in the call.
+              const keepLoaded = (detail: string) =>
+                mcpPrepareLock.withLock(
+                  input.threadId,
+                  Effect.gen(function* () {
+                    const staged = yield* mcpSessions.read(input.threadId);
+                    // A later open published its own credential; that one stays.
+                    if (
+                      staged === undefined ||
+                      McpProviderSession.mcpCredentialIdOf(staged) !== currentCredentialId
+                    ) {
+                      return;
+                    }
+                    yield* mcpSessionRegistry.revokeCredential(currentCredentialId);
+                    yield* removeSessionMcpCredential(
+                      input.providerSessionId,
+                      input.threadId,
+                      currentCredentialId,
+                    );
+                    const loadedRawToken = loadedCredential.authorizationHeader.replace(
+                      /^Bearer\s+/,
+                      "",
+                    );
+                    // Capability removals revoke immediately; the thread then holds no working token.
+                    if ((yield* mcpSessionRegistry.resolve(loadedRawToken)) === undefined) {
+                      yield* mcpSessions.clear(input.threadId);
                       yield* recordMcpTurnChecked(
                         input.providerSessionId,
                         input.threadId,
                         undefined,
                       );
-                    }),
-                  )
-                  .pipe(
-                    Effect.andThen(
-                      Effect.fail(
-                        new ProviderAdapter.ProviderAdapterMcpRotationBlockedError({
-                          driver: entry.runtime.driver,
-                          providerSessionId: input.providerSessionId,
-                          providerThreadId: input.providerThread.id,
-                          detail,
-                        }),
-                      ),
-                    ),
-                  );
+                      return yield* new ProviderAdapter.ProviderAdapterMcpRotationBlockedError({
+                        driver: entry.runtime.driver,
+                        providerSessionId: input.providerSessionId,
+                        providerThreadId: input.providerThread.id,
+                        detail,
+                      });
+                    }
+                    yield* mcpSessionRegistry.releaseRunBinding(loadedCredentialId);
+                    const { runId: _runId, attemptId: _attemptId, ...unbound } = loadedCredential;
+                    yield* mcpSessions.set(unbound);
+                  }),
+                );
               if (hasPendingWork) {
-                return yield* rollBack(
+                return yield* keepLoaded(
                   "Cannot refresh MCP credentials while background work is running on this thread.",
                 );
               }
@@ -2798,7 +2803,7 @@ export const layerWithOptions = (
                     ),
                   });
                 });
-                return yield* rollBack("Could not reload the thread to refresh MCP credentials.");
+                return yield* keepLoaded("Could not reload the thread to refresh MCP credentials.");
               }
               if (loadedCredential.runId === undefined) {
                 yield* mcpSessionRegistry.revokeCredential(loadedCredentialId);

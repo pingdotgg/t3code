@@ -3304,7 +3304,7 @@ it.effect.each([
   {
     scenario: "reload-blocked" as const,
     description:
-      "ProviderSessionManagerV2 fails reload explicitly without unloading or mutating the loaded token when background work is active",
+      "ProviderSessionManagerV2 keeps the loaded token, unbound, instead of reloading while background work is active",
   },
   {
     scenario: "reload-when-required" as const,
@@ -3615,20 +3615,19 @@ it.effect.each([
         const rotatedToken = rotatedConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
         assert.notEqual(rotatedToken, loadedToken);
 
-        const failed = yield* runtime
-          .resumeThread({
-            threadId,
-            providerThread,
-            modelSelection,
-            runtimePolicy,
-          })
-          .pipe(Effect.flip);
-        assert.equal(failed._tag, "ProviderAdapterMcpRotationBlockedError");
-        // Background work stayed alive (no unload), loaded token identity stayed immutable, and unused token was revoked.
+        yield* runtime.resumeThread({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        // Background work stayed alive (no unload): the turn runs on the loaded token, now unbound so
+        // its run can submit, and the unused token was revoked.
         assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
         const resolvedLoaded = yield* registry.resolve(loadedToken);
-        assert.equal(resolvedLoaded?.thread.runId, run1);
-        assert.equal(resolvedLoaded?.thread.attemptId, attempt1);
+        assert.isDefined(resolvedLoaded);
+        assert.isUndefined(resolvedLoaded?.thread.runId);
+        assert.isUndefined(resolvedLoaded?.thread.attemptId);
         assert.isUndefined(yield* registry.resolve(rotatedToken));
         assert.equal(
           (yield* mcpSessions.read(threadId))?.authorizationHeader,
@@ -3683,15 +3682,12 @@ it.effect.each([
         );
         assert.notEqual(unboundRotatedToken, unboundLoadedToken);
 
-        const unboundFailed = yield* runtime
-          .resumeThread({
-            threadId: unboundThreadId,
-            providerThread: unboundProviderThread,
-            modelSelection,
-            runtimePolicy,
-          })
-          .pipe(Effect.flip);
-        assert.equal(unboundFailed._tag, "ProviderAdapterMcpRotationBlockedError");
+        yield* runtime.resumeThread({
+          threadId: unboundThreadId,
+          providerThread: unboundProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
         assert.isTrue(Option.isNone(yield* Queue.poll(unloads)));
         const resolvedUnboundLoaded = yield* registry.resolve(unboundLoadedToken);
         assert.isDefined(resolvedUnboundLoaded);
@@ -3746,15 +3742,12 @@ it.effect.each([
         assert.isDefined(widerRotatedConfig);
         assert.isTrue(widerRotatedConfig!.browserToolsAvailable);
         const widerRotatedToken = widerRotatedConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
-        const widenedFailed = yield* runtime
-          .resumeThread({
-            threadId: widenedThreadId,
-            providerThread: widenedProviderThread,
-            modelSelection,
-            runtimePolicy,
-          })
-          .pipe(Effect.flip);
-        assert.equal(widenedFailed._tag, "ProviderAdapterMcpRotationBlockedError");
+        yield* runtime.resumeThread({
+          threadId: widenedThreadId,
+          providerThread: widenedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
         const resolvedNarrow = yield* registry.resolve(narrowLoadedToken);
         assert.isDefined(resolvedNarrow);
         assert.isFalse(resolvedNarrow!.capabilities.has("preview"));
@@ -3903,15 +3896,12 @@ it.effect.each([
           unloadFailedThreadId,
         ))!.authorizationHeader.replace(/^Bearer\s+/, "");
         yield* Ref.set(failUnload, true);
-        const unloadFailed = yield* runtime
-          .resumeThread({
-            threadId: unloadFailedThreadId,
-            providerThread: unloadFailedProviderThread,
-            modelSelection,
-            runtimePolicy,
-          })
-          .pipe(Effect.flip);
-        assert.equal(unloadFailed._tag, "ProviderAdapterMcpRotationBlockedError");
+        yield* runtime.resumeThread({
+          threadId: unloadFailedThreadId,
+          providerThread: unloadFailedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
         assert.isUndefined(yield* registry.resolve(stagedToken));
         assert.equal(
           (yield* mcpSessions.read(unloadFailedThreadId))?.authorizationHeader,

@@ -88,10 +88,10 @@ export const outputRequestProblem = (
     : outputSchemaProblem(schema);
 
 /** Appended to the turn's prompt: the agent learns the shape and how to hand the result back. */
-export const outputInstructions = (schema: OutputSchema): string =>
+export const outputInstructions = (schema: OutputSchema, runId: RunId): string =>
   [
     "A program reads the result of this turn, not a person.",
-    "When the work is done, call the `t3_submit_output` tool once with `json` set to JSON text matching this JSON Schema:",
+    `When the work is done, call the \`t3_submit_output\` tool once with \`runId\` set to \`${runId}\` and \`json\` set to JSON text matching this JSON Schema:`,
     JSON.stringify(schema),
     "If you could not finish, still submit, with the fields that say so. A rejected submission names what did not fit: correct it and submit again.",
   ].join("\n");

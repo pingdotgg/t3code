@@ -1053,20 +1053,23 @@ const make = Effect.gen(function* () {
         problem: "This turn was not asked for a result. Reply in your message instead.",
       });
     }
-    if (input.callerRunId !== undefined || input.callerAttemptId !== undefined) {
-      const matchesRun = (candidate: OrchestrationV2Run | undefined) =>
-        candidate !== undefined &&
-        (input.callerRunId === undefined || candidate.id === input.callerRunId) &&
-        (input.callerAttemptId === undefined ||
-          candidate.activeAttemptId === input.callerAttemptId);
-      // Accept the active run, or the un-stopped completed run whose own owed output is targeted.
-      const callerAllowed = matchesRun(active) || (run.id !== active.id && matchesRun(run));
-      if (!callerAllowed) {
-        return yield* new ThreadManagementRunOutputRejectedError({
-          threadId: input.threadId,
-          problem: "This output was submitted for a turn that is no longer active.",
-        });
-      }
+    // Without it a stopped run's late call cannot be told from the active run's.
+    if (input.callerRunId === undefined) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: "Pass `runId` as this turn's instructions gave it.",
+      });
+    }
+    const callerRunId = input.callerRunId;
+    const matchesRun = (candidate: OrchestrationV2Run) =>
+      candidate.id === callerRunId &&
+      (input.callerAttemptId === undefined || candidate.activeAttemptId === input.callerAttemptId);
+    // Accept the active run, or the un-stopped completed run whose own owed output is targeted.
+    if (!matchesRun(active) && !(run.id !== active.id && matchesRun(run))) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: "This output was submitted for a turn that is no longer active.",
+      });
     }
     const checked = yield* checkOutput(run.outputSchema, input.json);
     if (Result.isFailure(checked)) {

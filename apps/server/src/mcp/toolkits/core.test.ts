@@ -1705,11 +1705,13 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
       runId: RunId | undefined,
       attemptId: RunAttemptId | undefined,
       json: string,
+      argumentRunId?: RunId,
     ) =>
       Effect.gen(function* () {
         const server = yield* McpServer.McpServer;
         const { runId: _r, attemptId: _a, ...baseThread } = scope.thread!;
-        return yield* server.callTool({ name: "t3_submit_output", arguments: { json } }).pipe(
+        const args = argumentRunId === undefined ? { json } : { json, runId: argumentRunId };
+        return yield* server.callTool({ name: "t3_submit_output", arguments: args }).pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, {
             ...scope,
             thread: {
@@ -1722,9 +1724,9 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
         );
       });
 
-    // Service rejections surface as invalid_request.
+    // An unbound credential names its run in the call; service rejections surface as invalid_request.
     rejectNext = "This output was submitted for a turn that is no longer active.";
-    const unbound = yield* callWith(undefined, undefined, '{"ok":false}').pipe(
+    const unbound = yield* callWith(undefined, undefined, '{"ok":false}', runA).pipe(
       Effect.provide(serverLayer),
     );
     expect(unbound.isError).toBe(true);
@@ -1743,14 +1745,17 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
       message: "This output was submitted for a turn that is no longer active.",
     });
 
-    const active = yield* callWith(runB, attemptB, '{"ok":true}').pipe(Effect.provide(serverLayer));
+    // A bound credential outranks the argument.
+    const active = yield* callWith(runB, attemptB, '{"ok":true}', runA).pipe(
+      Effect.provide(serverLayer),
+    );
     expect(active.isError).toBe(false);
     expect(active.structuredContent).toEqual({ runId: runB });
     expect(calls).toEqual([
       {
         threadId,
         json: '{"ok":false}',
-        callerRunId: undefined,
+        callerRunId: runA,
         callerAttemptId: undefined,
       },
       {
