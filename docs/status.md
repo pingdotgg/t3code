@@ -1,6 +1,6 @@
 # Status
 
-**State:** Phase 1 integrated: the GPUI app connects to a disposable `conn-server` and renders live projects/threads in Dark Ocean and T3 Code Light. Phases 2-5 in progress.
+**State:** Phases 1, 3, 4 and most of 5 integrated and verified live against a disposable `conn-server`. Open: sidebar/header parity (Phase 2 polish) and the CEF browser inside the Browser panel. `scripts/check.sh` green (41 tests).
 
 Keep this file accurate. Update it whenever a milestone lands, a proof passes, or a blocker is found.
 
@@ -13,11 +13,11 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 | 1 | `conn-theme` palettes + `color-mix` shell token math | Done | 13 built-in themes incl. Dark Ocean; golden tests in `cargo test -p conn-theme` |
 | 1 | `conn-app` native macOS window + 44px traffic lights + frosted shell | Done | Traffic lights at (16, 15) → centered on 44px; blurred window; `.shots/p1-dark.png`, `.shots/p1-light.png` |
 | 2 | Workspace rail, thread sidebar, 44px header, Lucide/Phosphor icons | In progress | Rail, grouped sidebar, header, toolbar group render; drift listed below |
-| 3 | Chat timeline (Markdown, code blocks, tool rows, user bubbles) + composer | Not started | Pending |
-| 4 | Right panel: Files tree/preview, Diff viewer, Terminal (`alacritty_terminal`) | Not started | Pending |
-| 5 | `Cmd+K` palette, Settings route modal, live theme switching | Not started | Pending |
-| 5 | `conn-web` CEF-on-demand browser spike | Not started | Pending |
-| 5 | Side-by-side visual parity audit against Conn Electron (Dark Ocean + Light) | Not started | Pending |
+| 3 | Chat timeline (Markdown, code blocks, tool rows, user bubbles) + composer | Done | Live `subscribeThread`; `message.dispatch` sends a prompt and the Haiku reply streams in (automation `send`); `.shots/p3-dark.png`, `p3-light.png` |
+| 4 | Right panel: Files tree/preview, Diff viewer, Terminal (`alacritty_terminal`) | Done | `projects.listEntries`/`readFile`, `getFullThreadDiff`, local zsh PTY; `.shots/p4-*.png` |
+| 5 | `Cmd+K` palette, Settings route modal, live theme switching | Done | `.shots/p5-palette-*.png`, `p5-settings-*.png`; theme switch updates the open modal |
+| 5 | `conn-web` CEF-on-demand browser spike | In progress | Crate scaffold on main behind feature `cef` (default off); finishing + panel hosting delegated |
+| 5 | Side-by-side visual parity audit against Conn Electron (Dark Ocean + Light) | In progress | Per-phase captures in `.shots/`; final audit after sidebar polish lands |
 
 ## Known decisions & open notes
 
@@ -39,6 +39,20 @@ scripts/run-app.sh stop; scripts/dev-server.sh stop
 - Claude turns: the dev server uses a private copy of `../conn-server/helpers/sdk-host` with npm deps in `/tmp/conn-gpui-dev/sdk-host`; seed threads with `conn-server thread start <project> "<msg>" --provider claudeAgent --model haiku --wait --state-dir /tmp/conn-gpui-dev/state`.
 - Screenshots: this shell has no macOS screen-recording permission, so `screencapture` fails. Screenshots come from GPUI's `render_to_image` via the automation hook, flattened onto the theme background (no desktop blur, no native traffic lights in the capture).
 - Visual reference: the Conn lab build is no longer served, so the reference is a saved Conn screenshot (light mock window + dark chat) in `.shots/ref/` plus `docs/design-spec.md` metrics.
+
+## Visual fixes made from screenshots
+
+- Inline code chips: foreground 10% fill (Conn `.chat-markdown :not(pre) > code`), was invisible in dark.
+- Tool row paths shown relative to the workspace root (also strips the `/private` symlink prefix).
+- Diff lines no longer wrap; narrower line-number gutter and file list.
+- Settings frame flattened onto the sidebar color: GPUI cannot blur in-window content, so the translucent frame let the chat show through.
+- Open overlays (Settings, palette) now receive token updates on every theme switch.
+
+## Known limitations
+
+- Captures have no desktop blur and no native traffic lights (render_to_image draws only the GPUI scene).
+- Inline code uses the body font; GPUI `HighlightStyle` cannot switch font family inside a run.
+- The thread diff for the seeded "Add greet function" thread includes `target/` files: its checkpoint predates the demo `.gitignore`.
 
 ## Visual drift to fix (Phase 2 audit, 1st pass)
 
