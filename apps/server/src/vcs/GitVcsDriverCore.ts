@@ -63,6 +63,7 @@ import {
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as ServerConfig from "../config.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { windowsMountFor } from "../workspace/windowsDriveMount.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** T3's record of the branch, named as on the host, that a branch was cut from. */
@@ -81,7 +82,7 @@ const backgroundGitProcesses = Semaphore.makeUnsafe(2);
 // The fetch before `git worktree add` downloads everything the remote gained since
 // the last fetch; on busy repositories that alone outlasts the 30s default.
 const FETCH_REMOTE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
-const WORKTREE_INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
+const INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const REF_SNAPSHOT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -1049,6 +1050,59 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
+  // Git for Windows records no device or inode in the index, so WSL Git on a drive mount finds every
+  // entry changed and, as polls never save the refresh, re-reads every file on each poll. Refreshing
+  // once records Linux stat data, keeping Git's full check (and its change detection) fast.
+  const driveMountInfo =
+    hostPlatform === "linux"
+      ? yield* fileSystem
+          .readFileString("/proc/self/mountinfo")
+          .pipe(Effect.orElseSucceed(() => ""))
+      : "";
+  const indexWrittenByGitForWindows = (indexPath: string) =>
+    Effect.scoped(
+      Effect.flatMap(fileSystem.open(indexPath, { flag: "r" }), (file) => file.readAlloc(36)),
+    ).pipe(
+      Effect.map(
+        Option.match({
+          onNone: () => false,
+          onSome: (header) => {
+            if (header.length < 36) return false;
+            const view = new DataView(header.buffer, header.byteOffset, header.length);
+            // Header: signature, version, entry count; the first entry's dev and ino follow at 28.
+            return view.getUint32(8) > 0 && view.getUint32(28) === 0 && view.getUint32(32) === 0;
+          },
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+  // Untraced: it runs on every status poll, and off Linux it does no work.
+  const refreshIndexWrittenByGitForWindows = Effect.fnUntraced(function* (cwd: string) {
+    if (driveMountInfo === "") return;
+    // A symlinked alias must classify by the mount the checkout really lives on.
+    const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    if (windowsMountFor(driveMountInfo, physicalCwd) === undefined) return;
+    const indexPath = yield* executeGit(
+      "GitVcsDriver.refreshForeignIndex.indexPath",
+      cwd,
+      ["rev-parse", "--git-path", "index"],
+      { allowNonZeroExit: true },
+    ).pipe(
+      Effect.map((result) =>
+        result.exitCode === 0 ? path.resolve(cwd, result.stdout.trim()) : null,
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    if (indexPath === null || !(yield* indexWrittenByGitForWindows(indexPath))) return;
+    // Entries whose content changed stay stale, so status still reports them.
+    yield* executeGit(
+      "GitVcsDriver.refreshForeignIndex",
+      cwd,
+      ["update-index", "-q", "--refresh"],
+      // Git saves nothing until the whole check finishes, so a kill would repeat it every poll.
+      { allowNonZeroExit: true, timeoutMs: INDEX_REFRESH_TIMEOUT_MS },
+    ).pipe(Effect.ignore);
+  });
   type StatusFetchState = {
     phase: "queued" | "running" | "claimed";
     claimed: Deferred.Deferred<void>;
@@ -2671,6 +2725,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       ),
     );
+    yield* refreshIndexWrittenByGitForWindows(cwd);
     const statusArgs = [
       "status",
       "--porcelain=2",
@@ -4331,6 +4386,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     untrackedTotalsFailures.delete(cwd);
+    yield* refreshIndexWrittenByGitForWindows(cwd);
     const readNumstat = (ref: string) =>
       executeGit(
         "GitVcsDriver.readBranchChangeTotals",
@@ -5566,7 +5622,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "GitVcsDriver.createWorktree.refreshIndex",
       worktreePath,
       ["update-index", "-q", "--refresh", "--force-write-index"],
-      { timeoutMs: WORKTREE_INDEX_REFRESH_TIMEOUT_MS },
+      { timeoutMs: INDEX_REFRESH_TIMEOUT_MS },
     );
     const checkoutSecond = yield* indexSecond;
     yield* refresh;
