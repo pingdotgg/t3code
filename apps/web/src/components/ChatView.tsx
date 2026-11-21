@@ -103,6 +103,7 @@ import {
   workflowOpeningParentThreadId,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
+  canPersistThreadRuntimeModeImmediately,
   getUserQueuedThreadRuns,
   threadSteersDuringCompaction,
   threadSupportsProviderHandoff,
@@ -628,7 +629,7 @@ export default function ChatView(props: ChatViewProps) {
   const citationHistory = useCitedHistory(citationRequest);
   const { resolvedTheme } = useTheme();
   const composerRuntimeMode = useComposerDraftStore(
-    (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
+    (store) => store.getComposerDraft(baseComposerDraftTarget)?.runtimeMode ?? null,
   );
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
@@ -2178,7 +2179,12 @@ export default function ChatView(props: ChatViewProps) {
       }
     }
 
-    if (input.runtimeMode !== serverThread.runtimeMode) {
+    const durableRuntimeMode =
+      appAtomRegistry
+        .get(threadEnvironment.durableSnapshotAtom(environmentId))
+        ?.threads.find((candidate) => candidate.id === input.threadId)?.runtimeMode ??
+      serverThread.runtimeMode;
+    if (input.runtimeMode !== durableRuntimeMode) {
       result = mapAtomCommandResult(
         await setThreadRuntimeMode({
           environmentId,
@@ -2193,6 +2199,9 @@ export default function ChatView(props: ChatViewProps) {
       if (result._tag === "Failure") {
         return result;
       }
+      useComposerDraftStore
+        .getState()
+        .releaseRuntimeMode(scopeThreadRef(environmentId, input.threadId), input.runtimeMode);
     }
 
     if (input.interactionMode !== serverThread.interactionMode) {
@@ -3033,6 +3042,15 @@ export default function ChatView(props: ChatViewProps) {
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus: scheduleComposerFocusStable,
+    setThreadRuntimeMode,
+    canPersistRuntimeModeImmediately:
+      canOperateThread &&
+      activeThread !== undefined &&
+      canPersistThreadRuntimeModeImmediately({
+        thread: activeThread,
+        projection: serverProjection,
+        isWorking: isWorking || phase === "connecting" || pendingBackgroundTasks.length > 0,
+      }),
   });
   const { onResume, isResuming } = useComposerResume({
     environmentId,

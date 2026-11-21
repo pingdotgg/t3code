@@ -36,6 +36,7 @@ export async function resumeThread<E>(input: {
   readonly messageId: MessageId;
   readonly createdAt: string;
   readonly setRuntimeMode: Command<SetThreadRuntimeModeInput, E>;
+  readonly onRuntimeModePersisted?: (runtimeMode: RuntimeMode) => void;
   readonly setInteractionMode: Command<SetThreadInteractionModeInput, E>;
   readonly startTurn: Command<StartThreadTurnInput, E>;
   readonly resumeQueue: Command<ResumeThreadQueueInput, E>;
@@ -52,6 +53,7 @@ export async function resumeThread<E>(input: {
       });
       if (saved._tag === "Failure") return saved;
     }
+    input.onRuntimeModePersisted?.(runtimeMode);
     if (interactionMode !== thread.interactionMode) {
       const saved = await input.setInteractionMode({
         environmentId,

@@ -235,8 +235,11 @@ export interface FakeThread {
   readonly title: string;
   /** Defaults to GPT-5.4 on Codex. */
   readonly modelSelection?: ModelSelection;
+  /** Defaults to `"full-access"`. */
+  readonly runtimeMode?: OrchestrationV2ThreadShell["runtimeMode"];
   /** The first is the thread's active provider thread. */
   readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
+  readonly providerSessions?: OrchestrationV2ThreadProjection["providerSessions"];
   readonly issues?: OrchestrationV2ThreadShell["issues"];
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
@@ -322,7 +325,7 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     title: thread.title,
     providerInstanceId: modelSelection.instanceId,
     modelSelection,
-    runtimeMode: "full-access",
+    runtimeMode: thread.runtimeMode ?? "full-access",
     interactionMode: "default",
     branch: "main",
     worktreePath: null,
@@ -338,9 +341,9 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     createdBy: thread.providerSubagentOf ? "agent" : "user",
     creationSource: thread.providerSubagentOf ? "provider" : "web",
     latestRunId: latest?.id ?? null,
-    activeRunId: null,
+    activeRunId: latest && latest.status === "running" ? latest.id : null,
     // Idle reads as waiting on the user, which shows a per-second duration in the sidebar.
-    status: latest ? "completed" : "idle",
+    status: latest ? latest.status : "idle",
     pendingRuntimeRequest: null,
     latestVisibleMessage: null,
     latestUserMessageAt: AT,
@@ -396,7 +399,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     attempts: [],
     nodes: [],
     subagents: [],
-    providerSessions: [],
+    providerSessions: [...(thread.providerSessions ?? [])],
     providerThreads: [...(thread.providerThreads ?? [])],
     providerTurns: [],
     runtimeRequests: [...(thread.runtimeRequests ?? [])],

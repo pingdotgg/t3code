@@ -1,34 +1,37 @@
 import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   clampManagedRuntimeMode,
   type ManagedPolicySummary,
   type RuntimeMode,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useGT, useMessages } from "gt-react-native";
 import { View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
-import {
-  updateComposerDraftSettings,
-  useComposerDraftSettings,
-} from "../../state/use-composer-drafts";
+import { selectThreadRuntimeMode } from "../../state/thread-runtime-mode";
+import { useComposerDraftSettings } from "../../state/use-composer-drafts";
+import { useQuietThreadStructure } from "../../state/use-thread-detail";
 import { runtimeModeChoicesForSupportedModes } from "./thread-settings-options";
 
 /**
  * Shown while a thread's mode is above its environment's managed ceiling, where the server
- * refuses every turn. Switching sets the draft's mode, which the next send applies first.
+ * refuses every turn. Switching updates the thread's mode right away when safe.
  */
 export function ManagedRuntimeModeNotice(props: {
+  readonly thread: EnvironmentThreadShell;
+  readonly selectedThreadDetailRef: ScopedThreadRef | null;
   readonly threadKey: string;
-  readonly threadRuntimeMode: RuntimeMode;
   readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
   readonly policy: ManagedPolicySummary | undefined;
 }) {
   const gt = useGT();
   const messages = useMessages();
   const draftSettings = useComposerDraftSettings(props.threadKey);
-  const runtimeMode = draftSettings.runtimeMode ?? props.threadRuntimeMode;
+  const structure = useQuietThreadStructure(props.selectedThreadDetailRef);
+  const runtimeMode = draftSettings.runtimeMode ?? props.thread.runtimeMode;
   const denial = managedRuntimeModeDenial(props.policy, runtimeMode, messages);
   if (denial === undefined) return null;
   const choices = runtimeModeChoicesForSupportedModes(props.supportedRuntimeModes);
@@ -46,7 +49,14 @@ export function ManagedRuntimeModeNotice(props: {
       {target === undefined || targetLabel === undefined ? null : (
         <Button
           label={gt("Switch to {mode}", { mode: messages(targetLabel) })}
-          onPress={() => updateComposerDraftSettings(props.threadKey, { runtimeMode: target })}
+          onPress={() =>
+            selectThreadRuntimeMode({
+              thread: props.thread,
+              projection: structure?.projection,
+              isPendingCreation: props.selectedThreadDetailRef === null,
+              runtimeMode: target,
+            })
+          }
         />
       )}
     </View>

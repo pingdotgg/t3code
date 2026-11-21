@@ -3,10 +3,12 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import {
   canForkProjectedAssistantItem,
+  canPersistThreadRuntimeModeImmediately,
   deriveThreadQueueWorkflowState,
   getUserQueuedThreadRuns,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
+  threadSupportsRuntimeModeSwitchInSession,
 } from "./threadWorkflows.ts";
 
 const capabilities = (input?: {
@@ -83,6 +85,96 @@ describe("thread workflows", () => {
       }),
     ).toBe(true);
     expect(threadSupportsProviderHandoff({ ...projection, providerThreads: [] })).toBe(false);
+  });
+
+  it("persists runtime mode switches immediately when idle or when every live session switches in place", () => {
+    const idleThread = {
+      runtime: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      pendingBackgroundTasks: [],
+    };
+    const runningThread = {
+      ...idleThread,
+      runtime: { status: "running", activeRunId: "run" } as never,
+    };
+    const session = (status: string, supportsRuntimeModeSwitchInSession: boolean) => ({
+      id: `session-${status}-${String(supportsRuntimeModeSwitchInSession)}`,
+      status,
+      capabilities: { sessions: { supportsRuntimeModeSwitchInSession } },
+    });
+    const projectionWith = (input: {
+      readonly providerSessions?: ReadonlyArray<unknown>;
+      readonly runs?: ReadonlyArray<unknown>;
+      readonly runtimeRequests?: ReadonlyArray<unknown>;
+    }) =>
+      ({
+        thread: { id: "thread", activeProviderThreadId: null },
+        runs: input.runs ?? [],
+        providerSessions: input.providerSessions ?? [],
+        providerThreads: [],
+        runtimeRequests: input.runtimeRequests ?? [],
+      }) as unknown as OrchestrationV2ThreadProjection;
+
+    const inSessionLive = projectionWith({
+      runs: [{ id: "run", status: "running" }],
+      providerSessions: [session("ready", true)],
+    });
+    const restartRequiredLive = projectionWith({
+      runs: [{ id: "run", status: "running" }],
+      providerSessions: [session("ready", false)],
+    });
+    const mixedLive = projectionWith({
+      runs: [{ id: "run", status: "running" }],
+      providerSessions: [session("ready", true), session("ready", false)],
+    });
+    const stoppedAndLiveInSession = projectionWith({
+      runs: [{ id: "run", status: "running" }],
+      providerSessions: [session("stopped", false), session("ready", true)],
+    });
+
+    expect(threadSupportsRuntimeModeSwitchInSession(null)).toBe(false);
+    expect(threadSupportsRuntimeModeSwitchInSession(inSessionLive)).toBe(true);
+    expect(threadSupportsRuntimeModeSwitchInSession(restartRequiredLive)).toBe(false);
+    expect(threadSupportsRuntimeModeSwitchInSession(mixedLive)).toBe(false);
+    expect(threadSupportsRuntimeModeSwitchInSession(stoppedAndLiveInSession)).toBe(true);
+
+    // Idle threads persist regardless of session capability.
+    expect(
+      canPersistThreadRuntimeModeImmediately({
+        thread: idleThread,
+        projection: projectionWith({ providerSessions: [session("ready", false)] }),
+      }),
+    ).toBe(true);
+    // Active turns / open approvals on in-session providers (Antigravity, Codex, OpenCode v2) persist right away.
+    expect(
+      canPersistThreadRuntimeModeImmediately({
+        thread: { ...runningThread, hasPendingApprovals: true },
+        projection: inSessionLive,
+        isWorking: true,
+      }),
+    ).toBe(true);
+    // Active turns / open prompts on providers that detach on mode change defer to the next send.
+    expect(
+      canPersistThreadRuntimeModeImmediately({
+        thread: runningThread,
+        projection: restartRequiredLive,
+        isWorking: true,
+      }),
+    ).toBe(false);
+    expect(
+      canPersistThreadRuntimeModeImmediately({
+        thread: { ...idleThread, hasPendingUserInput: true },
+        projection: projectionWith({ providerSessions: [session("ready", false)] }),
+      }),
+    ).toBe(false);
+    expect(
+      canPersistThreadRuntimeModeImmediately({
+        thread: runningThread,
+        projection: null,
+        isWorking: true,
+      }),
+    ).toBe(false);
   });
 
   it("sorts queued messages and gates promotion from capabilities", () => {

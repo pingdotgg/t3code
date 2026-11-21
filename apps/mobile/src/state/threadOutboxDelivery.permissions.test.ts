@@ -106,6 +106,7 @@ vi.mock("./threads", async () => {
       updateMetadata: state.command(Effect, state.metadata),
       setRuntimeMode: state.command(Effect, state.runtime),
       setInteractionMode: state.command(Effect, state.interaction),
+      durableSnapshotAtom: () => Atom.make(null),
     },
     environmentThreadShells: { threadShellsAtom: state.threadShells },
     threadFamilies: {
@@ -171,6 +172,7 @@ vi.mock("./use-composer-drafts", async () => {
     mergeComposerDraftContent: vi.fn(async (_key: string, input: { text: string }) => {
       state.draftText += `\n${input.text}`;
     }),
+    releaseComposerDraftRuntimeMode: vi.fn(),
     replaceComposerDraftAttachments: vi.fn(),
     setFreshSessionPending: vi.fn(),
     undoComposerDraftMerge: vi.fn(),

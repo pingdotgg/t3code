@@ -90,6 +90,7 @@ import {
   type ComposerDraft,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
+  releaseComposerDraftRuntimeMode,
   replaceComposerDraftAttachments,
   removeDeliveredCloudQueuedMessage,
   undoComposerDraftMerge,
@@ -893,7 +894,12 @@ export function createThreadOutboxDelivery(): {
       return yield* restoreQueuedMessage(queuedMessage, runtimeModeDenial);
     }
 
-    if (settings.runtimeMode !== thread.runtimeMode) {
+    const durableRuntimeMode =
+      appAtomRegistry
+        .get(threadEnvironment.durableSnapshotAtom(queuedMessage.environmentId))
+        ?.threads.find((candidate) => candidate.id === queuedMessage.threadId)?.runtimeMode ??
+      thread.runtimeMode;
+    if (settings.runtimeMode !== durableRuntimeMode) {
       if (!hasAccess()) return;
       const runtimeResult = yield* deliveryCommand(threadEnvironment.setRuntimeMode, {
         environmentId: queuedMessage.environmentId,
@@ -908,6 +914,18 @@ export function createThreadOutboxDelivery(): {
         reportCommandFailure(queuedMessage, runtimeResult, "settings-sync");
         return yield* retryDelivery;
       }
+    }
+    const threadKey = scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
+    const hasOtherQueuedRuntimeMode = (
+      appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom)[threadKey] ?? []
+    ).some(
+      (candidate) =>
+        candidate.messageId !== queuedMessage.messageId &&
+        candidate.runtimeMode !== undefined &&
+        candidate.runtimeMode !== settings.runtimeMode,
+    );
+    if (!hasOtherQueuedRuntimeMode) {
+      releaseComposerDraftRuntimeMode(threadKey, settings.runtimeMode);
     }
 
     if (settings.interactionMode !== thread.interactionMode) {
