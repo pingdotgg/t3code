@@ -94,6 +94,11 @@ function thread(issues: ReadonlyArray<ThreadIssueLink>): OrchestrationV2AppThrea
   };
 }
 
+const autoSettleOff = (item: OrchestrationV2AppThread, off: boolean): OrchestrationV2AppThread => ({
+  ...item,
+  autoSettleDisabledAt: off ? DateTime.makeUnsafe(instant) : null,
+});
+
 function setup(
   rules: ReadonlyArray<IssueAutomationRule> = [rule()],
   links: ReadonlyArray<ThreadIssueLink> = [link("ENG-1")],
@@ -350,23 +355,47 @@ describe("IssueThreadAutomationService", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("keeps an action for a busy thread and drops it after manual organizing", () => {
+  it.effect.each(["manual organizing", "auto-settle off"] as const)(
+    "keeps an action for a busy thread and drops it after %s",
+    (change) => {
+      const { state, layer } = setup();
+      return Effect.gen(function* () {
+        const automation = yield* Automation.IssueThreadAutomationService;
+        const store = yield* Observations.IssueThreadAutomation;
+        yield* automation.sweep;
+        state.busy = true;
+        state.statuses.set("team-a", [{ key: "ENG-1", stateId: "done" }]);
+        yield* automation.sweep;
+        const pending = (yield* store.list).get(threadId)?.pending;
+        expect(pending?.action).toBe("settle");
+        expect(pending?.commandId).not.toBe(state.attempts.at(-1)?.commandId);
+        if (change === "manual organizing") state.revision++;
+        else state.threads = state.threads.map((item) => autoSettleOff(item, true));
+        state.busy = false;
+        yield* automation.sweep;
+        expect(state.commands).toHaveLength(0);
+        expect((yield* store.list).get(threadId)?.pending ?? null).toBeNull();
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect.each([
+    { action: "wake", from: "waiting", to: "open" },
+    { action: "snooze", from: "open", to: "waiting" },
+    { action: "settle", from: "open", to: "done" },
+  ] as const)("never applies $action to a thread with auto-settle off", ({ from, to }) => {
     const { state, layer } = setup();
+    state.statuses.set("team-a", [{ key: "ENG-1", stateId: from }]);
     return Effect.gen(function* () {
       const automation = yield* Automation.IssueThreadAutomationService;
-      const store = yield* Observations.IssueThreadAutomation;
       yield* automation.sweep;
-      state.busy = true;
-      state.statuses.set("team-a", [{ key: "ENG-1", stateId: "done" }]);
+      state.threads = state.threads.map((item) => autoSettleOff(item, true));
+      state.statuses.set("team-a", [{ key: "ENG-1", stateId: to }]);
       yield* automation.sweep;
-      const pending = (yield* store.list).get(threadId)?.pending;
-      expect(pending?.action).toBe("settle");
-      expect(pending?.commandId).not.toBe(state.attempts.at(-1)?.commandId);
-      state.revision++;
-      state.busy = false;
+      // Turned back on, the thread starts from its issues' statuses at that time.
+      state.threads = state.threads.map((item) => autoSettleOff(item, false));
       yield* automation.sweep;
-      expect(state.commands).toHaveLength(0);
-      expect((yield* store.list).get(threadId)?.pending).toBeNull();
+      expect(state.attempts).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
