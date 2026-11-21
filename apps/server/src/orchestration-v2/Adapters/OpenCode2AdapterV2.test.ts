@@ -7675,6 +7675,112 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
+  it.effect("completes a subagent a held wake launched that finished before the wake's turn", () =>
+    Effect.gen(function* () {
+      const CHILD_B = "ses_f1485c529ffeBBBBBBBBBBBBBB";
+      const toolB = { sessionID: SESSION, assistantMessageID: "msg_wake_a", id: "call-b" };
+      const report = (inboxID: string, child: string, text: string) =>
+        event("session.inbox.enqueued", {
+          inboxID,
+          sessionID: SESSION,
+          item: {
+            type: "synthetic",
+            payload: {
+              text: `<subagent sessionID="${child}" state="completed" description="Sleep">\n${text}\n</subagent>`,
+              description: "Sleep",
+              metadata: {
+                source: "subagent",
+                childID: child,
+                agent: "General",
+                state: "completed",
+              },
+            },
+            delivery: "steer",
+          },
+        });
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const bothOffered = yield* Deferred.make<void>();
+      // OpenCode runs wake A (which launches B), B and wake B before T3 starts wake A's turn.
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        report("msg_report_a", CHILD, "A_OK"),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_a" }),
+        event("session.tool.input.started", { ...toolB, name: "subagent" }),
+        event("session.tool.called", {
+          ...toolB,
+          name: "subagent",
+          input: { description: "Sleep", prompt: "sleep", background: true },
+          executed: false,
+        }),
+        event("session.created", { ...childCreated(CHILD_B), sessionID: CHILD_B }),
+        event("session.tool.progress", {
+          ...toolB,
+          metadata: { sessionID: CHILD_B, status: "running" },
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.started", { sessionID: CHILD_B }),
+        event("session.execution.succeeded", { sessionID: CHILD_B }),
+        report("msg_report_b", CHILD_B, "B_OK"),
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report_b" }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_reply_b",
+          ordinal: 0,
+          text: "REPLY_B",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: (request) =>
+            Effect.suspend(() =>
+              offers.push(request) === 2
+                ? Deferred.succeed(bothOffered, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          take: Effect.never,
+        }),
+      );
+      const statuses = new Map<string, string>();
+      let terminals = 0;
+      const firstEnded = yield* Deferred.make<void>();
+      const allEnded = yield* Deferred.make<void>();
+      yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          Effect.gen(function* () {
+            if (event.type === "subagent.updated") {
+              statuses.set(event.subagent.nativeTaskRef?.nativeId ?? "", event.subagent.status);
+            }
+            if (event.type !== "turn.terminal") return;
+            terminals += 1;
+            if (terminals === 2) yield* Deferred.succeed(firstEnded, undefined);
+            if (terminals === 3) yield* Deferred.succeed(allEnded, undefined);
+          }),
+        ),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(bothOffered);
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!, "wake-a"));
+      yield* Deferred.await(firstEnded);
+      yield* runtime.startTurn({
+        ...continuationTurn(thread, offers[1]!, "wake-b"),
+        runOrdinal: 3,
+        providerTurnOrdinal: 3,
+      });
+      yield* Deferred.await(allEnded);
+      assert.deepEqual(Object.fromEntries(statuses), {
+        "call-background": "completed",
+        "call-b": "completed",
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
+  );
+
   it.effect(
     "reverts a report's continuation at its report after a Stop dropped another client's prompt",
     () =>
