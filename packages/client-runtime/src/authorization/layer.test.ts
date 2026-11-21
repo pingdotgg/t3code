@@ -1008,6 +1008,40 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("keeps a cached relay token whose ticket answers after the 3 s cap", () =>
+    Effect.gen(function* () {
+      const started = Promise.withResolvers<void>();
+      const slowTicket = Promise.withResolvers<Response>();
+      const harness = yield* makeHarness({
+        initialToken: persistedToken(),
+        descriptor: DESCRIPTOR,
+        responses: [
+          () => {
+            started.resolve();
+            return slowTicket.promise;
+          },
+          accessToken("replacement-access-token"),
+          websocketTicket("replacement-ticket"),
+        ],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const pending = yield* remote
+          .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.forkScoped);
+        yield* Effect.promise(() => started.promise);
+        yield* TestClock.adjust("3500 millis");
+        slowTicket.resolve(websocketTicket("cached-ticket"));
+        return yield* Fiber.join(pending);
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(authorized.socketUrl).toContain("wsTicket=cached-ticket");
+      expect(requestsTo(harness, "/oauth/token")).toBe(0);
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+    }),
+  );
+
   it.effect("removes a newly refreshed token when websocket ticket authorization fails", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
