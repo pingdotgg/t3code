@@ -806,6 +806,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("queue steer running turn send default behavior composer")],
   },
   {
+    id: "side-thread-open-target",
+    title: msg("Open subagents and side chats in"),
+    to: "/settings/chat",
+    searchTerms: [
+      msg(
+        "subagent side chat linked thread click right panel side panel main view command ctrl middle click",
+      ),
+    ],
+  },
+  {
     id: "provider-update-checks",
     title: msg("Provider update checks"),
     to: "/settings/maintenance",
@@ -1307,6 +1317,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("commands scripts setup run dev server checkout worktree t3.json import")],
   },
   {
+    id: "project-repositories",
+    title: msg("Repositories"),
+    to: "/settings/projects",
+    searchTerms: [msg("tracked folders multi repo workspace code-workspace rescan add folder")],
+  },
+  {
     id: "environment-icon",
     title: msg("Environment icon"),
     to: "/settings/access",
@@ -1390,6 +1406,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "connections-environment",
     searchTerms: [msg("mobile push notifications live activities cloud tunnel")],
     cloudOnly: true,
+  },
+  {
+    id: "preview-tunnel",
+    title: msg("Preview tunnel"),
+    to: "/settings/access",
+    targetId: "connections-environment",
+    searchTerms: [
+      msg("localhost loopback port forwarding open on this device browser tabs stream security"),
+    ],
   },
   {
     id: "connections-environment",
