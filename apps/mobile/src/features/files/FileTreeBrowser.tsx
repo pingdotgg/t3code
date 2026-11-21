@@ -63,7 +63,7 @@ const FileTreeRow = function FileTreeRow(props: {
         props.onPressFile(node.path);
       }}
       className={cn(
-        "mx-2 min-h-[44px] flex-row items-center gap-2 rounded-[12px] px-2 active:bg-subtle android:min-h-[48px]",
+        "mx-2 min-h-[46px] flex-row items-center gap-2 rounded-[12px] px-2 active:bg-subtle android:min-h-[48px]",
         props.selected && "bg-thread-selected",
       )}
       style={{ paddingLeft: 8 + depth * 18 }}
@@ -232,7 +232,7 @@ export function FileTreeBrowser(props: {
       automaticallyAdjustsScrollIndicatorInsets
       keyboardDismissMode="on-drag"
       keyboardShouldPersistTaps="handled"
-      estimatedItemSize={Platform.OS === "android" ? 48 : 44}
+      estimatedItemSize={Platform.OS === "android" ? 48 : 46}
       recycleItems
       maintainVisibleContentPosition
       extraData={extraData}
