@@ -1,7 +1,9 @@
-import type {
-  ProviderApprovalOption,
-  ProviderUserInputAnswers,
-  UserInputQuestion,
+import {
+  type OrchestrationV2UserInputQuestion,
+  type ProviderApprovalOption,
+  type ProviderUserInputAnswers,
+  TrimmedNonEmptyString,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import * as Option from "effect/Option";
@@ -10,6 +12,7 @@ import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
+import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
 import {
@@ -176,6 +179,75 @@ export function makeAntigravityUserInputResponse(
   const option = matchingLabels.length === 1 ? matchingLabels[0] : undefined;
   return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : undefined;
 }
+
+const isElicitationForm = Schema.is(
+  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Unknown) }),
+);
+const isElicitationQuestion = Schema.is(
+  Schema.Struct({
+    type: Schema.Literal("string"),
+    title: TrimmedNonEmptyString,
+    oneOf: Schema.NonEmptyArray(
+      Schema.Struct({
+        const: TrimmedNonEmptyString,
+        title: TrimmedNonEmptyString,
+        description: Schema.optional(Schema.String),
+      }),
+    ),
+  }),
+);
+const isElicitationText = Schema.is(
+  Schema.Struct({
+    type: Schema.Literal("string"),
+    oneOf: Schema.optional(Schema.Undefined),
+    enum: Schema.optional(Schema.Undefined),
+  }),
+);
+
+/** ask_question sends each choice as qN titled with the question, plus a qN_other text field. */
+export const extractAntigravityElicitationForm: NonNullable<
+  AcpAdapterV2Flavor["extractElicitationForm"]
+> = (request) => {
+  if (request.mode !== "form" || !isElicitationForm(request.requestedSchema)) return undefined;
+  const { properties } = request.requestedSchema;
+  const questions: OrchestrationV2UserInputQuestion[] = [];
+  for (const [id, field] of Object.entries(properties)) {
+    if (!/^q\d+$/.test(id)) continue;
+    if (!isElicitationQuestion(field) || !isElicitationText(properties[`${id}_other`])) {
+      return undefined;
+    }
+    questions.push({
+      id,
+      header: `Question ${questions.length + 1}`,
+      question: field.title,
+      options: field.oneOf.map((option) => ({
+        label: option.title,
+        value: option.const,
+        description: option.description?.trim() || option.title,
+      })),
+    });
+  }
+  // Any other field means a different form; leave it to the generic parser.
+  if (questions.length === 0 || Object.keys(properties).length !== questions.length * 2) {
+    return undefined;
+  }
+  return {
+    questions,
+    respond: (answers) => {
+      const content: Record<string, string> = {};
+      for (const question of questions) {
+        const answer = Object.hasOwn(answers, question.id) ? answers[question.id] : undefined;
+        if (typeof answer !== "string" || !answer.trim()) return { action: "cancel" };
+        if (question.options.some((option) => option.value === answer)) {
+          content[question.id] = answer;
+        } else {
+          content[`${question.id}_other`] = answer;
+        }
+      }
+      return { action: "accept", content };
+    },
+  };
+};
 
 function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
   return text.length <= limit

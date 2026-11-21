@@ -2505,3 +2505,169 @@ describe("AntigravityAdapterV2 session system prompt", () => {
       }).pipe(Effect.provide(layerSession)),
   );
 });
+
+describe("AntigravityAdapterV2 questions", () => {
+  it.live("asks each ask_question choice once, with its `_other` field as the custom answer", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-ask-question-",
+      });
+      const responseLog = path.join(directory, "responses.jsonl");
+      // The form `agy acp` 1.5.9 sends for a two-question ask_question call.
+      const ask = (question: string, options: ReadonlyArray<string>) => ({
+        type: "string",
+        title: question,
+        oneOf: options.map((title, index) => ({ const: String(index + 1), title })),
+      });
+      const other = (question: string) => ({
+        type: "string",
+        title: "Other",
+        description: `Optional free-form answer to: ${question}`,
+      });
+      const research = "Should competitive research run before implementation?";
+      const roles = "Which workspace roles may read conversations over MCP?";
+      const requestedSchema = {
+        type: "object",
+        properties: {
+          q1: ask(research, ["(Recommended) Skip research", "Run research first"]),
+          q1_other: other(research),
+          q2: ask(roles, ["(Recommended) Owner and admin only", "Include support agents"]),
+          q2_other: other(roles),
+        },
+      };
+      const instanceId = ProviderInstanceId.make("antigravity-ask-question-test");
+      const threadId = ThreadId.make("thread-antigravity-ask-question");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: {
+                T3_ACP_ANTIGRAVITY: "1",
+                T3_ACP_EMIT_ELICITATION: "1",
+                T3_ACP_ELICITATION_SCHEMA: JSON.stringify(requestedSchema),
+                T3_ACP_ELICITATION_RESPONSE_LOG_PATH: responseLog,
+              },
+            },
+          }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto)),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-ask-question"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      yield* session.startTurn({
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project-antigravity-ask-question"),
+          title: "Antigravity ask_question",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make("run-antigravity-ask-question"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("attempt-antigravity-ask-question"),
+        rootNodeId: NodeId.make("node-antigravity-ask-question"),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message-antigravity-ask-question"),
+          text: "ask me two questions",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      const request = yield* session.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "turn.terminal" ||
+            (event.type === "turn_item.updated" && event.turnItem.type === "user_input_request"),
+        ),
+        Stream.runHead,
+      );
+      const item =
+        request._tag === "Some" &&
+        request.value.type === "turn_item.updated" &&
+        request.value.turnItem.type === "user_input_request"
+          ? request.value.turnItem
+          : undefined;
+      assert(item !== undefined, "the ask_question form reaches the question card");
+
+      assert.deepEqual(
+        item.questions.map((question) => [
+          question.id,
+          question.question,
+          question.allowCustomAnswer !== false,
+        ]),
+        [
+          ["q1", research, true],
+          ["q2", roles, true],
+        ],
+      );
+
+      yield* session.respondToRuntimeRequest({
+        requestId: item.requestId,
+        answers: { q1: "1", q2: "Only the support leads" },
+      });
+      yield* session.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      const responses = (yield* fileSystem.readFileString(responseLog))
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(responses, [
+        { action: "accept", content: { q1: "1", q2_other: "Only the support leads" } },
+      ]);
+    }).pipe(Effect.provide(layerSession)),
+  );
+});
