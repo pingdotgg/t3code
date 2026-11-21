@@ -128,7 +128,11 @@ sessions that hold `device` get a short block from
 [`orchestrationInstructions.ts`](../../packages/provider-core/src/server/orchestrationInstructions.ts)
 through their adapter's instruction channel. It points simulator and emulator UI
 work on local and SSH hosts at the tools; `simctl`, `adb` and ssh stay
-available for what the tools do not cover. Pi and Muse do not send it yet.
+available for what the tools do not cover. The block outranks memory notes, docs
+and a parent's task, and only the user's explicit ask lifts it. Codex reads it
+with developer authority, so a rule with no user exception is one the user
+cannot override, while an exception worded any wider lets a delegated recipe
+lift the rules too. Pi and Muse do not send it yet.
 Claude's native subagents never see the session's system prompt, so a
 `SubagentStart` hook passes them the block, where the runtime runs hooks and the
 subagent's context is not isolated.

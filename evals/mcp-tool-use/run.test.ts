@@ -1786,7 +1786,7 @@ const deviceCases = () =>
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {
     const cases = deviceCases();
-    assert.equal(new Set(cases.map((c) => c.id)).size, 16);
+    assert.equal(new Set(cases.map((c) => c.id)).size, 18);
     const base = buildBase(
       {
         ...template,
@@ -1804,7 +1804,7 @@ it.effect("builds device cases from product-backed worlds and synthetic prior tu
       // would have opened the app, so its world starts that session. OWN seeds another owner.
       assert.deepEqual(
         [...(sample.devices?.sessions(sample.shell).values() ?? [])],
-        ["FAIL-AFTER-hub", "OWN-01", "OWN-02", "OWN-03"].includes(testCase.id)
+        ["FAIL-AFTER-hub", "OWN-01", "OWN-02", "OWN-03", "OWN-04"].includes(testCase.id)
           ? [{ app: true }]
           : [],
         testCase.id,
@@ -2744,8 +2744,28 @@ it("shares failed device attempts across tools and launcher steps, resetting onl
   );
 });
 
+it("credits USER-01's screenshot script only when it runs, not when it is printed", () => {
+  const [pattern] = deviceCases().find((c) => c.id === "USER-01")?.expect.shellMust ?? [];
+  assert.isDefined(pattern);
+  const runs = (command: string) => new RegExp(pattern).test(command);
+  for (const command of [
+    "make screenshots_ios",
+    "cd /Users/user/acme/app && make screenshots_ios",
+    "ssh build-mac 'cd /Users/user/acme/app && make screenshots_ios'",
+    "echo ok; ssh build-mac 'cd /Users/user/acme/app && make screenshots_ios'",
+  ])
+    assert.isTrue(runs(command), command);
+  for (const command of [
+    "echo make screenshots_ios",
+    "echo 'cd /Users/user/acme/app && make screenshots_ios'",
+    `printf '%s\\n' "cd /Users/user/acme/app && make screenshots_ios"`,
+  ])
+    assert.isFalse(runs(command), command);
+});
+
 it("applies device shell checks to decoded cases and stops raw UI early", () => {
-  for (const testCase of deviceCases()) {
+  // In USER-01 the user picks the project's own simctl script, so raw UI is the right route.
+  for (const testCase of deviceCases().filter((c) => c.id !== "USER-01")) {
     const run = {
       calls: [
         {
