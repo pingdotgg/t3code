@@ -772,7 +772,8 @@ const ReviewPullRequestTool = Tool.make("pull_request_review", {
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWithoutForge);
 
 const MergePullRequestTool = Tool.make("pull_request_merge", {
-  description: "Merge a PR. Refuses if the head moved from expectedHeadSha (headSha in pull_request_read).",
+  description:
+    "Merge a PR. Refuses if the head moved from expectedHeadSha (headSha in pull_request_read).",
   parameters: Schema.Struct({
     ...ThreadPullRequestInput.fields,
     expectedHeadSha: TrimmedNonEmptyString,
