@@ -1,7 +1,5 @@
 appId: com.13kparkin.agentboard
 productName: Agent Board
-extraMetadata:
-  name: agent-board
 directories:
   output: release
 # The renderer and the main process are bundled, so the app ships no node_modules.
@@ -18,8 +16,9 @@ win:
       arch: x64
     - target: zip
       arch: x64
-  signAndEditExecutable: false
+  signAndEditExecutable: true
 nsis:
+  include: installer.nsh
   artifactName: Agent-Board-Setup-${version}.exe
   createDesktopShortcut: always
   createStartMenuShortcut: true
