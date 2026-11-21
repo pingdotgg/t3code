@@ -82,6 +82,17 @@ it.effect("refuses Tailscale Serve when remote clients are not allowed", () =>
       tailscaleServeEnabled: true,
     }).pipe(Effect.flip);
     assert.include(error.message, "Tailscale Serve");
+    // A proxy on this machine reaches a loopback bind, so the address it answers at is remote.
+    const advertised = yield* ManagedLimits.checkServerReachability(desktopAndLocal, {
+      authPolicy: "loopback-browser",
+      host: undefined,
+      tailscaleServeEnabled: false,
+      advertisedUrls: ["https://t3.example.test/"],
+    }).pipe(Effect.flip);
+    assert.equal(
+      advertised.message,
+      "Example Corp's policy does not allow remote clients, so the server cannot advertise an address.",
+    );
   }),
 );
 

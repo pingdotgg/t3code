@@ -214,6 +214,7 @@ export const checkServerReachability = Effect.fn("managedLimits.checkServerReach
       readonly authPolicy: ServerAuthPolicy;
       readonly host: string | undefined;
       readonly tailscaleServeEnabled: boolean;
+      readonly advertisedUrls?: ReadonlyArray<string> | undefined;
       /** The background service chose `host` to reach private networks; the user did not. */
       readonly privateNetworkOnly?: boolean | undefined;
     },
@@ -233,6 +234,9 @@ export const checkServerReachability = Effect.fn("managedLimits.checkServerReach
     if (allowsRemoteClients(policy)) return input.host ?? "127.0.0.1";
     if (input.tailscaleServeEnabled) {
       return yield* refuseRemoteClients(policy, "so Tailscale Serve cannot be turned on");
+    }
+    if (input.advertisedUrls !== undefined && input.advertisedUrls.length > 0) {
+      return yield* refuseRemoteClients(policy, "so the server cannot advertise an address");
     }
     return loopbackBindAddress(input.host) ?? (yield* cannotListen());
   },
