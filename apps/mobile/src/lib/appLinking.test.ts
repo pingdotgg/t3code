@@ -27,12 +27,14 @@ describe("shouldHandleAppLink", () => {
     expect(shouldHandleAppLink(url, true)).toBe(true);
   });
 
-  it.each(["t3code://expo-development-client/?url=x", "t3code://expo-sharing/anything"])(
-    "ignores lifecycle URL %s",
-    (url) => {
-      expect(shouldHandleAppLink(url, true)).toBe(false);
-    },
-  );
+  it.each([
+    "t3code://expo-development-client/?url=x",
+    "t3code://expo-sharing/anything",
+    "t3code://cloudflare-access#token=abc",
+    "forkcode://cloudflare-access/#token=abc",
+  ])("ignores lifecycle URL %s", (url) => {
+    expect(shouldHandleAppLink(url, true)).toBe(false);
+  });
 });
 
 describe("hostedAppLinkPrefixes", () => {

@@ -23,8 +23,11 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
+import { signInWithCloudflareAccess } from "./cloudflareAccessSignIn";
+import { useCloudflareAccessLoginOrigin } from "./useCloudflareAccessLoginOrigin";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
@@ -101,6 +104,7 @@ function PairingForm({
   const headerIconColor = useUniwindTheme()["--color-icon"];
 
   const connectDisabled = connecting || hostInput.trim().length === 0;
+  const cloudflareAccessOrigin = useCloudflareAccessLoginOrigin(hostInput);
 
   const clearError = () => {
     setSubmitError(null);
@@ -169,8 +173,7 @@ function PairingForm({
     }
   };
 
-  const handleSubmit = async () => {
-    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+  const handleSubmit = async (pairingUrl = buildPairingUrl(hostInput, codeInput)) => {
     setOwnAttempt(true);
     setSubmitError(null);
     setIsSubmitting(true);
@@ -192,6 +195,27 @@ function PairingForm({
         leaveSettingsPage(navigation, workspaceHasColumns(), "SettingsEnvironments");
       }
     }
+  };
+
+  const handleCloudflareAccessSignIn = async () => {
+    // Pair with the host the sign-in started from, whatever the field holds by the time it returns.
+    const origin = cloudflareAccessOrigin;
+    if (origin === null) return;
+    setOwnAttempt(true);
+    setSubmitError(null);
+    setIsSubmitting(true);
+    let pairingCode: string | null;
+    try {
+      pairingCode = await signInWithCloudflareAccess(origin);
+    } catch {
+      pairingCode = null;
+    }
+    setIsSubmitting(false);
+    if (pairingCode === null) {
+      setSubmitError(gt("Sign-in did not finish. Try again."));
+      return;
+    }
+    await handleSubmit(buildPairingUrl(origin, pairingCode));
   };
 
   return (
@@ -284,6 +308,18 @@ function PairingForm({
                       "For machines on your local network or tailnet. The machine keeps its own provider credentials.",
                     ))}
             </Text>
+            {cloudflareAccessOrigin !== null ? (
+              <Button
+                label={gt("Sign in with Google")}
+                icon="person.crop.circle"
+                tone="secondary"
+                fullWidth
+                loading={connecting}
+                onPress={() => {
+                  void handleCloudflareAccessSignIn();
+                }}
+              />
+            ) : null}
           </View>
 
           {hasCloudPublicConfig() ? <T3ConnectSection /> : null}

@@ -43,6 +43,9 @@ vi.mock("expo-haptics", () => ({
   NotificationFeedbackType: { Success: "success", Error: "error" },
 }));
 vi.mock("../../components/ui/ListRow", () => ({ ListRow: () => null }));
+vi.mock("../../components/ui/Button", () => ({ Button: () => null }));
+vi.mock("./cloudflareAccessSignIn", () => ({ signInWithCloudflareAccess: vi.fn() }));
+vi.mock("./useCloudflareAccessLoginOrigin", () => ({ useCloudflareAccessLoginOrigin: () => null }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({
