@@ -63,6 +63,8 @@ pub struct RightPanel {
     diff: Entity<DiffPanel>,
     terminal: Entity<TerminalPanel>,
     browser: Entity<BrowserPanel>,
+    /// True while the right panel is open and nothing covers it (see `set_surface_visible`).
+    surface_visible: bool,
     /// False when the shell draws the tab strip in its 44px glass header and the card fill.
     chrome: bool,
 }
@@ -108,6 +110,7 @@ impl RightPanel {
             terminal,
             browser,
             chrome: true,
+            surface_visible: false,
         }
     }
 
@@ -183,9 +186,25 @@ impl RightPanel {
             .update(cx, |p, cx| p.set_turn_count(turn_count, cx));
     }
 
+    /// Whether the native browser view may show: the shell passes `true` only when the right
+    /// panel is open and no GPUI overlay covers it. The Browser tab must also be active.
+    pub fn set_surface_visible(&mut self, visible: bool, cx: &mut Context<'_, Self>) {
+        self.surface_visible = visible;
+        self.sync_browser_visibility(cx);
+    }
+
+    fn sync_browser_visibility(&mut self, cx: &mut Context<'_, Self>) {
+        let show = self.surface_visible && self.tab == RightPanelTab::Browser;
+        self.browser.update(cx, |b, cx| b.set_visible(show, cx));
+    }
+
     /// Switches the active right-panel tab, lazily spawning the terminal PTY on first visit.
     pub fn set_tab(&mut self, tab: RightPanelTab, cx: &mut Context<'_, Self>) {
+        if self.tab == tab {
+            return;
+        }
         self.tab = tab;
+        self.sync_browser_visibility(cx);
         if tab == RightPanelTab::Terminal {
             self.terminal.update(cx, |p, cx| p.ensure_started(cx));
         }

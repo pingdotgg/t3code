@@ -17,14 +17,14 @@ use conn_web::{BrowserView, Rect as WebRect, WebError, WebRuntime, WebRuntimeSta
 #[cfg(feature = "cef")]
 use futures::StreamExt as _;
 use gpui_kit::assets::IconName;
+#[cfg(feature = "cef")]
+use gpui_kit::canvas;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window, div, px,
 };
-#[cfg(feature = "cef")]
-use gpui_kit::{MouseDownEvent, canvas};
 
 use super::color::to_hsla;
 
@@ -68,13 +68,21 @@ pub(crate) struct BrowserPanel {
     #[cfg(feature = "cef")]
     view: Rc<RefCell<Option<BrowserView>>>,
     #[cfg(feature = "cef")]
-    paint_gen: Rc<Cell<u64>>,
-    #[cfg(feature = "cef")]
     last_bounds: Rc<Cell<Option<WebRect>>>,
     #[cfg(feature = "cef")]
     parent_view: Rc<Cell<Option<usize>>>,
     #[cfg(feature = "cef")]
     creating_view: Rc<Cell<bool>>,
+    /// Whether the shell shows this panel (right panel open, Browser tab active, no GPUI
+    /// overlay on top). The native view is hidden whenever this is false.
+    #[cfg(feature = "cef")]
+    visible: Rc<Cell<bool>>,
+    /// Bounds last sent to the native view, so AppKit only hears about real changes.
+    #[cfg(feature = "cef")]
+    applied_bounds: Rc<Cell<Option<WebRect>>>,
+    /// Hidden state last sent to the native view.
+    #[cfg(feature = "cef")]
+    applied_hidden: Rc<Cell<Option<bool>>>,
 }
 
 impl fmt::Debug for BrowserPanel {
@@ -114,30 +122,11 @@ impl BrowserPanel {
         #[cfg(feature = "cef")]
         let view: Rc<RefCell<Option<BrowserView>>> = Rc::new(RefCell::new(None));
         #[cfg(feature = "cef")]
-        let paint_gen = Rc::new(Cell::new(0u64));
-        #[cfg(feature = "cef")]
         let last_bounds = Rc::new(Cell::new(None));
         #[cfg(feature = "cef")]
         let parent_view = Rc::new(Cell::new(native_ns_view(window).map(|p| p as usize)));
         #[cfg(feature = "cef")]
         let creating_view = Rc::new(Cell::new(false));
-
-        #[cfg(feature = "cef")]
-        {
-            // Hide the native NSView if a window resize or keystroke (e.g. Cmd+Alt+B)
-            // results in a frame where BrowserPanel is no longer mounted.
-            let view_for_bounds = view.clone();
-            let gen_for_bounds = paint_gen.clone();
-            subscriptions.push(cx.observe_window_bounds(window, move |_this, window, _cx| {
-                schedule_visibility_check(window, view_for_bounds.clone(), gen_for_bounds.clone());
-            }));
-
-            let view_for_keys = view.clone();
-            let gen_for_keys = paint_gen.clone();
-            subscriptions.push(cx.observe_keystrokes(move |_this, _event, window, _cx| {
-                schedule_visibility_check(window, view_for_keys.clone(), gen_for_keys.clone());
-            }));
-        }
 
         Self {
             tokens,
@@ -149,13 +138,34 @@ impl BrowserPanel {
             #[cfg(feature = "cef")]
             view,
             #[cfg(feature = "cef")]
-            paint_gen,
+            visible: Rc::new(Cell::new(false)),
+            #[cfg(feature = "cef")]
+            applied_bounds: Rc::new(Cell::new(None)),
+            #[cfg(feature = "cef")]
+            applied_hidden: Rc::new(Cell::new(None)),
             #[cfg(feature = "cef")]
             last_bounds,
             #[cfg(feature = "cef")]
             parent_view,
             #[cfg(feature = "cef")]
             creating_view,
+        }
+    }
+
+    /// Shows or hides the native browser view. The shell calls this whenever the right
+    /// panel opens or closes, the tab changes, or a GPUI overlay covers the panel.
+    pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<'_, Self>) {
+        #[cfg(feature = "cef")]
+        {
+            if self.visible.get() != visible {
+                self.visible.set(visible);
+                apply_hidden(&self.view, &self.applied_hidden, !visible);
+                cx.notify();
+            }
+        }
+        #[cfg(not(feature = "cef"))]
+        {
+            let _ = (visible, cx);
         }
     }
 
@@ -192,6 +202,8 @@ impl BrowserPanel {
                 "url": view.as_ref().map(BrowserView::url),
                 "title": view.as_ref().map(BrowserView::title),
                 "parent": self.parent_view.get().is_some(),
+                "visible": self.visible.get(),
+                "nativeHidden": self.applied_hidden.get(),
                 "bounds": self.last_bounds.get().map(|b| [b.x, b.y, b.width, b.height]),
             })
         }
@@ -585,18 +597,17 @@ impl Render for BrowserPanel {
             };
 
             let view_for_prepaint = self.view.clone();
-            let paint_gen = self.paint_gen.clone();
             let last_bounds = self.last_bounds.clone();
             let parent_view = self.parent_view.clone();
             let should_create = matches!(self.phase, RuntimePhase::Running) && !has_view;
             let entity = cx.entity().downgrade();
 
-            let view_for_mouse = self.view.clone();
-            let gen_for_mouse = self.paint_gen.clone();
+            let visible = self.visible.clone();
+            let applied_bounds = self.applied_bounds.clone();
+            let applied_hidden = self.applied_hidden.clone();
 
             let host_canvas = canvas(
                 move |bounds, window, cx| {
-                    paint_gen.set(paint_gen.get().wrapping_add(1));
                     if let Some(ns_view) = native_ns_view(window) {
                         parent_view.set(Some(ns_view as usize));
                     }
@@ -610,27 +621,24 @@ impl Render for BrowserPanel {
 
                     // `BrowserView::set_bounds` converts top-left logical points to AppKit's
                     // flipped coordinate space inside `conn_view_set_frame`.
-                    if let Some(view) = view_for_prepaint.borrow().as_ref() {
-                        if rect.width >= 1.0 && rect.height >= 1.0 {
-                            view.set_bounds(rect);
-                            view.set_hidden(false);
-                        } else {
-                            view.set_hidden(true);
+                    if view_for_prepaint.borrow().is_some() {
+                        let usable = rect.width >= 1.0 && rect.height >= 1.0;
+                        if usable && applied_bounds.get() != Some(rect) {
+                            applied_bounds.set(Some(rect));
+                            if let Some(view) = view_for_prepaint.borrow().as_ref() {
+                                view.set_bounds(rect);
+                            }
                         }
+                        apply_hidden(
+                            &view_for_prepaint,
+                            &applied_hidden,
+                            !(usable && visible.get()),
+                        );
                     } else if should_create && let Some(panel) = entity.upgrade() {
                         panel.update(cx, |panel, cx| panel.maybe_create_view_deferred(cx));
                     }
                 },
-                move |_, _, window, _| {
-                    // When the user clicks anywhere in GPUI (e.g. another right-panel tab or
-                    // the panel toggle), verify on the next frame whether BrowserPanel was
-                    // still painted; if not, hide the native child NSView immediately.
-                    let view_slot = view_for_mouse.clone();
-                    let paint_gen = gen_for_mouse;
-                    window.on_mouse_event(move |_: &MouseDownEvent, _phase, window, _| {
-                        schedule_visibility_check(window, view_slot.clone(), paint_gen.clone());
-                    });
-                },
+                |_, _, _, _| {},
             )
             .size_full();
 
@@ -793,23 +801,18 @@ fn native_ns_view(window: &Window) -> Option<*mut c_void> {
     }
 }
 
+/// Sends the hidden state to the native view only when it changes.
 #[cfg(feature = "cef")]
-fn schedule_visibility_check(
-    window: &mut Window,
-    view_slot: Rc<RefCell<Option<BrowserView>>>,
-    paint_gen: Rc<Cell<u64>>,
+fn apply_hidden(
+    view: &Rc<RefCell<Option<BrowserView>>>,
+    applied: &Rc<Cell<Option<bool>>>,
+    hidden: bool,
 ) {
-    if view_slot.borrow().is_none() {
+    if applied.get() == Some(hidden) {
         return;
     }
-    let gen_before = paint_gen.get();
-    window.on_next_frame(move |_window, cx| {
-        cx.defer(move |_cx| {
-            if paint_gen.get() == gen_before
-                && let Some(view) = view_slot.borrow().as_ref()
-            {
-                view.set_hidden(true);
-            }
-        });
-    });
+    if let Some(view) = view.borrow().as_ref() {
+        view.set_hidden(hidden);
+        applied.set(Some(hidden));
+    }
 }

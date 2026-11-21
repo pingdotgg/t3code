@@ -143,6 +143,7 @@ impl ConnApp {
     pub(crate) fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         use crate::palette::{CommandPalette, PaletteAction, PaletteEvent, PaletteItems};
         if self.command_palette.take().is_some() {
+            self.sync_browser_visibility(cx);
             cx.notify();
             return;
         }
@@ -178,10 +179,12 @@ impl ConnApp {
                     }
                     PaletteEvent::Dismiss => cx.notify(),
                 }
+                app.sync_browser_visibility(cx);
             },
         );
         self.overlay_subscriptions.push(sub);
         self.command_palette = Some(palette);
+        self.sync_browser_visibility(cx);
         cx.notify();
     }
 
@@ -189,6 +192,7 @@ impl ConnApp {
     pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         use crate::settings::{SettingsConnectionInfo, SettingsEvent, SettingsModal};
         if self.settings_modal.take().is_some() {
+            self.sync_browser_visibility(cx);
             cx.notify();
             return;
         }
@@ -208,13 +212,25 @@ impl ConnApp {
                 }
                 SettingsEvent::Close => {
                     app.settings_modal = None;
+                    app.sync_browser_visibility(cx);
                     cx.notify();
                 }
             },
         );
         self.overlay_subscriptions.push(sub);
         self.settings_modal = Some(modal);
+        self.sync_browser_visibility(cx);
         cx.notify();
+    }
+
+    /// Tells the right panel whether its surfaces are on screen, so the native browser view
+    /// hides while the panel is closed or a GPUI overlay covers it.
+    fn sync_browser_visibility(&self, cx: &mut Context<'_, Self>) {
+        let visible = self.layout.right_panel_open
+            && self.command_palette.is_none()
+            && self.settings_modal.is_none();
+        self.right_panel
+            .update(cx, |panel, cx| panel.set_surface_visible(visible, cx));
     }
 
     /// Pushes the selected thread's timeline (and title/model) into the chat view.
@@ -447,6 +463,7 @@ impl ConnApp {
     /// Toggles the right panel slot (`Cmd+Alt+B`).
     pub(crate) fn toggle_right_panel(&mut self, cx: &mut Context<'_, Self>) {
         self.layout.right_panel_open = !self.layout.right_panel_open;
+        self.sync_browser_visibility(cx);
         cx.notify();
     }
 
@@ -459,6 +476,7 @@ impl ConnApp {
         self.layout.right_panel_tab = tab;
         self.layout.right_panel_open = true;
         self.sync_chat(cx);
+        self.sync_browser_visibility(cx);
         cx.notify();
     }
 
@@ -476,6 +494,7 @@ impl ConnApp {
             self.layout.right_panel_open = true;
         }
         self.sync_chat(cx);
+        self.sync_browser_visibility(cx);
         cx.notify();
     }
 
