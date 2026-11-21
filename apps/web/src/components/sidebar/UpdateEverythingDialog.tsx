@@ -3,7 +3,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { ChevronRightIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { Fragment, type RefObject, useRef } from "react";
+import { Fragment, type RefObject, useRef, useState } from "react";
 
 import { environmentThreadShells } from "~/state/threads";
 import {
@@ -15,11 +15,16 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { Checkbox } from "../ui/checkbox";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ScrollArea } from "../ui/scroll-area";
-import type { RestartingMachine, UpdateEverythingRow } from "./updateEverything.logic";
+import type {
+  RestartingMachine,
+  UpdateEverythingRow,
+  UpdateMachineSelection,
+} from "./updateEverything.logic";
 
 const isRunning = (status: string) =>
   status === "preparing" || status === "starting" || status === "running";
@@ -47,7 +52,8 @@ interface UpdateEverythingDialogProps {
   readonly providerCount: number;
   readonly rows: ReadonlyArray<UpdateEverythingRow>;
   readonly restarts: ReadonlyArray<RestartingMachine>;
-  readonly onConfirm: () => void;
+  readonly onConfirm: (selection?: UpdateMachineSelection) => void;
+  readonly selectable?: boolean;
   /** Overrides the "Update N machines?" title, for an update-track switch. */
   readonly title?: string;
   readonly confirmLabel?: string;
@@ -97,8 +103,9 @@ function UpdateEverythingDialogContent({
   version,
   providerCount,
   rows,
-  restarts,
+  restarts: allRestarts,
   onConfirm,
+  selectable = false,
   cancelRef,
   title,
   confirmLabel,
@@ -109,6 +116,21 @@ function UpdateEverythingDialogContent({
 }: UpdateEverythingDialogContentProps) {
   const gt = useGT();
   const m = useMessages();
+  const [excluded, setExcluded] = useState<ReadonlySet<string>>(() => new Set());
+  const rowKey = (row: UpdateEverythingRow) =>
+    row.hostedByThisApp || row.app === "this-app" ? "this-app" : (row.environmentId ?? "this-app");
+  const updating = rows.filter((row) => row.app !== null || row.providers.length > 0);
+  const selected = updating.filter((row) => !selectable || !excluded.has(rowKey(row)));
+  const selectedIds = new Set(
+    selected.flatMap((row) => (row.environmentId === null ? [] : [row.environmentId])),
+  );
+  const restarts = allRestarts.filter(
+    (machine) => !selectable || selectedIds.has(machine.environmentId),
+  );
+  const selectedProviderCount = selectable
+    ? selected.reduce((count, row) => count + row.providers.length, 0)
+    : providerCount;
+  const selectedVersion = !selectable || selected.some((row) => row.app !== null) ? version : null;
   const stopped = useAtomValue(
     runningThreadCountAtom(
       restarts
@@ -127,7 +149,6 @@ function UpdateEverythingDialogContent({
   );
   const running = stopped + continuing;
   const restarting = new Set(restarts.map((machine) => machine.environmentId));
-  const updating = rows.filter((row) => row.app !== null || row.providers.length > 0);
   const skipped = rows.filter((row) => row.skipped !== null);
 
   return (
@@ -136,24 +157,24 @@ function UpdateEverythingDialogContent({
         <AlertDialogTitle>
           {title ??
             gt("{count, plural, one {Update {count} machine?} other {Update {count} machines?}}", {
-              count: updating.length,
+              count: selected.length,
             })}
         </AlertDialogTitle>
         <AlertDialogDescription>
-          {version !== null ? (
+          {selectedVersion !== null ? (
             <>
-              T3 Code <span className="font-mono text-xs">{version}</span>
+              T3 Code <span className="font-mono text-xs">{selectedVersion}</span>
             </>
           ) : null}
-          {version !== null && providerCount > 0 ? " · " : null}
-          {providerCount > 0
+          {selectedVersion !== null && selectedProviderCount > 0 ? " · " : null}
+          {selectedProviderCount > 0
             ? gt(
                 "{count, plural, one {{count} provider update} other {{count} provider updates}}",
-                { count: providerCount },
+                { count: selectedProviderCount },
               )
             : null}
           {checking
-            ? `${version !== null || providerCount > 0 ? " · " : ""}${gt("Checking for more…")}`
+            ? `${selectedVersion !== null || selectedProviderCount > 0 ? " · " : ""}${gt("Checking for more…")}`
             : null}
         </AlertDialogDescription>
       </AlertDialogHeader>
@@ -164,6 +185,14 @@ function UpdateEverythingDialogContent({
               {note}
             </p>
           ))}
+          {selectable ? (
+            <p className="text-muted-foreground text-sm">
+              <T>
+                Choose which machines to update. Only selected machines will be updated or
+                restarted.
+              </T>
+            </p>
+          ) : null}
           {/* Machine names truncate first. Provider lists wrap between names, never inside one. */}
           <div
             role="table"
@@ -173,9 +202,20 @@ function UpdateEverythingDialogContent({
               role="row"
               className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs"
             >
-              <span role="columnheader">
+              <label role="columnheader" className="flex items-center gap-2">
+                {selectable ? (
+                  <Checkbox
+                    aria-label={gt("Select all machines")}
+                    checked={selected.length === updating.length}
+                    indeterminate={selected.length > 0 && selected.length < updating.length}
+                    disabled={busy || updating.length === 0}
+                    onCheckedChange={(checked) =>
+                      setExcluded(checked ? new Set() : new Set(updating.map(rowKey)))
+                    }
+                  />
+                ) : null}
                 <T>Machine</T>
-              </span>
+              </label>
               <span role="columnheader">T3 Code</span>
               <span role="columnheader">
                 <T>Providers</T>
@@ -188,10 +228,24 @@ function UpdateEverythingDialogContent({
                 role="row"
                 className="col-span-full grid grid-cols-subgrid border-b border-border/50 py-1.5 last:border-b-0"
               >
-                <span role="cell" className="max-w-32 min-w-0">
+                <label role="cell" className="flex max-w-40 min-w-0 items-center gap-2">
+                  {selectable ? (
+                    <Checkbox
+                      checked={!excluded.has(rowKey(row))}
+                      disabled={busy}
+                      onCheckedChange={(checked) =>
+                        setExcluded((previous) => {
+                          const next = new Set(previous);
+                          if (checked) next.delete(rowKey(row));
+                          else next.add(rowKey(row));
+                          return next;
+                        })
+                      }
+                    />
+                  ) : null}
                   <span className="sr-only">{row.label}</span>
                   <MiddleTruncate value={row.label} aria-hidden />
-                </span>
+                </label>
                 <span role="cell">
                   {row.app !== null ? m(APP_LABELS[row.app]) : null}
                   {row.app === null && row.skipped !== null ? (
@@ -274,7 +328,19 @@ function UpdateEverythingDialogContent({
         <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
           <T>Cancel</T>
         </AlertDialogClose>
-        <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
+        <Button
+          disabled={disabledReason !== null || busy || (selectable && selected.length === 0)}
+          onClick={() =>
+            onConfirm(
+              selectable
+                ? {
+                    environmentIds: [...selectedIds],
+                    updateLocal: selected.some((row) => row.app === "this-app"),
+                  }
+                : undefined,
+            )
+          }
+        >
           {confirmLabel ?? gt("Update", { $context: "verb, confirms the update" })}
         </Button>
       </AlertDialogFooter>

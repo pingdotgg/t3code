@@ -12078,6 +12078,8 @@
   "ecdf5f108ecc71d0": "{count, plural, one {{count} can resume after the restart.} other {{count} can resume after the restart.}}",
   "0576c87870fb6389": "Update",
   "948185631ef288e6": "{count, plural, one {{count} running} other {{count} running}}",
+  "fc79eb5b32f47c10": "Choose which machines to update. Only selected machines will be updated or restarted.",
+  "0c63d52b2eb9fbb5": "Select all machines",
   "3d9a2f6b9c114039": "Providers",
   "f4baf8deafbb227d": "Skipped",
   "f938bb483eb3d189": "restarts last",

@@ -12070,6 +12070,8 @@
   "ecdf5f108ecc71d0": "{count, plural, one {{count} kann nach dem Neustart fortgesetzt werden.} other {{count} können nach dem Neustart fortgesetzt werden.}}",
   "0576c87870fb6389": "Aktualisieren",
   "948185631ef288e6": "{count, plural, one {{count} läuft} other {{count} laufen}}",
+  "fc79eb5b32f47c10": "Wähle aus, welche Maschinen aktualisiert werden sollen. Nur ausgewählte Maschinen werden aktualisiert oder neu gestartet.",
+  "0c63d52b2eb9fbb5": "Alle Maschinen auswählen",
   "3d9a2f6b9c114039": "Anbieter",
   "f4baf8deafbb227d": "Übersprungen",
   "f938bb483eb3d189": "startet zuletzt neu",

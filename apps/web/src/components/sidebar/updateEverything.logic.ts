@@ -731,6 +731,7 @@ export interface UpdateEverythingPlan {
 }
 
 export interface UpdateEverythingRow {
+  readonly hostedByThisApp?: boolean;
   readonly environmentId: EnvironmentId | null;
   readonly label: string;
   readonly app: "this-app" | "server" | "desktop-app" | null;
@@ -882,6 +883,9 @@ export function describeUpdateEverything(
     const row = rows.get(environmentId) ?? {
       environmentId,
       label,
+      hostedByThisApp:
+        environmentId === null ||
+        plan.localMachines.some((machine) => machine.environmentId === environmentId),
       app: null,
       skipped: null,
       providers: [],
@@ -917,4 +921,18 @@ export function describeUpdateEverything(
     providerCount,
     rows: Array.from(rows.values()),
   };
+}
+
+export interface UpdateMachineSelection {
+  readonly environmentIds: ReadonlyArray<EnvironmentId>;
+  readonly updateLocal: boolean;
+}
+
+export function selectUpdateMachines<T extends { readonly environmentId: EnvironmentId }>(
+  machines: ReadonlyArray<T>,
+  environmentIds?: ReadonlyArray<EnvironmentId>,
+): ReadonlyArray<T> {
+  return environmentIds === undefined
+    ? machines
+    : machines.filter((machine) => environmentIds.includes(machine.environmentId));
 }

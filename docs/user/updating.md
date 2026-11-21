@@ -4,11 +4,15 @@ The app you use and the server running your agents can be on different machines.
 When a server is behind your web or desktop app, the update button at the bottom
 of the sidebar and **Settings → Environments** offer to update it.
 
-## Update everything at once
+## Choose which machines to update
 
-The update button at the bottom of the sidebar updates every connected machine
-in one step. It updates outdated providers, then servers that are behind, then
-the desktop app you are using. Servers move to the
+The update button at the bottom of the sidebar lets you choose which connected
+machines to update. All machines start selected. Deselect a machine to leave its
+app, server, and providers running as they are. For example, update your laptop
+while keeping your PC host available over Tailscale.
+
+For the selected machines, it updates outdated providers, then servers that are
+behind, then the desktop app you are using if selected. Servers move to the
 version your desktop app is installing, or to your web app's version. A
 background service stays on its current release channel. A remote desktop app
 installs the latest release from its own channel. Hover the button to see what
@@ -32,7 +36,7 @@ If a desktop app restarts on its old version, T3 Code tells you the update did
 not apply. It does not install that version again on its own, even when another
 device asks. Use the update button on that machine to retry.
 
-The confirmation counts the running threads that the restarts will interrupt,
+The confirmation counts the running threads that the selected restarts will interrupt,
 and how many can resume afterwards. See **Continue threads after restarts**
 below.
 

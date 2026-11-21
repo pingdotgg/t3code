@@ -12068,6 +12068,8 @@
   "ecdf5f108ecc71d0": "{count, plural, one {{count} peut reprendre après le redémarrage.} other {{count} peuvent reprendre après le redémarrage.}}",
   "0576c87870fb6389": "Mettre à jour",
   "948185631ef288e6": "{count, plural, one {{count} en cours} other {{count} en cours}}",
+  "fc79eb5b32f47c10": "Choisissez les machines à mettre à jour. Seules les machines sélectionnées seront mises à jour ou redémarrées.",
+  "0c63d52b2eb9fbb5": "Sélectionner toutes les machines",
   "3d9a2f6b9c114039": "Fournisseurs",
   "f4baf8deafbb227d": "Ignorés",
   "f938bb483eb3d189": "redémarre en dernier",

@@ -22,6 +22,8 @@ import {
   collectUpdateEverythingResult,
   describeUpdateEverything,
   runUpdateEverything,
+  selectUpdateMachines,
+  type UpdateMachineSelection,
   type UpdateRunMachine,
 } from "./updateEverything.logic";
 import {
@@ -107,17 +109,25 @@ export function useUpdateEverything(
     run: async ({
       downloadLocal,
       installLocal,
+      selection,
     }: {
+      selection?: UpdateMachineSelection;
       downloadLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
       installLocal?: (reportError: ReportLocalUpdateError) => Promise<boolean>;
     }) => {
+      const selectedServers = selectUpdateMachines(servers, selection?.environmentIds);
+      const selectedProviders = selectUpdateMachines(providers.machines, selection?.environmentIds);
+      if (selection?.updateLocal === false) {
+        downloadLocal = undefined;
+        installLocal = undefined;
+      }
       const localFailures: Array<string> = [];
       const reportLocalError: ReportLocalUpdateError = (title, description) => {
         localFailures.push(`${title}: ${description}`);
       };
       const startedAt = Date.now();
       const machinesById = new Map<UpdateRunMachine["environmentId"], UpdateRunMachine>();
-      for (const machine of providers.machines) {
+      for (const machine of selectedProviders) {
         machinesById.set(machine.environmentId, {
           environmentId: machine.environmentId,
           label: machine.label,
@@ -130,7 +140,7 @@ export function useUpdateEverything(
           providerFailure: null,
         });
       }
-      for (const server of servers) {
+      for (const server of selectedServers) {
         const existing = machinesById.get(server.environmentId);
         machinesById.set(server.environmentId, {
           environmentId: server.environmentId,
@@ -158,7 +168,10 @@ export function useUpdateEverything(
         const outcome = await runUpdateEverything({
           ...(downloadLocal ? { downloadLocal: () => downloadLocal(reportLocalError) } : {}),
           updateProviders: async () => {
-            const runs = await providers.updateAll({ quiet: true });
+            const runs = await providers.updateAll({
+              quiet: true,
+              ...(selection ? { environmentIds: selection.environmentIds } : {}),
+            });
             const outcomes = runs.map((run) => {
               const runOutcome = getProviderUpdateRunOutcome(run);
               if (runOutcome.status !== "updated") {
@@ -192,11 +205,11 @@ export function useUpdateEverything(
             );
             return outcomes;
           },
-          ...(providers.machines.length > 0
+          ...(selectedProviders.length > 0
             ? {
                 stageServers: () =>
                   new Map(
-                    servers
+                    selectedServers
                       .filter(
                         (server) =>
                           machines.find((machine) => machine.environmentId === server.environmentId)
@@ -213,7 +226,7 @@ export function useUpdateEverything(
               }
             : {}),
           updateServers: async (staged) => {
-            const runs = servers.map(async (server) => {
+            const runs = selectedServers.map(async (server) => {
               await staged.get(server.environmentId);
               const serverOutcome = await updateServer(server, { quiet: true });
               settleUpdateRunMachine(
@@ -231,7 +244,7 @@ export function useUpdateEverything(
               return finished;
             });
             await Promise.all(
-              servers.map((server, index) =>
+              selectedServers.map((server, index) =>
                 waitForServerUpdateHandoff(server.environmentId, runs[index]!),
               ),
             );
