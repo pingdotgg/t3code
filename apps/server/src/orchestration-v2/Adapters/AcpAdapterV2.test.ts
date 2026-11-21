@@ -11857,6 +11857,8 @@ describe("AcpAdapterV2", () => {
       assert.deepInclude(late.providerThread.contextUsage, { usedTokens: 13101 });
       // With no run left to receive it, only a session-scoped update reaches the projection.
       assert.isTrue(late.sessionScoped);
+      // The run already settled the thread idle; the late update must not mark it active again.
+      assert.equal(late.providerThread.status, "idle");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
