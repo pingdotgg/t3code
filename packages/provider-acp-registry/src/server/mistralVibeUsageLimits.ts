@@ -57,13 +57,11 @@ export const readMistralVibeUsageLimits = Effect.fn("MistralVibe.readUsageLimits
     readonly sessionId: string;
     readonly onUsageLimits: (report: ProviderUsageLimitsReport) => Effect.Effect<void>;
   }) {
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const accountRead = yield* input.runtime.requestExt("_account/read", {
       sessionId: input.sessionId,
     });
-    const report = mistralVibeAccountToUsageLimits(
-      accountRead,
-      DateTime.formatIso(yield* DateTime.now),
-    );
+    const report = mistralVibeAccountToUsageLimits(accountRead, checkedAt);
     if (report !== undefined) yield* input.onUsageLimits(report);
   },
   (effect) => effect.pipe(Effect.ignore),

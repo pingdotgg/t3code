@@ -1,4 +1,7 @@
+import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 import { AcpRequestError } from "effect-acp/errors";
 import { describe, expect, it } from "@effect/vitest";
 
@@ -67,6 +70,23 @@ describe("readMistralVibeUsageLimits", () => {
       });
       expect(requests).toEqual([{ method: "_account/read", params: { sessionId: "session-1" } }]);
       expect(reports).toHaveLength(1);
+    }),
+  );
+
+  it.effect("stamps checkedAt when the request starts rather than when it returns", () =>
+    Effect.gen(function* () {
+      const before = DateTime.formatIso(yield* DateTime.now);
+      const reports: Array<ProviderUsageLimitsReport> = [];
+      yield* readMistralVibeUsageLimits({
+        runtime: {
+          requestExt: () =>
+            TestClock.adjust("5 seconds").pipe(Effect.as({ budget: { usagePercentage: 7 } })),
+        },
+        sessionId: "session-1",
+        onUsageLimits: (report) => Effect.sync(() => reports.push(report)),
+      });
+      expect(reports).toHaveLength(1);
+      expect(reports[0]?.checkedAt).toBe(before);
     }),
   );
 
