@@ -249,10 +249,6 @@ pub(super) struct ModelPickerView<'a> {
 }
 
 /// Renders Conn's floating `dropdown-glass` model picker popup.
-#[expect(
-    dead_code,
-    reason = "used by Composer entity; wired into ChatView by orchestrator"
-)]
 pub(super) fn render_model_picker(
     view: &ModelPickerView<'_>,
     cx: &mut Context<'_, Composer>,

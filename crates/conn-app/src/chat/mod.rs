@@ -13,7 +13,6 @@ use std::fmt;
 
 use conn_state::{ItemStatus, ThreadState, TimelineEntry};
 use conn_theme::Tokens;
-use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight, InteractiveElement,
     IntoElement, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
@@ -22,7 +21,7 @@ use gpui_kit::{
 
 use self::cache::{CachedRow, RowCache, TimelineItem, group_rows};
 use self::color::{hsla, message_highlight, muted_icon, prose_foreground};
-use self::composer::{COMPOSER_MAX_LINES, COMPOSER_MIN_LINES, COMPOSER_PLACEHOLDER};
+use self::composer::{Composer, ComposerEvent};
 use self::spinner::TurningArc;
 
 /// Centered chat content lane width matching Conn's `--chat-content-max-width` (`46rem`).
@@ -48,6 +47,15 @@ const MONO_FONT_FAMILY: &str = "JetBrains Mono";
 pub(crate) enum ChatEvent {
     Send(String),
     Stop,
+    /// Answer an approval row: `decision` is `accept` or `decline`.
+    Approval {
+        entry_id: String,
+        decision: String,
+    },
+    ModelSelected {
+        instance_id: String,
+        model: String,
+    },
 }
 
 /// GPUI entity rendering the Conn chat card (timeline + composer).
@@ -65,7 +73,7 @@ pub(crate) struct ChatView {
     workspace_root: Option<String>,
     scroll_handle: ScrollHandle,
     stick_to_bottom: bool,
-    textarea: Entity<TextareaState>,
+    composer: Entity<Composer>,
     _input_sub: Subscription,
 }
 
@@ -85,24 +93,31 @@ impl EventEmitter<ChatEvent> for ChatView {}
 
 impl ChatView {
     /// Creates a new [`ChatView`] styled with `tokens`.
-    pub(crate) fn new(tokens: Tokens, window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
-        let textarea = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .placeholder(COMPOSER_PLACEHOLDER)
-                .auto_grow(COMPOSER_MIN_LINES, COMPOSER_MAX_LINES)
-                .submit_on_enter(true)
-        });
-        let input_sub = cx.subscribe_in(
-            &textarea,
-            window,
-            |this, _, event: &InputEvent, window, cx| match event {
-                InputEvent::PressEnter { shift: false, .. } => {
-                    this.submit_composer(window, cx);
-                }
-                InputEvent::Change => {
+    pub(crate) fn new(
+        tokens: Tokens,
+        connection: Option<conn_client::Connection>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
+        let composer = cx.new(|cx| Composer::new(tokens.clone(), connection, window, cx));
+        let input_sub = cx.subscribe(
+            &composer,
+            |this, _, event: &ComposerEvent, cx| match event {
+                ComposerEvent::Send(text) => {
+                    this.stick_to_bottom = true;
+                    cx.emit(ChatEvent::Send(text.clone()));
                     cx.notify();
                 }
-                _ => {}
+                ComposerEvent::Stop => cx.emit(ChatEvent::Stop),
+                ComposerEvent::ModelSelected { instance_id, model } => {
+                    cx.emit(ChatEvent::ModelSelected {
+                        instance_id: instance_id.clone(),
+                        model: model.clone(),
+                    });
+                }
+                ComposerEvent::SlashCommand(command) => {
+                    eprintln!("composer: slash command {command} is not implemented yet");
+                }
             },
         );
 
@@ -119,7 +134,7 @@ impl ChatView {
             workspace_root: None,
             scroll_handle: ScrollHandle::new(),
             stick_to_bottom: true,
-            textarea,
+            composer,
             _input_sub: input_sub,
         }
     }
@@ -129,6 +144,8 @@ impl ChatView {
         if self.tokens == tokens {
             return;
         }
+        self.composer
+            .update(cx, |c, cx| c.set_tokens(tokens.clone(), cx));
         self.tokens = tokens;
         cx.notify();
     }
@@ -174,12 +191,16 @@ impl ChatView {
             self.scroll_handle.scroll_to_bottom();
         }
         cx.notify();
+        let working = self.working;
+        self.composer.update(cx, |c, cx| c.set_working(working, cx));
     }
 
     /// Sets the model display label shown in the composer footer.
     /// Sets the project root used to shorten tool row paths.
     pub(crate) fn set_workspace_root(&mut self, root: Option<String>, cx: &mut Context<'_, Self>) {
         if self.workspace_root != root {
+            self.composer
+                .update(cx, |c, cx| c.set_workspace_root(root.clone(), cx));
             self.workspace_root = root;
             cx.notify();
         }
@@ -201,26 +222,10 @@ impl ChatView {
         if self.model_label == label {
             return;
         }
+        self.composer
+            .update(cx, |c, cx| c.set_model_label(label.clone(), cx));
         self.model_label = label;
         cx.notify();
-    }
-
-    pub(super) fn submit_composer(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let raw = self.textarea.read(cx).value().to_string();
-        let trimmed = raw.trim().to_owned();
-        if trimmed.is_empty() {
-            return;
-        }
-        self.textarea.update(cx, |input, cx| {
-            input.set_value("", window, cx);
-        });
-        self.stick_to_bottom = true;
-        cx.emit(ChatEvent::Send(trimmed));
-        cx.notify();
-    }
-
-    pub(super) fn emit_stop(&mut self, cx: &mut Context<'_, Self>) {
-        cx.emit(ChatEvent::Stop);
     }
 
     pub(super) fn mark_code_copied(&mut self, key: String, cx: &mut Context<'_, Self>) {
@@ -347,7 +352,7 @@ impl ChatView {
             } => self.render_work_group(id, rows, *has_active, cx),
             TimelineItem::Approval(row) => {
                 if let TimelineEntry::Approval { id, title, detail } = &row.entry {
-                    self.render_approval_row(id, title, detail.as_deref())
+                    self.render_approval_row(id, title, detail.as_deref(), cx)
                 } else {
                     div().into_any_element()
                 }
@@ -727,7 +732,13 @@ impl ChatView {
 
     /// Renders Conn's `TimelinePendingApprovalRow`: a `WorkLogRow` with monospace command/title,
     /// muted detail, warning `"Waiting for approval"` status, and inline Approve / Decline actions.
-    fn render_approval_row(&self, id: &str, title: &str, detail: Option<&str>) -> AnyElement {
+    fn render_approval_row(
+        &self,
+        id: &str,
+        title: &str,
+        detail: Option<&str>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
         let mut meta = div()
             .ml(px(30.0))
             .flex()
@@ -774,6 +785,15 @@ impl ChatView {
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(hsla(self.tokens.foreground))
                     .hover(|s| s.underline())
+                    .on_click({
+                        let entry_id = id.to_owned();
+                        cx.listener(move |_, _, _, cx| {
+                            cx.emit(ChatEvent::Approval {
+                                entry_id: entry_id.clone(),
+                                decision: "accept".to_owned(),
+                            });
+                        })
+                    })
                     .child("Approve"),
             )
             .child(
@@ -782,6 +802,15 @@ impl ChatView {
                     .cursor_pointer()
                     .text_color(hsla(self.tokens.muted_foreground))
                     .hover(|s| s.text_color(hsla(self.tokens.foreground)).underline())
+                    .on_click({
+                        let entry_id = id.to_owned();
+                        cx.listener(move |_, _, _, cx| {
+                            cx.emit(ChatEvent::Approval {
+                                entry_id: entry_id.clone(),
+                                decision: "decline".to_owned(),
+                            });
+                        })
+                    })
                     .child("Decline"),
             );
 
@@ -970,8 +999,6 @@ impl Render for ChatView {
                 .child(self.render_empty_no_thread());
         }
 
-        let has_text = !self.textarea.read(cx).value().trim().is_empty();
-
         // Conn `.chat-content-lane`: centered `max-w-(--chat-content-max-width)` (736px),
         // `TIMELINE_LIST_HEADER` (`h-4` = 16px) at top, `h-4` (16px) at bottom; each row owns its `pb-*`.
         let mut lane = div()
@@ -1046,14 +1073,7 @@ impl Render for ChatView {
                     .w_full()
                     .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
                     .mx_auto()
-                    .child(composer::render_composer(
-                        &self.textarea,
-                        &self.model_label,
-                        has_text,
-                        self.working,
-                        &self.tokens,
-                        cx,
-                    )),
+                    .child(self.composer.clone()),
             );
 
         div()

@@ -93,15 +93,7 @@ impl ConnApp {
     ) -> Self {
         let mut layout = LayoutState::default();
         let server_url = server.as_ref().map(|c| c.http_base_url.to_string());
-        let chat = cx.new(|cx| crate::chat::ChatView::new(tokens.clone(), window, cx));
-        cx.subscribe(
-            &chat,
-            |app, _chat, event: &crate::chat::ChatEvent, cx| match event {
-                crate::chat::ChatEvent::Send(text) => app.send_prompt(text.clone(), cx),
-                crate::chat::ChatEvent::Stop => app.stop_selected(cx),
-            },
-        )
-        .detach();
+
         let (shell, connection) = match server {
             Some(config) => {
                 let (connection, events) = Connection::start(config, crate::live::RT.handle());
@@ -119,6 +111,22 @@ impl ConnApp {
             }
         };
 
+        let chat =
+            cx.new(|cx| crate::chat::ChatView::new(tokens.clone(), connection.clone(), window, cx));
+        cx.subscribe(
+            &chat,
+            |app, _chat, event: &crate::chat::ChatEvent, cx| match event {
+                crate::chat::ChatEvent::Send(text) => app.send_prompt(text.clone(), cx),
+                crate::chat::ChatEvent::Stop => app.stop_selected(cx),
+                crate::chat::ChatEvent::Approval { entry_id, decision } => {
+                    app.respond_approval(entry_id, decision, cx);
+                }
+                crate::chat::ChatEvent::ModelSelected { instance_id, model } => {
+                    app.select_model(instance_id, model, cx);
+                }
+            },
+        )
+        .detach();
         let right_panel = cx.new(|cx| {
             let mut panel =
                 crate::panels::RightPanel::new(tokens.clone(), connection.clone(), window, cx);
@@ -483,13 +491,6 @@ impl ConnApp {
     }
 
     /// Answers the approval timeline entry `entry_id` of the selected thread.
-    #[cfg_attr(
-        not(feature = "automation"),
-        expect(
-            dead_code,
-            reason = "the timeline's approval buttons call this once wired"
-        )
-    )]
     pub(crate) fn respond_approval(
         &mut self,
         entry_id: &str,
@@ -521,6 +522,34 @@ impl ConnApp {
         cx.spawn(async move |_, _| {
             if let Err(e) = connection.dispatch_command(command).await {
                 eprintln!("approval: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
+    }
+
+    /// Switches the selected thread's model (`thread.model-selection.set`).
+    pub(crate) fn select_model(
+        &mut self,
+        instance_id: &str,
+        model: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let command = match crate::commands::set_model_selection(&thread_id, instance_id, model) {
+            Ok(command) => command,
+            Err(e) => {
+                eprintln!("model: could not build thread.model-selection.set: {e}");
+                return;
+            }
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(command).await {
+                eprintln!("model: dispatchCommand failed: {e}");
             }
         })
         .detach();

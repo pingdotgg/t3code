@@ -35,7 +35,6 @@ use self::menus::{
     render_command_menu, replace_trigger,
 };
 use self::model_picker::{ModelCatalog, ModelPickerView, provider_icon_path, render_model_picker};
-use super::ChatView;
 use super::color::{hsla, hsla_alpha};
 use super::icons;
 
@@ -59,10 +58,6 @@ const ICON_MICROPHONE: &str = "superhero/microphone.svg";
 
 /// Events emitted by [`Composer`] to its host view (`ChatView` -> `ConnApp`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[expect(
-    dead_code,
-    reason = "emitted by Composer entity; wired into ChatView/ConnApp by orchestrator"
-)]
 pub(crate) enum ComposerEvent {
     Send(String),
     Stop,
@@ -71,10 +66,6 @@ pub(crate) enum ComposerEvent {
 }
 
 /// Stateful GPUI entity for the Conn composer, model picker, `/` command menu, and `@` mentions.
-#[expect(
-    dead_code,
-    reason = "wired into ChatView in chat/mod.rs by orchestrator"
-)]
 pub(crate) struct Composer {
     tokens: Tokens,
     connection: Option<Connection>,
@@ -266,6 +257,9 @@ impl Composer {
     pub(crate) fn set_model_label(&mut self, label: String, cx: &mut Context<'_, Self>) {
         if self.selected_model == label {
             return;
+        }
+        if self.selected_driver.is_none() {
+            self.selected_driver = infer_driver_from_model_label(&label).map(str::to_owned);
         }
         self.selected_model = label;
         cx.notify();
@@ -766,97 +760,6 @@ impl Render for Composer {
 
         root
     }
-}
-
-/// Renders the Conn rounded composer card inside the chat lane.
-///
-/// Kept API-compatible with `chat/mod.rs` while matching real Conn's card geometry,
-/// right-aligned footer (provider icon + model name, microphone button, round send/stop).
-pub(super) fn render_composer(
-    textarea: &Entity<TextareaState>,
-    model_label: &str,
-    has_text: bool,
-    working: bool,
-    tokens: &Tokens,
-    cx: &mut Context<'_, ChatView>,
-) -> AnyElement {
-    let (card_bg, card_border) = composer_surface_colors(tokens);
-    let highlight_bg = hsla(tokens.shell_highlight);
-    let fg = hsla(tokens.foreground);
-    let muted = hsla(tokens.muted_foreground);
-
-    let model_trigger = div()
-        .id("chat-composer-model-trigger")
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(6.0))
-        .h(px(FOOTER_CONTROL_HEIGHT_PX))
-        .px(px(8.0))
-        .rounded(px(8.0))
-        .cursor_pointer()
-        .text_size(px(14.0))
-        .line_height(px(20.0))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(hsla_alpha(tokens.foreground, 0.80))
-        .hover(move |s| s.bg(highlight_bg).text_color(fg))
-        .child(icons::icon(
-            provider_icon_path(infer_driver_from_model_label(model_label)),
-            16.0,
-            muted,
-        ))
-        .child(
-            div()
-                .max_w(px(MODEL_LABEL_MAX_WIDTH_PX))
-                .truncate()
-                .child(model_label.to_owned()),
-        );
-
-    let mic_btn = render_microphone_button(tokens);
-
-    let action_btn = render_primary_action_button(
-        working,
-        has_text,
-        tokens,
-        cx.listener(|view, _, _, cx| {
-            view.emit_stop(cx);
-        }),
-        cx.listener(|view, _, window, cx| {
-            view.submit_composer(window, cx);
-        }),
-    );
-
-    div()
-        .w_full()
-        .rounded(px(COMPOSER_RADIUS_PX))
-        .bg(card_bg)
-        .border_1()
-        .border_color(card_border)
-        .overflow_hidden()
-        .child(
-            div().px(px(16.0)).pt(px(16.0)).pb(px(8.0)).child(
-                Textarea::new(textarea)
-                    .appearance(false)
-                    .bordered(false)
-                    .text_size(px(14.0))
-                    .line_height(px(22.0))
-                    .text_color(fg),
-            ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_end()
-                .gap(px(8.0))
-                .px(px(8.0))
-                .pb(px(8.0))
-                .child(model_trigger)
-                .child(mic_btn)
-                .child(action_btn),
-        )
-        .into_any_element()
 }
 
 /// Composer card surface fill and border from `conn_theme::Tokens`.

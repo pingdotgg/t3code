@@ -185,10 +185,6 @@ pub(crate) fn filter_slash_commands(query: &str) -> Vec<&'static SlashCommand> {
 }
 
 /// Renders the floating `/` command menu or `@` file mention menu above the composer.
-#[expect(
-    dead_code,
-    reason = "used by Composer entity; wired into ChatView by orchestrator"
-)]
 pub(super) fn render_command_menu(
     trigger: &ComposerTrigger,
     file_mentions: &[FileMentionEntry],

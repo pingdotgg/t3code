@@ -85,13 +85,6 @@ pub(crate) fn launch_thread_payload(
 
 /// `runtime-request.respond`: answer an approval with `decision` (`accept`,
 /// `acceptForSession`, `decline`, `cancel`).
-#[cfg_attr(
-    not(any(test, feature = "automation")),
-    expect(
-        dead_code,
-        reason = "the timeline's approval buttons call this once wired"
-    )
-)]
 pub(crate) fn respond_approval(
     thread_id: &str,
     request_id: &str,
@@ -103,6 +96,20 @@ pub(crate) fn respond_approval(
         "threadId": thread_id,
         "requestId": request_id,
         "decision": decision,
+    }))
+}
+
+/// `thread.model-selection.set`: switch the thread to `model` on provider `instance_id`.
+pub(crate) fn set_model_selection(
+    thread_id: &str,
+    instance_id: &str,
+    model: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.model-selection.set",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "modelSelection": { "instanceId": instance_id, "model": model },
     }))
 }
 
@@ -130,6 +137,10 @@ mod tests {
             "queued dispatch decodes"
         );
         assert!(stop_thread("t1").is_ok(), "thread.stop decodes");
+        assert!(
+            set_model_selection("t1", "claudeAgent", "haiku").is_ok(),
+            "thread.model-selection.set decodes"
+        );
         assert!(
             respond_approval("t1", "r1", "accept").is_ok(),
             "runtime-request.respond decodes"
