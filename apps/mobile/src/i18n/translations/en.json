@@ -4864,6 +4864,7 @@
   "fd7d017dc6b0e2c9": "Could not load conversation",
   "d06aa0c461291a2a": "Messages not cached",
   "2414be1137e0112a": "Reconnect this environment to load the conversation.",
+  "c1968621dc365115": "Could not sync messages",
   "5e7b8c39e3c0a6a0": "Syncing messages…",
   "8a1cb930736c03cf": "Loading messages…",
   "cd625fe969e84626": "More",

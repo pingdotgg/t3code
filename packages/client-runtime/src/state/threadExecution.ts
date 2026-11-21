@@ -30,6 +30,7 @@ import {
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
+  DEFAULT_VARIANT_CHOICE_ID,
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentLabel,
   getProviderOptionStatedValue,
@@ -278,7 +279,7 @@ export function formatSubagentEffort(input: {
   }
   return (
     REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
-      Boolean,
+      (value) => value && value !== DEFAULT_VARIANT_CHOICE_ID,
     ) ?? null
   );
 }
