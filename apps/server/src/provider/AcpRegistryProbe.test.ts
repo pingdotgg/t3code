@@ -336,21 +336,42 @@ describe("ACP Registry probe", () => {
     expect(commands.skills.map((skill) => skill.name)).toEqual(["late-skill"]);
   });
 
-  it("routes dollar-prefixed ACP commands to the provider skill menu", () => {
+  it("routes dollar-prefixed and Devin skill-category ACP commands to the provider skill menu", () => {
     expect(
       normalizeAcpRegistryCommands([
         { name: "$workspace-skill", description: "Run the workspace skill" },
         { name: "$WORKSPACE-SKILL", description: "duplicate" },
         { name: "$", description: "empty" },
         { name: "review", description: "Review changes" },
+        {
+          name: "full-send",
+          description: "Ship it",
+          _meta: { "cognition.ai/icon": "zap", "cognition.ai/category": "Skills" },
+        },
+        {
+          name: "plan",
+          description: "Plan first",
+          input: { type: "text", hint: "[prompt]" },
+          _meta: { "cognition.ai/icon": "file-text", "cognition.ai/category": "Session" },
+        },
       ]),
     ).toEqual({
-      slashCommands: [{ name: "review", description: "Review changes" }],
+      slashCommands: [
+        { name: "review", description: "Review changes" },
+        { name: "plan", description: "Plan first", input: { hint: "[prompt]" } },
+      ],
       skills: [
         {
           name: "workspace-skill",
           description: "Run the workspace skill",
           path: "acp://skill/workspace-skill",
+          scope: "agent",
+          enabled: true,
+        },
+        {
+          name: "full-send",
+          description: "Ship it",
+          path: "acp://skill/full-send",
           scope: "agent",
           enabled: true,
         },

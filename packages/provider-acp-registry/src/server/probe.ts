@@ -298,8 +298,9 @@ export function normalizeAcpRegistryCommands(
     seen.add(key);
     const description = boundedText(command.description, MAX_DESCRIPTION_LENGTH);
     const hint = command.input ? boundedText(command.input.hint, MAX_DESCRIPTION_LENGTH) : "";
-    if (name.startsWith("$")) {
-      const skillName = boundedOpaqueValue(name.slice(1), MAX_ID_LENGTH);
+    const isDollarSkill = name.startsWith("$");
+    if (isDollarSkill || command._meta?.["cognition.ai/category"] === "Skills") {
+      const skillName = isDollarSkill ? boundedOpaqueValue(name.slice(1), MAX_ID_LENGTH) : name;
       if (skillName === undefined) continue;
       skills.push({
         name: skillName,

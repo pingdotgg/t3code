@@ -1,6 +1,7 @@
 import type * as AcpSchema from "effect-acp/compat";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import type { AcpAdapterV2SubagentUpdate } from "@t3tools/provider-acp/server/adapter";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -53,6 +54,13 @@ export function extractDevinSubagentUpdate(
     status: completed ? (completed.success === false ? "failed" : "completed") : "running",
     result: typeof completed?.summary === "string" ? completed.summary : null,
   };
+}
+
+// Devin invokes skills as `/name`; T3 composers insert `$name`.
+export function rewriteDevinSkillMentions(text: string, skillNames: ReadonlySet<string>): string {
+  return text.replace(SKILL_MENTION_PATTERN, (match, prefix: string, name: string) =>
+    skillNames.has(name) ? `${prefix}/${name}` : match,
+  );
 }
 
 // Devin's plan exit offers several allow_once options in no promised order; T3 never answers with bypass.
