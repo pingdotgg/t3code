@@ -12,6 +12,8 @@ const CLAUDE_TASK_OUTPUT_POLL_MS = 250;
 const MAX_LOCATE_ATTEMPTS = 40;
 /** Skip ahead of fast writers; only the tail is displayed. */
 const MAX_READ_BYTES = 256 * 1024;
+/** Ids come from the SDK stream and are joined into a path; one plain segment keeps them inside root. */
+const SAFE_PATH_SEGMENT = /^[\w-]+$/;
 
 /** Claude Code's per-user temp root, or none where it has no uid (Windows). */
 export function claudeTaskOutputRoot(
@@ -65,6 +67,7 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   readonly stop: Deferred.Deferred<void>;
   readonly onChunk: (chunk: string) => Effect.Effect<void>;
 }) {
+  if (!SAFE_PATH_SEGMENT.test(input.sessionId) || !SAFE_PATH_SEGMENT.test(input.taskId)) return;
   const fileSystem = yield* FileSystem.FileSystem;
   const pause = Deferred.await(input.stop).pipe(
     Effect.as(true),
