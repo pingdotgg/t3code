@@ -11,6 +11,9 @@ import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
+/** Folder reads in flight; the server shares one Git ignore check among reads beyond its four. */
+const FOLDER_READS_IN_FLIGHT = 64;
+
 export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const [directories, setDirectories] = useState(new Map<string, readonly ProjectEntry[]>());
   const [errors, setErrors] = useState(new Map<string, string>());
@@ -37,7 +40,8 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     const request = (async () => {
       // A shared query still waiting would join the removed folder's read.
       if (detached) await detached;
-      if (running.current >= 4) await new Promise<void>((resolve) => waiting.current.push(resolve));
+      if (running.current >= FOLDER_READS_IN_FLIGHT)
+        await new Promise<void>((resolve) => waiting.current.push(resolve));
       else running.current++;
       const result = active.current
         ? await executeAtomQuery(appAtomRegistry, atom, {
