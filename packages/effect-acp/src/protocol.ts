@@ -552,17 +552,18 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       }),
     }).pipe(Effect.asVoid);
 
-  // Pipes can close without process exit; use a live-clock diagnostic grace period.
-  const preferProcessExit = (fallback: AcpError.AcpError) =>
-    options.terminationError
+  // A broken pipe can win the race against the exit that explains it; wait briefly on the live clock.
+  const preferProcessExit = (error: AcpError.AcpError) =>
+    options.terminationError &&
+    (error._tag === "AcpTransportError" || error._tag === "AcpInputStreamEndedError")
       ? options.terminationError.pipe(
           Effect.timeoutOption("250 millis"),
           Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
-          Effect.map(Option.getOrElse(() => fallback)),
+          Effect.map(Option.getOrElse(() => error)),
         )
-      : Effect.succeed(fallback);
+      : Effect.succeed(error);
 
-  const handleTermination = (classify: () => Effect.Effect<AcpError.AcpError>) =>
+  const handleTermination = (cause: AcpError.AcpError) =>
     Ref.modify(terminationHandled, (handled) => {
       if (handled) {
         return [Effect.void, true] as const;
@@ -571,7 +572,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         Effect.gen(function* () {
           yield* Queue.offer(disconnects, 0);
           yield* Queue.end(rawNotifications);
-          const error = yield* classify();
+          const error = yield* preferProcessExit(cause);
           yield* Deferred.fail(terminationFailure, error);
           yield* failAllExtPending(error);
           yield* emitClientProtocolError(error);
@@ -883,10 +884,9 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               operation: "read-input-stream",
               cause: error,
             });
-        return handleTermination(() => Effect.succeed(normalized));
+        return handleTermination(normalized);
       },
-      onSuccess: () =>
-        handleTermination(() => preferProcessExit(new AcpError.AcpInputStreamEndedError({}))),
+      onSuccess: () => handleTermination(new AcpError.AcpInputStreamEndedError({})),
     }),
     Effect.forkScoped,
   );
@@ -958,11 +958,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
             cause,
           });
           return failOutgoingWrites(error).pipe(
-            Effect.andThen(
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.void
-                : handleTermination(() => preferProcessExit(error)),
-            ),
+            Effect.andThen(Cause.hasInterruptsOnly(cause) ? Effect.void : handleTermination(error)),
           );
         },
         onSuccess: () =>
@@ -975,9 +971,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
                       detail: "ACP output writer ended before the protocol closed",
                       cause: "Output writer ended",
                     });
-                    return failOutgoingWrites(error).pipe(
-                      Effect.andThen(handleTermination(() => Effect.succeed(error))),
-                    );
+                    return failOutgoingWrites(error).pipe(Effect.andThen(handleTermination(error)));
                   })();
               return handled.pipe(
                 Effect.andThen(
