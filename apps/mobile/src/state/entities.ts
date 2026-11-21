@@ -247,7 +247,7 @@ export function useLiveThreadLinkLabels(
   markdown: string,
   environmentId: EnvironmentId,
   linked = NO_LINKED_ENVIRONMENTS,
-): string {
+): { readonly markdown: string; readonly unavailable: ReadonlySet<string> } {
   const resolve = useMessages();
   const gt = useGT();
   const titles = useAtomValue(
@@ -255,7 +255,8 @@ export function useLiveThreadLinkLabels(
       ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
       : EMPTY_THREAD_LINK_TITLES_ATOM,
   );
-  return relabelThreadLinks(
+  const unavailable = new Set<string>();
+  const relabeled = relabelThreadLinks(
     markdown,
     environmentId,
     (ref, label) => {
@@ -269,7 +270,9 @@ export function useLiveThreadLinkLabels(
       return title && resolve(msg("Thread", { $context: "fallback title of a linked thread" }));
     },
     resolve,
+    (href) => unavailable.add(href),
   );
+  return { markdown: relabeled, unavailable };
 }
 
 /** Keyed reads; every thread is read only to place a v1 link its message's environment lacks. */

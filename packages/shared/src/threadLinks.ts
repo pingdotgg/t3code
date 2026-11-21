@@ -124,7 +124,7 @@ export function guessThreadLinkRef(
   return null;
 }
 
-function threadLinkHref(link: ThreadLink): string {
+export function threadLinkHref(link: ThreadLink): string {
   return link.environmentId === null
     ? `${V1_PREFIX}${link.threadId}`
     : `${V2_PREFIX}${link.environmentId}/${link.threadId}`;
