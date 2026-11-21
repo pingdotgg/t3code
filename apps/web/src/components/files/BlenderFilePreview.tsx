@@ -32,7 +32,8 @@ interface Opened {
   readonly job: BlenderJob | undefined;
   readonly error: unknown;
 }
-let nextOpenRequest = 0;
+let openRequestId = 0;
+const nextOpenRequestId = () => ++openRequestId;
 
 /**
  * A thread's `.blend` in the 3D viewer. Opening it asks the environment for the scene's preview
@@ -61,7 +62,7 @@ export function BlenderFilePreview({
   const active = enabled === true && canOpen;
 
   const open = async (retry: boolean) => {
-    const request = ++nextOpenRequest;
+    const request = nextOpenRequestId();
     const result = await openScene({
       environmentId,
       input: { threadId, path, ...(retry ? { retry } : {}) },
