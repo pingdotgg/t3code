@@ -212,8 +212,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macOS 26: the Apple Speech helper needs the macOS 26 SDK (SpeechTranscriber).
           - label: macOS arm64
-            runner: macos-15
+            runner: macos-26
             platform: mac
             target: dmg
             arch: arm64
@@ -221,7 +222,7 @@ jobs:
             resource_key: darwin-arm64
           # Native Intel: under Rosetta the 3-core hosted runner times out generating x64 bytecode.
           - label: macOS x64
-            runner: macos-15-intel
+            runner: macos-26-intel
             platform: mac
             target: dmg
             arch: x64
