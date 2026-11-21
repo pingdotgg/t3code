@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
 import { boundAntigravityToolText, isCutAntigravityToolText } from "./AntigravityProtocol.ts";
+import { swarmWorkerConversationIdFromTaskId } from "./AntigravitySwarm.ts";
 
 // Field numbers from the runtime's trajectory protos (exa.cortex_pb).
 const STEP_METADATA = 5;
@@ -45,8 +46,6 @@ interface AntigravityChildLaunch {
   readonly role: string;
   readonly prompt: string;
 }
-
-import { swarmWorkerConversationIdFromTaskId } from "./AntigravitySwarm.ts";
 
 const LaunchInput = Schema.Struct({ Role: Schema.String, Prompt: Schema.String });
 const SwarmAddInput = Schema.Struct({
