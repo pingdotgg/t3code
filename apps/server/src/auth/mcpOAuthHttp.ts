@@ -5,6 +5,7 @@ import {
   AuthMcpClientRegistration,
   AuthMcpRegistrationError,
   EnvironmentHttpApi,
+  MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -121,6 +122,7 @@ export const layer = HttpApiBuilder.group(
           Effect.map((client) => ({
             client_id: client.clientId,
             client_name: client.name,
+            ...(client.peerLink ? ({ software_id: MCP_PEER_LINK_SOFTWARE_ID } as const) : {}),
             redirect_uris: client.redirectUris,
             grant_types: ["authorization_code" as const],
             response_types: ["code" as const],
