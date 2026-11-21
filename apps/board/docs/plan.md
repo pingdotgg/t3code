@@ -49,13 +49,19 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Open the PR ready, never draft, with the configured forge's create command, per `skill://poteto-mode/playbooks/opening-a-pr.md`. A stack child targets its parent branch.
 - [ ] Run lint and typecheck once before the PR-facing push, as `vp lint apps/board` and `vp run --filter @agent-board/app typecheck`. From S1 on, also run `node standards/check-added-diagnostics.mjs`. Push with hooks on.
 - [ ] Run `skill://unslop` before each commit and `skill://no-comments` before review.
+- [ ] Run `skill://pre-pr-reviewer` on the diff before the code-ready push, with the PR's plan section as its ticket. It covers standards, tests, scope against the section, `skill://simplify`, dead code, defensive code, security, and regressions, and fixes its blockers in the owner's worktree.
 - [ ] Triage every Bugbot and security-reviewer comment per `skill://poteto-mode/references/bugbot-triage.md`.
 - [ ] Rebase onto current trunk before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.
 - [ ] Run `node apps/board/scripts/check-engine-untouched.mjs` before every push. A non-zero exit blocks the push.
 
 ### Verdict and merge, for every PR
 
-- [ ] At the code-ready head SHA and at each later push that changes the patch, run the swarm per `skill://swarm`. One gates lane. The ten live lanes from the PR's **Verify, live** block. The perf lane from its **Verify, perf** block. Two or more audit lanes, each with its own focus, that read the diff and the receipts and distrust the PR body. The root audits the receipts in the merge-ready report before the verdict.
+- [ ] At the code-ready head SHA and at each later push that changes the patch, run the swarm per `skill://swarm`. One gates lane. The ten live lanes from the PR's **Verify, live** block. The perf lane from its **Verify, perf** block. At least these read-only audit lanes, which read the diff and the receipts and distrust the PR body:
+  - [ ] A bugs and breaking-change lane on `thermo-nuclear-review-subagent`.
+  - [ ] A `skill://ponytail-review` lane for correctness, load, missing tests, and code that should not exist.
+  - [ ] A security lane following `skill://security-audit` in guidance mode, for any diff that renders third-party content, handles a key or token, or writes outside the board. It reports only findings with a crossed trust boundary and a concrete result.
+  - [ ] A receipts lane that checks every lane's evidence against its Pass condition.
+- [ ] The root audits the receipts in the merge-ready report before the verdict.
 - [ ] Clean only when every lane is `PASS`. Findings go back to the owner, including a defect that a lane filed as a note. A new head gets a fresh swarm and a fresh verdict, except for results that stay valid under the patch-id rule in `skill://poteto-mode/playbooks/shipping.md`.
 - [ ] Append a clean PR to the linear stack per `skill://poteto-mode/playbooks/autopilot-stack.md` step 7. A rebase voids verdicts above the changed head, and the patch-id rule in `skill://poteto-mode/playbooks/shipping.md` decides which verdicts survive. The operator lands the stack bottom-up.
 
