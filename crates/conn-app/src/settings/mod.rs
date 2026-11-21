@@ -12,8 +12,9 @@
 //!   `shell_divider_raised` between square rows, no trailing divider).
 
 pub(crate) mod controls;
+pub(crate) mod scheduled_tasks;
 
-use conn_client::ConnectionStatus;
+use conn_client::{Connection, ConnectionStatus};
 use conn_theme::{Appearance, Rgba, ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -32,6 +33,9 @@ use crate::shell::{DIVIDER_WIDTH_PX, INNER_BORDER_PX};
 use crate::theme::{hsla, hsla_alpha};
 
 use self::controls::{kbd_cap, pill_switch, settings_row, settings_section};
+pub(crate) use self::scheduled_tasks::{
+    ScheduledTaskProjectOption, ScheduledTasksInit, ScheduledTasksView,
+};
 
 actions!(conn_settings, [OpenSettings]);
 
@@ -51,13 +55,15 @@ pub(crate) enum SettingsPage {
     General,
     Appearance,
     Connections,
+    ScheduledTasks,
     Keyboard,
 }
 
-const ALL_PAGES: [SettingsPage; 4] = [
+const ALL_PAGES: [SettingsPage; 5] = [
     SettingsPage::General,
     SettingsPage::Appearance,
     SettingsPage::Connections,
+    SettingsPage::ScheduledTasks,
     SettingsPage::Keyboard,
 ];
 
@@ -67,6 +73,7 @@ impl SettingsPage {
             Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Connections => "Connections",
+            Self::ScheduledTasks => "Scheduled tasks",
             Self::Keyboard => "Keyboard",
         }
     }
@@ -76,6 +83,7 @@ impl SettingsPage {
             Self::General => IconName::SlidersHorizontal,
             Self::Appearance => IconName::Palette,
             Self::Connections => IconName::Plug,
+            Self::ScheduledTasks => IconName::Clock,
             Self::Keyboard => IconName::Keyboard,
         }
     }
@@ -169,6 +177,7 @@ pub(crate) struct SettingsModal {
     show_stopped_instances: bool,
     operator_url_input: Entity<InputState>,
     operator_saved_notice: Option<String>,
+    scheduled_tasks: Entity<ScheduledTasksView>,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -203,6 +212,9 @@ impl SettingsModal {
         tokens: Tokens,
         reduce_transparency: bool,
         connection: SettingsConnectionInfo,
+        live_connection: Option<Connection>,
+        projects: Vec<ScheduledTaskProjectOption>,
+        default_model: (Option<String>, String),
         orbit: OrbitSettingsInfo,
         custom_themes: &[conn_theme::ThemeDefinition],
         window: &mut Window,
@@ -230,9 +242,28 @@ impl SettingsModal {
         let new_profile_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("New profile name"));
 
+        let geometry = ShellGeometry::default();
+        let scheduled_tokens = tokens.clone();
+        let scheduled_url = connection.server_url.clone();
+        let (default_instance_id, default_model_slug) = default_model;
+        let scheduled_tasks = cx.new(|cx| {
+            ScheduledTasksView::new(
+                ScheduledTasksInit {
+                    tokens: scheduled_tokens,
+                    geometry,
+                    connection: live_connection,
+                    server_url: scheduled_url,
+                    projects,
+                    default_instance_id,
+                    default_model: default_model_slug,
+                },
+                cx,
+            )
+        });
+
         Self {
             tokens,
-            geometry: ShellGeometry::default(),
+            geometry,
             active_page: SettingsPage::Appearance,
             active_theme_id: active_theme_id.into(),
             reduce_transparency,
@@ -245,6 +276,7 @@ impl SettingsModal {
             show_stopped_instances: false,
             operator_url_input,
             operator_saved_notice: None,
+            scheduled_tasks,
             focus_handle,
             scroll: ScrollHandle::new(),
         }
@@ -254,13 +286,22 @@ impl SettingsModal {
     pub(crate) fn set_orbit_state(
         &mut self,
         connection: SettingsConnectionInfo,
+        live_connection: Option<Connection>,
+        projects: Vec<ScheduledTaskProjectOption>,
         orbit: OrbitSettingsInfo,
         custom_themes: &[conn_theme::ThemeDefinition],
         cx: &mut Context<'_, Self>,
     ) {
+        let url_changed = self.connection.server_url != connection.server_url;
         self.connection = connection;
         self.orbit = orbit;
         self.themes = build_theme_options(custom_themes);
+        if url_changed {
+            let server_url = self.connection.server_url.clone();
+            self.scheduled_tasks.update(cx, |view, cx| {
+                view.set_connection(live_connection, server_url, projects, cx);
+            });
+        }
         cx.notify();
     }
 
@@ -272,7 +313,10 @@ impl SettingsModal {
         cx: &mut Context<'_, Self>,
     ) {
         self.active_theme_id = theme_id.into();
-        self.tokens = tokens;
+        self.tokens = tokens.clone();
+        self.scheduled_tasks.update(cx, |view, cx| {
+            view.set_tokens(tokens, cx);
+        });
         cx.notify();
     }
 
@@ -506,6 +550,7 @@ impl SettingsModal {
                 SettingsPage::General => self.render_general_page(),
                 SettingsPage::Appearance => self.render_appearance_page(cx),
                 SettingsPage::Connections => self.render_connections_page(cx),
+                SettingsPage::ScheduledTasks => self.scheduled_tasks.clone().into_any_element(),
                 SettingsPage::Keyboard => self.render_keyboard_page(),
             }
         };
@@ -716,6 +761,12 @@ impl SettingsModal {
             .contains(needle)
         {
             sections.push(self.render_connections_page(cx));
+        }
+
+        if "scheduled tasks cron recurring interval webhook deliveries hmac automation"
+            .contains(needle)
+        {
+            sections.push(self.scheduled_tasks.clone().into_any_element());
         }
 
         if sections.is_empty() {

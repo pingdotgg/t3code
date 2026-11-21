@@ -387,12 +387,18 @@ impl ConnApp {
         let theme_id = self.theme_id.clone();
         let tokens = self.tokens.clone();
         let reduce_transparency = self.reduce_transparency;
+        let live_connection = self.connection.clone();
+        let projects = self.scheduled_task_projects();
+        let default_model = self.default_scheduled_task_model();
         let modal = cx.new(|cx| {
             SettingsModal::new(
                 theme_id,
                 tokens,
                 reduce_transparency,
                 connection,
+                live_connection,
+                projects,
+                default_model,
                 orbit_info,
                 &custom_themes,
                 window,
@@ -2449,6 +2455,34 @@ impl ConnApp {
         cx.notify();
     }
 
+    fn scheduled_task_projects(&self) -> Vec<crate::settings::ScheduledTaskProjectOption> {
+        self.shell
+            .projects
+            .iter()
+            .filter(|p| p.archived_at.is_none())
+            .map(|p| crate::settings::ScheduledTaskProjectOption {
+                id: p.id.clone(),
+                name: p.title.clone(),
+            })
+            .collect()
+    }
+
+    fn default_scheduled_task_model(&self) -> (Option<String>, String) {
+        if let Some(thread_id) = &self.layout.selected_thread_id
+            && let Some(thread) = self.shell.threads.iter().find(|t| &t.id == thread_id)
+        {
+            let instance = conn_state::extract_model_instance(&thread.model_selection);
+            let slug = conn_state::extract_model_slug(&thread.model_selection);
+            if !slug.is_empty() {
+                return (instance, slug);
+            }
+        }
+        (
+            Some("claudeAgent".to_owned()),
+            "claude-sonnet-4-6".to_owned(),
+        )
+    }
+
     fn refresh_settings_orbit_info(&self, cx: &mut Context<'_, Self>) {
         if let Some(modal) = &self.settings_modal {
             let connection = crate::settings::SettingsConnectionInfo {
@@ -2456,9 +2490,13 @@ impl ConnApp {
                 server_url: self.server_url.clone(),
                 status: self.status.clone(),
             };
+            let live_connection = self.connection.clone();
+            let projects = self.scheduled_task_projects();
             let info = self.orbit.settings_info(self.server_url.as_deref());
             let custom = self.orbit.custom_themes.clone();
-            modal.update(cx, |m, cx| m.set_orbit_state(connection, info, &custom, cx));
+            modal.update(cx, |m, cx| {
+                m.set_orbit_state(connection, live_connection, projects, info, &custom, cx);
+            });
         }
     }
     /// Switches the selected thread's runtime permission mode (`thread.runtime-mode.set`).

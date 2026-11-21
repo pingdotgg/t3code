@@ -13,6 +13,7 @@
 
 mod annotations;
 mod layout;
+mod scheduled;
 mod shell;
 mod thread;
 
@@ -20,6 +21,12 @@ pub use conn_contract::{
     AnnotationCapture, AnnotationRecord, AnnotationRecordSource, AnnotationStatus,
     OrchestrationProjectShell as ProjectShell, OrchestrationV2ShellStreamItem as ShellStreamItem,
     OrchestrationV2ThreadShell as ThreadShell, OrchestrationV2ThreadStreamItem as ThreadStreamItem,
+    ScheduledTask, ScheduledTaskGetWebhookDeliveryInput, ScheduledTaskGetWebhookDeliveryResult,
+    ScheduledTaskListResult, ScheduledTaskListWebhookDeliveriesInput,
+    ScheduledTaskListWebhookDeliveriesResult, ScheduledTaskRunNowResult, ScheduledTaskRunStatus,
+    ScheduledTaskSchedule, ScheduledTaskSetEnabledInput, ScheduledTaskUpsertInput,
+    ScheduledTaskWebhookDelivery, ScheduledTaskWebhookDeliverySummary,
+    ScheduledTaskWebhookSignatureEncoding,
 };
 
 pub use crate::annotations::{
@@ -27,6 +34,13 @@ pub use crate::annotations::{
     DetectedPoint, DetectedRect, annotation_state, build_annotation_prompt,
     build_browser_annotation_capture, build_device_annotation_capture, count_annotations,
     waiting_ids_to_send,
+};
+pub use crate::scheduled::{
+    DEFAULT_WEBHOOK_SIGNATURE_HEADER, DEFAULT_WEBHOOK_SIGNATURE_PREFIX,
+    MAX_WEBHOOK_COALESCE_WINDOW_SECONDS, MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
+    MIN_WEBHOOK_COALESCE_WINDOW_SECONDS, ScheduleMode, ScheduledTaskDraft, WorkspaceMode,
+    build_upsert_input, extract_model_instance, extract_model_slug, resolve_webhook_url,
+    schedule_label, webhook_delivery_label,
 };
 
 pub use crate::layout::{
