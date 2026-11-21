@@ -1,6 +1,7 @@
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
+  AuthAccessWriteScope,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
@@ -9,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
+import * as Struct from "effect/Struct";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
   EnvironmentId,
@@ -23,7 +25,7 @@ import {
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
-import { SettingsSecretValue } from "./settingsSecretValue.ts";
+import { containsSecretReference, SettingsSecretValue } from "./settingsSecretValue.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -299,6 +301,10 @@ export const DefaultThemePreference = Schema.String.check(Schema.isMaxLength(64)
 // Excluded from RPC patches so t3 theme set can validate syntax and resolvability.
 export type DefaultThemePreference = typeof DefaultThemePreference.Type;
 
+/** A mode clients apply once per set, like the default theme. Empty sets none. */
+export const DefaultAppearancePreference = Schema.Literals(["", "light", "dark", "system"]);
+export type DefaultAppearancePreference = typeof DefaultAppearancePreference.Type;
+
 export const DEFAULT_BROWSER_VIEWPORT: PreviewViewportSetting = FILL_PREVIEW_VIEWPORT;
 export const DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW = true;
 export {
@@ -309,6 +315,13 @@ export {
 export const BrowserLinkTarget = Schema.Literals(["system", "app"]);
 export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
 export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
+/**
+ * Where a plain click opens a subagent, a side chat or a linked environment's thread: beside the
+ * thread you are in, or in its place. A modified click opens it in the other one.
+ */
+export const SideThreadOpenTarget = Schema.Literals(["panel", "main"]);
+export type SideThreadOpenTarget = typeof SideThreadOpenTarget.Type;
+const DEFAULT_SIDE_THREAD_OPEN_TARGET: SideThreadOpenTarget = "panel";
 /**
  * What the address bar searches with when the input is not an address.
  * "custom" uses `browserCustomSearchUrl`, a template with `%s` for the query.
@@ -463,6 +476,7 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_QUIT_CONFIRMATION_MODE)),
   ),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  confirmTerminalClose: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   diffFilesCollapsed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -518,6 +532,9 @@ export const ClientSettingsSchema = Schema.Struct({
   followUpBehavior: Schema.Literals(["queue", "steer"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("steer")),
   ),
+  sideThreadOpenTarget: SideThreadOpenTarget.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDE_THREAD_OPEN_TARGET)),
+  ),
   proactivePanelsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   showSkillsInSlashMenu: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   boringSidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -566,6 +583,7 @@ export const ClientSettingsSchema = Schema.Struct({
   speechTranslateToEnglish: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   speechSilenceFiltering: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  speechStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechRemoveFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechPostProcessingPrompt: SpeechPostProcessingPromptSettings.pipe(
     Schema.withDecodingDefault(
@@ -1341,6 +1359,11 @@ export const StorageCleanupSettings = Schema.Struct({
 });
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
+const UsageHistoryRetentionDays = Schema.Union([
+  Schema.Int.check(Schema.isGreaterThan(0)),
+  Schema.Literal("unlimited"),
+]);
+
 const CloudSpeechCredential = SettingsSecretValue.pipe(
   Schema.withDecodingDefault(Effect.succeed("")),
 );
@@ -1377,8 +1400,14 @@ export const ServerSettings = Schema.Struct({
   ),
   /** Holds an OS sleep inhibitor while any run is active; closing a laptop lid still sleeps it. */
   keepAwakeWhileAgentsWork: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** New T3 Connect device keys wait for approval from someone already trusted here. */
+  requireConnectDeviceApproval: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
 
   enableAgentBrowserAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Lets clients reach this machine's loopback ports over `/api/preview/tunnel`. */
+  enablePreviewTunnel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
@@ -1491,6 +1520,12 @@ export const ServerSettings = Schema.Struct({
   defaultThemeSetAt: Schema.String.check(Schema.isMaxLength(64)).pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
   ),
+  defaultAppearance: DefaultAppearancePreference.pipe(
+    Schema.withDecodingDefault(Effect.succeed("" as const)),
+  ),
+  defaultAppearanceSetAt: Schema.String.check(Schema.isMaxLength(64)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
   environmentIcon: ForwardCompatibleNullable(EnvironmentMachineKind).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1564,6 +1599,10 @@ export const ServerSettings = Schema.Struct({
   ),
   secretProviders: Schema.Record(SecretProviderId, SecretProviderConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+
+  usageHistoryRetentionDays: UsageHistoryRetentionDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(92)),
   ),
 
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
@@ -1829,7 +1868,9 @@ export const ServerSettingsPatch = Schema.Struct({
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   keepAwakeWhileAgentsWork: Schema.optionalKey(Schema.Boolean),
+  requireConnectDeviceApproval: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
+  enablePreviewTunnel: Schema.optionalKey(Schema.Boolean),
   cloudSpeechCredentials: Schema.optionalKey(
     Schema.Struct({
       openai: Schema.optionalKey(SettingsSecretValue),
@@ -1901,6 +1942,10 @@ export const ServerSettingsPatch = Schema.Struct({
   automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
+  defaultTheme: Schema.optionalKey(DefaultThemePreference),
+  defaultThemeSetAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
+  defaultAppearance: Schema.optionalKey(DefaultAppearancePreference),
+  defaultAppearanceSetAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
@@ -1949,6 +1994,8 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(SecretProviderId, Schema.NullOr(SecretProviderConfigWrite)),
   ),
 
+  usageHistoryRetentionDays: Schema.optionalKey(UsageHistoryRetentionDays),
+
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
   ),
@@ -1959,14 +2006,22 @@ export const ServerSettingsPatch = Schema.Struct({
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
+/** The theme service sets theme defaults after it validates them, so clients cannot. */
+export const ClientServerSettingsPatch = ServerSettingsPatch.mapFields(
+  Struct.omit(["defaultTheme", "defaultThemeSetAt", "defaultAppearance", "defaultAppearanceSetAt"]),
+);
+
 export function requiredScopesForServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ReadonlyArray<AuthEnvironmentScope> {
   let changesProviders = false;
   let changesSettings = false;
+  let changesAccess = false;
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    if (
+    if (key === "requireConnectDeviceApproval" || key === "enablePreviewTunnel") {
+      changesAccess = true;
+    } else if (
       key === "providers" ||
       key === "providerInstances" ||
       key === "usageLimitSources" ||
@@ -1978,13 +2033,16 @@ export function requiredScopesForServerSettingsPatch(
       changesSettings = true;
     }
   }
+  // A reference can name any secret the store holds; choosing where one goes is provider authority.
+  if (containsSecretReference(patch)) changesProviders = true;
   // Removing a secret provider also clears the settings fields that read from it.
   if (Object.values(patch.secretProviders ?? {}).some((entry) => entry === null)) {
     changesSettings = true;
   }
   return [
-    ...(changesSettings || !changesProviders ? [AuthSettingsWriteScope] : []),
+    ...(changesSettings || (!changesProviders && !changesAccess) ? [AuthSettingsWriteScope] : []),
     ...(changesProviders ? [AuthProvidersManageScope] : []),
+    ...(changesAccess ? [AuthAccessWriteScope] : []),
   ];
 }
 
@@ -2025,6 +2083,7 @@ export const ClientSettingsPatch = Schema.Struct({
   browserDefaultProfileId: Schema.optionalKey(BrowserProfileId),
   confirmQuit: Schema.optionalKey(QuitConfirmationMode),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
+  confirmTerminalClose: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   confirmThreadUnpin: Schema.optionalKey(Schema.Boolean),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
@@ -2052,6 +2111,7 @@ export const ClientSettingsPatch = Schema.Struct({
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
+  sideThreadOpenTarget: Schema.optionalKey(SideThreadOpenTarget),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   boringSidebarEnabled: Schema.optionalKey(Schema.Boolean),
@@ -2076,6 +2136,7 @@ export const ClientSettingsPatch = Schema.Struct({
   speechTranslateToEnglish: Schema.optionalKey(Schema.Boolean),
   speechCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechSilenceFiltering: Schema.optionalKey(Schema.Boolean),
+  speechStreaming: Schema.optionalKey(Schema.Boolean),
   speechRemoveFillerWords: Schema.optionalKey(Schema.Boolean),
   speechPostProcessingPrompt: Schema.optionalKey(SpeechPostProcessingPromptSettings),
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),

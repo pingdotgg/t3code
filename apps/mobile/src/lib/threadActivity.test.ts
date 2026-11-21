@@ -39,6 +39,23 @@ const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
 const runId = RunId.make("run-1");
 
+it.each(["info", "warning", "error", undefined] as const)(
+  "renders %s system notice severity",
+  (level) => {
+    const item = {
+      ...base("notice", "2026-08-29T00:00:00.000Z", 1),
+      type: "system_notice" as const,
+      message: "Extension notice",
+      ...(level === undefined ? {} : { level }),
+    };
+    const activity = buildThreadFeed([projected(item, 0)]).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    expect(activity?.icon).toBe(level === "info" ? "zap" : "warning");
+    expect(activity?.summary).toBe(item.message);
+  },
+);
+
 it("shows a captured MCP app for a failed deferred write", () => {
   const mcpApp = {
     attachmentId: "deferred-app-html",
@@ -54,7 +71,36 @@ it("shows a captured MCP app for a failed deferred write", () => {
     input: {},
     output: { t3McpApp: mcpApp, result: { content: [], isError: true } },
   };
-  expect(buildThreadFeed([projected(item, 0)])).toMatchObject([{ type: "mcp-app", app: mcpApp }]);
+  expect(buildThreadFeed([projected(item, 0)])).toMatchObject([
+    { type: "activity-group" },
+    { type: "mcp-app", app: mcpApp },
+  ]);
+});
+
+it("keeps an MCP app call's tool activity beside its app card", () => {
+  const mcpApp = {
+    attachmentId: "repro-app-html",
+    server: "repro",
+    tool: "aggregate_rum_events",
+    resourceUri: "ui://repro/dataviz",
+  };
+  const item: OrchestrationV2TurnItem = {
+    ...base("repro-app", "2026-08-29T00:00:00.000Z", 1),
+    type: "dynamic_tool",
+    toolName: "repro.aggregate_rum_events",
+    input: { query: "@type:view" },
+    output: {
+      t3McpApp: mcpApp,
+      result: { content: [{ type: "text", text: "Notice\nview\tcount\n/home\t42" }] },
+    },
+  };
+  const feed = buildThreadFeed([projected(item, 0)]);
+  expect(feed).toContainEqual(expect.objectContaining({ type: "mcp-app", app: mcpApp }));
+  const activities = feed.flatMap((entry) =>
+    entry.type === "activity-group" ? entry.activities : [],
+  );
+  expect(activities).toHaveLength(1);
+  expect(activities[0]?.getFullDetail()).toContain("@type:view");
 });
 
 it("keeps historical plan detail accessible from its paged turn item", () => {
@@ -694,6 +740,37 @@ describe("buildThreadFeed", () => {
     expect(summarizeToolGroup([activity.workEntry]).summary).toBe("Changed 3 files");
   });
 
+  it("labels a running command without command text by its status", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...base("commandless", "2026-06-20T00:00:02.000Z", 1),
+      type: "command_execution",
+      title: "Ran command",
+      status: "running",
+      completedAt: null,
+      runId: null,
+      input: "",
+    };
+    const feed = buildThreadFeed([
+      projected({ ...userMessage(), runId: null }, 0),
+      projected(item, 1),
+    ]);
+    const activity = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0]!;
+    expect(workEntryRowLabel(activity.workEntry)).toBe("Running command");
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set(),
+      new Set(),
+      "2026-06-20T00:00:01.000Z",
+      true,
+    );
+    expect(presented.find((entry) => entry.type === "activity-group")).toMatchObject({
+      activities: [{ live: true, groupStandIn: { label: "Running command" } }],
+    });
+  });
+
   it("anchors feedback before later committed turns", () => {
     const laterUser = {
       ...userMessage("2026-08-29T00:00:05.000Z"),
@@ -1282,24 +1359,24 @@ describe("buildThreadFeed", () => {
       "assistant:resume-answer",
     ]);
 
-    expect(
-      shape(
-        deriveThreadFeedPresentation(
-          feed(true),
-          null,
-          new Set(),
-          new Set(),
-          "2026-06-20T00:01:12.000Z",
-          true,
-        ),
-      ),
-    ).toEqual([
+    const working = deriveThreadFeedPresentation(
+      feed(true),
+      null,
+      new Set(),
+      new Set(),
+      "2026-06-20T00:01:12.000Z",
+      true,
+    );
+    expect(shape(working)).toEqual([
       "user:launch",
       "fold:Worked for 8s",
       "assistant:launch-answer",
       "user:resume",
+      "fold:Working",
       "activity-group",
     ]);
+    // The live timer row becomes the settled fold in place.
+    expect(working[4]?.id).toBe(settled[4]?.id);
   });
 
   it("keeps imported V1 turns folded once the thread's first V2 run starts", () => {
@@ -1397,8 +1474,8 @@ describe("buildThreadFeed", () => {
         new Set(),
         new Set(),
         startedAt,
-      ),
-    ).toEqual([]);
+      ).map((row) => row.type),
+    ).toEqual(["run-fold"]);
   });
   it("hides tool calls or everything but the final answer", () => {
     const at = (second: number) => `2026-06-20T00:00:${String(second).padStart(2, "0")}.000Z`;
@@ -1468,6 +1545,16 @@ describe("buildThreadFeed", () => {
         phase === "final_answer",
       );
     }
+    const confirmed = { ...answer, phase: "final_answer" as const };
+    const continued = buildThreadFeed(
+      [user, confirmed, passed, final].map((item, index) => projected(item, index)),
+    );
+    expect(
+      deriveThreadFeedPresentation(continued, null, new Set()).some(
+        (row) => row.type === "message" && row.message.id === answer.messageId,
+      ),
+    ).toBe(true);
+    expect(rows([user, confirmed, passed, final], "zen")).toEqual(["user", "answer", "final"]);
     expect(rows([user, steer, step, passed, final], "zen")).toEqual(["user", "steer", "final"]);
     expect(rows([user, steer, answer, step], "zen", running)).toEqual([
       "user",
@@ -1738,8 +1825,9 @@ describe("subagent continued by a later turn", () => {
   ];
 
   it("keeps each turn's fold between its own prompt and answer", () => {
+    const feed = buildThreadFeed(items.map((entry, index) => projected(entry, index)));
     const presented = deriveThreadFeedPresentation(
-      buildThreadFeed(items.map((entry, index) => projected(entry, index))),
+      feed,
       { runId: run2, status: "completed", startedAt: at(30), completedAt: at(41) },
       new Set(),
     );
@@ -1751,6 +1839,53 @@ describe("subagent continued by a later turn", () => {
       `run-fold:${run2}`,
       "closing-2",
     ]);
+
+    // While the run works, its fold row already holds that slot with a live timer.
+    const live = deriveThreadFeedPresentation(
+      feed,
+      { runId: run2, status: "running", startedAt: at(30), completedAt: null },
+      new Set(),
+      new Set(),
+      at(30),
+    );
+    expect(live.slice(3, 6).map((entry) => entry.id)).toEqual([
+      "prompt-2",
+      `run-fold:${run2}`,
+      expect.not.stringMatching(/^run-fold:/),
+    ]);
+    expect(live[4]).toMatchObject({ workingSince: at(30) });
+    expect(live.filter((entry) => entry.type === "run-fold")).toHaveLength(2);
+  });
+
+  it("puts the live fold after a plan the settled fold leaves in view", () => {
+    const planned = buildThreadFeed(
+      [
+        user("prompt", run2, 1, 0),
+        {
+          ...item("plan", run2, 2, 1),
+          type: "proposed_plan",
+          planId: "plan",
+          markdown: "The plan",
+          streaming: false,
+        } as OrchestrationV2TurnItem,
+        reasoning("reasoning", run2, 3, 2),
+        assistant("closing", run2, 4, 9),
+      ].map((entry, index) => projected(entry, index)),
+    );
+    const ids = (running: boolean) =>
+      deriveThreadFeedPresentation(
+        planned,
+        running
+          ? { runId: run2, status: "running", startedAt: at(0), completedAt: null }
+          : { runId: run2, status: "completed", startedAt: at(0), completedAt: at(9) },
+        new Set(),
+        new Set(),
+        running ? at(0) : null,
+      ).map((entry) => entry.id);
+    const settledIds = ids(false);
+    const foldIndex = settledIds.indexOf(`run-fold:${run2}`);
+    expect(foldIndex).toBeGreaterThan(1);
+    expect(ids(true).indexOf(`run-fold:${run2}`)).toBe(foldIndex);
   });
 });
 

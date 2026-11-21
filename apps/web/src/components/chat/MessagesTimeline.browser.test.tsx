@@ -2,7 +2,7 @@ import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { flushSync } from "react-dom";
 import { AudioPreview } from "../files/AudioPreview";
-import { cdp, page } from "vite-plus/test/browser";
+import { cdp, page, userEvent } from "vite-plus/test/browser";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -37,6 +37,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { createWorkspaceFocusController, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import {
@@ -48,6 +49,8 @@ import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
 import { remarkThoughtPreview, THOUGHT_PREVIEW_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
+import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
@@ -85,6 +88,10 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
       stubbedAsset.url
         ? { _tag: "Success", url: stubbedAsset.url }
         : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+    useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
+      stubbedAsset.url
+        ? args[1].map(() => stubbedAsset.url)
+        : actual.useAssetUrls(...args)) as typeof actual.useAssetUrls,
   };
 });
 
@@ -440,7 +447,8 @@ describe("MessagesTimeline work rows", () => {
         expect(screen.text()).toContain("Follow-up explanation");
         expect(screen.text()).not.toContain("Old interrupted progress");
         await click(screen.buttons("Open Simplify delivery")[0]!);
-        expect(onOpenThread).toHaveBeenCalledWith(childThreadId);
+        // A subagent's card says how it was clicked, so it opens beside the thread or in its place.
+        expect(onOpenThread).toHaveBeenCalledWith(childThreadId, undefined, "primary");
       } else if (source === "legacy") {
         expect(screen.text()).toContain("Old interrupted progress");
       } else {
@@ -563,6 +571,38 @@ describe("MessagesTimeline messages", () => {
     await expectHeadingInView("First turn", "Turn 1:");
     expect(headingFor("Last turn")).toBeDefined();
     await expectHeadingInView("Last turn", "Turn 118:");
+  });
+
+  it("scrolls from the keyboard once F6 moves into the conversation", async () => {
+    setup();
+    const props = baseProps();
+    const entries = Array.from({ length: 40 }, (_, index) =>
+      message(`Turn ${index}:\n\n${"x ".repeat(200)}`, {}, `turn-${index}`),
+    );
+    await using _screen = await renderElement(
+      <>
+        <div
+          {...workspaceAreaProps("conversation", 1, "Conversation")}
+          className="relative flex min-h-0 flex-1 flex-col"
+        >
+          <MessagesTimeline {...props} timelineEntries={entries} />
+        </div>
+        <div {...workspaceAreaProps("composer", 2, "Message input")}>
+          <button type="button">Send</button>
+        </div>
+      </>,
+    );
+    const focus = createWorkspaceFocusController(document);
+    using _focus = { [Symbol.dispose]: focus.dispose };
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
+    const atEnd = viewport.scrollTop;
+    page.getByRole("button", { name: "Send" }).element().focus();
+    await userEvent.keyboard("{F6}");
+    focus.move(-1);
+    expect(viewport).toHaveAttribute("data-workspace-keyboard-focus");
+    await userEvent.keyboard("{PageUp}");
+    await vi.waitFor(() => expect(viewport.scrollTop).toBeLessThan(atEnd));
   });
 
   it("disables the minimap's next turn button at the bottom of the thread", async () => {
@@ -826,6 +866,49 @@ describe("MessagesTimeline messages", () => {
     expect(screen.text()).toContain(source);
     expect(screen.container.querySelector("script, img")).toBeNull();
     expect((globalThis as { __t3Xss?: number }).__t3Xss).toBeUndefined();
+  });
+
+  it("shows the spaces typed at the start of user lines, where find also matches them", async () => {
+    const source = "Plan\n   Step one\n\tDetail";
+    await using screen = await renderTimeline([
+      message(source),
+      message(source, { role: "assistant" }, "assistant-1"),
+    ]);
+    const [user, assistant] = screen.container.querySelectorAll<HTMLElement>(
+      "[data-timeline-row-kind=message]",
+    );
+    expect(user?.querySelector<HTMLElement>("[data-user-message-body]")?.innerText).toBe(source);
+    expect(assistant?.querySelector<HTMLElement>(".chat-markdown")?.innerText).toBe(
+      "Plan Step one Detail",
+    );
+    const query = "   Step one";
+    const indexed = searchableMessageSegments({ role: "user", text: source, streaming: false });
+    const ranges = collectThreadFindRanges(screen.container, query);
+    expect(ranges.map(({ rowId, range }) => [rowId, range.toString()])).toEqual([
+      [user?.closest("[data-timeline-row-id]")?.getAttribute("data-timeline-row-id"), query],
+    ]);
+    expect(
+      indexed?.reduce((count, segment) => count + countThreadSearchOccurrences(segment, query), 0),
+    ).toBe(ranges.length);
+  });
+
+  it("keeps single tildes in user paths literal without changing double tildes or assistant text", async () => {
+    const source =
+      "Install the skill as ~/folder-a/skills/x, then follow the guide (~/folder-a/guide.md).";
+    await using screen = await renderTimeline([
+      message(source),
+      message("Drop ~~the old plan~~", {}, "message-2"),
+      message(source, { role: "assistant" }, "assistant-1"),
+    ]);
+    const [user, doubleTilde, assistant] = screen.container.querySelectorAll<HTMLElement>(
+      "[data-timeline-row-kind=message]",
+    );
+    expect(user?.textContent).toContain(source);
+    expect(user?.querySelector("del")).toBeNull();
+    expect(doubleTilde?.querySelector("del")?.textContent).toBe("the old plan");
+    expect(assistant?.querySelector("del")?.textContent).toBe(
+      "/folder-a/skills/x, then follow the guide (",
+    );
   });
 
   it("renders sanitized raw HTML in assistant messages", async () => {
@@ -1153,6 +1236,27 @@ const CITATION_REQUEST = {
 } satisfies NonNullable<TimelineProps["citationRequest"]>;
 
 describe("MessagesTimeline citations", () => {
+  it("offers Cite for text an agent sent with send_to_user", async () => {
+    const text = "The draft the next question refers to";
+    await using screen = await renderTimeline(
+      [
+        {
+          id: "sent",
+          kind: "sent-message",
+          createdAt: CREATED_AT,
+          runId: RunId.make("run-sent"),
+          text,
+        },
+      ],
+      { onCiteAssistantText: () => true },
+    );
+    await expect.element(screen.getByText(text)).toHaveStyle({ pointerEvents: "auto" });
+    await userEvent.tripleClick(screen.getByText(text));
+    await expect
+      .element(page.getByRole("button", { name: "Cite selection in composer" }))
+      .toBeVisible();
+  });
+
   it("lands a citation present at mount under StrictMode", async () => {
     await using _screen = await renderElement(
       <StrictMode>
@@ -1175,6 +1279,21 @@ describe("MessagesTimeline citations", () => {
         "the cited answer",
       ),
     );
+  });
+
+  it("moves focus to the cited response so screen readers follow it", async () => {
+    await using _screen = await renderTimeline(
+      [
+        message("A question", {}, "question"),
+        message("the cited answer", { role: "assistant" }, "cited"),
+      ],
+      { citationRequest: CITATION_REQUEST, citationHistory: { _tag: "found" } },
+    );
+    await vi.waitFor(() => {
+      const cited = document.querySelector("[data-citation-highlighted]");
+      expect(cited?.textContent).toContain("the cited answer");
+      expect(cited?.contains(document.activeElement)).toBe(true);
+    });
   });
 
   it("opens the superseded attempt that folds the cited response", async () => {
@@ -1659,6 +1778,47 @@ describe("MessagesTimeline attachments", () => {
       }),
     );
   });
+
+  it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    onTestFinished(() => {
+      stubbedAsset.url = "";
+    });
+    const onImageExpand = vi.fn<ComponentProps<typeof MessagesTimeline>["onImageExpand"]>();
+    const read = (name: string) =>
+      work(`read-${name}`, {
+        label: `Read ${name}`,
+        toolTitle: "Read",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolLifecycleStatus: "completed",
+        viewedImagePath: `/repo/${name}`,
+      });
+    await using screen = await renderTimeline(
+      [read("first.png"), read("second.png"), read("third.png")],
+      { onImageExpand, workspaceRoot: "/repo" },
+    );
+    await click(screen.button(/^Read 3 files/));
+    await vi.waitFor(() => expect(screen.buttons("Read")).toHaveLength(3));
+    await click(screen.buttons("Read")[1]!);
+    const inRow = await vi.waitFor(() => {
+      const image = [...screen.container.querySelectorAll("img")].find(
+        (img) => img.alt === "second.png" && !img.closest("[data-image-gallery]"),
+      );
+      expect(image).toBeTruthy();
+      return image!;
+    });
+    await click(inRow.closest<HTMLElement>("button, [role=button]")!);
+    expect(onImageExpand).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        index: 1,
+        images: ["first.png", "second.png", "third.png"].map((name) =>
+          expect.objectContaining({ name }),
+        ),
+      }),
+    );
+  });
 });
 
 describe("MessagesTimeline thread find", () => {
@@ -1681,6 +1841,99 @@ describe("MessagesTimeline thread find", () => {
     return { navigations, element };
   }
   const released = { source: "command", releasesFollow: true };
+
+  it("reveals the previous match in a table without scrolling a sibling table", async () => {
+    setup();
+    const columns = Array.from({ length: 12 }, (_, index) => `DiagnosticsColumn${index}`);
+    const cells = ["needle", ...columns.slice(1, -1), "needle"];
+    const table = [columns, columns.map(() => "---"), cells]
+      .map((row) => `| ${row.join(" | ")} |`)
+      .join("\n");
+    const entry = message(`${table}\n\n${table}`);
+    const props = {
+      ...baseProps(),
+      timelineEntries: [entry],
+      liveFollowEnabled: false,
+      findOpen: true,
+      findExpanded: true,
+      findQuery: "needle",
+    };
+    const element = (occurrence: number, navigationId: number) => (
+      <MessagesTimeline
+        {...props}
+        activeFindMatch={{ entryId: entry.id, runId: null, occurrence }}
+        findNavigationId={navigationId}
+      />
+    );
+    await using screen = await renderElement(element(1, 1));
+    const [viewport, sibling] = await vi.waitFor(() => {
+      const tables = screen.container.querySelectorAll<HTMLElement>(
+        '.chat-markdown-table-container [data-slot="scroll-area-viewport"]',
+      );
+      expect(tables).toHaveLength(2);
+      return [tables[0]!, tables[1]!] as const;
+    });
+    viewport.scrollLeft = viewport.scrollWidth;
+    sibling.scrollLeft = sibling.scrollWidth;
+    const siblingOffset = sibling.scrollLeft;
+    const clip = viewport.getBoundingClientRect();
+    expect(viewport.querySelector("td")!.getBoundingClientRect().right).toBeLessThan(clip.left);
+    expect(siblingOffset).toBeGreaterThan(0);
+
+    await screen.rerender(element(0, 2));
+    await vi.waitFor(() => {
+      const [match] = CSS.highlights.get("t3-thread-find-active") ?? [];
+      if (!(match instanceof Range)) throw new Error("Missing active match range");
+      expect(match.startContainer.parentElement?.closest("td")).toBe(viewport.querySelector("td"));
+      expect(match.getBoundingClientRect().left).toBeGreaterThanOrEqual(clip.left - 1);
+    });
+    expect(sibling.scrollLeft).toBe(siblingOffset);
+  });
+
+  it("reveals a match in a nested table clipped by the outer table", async () => {
+    setup();
+    const columns = Array.from({ length: 12 }, (_, index) => `<td>DiagnosticsColumn${index}</td>`);
+    const entry = message(
+      `<table><tbody><tr>${columns.join("")}<td><table><tbody><tr><td>needle</td></tr></tbody></table></td></tr></tbody></table>`,
+      { role: "assistant" },
+    );
+    const props = {
+      ...baseProps(),
+      timelineEntries: [entry],
+      liveFollowEnabled: false,
+      findOpen: true,
+      findExpanded: true,
+      findQuery: "needle",
+    };
+    await using screen = await renderElement(<MessagesTimeline {...props} />);
+    const outerViewport = await vi.waitFor(() => {
+      const viewport = screen.container.querySelector(
+        '.chat-markdown-table-container [data-slot="scroll-area-viewport"]',
+      );
+      const nestedCell = viewport?.querySelector("table table td");
+      expect(nestedCell?.textContent).toBe("needle");
+      expect(nestedCell!.getBoundingClientRect().left).toBeGreaterThan(
+        viewport!.getBoundingClientRect().right,
+      );
+      return viewport!;
+    });
+
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        activeFindMatch={{ entryId: entry.id, runId: null, occurrence: 0 }}
+        findNavigationId={1}
+      />,
+    );
+    await vi.waitFor(() => {
+      const [match] = CSS.highlights.get("t3-thread-find-active") ?? [];
+      if (!(match instanceof Range)) throw new Error("Missing active match range");
+      const bounds = match.getBoundingClientRect();
+      const clip = outerViewport.getBoundingClientRect();
+      expect(bounds.left).toBeGreaterThanOrEqual(clip.left - 1);
+      expect(bounds.right).toBeLessThanOrEqual(clip.right + 1);
+    });
+  });
 
   it("releases follow once when it starts showing a thread whose find is open", async () => {
     setup();
@@ -1965,7 +2218,7 @@ it("renders automatic compaction as one live divider that finishes with its reas
   await expect
     .element(
       screen.getByRole("separator", {
-        name: "Context automatically compacted before cache expiry 899K → 19K tokens",
+        name: "Auto-compacted before cache expiry 899K → 19K tokens",
       }),
     )
     .toBeVisible();

@@ -157,6 +157,31 @@ const layerPausingAttachEventSink = (pause: {
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
+const layerReleaseRecordedEventSink = (recorded: Deferred.Deferred<void>) =>
+  Layer.effect(
+    EventSink.EventSinkV2,
+    Effect.gen(function* () {
+      const delegate = yield* EventSink.EventSinkV2;
+      return EventSink.EventSinkV2.of({
+        ...delegate,
+        write: (input) =>
+          delegate
+            .write(input)
+            .pipe(
+              Effect.tap(() =>
+                input.events.some(
+                  (event) =>
+                    event.type === "provider-session.updated" &&
+                    (event.payload.status === "stopped" || event.payload.status === "error"),
+                )
+                  ? Deferred.succeed(recorded, undefined)
+                  : Effect.void,
+              ),
+            ),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestEventSink));
+
 const layerBeforeUnchangedWriteEventSink = (
   before: Ref.Ref<Effect.Effect<void>>,
   // One effect runs before each turn-item write, in order.
@@ -459,13 +484,14 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
-    readonly startTurn?: Effect.Effect<void>;
+    readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly unloads?: Queue.Queue<string>;
     readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -558,6 +584,11 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                     if (event.type === "provider_session.updated") session = event.providerSession;
                   }),
                 ),
+                Stream.ensuring(
+                  options.eventStreamsEnded === undefined
+                    ? Effect.void
+                    : Queue.offer(options.eventStreamsEnded, input.providerSessionId),
+                ),
               ),
           ...(options.backgroundTasksEndWithProcess === false
             ? {}
@@ -641,13 +672,15 @@ function layerTest(input: {
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
-  readonly startTurn?: Effect.Effect<void>;
+  readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly unloads?: Queue.Queue<string>;
   readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
+  readonly eventStreamsEnded?: Queue.Queue<ProviderSessionId>;
+  readonly releaseRecorded?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
@@ -664,7 +697,9 @@ function layerTest(input: {
             )
           : input.failReleaseEventWrites
             ? layerFailingReleaseEventSink
-            : layerTestEventSink;
+            : input.releaseRecorded !== undefined
+              ? layerReleaseRecordedEventSink(input.releaseRecorded)
+              : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -698,6 +733,9 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
+      ...(input.eventStreamsEnded === undefined
+        ? {}
+        : { eventStreamsEnded: input.eventStreamsEnded }),
     }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
   );
   const layerConfiguredMcpRegistry =
@@ -813,6 +851,8 @@ function runBrowserAccessScenario(input: {
   readonly enableAgentBrowserAccess: boolean;
   readonly projectOverride: boolean;
   readonly deviceOverride?: boolean;
+  readonly enableAgentDeviceAccess?: boolean;
+  readonly enableDeviceSupport?: boolean;
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
   readonly delegatedBy?: ThreadId;
@@ -867,6 +907,12 @@ function runBrowserAccessScenario(input: {
           projectServiceLayer: layerProjectService,
           serverSettingsLayer: ServerSettings.layerTest({
             enableAgentBrowserAccess: input.enableAgentBrowserAccess,
+            ...(input.enableAgentDeviceAccess === undefined
+              ? {}
+              : { enableAgentDeviceAccess: input.enableAgentDeviceAccess }),
+            ...(input.enableDeviceSupport === undefined
+              ? {}
+              : { enableDeviceSupport: input.enableDeviceSupport }),
             projectSettingsOverrides: {
               [projectId]: {
                 enableAgentBrowserAccess: input.projectOverride,
@@ -1091,6 +1137,7 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
 it.effect("ProviderSessionManagerV2 closes every live session for a provider instance", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const eventStreamsEnded = yield* Queue.unbounded<ProviderSessionId>();
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1131,6 +1178,9 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
       assert.isTrue(Option.isNone(yield* manager.get(firstProviderSessionId)));
       assert.isTrue(Option.isNone(yield* manager.get(secondProviderSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 2);
+      // Like Codex and Claude, the fake adapter never ends its event queue; release must still stop the pump.
+      const ended = [yield* Queue.take(eventStreamsEnded), yield* Queue.take(eventStreamsEnded)];
+      assert.sameMembers(ended, [firstProviderSessionId, secondProviderSessionId]);
     });
 
     yield* effect.pipe(
@@ -1138,6 +1188,7 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
         layerTest({
           state,
           idleTimeoutMs: 60_000,
+          eventStreamsEnded,
         }),
       ),
     );
@@ -1626,6 +1677,153 @@ it.effect("ProviderSessionManagerV2 gives up on a provider that never confirms a
   }),
 );
 
+// A failed start can leave its native thread gone, as when Claude rejects a resume.
+it.effect("ProviderSessionManagerV2 resumes a thread natively again after its start failed", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-failed-start-resume");
+      const providerSessionId = idAllocator.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+        nativeThreadId: `native-${threadId}`,
+      });
+      const resume = runtime.resumeThread({
+        providerThread,
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* resume;
+      yield* resume;
+      assert.equal((yield* Ref.get(state)).resumeCount, 1);
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      yield* runtime
+        .startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "turn",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.flip);
+      yield* resume;
+      assert.equal((yield* Ref.get(state)).resumeCount, 2);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          startTurn: Effect.fail(
+            new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CODEX_DRIVER,
+              detail: "query ended before the turn could start",
+            }),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 still idles out a session releaseUnlessBusy kept", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-kept-idles");
+      const providerSessionId = idAllocator.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+        nativeThreadId: `native-${threadId}`,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      yield* runtime.startTurn({
+        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+          text: "turn",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+
+      assert.isFalse(
+        yield* manager.releaseUnlessBusy({
+          providerSessionId,
+          ownProviderThreadIds: [providerThread.id],
+          throughRunOrdinal: 1,
+          keepIf: Effect.succeed(true),
+          reason: "manual_shutdown",
+        }),
+      );
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+      // The stopped run 1 never reports its end.
+      yield* TestClock.adjust("2 seconds");
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000 })));
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 keeps a shared session a sibling is busy on when releasing",
   () =>
@@ -1692,6 +1890,7 @@ it.effect(
           manager.releaseUnlessBusy({
             providerSessionId,
             ownProviderThreadIds: [providerThreadOf(own).id],
+            throughRunOrdinal: 1,
             reason: "manual_shutdown",
           });
 
@@ -2060,6 +2259,7 @@ it.effect("ProviderSessionManagerV2 interrupts event subscriptions on server shu
 it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const unloads = yield* Queue.unbounded<string>();
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2117,11 +2317,12 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
         events.map((event) => event.type),
         ["turn.terminal", "provider_session.updated"],
       );
+      assert.equal(yield* Queue.take(unloads), "close");
       assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
       assert.equal((yield* Ref.get(state)).closeCount, 1);
     });
 
-    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, unloads })));
   }),
 );
 
@@ -2393,7 +2594,7 @@ it.effect(
         assert.equal(resolved?.thread.threadId, threadId);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["preview", "orchestration", "worktree", "pull-requests"]),
+          new Set(["preview", "orchestration", "worktree", "pull-requests", "issues"]),
         );
 
         assert.isFalse(yield* captured!.hasPendingWake!);
@@ -2505,7 +2706,7 @@ it.effect(
         const resolved = yield* registry.resolve(token!);
         assert.deepEqual(
           resolved?.capabilities,
-          new Set(["orchestration", "worktree", "pull-requests"]),
+          new Set(["orchestration", "worktree", "pull-requests", "issues"]),
         );
 
         yield* manager.close(providerSessionId);
@@ -3213,8 +3414,12 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
         toolName: "mcp__t3-code__t3_worktree_handoff",
         input: {},
       }) satisfies OrchestrationV2TurnItem;
+    const cutOffNodeId = idAllocator.derive.nodeFromProviderItem({
+      driver: CODEX_DRIVER,
+      nativeItemId: "cut-off",
+    });
     const seededToolCalls = {
-      cutOff: toolCall("cut-off", providerThreads[0]!, "running", now),
+      cutOff: { ...toolCall("cut-off", providerThreads[0]!, "running", now), nodeId: cutOffNodeId },
       finished: toolCall("finished", providerThreads[0]!, "completed", now),
       otherSession: toolCall("other-session", providerThreads[1]!, "running", now),
       // Started by a replacement session after the release.
@@ -3240,8 +3445,88 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
           ],
         });
       });
+    yield* eventSink.write({
+      events: [
+        {
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "node.updated",
+          threadId,
+          nodeId: cutOffNodeId,
+          driver: CODEX_DRIVER,
+          occurredAt: now,
+          payload: {
+            id: cutOffNodeId,
+            threadId,
+            runId: null,
+            parentNodeId: null,
+            rootNodeId: cutOffNodeId,
+            kind: "tool_call",
+            status: "running",
+            countsForRun: true,
+            providerThreadId: providerThreads[0]!.id,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+      ],
+    });
     yield* Effect.forEach(Object.values(seededToolCalls), writeToolCall);
+    const cutOffNodeStatus = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      return projection.nodes.find((node) => node.id === cutOffNodeId)?.status;
+    });
+    // A background native subagent that outlived its completed run; Claude records no provider thread on it.
+    const nativeSubagentRunId = idAllocator.derive.run({ threadId, ordinal: 1 });
+    const nativeSubagentId = idAllocator.derive.nodeFromProviderItem({
+      driver: CODEX_DRIVER,
+      nativeItemId: "background-agent",
+    });
+    yield* eventSink.write({
+      events: [
+        {
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "subagent.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: nativeSubagentId,
+            threadId,
+            runId: nativeSubagentRunId,
+            parentNodeId: idAllocator.derive.rootNode({ runId: nativeSubagentRunId }),
+            origin: "provider_native",
+            createdBy: "agent",
+            driver: CODEX_DRIVER,
+            providerInstanceId: modelSelection.instanceId,
+            providerThreadId: null,
+            childThreadId: null,
+            nativeTaskRef: {
+              driver: CODEX_DRIVER,
+              nativeId: "background-agent",
+              strength: "strong",
+            },
+            prompt: "sleep 150; echo done",
+            title: "Background agent",
+            model: null,
+            status: "running",
+            result: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+          },
+        },
+      ],
+    });
     yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+    const nativeSubagentStatus = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      return projection.subagents.find((subagent) => subagent.id === nativeSubagentId)?.status;
+    });
     const toolCallStatus = (id: OrchestrationV2TurnItem["id"]) =>
       Effect.gen(function* () {
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -3277,6 +3562,8 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
       writeToolCall,
       toolCalls,
       toolCallStatus,
+      nativeSubagentStatus,
+      cutOffNodeStatus,
     };
   });
 
@@ -3288,8 +3575,16 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const { threadId, providerSessionId, rosters, toolCalls, seededToolCalls, writeToolCall } =
-          yield* openSessionWithBackgroundCommand("provider-session-manager-detach-roster");
+        const {
+          threadId,
+          providerSessionId,
+          rosters,
+          toolCalls,
+          seededToolCalls,
+          writeToolCall,
+          nativeSubagentStatus,
+          cutOffNodeStatus,
+        } = yield* openSessionWithBackgroundCommand("provider-session-manager-detach-roster");
         const runtime = Option.getOrThrow(yield* manager.get(providerSessionId));
         const subscription = yield* runtime.subscribeEvents!;
         const consuming = yield* Deferred.make<void>();
@@ -3342,9 +3637,26 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
           );
         yield* interrupts(1);
         yield* Deferred.succeed(resume, undefined);
+        const consumed = yield* Fiber.join(consumer);
         assert.equal(
-          Exit.isFailure(yield* Fiber.join(consumer)),
+          Exit.isFailure(consumed),
           release !== "provider stop" && release !== "early close",
+        );
+        // regression: #22971 only a detach names its thread, so a handoff run can settle on it.
+        assert.equal(
+          Exit.isFailure(consumed)
+            ? (Cause.squash(consumed.cause) as ProviderAdapter.ProviderAdapterEventStreamError)
+                .detachedThreadId
+            : undefined,
+          release === "detach" ? threadId : undefined,
+        );
+        // A run ends the work it tracks only when the adapter reported its runtime failing.
+        assert.equal(
+          Exit.isFailure(consumed)
+            ? (Cause.squash(consumed.cause) as ProviderAdapter.ProviderAdapterEventStreamError)
+                .raisedByT3
+            : undefined,
+          Exit.isFailure(consumed) ? true : undefined,
         );
         yield* interrupts(2);
 
@@ -3356,6 +3668,9 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
           otherSession: "running",
           replacement: "running",
         });
+        assert.equal(yield* cutOffNodeStatus, "interrupted");
+        // regression: #36548 a native subagent the dead process ran stayed running after its run completed
+        assert.notInclude(["pending", "running", "waiting"], yield* nativeSubagentStatus);
       });
 
       yield* effect.pipe(
@@ -3618,6 +3933,7 @@ it.effect(
 it.effect("ProviderSessionManagerV2 releases sessions when provider event streams fail", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const releaseRecorded = yield* Deferred.make<void>();
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3646,7 +3962,7 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
         runtimePolicy,
       });
       yield* runtime.events.pipe(Stream.runDrain, Effect.ignore, Effect.forkScoped);
-      yield* Effect.yieldNow;
+      yield* Deferred.await(releaseRecorded);
 
       const liveSession = yield* manager.get(providerSessionId);
       const runtimeState = yield* Ref.get(state);
@@ -3667,6 +3983,7 @@ it.effect("ProviderSessionManagerV2 releases sessions when provider event stream
           state,
           idleTimeoutMs: 1000,
           failEventStream: true,
+          releaseRecorded,
         }),
       ),
     );
@@ -5436,6 +5753,7 @@ it.effect(
         enableAgentBrowserAccess: false,
         projectOverride: false,
         deviceOverride: true,
+        enableDeviceSupport: true,
       });
       assert.isTrue(enabled?.capabilities?.has("device"));
       assert.isFalse(enabled?.browserToolsAvailable);
@@ -5443,10 +5761,47 @@ it.effect(
         enableAgentBrowserAccess: false,
         projectOverride: false,
         deviceOverride: true,
+        enableDeviceSupport: true,
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
+);
+
+it.effect("ProviderSessionManagerV2 withholds device tools while device support is off", () =>
+  Effect.gen(function* () {
+    const global = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: false,
+      projectOverride: false,
+      enableAgentDeviceAccess: true,
+      enableDeviceSupport: false,
+    });
+    assert.isFalse(
+      global?.capabilities?.has("device"),
+      "global agent device access granted device tools with device support off",
+    );
+    const project = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: false,
+      projectOverride: false,
+      deviceOverride: true,
+      enableDeviceSupport: false,
+    });
+    assert.isFalse(
+      project?.capabilities?.has("device"),
+      "project agent device access granted device tools with device support off",
+    );
+    const missingProject = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: false,
+      projectOverride: false,
+      enableAgentDeviceAccess: true,
+      enableDeviceSupport: false,
+      projectExists: false,
+    });
+    assert.isFalse(
+      missingProject?.capabilities?.has("device"),
+      "agent device access granted device tools with device support off for a missing project",
+    );
+  }),
 );
 
 // Device instructions reach delegated children only because their own sessions hold `device`.
@@ -5456,6 +5811,7 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
       enableAgentBrowserAccess: false,
       projectOverride: false,
       deviceOverride: true,
+      enableDeviceSupport: true,
       delegatedBy: ThreadId.make("thread-provider-session-manager-parent"),
     });
     assert.isTrue(child?.capabilities?.has("device"));
