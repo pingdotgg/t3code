@@ -567,6 +567,24 @@ it.effect("a fields request keeps each value apart and delivers one file per fie
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("an older client's single value answers a one-field card", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "secret-files-test-" });
+    yield* withService(
+      ({ service, dispatched }) =>
+        Effect.gen(function* () {
+          yield* service.answer({ threadId, turnItemId, answer: { type: "save", secret: "tv" } });
+          assert.include(dispatched[0] as object, { secretStatus: "saved" });
+          const saved = yield* service.saveToFile({ threadId, turnItemId });
+          const files = "files" in saved ? saved.files : {};
+          assert.equal(yield* fs.readFileString(files.test_field ?? ""), "tv");
+        }),
+      { delivery: "file", directory, fields: [{ name: "test_field", label: "Test value" }] },
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("two racing answers to a fields card never mix their values", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

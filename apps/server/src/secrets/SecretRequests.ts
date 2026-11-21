@@ -57,6 +57,10 @@ function answerValues(
 ): ReadonlyArray<readonly [FieldName, string]> | undefined {
   if (item.fields === undefined)
     return "secret" in answer ? [[undefined, answer.secret]] : undefined;
+  // Clients older than `fields` render a one-field card as their single input.
+  const [only, ...rest] = item.fields;
+  if ("secret" in answer)
+    return only !== undefined && rest.length === 0 ? [[only.name, answer.secret]] : undefined;
   if (!("values" in answer)) return undefined;
   const { values } = answer;
   if (Object.keys(values).length !== item.fields.length) return undefined;
