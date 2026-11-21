@@ -6,9 +6,15 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { isSameOriginRendererNavigation } from "../window/RendererNavigation.ts";
 
 export interface DesktopIpcInvokeEvent {
-  readonly sender: { readonly id: number };
+  readonly sender: {
+    readonly id: number;
+    readonly getType?: () => string;
+    readonly getURL?: () => string;
+    readonly mainFrame?: unknown;
+  };
   readonly senderFrame?: unknown;
 }
 
@@ -118,6 +124,7 @@ export const make = (
                 Effect.gen(function* () {
                   yield* Effect.annotateCurrentSpan({ channel });
                   if (!(yield* isTrustedSender(event))) {
+                    yield* Effect.logWarning("Rejected IPC from an untrusted sender.");
                     return yield* new DesktopIpcUntrustedSenderError({ channel });
                   }
                   return yield* handler(raw, event);
@@ -185,16 +192,32 @@ export const layer = (ipcMain: DesktopIpcMain) =>
     Effect.gen(function* () {
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       return make(ipcMain, (event) =>
-        Effect.map(
-          electronWindow.main,
-          (main) =>
-            Option.isSome(main) &&
-            main.value.webContents.id === event.sender.id &&
-            main.value.webContents.mainFrame === event.senderFrame,
-        ),
+        Effect.map(electronWindow.main, (main) => {
+          if (Option.isNone(main)) return false;
+          const app = main.value.webContents;
+          if (app.id === event.sender.id) return app.mainFrame === event.senderFrame;
+          return isPopoutWindow(event, app.getURL());
+        }),
       );
     }),
   );
+
+// A pop-out browser window runs the app itself, so it is as trusted as the main window.
+// Preview guests are "webview" contents, and their pop-ups never load the app origin.
+// The hash is routing, not a secret: any app-origin page is already as trusted as the main window.
+const isPopoutWindow = (event: DesktopIpcInvokeEvent, appUrl: string): boolean => {
+  const sender = event.sender;
+  if (sender.getType?.() !== "window" || sender.mainFrame !== event.senderFrame) return false;
+  try {
+    const url = new URL(sender.getURL?.() ?? "");
+    return (
+      isSameOriginRendererNavigation({ applicationUrl: appUrl, navigationUrl: url.href }) &&
+      url.hash.startsWith("#/browser-window/")
+    );
+  } catch {
+    return false;
+  }
+};
 
 export const layerTest = (ipcMain: DesktopIpcMain) =>
   Layer.succeed(

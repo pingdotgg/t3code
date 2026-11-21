@@ -13,6 +13,7 @@ import {
 import { msg, T, useGT, Var } from "gt-react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { PoppedOutAnnotationReceiver } from "~/components/preview/previewAnnotationDelivery";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
@@ -182,6 +183,8 @@ function RootRouteBranch() {
     return <Outlet />;
   }
 
+  if (pathname.startsWith("/browser-window/")) return <Outlet />;
+
   // Settings can reopen /welcome mid-session, so it mounts everything the app does except the
   // first-run gate and the event router, whose first navigation would leave the page.
   const appHosts = (
@@ -220,6 +223,7 @@ function RootRouteBranch() {
   return (
     <>
       <ChatGptWelcomeCoordinator />
+      <PoppedOutAnnotationReceiver />
       {isWelcome ? (
         <>
           {appHosts}

@@ -614,6 +614,8 @@ export interface DesktopPreviewTabState {
   canGoForward: boolean;
   zoomFactor: number;
   pictureInPicture: boolean;
+  /** Rendered in its own window; the main window shows a placeholder. */
+  detached: boolean;
   colorScheme: DesktopPreviewColorScheme;
   audioMuted: boolean;
   /** Chromium reports playback even when audioMuted is true. */
@@ -979,6 +981,11 @@ export interface DesktopPreviewTabDefaults {
 export const DesktopPreviewRegisterWebviewInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   webContentsId: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+
+export const DesktopPreviewOpenTabWindowInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  partition: Schema.String,
 });
 
 export const DesktopPreviewNavigateInputSchema = Schema.Struct({
@@ -1400,6 +1407,10 @@ export interface DesktopPreviewBridge {
   copyArtifactToClipboard: (path: string) => Promise<void>;
   pictureInPicture: {
     open: (tabId: string) => Promise<void>;
+    close: (tabId: string) => Promise<void>;
+  };
+  tabWindow: {
+    open: (tabId: string, partition: string) => Promise<void>;
     close: (tabId: string) => Promise<void>;
   };
   recording: {
