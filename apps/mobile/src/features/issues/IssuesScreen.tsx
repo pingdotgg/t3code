@@ -198,8 +198,8 @@ export function IssuesScreen(
   const entries = groups.flatMap((group) => group.rows).sort(issueOrder(sort));
   const filterScopes = issueFilterScopes(held, projects);
   const notices = [
-    // An environment that failed while another answered: its issues are missing from the rows.
-    ...(entries.length > 0 && list.error ? [list.error] : []),
+    // An environment that failed while another answered or still reads: its issues are missing.
+    ...((entries.length > 0 || list.awaitingAnswer) && list.error ? [list.error] : []),
     ...groups.flatMap((group) => [
       ...(group.tracker.configured
         ? []
@@ -309,7 +309,12 @@ export function IssuesScreen(
         onEndReachedThreshold={0.5}
         refreshControl={
           <RefreshControl
-            refreshing={list.isPending && list.answers.length > 0}
+            // An empty list still waiting on an environment shows its own spinner instead.
+            refreshing={
+              list.isPending &&
+              list.answers.length > 0 &&
+              !(entries.length === 0 && list.awaitingAnswer)
+            }
             onRefresh={list.refresh}
             // The list already accounts for the navigation header in its content inset.
             progressViewOffset={Platform.OS === "ios" ? 60 : undefined}
@@ -484,7 +489,7 @@ export function IssuesScreen(
           ) : undefined
         }
         ListEmptyComponent={
-          list.isPending && list.answers.length === 0 ? (
+          (list.isPending && list.answers.length === 0) || list.awaitingAnswer ? (
             <View className="items-center py-12">
               <AppActivityIndicator colorClassName="accent-icon" />
             </View>

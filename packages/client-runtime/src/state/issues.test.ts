@@ -323,6 +323,45 @@ describe("createMergedIssueListAtoms", () => {
     }
   });
 
+  it("waits for an environment that has not answered while another has", () => {
+    const fast = EnvironmentId.make("fast");
+    const slow = EnvironmentId.make("slow");
+    const results = new Map<string, AsyncResult.AsyncResult<IssueListResult, string>>([
+      [fast, AsyncResult.success(answer)],
+      [slow, AsyncResult.initial(true)],
+    ]);
+    const lists = Atom.family((environmentId: string) => Atom.make(results.get(environmentId)!));
+    const listings = createMergedIssueListAtoms(
+      { list: (target) => lists(target.environmentId), refreshList: () => {} },
+      String,
+    );
+    const registry = AtomRegistry.make();
+    const listing = listings.atom(
+      [fast, slow].map((environmentId) => ({ environmentId, input: { state: "open" } })),
+    );
+    const unmount = registry.mount(listing);
+    try {
+      expect(registry.get(listing)).toMatchObject({
+        answers: [[fast, answer]],
+        awaitingAnswer: true,
+      });
+      // A failure being retried has its error to show, and an answer has its rows.
+      registry.set(lists(slow), AsyncResult.waiting(AsyncResult.fail("Tracker unavailable")));
+      expect(registry.get(listing).awaitingAnswer).toBe(false);
+      registry.set(lists(slow), AsyncResult.success(answer));
+      expect(registry.get(listing)).toMatchObject({
+        answers: [
+          [fast, answer],
+          [slow, answer],
+        ],
+        awaitingAnswer: false,
+      });
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
+
   it("releases historical search targets when the list closes", async () => {
     NodeV8.setFlagsFromString("--expose-gc");
     const gc = NodeVM.runInNewContext("gc") as () => void;
