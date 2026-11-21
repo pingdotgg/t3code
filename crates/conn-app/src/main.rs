@@ -37,6 +37,8 @@ const MIN_WINDOW_HEIGHT_PX: f32 = 480.0;
 const MACOS_TRAFFIC_LIGHT_X_PX: f32 = 16.0;
 const MACOS_TRAFFIC_LIGHT_Y_PX: f32 = 15.0;
 
+mod chat;
+
 fn main() {
     let application = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
     application.run(|cx| {

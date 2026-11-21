@@ -27,6 +27,7 @@ raw-window-handle.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+syntect = { version = "5.3.0", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
 tokio.workspace = true
 url.workspace = true
 

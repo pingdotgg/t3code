@@ -1082,6 +1082,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "syntect",
  "tokio",
  "url",
 ]
