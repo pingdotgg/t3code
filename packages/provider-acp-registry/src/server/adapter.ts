@@ -243,6 +243,12 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       /^(?:mistral-)?vibe(?:-acp)?(\.exe|\.cmd)?$/i.test(
         options.settings.commandPath.split(/[\\/]/).pop() ?? "",
       ));
+  const isKilo =
+    registryAgentId === "kilo" ||
+    (options.settings.source === "local" &&
+      /^kilo(?:code)?(\.exe|\.cmd)?$/i.test(
+        options.settings.commandPath.split(/[\\/]/).pop() ?? "",
+      ));
   const runtimeOptions = isClaude
     ? {
         ...options,
@@ -252,7 +258,17 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
             options.environment.CLAUDE_AGENT_ACP_EXPERIMENTAL_V2 ?? "1",
         },
       }
-    : options;
+    : isKilo
+      ? {
+          ...options,
+          // Kilo (7.8.32) reads its client at startup, before `kilo acp` sets it, so it offers
+          // its question tool over ACP, which never asks the client and hangs the turn.
+          environment: {
+            ...options.environment,
+            KILO_CLIENT: options.environment.KILO_CLIENT ?? "acp",
+          },
+        }
+      : options;
   const watchKimiPromptOutcome = isKimi
     ? yield* makeKimiPromptOutcomeWatch(options.environment.KIMI_CODE_HOME)
     : undefined;
