@@ -611,7 +611,7 @@ function OpenCommandPaletteDialog(props: {
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
   const canContinueActiveThread =
-    activeThread !== null && canContinueThread(activeThreadServerConfig, activeThread.projectId);
+    activeThread != null && canContinueThread(activeThreadServerConfig, activeThread.projectId);
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
   );
@@ -1698,7 +1698,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeThread !== null) {
+  if (activeThread != null) {
     actionItems.push({
       kind: "action",
       value: "action:copy-thread-chip",
@@ -1711,7 +1711,7 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  if (activeThread !== null && canContinueActiveThread) {
+  if (activeThread != null && canContinueActiveThread) {
     actionItems.push({
       kind: "action",
       value: "action:continue-in-new-thread",

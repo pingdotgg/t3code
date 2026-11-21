@@ -685,7 +685,8 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   for (const thread of visible) {
     const configLoaded = serverConfigs.has(thread.environmentId);
     const supportsDependencies =
-      serverConfigs.get(thread.environmentId)?.environment.capabilities.threadDependencies === true;
+      serverConfigs.get(thread.environmentId)?.environment?.capabilities?.threadDependencies ===
+      true;
     const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
     if (optimisticDrop?.key === threadKey) {
       const projected = applySidebarThreadDrop(
@@ -1936,8 +1937,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           thread !== undefined &&
           sectionByThreadKeyRef.current.get(key) === originSection &&
           (action === "release"
-            ? serverConfigs.get(thread.environmentId)?.environment.capabilities
-                .threadDependencies === true
+            ? serverConfigs.get(thread.environmentId)?.environment?.capabilities
+                ?.threadDependencies === true
             : serverConfigs.has(thread.environmentId))
         );
       };
@@ -2778,7 +2779,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           projectByKey.get(`${thread.environmentId}:${thread.projectId}`)?.workspaceRoot ??
           null;
         const configLoaded = serverConfigs.has(thread.environmentId);
-        const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
+        const capabilities = serverConfigs.get(thread.environmentId)?.environment?.capabilities;
         const reminderSupported = supportsSnoozeReminder(capabilities);
         const supportsAutoSettleOptOut = capabilities?.threadAutoSettleOptOut === true;
         const supportsDependencies = capabilities?.threadDependencies === true;
@@ -3694,11 +3695,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             settlementSupported={serverConfigs.has(thread.environmentId)}
                             snoozeSupported={serverConfigs.has(thread.environmentId)}
                             snoozeReminderSupported={supportsSnoozeReminder(
-                              serverConfigs.get(thread.environmentId)?.environment.capabilities,
+                              serverConfigs.get(thread.environmentId)?.environment?.capabilities,
                             )}
                             dependenciesSupported={
-                              serverConfigs.get(thread.environmentId)?.environment.capabilities
-                                .threadDependencies === true
+                              serverConfigs.get(thread.environmentId)?.environment?.capabilities
+                                ?.threadDependencies === true
                             }
                             pinningSupported={serverConfigs.has(thread.environmentId)}
                             isPinned={thread.pinnedAt != null}
