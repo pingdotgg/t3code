@@ -162,6 +162,12 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
     ),
   ],
   [
+    "1–4,294,967,295 tokens or 1–100%. Requires CLI support in ACP mode. Leave empty to preserve existing CLI behavior, including any inherited override.",
+    msg(
+      "1–4,294,967,295 tokens or 1–100%. Requires CLI support in ACP mode. Leave empty to preserve existing CLI behavior, including any inherited override.",
+    ),
+  ],
+  [
     "Google accounts use your subscription; API keys and Agent Platform bill usage.",
     msg("Google accounts use your subscription; API keys and Agent Platform bill usage."),
   ],
@@ -242,6 +248,7 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
   ],
   ["e.g. --chrome", msg("e.g. --chrome")],
   ["e.g. 300000", msg("e.g. 300000")],
+  ["e.g. 840000 or 85%", msg("e.g. 840000 or 85%")],
   ["Optional", msg("Optional", { $context: "placeholder of an optional settings field" })],
   ["Automatic", msg("Automatic", { $context: "placeholder, chosen automatically when empty" })],
   ["Registry default", msg("Registry default")],

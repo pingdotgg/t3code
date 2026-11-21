@@ -550,6 +550,7 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
   readonly runtimeTempDirectory?: string;
+  readonly autoCompactWindow?: string;
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
@@ -562,12 +563,17 @@ export function buildAntigravityAcpSpawnInput(input: {
       "antigravity-acp",
     ],
     cwd: input.cwd,
-    env: antigravityEnvironment(
-      input.profile,
-      input.baseEnv ?? process.env,
-      input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
-      input.runtimeTempDirectory,
-    ),
+    env: {
+      ...antigravityEnvironment(
+        input.profile,
+        input.baseEnv ?? process.env,
+        input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
+        input.runtimeTempDirectory,
+      ),
+      ...(input.autoCompactWindow
+        ? { AGY_CLI_AUTO_COMPACT_OVERRIDE: input.autoCompactWindow }
+        : {}),
+    },
     extendEnv: false,
   };
 }

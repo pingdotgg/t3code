@@ -875,6 +875,8 @@ export const AntigravityAuthMethod = Schema.Literals(
 );
 export type AntigravityAuthMethod = typeof AntigravityAuthMethod.Type;
 
+const ANTIGRAVITY_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d*|(?:[1-9]\d?|100)%)$/;
+
 export const AntigravitySettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -932,12 +934,32 @@ export const AntigravitySettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "Automatic", clearWhenEmpty: "persist" },
       }),
     ),
+    autoCompactWindow: TrimmedString.check(
+      Schema.isPattern(ANTIGRAVITY_AUTO_COMPACT_WINDOW_PATTERN),
+      Schema.makeFilter(
+        (value) =>
+          value === "" ||
+          value.endsWith("%") ||
+          Number(value) <= 4_294_967_295 ||
+          "Token count must not exceed 4,294,967,295.",
+      ),
+    ).pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Auto-compact after",
+        description:
+          "1–4,294,967,295 tokens or 1–100%. Requires CLI support in ACP mode. Leave empty to preserve existing CLI behavior, including any inherited override.",
+        providerSettingsForm: { placeholder: "e.g. 840000 or 85%", clearWhenEmpty: "omit" },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
-  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
+  {
+    order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath", "autoCompactWindow"],
+  },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 
