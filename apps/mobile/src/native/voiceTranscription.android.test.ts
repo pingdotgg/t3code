@@ -78,12 +78,13 @@ it.each([
     selection: { start: 16, end: 16 },
     revision: 1,
   };
-  const prepareToRecordAsync = vi.fn(async () => {});
+  const recorderReady = Promise.withResolvers<void>();
+  const record = vi.fn();
   const controller = new VoiceInputController({
     recorder: {
       uri: "file:///acceptance.m4a",
-      prepareToRecordAsync,
-      record: () => {},
+      prepareToRecordAsync: async () => recorderReady.resolve(),
+      record,
       stop: async () => {},
     },
     getTranscriber: () => transcriber,
@@ -95,12 +96,21 @@ it.each([
     commitDraft: commit,
     onStateChange: () => {},
   });
-  await controller.start();
+  const model = Promise.withResolvers<{ locale: string; mode: number }>();
+  if (phase === "transcription") mocks.prepare.mockReturnValueOnce(model.promise);
+  const starting = controller.start();
+  if (phase === "transcription") {
+    await recorderReady.promise;
+    expect(controller.currentState.phase).toBe("preparing");
+    expect(record).not.toHaveBeenCalled();
+    model.resolve({ locale: "en-US", mode: 0 });
+  }
+  await starting;
   if (phase === "transcription") await controller.stop();
 
   expect(controller.currentState).toMatchObject({ phase: "error", errorAction: "retry" });
   expect(commit).not.toHaveBeenCalled();
   expect(draft.text).toBe("Preserved draft.");
   expect(controller.currentState.error).toMatch(expected);
-  expect(prepareToRecordAsync).toHaveBeenCalledTimes(phase === "preparation" ? 0 : 1);
+  expect(record).toHaveBeenCalledTimes(phase === "preparation" ? 0 : 1);
 });

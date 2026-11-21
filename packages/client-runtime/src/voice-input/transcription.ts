@@ -25,6 +25,8 @@ export type PreparedVoiceTranscription = {
 };
 
 export type VoiceTranscriber = {
+  /** Only for local model setup that does not gate microphone access on a destination grant. */
+  readonly prepareAlongsideRecorder?: boolean;
   readonly prepare: (options: VoiceTranscriptionOptions) => Promise<PreparedVoiceTranscription>;
 };
 

@@ -43,9 +43,18 @@ export function updateMicrophoneOrder(
 /** Remembers newly seen microphones and returns the device id to record from, empty for System default. */
 export async function chooseRecordingMicrophone(): Promise<string> {
   // Rejects where the browser has no media devices, such as plain HTTP.
-  const devices = await listAudioInputs().catch(() => []);
-  return preferredMicrophoneId(
-    updateMicrophoneOrder((order) => rememberMicrophones(order, devices)),
-    devices,
-  );
+  const selection = listAudioInputs()
+    .catch(() => [])
+    .then((devices) =>
+      preferredMicrophoneId(
+        updateMicrophoneOrder((order) => rememberMicrophones(order, devices)),
+        devices,
+      ),
+    );
+  // Newly discovered devices rank below System default, so they cannot change this choice.
+  if (isClientSettingsHydrated() && microphoneOrder(getClientSettings())[0]?.kind === "default") {
+    void selection.catch(() => {});
+    return "";
+  }
+  return selection;
 }

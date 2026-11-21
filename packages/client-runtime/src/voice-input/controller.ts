@@ -396,21 +396,34 @@ export class VoiceInputController {
         return;
       }
 
+      const { signal } = abortController;
+      let modelFailure: VoiceInputFailure | undefined;
+      const model = runTranscriptionOperation(() => transcriber.prepare({ signal })).catch(
+        (error: unknown) => {
+          if (!signal.aborted) modelFailure = preparationFailure(error, this.resolve);
+          throw error;
+        },
+      );
+      const prepareRecorder = async () => {
+        if (!transcriber.prepareAlongsideRecorder) await model;
+        if (signal.aborted) return;
+        await this.dependencies.configureRecording();
+        this.recordingConfigured = true;
+        if (!signal.aborted) await this.dependencies.recorder.prepareToRecordAsync(signal);
+      };
+      const recorder = prepareRecorder();
       try {
-        this.transcription = await runTranscriptionOperation(() =>
-          transcriber.prepare({ signal: abortController.signal }),
-        );
+        [this.transcription] = await Promise.all([model, recorder]);
       } catch (error) {
-        if (this.isCurrent(operationToken))
-          this.setFailure(preparationFailure(error, this.resolve), "retry");
-        return;
+        abortController.abort();
+        // A native call may finish after cancellation; keep ownership until both have settled.
+        await Promise.allSettled([model, recorder]);
+        if (modelFailure) {
+          if (this.isCurrent(operationToken)) this.setFailure(modelFailure, "retry");
+          return;
+        }
+        throw error;
       }
-      if (!this.isCurrent(operationToken)) return;
-
-      await this.dependencies.configureRecording();
-      this.recordingConfigured = true;
-      if (!this.isCurrent(operationToken)) return;
-      await this.dependencies.recorder.prepareToRecordAsync(abortController.signal);
       if (!this.isCurrent(operationToken)) return;
       this.recordingUri = this.dependencies.recorder.uri;
       this.rememberRecordingUri(this.recordingUri);
