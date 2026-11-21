@@ -33,6 +33,9 @@ const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
+  /** The tracked repository the Git scopes read; absent reads the thread's folder. Not persisted. */
+  gitRepositoryByThreadKey: Record<string, string | null>;
+  selectGitRepository: (ref: ScopedThreadRef, repositoryPath: string | null) => void;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
@@ -63,6 +66,25 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      gitRepositoryByThreadKey: {},
+      selectGitRepository: (ref, repositoryPath) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          if ((state.gitRepositoryByThreadKey[threadKey] ?? null) === repositoryPath) return state;
+          const previous = state.byThreadKey[threadKey];
+          // A commit or base ref of the repository being left means nothing in the next one.
+          return {
+            gitRepositoryByThreadKey: {
+              ...state.gitRepositoryByThreadKey,
+              [threadKey]: repositoryPath,
+            },
+            byThreadKey:
+              previous?.kind === "branch" || previous?.kind === "commit"
+                ? { ...state.byThreadKey, [threadKey]: { kind: "branch", baseRef: null } }
+                : state.byThreadKey,
+            branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: null },
+          };
+        }),
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -179,13 +201,19 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
-          if (!(threadKey in state.byThreadKey) && !(threadKey in state.branchBaseRefByThreadKey)) {
+          if (
+            !(threadKey in state.byThreadKey) &&
+            !(threadKey in state.branchBaseRefByThreadKey) &&
+            !(threadKey in state.gitRepositoryByThreadKey)
+          ) {
             return state;
           }
           const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
           const { [threadKey]: _removedBaseRef, ...branchBaseRefByThreadKey } =
             state.branchBaseRefByThreadKey;
-          return { byThreadKey, branchBaseRefByThreadKey };
+          const { [threadKey]: _removedRepository, ...gitRepositoryByThreadKey } =
+            state.gitRepositoryByThreadKey;
+          return { byThreadKey, branchBaseRefByThreadKey, gitRepositoryByThreadKey };
         }),
     }),
     {
@@ -244,6 +272,13 @@ export function selectThreadBranchBaseRef(
   ref: ScopedThreadRef | null | undefined,
 ): string | null {
   return ref ? branchBaseRef(state, scopedThreadKey(ref)) : null;
+}
+
+export function selectThreadGitRepository(
+  state: Pick<DiffPanelStoreState, "gitRepositoryByThreadKey">,
+  ref: ScopedThreadRef | null | undefined,
+): string | null {
+  return ref ? (state.gitRepositoryByThreadKey[scopedThreadKey(ref)] ?? null) : null;
 }
 
 export function resolveToolCallDiffTarget(

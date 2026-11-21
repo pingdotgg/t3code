@@ -84,7 +84,8 @@ interface ThreadDetailsPanelProps extends Pick<
   onStartFromOriginChange: (startFromOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
-  onOpenChanges?: () => void;
+  /** Opens the Diff panel on a tracked repository, or on the thread's folder for null. */
+  onOpenChanges?: (repositoryPath: string | null) => void;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
@@ -104,6 +105,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+  const { onOpenChanges } = props;
   const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
   const serverConfig = useServerConfigs().get(props.environmentId);
   const tracksFolders = (project?.trackedFolders?.length ?? 0) > 0;
@@ -279,7 +281,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         workspaceMutationId={props.workspaceMutationId}
                         activeThreadRef={activeThreadRef}
                         {...(props.draftId ? { draftId: props.draftId } : {})}
-                        {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
+                        {...(onOpenChanges ? { onOpenChanges: () => onOpenChanges(null) } : {})}
                       />
                     ) : null}
                     {show.repositories ? (
@@ -296,6 +298,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         onTaskFolderChange={taskFolderQuery.refresh}
                         explainsEmpty={!folderIsRepo}
                         showActions={visible.gitActions}
+                        showChanges={visible.changes}
+                        {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
                       />
                     ) : null}
                   </div>

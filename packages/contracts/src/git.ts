@@ -122,6 +122,8 @@ export const VcsStatusSubscriptionInput = Schema.Struct({
   ...VcsStatusInput.fields,
   /** Passive observers receive cached remote status without retaining its refresh loop. */
   includeRemote: Schema.optional(Schema.Boolean),
+  /** Asks a passive observer's status for Changes totals, which full subscribers always get. */
+  includeBranchChanges: Schema.optional(Schema.Boolean),
 });
 export type VcsStatusSubscriptionInput = typeof VcsStatusSubscriptionInput.Type;
 

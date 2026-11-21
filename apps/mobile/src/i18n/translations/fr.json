@@ -5407,6 +5407,7 @@
   "28dd3410a8843fed": "Worktree",
   "a46d99e72af41cd4": "Actualiser le statut du dépôt",
   "94662355bd93e456": "Pas un dépôt Git",
+  "524ff3e6454af05f": "{branch} · +{insertions} −{deletions}",
   "ccee3dad52e2d1c7": "{branch} · Propre",
   "2e502e7f45789092": "{branch} · {count, plural, one {{count} fichier} other {{count} fichiers}} · +{insertions} −{deletions}",
   "f169e59fe234e9f1": "Impossible d’ajouter {name}",

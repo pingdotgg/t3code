@@ -1434,6 +1434,18 @@ describe("VcsStatusBroadcaster", () => {
         true,
         false,
       ]);
+
+      // A repository row stays off the remote poller but still shows its Changes totals.
+      const rowSnapshot = yield* Stream.runHead(
+        broadcaster.streamStatus({
+          cwd: "/repo",
+          includeRemote: false,
+          includeBranchChanges: true,
+        }),
+      );
+      const row = Option.getOrThrow(rowSnapshot);
+      assert.strictEqual(row._tag, "snapshot");
+      if (row._tag === "snapshot") assert.deepStrictEqual(row.local.branchChanges, branchChanges);
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 

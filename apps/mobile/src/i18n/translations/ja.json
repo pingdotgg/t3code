@@ -5388,6 +5388,7 @@
   "28dd3410a8843fed": "ワークツリー",
   "a46d99e72af41cd4": "リポジトリのステータスを更新",
   "94662355bd93e456": "Git リポジトリではありません",
+  "524ff3e6454af05f": "{branch} · +{insertions} −{deletions}",
   "ccee3dad52e2d1c7": "{branch} · 変更なし",
   "2e502e7f45789092": "{branch} · {count, plural, other {{count} 個のファイル}} · +{insertions} −{deletions}",
   "f169e59fe234e9f1": "{name} を追加できませんでした",

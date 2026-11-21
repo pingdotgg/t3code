@@ -5392,6 +5392,7 @@
   "28dd3410a8843fed": "워크트리",
   "a46d99e72af41cd4": "저장소 상태 새로 고침",
   "94662355bd93e456": "Git 저장소가 아님",
+  "524ff3e6454af05f": "{branch} · +{insertions} −{deletions}",
   "ccee3dad52e2d1c7": "{branch} · 변경 없음",
   "2e502e7f45789092": "{branch} · {count, plural, other {파일 {count}개}} · +{insertions} −{deletions}",
   "f169e59fe234e9f1": "{name}을(를) 추가하지 못했습니다",

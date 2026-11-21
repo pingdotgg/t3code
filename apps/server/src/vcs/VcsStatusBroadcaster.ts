@@ -373,8 +373,8 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  // Only full subscribers and direct reads show Changes totals. Command palette rows subscribe
-  // without remote status and skip them, which halves the git processes a burst of rows spawns.
+  // Only full subscribers, direct reads and observers that ask show Changes totals. Command
+  // palette rows skip them, which halves the git processes a burst of rows spawns.
   const branchChangesDemand = new Map<string, number>();
   const wantsBranchChanges = (cwd: string) => branchChangesDemand.has(cwd);
   const acquireBranchChangesDemand = (cwd: string) =>
@@ -1166,7 +1166,9 @@ export const make = Effect.gen(function* () {
               else detailedSubscribers.set(cwd, remaining);
             }).pipe(Effect.andThen(trimCachedStatuses)),
         );
-        if (input.includeRemote !== false) yield* acquireBranchChangesDemand(cwd);
+        if (input.includeRemote !== false || input.includeBranchChanges === true) {
+          yield* acquireBranchChangesDemand(cwd);
+        }
         const subscription = yield* PubSub.subscribe(changesPubSub);
         // Watch before reading so a checkout in between still publishes.
         yield* Effect.acquireRelease(retainHeadWatcher(cwd), () => releaseHeadWatcher(cwd));

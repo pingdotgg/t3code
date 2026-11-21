@@ -68,6 +68,8 @@ interface ThreadRepositorySectionsProps {
   /** Says so when no repository is listed, instead of leaving the section blank. */
   explainsEmpty: boolean;
   showActions: boolean;
+  showChanges: boolean;
+  onOpenChanges?: (repositoryPath: string) => void;
 }
 
 const RepositorySection = memo(function RepositorySection(props: {
@@ -79,6 +81,8 @@ const RepositorySection = memo(function RepositorySection(props: {
   expanded: boolean;
   owner: { readonly threadId?: ThreadId; readonly projectId?: ProjectId };
   showActions: boolean;
+  showChanges: boolean;
+  onOpenChanges: ((key: string) => void) | undefined;
   onToggle: (key: string) => void;
   onRemove: (key: string) => void;
 }) {
@@ -87,7 +91,7 @@ const RepositorySection = memo(function RepositorySection(props: {
   const status = useEnvironmentQuery(
     vcsEnvironment.status({
       environmentId: props.threadRef.environmentId,
-      input: { cwd: props.cwd, includeRemote: false },
+      input: { cwd: props.cwd, includeRemote: false, includeBranchChanges: true },
     }),
   );
   const summary = repositorySectionSummary(status.data);
@@ -126,7 +130,7 @@ const RepositorySection = memo(function RepositorySection(props: {
                   #{summary.pullRequest.number}
                 </span>
               ) : null}
-              {summary.changedFiles > 0 ? (
+              {summary.changedFiles > 0 || summary.baseRef !== null ? (
                 <>
                   <span className="text-diff-addition-foreground">
                     +{formatDiffCount(summary.insertions)}
@@ -147,7 +151,10 @@ const RepositorySection = memo(function RepositorySection(props: {
             threadRef={props.threadRef}
             owner={props.owner}
             showActions={props.showActions}
-            showChanges={false}
+            showChanges={props.showChanges}
+            {...(props.onOpenChanges
+              ? { onOpenChanges: () => props.onOpenChanges?.(props.sectionKey) }
+              : {})}
           />
           {props.removable ? (
             <ThreadDetailsControl
@@ -296,6 +303,8 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
       expanded={expandedKey === section.key}
       owner={owner}
       showActions={props.showActions}
+      showChanges={props.showChanges}
+      onOpenChanges={props.onOpenChanges}
       onToggle={toggle}
       onRemove={remove}
     />

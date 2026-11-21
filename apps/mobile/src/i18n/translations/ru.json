@@ -5487,6 +5487,7 @@
   "28dd3410a8843fed": "Рабочее дерево",
   "a46d99e72af41cd4": "Обновить статус репозитория",
   "94662355bd93e456": "Не Git-репозиторий",
+  "524ff3e6454af05f": "{branch} · +{insertions} −{deletions}",
   "ccee3dad52e2d1c7": "{branch} · Нет изменений",
   "2e502e7f45789092": "{branch} · {count, plural, one {{count} файл} few {{count} файла} many {{count} файлов} other {{count} файла}} · +{insertions} −{deletions}",
   "f169e59fe234e9f1": "Не удалось добавить {name}",

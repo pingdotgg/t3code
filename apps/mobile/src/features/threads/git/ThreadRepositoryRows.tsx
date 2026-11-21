@@ -50,6 +50,15 @@ function repositoryRowDescription(
   if (summary === null) return error ?? resolve(msg("Checking status"));
   if (!summary.isRepository) return resolve(msg("Not a Git repository"));
   const branch = summary.branch ?? resolve(msg("Detached HEAD"));
+  if (summary.baseRef !== null) {
+    return resolve(
+      msg("{branch} · +{insertions} −{deletions}", {
+        branch,
+        insertions: formatDiffCount(summary.insertions),
+        deletions: formatDiffCount(summary.deletions),
+      }),
+    );
+  }
   if (summary.changedFiles === 0) return resolve(msg("{branch} · Clean", { branch }));
   return resolve(
     msg(
@@ -74,7 +83,7 @@ const RepositoryRow = memo(function RepositoryRow(props: {
   const status = useEnvironmentQuery(
     vcsEnvironment.status({
       environmentId: props.environmentId,
-      input: { cwd: props.section.cwd, includeRemote: false },
+      input: { cwd: props.section.cwd, includeRemote: false, includeBranchChanges: true },
     }),
   );
   const summary = repositorySectionSummary(status.data);

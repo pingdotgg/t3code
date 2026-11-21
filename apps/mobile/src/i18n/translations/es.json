@@ -5407,6 +5407,7 @@
   "28dd3410a8843fed": "Worktree",
   "a46d99e72af41cd4": "Actualizar el estado del repositorio",
   "94662355bd93e456": "No es un repositorio Git",
+  "524ff3e6454af05f": "{branch} · +{insertions} −{deletions}",
   "ccee3dad52e2d1c7": "{branch} · Limpio",
   "2e502e7f45789092": "{branch} · {count, plural, one {{count} archivo} other {{count} archivos}} · +{insertions} −{deletions}",
   "f169e59fe234e9f1": "No se pudo añadir {name}",

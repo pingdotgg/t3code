@@ -717,23 +717,33 @@ export interface RepositorySectionSummary {
   /** Null on a detached HEAD. */
   readonly branch: string | null;
   readonly isRepository: boolean;
+  /** Files changed in the working tree. */
   readonly changedFiles: number;
   readonly insertions: number;
   readonly deletions: number;
+  /** Ref the line counts compare against; null when they are the working tree's own changes. */
+  readonly baseRef: string | null;
   /** The branch's pull request, from the last remote read anyone made of this folder. */
   readonly pullRequest: NonNullable<VcsStatusResult["pr"]> | null;
 }
 
+/** Counts lines the way the thread folder's Changes row does, so unpushed commits count too. */
 export function repositorySectionSummary(
   status: VcsStatusResult | null | undefined,
 ): RepositorySectionSummary | null {
   if (status == null) return null;
+  const branch = status.branchChanges;
+  const totals =
+    branch && (branch.insertions > 0 || branch.deletions > 0)
+      ? branch
+      : { ...status.workingTree, baseRef: null };
   return {
     branch: status.refName,
     isRepository: status.isRepo,
     changedFiles: status.workingTree.files.length,
-    insertions: status.workingTree.insertions,
-    deletions: status.workingTree.deletions,
+    insertions: totals.insertions,
+    deletions: totals.deletions,
+    baseRef: totals.baseRef,
     pullRequest: status.pr,
   };
 }
