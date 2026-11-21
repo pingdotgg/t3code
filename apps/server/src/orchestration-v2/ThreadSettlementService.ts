@@ -624,7 +624,13 @@ export const make = Effect.gen(function* () {
       groups.values(),
       (group) =>
         Effect.gen(function* () {
-          const pullRequest = yield* pullRequestFor(group);
+          // A thread of a project whose folder is not a repository has no branch pull request.
+          const pullRequest = yield* pullRequestFor(group).pipe(
+            Effect.catchIf(
+              (error) => error._tag === "GitCommandError" && error.reason === "not_a_repository",
+              () => Effect.void,
+            ),
+          );
           if (pullRequest === undefined) return;
           yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
             discard: true,

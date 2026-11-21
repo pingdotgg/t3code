@@ -65,6 +65,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
+  repositoryRewindCheckpoint,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
@@ -111,6 +112,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -200,6 +202,7 @@ import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
   makeSubagentChildThread,
+  SUBAGENT_RESULT_TURN_ITEM_TYPES,
   subagentResultForRun,
   delegatedTaskProgress,
   delegatedTaskReportRuns,
@@ -1618,6 +1621,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const commandReceipts = yield* CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const taskFolderStore = yield* TaskFolderStore.TaskFolderStore;
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
   const nextTurnItemOrdinal = (
@@ -5155,8 +5159,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 };
             const branch = thread.branchPullRequest;
             const branchKey = branch ? legacyThreadPullRequestKey(branch) : null;
+            // A link hides the branch pull request, so the first one keeps it: always when the
+            // user links, and for one opened here when it is in another repository, such as a
+            // tracked one.
+            const keepsBranchPullRequest =
+              command.source === "manual" ||
+              (command.source === "created" &&
+                branchKey !== null &&
+                (branchKey.host !== key.host || branchKey.repository !== key.repository));
             pullRequests = [
-              ...(command.source === "manual" &&
+              ...(keepsBranchPullRequest &&
               branch &&
               branchKey &&
               visibleThreadPullRequests(links).length === 0 &&
@@ -14418,10 +14430,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Checkpoint ${command.checkpointId} was not found.`,
         });
       }
-      // Missing snapshots support conversation rewind only.
+      const worktreePath = projection.thread.worktreePath;
+      const taskFolder =
+        command.restoreFiles === false || worktreePath === null
+          ? null
+          : yield* taskFolderStore.findContaining(worktreePath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause,
+                  }),
+              ),
+            );
+      // A task folder's linked project folder has no snapshot; its repositories can still restore.
+      const restoresRepositories =
+        taskFolder !== null &&
+        !taskFolder.projectIsWorktree &&
+        projection.checkpointScopes.some(
+          (scope) =>
+            typeof scope.repositoryPath === "string" &&
+            repositoryRewindCheckpoint(
+              projection.checkpoints.filter((candidate) => candidate.scopeId === scope.id),
+              targetCheckpoint.appRunOrdinal ?? 0,
+            ) !== null,
+        );
+      // Missing snapshots otherwise support conversation rewind only.
       if (
         targetCheckpoint.status !== "ready" &&
-        !(command.restoreFiles === false && targetCheckpoint.status === "missing")
+        !(
+          targetCheckpoint.status === "missing" &&
+          (command.restoreFiles === false || restoresRepositories)
+        )
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -14446,13 +14487,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Checkpoint ${command.checkpointId} belongs to scope ${targetScope.id}, not ${command.scopeId}.`,
         });
       }
+      // A repository's checkpoints follow the thread's; they are not a place to rewind to.
+      if (typeof targetScope.repositoryPath === "string") {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Checkpoint ${command.checkpointId} belongs to a tracked repository; roll back to the thread's own checkpoint instead.`,
+        });
+      }
       if (command.restoreFiles !== false) {
-        const isolated = yield* isCheckpointRestoreIsolated(projection.thread, targetScope, {
-          projects,
-          path,
-          fileSystem,
-          projections: projectionStore,
-        }).pipe(
+        const isolated = yield* isCheckpointRestoreIsolated(
+          projection.thread,
+          targetScope,
+          taskFolder,
+          {
+            projects,
+            path,
+            fileSystem,
+            projections: projectionStore,
+          },
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new OrchestratorDispatchError({
@@ -14508,6 +14562,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           rollbackRequestId: command.commandId,
           rollbackFailure: null,
+          rollbackUnrestored: null,
           updatedAt: now,
         },
       });
@@ -14998,7 +15053,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageRoles: ["assistant"],
           messageRunIds: resultRunIds,
           turnItemRunIds: resultRunIds,
-          turnItemTypes: ["assistant_message", "error", "system_notice"],
+          turnItemTypes: SUBAGENT_RESULT_TURN_ITEM_TYPES,
           providerTurnAttemptIds: [childRun, ...reportRuns].flatMap(
             (run) => run.activeAttemptId ?? [],
           ),
@@ -17131,6 +17186,7 @@ export const layer: Layer.Layer<
   | ProjectionStoreV2
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
+  | TaskFolderStore.TaskFolderStore
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
   Layer.provide(ThreadCommandExecutor.layer),

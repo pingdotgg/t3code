@@ -57,13 +57,50 @@ describe("Response", () => {
 
     const encoded = null as unknown as Response.ToolCallParts<Tools, "encoded">
     if (encoded.name === "BooleanTool") {
-      expect(encoded.params).type.toBe<boolean>()
+      expect(encoded.params).type.toBe<Schema.Json>()
     } else {
-      expect(encoded.params).type.toBe<string>()
+      expect(encoded.params).type.toBe<Schema.Json>()
     }
 
     const opaque = null as unknown as Response.ToolCallParts<Tools, "opaque">
     expect(opaque.params).type.toBe<unknown>()
+  })
+
+  it("keeps raw encoded parameters possible for provider-defined tools with a non-literal handler flag", () => {
+    const ScheduleTool = Tool.providerDefined({
+      id: "test.schedule",
+      customName: "ScheduleTool",
+      providerName: "schedule",
+      requiresHandler: hole<boolean>(),
+      parameters: Schema.Struct({ at: Schema.Date })
+    })()
+
+    const encoded = null as unknown as Response.ToolCallParts<{ readonly ScheduleTool: typeof ScheduleTool }, "encoded">
+    expect(encoded.params).type.toBe<{ readonly at: Date } | Schema.Json>()
+  })
+
+  it("keeps raw encoded parameters for annotated provider-defined tools", () => {
+    const ScheduleTool = Tool.providerDefined({
+      id: "test.schedule",
+      customName: "ScheduleTool",
+      providerName: "schedule",
+      parameters: Schema.Struct({ at: Schema.Date })
+    })().annotate(Tool.Title, "Schedule")
+
+    const encoded = null as unknown as Response.ToolCallParts<{ readonly ScheduleTool: typeof ScheduleTool }, "encoded">
+    expect(encoded.params).type.toBe<{ readonly at: Date }>()
+  })
+
+  it("keeps raw encoded parameters for provider-defined tools with a replaced success schema", () => {
+    const ScheduleTool = Tool.providerDefined({
+      id: "test.schedule",
+      customName: "ScheduleTool",
+      providerName: "schedule",
+      parameters: Schema.Struct({ at: Schema.Date })
+    })().setSuccess(Schema.String)
+
+    const encoded = null as unknown as Response.ToolCallParts<{ readonly ScheduleTool: typeof ScheduleTool }, "encoded">
+    expect(encoded.params).type.toBe<{ readonly at: Date }>()
   })
 
   it("preserves tool names with success and failure results", () => {
