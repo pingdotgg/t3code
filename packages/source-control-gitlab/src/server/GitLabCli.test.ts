@@ -406,26 +406,27 @@ layer("GitLabCli.layer", (it) => {
 
   it.effect("does not label a failed merge request list as a missing merge request", () =>
     Effect.gen(function* () {
-      mockedRun.mockReturnValueOnce(
+      mockedRun.mockImplementationOnce((input) =>
         Effect.fail(
           new VcsProcessExitError({
             operation: "GitLabCli.execute",
             command: "glab",
             cwd: "/repo",
             exitCode: 1,
-            detail: "VCS resource not found.",
+            detail: input.notFoundDetail ?? "VCS resource not found.",
             failureKind: "not-found",
           }),
         ),
       );
 
       const glab = yield* GitLabCli.GitLabCli;
-      yield* glab
+      const error = yield* glab
         .listMergeRequests({ cwd: "/repo", headSelector: "feature", state: "open" })
         .pipe(Effect.flip);
 
       // glab prints a bare "404 Not Found" when an unauthenticated call cannot see the project.
       expect(mockedRun.mock.calls[0]?.[0].notFoundDetail).not.toBe("Merge request not found.");
+      expect(error.detail).toMatch(/^GitLab returned 404 Not Found\./);
     }),
   );
 
