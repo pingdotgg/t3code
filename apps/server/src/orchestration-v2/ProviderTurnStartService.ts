@@ -996,6 +996,9 @@ export const layer: Layer.Layer<
           text: providerMessage.text,
           records: providerMessage.context?.records ?? [],
         }),
+        projection.thread.lineage.relationshipToParent === "subagent"
+          ? projection.thread.lineage.parentThreadId
+          : null,
       );
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =

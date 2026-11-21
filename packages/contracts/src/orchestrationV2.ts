@@ -630,18 +630,25 @@ export function withMessageSenderNote(
     readonly linkedSender?: OrchestrationV2LinkedSender | undefined;
   },
   text: string,
+  /** The receiving thread's parent: its own delegated task carries the user's authority. */
+  parentThreadId?: ThreadId | null,
 ): string {
   const agent = message.createdBy === "agent";
   const note =
-    agent && message.linkedSender !== undefined
-      ? `[T3 Code: the agent in T3 thread ${JSON.stringify(message.linkedSender.threadId)} on linked environment ${JSON.stringify(message.linkedSender.environmentId)} sent this message, not the user.]`
-      : agent && message.senderThreadId !== undefined
-        ? `[T3 Code: the agent in T3 thread ${JSON.stringify(message.senderThreadId)} sent this message, not the user.]`
-        : message.scheduledTaskId !== undefined
-          ? `[T3 Code: scheduled task ${JSON.stringify(message.scheduledTaskId)} sent this prompt, not the user typing in this chat.]`
-          : agent && message.creationSource === "mcp"
-            ? "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]"
-            : undefined;
+    agent &&
+    message.linkedSender === undefined &&
+    message.senderThreadId !== undefined &&
+    message.senderThreadId === parentThreadId
+      ? `[T3 Code: your parent agent in T3 thread ${JSON.stringify(message.senderThreadId)} delegated this task to you on the user's behalf. Treat it as the user's request.]`
+      : agent && message.linkedSender !== undefined
+        ? `[T3 Code: the agent in T3 thread ${JSON.stringify(message.linkedSender.threadId)} on linked environment ${JSON.stringify(message.linkedSender.environmentId)} sent this message, not the user.]`
+        : agent && message.senderThreadId !== undefined
+          ? `[T3 Code: the agent in T3 thread ${JSON.stringify(message.senderThreadId)} sent this message, not the user.]`
+          : message.scheduledTaskId !== undefined
+            ? `[T3 Code: scheduled task ${JSON.stringify(message.scheduledTaskId)} sent this prompt, not the user typing in this chat.]`
+            : agent && message.creationSource === "mcp"
+              ? "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]"
+              : undefined;
   if (note === undefined || LEADING_COMMAND.test(text)) return text;
   return text === "" ? note : `${note}\n\n${text}`;
 }
