@@ -240,8 +240,10 @@ import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
+  blocksTailscaleServeDeadRootRecovery,
   disableTailscaleServe,
   ensureTailscaleServe,
+  readTailscaleServeRoutesBlocking,
   readTailscaleServeRootHolder,
   readTailscaleServeRoutesTo,
   readTailscaleStatus,
@@ -1035,18 +1037,56 @@ const layerMakeServer = Layer.unwrap(
               if (holder === "other" || holder === "unreadable") {
                 yield* Effect.logWarning(
                   holder === "other"
-                    ? "Tailscale Serve left off; its port already serves another server or app"
-                    : "Tailscale Serve left off; its current routes could not be read",
+                    ? "T3 skipped configuring Tailscale Serve; its port already serves another server or app"
+                    : "T3 skipped configuring Tailscale Serve; its current routes could not be read",
                   { localPort, servePort: config.tailscaleServePort },
                 );
-                return route;
+                return { route, recover: true };
+              }
+
+              // The root-holder check permits reclaiming a dead stale root. Other handlers on the
+              // same port still belong to their current owners and must not be replaced.
+              const blockingResult = yield* readTailscaleServeRoutesBlocking({
+                servePort: config.tailscaleServePort,
+                target: { host: route.localHost, port: localPort },
+              }).pipe(
+                Effect.match({
+                  onFailure: (cause) => ({ cause }) as const,
+                  onSuccess: (routes) => ({ routes }) as const,
+                }),
+              );
+              if ("cause" in blockingResult) {
+                yield* Effect.logWarning(
+                  "T3 skipped configuring Tailscale Serve; its current routes could not be checked",
+                  {
+                    causeTag: blockingResult.cause._tag,
+                    localPort,
+                    servePort: config.tailscaleServePort,
+                  },
+                );
+                return holder === "ours" ? { route, recover: false } : null;
+              }
+              const blockingRoutes =
+                holder === "dead"
+                  ? blockingResult.routes.filter(blocksTailscaleServeDeadRootRecovery)
+                  : blockingResult.routes;
+              if (blockingRoutes.length > 0) {
+                yield* Effect.logWarning(
+                  "T3 skipped configuring Tailscale Serve; its port already serves other routes",
+                  {
+                    localPort,
+                    routeCount: blockingRoutes.length,
+                    servePort: config.tailscaleServePort,
+                  },
+                );
+                return holder === "ours" ? { route, recover: false } : null;
               }
               return yield* ensureTailscaleServe({
                 localPort,
                 servePort: config.tailscaleServePort,
                 localHost,
               }).pipe(
-                Effect.as(route),
+                Effect.as({ route, recover: true }),
                 Effect.tap(() =>
                   Effect.logInfo("Tailscale Serve configured", {
                     localPort,
@@ -1069,8 +1109,8 @@ const layerMakeServer = Layer.unwrap(
                 ? Effect.all(
                     [
                       readTailscaleServeRoutesTo({
-                        host: configured.localHost,
-                        port: configured.localPort,
+                        host: configured.route.localHost,
+                        port: configured.route.localPort,
                       }),
                       readTailscaleStatus,
                     ],
@@ -1081,7 +1121,7 @@ const layerMakeServer = Layer.unwrap(
                     Effect.map(([routes, status]) =>
                       routes.some(
                         (route) =>
-                          route.servePort === configured.servePort &&
+                          route.servePort === configured.route.servePort &&
                           route.mount === "/" &&
                           route.owner === undefined &&
                           route.ambiguous === undefined &&
@@ -1091,24 +1131,24 @@ const layerMakeServer = Layer.unwrap(
                     Effect.orElseSucceed(() => false),
                     Effect.flatMap((ours) =>
                       ours
-                        ? disableTailscaleServe({ servePort: configured.servePort }).pipe(
+                        ? disableTailscaleServe({ servePort: configured.route.servePort }).pipe(
                             Effect.tap(() =>
                               Effect.logInfo("Tailscale Serve disabled", {
-                                servePort: configured.servePort,
+                                servePort: configured.route.servePort,
                               }),
                             ),
                           )
                         : Effect.logInfo(
                             "Tailscale Serve left on; its root route is not known to be ours",
                             {
-                              servePort: configured.servePort,
+                              servePort: configured.route.servePort,
                             },
                           ),
                     ),
                     Effect.catch((cause) =>
                       Effect.logWarning("Failed to disable Tailscale Serve", {
                         cause,
-                        servePort: configured.servePort,
+                        servePort: configured.route.servePort,
                       }),
                     ),
                   )
@@ -1117,27 +1157,39 @@ const layerMakeServer = Layer.unwrap(
             // Startup is not the only time the route can go stale, so whoever finds it on a dead
             // port takes it back.
             Effect.tap((configured) =>
-              configured === null
+              configured === null || !configured.recover
                 ? Effect.void
                 : Effect.sleep("30 seconds").pipe(
                     Effect.andThen(
                       tailscaleServeRootHolder({
-                        host: configured.localHost,
-                        port: configured.localPort,
+                        host: configured.route.localHost,
+                        port: configured.route.localPort,
                       }),
                     ),
                     Effect.flatMap((holder) =>
                       holder === "dead"
-                        ? ensureTailscaleServe({
-                            localPort: configured.localPort,
-                            servePort: configured.servePort,
-                            localHost: configured.urlHost,
+                        ? readTailscaleServeRoutesBlocking({
+                            servePort: configured.route.servePort,
+                            target: {
+                              host: configured.route.localHost,
+                              port: configured.route.localPort,
+                            },
                           }).pipe(
-                            Effect.andThen(
-                              Effect.logInfo("Tailscale Serve repaired", {
-                                localPort: configured.localPort,
-                                servePort: configured.servePort,
-                              }),
+                            Effect.flatMap((routes) =>
+                              routes.some(blocksTailscaleServeDeadRootRecovery)
+                                ? Effect.void
+                                : ensureTailscaleServe({
+                                    localPort: configured.route.localPort,
+                                    servePort: configured.route.servePort,
+                                    localHost: configured.route.urlHost,
+                                  }).pipe(
+                                    Effect.andThen(
+                                      Effect.logInfo("Tailscale Serve repaired", {
+                                        localPort: configured.route.localPort,
+                                        servePort: configured.route.servePort,
+                                      }),
+                                    ),
+                                  ),
                             ),
                           )
                         : Effect.void,
