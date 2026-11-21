@@ -63,15 +63,6 @@ const DROPPED_REQUEST_HEADER_PREFIXES = ["proxy-", "cf-", "x-forwarded-", "x-b3-
 
 export const isRelayHookPath = (url: string): boolean => url.startsWith(RELAY_HOOK_PATH_PREFIX);
 
-export const redactRelayHookUrl = (url: string): string => {
-  const path = url.split("?", 1)[0] ?? url;
-  const segments = path.split("/");
-  if (segments.length >= 6) {
-    segments[5] = "redacted";
-  }
-  return segments.join("/");
-};
-
 /** Budget decoded tokens so equivalent spellings share limits and wrong tokens cannot exhaust a real sender's budget. */
 const hookBudgetKey = (hook: {
   readonly endpointKey: string;

@@ -469,9 +469,15 @@ describe("HookForwarder", () => {
       });
       const harness = makeHarness();
       const handler = yield* harness.httpEffect;
-      const response = yield* traceRelayHttpRequestWith(
-        handler,
-        Layer.succeed(Tracer.Tracer, tracer),
+      let response: HttpServerResponse.HttpServerResponse | undefined;
+      // The Workers adapter runs every request through HttpEffect.toHandled, which holds the
+      // request state that route redaction writes to.
+      yield* HttpEffect.toHandled(
+        traceRelayHttpRequestWith(handler, Layer.succeed(Tracer.Tracer, tracer)),
+        (_request, sent) =>
+          Effect.sync(() => {
+            response = sent;
+          }),
       ).pipe(
         Effect.provideService(
           HttpServerRequest.HttpServerRequest,
@@ -484,7 +490,7 @@ describe("HookForwarder", () => {
           ),
         ),
       );
-      expect(response.status).toBe(200);
+      expect(response?.status).toBe(200);
       expect(harness.sent[0]?.url).toContain("super-secret-token");
       yield* Effect.yieldNow;
       const serialized = spans
@@ -494,7 +500,7 @@ describe("HookForwarder", () => {
       expect(serialized).not.toContain("also-secret");
       expect(serialized).not.toContain("header-secret");
       const server = spans.find((span) => span.kind === "server");
-      expect(server?.attributes.get("url.path")).toBe(`/v1/hooks/${endpointKey}/hook-1/redacted`);
+      expect(server?.attributes.get("url.path")).toBe(`/v1/hooks/${endpointKey}/hook-1/REDACTED`);
     }),
   );
 

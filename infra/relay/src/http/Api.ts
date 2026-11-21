@@ -80,7 +80,7 @@ import * as EnvironmentPublishSignatures from "../environments/EnvironmentPublis
 import * as MobileRegistrations from "../agentActivity/MobileRegistrations.ts";
 import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import { withSpanAttributes } from "../observability.ts";
-import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
+import { isRelayHookPath } from "../hooks/HookForwarder.ts";
 import * as RelayDb from "../db.ts";
 
 // Delegated IDs exceed the router's default 100-character limit; match the environment server.
@@ -189,7 +189,8 @@ const relayRequestDeadline = <E, R>(
           const request = yield* HttpServerRequest.HttpServerRequest;
           yield* Effect.logError("relay request exceeded deadline", {
             "http.method": request.method,
-            "http.url": request.url,
+            // Hook URLs carry their token in the path.
+            ...(isRelayHookPath(request.url) ? {} : { "http.url": request.url }),
             "relay.request.deadline_ms": deadlineMs,
           });
           yield* Effect.annotateCurrentSpan({
@@ -242,12 +243,9 @@ const traceRelayHttpRequest = Effect.fnUntraced(function* <E, R>(
       Effect.ensuring(Effect.yieldNow),
     );
   }
-  // Hook URLs carry a secret token: the tracer and deadline log see a redacted
-  // request, while the route itself still receives the original. A webhook
-  // sender's trace context is dropped, so it cannot pick the trace our relay
-  // and environment spans land in.
+  // A webhook sender's trace context is dropped, so it cannot pick the trace our
+  // relay and environment spans land in. The hook route redacts its token itself.
   const redacted = request.modify({
-    url: redactRelayHookUrl(request.url),
     headers: Headers.removeMany(
       request.headers,
       Object.keys(request.headers).filter((name) => SENDER_TRACE_HEADER.test(name)),

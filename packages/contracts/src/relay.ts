@@ -1304,7 +1304,8 @@ const RelayHooksGroup = HttpApiGroup.make("hooks")
     HttpApiEndpoint.patch("forwardPatch", RELAY_HOOK_PATH, relayHookEndpoint),
     HttpApiEndpoint.get("forwardGet", RELAY_HOOK_PATH, relayHookEndpoint),
   )
-  .annotate(OpenApi.Description, "Forward webhook requests to an environment.");
+  .annotate(OpenApi.Description, "Forward webhook requests to an environment.")
+  .annotate(HttpApi.RedactedNames, { params: ["token"] });
 
 export const RelayMobileTelemetrySignal = Schema.Literals(["logs", "metrics", "traces"]);
 export type RelayMobileTelemetrySignal = typeof RelayMobileTelemetrySignal.Type;
