@@ -91,6 +91,7 @@ function shown(
   own: ServerProviderUsageLimits,
   sources: readonly UsageLimitSourceSnapshot[],
   model: string | null,
+  servingAccount: string | null = null,
 ) {
   const resolved = resolveThreadDetailsLimits(
     instanceId,
@@ -98,6 +99,7 @@ function shown(
     [claudeInstance(own)],
     sources,
     now,
+    servingAccount === null ? null : { sourceId: "Hub", accountId: servingAccount },
   );
   if (resolved?.kind !== "pool") return resolved;
   return {
@@ -143,5 +145,20 @@ describe("resolveThreadDetailsLimits", () => {
       kind: "pool",
       rows: [{ label: "Session", left: 70, accounts: 1, from: { hubs: ["Hub"], signedIn: false } }],
     });
+  });
+
+  it("shows the account the hub serves the thread from, else the pool", () => {
+    const sources = [
+      hub("Hub", [
+        { id: "a.json", limits: limitsAt(10) },
+        { id: "b.json", models: [], limits: limitsAt(50) },
+      ]),
+    ];
+    const pool = shown(unsupported, sources, null);
+    expect(shown(unsupported, sources, null, "b.json")).toMatchObject({
+      rows: [{ left: 50, accounts: 1 }],
+    });
+    expect(pool).toMatchObject({ rows: [{ left: 90, accounts: 1 }] });
+    expect(shown(unsupported, sources, null, "gone.json")).toEqual(pool);
   });
 });

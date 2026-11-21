@@ -1,5 +1,6 @@
 import {
   ProviderDriverKind,
+  TrimmedNonEmptyString,
   UsageLimitSourceError,
   type ProviderConsumeResetCreditResult,
   type UsageLimitSourceAccount,
@@ -122,6 +123,9 @@ const CreditList = Schema.Struct({
 
 const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
 const decodeAuthFileModels = Schema.decodeUnknownEffect(AuthFileModels);
+const decodeSessionAccount = Schema.decodeUnknownEffect(
+  Schema.Struct({ id: TrimmedNonEmptyString }),
+);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
@@ -604,5 +608,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
   });
-  return { readAccounts, consume };
+  // Hubs without session routing reject this route; the caller then shows the pool.
+  const servingAccount = Effect.fn("CliproxyApi.servingAccount")(function* (
+    hub: CliproxyHub,
+    provider: "claude" | "codex",
+    session: string,
+  ) {
+    const query = new URLSearchParams({ provider, session });
+    const response = yield* management(hub, `routing/session-affinity?${query}`);
+    return (yield* decodeSessionAccount(response)).id;
+  });
+  return { readAccounts, consume, servingAccount };
 });

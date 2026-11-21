@@ -73,6 +73,15 @@ function fixture(
           ? decodeRequest(new TextDecoder().decode(request.body.body))
           : undefined;
       requests.push({ path, ...(body ? { body } : {}) });
+      if (path.endsWith("/routing/session-affinity")) {
+        const query = new URL(request.url).searchParams;
+        return HttpClientResponse.fromWeb(
+          request,
+          query.get("provider") === "claude" && query.get("session") === "session-a"
+            ? Response.json({ provider: "claude", id: "first.json", auth_index: "a" })
+            : Response.json({ error: "session is not bound to an account" }, { status: 404 }),
+        );
+      }
       if (path.endsWith("/auth-files/models"))
         return HttpClientResponse.fromWeb(
           request,
@@ -738,6 +747,15 @@ describe("CLIProxyAPI built-in management API", () => {
       expect(test.requests.filter((request) => request.path.endsWith("/reset-quota"))).toHaveLength(
         1,
       );
+    }),
+  );
+
+  it.effect("names the account a hub with session routing serves a session from", () =>
+    Effect.gen(function* () {
+      const api = yield* fixture().api;
+      expect(yield* api.servingAccount(config, "claude", "session-a")).toBe("first.json");
+      const unbound = yield* api.servingAccount(config, "claude", "other").pipe(Effect.result);
+      expect(unbound._tag).toBe("Failure");
     }),
   );
 

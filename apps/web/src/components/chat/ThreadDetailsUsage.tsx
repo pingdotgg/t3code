@@ -1,11 +1,14 @@
 import type {
+  EnvironmentId,
   ProviderInstanceId,
   ServerProvider,
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
+import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import {
+  instanceHubs,
   type LimitPace,
   type LimitPoolWindow,
   paceOf,
@@ -18,6 +21,8 @@ import { msg, useGT, useLocale, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { serverEnvironment } from "../../state/server";
+import { useEnvironmentQuerySelector } from "../../state/query";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
@@ -35,6 +40,9 @@ const PACE_LABEL: Record<LimitPace, string> = {
 };
 
 export interface ThreadDetailsUsageInput {
+  readonly environmentId: EnvironmentId;
+  /** The provider's own session id, which a hub with session routing maps to an account. */
+  readonly nativeSessionId: string | null;
   readonly providerInstanceId: ProviderInstanceId | null;
   readonly model: string | null;
   readonly providers: readonly ServerProvider[];
@@ -52,6 +60,8 @@ function limitTone(left: number): UsageTone {
 
 /** The selected provider's limit windows. Each row reads as room left and opens the usage page. */
 export function ThreadDetailsUsage({
+  environmentId,
+  nativeSessionId,
   providerInstanceId,
   model,
   providers,
@@ -60,7 +70,32 @@ export function ThreadDetailsUsage({
   const gt = useGT();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
-  const resolved = resolveThreadDetailsLimits(providerInstanceId, model, providers, sources, now);
+  const provider = providers.find((entry) => entry.instanceId === providerInstanceId);
+  // Endpoints carry only an origin, so hubs that share one cannot say which serves the thread.
+  const hubs = provider ? instanceHubs(provider, sources) : [];
+  const hub = hubs.length === 1 ? hubs[0] : undefined;
+  const servingAccount = useEnvironmentQuerySelector(
+    provider && hub?.endpoint && nativeSessionId
+      ? serverEnvironment.usageLimitSourceServingAccount({
+          environmentId,
+          input: {
+            sourceId: hub.id,
+            endpoint: hub.endpoint,
+            driver: provider.driver,
+            session: nativeSessionId,
+          },
+        })
+      : null,
+    selectEnvironmentQueryData,
+  );
+  const resolved = resolveThreadDetailsLimits(
+    providerInstanceId,
+    model,
+    providers,
+    sources,
+    now,
+    hub && servingAccount ? { sourceId: hub.id, accountId: servingAccount } : null,
+  );
   if (!resolved) return null;
 
   return (
