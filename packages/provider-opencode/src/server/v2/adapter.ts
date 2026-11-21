@@ -320,6 +320,11 @@ interface Wake {
     string,
     { readonly status: "completed" | "failed" | "interrupted"; readonly exit?: number }
   >;
+  /** Held subagent launches whose child reported first; the report found no call to settle. */
+  readonly reported: Map<
+    string,
+    { readonly status: OrchestrationV2Subagent["status"]; readonly output: string }
+  >;
 }
 
 interface OpenBlock {
@@ -3065,6 +3070,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         children: new Set(),
         awaited: new Set(),
         ended: new Map(),
+        reported: new Map(),
       };
       state.wakes.push(wake);
       yield* Effect.logInfo("OpenCode started a turn on its own; asking for a continuation.", {
@@ -3263,6 +3269,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           : outcome === "cancelled"
             ? "cancelled"
             : "completed";
+      const holding =
+        open.length === 0
+          ? sessionsOf(state)
+              .flatMap((session) => session.wakes)
+              .find((wake) => !wake.dropped && wake.children.has(childId))
+          : undefined;
+      if (holding !== undefined && !holding.reported.has(childId)) {
+        holding.reported.set(childId, { status, output });
+      }
       for (const each of lost) yield* settleCall(each, "completed", each.answer);
       for (const each of calls) yield* settleCall(each, status, output);
     });
@@ -4509,6 +4524,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* Effect.forEach(wake.events, (event) => route(event, sessionOfEvent(event), true), {
         discard: true,
       }).pipe(Effect.ensuring(Effect.sync(() => (replaying = undefined))));
+      for (const [childId, report] of wake.reported) {
+        const calls = [...threads.values()]
+          .flatMap((state) => [...state.calls.values()])
+          .filter((candidate) => candidate.child?.sessionId === childId);
+        for (const call of calls) yield* settleCall(call, report.status, report.output);
+      }
     });
 
     const discardWakes = (caller: ThreadState, wakes: ReadonlyArray<Wake>) => {

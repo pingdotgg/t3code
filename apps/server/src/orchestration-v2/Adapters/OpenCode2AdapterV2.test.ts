@@ -7679,6 +7679,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const CHILD_B = "ses_f1485c529ffeBBBBBBBBBBBBBB";
       const toolB = { sessionID: SESSION, assistantMessageID: "msg_wake_a", id: "call-b" };
+      const joinB = { ...toolB, id: "call-b-again" };
       const report = (inboxID: string, child: string, text: string) =>
         event("session.inbox.enqueued", {
           inboxID,
@@ -7720,6 +7721,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ...toolB,
           metadata: { sessionID: CHILD_B, status: "running" },
         }),
+        // A second call of wake A joins B while it runs; B's one report answers both.
+        event("session.tool.input.started", { ...joinB, name: "subagent" }),
+        event("session.tool.called", {
+          ...joinB,
+          name: "subagent",
+          input: { description: "Again", prompt: "also", sessionID: CHILD_B, background: true },
+          executed: false,
+        }),
+        event("session.tool.progress", {
+          ...joinB,
+          metadata: { sessionID: CHILD_B, status: "running" },
+        }),
         event("session.execution.succeeded", { sessionID: SESSION }),
         event("session.execution.started", { sessionID: CHILD_B }),
         event("session.execution.succeeded", { sessionID: CHILD_B }),
@@ -7733,6 +7746,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           text: "REPLY_B",
         }),
         event("session.execution.succeeded", { sessionID: SESSION }),
+        // Replaying wake A's join writes B's rules.
+        out("session.update", { sessionID: CHILD_B, permissions: "<any>" }),
+        reply("session.update", null),
       ]).pipe(
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) =>
@@ -7776,6 +7792,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.deepEqual(Object.fromEntries(statuses), {
         "call-background": "completed",
         "call-b": "completed",
+        "call-b-again": "completed",
       });
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
