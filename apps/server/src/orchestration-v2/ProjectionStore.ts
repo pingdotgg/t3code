@@ -5083,7 +5083,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               json_extract(payload_json, '$.snoozedUntil') AS snoozed_until
             FROM orchestration_v2_projection_threads
             WHERE deleted_at IS NULL
-              AND json_extract(payload_json, '$.limitRecovery.autoResume') = 1
+              AND CASE WHEN json_valid(payload_json)
+                THEN json_extract(payload_json, '$.limitRecovery.autoResume') = 1
+                ELSE 0 END
           )
         `;
         const wakes = [rows[0]?.reset_ms, rows[0]?.snooze_ms].filter(
@@ -8926,8 +8928,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT payload_json
           FROM orchestration_v2_projection_threads
           WHERE deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`}
-            AND json_extract(payload_json, '$.archivedAt') IS NULL
-            AND json_array_length(payload_json, '$.pullRequests') > 0
+            AND archived_at IS NULL
+            AND CASE WHEN json_valid(payload_json)
+              THEN json_array_length(payload_json, '$.pullRequests') > 0
+              ELSE 0 END
           ORDER BY updated_at ASC, thread_id ASC
         `;
           return yield* Effect.forEach(rows, (row) =>
@@ -9404,7 +9408,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         FROM orchestration_v2_projection_threads
         WHERE deleted_at IS NULL
           AND archived_at IS NULL
-          AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+          AND CASE WHEN json_valid(payload_json)
+            THEN json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+            ELSE 0 END
       `;
         return rows.map((row) => ThreadId.make(row.thread_id));
       },

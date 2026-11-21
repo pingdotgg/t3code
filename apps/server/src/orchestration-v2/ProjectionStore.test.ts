@@ -9056,7 +9056,29 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (row) => row.id === threadId,
         ),
       );
-      assert.strictEqual(yield* store.getLimitRecoveryWakeAt(now), DateTime.toEpochMillis(reset));
+      const traced = traceSqlStatements();
+      assert.strictEqual(
+        yield* store.getLimitRecoveryWakeAt(now).pipe(Effect.withTracer(traced.tracer)),
+        DateTime.toEpochMillis(reset),
+      );
+      yield* store.listActiveSubagentThreadIds().pipe(Effect.withTracer(traced.tracer));
+      yield* store.getThreadsWithPullRequests().pipe(Effect.withTracer(traced.tracer));
+      for (const indexName of [
+        "orchestration_v2_projection_threads_limit_recovery_wake_idx",
+        "orchestration_v2_projection_threads_active_subagent_idx",
+        "orchestration_v2_projection_threads_pull_requests_idx",
+      ]) {
+        const plans = yield* Effect.forEach(
+          traced.statements.filter((statement) =>
+            statement.includes("FROM orchestration_v2_projection_threads"),
+          ),
+          (statement) => sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${statement}`),
+        );
+        assert.isTrue(
+          plans.some((plan) => plan.some((row) => row.detail.includes(indexName))),
+          `expected query plan to use ${indexName}`,
+        );
+      }
       assert.isNull(yield* store.getLimitRecoveryWakeAt(reset));
       const due = (yield* store.getLimitRecoveryCandidates({
         ...recoveryOptions,
