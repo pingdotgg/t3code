@@ -13374,7 +13374,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.checkMcpSignIns = (message.mcp_servers ?? []).some(
                       (server) =>
                         (server.status === "pending" || server.status === "needs-auth") &&
-                        // claude.ai connectors and plugin servers the user never connected need a sign-in too.
+                        // Unconnected claude.ai connectors and plugin servers are never announced.
                         !server.name.startsWith("claude.ai ") &&
                         !isClaudePluginMcpServer(server),
                     );
