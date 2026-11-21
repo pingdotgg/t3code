@@ -19,11 +19,10 @@ import {
   type HistoryDirection,
 } from "../../navigationHistory";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
-import { useEnvironmentQuery } from "../../state/query";
 import { cn } from "../../lib/utils";
 import {
+  useConnectedEnvironmentIds,
   useIssuesSupported,
-  usePrimaryEnvironmentId,
   usePullRequestsSupported,
 } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -264,13 +263,12 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  // Counts only: the button is there for servers that run workflows, and says when one waits.
-  const workflowCounts = useEnvironmentQuery(
-    primaryEnvironmentId === null
-      ? null
-      : serverEnvironment.workflowCounts({ environmentId: primaryEnvironmentId, input: {} }),
-  ).data;
+  const connectedIds = useConnectedEnvironmentIds();
+  // Counts only, from every connected server: the button is there where workflows run, and says
+  // when one waits. The command palette opens the page from anywhere.
+  const workflowCounts = useAtomValue(
+    serverEnvironment.workflowCountsAcross(JSON.stringify(connectedIds.toSorted())),
+  );
   const handleWorkflowsClick = () => {
     closeMobileSidebar();
     void navigate({ to: "/workflows" });
@@ -340,7 +338,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handleIssuesClick}
             />
           ) : null}
-          {workflowCounts !== undefined && workflowCounts !== null && workflowCounts.total > 0 ? (
+          {workflowCounts.total > 0 ? (
             <SidebarUtilityItem
               icon={<WorkflowIcon />}
               label={gt("Workflows")}
