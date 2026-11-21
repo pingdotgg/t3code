@@ -11,7 +11,8 @@ const linkUrlsCache = new Map<string, readonly string[]>();
 export const EMPTY_FILE_HREFS: ReadonlySet<string> = new Set<string>();
 export const EMPTY_LINK_URLS: readonly string[] = [];
 
-const LINK_CANDIDATE_RE = /(?:\]\(|\]\[|\]:|https?:\/\/|www\.|mailto:|t3-|<[a-z][a-z0-9+.-]*:)/i;
+const LINK_CANDIDATE_RE =
+  /(?:\]\(|\]\[|\]:|https?:\/\/|www\.|mailto:|t3-|<[a-z][a-z0-9+.-]*:|[^\s@]+@[^\s@]+)/i;
 
 interface MdastNodeLike {
   readonly type: string;

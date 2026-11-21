@@ -1,6 +1,7 @@
 import type { Root } from "mdast";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { parseMarkdownAst } from "./markdownDocument";
 import {
   EMPTY_LINK_URLS,
   getCachedMarkdownAst,
@@ -59,5 +60,11 @@ describe("markdownParseCache", () => {
     expect(first).toEqual(["src/a.ts", "https://example.com"]);
     expect(second).toBe(first);
     expect(parse).toHaveBeenCalledTimes(1);
+  });
+
+  it("extracts GFM email autolinks with the configured remark-gfm parser", () => {
+    const urls = getCachedMarkdownLinkUrls("Contact contact@example.com", parseMarkdownAst);
+    expect(urls).toEqual(["mailto:contact@example.com"]);
+    expect(getCachedMarkdownLinkUrls("Contact contact@example.com", parseMarkdownAst)).toBe(urls);
   });
 });
