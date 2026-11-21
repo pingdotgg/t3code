@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as Clipboard from "expo-clipboard";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "./haptics";
 
 export class CopyTextClipboardWriteError extends Schema.TaggedError<CopyTextClipboardWriteError>()(
   "CopyTextClipboardWriteError",

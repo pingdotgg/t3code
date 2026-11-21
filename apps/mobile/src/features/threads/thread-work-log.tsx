@@ -15,7 +15,7 @@ import {
   getQuestionAnswerPreview,
   hasQuestionAnswer,
 } from "@t3tools/client-runtime/work-log/user-input";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { T, useGT, useMessages } from "gt-react-native";
 import { Image } from "expo-image";
 import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";

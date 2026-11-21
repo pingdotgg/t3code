@@ -11,7 +11,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { msg, T, useGT } from "gt-react-native";
 import { useEffect, useRef, useState, type RefObject } from "react";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { Accelerometer } from "expo-sensors";
 import { Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";

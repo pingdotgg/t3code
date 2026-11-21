@@ -3,7 +3,7 @@ import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entitie
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 
 import { environmentThreadDetails } from "../../state/threads";
 

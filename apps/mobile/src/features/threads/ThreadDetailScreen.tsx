@@ -80,7 +80,7 @@ import { isProviderNativeSubagentThread } from "@t3tools/contracts";
 import type { QueuedRunEdit } from "../../state/queued-run-edit";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import {
   useCallback,
   useEffect,

@@ -17,7 +17,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import * as Haptics from "expo-haptics";
+import * as Haptics from "../../lib/haptics";
 import { useNavigation } from "@react-navigation/native";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { m } from "../../i18n/messages";
