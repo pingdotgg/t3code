@@ -23,6 +23,16 @@ window.addEventListener("vite:preloadError", (event) => {
   }
 });
 
+// VDI/VM absolute pointers can report `any-hover: none` while delivering real mouse events.
+if (!window.matchMedia("(any-hover: hover)").matches) {
+  const markMouseHover = (event: PointerEvent) => {
+    if (event.pointerType !== "mouse") return;
+    document.documentElement.dataset.mouseHover = "";
+    window.removeEventListener("pointermove", markMouseHover);
+  };
+  window.addEventListener("pointermove", markMouseHover, { passive: true });
+}
+
 const app = <AppRoot router={router} />;
 
 // Split by runtime to keep Clerk out of local startup and clerk-js out of browser builds.
