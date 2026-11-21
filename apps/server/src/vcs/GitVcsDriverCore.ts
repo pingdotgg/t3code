@@ -3406,11 +3406,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // Like git commit, a merge resolved to HEAD's tree still records its merge commit.
       const mergeHeadPath = yield* runGitStdout("GitVcsDriver.commit.mergeHead", cwd, [
         "rev-parse",
-        "--path-format=absolute",
         "--git-path",
         "MERGE_HEAD",
       ]);
-      const merging = yield* fileSystem.exists(mergeHeadPath.trim()).pipe(
+      const merging = yield* fileSystem.realPath(cwd).pipe(
+        Effect.orElseSucceed(() => cwd),
+        Effect.flatMap((physicalCwd) =>
+          fileSystem.exists(path.resolve(physicalCwd, mergeHeadPath.trim())),
+        ),
         Effect.mapError(
           (cause) =>
             new GitCommandError({
