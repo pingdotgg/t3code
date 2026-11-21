@@ -165,8 +165,7 @@ function ProviderHeader(props: {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
-  /** The section's selected model, named while collapsed so it stays visible. */
-  readonly activeModel?: string | undefined;
+  readonly activeModel: ModelOption | undefined;
   readonly onToggle: () => void;
 }) {
   const gt = useGT();
@@ -189,7 +188,7 @@ function ProviderHeader(props: {
           {props.collapsed ? (
             props.activeModel ? (
               <Text numberOfLines={1} className="shrink text-xs font-t3-medium text-foreground">
-                {props.activeModel}
+                {props.activeModel.label}
               </Text>
             ) : (
               <Text className="text-2xs font-t3-medium text-foreground-muted">
@@ -221,7 +220,13 @@ function ProviderHeader(props: {
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
         accessibilityValue={
-          props.collapsed && props.activeModel ? { text: props.activeModel } : undefined
+          props.collapsed && props.activeModel
+            ? {
+                text: [props.activeModel.label, props.activeModel.subtitle]
+                  .filter(Boolean)
+                  .join(", "),
+              }
+            : undefined
         }
         className="mx-4 mt-1 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60"
         style={{ minHeight: ROW_MIN_HEIGHT.control }}
@@ -749,7 +754,7 @@ type ThreadSettingsProviderCatalog = {
   readonly collapsible: boolean;
   readonly collapsed: boolean;
   readonly modelCount: number;
-  readonly activeModel: string | undefined;
+  readonly activeModel: ModelOption | undefined;
   readonly models: ReadonlyArray<ModelOption>;
 };
 
@@ -767,7 +772,7 @@ type ThreadSettingsCatalogItem =
       readonly detail: string | undefined;
       readonly collapsed: boolean;
       readonly modelCount: number;
-      readonly activeModel: string | undefined;
+      readonly activeModel: ModelOption | undefined;
     }
   | {
       readonly kind: "model";
@@ -860,6 +865,12 @@ function ThreadSettingsSubProviderListHeader(props: {
   );
 }
 
+// An unavailable model would read as usable in a header, so the count shows instead.
+const usableDisplayedModel = (
+  session: ThreadSettingsSessionValue,
+  models: ReadonlyArray<ModelOption>,
+) => models.find((model) => session.isDisplayed(model) && !model.isUnavailable);
+
 const modelItems = (models: ReadonlyArray<ModelOption>) =>
   models.map((option, index) => ({
     kind: "model" as const,
@@ -911,7 +922,7 @@ function subProviderCatalogItems(
           detail: subProvider.unavailableReason,
           collapsed,
           modelCount: backendModels.length,
-          activeModel: collapsed ? backendModels.find(session.isDisplayed)?.label : undefined,
+          activeModel: collapsed ? usableDisplayedModel(session, backendModels) : undefined,
         },
         // The heading names the backend, so rows drop it.
         ...(collapsed
@@ -987,7 +998,7 @@ function buildThreadSettingsCatalogItems(
       collapsible,
       collapsed,
       modelCount: visibleModels.length,
-      activeModel: collapsed ? group.models.find(session.isDisplayed)?.label : undefined,
+      activeModel: collapsed ? usableDisplayedModel(session, group.models) : undefined,
       models: collapsed ? [] : visibleModels,
     };
     return [
