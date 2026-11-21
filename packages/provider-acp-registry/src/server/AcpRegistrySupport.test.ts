@@ -1641,7 +1641,7 @@ describe("AcpRegistrySupport", () => {
         });
         const resolved = yield* resolver.resolve(settings(), "/workspace");
 
-        expect(resolved.agent.version).toBe("1.2.4");
+        expect(resolved.agent?.version).toBe("1.2.4");
         expect(resolved.spawn.command).toContain("/tools/example-agent/1.2.4/");
         expect(requests).toContain(registryUrl);
       }).pipe(
