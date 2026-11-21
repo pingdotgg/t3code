@@ -62,6 +62,8 @@ const RESUME_LOOK_EVERY = Duration.millis(25);
 const RESUME_LOOKS = 80;
 const WATCH_SETTLE = Duration.millis(100);
 const END_TRIES = 5;
+// How long a cancelled run's cleanup rests after each failed try before the sweep tries again.
+const END_AFTER = ["5 minutes", "20 minutes", "80 minutes", "5 hours"] as const;
 // Delivery ids that common senders put on a request and keep when they send it again.
 const DELIVERY_HEADERS = [
   "x-github-delivery",
@@ -104,6 +106,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   });
   const scope = yield* Scope.Scope;
   const agents = yield* WorkflowAgents;
+  const stopTurn = plain(agents.interrupt);
   const random = yield* SecureRandom.SecureRandom;
   const digest = yield* Digest.Digest;
   const context = yield* Effect.context<WorkflowEngine.WorkflowEngine>();
@@ -557,6 +560,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         }),
       ),
       Effect.provideContext(forStep(keyValues, link, forge, row.run_id, END_STEP)),
+      // The sweep that runs it reads the engine's BigInts; the cleanup's own code must not.
+      Effect.provideService(SqlClient.SafeIntegers, false),
       Effect.matchCauseEffect({
         onSuccess: () => store.stepEnded(row.run_id, END_STEP, "completed", null),
         onFailure: (cause) =>
@@ -580,16 +585,34 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     for (const child of yield* store.orphans) {
       yield* Effect.ignore(cancel(child.run_id, "the run that invoked it was cancelled"));
     }
+    // A cancel cut short after the run was ended: what it had not stopped yet is stopped here.
+    for (const row of yield* store.cancelsCutShort(END_STEP)) {
+      if (cancelling.has(row.run_id) || ending.has(row.run_id)) continue;
+      const engine = byTag.get(row.engine_tag);
+      if (engine !== undefined) yield* withEngine(engine.interrupt(row.run_id));
+      yield* stopSteps(row.run_id, yield* store.runningThreads(row.run_id));
+    }
+    // A run that ended without its parent hearing of it. Telling twice is harmless.
+    for (const child of yield* store.untold) yield* ended(child.run_id);
     yield* store.mailExpire;
     yield* fireSchedules;
     yield* fireOpened;
     yield* fireWatches;
+    const at = yield* DateTime.now;
     // A run with a step still going is ended by its cancel, which waits for that step.
     for (const row of yield* store.runsToEnd(END_STEP, END_TRIES)) {
+      const rest = END_AFTER[Number(row.end_attempts ?? 0) - 1];
+      if (row.end_ended_at !== null && rest !== undefined) {
+        const due = DateTime.addDuration(
+          DateTime.makeUnsafe(row.end_ended_at),
+          Duration.fromInputUnsafe(rest),
+        );
+        if (DateTime.isLessThan(at, due)) continue;
+      }
       if (!link.inFlight.busy(row.run_id)) yield* endCancelled(row);
     }
     for (const row of yield* store.everyRun("running")) yield* reconcile(row);
-    const at = yield* DateTime.now;
+    for (const row of yield* store.everyRun("waiting")) yield* reconcile(row);
     for (const row of yield* store.everyRun("paused")) {
       const due = resumesAt(row);
       if (due === undefined || DateTime.isLessThan(at, due)) continue;
@@ -754,32 +777,51 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     ).pipe(Effect.ignore);
   });
 
+  /** A step in flight cannot be interrupted, so the agent it waits on is stopped instead. */
+  const stopSteps = Effect.fn("WorkflowEngine.stopSteps")(function* (
+    runId: string,
+    threads: ReadonlyArray<Parameters<typeof stopTurn>[0]>,
+  ) {
+    yield* Effect.forEach(threads, (thread) => Effect.ignore(stopTurn(thread)), {
+      discard: true,
+    });
+    yield* store.stepsCancelled(runId, END_STEP);
+  });
+
+  // Cancels under way, whose slow part the sweep must not take for one cut short.
+  const cancelling = new Set<string>();
   const cancel: Workflows["Service"]["cancel"] = Effect.fn("Workflows.cancel")(
     function* (runId, reason) {
       const row = yield* requireRun(runId);
       if (row.ended_at !== null) return;
       const threads = yield* store.runningThreads(runId);
-      // Ended first, so nothing the run still does can be recorded as its outcome. A run that
-      // finished in the meantime keeps its own ending, and its cleanup is its own.
-      if (!(yield* store.runEnded(runId, "cancelled", reason, null))) return;
       const engine = byTag.get(row.engine_tag);
-      if (engine !== undefined) yield* withEngine(engine.interrupt(runId));
-      // A step in flight cannot be interrupted, so the agent it waits on is stopped instead.
-      yield* Effect.forEach(threads, (thread) => Effect.ignore(agents.interrupt(thread)), {
-        discard: true,
-      });
-      yield* store.stepsCancelled(runId);
-      // What this run invoked was part of it.
-      yield* Effect.forEach(
-        yield* store.children(runId),
-        (child) => Effect.ignore(cancel(child.run_id, reason)),
-        { discard: true },
-      );
-      yield* ended(runId);
-      // Waited for briefly, so the caller usually hears of a run that is cleaned up. A cleanup
-      // can take minutes; it goes on by itself, and the sweep finishes one that is cut short.
-      const cleanup = yield* Effect.forkIn(endCancelled({ ...row, detail: reason }), scope);
-      yield* Fiber.join(cleanup).pipe(Effect.timeoutOption(CANCEL_WAITS));
+      cancelling.add(runId);
+      yield* Effect.gen(function* () {
+        // Ended first, so nothing the run still does can be recorded as its outcome. A run that
+        // finished in the meantime keeps its own ending, and its cleanup is its own. Not cut off
+        // midway: the engine would go on with a cancelled run, or its parent wait forever.
+        const cancelled = yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            if (!(yield* store.runEnded(runId, "cancelled", reason, null))) return false;
+            if (engine !== undefined) yield* withEngine(engine.interrupt(runId));
+            yield* ended(runId);
+            return true;
+          }),
+        );
+        if (!cancelled) return;
+        yield* stopSteps(runId, threads);
+        // What this run invoked was part of it.
+        yield* Effect.forEach(
+          yield* store.children(runId),
+          (child) => Effect.ignore(cancel(child.run_id, reason)),
+          { discard: true },
+        );
+        // Waited for briefly, so the caller usually hears of a run that is cleaned up. A cleanup
+        // can take minutes; it goes on by itself, and the sweep finishes one that is cut short.
+        const cleanup = yield* Effect.forkIn(endCancelled({ ...row, detail: reason }), scope);
+        yield* Fiber.join(cleanup).pipe(Effect.timeoutOption(CANCEL_WAITS));
+      }).pipe(Effect.ensuring(Effect.sync(() => cancelling.delete(runId))));
     },
   );
 
