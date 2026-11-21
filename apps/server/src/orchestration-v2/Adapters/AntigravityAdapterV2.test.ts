@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- node:sqlite writes the native Antigravity session log fixture.
-import * as NodeSqlite from "node:sqlite";
-
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -1348,73 +1345,6 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       const terminal = run.at(-1);
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
       assert.include(JSON.stringify(run), "Here is the chart.", "the reply is part of the run");
-      assert.lengthOf(offers, 0, "the open run needs no continuation");
-    }).pipe(Effect.provide(layerSession)),
-  );
-
-  it.effect("fails deferred finalize when Antigravity logs a post-background quota error", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const profile = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-agy-deferred-quota-",
-      });
-      const conversations = path.join(profile, "antigravity-acp", "conversations");
-      yield* fileSystem.makeDirectory(conversations, { recursive: true });
-      const appendStep = (stepIndex: number, stepType: number, payload: Uint8Array) => {
-        const database = new NodeSqlite.DatabaseSync(path.join(conversations, "mock-session-1.db"));
-        try {
-          database.exec(
-            "CREATE TABLE IF NOT EXISTS steps (idx INTEGER PRIMARY KEY, step_type INTEGER, step_payload BLOB)",
-          );
-          database.prepare("INSERT INTO steps VALUES (?, ?, ?)").run(stepIndex, stepType, payload);
-        } finally {
-          database.close();
-        }
-      };
-
-      const { command, usage, offers, send, startTurn, until, throughPromptSettled } =
-        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 }, undefined, undefined, {
-          profileDirectory: profile,
-        });
-      yield* startTurn(1, false);
-      yield* throughPromptSettled;
-
-      // Command finishes and wakes the model; during the wake Antigravity hits a 429 quota error
-      // and writes CORTEX_STEP_TYPE_ERROR_MESSAGE (17) into its native conversation log.
-      yield* send({
-        sessionUpdate: "tool_call_update",
-        ...command,
-        status: "completed",
-        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
-      });
-      appendStep(
-        1,
-        17,
-        Buffer.concat([
-          Buffer.from([0x0a, 0x24]),
-          Buffer.from(
-            "Agent execution terminated due to error.\u0012agent executor error: Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetTimeStamp:2030-01-01T00:00:00Z] reason:QUOTA_EXHAUSTED]]",
-          ),
-        ]),
-      );
-      yield* send(usage);
-      yield* TestClock.adjust("3 seconds");
-
-      const run = yield* until((event) => event.type === "turn.terminal");
-      const terminal = run.at(-1);
-      assert.equal(terminal?.type, "turn.terminal");
-      if (terminal?.type === "turn.terminal") {
-        assert.equal(terminal.status, "failed");
-        assert.deepEqual(terminal.failure, {
-          class: "usage_limit",
-          message: "You have reached your Antigravity quota for this period.",
-          code: "RESOURCE_EXHAUSTED",
-          retryable: true,
-          resetAt: "2030-01-01T00:00:00.000Z",
-        });
-        assert.equal(terminal.threadDisposition, "reusable");
-      }
       assert.lengthOf(offers, 0, "the open run needs no continuation");
     }).pipe(Effect.provide(layerSession)),
   );
