@@ -24,10 +24,10 @@ const none = Option.none<boolean>();
 
 it.each([
   {
-    label: "a new machine starts from T3 Connect and asks",
+    label: "a new machine starts with no route and asks",
     setup: { installed: false, connect: false, lan: false },
     flags: { connect: none, lan: none },
-    expected: { routes: { connect: true, lan: false }, ask: ["connect", "lan"] },
+    expected: { routes: { connect: false, lan: false }, ask: ["connect", "lan"] },
   },
   {
     label: "a build without T3 Connect never offers it",

@@ -2,6 +2,7 @@ import {
   type ChatAttachment,
   ChatAttachmentId,
   CommandId,
+  GUEST_PAGE_PATH,
   GUEST_SHARE_TTL_MS,
   GuestMessageId,
   GuestShareCreateError,
@@ -60,6 +61,12 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { guestShareView, guestThreadModel } from "./guestView.ts";
+import {
+  guestHistoryPage,
+  guestSnapshot,
+  guestStreamItem,
+  guestTurnItem,
+} from "./guestRedaction.ts";
 import {
   classifyGuestUploads,
   GUEST_UPLOAD_HEADER_BYTES,
@@ -365,7 +372,7 @@ const make = Effect.gen(function* () {
       return yield* new GuestShareCreateError({ reason: "changed" });
     }
     const credential = yield* signInvite(shareId);
-    return { url: `https://${host}/guest#${credential}`, share: thread.guestShare };
+    return { url: `https://${host}${GUEST_PAGE_PATH}#${credential}`, share: thread.guestShare };
   });
 
   const redeem = Effect.fn("GuestShareService.redeem")(function* (request: GuestRedeemRequest) {
@@ -568,12 +575,11 @@ const make = Effect.gen(function* () {
           if (item.event.type === "turn-item.updated") rememberSent(share.id, [item.event.payload]);
           const updated = threadOf(item.event);
           const view = updated === null ? null : viewOf(updated);
-          return view === null
-            ? [{ type: "thread", item }]
-            : [
-                { type: "thread", item },
-                { type: "view", view },
-              ];
+          const guestItem = guestStreamItem(item);
+          return [
+            ...(guestItem === null ? [] : [{ type: "thread" as const, item: guestItem }]),
+            ...(view === null ? [] : [{ type: "view" as const, view }]),
+          ];
         }),
         Stream.flattenIterable,
         // A failed read closes the response without `ended`: the browser reconnects, and
@@ -589,7 +595,7 @@ const make = Effect.gen(function* () {
     });
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },
-      { type: "thread", item: openingSnapshot },
+      { type: "thread", item: guestSnapshot(openingSnapshot) },
     ];
     const events = Stream.fromIterable(opening).pipe(
       Stream.concat(
@@ -670,8 +676,9 @@ const make = Effect.gen(function* () {
   const item = Effect.fn("GuestShareService.item")(function* (session: string, itemId: string) {
     const { item } = yield* threadItem(session, itemId);
     return {
-      item:
+      item: guestTurnItem(
         item.type === "file_change" ? projectTurnItemForWire(item) : projectTurnItemForDetail(item),
+      ),
     };
   });
 
@@ -687,7 +694,7 @@ const make = Effect.gen(function* () {
       share.id,
       page.items.map((row) => row.item),
     );
-    return page;
+    return guestHistoryPage(page);
   });
 
   const commandOutput = Effect.fn("GuestShareService.commandOutput")(function* (

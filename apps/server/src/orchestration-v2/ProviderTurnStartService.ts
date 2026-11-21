@@ -3,6 +3,7 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import {
   CommandId,
+  ORCHESTRATION_V2_SESSION_OPEN_FAILURE_TITLE,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   latestProviderTurnForAttempt,
   withMessageSenderNote,
@@ -964,7 +965,7 @@ export const layer: Layer.Layer<
         if (input.willRetry === true && !requiresSignIn) return yield* failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
-          title: "Provider session failed to open",
+          title: ORCHESTRATION_V2_SESSION_OPEN_FAILURE_TITLE,
           error: sessionResult.failure,
         });
         return;

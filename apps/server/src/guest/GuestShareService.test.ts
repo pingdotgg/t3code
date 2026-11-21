@@ -10,6 +10,7 @@ import {
   MessageId,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
+  ProfileId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -157,7 +158,14 @@ const layerTest = GuestShareService.layer.pipe(
 
 const threadId = ThreadId.make("thread:guest-share-service");
 
-const shareThreadFor = Effect.fn(function* (threadId: ThreadId) {
+const shareThreadFor = Effect.fn(function* (
+  threadId: ThreadId,
+  owner: {
+    readonly branch?: string;
+    readonly worktreePath?: string;
+    readonly profileId?: string;
+  } = {},
+) {
   yield* Ref.set(hostname, "env.t3.test");
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   yield* orchestrator.dispatch({
@@ -166,11 +174,15 @@ const shareThreadFor = Effect.fn(function* (threadId: ThreadId) {
     threadId,
     projectId: ProjectId.make("project:guest-share-service"),
     title: "Review me",
-    modelSelection: { instanceId, model: "gpt-5.1-codex" },
+    modelSelection: {
+      instanceId,
+      model: "gpt-5.1-codex",
+      ...(owner.profileId === undefined ? {} : { profileId: ProfileId.make(owner.profileId) }),
+    },
     runtimeMode: "full-access",
     interactionMode: "default",
-    branch: null,
-    worktreePath: null,
+    branch: owner.branch ?? null,
+    worktreePath: owner.worktreePath ?? null,
     createdBy: "user",
     creationSource: "web",
   });
@@ -255,6 +267,52 @@ it.effect("streams the owner's thread events after the share and a snapshot", ()
       turnItems.flatMap((item) => (item.type === "user_message" ? [item.text] : [])),
       ["Fix the login bug"],
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps the owner's profile, branch and worktree out of the guest stream", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares, credential } = yield* shareThreadFor(threadId, {
+      branch: "owner-private-branch",
+      worktreePath: "/srv/owner-private-worktree",
+      profileId: "owner-private-profile",
+    });
+    const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    const events = yield* guestShares.stream(session);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("owner-message-private"),
+      threadId,
+      messageId: MessageId.make("message:private"),
+      text: "Fix the login bug",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.guest-share.close",
+      commandId: CommandId.make("close-after-private"),
+      threadId,
+    });
+    const received = Array.from(yield* Stream.runCollect(events));
+    // A thread record and a run both reached the guest, the places the profile lives.
+    assert.isTrue(
+      received.some(
+        (event) =>
+          event.type === "thread" &&
+          event.item.kind === "event" &&
+          event.item.event.type === "run.created",
+      ),
+    );
+    const wire = JSON.stringify(received);
+    for (const secret of [
+      "owner-private-branch",
+      "owner-private-worktree",
+      "owner-private-profile",
+    ]) {
+      assert.notInclude(wire, secret);
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 

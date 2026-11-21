@@ -8709,15 +8709,14 @@
   "298c7150a7621c80": "Simlock-enhetsvärdar",
   "67937aa49179285e": "På en Mac klonas nya worktrees från en utcheckning som cachas i T3-hemmappen i stället för att varje fil skrivs. Använder Gits vanliga utcheckning när det inte går. Om du stänger av det tas cachen bort.",
   "f9904f78d3003f58": "Snabb utcheckning av worktree",
-  "ec7623deed751c05": [
-    "Dela en tråd med en gäst som följer den live i en webbläsare och skickar meddelanden som du godkänner. Kräver T3 Connect: logga in och länka den här datorn under",
-    " ",
+  "48dad87900cceb9d": [
+    "Dela en tråd med en gäst som följer den live i en webbläsare och skickar meddelanden som du godkänner. Kräver T3 Connect: kör ",
     {
-      "t": "Link",
+      "t": "code",
       "i": 1,
-      "c": "Delning och åtkomst"
+      "c": "t3 connect link"
     },
-    ". Om du stänger av det stoppas alla gästlänkar."
+    " på värden och starta sedan om T3. Om du stänger av det stoppas alla gästlänkar."
   ],
   "bff0033ea41eb38e": [
     "Låt agenter här arbeta på dina andra datorer, och deras här. Aktivera det på varje dator och länka dem sedan under",

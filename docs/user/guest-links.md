@@ -7,10 +7,25 @@ until you send or dismiss it.
 ## Share a thread
 
 Guest links are a beta. Turn on **Settings → Labs → Guest links** for the machine that runs the
-thread. They also need [T3 Connect](./remote-access.md): sign in and link that machine, because the
-link points at its T3 Connect address. The machine must stay online while the guest uses it.
+thread. They also need [T3 Connect](./remote-access.md) on that machine, because the link points at
+its T3 Connect address. The machine must stay online while the guest uses it.
 While the setting is off, every guest link on that machine stops working; links that have not
 expired work again when you turn it back on.
+
+In T3 Dulli, link the machine from a terminal on it. The app's T3 Connect sign-in does not work
+with the public T3 Connect, but the terminal's does:
+
+```sh
+t3 connect link              # over SSH it signs in with a code you approve on any device
+t3 connect status            # shows whether the tunnel is up
+```
+
+On a Mac or PC running the desktop app, use the `t3` command the app installs, then restart the app.
+On a server, restart it afterwards with `t3 service restart`, or start it with `t3 serve`.
+
+In T3 Dulli the T3 Connect address serves only guest links. It does not serve the app, pairing,
+sign-in, or webhooks, so your own devices keep reaching the machine over your network or tailnet. To turn it off
+again, run `t3 connect unlink` (or `t3 connect logout`, which also forgets the sign-in) and restart.
 
 1. Right-click the thread in the sidebar and choose **Share with guest**. It is also in the thread
    menu and the command palette. In the mobile app, long-press the thread in the list.
@@ -33,7 +48,8 @@ command. Their composer shows the thread's model, but they cannot change it. The
 reverting, opening files on your machine, or answering the agent for you.
 
 Anything the agent read or printed can show, such as a value from a file. Share only threads you
-are comfortable showing.
+are comfortable showing. The guest does not get the thread's profile, branch, or folder on your
+machine, though the agent's own work can still mention them.
 
 ## Guest attachments
 

@@ -227,7 +227,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         });
 
         assert.include(printed, "Exposure: publish-only");
-        assert.notInclude(printed, "Other devices can reach this machine");
+        assert.notInclude(printed, "Guest links can reach this machine");
       }),
     );
 

@@ -116,6 +116,8 @@ export const GuestSubmitRequest = Schema.Struct({
 });
 export type GuestSubmitRequest = typeof GuestSubmitRequest.Type;
 
+/** The page a guest link opens. */
+export const GUEST_PAGE_PATH = "/guest";
 export const GUEST_ROUTE_PREFIX = "/api/guest";
 /** The guest page and guest routes name the share they mean with this query parameter. */
 export const GUEST_SHARE_PARAM = "share";

@@ -2,6 +2,7 @@ import * as NodeNet from "node:net";
 
 import {
   connectReachabilityHelpUrl,
+  GUEST_PAGE_PATH,
   type EnvironmentConnectReachability,
   formatConnectReachable,
 } from "@t3tools/contracts";
@@ -303,7 +304,8 @@ const make = Effect.gen(function* () {
   const probeEndpoint = Effect.fn("ConnectReachability.probeEndpoint")(
     function* (hostname: string) {
       const response = yield* httpClient
-        .get(`https://${hostname}/.well-known/t3/environment`, { acceptJson: true })
+        // The guest page, the one page T3 Connect serves in T3 Dulli (see connectGuestOnly.ts).
+        .get(`https://${hostname}${GUEST_PAGE_PATH}`, { acceptJson: true })
         .pipe(Effect.timeoutOption(ENDPOINT_REQUEST_TIMEOUT));
       if (Option.isNone(response)) return { kind: "timeout" } satisfies EndpointProbe;
       const { status } = response.value;

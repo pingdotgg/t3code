@@ -93,7 +93,7 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
 
 /**
  * The routes `t3 up` starts from. With no route flag it asks about every
- * route, starting a machine with no service from T3 Connect. Any route flag
+ * route; in T3 Dulli, T3 Connect serves only guest links, so it starts off. Any route flag
  * means it asks nothing and keeps the routes not named as they are.
  */
 export const planRoutes = (
@@ -102,7 +102,7 @@ export const planRoutes = (
 ) => {
   const ask = Option.isNone(flags.connect) && Option.isNone(flags.lan);
   const start = {
-    connect: setup.connect === true || (ask && !setup.installed && setup.connect !== null),
+    connect: setup.connect === true,
     lan: setup.lan,
   };
   return {
@@ -121,7 +121,7 @@ const needsRestart = (before: Routes, after: Routes) =>
   after.lan !== before.lan || (after.connect && !before.connect);
 
 const CHOICES = {
-  connect: { title: "T3 Connect", description: "Creates a tunnel to control your PC." },
+  connect: { title: "T3 Connect", description: "A public address for guest links only." },
   lan: { title: "Local network", description: "LAN and tailnet. Pairing code required." },
 } satisfies Record<Route, { readonly title: string; readonly description: string }>;
 
@@ -202,7 +202,7 @@ const formatSetup = (setup: Setup, hints: Hints) => {
 const formatNextSteps = (routes: Routes, serviceInstalled: boolean, hints: Hints) =>
   [
     ...(routes.connect
-      ? ["On your other device, sign in to T3 Connect with the same account."]
+      ? ["Guest links can use T3 Connect now: Settings → Labs → Guest links."]
       : []),
     ...(routes.lan ? [`Run \`${hints.pair}\`. Use the code on your other device.`] : []),
     ...(routes.connect || routes.lan
@@ -459,7 +459,7 @@ export const upCommand = Command.make("up", {
   ...projectLocationFlags,
   connect: Flag.Boolean("connect").pipe(
     Flag.withDescription(
-      "Allow access through T3 Connect with your T3 account. Turn off with --no-connect.",
+      "Give this machine a T3 Connect address for guest links. Turn off with --no-connect.",
     ),
     Flag.optional,
   ),
@@ -471,7 +471,7 @@ export const upCommand = Command.make("up", {
   ),
   yes: Flag.Boolean("yes").pipe(
     Flag.withDescription(
-      "Ask nothing. Keep the access settings; a new machine gets T3 Connect. A restart stops running agent turns.",
+      "Ask nothing. Keep the access settings. A restart stops running agent turns.",
     ),
     Flag.withDefault(false),
   ),

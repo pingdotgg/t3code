@@ -1,6 +1,6 @@
 import { useNavigate, useRouter, type AnyRouter } from "@tanstack/react-router";
 
-import { GUEST_PAGE_PATH } from "../../guestPage";
+import { GUEST_PAGE_PATH } from "@t3tools/contracts";
 import { withoutAssistantCitationHash } from "../../lib/assistantCitationNavigation";
 import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../../threadRoutes";
 

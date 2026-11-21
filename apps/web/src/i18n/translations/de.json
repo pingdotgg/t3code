@@ -8703,15 +8703,14 @@
   "298c7150a7621c80": "Simlock-Geräte-Hosts",
   "67937aa49179285e": "Auf einem Mac neue Worktrees aus einem im T3-Home-Ordner zwischengespeicherten Checkout klonen, statt jede Datei zu schreiben. Verwendet den normalen Git-Checkout, wenn das nicht geht. Beim Ausschalten wird der Cache gelöscht.",
   "f9904f78d3003f58": "Schneller Worktree-Checkout",
-  "ec7623deed751c05": [
-    "Teile einen Thread mit einem Gast, der ihn live im Browser verfolgt und Nachrichten sendet, die du genehmigst. Erfordert T3 Connect: Melde dich an und verknüpfe diesen Rechner unter",
-    " ",
+  "48dad87900cceb9d": [
+    "Teile einen Thread mit einem Gast, der ihn live im Browser verfolgt und Nachrichten sendet, die du genehmigst. Erfordert T3 Connect: Führe ",
     {
-      "t": "Link",
+      "t": "code",
       "i": 1,
-      "c": "Freigabe & Zugriff"
+      "c": "t3 connect link"
     },
-    ". Beim Ausschalten werden alle Gastlinks beendet."
+    " auf dem Host aus und starte T3 danach neu. Beim Ausschalten werden alle Gastlinks beendet."
   ],
   "bff0033ea41eb38e": [
     "Lass Agenten hier auf deinen anderen Rechnern arbeiten und deren Agenten hier. Schalte es für jeden Rechner ein und verknüpfe sie dann unter",

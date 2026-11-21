@@ -8701,15 +8701,14 @@
   "298c7150a7621c80": "Hosts de dispositivos Simlock",
   "67937aa49179285e": "No Mac, clona novos worktrees a partir de um checkout em cache na pasta T3 home em vez de gravar cada arquivo. Usa o checkout normal do Git quando não consegue. Desativar exclui o cache.",
   "f9904f78d3003f58": "Checkout rápido de worktree",
-  "ec7623deed751c05": [
-    "Compartilhe uma thread com um convidado que a acompanha ao vivo no navegador e envia mensagens que você aprova. Requer T3 Connect: entre e vincule esta máquina em",
-    " ",
+  "48dad87900cceb9d": [
+    "Compartilhe uma thread com um convidado que a acompanha ao vivo no navegador e envia mensagens que você aprova. Requer T3 Connect: execute ",
     {
-      "t": "Link",
+      "t": "code",
       "i": 1,
-      "c": "Compartilhamento"
+      "c": "t3 connect link"
     },
-    ". Desativar encerra todos os links de convidado."
+    " no host e depois reinicie o T3. Desativar encerra todos os links de convidado."
   ],
   "bff0033ea41eb38e": [
     "Permite que os agentes daqui trabalhem nas suas outras máquinas, e os delas aqui. Ative em cada máquina e depois vincule-as em",

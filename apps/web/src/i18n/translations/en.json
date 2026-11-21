@@ -8711,15 +8711,14 @@
   "298c7150a7621c80": "Simlock device hosts",
   "67937aa49179285e": "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
   "f9904f78d3003f58": "Fast worktree checkout",
-  "ec7623deed751c05": [
-    "Share a thread with a guest who watches it live in a browser and sends messages you approve. Needs T3 Connect: sign in and link this machine in",
-    " ",
+  "48dad87900cceb9d": [
+    "Share a thread with a guest who watches it live in a browser and sends messages you approve. Needs T3 Connect: run ",
     {
-      "t": "Link",
+      "t": "code",
       "i": 1,
-      "c": "Sharing & access"
+      "c": "t3 connect link"
     },
-    ". Turning it off stops every guest link."
+    " on the host, then restart T3. Turning it off stops all guest links."
   ],
   "bff0033ea41eb38e": [
     "Let agents here work on your other machines, and theirs here. Turn it on for each machine, then link them in",

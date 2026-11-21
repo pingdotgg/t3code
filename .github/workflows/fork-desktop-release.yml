@@ -136,6 +136,12 @@ jobs:
     timeout-minutes: 30
     env:
       VITE_DESKTOP_BUILD_BRAND: dulli
+      # T3 Connect only for guest links: the server signs in with the CLI and serves guests.
+      # Public identifiers from .env.example. Without the JWT template, web, desktop and
+      # mobile keep their Connect sign-in hidden, since upstream's Clerk refuses the fork's apps.
+      T3CODE_RELAY_URL: https://relay.t3.codes
+      T3CODE_CLERK_PUBLISHABLE_KEY: pk_live_Y2xlcmsudDMuY29kZXMk
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: hzxSgY2cH10sDU2r
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -175,6 +181,11 @@ jobs:
     needs: [preflight, build_bundle]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    # build-exe packs the server again, so it needs the same T3 Connect values as build_bundle.
+    env:
+      T3CODE_RELAY_URL: https://relay.t3.codes
+      T3CODE_CLERK_PUBLISHABLE_KEY: pk_live_Y2xlcmsudDMuY29kZXMk
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: hzxSgY2cH10sDU2r
     strategy:
       fail-fast: false
       matrix:

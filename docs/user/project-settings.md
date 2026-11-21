@@ -110,7 +110,8 @@ In **Settings → Scheduled tasks**, choose **On webhook**
 as a task's schedule to run it whenever another service calls its URL, such as
 GitHub on a new pull request or a CI job that failed. A public URL needs a
 [T3 Connect](remote-access.md) managed tunnel; after you save the task, copy
-its URL from the editor. Without one, the editor shows only the URL's path.
+its URL from the editor. Without one, the editor shows only the URL's path. In T3 Dulli, T3 Connect
+serves only guest links, so the editor shows the path; reach it over your own network or tailnet.
 **Rotate** replaces the URL and the old one stops working.
 
 The prompt decides what the agent sees. Placeholders pull values out of the

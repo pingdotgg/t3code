@@ -234,7 +234,7 @@ function formatCloudStatus(
           : status.reachability.status === "reachable"
             ? [
                 "",
-                `✓ Other devices can reach this machine · ${formatConnectReachable(status.reachability)}`,
+                `✓ Guest links can reach this machine · ${formatConnectReachable(status.reachability)}`,
               ]
             : ["", formatReachabilityFailure(status.reachability)]),
     ...(nextStep ? ["", `Next: ${nextStep}`] : []),
@@ -662,7 +662,7 @@ const connectStatusCommand = Command.make("status", {
   json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "Show T3 Connect setup and check that other devices can reach this machine.",
+    "Show T3 Connect setup and check that guest links can reach this machine.",
   ),
   Command.withHandler((flags) =>
     runCloudCommand(
