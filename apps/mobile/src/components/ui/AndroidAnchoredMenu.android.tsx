@@ -66,7 +66,17 @@ type TriggerAccessibilityProps = {
 };
 
 function stripTriggerAccessibility(node: ReactNode, depth = 0): ReactNode {
-  if (depth >= 3 || !isValidElement(node)) return node;
+  if (depth >= 3) return node;
+  if (Array.isArray(node)) {
+    let changed = false;
+    const next = node.map((child) => {
+      const stripped = stripTriggerAccessibility(child, depth);
+      if (stripped !== child) changed = true;
+      return stripped;
+    });
+    return changed ? next : node;
+  }
+  if (!isValidElement(node)) return node;
   const element = node as ReactElement<TriggerAccessibilityProps>;
   const { accessibilityRole, accessibilityLabel, accessibilityHint, accessibilityState } =
     element.props;
@@ -94,30 +104,52 @@ function stripTriggerAccessibility(node: ReactNode, depth = 0): ReactNode {
   return node;
 }
 
-function extractTriggerAccessibility(node: ReactNode): TriggerAccessibilityProps {
-  let current: ReactNode = node;
-  for (let depth = 0; depth < 3 && isValidElement(current); depth++) {
-    const element = current as ReactElement<TriggerAccessibilityProps>;
-    const { accessibilityLabel, accessibilityHint, accessibilityState, hitSlop, disabled } =
-      element.props;
-    if (
-      accessibilityLabel !== undefined ||
-      accessibilityHint !== undefined ||
-      accessibilityState !== undefined ||
-      hitSlop !== undefined ||
-      disabled !== undefined
-    ) {
-      return {
-        accessibilityLabel,
-        accessibilityHint,
-        accessibilityState:
-          accessibilityState ?? (disabled !== undefined ? { disabled } : undefined),
-        hitSlop,
-      };
+function extractTriggerAccessibility(
+  node: ReactNode,
+  depth = 0,
+  acc: {
+    accessibilityLabel?: AccessibilityProps["accessibilityLabel"];
+    accessibilityHint?: AccessibilityProps["accessibilityHint"];
+    accessibilityState?: AccessibilityProps["accessibilityState"];
+    hitSlop?: PressableProps["hitSlop"];
+  } = {},
+): TriggerAccessibilityProps {
+  if (depth >= 3) return acc;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      extractTriggerAccessibility(child, depth, acc);
     }
-    current = element.props.children;
+    return acc;
   }
-  return {};
+  if (!isValidElement(node)) return acc;
+  const element = node as ReactElement<TriggerAccessibilityProps>;
+  const { accessibilityLabel, accessibilityHint, accessibilityState, hitSlop, disabled } =
+    element.props;
+  if (acc.accessibilityLabel === undefined && accessibilityLabel !== undefined) {
+    acc.accessibilityLabel = accessibilityLabel;
+  }
+  if (acc.accessibilityHint === undefined && accessibilityHint !== undefined) {
+    acc.accessibilityHint = accessibilityHint;
+  }
+  if (acc.accessibilityState === undefined) {
+    const nextState = accessibilityState ?? (disabled !== undefined ? { disabled } : undefined);
+    if (nextState !== undefined) acc.accessibilityState = nextState;
+  }
+  if (acc.hitSlop === undefined && hitSlop !== undefined) {
+    acc.hitSlop = hitSlop;
+  }
+  if (
+    acc.accessibilityLabel !== undefined &&
+    acc.accessibilityHint !== undefined &&
+    acc.accessibilityState !== undefined &&
+    acc.hitSlop !== undefined
+  ) {
+    return acc;
+  }
+  if (element.props.children !== undefined) {
+    extractTriggerAccessibility(element.props.children, depth + 1, acc);
+  }
+  return acc;
 }
 
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {

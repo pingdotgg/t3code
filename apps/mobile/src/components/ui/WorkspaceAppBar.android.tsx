@@ -210,12 +210,7 @@ function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
                       : []),
                   ]}
                 >
-                  <Icon
-                    source={SEARCH_ICON}
-                    size={24}
-                    tint={search ? tint : "transparent"}
-                    contentDescription={search?.accessibilityLabel}
-                  />
+                  <Icon source={SEARCH_ICON} size={24} tint={search ? tint : "transparent"} />
                 </IconButton>
                 <Box contentAlignment="center" modifiers={[size(ACTION_SIZE, ACTION_SIZE)]}>
                   <Icon
