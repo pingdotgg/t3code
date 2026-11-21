@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -77,10 +78,13 @@ function mockHandle(result: { stdout?: string; stderr?: string; code?: number })
 
 // The executable name depends on the host platform (`tailscale.exe` on
 // Windows), so pin it: these tests assert the posix spelling.
-function layerSpawner(spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) {
+function layerSpawner(
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  platform: NodeJS.Platform = "linux",
+) {
   return Layer.merge(
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    Layer.succeed(HostProcess.Platform, "linux"),
+    Layer.succeed(HostProcess.Platform, platform),
   );
 }
 
@@ -380,6 +384,61 @@ describe("tailscale", () => {
         Effect.provide(layer),
       );
       assert.equal(degraded, null);
+    });
+  });
+
+  // regression: #38404 - a GUI-launched macOS app has no `tailscale` on PATH, and the App Store
+  // build ships its CLI only inside the app bundle, where it needs TAILSCALE_BE_CLI to act as one.
+  it.effect("falls back to the macOS app CLI when `tailscale` is not on PATH", () => {
+    const spawned: Array<{ command: string; env: unknown; extendEnv: unknown }> = [];
+    const layer = layerSpawner(
+      ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand") return Effect.die("unexpected command");
+        if (command.command === "tailscale") {
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              pathOrDescriptor: "tailscale",
+            }),
+          );
+        }
+        spawned.push({
+          command: command.command,
+          env: command.options.env,
+          extendEnv: command.options.extendEnv,
+        });
+        return Effect.succeed(mockHandle({ stdout: tailscaleStatusJson }));
+      }),
+      "darwin",
+    );
+
+    return Effect.gen(function* () {
+      const status = yield* readTailscaleStatus.pipe(Effect.provide(layer));
+      assert.equal(status.magicDnsName, "desktop.tail.ts.net");
+      assert.deepEqual(spawned, [
+        {
+          command: "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+          env: { TAILSCALE_BE_CLI: "1" },
+          extendEnv: true,
+        },
+      ]);
+
+      const missing = layerSpawner(
+        ChildProcessSpawner.make(() =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+            }),
+          ),
+        ),
+        "darwin",
+      );
+      const error = yield* readTailscaleStatus.pipe(Effect.flip, Effect.provide(missing));
+      assert.instanceOf(error, TailscaleCommandSpawnError);
     });
   });
 

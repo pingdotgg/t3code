@@ -31,6 +31,9 @@ const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 const tailscaleCommandForPlatform = (platform: NodeJS.Platform): "tailscale" | "tailscale.exe" =>
   platform === "win32" ? "tailscale.exe" : "tailscale";
 
+/** The Mac App Store build ships its CLI only here, and a GUI-launched app has no shell PATH to find it. */
+const MACOS_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+
 const TailscaleCommandContext = {
   executable: Schema.Literals(["tailscale", "tailscale.exe"]),
   subcommand: Schema.Literals(["status", "serve", "debug"]),
@@ -241,31 +244,50 @@ export const parseTailscaleStatus = (
     }),
   );
 
-const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function* (
-  subcommand: "status" | "serve" | "debug",
+const spawnTailscale = Effect.fn("tailscale.spawnTailscale")(function* (
+  commandContext: Schema.Struct.Type<typeof TailscaleCommandContext>,
   args: readonly string[],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const hostPlatform = yield* HostProcess.Platform;
-  const executable = tailscaleCommandForPlatform(hostPlatform);
+  const spawnExecutable = (executable: string) =>
+    spawner
+      .spawn(
+        ChildProcess.make(executable, [...args], {
+          forceKillAfter: TAILSCALE_KILL_GRACE,
+          // The macOS app binary starts the GUI unless told to act as the CLI; other builds ignore this.
+          env: { TAILSCALE_BE_CLI: "1" },
+          extendEnv: true,
+        }),
+      )
+      .pipe(
+        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
+        // Spawning can also fail as a defect rather than a typed error - a
+        // non-directory entry on PATH makes node throw ENOTDIR synchronously.
+        // `mapError` never sees that, so it would escape as an uncaught error.
+        Effect.catchDefect((cause) =>
+          Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
+        ),
+      );
+  return yield* spawnExecutable(commandContext.executable).pipe(
+    hostPlatform === "darwin"
+      ? Effect.catch((error) => spawnExecutable(MACOS_APP_CLI).pipe(Effect.mapError(() => error)))
+      : (effect) => effect,
+  );
+});
+
+const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function* (
+  subcommand: "status" | "serve" | "debug",
+  args: readonly string[],
+) {
+  const hostPlatform = yield* HostProcess.Platform;
   const commandContext = {
-    executable,
+    executable: tailscaleCommandForPlatform(hostPlatform),
     subcommand,
     argumentCount: args.length,
   };
-  const command = ChildProcess.make(executable, [...args], {
-    forceKillAfter: TAILSCALE_KILL_GRACE,
-  });
   return yield* Effect.gen(function* () {
-    const child = yield* spawner.spawn(command).pipe(
-      Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      // Spawning can also fail as a defect rather than a typed error - a
-      // non-directory entry on PATH makes node throw ENOTDIR synchronously.
-      // `mapError` never sees that, so it would escape as an uncaught error.
-      Effect.catchDefect((cause) =>
-        Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      ),
-    );
+    const child = yield* spawnTailscale(commandContext, args);
     const [stdout, stderr, exitCode] = yield* Effect.all(
       [
         collectStdout(child.stdout),
@@ -399,24 +421,15 @@ const runTailscaleCommand = Effect.fn("tailscale.runTailscaleCommand")(function*
   args: readonly string[],
   timeoutInput: Duration.Input,
 ): Effect.fn.Return<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const hostPlatform = yield* HostProcess.Platform;
-  const executable = tailscaleCommandForPlatform(hostPlatform);
   const commandContext = {
-    executable,
+    executable: tailscaleCommandForPlatform(hostPlatform),
     subcommand: "serve" as const,
     argumentCount: args.length,
   };
   const timeout = Duration.fromInputUnsafe(timeoutInput);
   return yield* Effect.gen(function* () {
-    const child = yield* spawner
-      .spawn(ChildProcess.make(executable, args, { forceKillAfter: TAILSCALE_KILL_GRACE }))
-      .pipe(
-        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-        Effect.catchDefect((cause) =>
-          Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
-        ),
-      );
+    const child = yield* spawnTailscale(commandContext, args);
     // An unread stdout pipe fills on a long success summary and blocks the child before it exits.
     const [, stderr, exitCode] = yield* Effect.all(
       [
