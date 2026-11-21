@@ -356,6 +356,7 @@ export function SettingsRow({
   const gt = useGT();
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const titleId = useId();
+  const controlId = useId();
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -433,7 +434,7 @@ export function SettingsRow({
     ) : (
       resetAction
     );
-  const inertControl = (message: string, dim = true) => (
+  const inertControl = (message: string, selfDisabled = false) => (
     <Tooltip>
       <TooltipTrigger
         render={
@@ -441,17 +442,19 @@ export function SettingsRow({
             tabIndex={0}
             role="group"
             aria-disabled="true"
-            aria-labelledby={titleId}
+            // A self-disabled control stays out of `inert` so its own label names the action.
+            aria-labelledby={selfDisabled ? `${titleId} ${controlId}` : titleId}
             aria-description={message}
             className="flex w-full cursor-not-allowed items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[32rem]/settings-row:w-auto"
           />
         }
       >
         <div
-          inert
+          id={controlId}
+          inert={!selfDisabled}
           className={cn(
             "flex w-full items-center gap-2 @min-[32rem]/settings-row:w-auto",
-            dim && "opacity-50",
+            !selfDisabled && "opacity-50",
           )}
         >
           {control}
@@ -483,7 +486,7 @@ export function SettingsRow({
         : unavailable && control
           ? inertControl(
               !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable)
-                ? context
+                ? context && (context.environments.length > 0 || primarySettingsAvailable)
                   ? gt("Reconnect the selected environment to change this setting.")
                   : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE
                 : lackingPermissionMessage(),
@@ -493,7 +496,7 @@ export function SettingsRow({
             : deviceReadOnly && control
               ? inertControl(gt("Saved on this device. Select All projects to change it."))
               : disabledReason !== undefined && control
-                ? inertControl(disabledReason, false)
+                ? inertControl(disabledReason, true)
                 : control;
   const customized =
     context !== null &&

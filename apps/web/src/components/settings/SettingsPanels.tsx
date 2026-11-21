@@ -314,7 +314,7 @@ function AboutVersionSection() {
   const buttonDisabledReason = isUpdateActionPending
     ? gt("An update installation is pending.")
     : buttonDisabled && updateState
-      ? (getDesktopUpdateDisabledReason(updateState, updatesDenial) ??
+      ? (getDesktopUpdateDisabledReason(updateState, updatesDenial, messages) ??
         (updateState.status === "checking"
           ? gt("Checking for updates.")
           : (buttonTooltip ?? undefined)))
