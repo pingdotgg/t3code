@@ -1728,17 +1728,20 @@ export default function ChatView(props: ChatViewProps) {
     mutationId: workspaceMutationId,
   });
   // Per thread: opening a thread with workspace changes reads a cached status again.
-  const gitStatusRevision = (revision: string | null | undefined) =>
-    revision == null ? undefined : `${activeThreadKey ?? ""}\u0000${revision}`;
+  const gitStatusRevision =
+    workspaceRevision.revision === null
+      ? undefined
+      : `${activeThreadKey ?? ""}\u0000${workspaceRevision.revision}`;
   const gitStatusQuery = {
     data: useAtomValue(
       gitStatusAtom
         ? chatGitStatusAtom(
-            revisionedQuery(
-              gitStatusAtom,
-              gitStatusRevision(workspaceRevision.pending ? undefined : workspaceMutationId),
-              gitStatusRevision(workspaceRevision.placeholder),
-            ),
+            workspaceRevision.pending
+              ? revisionedQuery(gitStatusAtom, undefined, gitStatusRevision)
+              : revisionedQuery(
+                  gitStatusAtom,
+                  workspaceMutationId === null ? undefined : gitStatusRevision,
+                ),
           )
         : NO_CHAT_GIT_STATUS_ATOM,
     ),
@@ -3377,6 +3380,7 @@ export default function ChatView(props: ChatViewProps) {
       keybindings={keybindings}
       configuredPreviewUrls={configuredPreviewUrls}
       workspaceMutationId={workspaceMutationId}
+      workspaceRevision={workspaceRevision.revision}
       getShortcutContext={getShortcutContextStable}
       onSendAnnotation={sendPreviewAnnotationStable}
       onCloseSurface={closeRightPanelSurface}
@@ -4057,14 +4061,7 @@ export default function ChatView(props: ChatViewProps) {
                     )
                   }
                   gitCwd={gitCwd}
-                  workspaceMutationId={
-                    workspaceRevision.pending
-                      ? (workspaceRevision.placeholder ?? null)
-                      : workspaceMutationId
-                  }
-                  workspaceRevisionPlaceholder={
-                    workspaceRevision.pending ? undefined : workspaceRevision.placeholder
-                  }
+                  workspaceMutationId={workspaceRevision.revision}
                   isGitRepo={isGitRepo}
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}

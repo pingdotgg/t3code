@@ -17,9 +17,9 @@ const isCached = (registry: AtomRegistry.AtomRegistry, query: Atom.Atom<unknown>
 
 const makeRevisionedFamily = (query: Atom.Atom<unknown>) =>
   Atom.family((key: string) => {
-    const { revision, placeholder } = JSON.parse(key) as {
+    const { revision, startedUnder } = JSON.parse(key) as {
       readonly revision?: string | null;
-      readonly placeholder?: string;
+      readonly startedUnder?: string;
     };
     return Atom.readable(
       (get) => {
@@ -34,12 +34,11 @@ const makeRevisionedFamily = (query: Atom.Atom<unknown>) =>
           // Nothing cached: the read below fetches fresh, which a refresh would only restart.
           const cached = isCached(get.registry, query);
           if (revision === undefined) {
-            if (!cached && placeholder !== undefined) revisions.set(query, placeholder);
+            if (!cached && startedUnder !== undefined) revisions.set(query, startedUnder);
             return get(query);
           }
-          const last = revisions.get(query);
           const stale = revisions.has(query)
-            ? last !== revision && (placeholder === undefined || last !== placeholder)
+            ? revisions.get(query) !== revision
             : // A reader without a revision may have cached it before the latest
               // workspace change.
               revision !== null;
@@ -78,15 +77,14 @@ const revisionedFamily = (query: Atom.Atom<unknown>) => {
 
 /**
  * Reads `query` under a workspace revision (latest mutation id); a revision other than the
- * last one read refetches a cached query. `undefined` reads without taking part.
- * `placeholder` stands for a revision not known yet (see `useWorkspaceRevision`): a fetch that a
- * read without a revision starts is recorded under it, and a query last read under it is current.
+ * last one read refetches a cached query. `undefined` reads without taking part, and with
+ * `startedUnder` records a fetch that this read starts as read under that revision.
  */
 export function revisionedQuery<A>(
   query: Atom.Atom<A>,
   revision: string | null | undefined,
-  placeholder?: string,
+  startedUnder?: string,
 ): Atom.Atom<A> {
-  if (revision === undefined && placeholder === undefined) return query;
-  return revisionedFamily(query)(JSON.stringify({ revision, placeholder })) as Atom.Atom<A>;
+  if (revision === undefined && startedUnder === undefined) return query;
+  return revisionedFamily(query)(JSON.stringify({ revision, startedUnder })) as Atom.Atom<A>;
 }

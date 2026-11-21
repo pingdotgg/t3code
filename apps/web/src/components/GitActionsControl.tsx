@@ -158,8 +158,6 @@ interface GitActionsViewProps {
   showChanges?: boolean;
   onOpenChanges?: () => void;
   workspaceMutationId?: string | null;
-  /** The placeholder `workspaceMutationId` replaced; see `useWorkspaceRevision`. */
-  workspaceRevisionPlaceholder?: string | undefined;
 }
 
 interface GitActionsControlProps extends GitActionsViewProps {
@@ -1019,7 +1017,6 @@ function CheckoutGitActionsControl({
   showChanges = true,
   onOpenChanges,
   workspaceMutationId = null,
-  workspaceRevisionPlaceholder,
 }: GitActionsControlProps) {
   const gt = useGT();
   const messages = useMessages();
@@ -1077,19 +1074,17 @@ function CheckoutGitActionsControl({
   // Same input as the Diff panel's branch query, so both read one cached result. Status
   // totals join the revision because edits, pulls and resets outside a turn leave the mutation
   // id as is.
-  const changesRevisionOf = (workspaceRevision: string | null) =>
-    gitStatusForActions
-      ? JSON.stringify([
-          workspaceRevision,
-          gitStatusForActions.refName,
-          gitStatusForActions.workingTree.insertions,
-          gitStatusForActions.workingTree.deletions,
-          gitStatusForActions.branchChanges?.baseRef,
-          gitStatusForActions.branchChanges?.insertions,
-          gitStatusForActions.branchChanges?.deletions,
-        ])
-      : null;
-  const changesRevision = changesRevisionOf(workspaceMutationId);
+  const changesRevision = gitStatusForActions
+    ? JSON.stringify([
+        workspaceMutationId,
+        gitStatusForActions.refName,
+        gitStatusForActions.workingTree.insertions,
+        gitStatusForActions.workingTree.deletions,
+        gitStatusForActions.branchChanges?.baseRef,
+        gitStatusForActions.branchChanges?.insertions,
+        gitStatusForActions.branchChanges?.deletions,
+      ])
+    : null;
   const changesPreview = useEnvironmentQuery(
     showChanges &&
       isRepo &&
@@ -1109,9 +1104,6 @@ function CheckoutGitActionsControl({
             },
           }),
           changesRevision,
-          workspaceRevisionPlaceholder === undefined
-            ? undefined
-            : (changesRevisionOf(workspaceRevisionPlaceholder) ?? undefined),
         )
       : null,
   );

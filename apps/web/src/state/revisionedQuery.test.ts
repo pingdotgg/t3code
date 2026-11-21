@@ -1,6 +1,7 @@
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
+import { advanceWorkspaceVisit, workspaceRevisionOf } from "../hooks/useWorkspaceRevision";
 import { revisionedQuery } from "./revisionedQuery";
 
 // A stand-in query that counts its fetches.
@@ -21,8 +22,8 @@ function setup(readQuery: (cache: Atom.Atom<number>) => Atom.Atom<number> = (cac
       return fetches;
     }).pipe(Atom.keepAlive),
   );
-  const mount = async (revision: string | null | undefined, placeholder?: string) => {
-    const release = registry.mount(revisionedQuery(query, revision, placeholder));
+  const mount = async (revision: string | null | undefined, startedUnder?: string) => {
+    const release = registry.mount(revisionedQuery(query, revision, startedUnder));
     // A stale read refetches in a microtask, after the render that read it.
     await Promise.resolve();
     return () => {
@@ -129,33 +130,51 @@ describe("revisionedQuery", () => {
     await Promise.resolve();
   });
 
-  it("does not refetch when the revision replaces the placeholder the query was read under", async () => {
-    const { mount, fetches } = setup();
-
-    (await mount("thread-a-1"))();
-    (await mount("unloaded-b"))();
-    expect(fetches()).toBe(2);
-
-    (await mount("thread-b-1", "unloaded-b"))();
-    expect(fetches()).toBe(2);
-
-    (await mount("thread-b-2"))();
-    expect(fetches()).toBe(3);
-  });
-
-  it("records a fetch started without a revision under the placeholder", async () => {
+  it("records a fetch started without a revision under the one it names", async () => {
     const fresh = setup();
-    (await fresh.mount(undefined, "unloaded-b"))();
-    (await fresh.mount("thread-b-1", "unloaded-b"))();
+    (await fresh.mount(undefined, "visit-b"))();
+    (await fresh.mount("visit-b"))();
     expect(fresh.fetches()).toBe(1);
 
-    // Cached before the placeholder read: the revision that turns up still refetches it.
+    // Cached before that read: the revision still refetches it.
     const cached = setup();
     (await cached.mount("thread-a-1"))();
-    (await cached.mount(undefined, "unloaded-b"))();
+    (await cached.mount(undefined, "visit-b"))();
     expect(cached.fetches()).toBe(1);
-    (await cached.mount("thread-b-1", "unloaded-b"))();
+    (await cached.mount("visit-b"))();
     expect(cached.fetches()).toBe(2);
+  });
+
+  it("does not refetch for either of two readers when a thread's history loads", async () => {
+    const { mount, fetches } = setup();
+    let visit = advanceWorkspaceVisit(
+      null,
+      { threadKey: "thread-b", unloaded: true, mutationId: null },
+      "view",
+    );
+    // The Changes totals and the Diff panel read one query, each under its own format, and
+    // stay mounted through the load as a rendered component does.
+    let release = () => {};
+    const render = async (unloaded: boolean, mutationId: string | null) => {
+      visit = advanceWorkspaceVisit(visit, { threadKey: "thread-b", unloaded, mutationId }, "view");
+      const { revision } = workspaceRevisionOf(visit, mutationId);
+      const releaseTotals = await mount(JSON.stringify([revision, "status"]));
+      const releaseDiff = await mount(revision);
+      release();
+      release = () => {
+        releaseTotals();
+        releaseDiff();
+      };
+    };
+
+    await render(true, null);
+    const opened = fetches();
+    await render(false, "thread-b-1");
+    expect(fetches()).toBe(opened);
+
+    await render(false, "thread-b-2");
+    expect(fetches()).toBeGreaterThan(opened);
+    release();
   });
 
   it("does not restart the fetch of a query whose cache is gone", async () => {

@@ -3,7 +3,8 @@ import { useId, useState } from "react";
 interface WorkspaceVisit {
   readonly threadKey: string | null;
   readonly visit: number;
-  readonly placeholder: string;
+  /** The revision this visit's reads start under. */
+  readonly revision: string;
   /** Whether this visit's reads cover the mutation id the history will load with. */
   readonly awaitsBaseline: boolean;
   /** The mutation id the history loaded with; `undefined` until it loads. */
@@ -18,13 +19,10 @@ interface WorkspaceVisitInput {
 }
 
 export interface WorkspaceRevision {
+  /** What workspace queries are read under; changes only when the workspace may have. */
+  readonly revision: string | null;
   /** The history is not synchronized: the mutation id is unknown, not absent. */
   readonly pending: boolean;
-  /**
-   * The revision this visit's reads started under, set while the mutation id is unknown
-   * or still the one the history loaded with. See `revisionedQuery`.
-   */
-  readonly placeholder: string | undefined;
 }
 
 export function advanceWorkspaceVisit(
@@ -37,7 +35,7 @@ export function advanceWorkspaceVisit(
     return {
       threadKey: input.threadKey,
       visit: next,
-      placeholder: `unloaded:${instanceId}:${next}:${input.threadKey ?? ""}`,
+      revision: `visit:${instanceId}:${next}:${input.threadKey ?? ""}`,
       awaitsBaseline: input.unloaded,
       baseline: undefined,
     };
@@ -51,18 +49,15 @@ export function workspaceRevisionOf(
   visit: WorkspaceVisit,
   mutationId: string | null,
 ): WorkspaceRevision {
-  if (!visit.awaitsBaseline) return { pending: false, placeholder: undefined };
-  if (visit.baseline === undefined) return { pending: true, placeholder: visit.placeholder };
-  return {
-    pending: false,
-    placeholder: mutationId === visit.baseline ? visit.placeholder : undefined,
-  };
+  if (!visit.awaitsBaseline) return { revision: mutationId, pending: false };
+  if (visit.baseline === undefined) return { revision: visit.revision, pending: true };
+  return { revision: mutationId === visit.baseline ? visit.revision : mutationId, pending: false };
 }
 
 /**
- * Tells the mutation id a thread's history loads with from a workspace change. That id was
- * made before the visit began, so the workspace reads the visit already started cover it;
- * only an id that replaces it is a change those reads have not seen.
+ * The revision a thread's workspace queries are read under. The mutation id a thread's history
+ * loads with was made before the visit began, so the reads the visit already started cover it:
+ * the visit keeps one revision of its own until an id replaces that one.
  */
 export function useWorkspaceRevision(input: WorkspaceVisitInput): WorkspaceRevision {
   const instanceId = useId();
