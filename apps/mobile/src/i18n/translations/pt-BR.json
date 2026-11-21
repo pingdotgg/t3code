@@ -1248,6 +1248,8 @@
   "732708950237004e": "Este cliente é mais antigo que o servidor em {environment}; o uso dele fica fora dos totais.",
   "9758c2ede06aa19b": "Hoje às {hour}",
   "9102fd47fc686f0f": "Ontem às {hour}",
+  "a645030d190791e2": "Até {percent}% do seu limite semanal",
+  "d9d3e9b17c602345": "Até {percent}% do seu limite {limit}",
   "72777a9fb1f7f637": "Geral",
   "cb42b8946f737f0c": "Todo o uso do seu plano neste ciclo de cobrança.",
   "935292957f8578fb": "Modelos do Cursor",

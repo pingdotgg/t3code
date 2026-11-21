@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -36,6 +37,28 @@ const respond = (status: number, body: unknown) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body, { status }))),
   );
 const refuseRequests = HttpClient.make(() => Effect.die("must not send a request"));
+const usageBody = {
+  cedar_ember: {
+    eligible: true,
+    next_grant_id: "grant_a",
+    grants: [
+      grant({}),
+      grant({ id: "fable_a", clears: ["seven_day_overage_included"], gives_back_weekly: true }),
+      grant({ id: "model_weekly", clears: ["seven_day_overage_included"] }),
+    ],
+  },
+  limits: [
+    { kind: "session", percent: 20, scope: null },
+    { kind: "weekly_all", percent: 38, scope: null },
+    { kind: "weekly_scoped", percent: 16, scope: { model: { id: null, display_name: "Fable" } } },
+  ],
+  weekly_scoped_shares: [
+    { limit_index: 2, used_percent_of_weekly: 8, allowance_percent_of_weekly: 50 },
+    { limit_index: 1, used_percent_of_weekly: 38, allowance_percent_of_weekly: 100 },
+    { limit_index: 9, used_percent_of_weekly: 1, allowance_percent_of_weekly: 10 },
+  ],
+};
+const fableShare = { ofWindowId: "seven_day", usedPercent: 8, allowancePercent: 50 };
 
 describe("claudeResetCreditsToContract", () => {
   it("counts live grants and pins the next usable one", () => {
@@ -82,29 +105,49 @@ describe("claudeResetCreditsToContract", () => {
           grant({ id: "weekly_a", clears: ["seven_day"], ends_at: "2026-12-10T22:00:00Z" }),
           grant({
             id: "fable_a",
-            clears: ["seven_day_overage_included"],
+            clears: ["five_hour", "seven_day_overage_included"],
             gives_back_weekly: true,
             ends_at: "2027-03-09T07:59:00Z",
           }),
-          grant({ id: "fable_b", gives_back_weekly: true, type: "weekly" }),
+          grant({
+            id: "fable_b",
+            clears: ["seven_day_overage_included"],
+            gives_back_weekly: true,
+            type: "weekly",
+          }),
           grant({ id: "session_a", type: "session" }),
+          grant({
+            id: "full_a",
+            type: "full",
+            clears: ["seven_day", "seven_day_overage_included", ""],
+          }),
           grant({ id: "spent", clears: ["seven_day"], resets_left: 0 }),
+          grant({ id: "weekly_b", clears: ["seven_day"], resets_left: 2 }),
+          grant({ id: "model_weekly", clears: ["seven_day_overage_included"] }),
         ],
       },
       NOW,
+      "Fable",
     );
     expect(
-      credits?.options?.map(({ creditId, label, availableCount }) => [
+      credits?.options?.map(({ creditId, label, availableCount, clearsWindowIds, scope }) => [
         creditId,
         label,
         availableCount,
+        clearsWindowIds,
+        scope,
       ]),
     ).toEqual([
-      ["session_a", "5-hour reset", 1],
-      ["weekly_a", "Weekly reset", 1],
-      ["fable_a", "Fable reset", 2],
+      ["session_a", "5-hour reset", 1, ["five_hour"], undefined],
+      ["weekly_a", "Weekly reset", 3, ["seven_day"], undefined],
+      ["model_weekly", "Fable weekly reset", 1, ["seven_day_fable"], "Fable"],
+      ["fable_a", "Fable reset", 2, ["seven_day_fable"], "Fable"],
+      ["full_a", "Full reset", 1, ["seven_day"], undefined],
     ]);
-    expect(credits).toMatchObject({ availableCount: 4, nextCreditId: "weekly_a" });
+    expect(credits?.options?.find((option) => option.creditId === "model_weekly")).toMatchObject({
+      description: "Refills your Fable weekly allowance.",
+    });
+    expect(credits).toMatchObject({ availableCount: 8, nextCreditId: "weekly_a" });
   });
 
   it("offers nothing to redeem without a usable next grant or an eligible account", () => {
@@ -129,7 +172,7 @@ describe("claudeResetCreditsToContract", () => {
   });
 });
 
-effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
+effectIt.layer(NodeServices.layer)("readClaudeAccountUsage", (it) => {
   it.effect("reads the grants with the CLI's request", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
@@ -140,31 +183,75 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         expect(request.headers.authorization).toBe("Bearer oauth-token");
         expect(request.headers["anthropic-beta"]).toBe("oauth-2025-04-20");
         expect(request.headers["user-agent"]).toBe("claude-cli/2.1.0 (external, cli)");
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
-            }),
-          ),
-        );
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(usageBody)));
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const usage = yield* ClaudeResetCredits.readClaudeAccountUsage(
+        configDir,
+        "2.1.0",
+        "Fable",
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(usage?.resetCredits).toMatchObject({ nextCreditId: "grant_a" });
+      expect([...(usage?.sharesByWindowId ?? [])]).toEqual([["seven_day_fable", fableShare]]);
+      expect(usage?.resetCredits?.options?.map((option) => option.description)).toEqual([
+        "Refills your Fable weekly allowance.",
+        "Refills your Fable allowance and gives back the 8% of your weekly limit Fable used. It doesn't reset the rest of your weekly limit.",
+        "Refills your 5-hour and weekly limits.",
+      ]);
+    }),
+  );
+
+  it.effect("serves a recent read from disk until it is forgotten or expires", () =>
+    Effect.gen(function* () {
+      const { configDir } = yield* writeLogin;
+      const cacheFile = ClaudeResetCredits.claudeResetCreditsCacheFile(
+        yield* Path.Path,
+        configDir,
+        configDir,
+      );
+      let requests = 0;
+      let body: unknown = usageBody;
+      const client = HttpClient.make((request) => {
+        requests += 1;
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+      });
+      const read = (version = "2.1.0") =>
+        ClaudeResetCredits.readClaudeAccountUsage(configDir, version, undefined, cacheFile).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HttpClient.HttpClient, client),
+        );
+      yield* read();
+      const cached = yield* read();
+      expect(cached?.resetCredits).toMatchObject({ nextCreditId: "grant_a" });
+      expect(cached?.sharesByWindowId.get("seven_day_fable")).toEqual(fableShare);
+      expect(requests).toBe(1);
+      yield* read("2.2.0");
+      yield* read("2.2.0");
+      expect(requests).toBe(2);
+      yield* ClaudeResetCredits.forgetClaudeResetCredits(cacheFile);
+      yield* read("2.2.0");
+      expect(requests).toBe(3);
+      yield* TestClock.adjust("2 minutes");
+      yield* read("2.2.0");
+      expect(requests).toBe(4);
+      body = {};
+      yield* TestClock.adjust("2 minutes");
+      yield* read("2.2.0");
+      yield* read("2.2.0");
+      expect(requests).toBe(5);
     }),
   );
 
   it.effect("reads nothing from keychain logins or failed requests", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const darwin = yield* ClaudeResetCredits.readClaudeAccountUsage(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const limited = yield* ClaudeResetCredits.readClaudeAccountUsage(configDir, "2.1.0").pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );

@@ -22,6 +22,25 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
+/** @public */
+export function usageShareSummary(
+  share: ServerProviderUsageWindow["share"],
+  windows: ReadonlyArray<{ readonly id: string; readonly label: string }>,
+  resolve: MFunctionType = mFallback,
+): string | null {
+  const parent = share && windows.find((window) => window.id === share.ofWindowId);
+  if (!share || !parent) return null;
+  const percent = Math.round(share.allowancePercent);
+  return parent.id === "seven_day"
+    ? resolve(msg("Up to {percent}% of your weekly limit", { percent }))
+    : resolve(
+        msg("Up to {percent}% of your {limit} limit", {
+          percent,
+          limit: parent.label.toLowerCase(),
+        }),
+      );
+}
+
 const CURSOR_USAGE_WINDOW_COPY: Readonly<
   Record<string, { readonly label: string; readonly description: string }>
 > = {

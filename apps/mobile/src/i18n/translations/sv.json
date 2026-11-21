@@ -1248,6 +1248,8 @@
   "732708950237004e": "Den här klienten är äldre än servern på {environment}; dess användning räknas inte med i totalerna.",
   "9758c2ede06aa19b": "{hour} i dag",
   "9102fd47fc686f0f": "{hour} i går",
+  "a645030d190791e2": "Upp till {percent}% av din veckogräns",
+  "d9d3e9b17c602345": "Upp till {percent}% av din {limit}-gräns",
   "72777a9fb1f7f637": "Totalt",
   "cb42b8946f737f0c": "All användning i din plan under den här faktureringsperioden.",
   "935292957f8578fb": "Cursor-modeller",
