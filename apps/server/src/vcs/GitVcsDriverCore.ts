@@ -3247,6 +3247,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       : undefined;
   });
 
+  // Like git commit, a merge resolved to HEAD's tree still records its merge commit.
+  const mergeHeadExists = Effect.fnUntraced(function* (operation: string, cwd: string) {
+    const mergeHeadPath = yield* runGitStdout(operation, cwd, [
+      "rev-parse",
+      "--git-path",
+      "MERGE_HEAD",
+    ]);
+    // Git's relative paths use the physical cwd, even when the project uses a symlink.
+    const physicalCwd = yield* fileSystem.realPath(cwd);
+    return yield* fileSystem.exists(path.resolve(physicalCwd, mergeHeadPath.trim()));
+  });
+
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
     Effect.fn("prepareCommitContext")(function* (cwd, filePaths, options) {
       return yield* Effect.scoped(
@@ -3315,16 +3327,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ["-c", "diff.relative=false", "diff", "--cached", "--name-status"],
             { env, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
           ).pipe(Effect.map((stdout) => stdout.trim()));
-          if (stagedSummary.length === 0) {
-            // Like git commit, a merge resolved to HEAD's tree still records its merge commit.
-            const mergeHeadPath = yield* runGitStdout(
-              "GitVcsDriver.prepareCommitContext.mergeHead",
-              cwd,
-              ["rev-parse", "--git-path", "MERGE_HEAD"],
-            );
-            if (!(yield* fileSystem.exists(path.resolve(physicalCwd, mergeHeadPath.trim())))) {
-              return null;
-            }
+          if (
+            stagedSummary.length === 0 &&
+            !(yield* mergeHeadExists("GitVcsDriver.prepareCommitContext.mergeHead", cwd))
+          ) {
+            return null;
           }
 
           // A user-supplied message needs change detection, but no patch for generation.
@@ -3380,6 +3387,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       options?.stage !== undefined
         ? yield* stageCommitChanges(cwd, options.stage.filePaths)
         : undefined;
+    if (options?.skipIfNothingStaged) {
+      const staged = yield* executeGit(
+        "GitVcsDriver.commit.stagedChanges",
+        cwd,
+        [
+          "-c",
+          "diff.relative=false",
+          "diff",
+          "--cached",
+          "--quiet",
+          ...(partialCommitPaths ? ["--", ...partialCommitPaths] : []),
+        ],
+        { allowNonZeroExit: true },
+      );
+      if (
+        staged.exitCode === 0 &&
+        !(yield* mergeHeadExists("GitVcsDriver.commit.mergeHead", cwd).pipe(
+          Effect.catchTags({
+            PlatformError: (cause) =>
+              new GitCommandError({
+                operation: "GitVcsDriver.commit.mergeHead",
+                command: "git commit",
+                cwd,
+                detail: "Could not check whether a merge is in progress.",
+                cause,
+              }),
+          }),
+        ))
+      ) {
+        return null;
+      }
+    }
     const args = ["commit", "-m", subject];
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {

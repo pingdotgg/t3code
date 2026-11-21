@@ -2495,6 +2495,16 @@ export const make = Effect.gen(function* () {
         : Effect.void;
 
     let suggestion: CommitAndBranchSuggestion | null | undefined = preResolvedSuggestion;
+    // A typed message for the whole worktree needs no preview: commit stages once and skips
+    // when nothing is staged.
+    const customCommit =
+      suggestion || filePaths ? null : parseCustomCommitMessage(commitMessage ?? "");
+    if (customCommit) {
+      suggestion = {
+        ...customCommit,
+        commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
+      };
+    }
     if (!suggestion) {
       const needsGeneration = !commitMessage?.trim();
       if (needsGeneration) {
@@ -2566,11 +2576,16 @@ export const make = Effect.gen(function* () {
             },
           }
         : null;
-    const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
+    const committed = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
       timeoutMs: COMMIT_TIMEOUT_MS,
       stage: filePaths ? { filePaths } : {},
+      ...(customCommit ? { skipIfNothingStaged: true } : {}),
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
+    if (!committed) {
+      return { status: "skipped_no_changes" as const };
+    }
+    const { commitSha } = committed;
     if (currentHookName !== null) {
       yield* emit({
         kind: "hook_finished",

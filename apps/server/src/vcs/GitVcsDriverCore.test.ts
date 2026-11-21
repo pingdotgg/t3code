@@ -2706,7 +2706,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       assert.lengthOf(unborn.workingTree.files, files.length);
       assert.equal(unborn.workingTree.insertions, files.length);
       const initial = yield* driver.commit(cwd, "initial", "");
-      assert.match(initial.commitSha, /^[a-f0-9]{40}$/);
+      assert.match(initial?.commitSha ?? "", /^[a-f0-9]{40}$/);
       assert.isFalse((yield* driver.statusDetailsLocal(cwd)).hasWorkingTreeChanges);
       yield* Effect.forEach(files, (file) => fs.writeFileString(path.join(cwd, file), "after\n"), {
         concurrency: 16,
@@ -8566,6 +8566,31 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("skips a commit with nothing staged but records a merge resolved to HEAD", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const skip = { stage: {}, skipIfNothingStaged: true } as const;
+
+        assert.isNull(yield* driver.commit(cwd, "Nothing", "", skip));
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), head);
+
+        yield* git(cwd, ["checkout", "--quiet", "-b", "side"]);
+        yield* writeTextFile(cwd, "side.txt", "side\n");
+        yield* git(cwd, ["add", "side.txt"]);
+        yield* git(cwd, ["commit", "--quiet", "-m", "side"]);
+        const side = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["checkout", "--quiet", "-"]);
+        yield* git(cwd, ["merge", "--quiet", "-s", "ours", "--no-commit", "side"]);
+
+        const merge = yield* driver.commit(cwd, "Merge side", "", skip);
+        assert.isNotNull(merge);
+        assert.equal(yield* git(cwd, ["show", "-s", "--format=%P", "HEAD"]), `${head} ${side}`);
+      }),
+    );
+
     it.effect.each(["root", "aliased-nested"] as const)(
       "prepares selected files without staging and commits only those files from %s",
       (location) =>
@@ -8592,7 +8617,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const commit = yield* driver.commit(cwd, "Add a", "", {
             stage: { filePaths: [selected] },
           });
-          assert.match(commit.commitSha, /^[a-f0-9]{40}$/);
+          assert.match(commit?.commitSha ?? "", /^[a-f0-9]{40}$/);
           assert.equal(yield* git(repository, ["log", "-1", "--pretty=%s"]), "Add a");
           assert.equal(
             yield* git(repository, ["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"]),

@@ -173,6 +173,8 @@ export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
   readonly stage?: { readonly filePaths?: readonly string[] };
+  /** Return null instead of committing when staging leaves nothing to commit. */
+  readonly skipIfNothingStaged?: boolean;
 }
 
 export interface GitDeleteLocalBranchInput {
@@ -360,7 +362,7 @@ export class GitVcsDriver extends Context.Service<
       subject: string,
       body: string,
       options?: GitCommitOptions,
-    ) => Effect.Effect<{ commitSha: string }, GitCommandError>;
+    ) => Effect.Effect<{ commitSha: string } | null, GitCommandError>;
     readonly pushCurrentBranch: (
       cwd: string,
       fallbackBranch: string | null,
