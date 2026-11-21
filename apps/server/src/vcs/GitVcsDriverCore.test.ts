@@ -916,9 +916,39 @@ it.effect("resolves a branch's base once while its refs and branch config are un
       // One thread switch: two local status reads and the two diff preview passes.
       yield* driver.statusDetailsLocal(cwd);
       yield* driver.statusDetailsLocal(cwd);
-      yield* driver.getReviewDiffPreview({ cwd, trackedOnly: true });
-      yield* driver.getReviewDiffPreview({ cwd });
+      const tracked = yield* driver.getReviewDiffPreview({ cwd, trackedOnly: true });
+      assert.isDefined(tracked.completionToken);
       assert.equal(lookups(), 1);
+      // The complete pass adds only the untracked listing to the tracked pass it follows.
+      const complete = yield* driver.getReviewDiffPreview({
+        cwd,
+        completionToken: tracked.completionToken!,
+      });
+      assert.deepStrictEqual(
+        spawnedArgs.map((args) => args.find((arg) => !arg.startsWith("-") && !arg.includes("="))),
+        ["ls-files"],
+      );
+      assert.isUndefined(complete.incomplete);
+      assert.deepStrictEqual(complete.sources, tracked.sources);
+      spawnedArgs.length = 0;
+      // A token is used once, and untracked files are still diffed when there are some.
+      yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+      const second = yield* driver.getReviewDiffPreview({ cwd, trackedOnly: true });
+      const withUntracked = yield* driver.getReviewDiffPreview({
+        cwd,
+        completionToken: second.completionToken!,
+      });
+      assert.include(
+        withUntracked.sources.flatMap((source) => source.files?.map((file) => file.path) ?? []),
+        "untracked.txt",
+      );
+      const reused = yield* driver.getReviewDiffPreview({
+        cwd,
+        completionToken: tracked.completionToken!,
+      });
+      assert.deepStrictEqual(reused.sources, withUntracked.sources);
+      yield* (yield* FileSystem.FileSystem).remove(`${cwd}/untracked.txt`);
+      spawnedArgs.length = 0;
 
       yield* git(cwd, ["config", "branch.feature/x.t3-merge-base-ref", "refs/heads/main"]);
       yield* driver.statusDetailsLocal(cwd);
