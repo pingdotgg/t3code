@@ -1844,15 +1844,15 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends O1 to the base-branch stack and the operator lands it bottom-up.
 
-## Send tickets or a whole board to a Warp factory and work with them from the board (X1)
+## Send tickets or a whole board to the cloud, on Warp or Claude, and work with them from the board (X1)
 
 **Depends on.** O1.
 
 **Files.**
 
-- [ ] Create `apps/board/electron/warp.ts` and `apps/board/electron/warp.test.ts`.
+- [ ] Create `apps/board/electron/warp.ts`, `apps/board/electron/warp.test.ts`, and `apps/board/electron/claudeCloud.ts`.
 - [ ] Create `apps/board/src/warp/WarpCard.tsx`, `apps/board/src/warp/SendToWarp.tsx`, `apps/board/src/warp/WarpBadge.tsx`, and `apps/board/src/warp/WarpTaskTab.tsx`.
-- [ ] Create `apps/board/src/warp/warpTasks.ts`, `apps/board/src/warp/warpTasks.test.ts`, and `apps/board/docs/warp-review.md`.
+- [ ] Create `apps/board/src/warp/warpTasks.ts`, `apps/board/src/warp/warpTasks.test.ts`, and `apps/board/docs/cloud-review.md`.
 - [ ] Edit L1's `apps/board/src/settings/IntegrationsPage.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/files/MainTabs.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/board.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and the IPC, preload, and bridge files that carry Warp calls.
 
 **Build.**
@@ -1861,9 +1861,15 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Add a **Warp** card to L1's Integrations page in Orca's card style, copied from `src/renderer/src/components/integrations/task-trackers/linear-integration-card.tsx` and `linear-api-key-dialog.tsx` in Orca's source. Connect takes the key, lists the account's factories from `GET /factory`, and Disconnect deletes the key.
 - [ ] Only the operator sends work to Warp, from the UI. The orchestrator never sends and never proposes a send.
 - [ ] Add **Send to Warp** to the ticket frame's menu. It opens a dialog with a factory picker searched through `GET /factory?search=`, and a title and prompt filled from the ticket's goal, with L1's linked issue as `ticket_ref` (for example `linear:XEO-123`) and `ticket_url`. Send calls `POST /factory/{uid}/runs` and stores the factory, task, and run IDs in an optional `warp` field on the ticket.
-- [ ] Add **Send board to Warp** to the orchestrator card. The same dialog fills the prompt with the board's goal and every open ticket's title, goal, and linked issue. Send dispatches one run and stores the factory and run IDs in an optional `warp` field in `board.json`. The board then shows the factory's tasks from that run as frames with Warp badges. Before building this, dispatch one run in the test factory and record in `warp-review.md` how the foreman's tasks link back to that run.
-- [ ] `brief.md` tells the orchestrator that a ticket with a `warp` field, or every ticket on a board sent to Warp, runs in Warp. It starts no local agent on that work and plans the rest around it.
-- [ ] Research how cloud tickets get reviewed before building that part. Compare Warp's own Review stage, R2's review templates, and whether the review skills reach Warp's agents from the repo. Record the findings and a proposed fit in `warp-review.md`, and bring it to the operator for a decision.
+- [ ] Add **Send board to cloud** to the orchestrator card. Its dialog picks a target, a Warp factory or a Claude cloud orchestrator, and fills the prompt with the board's goal and every open ticket's title, goal, and linked issue. A Warp send dispatches one run and stores the factory and run IDs in an optional `warp` field in `board.json`. The board then shows the factory's tasks from that run as frames with Warp badges. Before building this, dispatch one run in the test factory and record in `cloud-review.md` how the foreman's tasks link back to that run.
+- [ ] A Claude cloud send runs on the operator's Claude subscription, through the `claude` CLI from the main process in `electron/claudeCloud.ts`. It runs `claude --cloud "<prompt>"` in the project's checkout with the operator's claude.ai login, and stores the session ID and URL in an optional `cloud` field in `board.json`. Sources: [Use Claude Code in the cloud](https://code.claude.com/docs/en/claude-code-on-the-web).
+  - [ ] The prompt carries the brief's rules and facts, plus one more rule: after every write to `tickets.json` or `foryou.jsonl`, commit the board folder and push it to the branch `agentboard/<board slug>`.
+  - [ ] The board reads that branch from the main process with `git fetch` and `git show`, every 10 s while the board is visible, and shows its tickets, lanes, and For-you cards as it does for a local board.
+  - [ ] Answering a card sends `claude -p "<the card's answer message>" --cloud <session id> --output-format json`, and the card shows the send failed when the result has `ok: false`.
+  - [ ] **Open in Claude** opens the session's URL in B11's panel, where the operator sees the conversation and answers the session's own approvals.
+  - [ ] Before building this target, run one small cloud session on the lane repo. Record in `cloud-review.md` whether the session can push the store branch, whether a follow-up reaches it, whether `claude --cloud <session id>` attach can stream its events, and whether `claude agents --json` or `/tasks` lists it. If the push or the follow-up fails, drop this target and tell the operator.
+- [ ] `brief.md` tells the orchestrator that a ticket with a `warp` field, or every ticket on a board sent to the cloud, runs there. It starts no local agent on that work and plans the rest around it.
+- [ ] Research how cloud tickets get reviewed before building that part. Compare Warp's own Review stage, R2's review templates, and whether the review skills reach Warp's agents and Claude cloud sessions from the repo. Cloud sessions read the repo's `.claude/`, not `~/.claude`. Record the findings and a proposed fit in `cloud-review.md`, and bring it to the operator for a decision.
 - [ ] In `WarpBadge.tsx`, show a sent ticket's task state from `GET /factory/{uid}/tasks/{task_uid}` on its frame. Poll every 10 s while the board is visible, and stop while it is hidden. A pull request the task opens shows as B10's PR chip, so checks and merge readiness work as they do for a local ticket.
 - [ ] In `WarpTaskTab.tsx`, open a main-view tab per Warp task. It shows the conversation from `GET /agent/runs/{runId}/conversation` through C2's markdown, a reply box that calls `POST /agent/runs/{runId}/followups`, **Interrupt** through `POST /agent/runs/{runId}/interrupt`, **Stop** through `POST /factory/{uid}/tasks/{task_uid}/cancel`, and **Open in Warp**, which opens the run's session link in B11's panel.
 - [ ] Turn the factory inbox from `GET /factory-inbox` into For-you cards for this board's tasks, such as a foreman's plan-review question. Answering sends a follow-up and marks the notification read through `POST /factory-inbox/notifications/read`.
@@ -1871,25 +1877,25 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **You see.**
 
-- [ ] Settings connects Warp. The operator sends a ticket or a whole board to a Warp factory from the UI, and the board shows each task's state, conversation, questions, and pull request, with reply, interrupt, and stop.
+- [ ] Settings connects Warp. The operator sends a ticket to a Warp factory, or a whole board to Warp or to a Claude cloud orchestrator, from the UI. The board shows each task's state, conversation, questions, and pull request, with reply, interrupt, and stop on Warp, and tickets, For-you cards, and pull requests on Claude cloud.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
 - [ ] `warpTasks.test.ts` maps fixed task and run states to literal badges, builds literal `POST /factory/{uid}/runs` bodies from a fixed ticket with a Linear issue and from a fixed board, and turns fixed inbox notifications into literal For-you items. `electron/warp.test.ts` runs the client against a local HTTP server and checks the bearer header, the error text for a rejected key and for missing credits, and that no error message contains the key. Run `vp test run src/warp/warpTasks.test.ts electron/warp.test.ts` from `apps/board`.
 
-**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. The operator creates one test factory in Warp's web app connected only to `13kparkin/agent-board-lanes`, and enters the key into the board's Warp card when the lane asks. Lanes share one small dispatched task to keep credit use low.
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. The operator creates one test factory in Warp's web app connected only to `13kparkin/agent-board-lanes`, installs the Claude GitHub App on that repo, and enters the Warp key into the board's Warp card when the lane asks. Lanes share one small dispatched task per target, to keep credit and subscription use low.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk has no Warp card, so record that fact. Connect Warp at head, then enter a revoked key. Save `x1-connect.png` and `x1-bad-key.png`. Pass when the card lists the factories `GET /factory` returns, the key appears in no board file, log, or renderer storage, and the revoked key is rejected with nothing dispatched.
 - [ ] Lane 2. Send a ticket from its frame menu on a board with a real Claude orchestrator. Save `x1-send.png`. Pass when exactly one task carries the ticket's `ticket_ref`, and the orchestrator starts no local agent on that ticket.
-- [ ] Lane 3. Watch the sent ticket. Save `x1-status.png`. Pass when its badge follows the task through at least two states that match the API, with no reload.
+- [ ] Lane 3. Watch the sent ticket, then stop it. Save `x1-status.png` and `x1-stop.txt`. Pass when its badge follows the task through at least two states that match the API, with no reload, and the API reports it stopped and the badge shows it.
 - [ ] Lane 4. Reply in the Warp tab. Save `x1-reply.png`. Pass when the follow-up appears in the run's conversation from the API and the foreman responds to it.
 - [ ] Lane 5. Answer a foreman question from its For-you card. Save `x1-needs-you.png`. Pass when the card matches the inbox item, the answer reaches the conversation, and the notification reads as read.
 - [ ] Lane 6. Let the task open its pull request on the lane repo. Save `x1-pr.png`. Pass when the PR chip and its checks match `gh pr view`.
-- [ ] Lane 7. Stop the task. Save `x1-stop.txt`. Pass when the API reports it stopped and the badge shows it.
-- [ ] Lane 8. Send a two-ticket board from the orchestrator card. Save `x1-board.png`. Pass when the factory's tasks from that run show as frames whose badges match `GET /factory/{uid}/tasks`, and the orchestrator starts no local agent.
+- [ ] Lane 7. Send a two-ticket board to a Claude cloud orchestrator. Save `x1-claude-cloud.png` and `x1-claude-cloud.txt`. Pass when the board's frames and For-you cards match the pushed `agentboard/<board slug>` branch, an answered card reaches the session as a follow-up, and the session's pull request shows as a PR chip.
+- [ ] Lane 8. Send a two-ticket board to a Warp factory from the orchestrator card. Save `x1-board.png`. Pass when the factory's tasks from that run show as frames whose badges match `GET /factory/{uid}/tasks`, and the orchestrator starts no local agent.
 - [ ] Lane 9. Run the Windows app with a Warp tab open beside the board. Save `x1-windows.png` from a full-window capture. Pass when the tab fits beside the board and the Warp card matches Orca's integration cards.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `x1-checks.txt`. Pass when all three exit 0.
-- [ ] Cleanup. Stop the test task, close its pull request and delete its branches on the lane repo, disconnect Warp in the board, and tell the operator to revoke the key.
+- [ ] Cleanup. Stop the test task, archive the Claude cloud session, close their pull requests and delete their branches on the lane repo, disconnect Warp in the board, and tell the operator to revoke the key.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
