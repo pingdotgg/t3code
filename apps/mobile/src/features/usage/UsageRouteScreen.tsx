@@ -4,6 +4,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { EnvironmentId, USAGE_CONTRACT_VERSION, type UsageProviderKind } from "@t3tools/contracts";
 import { type RouteProp, useIsFocused, useRoute } from "@react-navigation/native";
 import {
+  emptyUsageReason,
   updatingProvidersLabel,
   usageEnvironmentProgress,
   usageProgress,
@@ -146,6 +147,7 @@ function UsageScreen(props: {
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
   );
+  const emptyReason = merged.models.length === 0 ? emptyUsageReason(selectedEnvironments) : null;
 
   const days = enumerateDays(window.sinceDay, window.untilDay);
   const chartDays =
@@ -328,7 +330,7 @@ function UsageScreen(props: {
                       </T>
                     </Text>
                   ) : null}
-                  {isPending ? (
+                  {isPending || emptyReason === "pending" ? (
                     <Text className="py-16 text-center text-base text-foreground-muted">
                       <T>Scanning provider transcripts…</T>
                     </Text>
@@ -338,7 +340,7 @@ function UsageScreen(props: {
                         ? gt("Connect an environment to see usage.")
                         : gt("Select an environment to see usage.")}
                     </Text>
-                  ) : !canReadDiagnostics ? (
+                  ) : !canReadDiagnostics || emptyReason === "failed" ? (
                     <View className="gap-2 py-16">
                       {selectedEnvironments.map((environment) => (
                         <Text
