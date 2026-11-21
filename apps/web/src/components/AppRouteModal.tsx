@@ -71,11 +71,12 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
               "--app-modal-titlebar-height": `${nativeTitlebarHeight}px`,
               "--app-modal-top-inset": `max(env(safe-area-inset-top), ${nativeTitlebarHeight}px)`,
               "--app-modal-sm-top": `max(1.5rem, ${nativeTitlebarHeight}px)`,
+              "--app-modal-lg-top": `max(2.5rem, ${nativeTitlebarHeight}px)`,
             } as CSSProperties
           }
           // Electron hit-tests drag regions under the backdrop regardless of z-index; without
           // this, presses above the modal move the window instead of dismissing it.
-          className="fixed inset-0 z-50 flex items-center justify-center [-webkit-app-region:no-drag] sm:p-6 sm:pt-(--app-modal-sm-top) lg:p-10"
+          className="fixed inset-0 z-50 flex items-center justify-center [-webkit-app-region:no-drag] sm:p-6 sm:pt-(--app-modal-sm-top) lg:p-10 lg:pt-(--app-modal-lg-top)"
           onPointerDown={(event) => {
             backdropPressRef.current = event.target === event.currentTarget;
           }}
@@ -102,14 +103,16 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
             data-app-modal=""
             className="relative flex size-full min-h-0 min-w-0 flex-col overflow-hidden bg-background max-sm:pt-(--app-modal-top-inset) max-sm:pb-safe text-foreground outline-none transition-[opacity,scale] duration-150 ease-out [-webkit-app-region:no-drag] data-ending-style:scale-[0.985] data-ending-style:opacity-0 data-starting-style:scale-[0.985] data-starting-style:opacity-0 sm:max-h-[60rem] sm:max-w-[80rem] sm:rounded-2xl sm:border sm:shadow-2xl/40"
           >
-            {/* The emptied strip still moves the window, as the titlebar it replaces does. */}
-            <div
-              aria-hidden
-              className="absolute inset-x-0 top-0 hidden h-(--app-modal-titlebar-height) [-webkit-app-region:drag] max-sm:block"
-            />
             {children}
             <GlobalVoiceInputIndicator />
           </DialogPrimitive.Popup>
+          {/* The titlebar strip still moves the window. It follows the popup because Electron
+              lets the later region win. pointer-events-none keeps clicks on the backdrop, where
+              fullscreen macOS (no native drag) still dismisses. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 h-(--app-modal-titlebar-height) [-webkit-app-region:drag]"
+          />
         </DialogPrimitive.Viewport>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
