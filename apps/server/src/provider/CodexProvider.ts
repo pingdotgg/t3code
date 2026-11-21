@@ -133,8 +133,17 @@ export function codexCustomEndpoint(config: unknown): string | undefined {
 export const codexRoutesSpendNativeQuota = (
   account: CodexSchema.V2GetAccountResponse,
   config: unknown,
-): boolean =>
-  account.requiresOpenaiAuth && account.account?.type !== "apiKey" && routesToNativeOpenai(config);
+  subscriptionQuotaBaseUrl?: string,
+): boolean => {
+  if (!account.requiresOpenaiAuth || account.account?.type === "apiKey") return false;
+  if (routesToNativeOpenai(config)) return true;
+  const baseUrl = codexRouteBaseUrl(config);
+  if (account.account?.type !== "chatgpt" || !baseUrl || baseUrl !== subscriptionQuotaBaseUrl) {
+    return false;
+  }
+  const url = URL.parse(baseUrl);
+  return url !== null && /^https?:$/.test(url.protocol);
+};
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
@@ -787,11 +796,15 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       ).pipe(
         Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
         Effect.flatMap((config) => {
-          // Only a confirmed native route may probe or publish the login's quota.
+          // Only a confirmed native or declared pass-through route may probe the login's quota.
           const nativeUsage =
             !input.skipNativeUsage &&
             config !== undefined &&
-            codexRoutesSpendNativeQuota(accountResponse, config.config);
+            codexRoutesSpendNativeQuota(
+              accountResponse,
+              config.config,
+              input.environment?.T3CODE_CODEX_SUBSCRIPTION_QUOTA_BASE_URL?.trim(),
+            );
           const readUsage: Effect.Effect<CodexRateLimitsProbe | undefined> = nativeUsage
             ? readCodexRateLimits(client, deadlineMs)
             : Effect.undefined;
