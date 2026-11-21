@@ -103,12 +103,15 @@ export class WorkflowAgents extends Context.Service<
       turn: AgentTurn,
       options?: { readonly quiet?: Duration.Duration | undefined },
     ) => Effect.Effect<AgentResult, WorkflowAgentError>;
-    /** Stop whatever the thread is doing, when its run is cancelled. */
+    /**
+     * Stop whatever the thread is doing, when its run is cancelled. `ended` when there was nothing
+     * to stop: the turn had already ended.
+     */
     readonly interrupt: (thread: {
       readonly threadId: string;
       readonly environment?: string | undefined;
       /** The step's own turn. With it, a turn of someone else's on the same thread is left alone. */
       readonly turnId?: string | undefined;
-    }) => Effect.Effect<void, WorkflowAgentError>;
+    }) => Effect.Effect<"stopped" | "ended", WorkflowAgentError>;
   }
 >()("t3/workflows/WorkflowAgents") {}

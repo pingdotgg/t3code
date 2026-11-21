@@ -427,6 +427,7 @@ const fakeAgents = () => {
   let threads = 0;
   let refusals = 0;
   const unreadable = new Set<string>();
+  const unanswered = new Set<string>();
   const turn = (key: string) => {
     const known = turns.get(key);
     if (known !== undefined) return known;
@@ -455,22 +456,38 @@ const fakeAgents = () => {
             ...(input.environment === undefined ? {} : { environment: input.environment }),
           };
         }),
-      result: (started) =>
-        [...unreadable].some((key) => started.turnId.endsWith(`/${key}`) && unreadable.delete(key))
-          ? Effect.fail(new WorkflowAgentError({ reason: "the result could not be read" }))
-          : Deferred.await(turn(started.turnId).ended),
+      result: (started) => {
+        const once = (keys: Set<string>) =>
+          [...keys].some((key) => started.turnId.endsWith(`/${key}`) && keys.delete(key));
+        if (once(unreadable)) {
+          return Effect.fail(new WorkflowAgentError({ reason: "the result could not be read" }));
+        }
+        return once(unanswered) ? Effect.never : Deferred.await(turn(started.turnId).ended);
+      },
       // Counted per try, so a retry of the same stop uses up a refusal too.
       interrupt: (thread) =>
         Effect.suspend(() =>
           refusals-- > 0
             ? Effect.fail(new WorkflowAgentError({ reason: "the link is down" }))
-            : Effect.sync(() => void interrupted.push(thread)),
+            : Effect.flatMap(
+                Effect.sync(() => void interrupted.push(thread)),
+                () =>
+                  thread.turnId !== undefined && turns.has(thread.turnId)
+                    ? Effect.map(Deferred.isDone(turns.get(thread.turnId)!.ended), (done) =>
+                        done ? ("ended" as const) : ("stopped" as const),
+                      )
+                    : Effect.succeed("stopped" as const),
+              ),
         ),
     }),
     interrupted,
     /** The next read of a turn with this key fails. */
     unreadableResult: (key: string) => {
       unreadable.add(key);
+    },
+    /** The next read of a turn with this key never answers, as one that is waited past. */
+    unansweredResult: (key: string) => {
+      unanswered.add(key);
     },
     /** Turns down the next `count` stops. */
     refuseStops: (count: number) => {
@@ -1794,6 +1811,34 @@ it.effect("a workflow can take an agent's failure as an answer and go on", () =>
         const retried = yield* workflows.waitFor(late.runId, status("completed", "paused"));
         assert.equal(retried.status, "completed");
         assert.notInclude(retried.result as string, "could not be stopped");
+
+        // A result that arrived as its time ran out, before it was read, is still the answer.
+        agents.unansweredResult("first/0");
+        const lastMinute = yield* workflows.start(
+          "fallback",
+          { project: "p1", timeout: "1 minute" },
+          { idempotencyKey: "m" },
+        );
+        yield* agents.started(lastMinute.runId, "first/0");
+        yield* agents.end(lastMinute.runId, "first/0", { output: { head: "pqr" } });
+        yield* agents.end(lastMinute.runId, "second/0", { output: { head: "not needed" } });
+        const answered = yield* workflows.waitFor(lastMinute.runId, status("completed", "paused"));
+        assert.equal(answered.result, "pqr");
+
+        // One whose turn had ended without its result is not said to be stopped: the agent may
+        // answer from a later turn nobody stopped.
+        agents.unansweredResult("first/0");
+        const owing = yield* workflows.start(
+          "fallback",
+          { project: "p1", timeout: "1 minute" },
+          { idempotencyKey: "o" },
+        );
+        yield* agents.started(owing.runId, "first/0");
+        yield* agents.end(owing.runId, "first/0", {});
+        yield* agents.started(owing.runId, "second/0");
+        yield* agents.end(owing.runId, "second/0", { output: { head: "stu" } });
+        const owed = yield* workflows.waitFor(owing.runId, status("completed", "paused"));
+        assert.include(owed.result as string, "may still be at work");
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
