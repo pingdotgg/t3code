@@ -1811,14 +1811,22 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.deepEqual(opened.prompts[1]!.prompt, [{ type: "text", text: "Skip the build" }]);
 
       yield* send({ sessionUpdate: "tool_call_update", ...followUp, status: "completed" });
-      yield* TestClock.adjust("16 minutes");
-      const silent = yield* until((event) => event.type === "turn.terminal");
-      const terminal = silent.at(-1);
+      // A long model call or wait sends nothing, so quiet alone does not mean the agent hung.
+      yield* TestClock.adjust("1 hour");
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Skipped the build." },
+      });
+      yield* send(opened.usage);
+      yield* opened.releaseSteer;
+      const quiet = yield* until((event) => event.type === "turn.terminal");
+      const terminal = quiet.at(-1);
       assert.equal(
         terminal?.type === "turn.terminal" && terminal.status,
-        "failed",
-        "a silent steer prompt must still hit the inactivity timeout",
+        "completed",
+        "a prompt that stays quiet must be left to finish",
       );
+      assert.include(JSON.stringify(quiet), "Skipped the build.");
     }).pipe(Effect.provide(layerSession)),
   );
 
