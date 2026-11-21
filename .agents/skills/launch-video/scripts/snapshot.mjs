@@ -82,6 +82,26 @@ async function freeze(known) {
   });
   for (const el of clone.querySelectorAll("script, noscript, style, link, base")) el.remove();
 
+  // Open shadow roots (the diff viewer draws inside one) become declarative shadow DOM.
+  const shadowHtml = (root) => {
+    const sheets = [...root.adoptedStyleSheets]
+      .map((sheet) => {
+        try {
+          return [...sheet.cssRules].map((r) => r.cssText).join("\n");
+        } catch {
+          return "";
+        }
+      })
+      .join("\n");
+    const nested = [...root.querySelectorAll("*")].filter((el) => el.shadowRoot);
+    let inner = root.getHTML({ shadowRoots: nested.map((el) => el.shadowRoot) });
+    return `<template shadowrootmode="open"><style>${rewrite(sheets, location.href)}</style>${inner}</template>`;
+  };
+  source.forEach((el, i) => {
+    if (!el.shadowRoot) return;
+    copies[i].insertAdjacentHTML("afterbegin", shadowHtml(el.shadowRoot));
+  });
+
   const head = clone.querySelector("head");
   const styleEl = document.createElement("style");
   styleEl.textContent = css;
