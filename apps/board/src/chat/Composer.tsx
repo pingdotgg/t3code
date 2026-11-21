@@ -13,8 +13,9 @@ import {
   type OrchestrationV2ThreadProjection,
   ProviderInstanceId,
   type ThreadId,
+  type ChatAttachment,
 } from "@t3tools/contracts";
-import { SendHorizontal, Square } from "lucide-react";
+import { Paperclip, SendHorizontal, Square, X } from "lucide-react";
 import { flushSync } from "react-dom";
 import {
   type FormEvent,
@@ -39,7 +40,9 @@ import { failureText } from "../settings/failureText";
 import { newId } from "../state/boards";
 import { ensureOrchestratorInstance } from "../state/orchestrator";
 import { engineProvidersAtom, serverEnvironment } from "../state/server";
+import { uploadAttachments } from "../state/attachmentUploads";
 import { interruptTurn, startTurn } from "../state/threads";
+import { attachmentInputs } from "./attachments";
 import { ModelPicker } from "./ModelPicker";
 import {
   buildSlashItems,
@@ -54,6 +57,10 @@ import { useWorkspaceSnapshot } from "./workspaceSnapshot";
 
 const SWITCH_BLOCKED =
   "This thread does not support switching providers after it has started. Start a new thread to use this model.";
+
+const markShown = (chip: HTMLElement | null) => {
+  if (chip !== null) performance.mark("board:attach-shown");
+};
 
 /**
  * The box that sends a message to the orchestrator or stops its turn, with the model picker for the
@@ -83,6 +90,8 @@ export function Composer({
   const [override, setOverride] = useState<PickerValue | null>(null);
   const [fresh, setFresh] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const picker = useRef<HTMLInputElement | null>(null);
 
   const providers = useAtomValue(engineProvidersAtom);
   const providersForCwd = useMemo(() => resolveProvidersForCwd(providers, cwd), [providers, cwd]);
@@ -127,6 +136,15 @@ export function Composer({
   );
   const ranked = useMemo(() => rankSlashItems(items, query ?? ""), [items, query]);
   const highlighted = Math.min(active, Math.max(ranked.length - 1, 0));
+
+  const addFiles = (added: File[]) => {
+    const checked = attachmentInputs([...files, ...added]);
+    if ("error" in checked) setError(checked.error);
+    else {
+      setError(null);
+      setFiles([...files, ...added]);
+    }
+  };
 
   const edit = (value: string, at: number) => {
     if (MARK_SLASH && slashQuery(draft, cursor) === null && slashQuery(value, at) !== null) {
@@ -182,6 +200,20 @@ export function Composer({
         return;
       }
     }
+    let attachments: ChatAttachment[] = [];
+    if (files.length > 0) {
+      const checked = attachmentInputs(files);
+      if ("error" in checked) {
+        setError(checked.error);
+        return;
+      }
+      try {
+        attachments = await uploadAttachments(registry, environmentId, files, checked.inputs);
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : String(failure));
+        return;
+      }
+    }
     setDraft("");
     setCursor(0);
     const result = await runAtomCommand(
@@ -191,7 +223,7 @@ export function Composer({
         environmentId,
         input: {
           threadId,
-          message: { messageId: MessageId.make(newId()), role: "user", text, attachments: [] },
+          message: { messageId: MessageId.make(newId()), role: "user", text, attachments },
           runtimeMode: projection.thread.runtimeMode,
           interactionMode: projection.thread.interactionMode,
           ...(selection === null ? {} : { modelSelection: selection }),
@@ -202,6 +234,7 @@ export function Composer({
     );
     if (result._tag === "Success") {
       setFresh(false);
+      setFiles([]);
     } else {
       setDraft(text);
       setCursor(text.length);
@@ -253,6 +286,16 @@ export function Composer({
   return (
     <form
       onSubmit={(event) => void send(event)}
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (event.dataTransfer.files.length === 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        performance.mark("board:attach-drop");
+        addFiles(Array.from(event.dataTransfer.files));
+      }}
       className="relative shrink-0 border-t border-line p-2"
     >
       {open && (
@@ -278,6 +321,27 @@ export function Composer({
         </p>
       )}
       <div className="flex flex-col gap-1 rounded-xl border border-line bg-panel p-2 focus-within:border-muted">
+        {files.length > 0 && (
+          <ul aria-label="Attached files" className="flex flex-wrap gap-1">
+            {files.map((file, index) => (
+              <li
+                key={`${file.name}:${file.lastModified}:${file.size}`}
+                ref={markShown}
+                className="flex max-w-full items-center gap-1 rounded-md border border-line bg-hover px-1.5 text-[11px] leading-5 text-fg"
+              >
+                <span className="min-w-0 truncate">{file.name}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${file.name}`}
+                  onClick={() => setFiles(files.filter((_, at) => at !== index))}
+                  className="text-muted hover:text-fg"
+                >
+                  <X className="size-3" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             ref={input}
@@ -297,6 +361,25 @@ export function Composer({
             }
             className="max-h-40 min-h-10 min-w-0 flex-1 resize-none bg-transparent text-fg outline-none placeholder:text-faint"
           />
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            data-testid="attach-input"
+            onChange={(event) => {
+              addFiles(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            aria-label="Attach files"
+            onClick={() => picker.current?.click()}
+            className="grid size-7 shrink-0 place-items-center rounded-full text-muted hover:bg-hover hover:text-fg"
+          >
+            <Paperclip className="size-3.5" />
+          </button>
           {live && draft.trim() === "" ? (
             <button
               type="button"

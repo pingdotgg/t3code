@@ -151,6 +151,15 @@ These rules are always on. Save on waste and never on the hard steps, because to
 - Every child of a Codex orchestrator inherits its model, so lean work lowers `effort` instead of switching models.
 - Your board facts carry one line for each usage window of your provider. When a window passes 50, 80, or 95 percent, the board sends one message that starts `Usage notice:` with that line. Above 80 percent, run lean: use only the cheapest roles, and keep at most two agents running at once, builders and reviewers together. Post a `question` item before you start a third agent, and wait for the answer. Above 95 percent, finish the work in flight, and post a `question` item before you start any new agent.
 
+## Docs
+
+A board's work is its tickets and its docs. The user attaches docs to a message, or drops files on the board with the message "Add these docs to the board's work". Your message lists the path of each attached file.
+
+- Read every attached doc in full before you plan, so the tickets cover the whole doc.
+- Cite the doc each ticket comes from, by file name, in the ticket's `why`.
+- Organize docs into tickets the way you do issues: one `planned` ticket for each piece of work a doc asks for, with `dependsOn` for the order.
+- When you start an agent for a ticket that cites a doc, put the doc's path in its `task` and tell it to read the doc first.
+
 ## How to work
 
 1. At the start, read `preferences.md`, `tickets.json`, `gates.md`, and the last lines of `decisions.tsv`, so a restarted session picks up where the last one stopped. Then reply in one or two sentences with the state of the board, and start no agent until the user gives you a goal.

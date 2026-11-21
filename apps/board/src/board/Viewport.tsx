@@ -38,7 +38,16 @@ const zoomButton = "grid h-[30px] w-8 place-items-center text-muted hover:bg-hov
  */
 export const useRevealRef = () => useContext(RevealContext);
 
-export function Viewport({ content, children }: { content?: Rect; children?: ReactNode }) {
+export function Viewport({
+  content,
+  onDropFiles,
+  children,
+}: {
+  content?: Rect;
+  /** Files dropped anywhere on the canvas. */
+  onDropFiles?: (files: File[]) => void;
+  children?: ReactNode;
+}) {
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{ startX: number; startY: number; origin: View } | null>(null);
   const [view, setView] = useState<View>(INITIAL_VIEW);
@@ -124,6 +133,16 @@ export function Viewport({ content, children }: { content?: Rect; children?: Rea
         onPointerMove={onPointerMove}
         onPointerUp={endPan}
         onPointerCancel={endPan}
+        onDragOver={(event) => {
+          if (onDropFiles !== undefined && event.dataTransfer.types.includes("Files")) {
+            event.preventDefault();
+          }
+        }}
+        onDrop={(event) => {
+          if (onDropFiles === undefined || event.dataTransfer.files.length === 0) return;
+          event.preventDefault();
+          onDropFiles(Array.from(event.dataTransfer.files));
+        }}
       >
         <div
           className="absolute top-0 left-0 origin-top-left"

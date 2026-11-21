@@ -1,10 +1,12 @@
-import { GitBranch, MessageCircleQuestion, TriangleAlert } from "lucide-react";
+import { GitBranch, LoaderCircle, MessageCircleQuestion, TriangleAlert } from "lucide-react";
 
 import type { Ticket } from "../domain/ticket";
 import type { AgentView, RunState } from "../state/boardModel";
+import { usePrContext } from "../state/prStatus";
 import { Tooltip } from "../ui/Tooltip";
 import { ProviderGlyph } from "../usage/ProviderGlyph";
 import { CARD_HEIGHT } from "./layout";
+import { SetupFailure, useSetupLine } from "./SetupLine";
 import { ReviewChanges } from "./ReviewChanges";
 
 const STATE = {
@@ -29,6 +31,8 @@ export function AgentCard({
   onOpen: () => void;
 }) {
   const state = STATE[agent.runState];
+  const environmentId = usePrContext().project.environmentId;
+  const setup = useSetupLine(environmentId, agent.threadId);
   return (
     <div className="relative" style={{ height: CARD_HEIGHT }}>
       <button
@@ -75,6 +79,18 @@ export function AgentCard({
             <TriangleAlert className="size-3 shrink-0" aria-hidden />
             Outside the role registry
           </span>
+        ) : setup !== null ? (
+          <span
+            data-testid="setup-line"
+            className={`flex min-w-0 items-center gap-1 text-[11px] ${setup.kind === "failed" ? "text-red-300" : "text-sky-300"}`}
+          >
+            {setup.kind === "failed" ? (
+              <TriangleAlert className="size-3 shrink-0" aria-hidden />
+            ) : (
+              <LoaderCircle className="size-3 shrink-0 animate-spin" aria-hidden />
+            )}
+            <span className="truncate">{setup.text}</span>
+          </span>
         ) : (
           <span className="flex min-w-0 items-center gap-1 text-[11px] text-faint">
             <GitBranch className="size-3 shrink-0" aria-hidden />
@@ -89,6 +105,9 @@ export function AgentCard({
             className="grid size-5 place-items-center rounded text-faint hover:bg-hover hover:text-fg"
           />
         </span>
+      )}
+      {setup?.kind === "failed" && (
+        <SetupFailure environmentId={environmentId} threadId={agent.threadId} line={setup} />
       )}
     </div>
   );

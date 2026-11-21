@@ -1,7 +1,7 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { TriangleAlert } from "lucide-react";
-import { useContext, useMemo } from "react";
+import { useContext, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { ArtifactsProvider } from "../artifacts/ArtifactsContext";
@@ -15,6 +15,7 @@ import { frameOrderAtom, peekAtom } from "../state/boardUi";
 import { useThreadFamily } from "../state/family";
 import { PrProvider } from "../state/prStatus";
 import { focusedCardAtom, useBoardForYou } from "../state/forYou";
+import { addDocs } from "../state/attachmentUploads";
 import { useBoardView } from "../state/boardView";
 import type { ValidBoard } from "../store/boardFiles";
 import { ForYouLane } from "./ForYouLane";
@@ -35,6 +36,7 @@ export function BoardScreen({
   listed: ValidBoard;
 }) {
   const registry = useContext(RegistryContext);
+  const [dropError, setDropError] = useState<string | null>(null);
   const { board } = listed;
   const { model, issue, stats } = useBoardView(project, listed);
   const order = useAtomValue(frameOrderAtom)[board.id] ?? NO_ORDER;
@@ -77,7 +79,17 @@ export function BoardScreen({
       <PrProvider value={prContext}>
         <div className="flex h-full min-h-0">
           <MainTabs files={artifacts.value.files}>
-            <Viewport content={layout.content}>
+            <Viewport
+              content={layout.content}
+              onDropFiles={(files) =>
+                void addDocs(
+                  registry,
+                  project.environmentId,
+                  board.orchestratorThreadId,
+                  files,
+                ).then(setDropError)
+              }
+            >
               <OrchestratorCard
                 project={project}
                 listed={listed}
@@ -101,6 +113,15 @@ export function BoardScreen({
               />
             </Viewport>
             <div className="absolute bottom-3.5 left-3.5 z-10 flex max-w-[60%] flex-col gap-2">
+              {dropError !== null && (
+                <p
+                  role="alert"
+                  data-testid="drop-error"
+                  className="rounded-lg border border-red-400/40 bg-panel px-3 py-2 break-words text-red-300 shadow-panel"
+                >
+                  {dropError}
+                </p>
+              )}
               {issue !== null && (
                 <div
                   role="alert"
