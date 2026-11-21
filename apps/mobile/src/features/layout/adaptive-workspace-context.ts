@@ -38,7 +38,10 @@ export interface AdaptiveWorkspaceActions {
   readonly setNativeInspectorWidth: (width: number) => void;
 }
 
-/** Changes only with the window (size, fold, hinge), never with a pane toggle or the keyboard. */
+/**
+ * Changes with the window (size, fold, hinge) and once a sidebar resize ends, never with a pane
+ * toggle or the keyboard.
+ */
 interface AdaptiveWorkspaceLayoutValue extends AdaptiveWorkspaceActions {
   readonly layout: Layout;
   readonly nativeInspectorWidth: number;
