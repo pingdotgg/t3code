@@ -20,6 +20,7 @@ import { makeCli } from "../binCli.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "../cloud/CliState.ts";
 import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
 } from "../cloud/config.ts";
@@ -111,6 +112,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         readonly linkMode?: "managed" | "publish_only";
         /** Linked from desktop, web, or mobile: no CLI-desired link is stored. */
         readonly linkedByApp?: boolean;
+        readonly revoked?: boolean;
       },
     ) =>
       Effect.gen(function* () {
@@ -121,7 +123,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
             const listening = NodeHttp.createServer((request, response) => {
               requests.push(`${request.method} ${request.url}`);
               response.writeHead(200, { "content-type": "application/json" });
-              response.end(JSON.stringify({ ok: true, endpointRuntimeStatus: null }));
+              response.end(
+                JSON.stringify(
+                  request.url === "/api/connect/reachability"
+                    ? {
+                        status: "reachable",
+                        checkedAt: "2026-01-01T00:00:00.000Z",
+                        readyConnections: 4,
+                        protocol: "quic",
+                      }
+                    : { ok: true, endpointRuntimeStatus: null },
+                ),
+              );
             });
             listening.listen(0, "127.0.0.1", () => resume(Effect.succeed(listening)));
           }),
@@ -169,6 +182,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
                 `${baseDir}/userdata/secrets/${CLOUD_CLI_DESIRED_LINK_SECRET}.bin`,
                 options.linkMode ?? "managed",
               );
+          if (options.revoked) {
+            yield* Effect.all([
+              fs.writeFileString(
+                `${baseDir}/userdata/secrets/${CLOUD_LINKED_USER_ID}.bin`,
+                "user_cli_linked",
+              ),
+              fs.writeFileString(`${baseDir}/userdata/secrets/${CLOUD_LINK_REVOKED}.bin`, "true"),
+            ]);
+          }
         }
 
         yield* Command.runWith(makeCli({ cloudEnabled: true }), { version: "0.0.0" })([
@@ -263,6 +285,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
         });
 
         assert.include(printed, "Exposure: publish-only");
+        assert.notInclude(printed, "Other devices can reach this machine");
+      }),
+    );
+
+    it.effect("status does not report a link the relay revoked as reachable", () =>
+      Effect.gen(function* () {
+        const { printed } = yield* runConnect(process.pid, { command: "status", revoked: true });
+
+        assert.include(printed, "Environment link: removed from T3 Connect");
         assert.notInclude(printed, "Other devices can reach this machine");
       }),
     );
