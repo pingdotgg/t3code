@@ -27,6 +27,25 @@ On a Windows machine, run the same commands from WSL with `dev:windows` and `sta
 
 `PORT` moves the dev server. `AGENT_BOARD_CDP_PORT` turns on Electron's remote debugging port. Electron prints `board:first-paint <ms>` once the renderer has painted, measured from the main process start.
 
+## Releases
+
+Releases are on the fork's Releases page as `board-v<version>`.
+Download `Agent-Board-Setup-<version>.exe` and run it for a per-user install with Start menu and desktop shortcuts, or unzip `Agent-Board-<version>-win-x64.zip` and run `Agent Board.exe`.
+Neither is code signed, so Windows SmartScreen warns on first run, and neither updates itself.
+`SHA256SUMS` lists the hash of each file.
+
+To cut a release, check out a clean `origin/main` and run this.
+
+```sh
+node apps/board/scripts/release.mjs 0.1.0
+```
+
+It stops if the tag exists, runs the same gates as CI, builds, packages with electron-builder from Linux with no Wine, writes `SHA256SUMS` and the release notes, and runs `gh release create`.
+A test release comes from a pushed branch and is marked with `--prerelease`.
+With `ANTHROPIC_API_KEY` set, the notes open with a Claude summary of the pull requests since the previous `board-v*` tag, over GitHub's generated list. Without it, the notes are GitHub's list alone.
+
+When Actions is available on the repo, `gh workflow run agent-board.yml -f version=0.1.0` runs the same script in a `release` job, using the `ANTHROPIC_API_KEY` repo secret. Add `-f prerelease=true` for a pre-release.
+
 ## omp rules for Claude Code
 
 The `omp-kit` plugin in `plugins/` gives every Claude Code session the rules in `~/.omp/agent/rules`, the sticky `~/.omp/agent/RULES.md`, a TypeScript language server for the `LSP` tool, and `vp` on the Bash path. Rules are read at hook time, so editing a rule file takes effect in the next session. `OMP_KIT_RULES_DIR` points the engine at another rules folder, and `RULES.md` is read from that folder's parent.
