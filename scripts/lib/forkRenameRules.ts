@@ -403,7 +403,9 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     class: "false-positive",
     reason: "Base64 or hashed data: embedded images, lockfile integrity, signatures.",
     test: (o) =>
-      /base64,|integrity|sha(?:256|512)-/.test(o.line) || /^[A-Za-z0-9+/=]{40,}$/.test(stem(o)),
+      /base64,|integrity|sha(?:256|512)-/.test(o.line) ||
+      // Long generated identifiers are letters only; encoded data has digits or padding.
+      (/^[A-Za-z0-9+/=]{40,}$/.test(stem(o)) && /[0-9+/=]/.test(stem(o).replace(/t3/gi, ""))),
   },
 
   {

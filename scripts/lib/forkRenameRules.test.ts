@@ -34,6 +34,11 @@ describe("FORK_RENAME_RULES", () => {
     ["apps/web/src/a.tsx", "export function T3ComposerEditorView() {}", "identifier"],
     ["apps/web/src/a.ts", 'const message = "Restart T3 Code?";', "display"],
     [
+      "apps/server/src/device/ExpoApi.graphql.ts",
+      "export const T3CreateEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation = Schema.Struct({",
+      "identifier",
+    ],
+    [
       "apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx",
       "  make it available through T3\n  Connect.",
       "upstream-reference",

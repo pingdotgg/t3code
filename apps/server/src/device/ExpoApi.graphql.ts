@@ -96,11 +96,11 @@ export const CreateDeviceRunSessionDeviceRunSession = Schema.Struct({
 })
 export interface CreateDeviceRunSessionDeviceRunSession extends Schema.Struct.Type<typeof CreateDeviceRunSessionDeviceRunSession.fields> {}
 
-export const T3CreateEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation = Schema.Struct({
+export const LatheCreateEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation = Schema.Struct({
   /** Create a device run session */
   createDeviceRunSession: CreateDeviceRunSessionDeviceRunSession
 })
-export interface T3CreateEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation extends Schema.Struct.Type<typeof T3CreateEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation.fields> {}
+export interface LatheCreateEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation extends Schema.Struct.Type<typeof LatheCreateEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation.fields> {}
 
 /** `mutation LatheCreateEasSimulatorSession` */
 export const LatheCreateEasSimulatorSession = GraphQL.mutation("LatheCreateEasSimulatorSession", {
@@ -118,7 +118,7 @@ export const LatheCreateEasSimulatorSession = GraphQL.mutation("LatheCreateEasSi
   },
   result: Schema.Struct({
     /** Mutations that create, stop, update, and delete device run sessions */
-    deviceRunSession: T3CreateEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation
+    deviceRunSession: LatheCreateEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation
   })
 })
 export declare namespace LatheCreateEasSimulatorSession {
@@ -244,7 +244,7 @@ export const EnsureDeviceRunSessionStoppedDeviceRunSession = Schema.Struct({
 })
 export interface EnsureDeviceRunSessionStoppedDeviceRunSession extends Schema.Struct.Type<typeof EnsureDeviceRunSessionStoppedDeviceRunSession.fields> {}
 
-export const T3StopEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation = Schema.Struct({
+export const LatheStopEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation = Schema.Struct({
   /**
    * Ensure a device run session is stopped. Idempotent: if the session has already
    * finished, the existing session is returned unchanged (an ERRORED session stays
@@ -252,7 +252,7 @@ export const T3StopEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation =
    */
   ensureDeviceRunSessionStopped: EnsureDeviceRunSessionStoppedDeviceRunSession
 })
-export interface T3StopEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation extends Schema.Struct.Type<typeof T3StopEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation.fields> {}
+export interface LatheStopEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation extends Schema.Struct.Type<typeof LatheStopEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation.fields> {}
 
 /** `mutation LatheStopEasSimulatorSession` */
 export const LatheStopEasSimulatorSession = GraphQL.mutation("LatheStopEasSimulatorSession", {
@@ -270,7 +270,7 @@ export const LatheStopEasSimulatorSession = GraphQL.mutation("LatheStopEasSimula
   },
   result: Schema.Struct({
     /** Mutations that create, stop, update, and delete device run sessions */
-    deviceRunSession: T3StopEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation
+    deviceRunSession: LatheStopEasSimulatorSessionDeviceRunSessionDeviceRunSessionMutation
   })
 })
 export declare namespace LatheStopEasSimulatorSession {
