@@ -419,13 +419,16 @@ const make = Effect.gen(function* () {
         function* (marker: string) {
           const stat = yield* fs.lstat(marker);
           if (stat.type !== "File") return true;
-          if (stat.size > 64n * 1024n) return false;
+          if (stat.size > 64n * 1024n) return true;
           const content = yield* fs.readFileString(marker);
           if (!content.startsWith("gitdir: ")) return false;
           const gitDir = content.slice(8).replace(/[\r\n]+$/, "");
           if (gitDir === "") return false;
           if (isNetworkPath(gitDir)) return true;
-          return yield* fs.exists(path.resolve(path.dirname(marker), gitDir));
+          // Git lets the filesystem resolve `..` after symlinks, so the target is not normalized.
+          return yield* fs.exists(
+            path.isAbsolute(gitDir) ? gitDir : `${path.dirname(marker)}/${gitDir}`,
+          );
         },
         Effect.orElseSucceed(() => true),
       );

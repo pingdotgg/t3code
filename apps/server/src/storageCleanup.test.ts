@@ -851,7 +851,7 @@ describe("checkpoint ref cleanup", () => {
   );
 });
 
-it.live.each(["repository", "uppercase", "bare", "separate"] as const)(
+it.live.each(["repository", "uppercase", "bare", "separate", "symlinked"] as const)(
   "keeps a worktree holding an ignored nested %s",
   (kind) =>
     runCleanupTest(
@@ -864,6 +864,10 @@ it.live.each(["repository", "uppercase", "bare", "separate"] as const)(
         } else if (kind === "separate") {
           // Git keeps trailing spaces in a gitdir pathname.
           yield* command(repo, ["init", "--separate-git-dir", `${repo}/metadata `, nested]);
+        } else if (kind === "symlinked") {
+          yield* command(repo, ["init", "--separate-git-dir", `${repo}/linked`, nested]);
+          yield* fs.symlink(`${repo}/.git`, `${nested}/link`);
+          yield* fs.writeFileString(`${nested}/.git`, "gitdir: link/../linked\n");
         } else {
           yield* command(repo, [
             "clone",
