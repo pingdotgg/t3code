@@ -12212,6 +12212,505 @@ describe("AcpAdapterV2", () => {
       ]);
     }).pipe(Effect.provide(layerTest)),
   );
+
+  const openUrlElicitationSession = (options: {
+    readonly id: string;
+    readonly onUrlElicitation: (input: {
+      readonly elicitationId: string;
+      readonly url: string;
+      readonly message: string;
+    }) => Effect.Effect<boolean>;
+    readonly hardInterrupt?: boolean;
+    readonly holdAgentRequest?: boolean;
+    readonly onLifecycleEvent?: (event: {
+      readonly type: string;
+      readonly requestId?: string;
+    }) => Effect.Effect<void>;
+  }) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      let elicitationHandler: Parameters<RuntimeService["handleElicitation"]>[0] | undefined;
+      let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
+      const promptStarted = yield* Deferred.make<void>();
+      const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+      const lifecycleEvents: Array<{
+        readonly type: string;
+        readonly requestId?: string;
+      }> = [];
+      const instanceId = ProviderInstanceId.make(`acp-test-url-elicitation-${options.id}`);
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const baseMakeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          handleSessionUpdate: (handler) =>
+            Effect.sync(() => {
+              sessionUpdateHandler = handler;
+            }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+          handleElicitation: (handler) =>
+            Effect.sync(() => {
+              elicitationHandler = handler;
+            }).pipe(Effect.andThen(runtime.handleElicitation(handler))),
+          prompt: () =>
+            Deferred.succeed(promptStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(promptGate)),
+            ),
+          ...(options.hardInterrupt
+            ? { terminateProcessGroup: Effect.void }
+            : {
+                cancel: Deferred.succeed(promptGate, { stopReason: "cancelled" }).pipe(
+                  Effect.asVoid,
+                ),
+              }),
+        }),
+      });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          ...(options.hardInterrupt ? { terminateRuntimeProcessGroupOnInterrupt: true } : {}),
+          ...(options.holdAgentRequest
+            ? { enablePostSettleContinuation: true, wakeOnDetachedRequest: true }
+            : {}),
+          onUrlElicitation: options.onUrlElicitation,
+          makeRuntime: (input) =>
+            Effect.sync(() => {
+              runtimeInput = input;
+            }).pipe(Effect.andThen(baseMakeRuntime(input))),
+        },
+        selfInvocation,
+        ...(options.holdAgentRequest ? { continuationRequests: { offer: () => Effect.void } } : {}),
+        testHooks: {
+          onNativeResponseLifecycle: (event) => {
+            const summary = {
+              type: event.type,
+              ...(event.requestId === undefined ? {} : { requestId: event.requestId }),
+            };
+            lifecycleEvents.push(summary);
+            return options.onLifecycleEvent?.(summary) ?? Effect.void;
+          },
+        },
+      });
+      const threadId = ThreadId.make(`thread-acp-url-elicitation-${options.id}`);
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const sessionScope = yield* Scope.fork(yield* Scope.Scope);
+      yield* Effect.addFinalizer(() =>
+        Deferred.succeed(promptGate, { stopReason: "cancelled" }).pipe(Effect.ignore),
+      );
+      const runtime = yield* adapter
+        .openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            `provider-session-acp-url-elicitation-${options.id}`,
+          ),
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.provideService(Scope.Scope, sessionScope));
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      yield* Deferred.await(promptStarted);
+      if (
+        sessionUpdateHandler === undefined ||
+        elicitationHandler === undefined ||
+        runtimeInput?.onOutgoingResponse === undefined
+      ) {
+        return yield* Effect.die("ACP runtime must register update and elicitation handlers");
+      }
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      return {
+        runtime,
+        sessionScope,
+        providerThread,
+        providerTurnId,
+        events,
+        lifecycleEvents,
+        sessionUpdateHandler,
+        elicitationHandler,
+        onOutgoingResponse: runtimeInput.onOutgoingResponse,
+      };
+    });
+
+  it.live(
+    "projects session/update notifications and resolves accept/decline while URL elicitation awaits consent",
+    () =>
+      Effect.gen(function* () {
+        const acceptStarted = yield* Deferred.make<void>();
+        const acceptConsent = yield* Deferred.make<boolean>();
+        const declineStarted = yield* Deferred.make<void>();
+        const declineConsent = yield* Deferred.make<boolean>();
+        const session = yield* openUrlElicitationSession({
+          id: "nonblocking",
+          onUrlElicitation: ({ elicitationId }) =>
+            elicitationId === "url-auth-accept"
+              ? Deferred.succeed(acceptStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(acceptConsent)),
+                )
+              : Deferred.succeed(declineStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(declineConsent)),
+                ),
+        });
+
+        const acceptFiber = yield* session
+          .elicitationHandler(
+            {
+              mode: "url",
+              url: "https://example.com/auth",
+              elicitationId: "url-auth-accept",
+              sessionId: "mock-session-1",
+              message: "Sign in to continue",
+            },
+            { requestId: "url-elicit-accept", method: "elicitation/create" },
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(acceptStarted);
+        assert.isFalse(
+          session.lifecycleEvents.some(
+            (event) => event.type === "registered" && event.requestId === "url-elicit-accept",
+          ),
+        );
+
+        const updateResult = yield* session
+          .sessionUpdateHandler({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call",
+              toolCallId: "call-during-url-elicit",
+              title: "Read file",
+              kind: "read",
+              status: "in_progress",
+              rawInput: { path: "README.md" },
+            },
+          })
+          .pipe(Effect.timeoutOption("1 second"));
+        assert.isTrue(Option.isSome(updateResult));
+
+        const projected = yield* Effect.gen(function* () {
+          while (true) {
+            const event = yield* Queue.take(session.events);
+            if (
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "call-during-url-elicit"
+            ) {
+              return event;
+            }
+          }
+        }).pipe(Effect.timeoutOption("1 second"));
+        assert.isTrue(Option.isSome(projected));
+
+        yield* Deferred.succeed(acceptConsent, true);
+        const acceptResponse = yield* Fiber.join(acceptFiber).pipe(
+          Effect.timeoutOption("1 second"),
+        );
+        assert(Option.isSome(acceptResponse));
+        assert.deepEqual(acceptResponse.value, { action: "accept" });
+        assert.isTrue(
+          session.lifecycleEvents.some(
+            (event) => event.type === "registered" && event.requestId === "url-elicit-accept",
+          ),
+        );
+        yield* session.onOutgoingResponse("url-elicit-accept");
+        assert.isTrue(
+          session.lifecycleEvents.some(
+            (event) => event.type === "removed" && event.requestId === "url-elicit-accept",
+          ),
+        );
+
+        const declineFiber = yield* session
+          .elicitationHandler(
+            {
+              mode: "url",
+              url: "https://example.com/auth-2",
+              elicitationId: "url-auth-decline",
+              sessionId: "mock-session-1",
+              message: "Sign in again",
+            },
+            { requestId: "url-elicit-decline", method: "elicitation/create" },
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(declineStarted);
+        yield* Deferred.succeed(declineConsent, false);
+        const declineResponse = yield* Fiber.join(declineFiber).pipe(
+          Effect.timeoutOption("1 second"),
+        );
+        assert(Option.isSome(declineResponse));
+        assert.deepEqual(declineResponse.value, { action: "decline" });
+        yield* session.onOutgoingResponse("url-elicit-decline");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("allows soft interruptTurn and session close while URL elicitation awaits consent", () =>
+    Effect.gen(function* () {
+      const urlStarted = yield* Deferred.make<void>();
+      const urlConsent = yield* Deferred.make<boolean>();
+      const session = yield* openUrlElicitationSession({
+        id: "soft-interrupt",
+        onUrlElicitation: () =>
+          Deferred.succeed(urlStarted, undefined).pipe(Effect.andThen(Deferred.await(urlConsent))),
+      });
+
+      const elicitationFiber = yield* session
+        .elicitationHandler(
+          {
+            mode: "url",
+            url: "https://example.com/auth",
+            elicitationId: "url-auth-soft-stop",
+            sessionId: "mock-session-1",
+            message: "Sign in to continue",
+          },
+          { requestId: "url-elicit-soft-stop", method: "elicitation/create" },
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(urlStarted);
+
+      const interrupted = yield* session.runtime
+        .interruptTurn({
+          providerThread: session.providerThread,
+          providerTurnId: session.providerTurnId,
+        })
+        .pipe(Effect.timeoutOption("2 seconds"));
+      assert.isTrue(Option.isSome(interrupted));
+
+      const terminal = yield* Effect.gen(function* () {
+        while (true) {
+          const event = yield* Queue.take(session.events);
+          if (event.type === "turn.terminal") return event;
+        }
+      }).pipe(Effect.timeoutOption("1 second"));
+      assert(Option.isSome(terminal));
+      assert.equal(terminal.value.status, "interrupted");
+
+      const closed = yield* Scope.close(session.sessionScope, Exit.void).pipe(
+        Effect.timeoutOption("2 seconds"),
+      );
+      assert.isTrue(Option.isSome(closed));
+
+      yield* Deferred.succeed(urlConsent, true);
+      const staleResponse = yield* Fiber.join(elicitationFiber).pipe(
+        Effect.timeoutOption("200 millis"),
+      );
+      assert.isTrue(Option.isNone(staleResponse));
+      assert.isFalse(
+        session.lifecycleEvents.some(
+          (event) => event.type === "registered" && event.requestId === "url-elicit-soft-stop",
+        ),
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live(
+    "allows hard-restart interruptTurn without native response timeout and drops stale URL elicitation response",
+    () =>
+      Effect.gen(function* () {
+        const urlStarted = yield* Deferred.make<void>();
+        const urlConsent = yield* Deferred.make<boolean>();
+        const session = yield* openUrlElicitationSession({
+          id: "hard-interrupt",
+          hardInterrupt: true,
+          onUrlElicitation: () =>
+            Deferred.succeed(urlStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(urlConsent)),
+            ),
+        });
+
+        const elicitationFiber = yield* session
+          .elicitationHandler(
+            {
+              mode: "url",
+              url: "https://example.com/auth",
+              elicitationId: "url-auth-hard-stop",
+              sessionId: "mock-session-1",
+              message: "Sign in to continue",
+            },
+            { requestId: "url-elicit-hard-stop", method: "elicitation/create" },
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(urlStarted);
+
+        const interrupted = yield* session.runtime
+          .interruptTurn({
+            providerThread: session.providerThread,
+            providerTurnId: session.providerTurnId,
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.timeoutOption("1 second"));
+        assert.isTrue(Option.isSome(interrupted));
+        assert.isFalse(
+          session.lifecycleEvents.some(
+            (event) => event.type === "timer_started" || event.type === "failed",
+          ),
+        );
+
+        yield* Deferred.succeed(urlConsent, true);
+        const staleResponse = yield* Fiber.join(elicitationFiber).pipe(
+          Effect.timeoutOption("200 millis"),
+        );
+        assert.isTrue(Option.isNone(staleResponse));
+        assert.isFalse(
+          session.lifecycleEvents.some(
+            (event) => event.type === "registered" && event.requestId === "url-elicit-hard-stop",
+          ),
+        );
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live(
+    "does not deadlock replacement teardown after URL elicitation registration under holdingAgentRequest",
+    () =>
+      Effect.gen(function* () {
+        const urlStarted = yield* Deferred.make<void>();
+        const urlConsent = yield* Deferred.make<boolean>();
+        const watcherStarted = yield* Deferred.make<void>();
+        let triggerReplacement: (() => Effect.Effect<void>) | undefined;
+        let replacementFiber: Fiber.Fiber<void, ProviderAdapter.ProviderAdapterV2Error> | undefined;
+        const session = yield* openUrlElicitationSession({
+          id: "holding-agent-request-race",
+          hardInterrupt: true,
+          holdAgentRequest: true,
+          onUrlElicitation: () =>
+            Deferred.succeed(urlStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(urlConsent)),
+            ),
+          onLifecycleEvent: (event) =>
+            event.type === "registered" && event.requestId === "url-elicit-race"
+              ? (triggerReplacement?.() ?? Effect.void)
+              : event.type === "watcher_started"
+                ? Deferred.succeed(watcherStarted, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+        });
+        const testScope = yield* Scope.Scope;
+        triggerReplacement = () =>
+          Effect.gen(function* () {
+            replacementFiber = yield* session.runtime
+              .interruptTurn({
+                providerThread: session.providerThread,
+                providerTurnId: session.providerTurnId,
+                requestRuntimeRestart: true,
+              })
+              .pipe(Effect.forkIn(testScope, { startImmediately: true }));
+            // Yield so replacement parks on runtimeCallbackPermit before registration releases it.
+            yield* Effect.yieldNow;
+          });
+
+        const elicitationFiber = yield* session
+          .elicitationHandler(
+            {
+              mode: "url",
+              url: "https://example.com/auth",
+              elicitationId: "url-auth-race",
+              sessionId: "mock-session-1",
+              message: "Sign in to continue",
+            },
+            { requestId: "url-elicit-race", method: "elicitation/create" },
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(urlStarted);
+        yield* Deferred.succeed(urlConsent, true);
+
+        const watching = yield* Deferred.await(watcherStarted).pipe(
+          Effect.timeoutOption("1 second"),
+        );
+        assert.isTrue(
+          Option.isSome(watching),
+          "replacement teardown must acquire runtimeCallbackPermit and wait on the pending acknowledgement",
+        );
+
+        // Must return immediately without needing runtimeCallbackPermit again so RPC can flush the response.
+        const response = yield* Fiber.join(elicitationFiber).pipe(Effect.timeoutOption("1 second"));
+        assert(Option.isSome(response));
+        assert.deepEqual(response.value, { action: "accept" });
+        yield* session.onOutgoingResponse("url-elicit-race");
+
+        assert(replacementFiber !== undefined);
+        const replaced = yield* Fiber.join(replacementFiber).pipe(Effect.timeoutOption("1 second"));
+        assert.isTrue(Option.isSome(replaced));
+        assert.isFalse(session.lifecycleEvents.some((event) => event.type === "failed"));
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("drops a URL elicitation defect when the callback generation has already retired", () =>
+    Effect.gen(function* () {
+      const urlStarted = yield* Deferred.make<void>();
+      const urlGate = yield* Deferred.make<void>();
+      const session = yield* openUrlElicitationSession({
+        id: "stale-defect",
+        hardInterrupt: true,
+        onUrlElicitation: () =>
+          Deferred.succeed(urlStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(urlGate)),
+            Effect.andThen(Effect.die(new Error("boom after retirement"))),
+          ),
+      });
+
+      const elicitationFiber = yield* session
+        .elicitationHandler(
+          {
+            mode: "url",
+            url: "https://example.com/auth",
+            elicitationId: "url-auth-defect",
+            sessionId: "mock-session-1",
+            message: "Sign in to continue",
+          },
+          { requestId: "url-elicit-defect", method: "elicitation/create" },
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(urlStarted);
+
+      const interrupted = yield* session.runtime
+        .interruptTurn({
+          providerThread: session.providerThread,
+          providerTurnId: session.providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.timeoutOption("1 second"));
+      assert.isTrue(Option.isSome(interrupted));
+
+      yield* Deferred.succeed(urlGate, undefined);
+      const staleExit = yield* Fiber.await(elicitationFiber).pipe(
+        Effect.timeoutOption("200 millis"),
+      );
+      assert.isTrue(
+        Option.isNone(staleExit),
+        "URL elicitation defect after generation retirement must park instead of emitting a stale error response",
+      );
+      assert.isFalse(
+        session.lifecycleEvents.some(
+          (event) => event.type === "registered" && event.requestId === "url-elicit-defect",
+        ),
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
 });
 
 describe("acpPostSettleContinuationOfferEvidence", () => {
