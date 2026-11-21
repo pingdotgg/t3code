@@ -3865,9 +3865,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const session = yield* requireSession(input.threadId, terminalId);
         session.history.clear();
         session.pendingHistoryControlSequence = "";
-        session.pendingProcessEvents = [];
+        // Scrollback clearing must preserve lifecycle events and the active drain owner.
+        session.pendingProcessEvents = session.pendingProcessEvents
+          .slice(session.pendingProcessEventIndex)
+          .filter((event) => event?.type === "exit");
         session.pendingProcessEventIndex = 0;
-        session.processEventDrainRunning = false;
         const eventStamp = advanceEventSequence(session);
         // A drain waits for the key to go idle, which never happens while the shell keeps
         // printing; every reader of the file flushes it first.
