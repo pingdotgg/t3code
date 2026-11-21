@@ -7777,6 +7777,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* applyItem(otherThreadId, otherRunId);
 
         const snapshot = yield* projectionStore.getShellSnapshot({ projectId });
+        const withoutItemCounts = yield* projectionStore.getShellSnapshot({
+          projectId,
+          includeItemCounts: false,
+        });
+        assert.deepEqual(
+          withoutItemCounts.threads,
+          snapshot.threads.map((thread) => ({
+            ...thread,
+            itemCount: 0,
+            visibleItemCount: 0,
+          })),
+        );
         const expected = [
           [busyThreadId, 4],
           [emptyThreadId, 0],
@@ -10699,6 +10711,21 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]) {
         assert.equal(shell?.visibleItemCount, targetAfterRollback.visibleTurnItems.length);
       }
+      const lightweightRead = traceSqlStatements();
+      const withoutItemCounts = yield* projectionStore
+        .getShellSnapshot({ projectId, includeItemCounts: false })
+        .pipe(Effect.withTracer(lightweightRead.tracer));
+      assert.isNotEmpty(lightweightRead.statements);
+      assert.deepEqual(
+        lightweightRead.statements.filter(
+          (query) =>
+            query.includes("AS rolled_back_at") ||
+            query.includes("orchestration_v2_projection_turn_item_counts"),
+        ),
+        [],
+      );
+      const forkShell = withoutItemCounts.threads.find((thread) => thread.id === targetThreadId);
+      assert.equal(forkShell?.visibleItemCount, 0);
       const forwardPage = yield* projectionStore.getTimelinePage(targetThreadId, {
         view: "activity",
         limit: 2,

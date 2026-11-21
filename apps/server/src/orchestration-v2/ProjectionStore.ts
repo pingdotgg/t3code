@@ -490,6 +490,8 @@ export interface ProjectionTimelinePage {
 }
 
 export interface ShellSnapshotOptions {
+  /** Skip item counts for consumers that only need thread and worktree state. Defaults to true. */
+  readonly includeItemCounts?: boolean;
   readonly location?: "active" | "archive";
   readonly projectId?: ProjectId;
   readonly unsettledOnly?: boolean;
@@ -9212,6 +9214,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const readShellSnapshotRows = Effect.fn("ProjectionStore.readShellSnapshotRows")(function* (
       options: ShellSnapshotOptions | undefined,
     ) {
+      const includeItemCounts = options?.includeItemCounts !== false;
       const targetThreadRows = yield* selectShellThreadRows(undefined, options);
       const targetThreadIds = new Set(targetThreadRows.map((row) => ThreadId.make(row.thread_id)));
       const rowsByThreadId = new Map(
@@ -9234,7 +9237,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       }
       const threadRows = [...rowsByThreadId.values()];
       const threadIds = [...rowsByThreadId.keys()];
-      const forkSourceIds = shellForkSourceIds(threadRows);
+      const forkSourceIds = includeItemCounts ? shellForkSourceIds(threadRows) : [];
       const readForThreadIds = <A>(
         read: (ids: ReadonlyArray<ThreadId>) => Effect.Effect<ReadonlyArray<A>, unknown>,
         ids: ReadonlyArray<ThreadId> = threadIds,
@@ -9249,7 +9252,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ] = yield* Effect.all([
         readForThreadIds(selectShellRunRows, forkSourceIds),
         readForThreadIds(selectShellRunItemCounts, forkSourceIds),
-        readForThreadIds(selectShellItemCounts),
+        readForThreadIds(selectShellItemCounts, includeItemCounts ? threadIds : []),
         sql<{ readonly snapshot_sequence: number | null }>`
         SELECT MAX(sequence) AS snapshot_sequence
         FROM orchestration_events
@@ -9269,6 +9272,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       ]);
       return {
+        includeItemCounts,
         targetThreadIds,
         threadRows,
         runRows,
@@ -9281,6 +9285,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     });
 
     const decodeShellSnapshot = Effect.fn("ProjectionStore.decodeShellSnapshot")(function* ({
+      includeItemCounts,
       targetThreadIds,
       threadRows,
       runRows,
@@ -9314,10 +9319,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .map((state) =>
           shellFromState({
             state,
-            visibleItemCount: visibleItemCountForShell({
-              threadId: state.thread.id,
-              statesByThreadId,
-            }),
+            visibleItemCount: includeItemCounts
+              ? visibleItemCountForShell({ threadId: state.thread.id, statesByThreadId })
+              : 0,
           }),
         );
 
