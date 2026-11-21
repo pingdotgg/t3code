@@ -3236,10 +3236,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds, revealedMessageId } =
     interactionState;
   const markdownLinkRequest = useRef<AbortController | null>(null);
+  const markdownSaveRequest = useRef<AbortController | null>(null);
   const onInlinePlaybackStart = () => {
     markdownLinkRequest.current?.abort();
   };
-  useFocusEffect(useCallback(() => () => markdownLinkRequest.current?.abort(), []));
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        markdownLinkRequest.current?.abort();
+        markdownSaveRequest.current?.abort();
+      },
+      [],
+    ),
+  );
   // A preview belongs to the thread and presentation it was opened from: a change closes it and
   // aborts a pending lookup.
   const markdownLinkScope = JSON.stringify([
@@ -3247,8 +3256,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     props.threadId,
     props.contentPresentation.kind,
   ]);
-  // oxlint-disable-next-line react/exhaustive-effect-dependencies, t3code/no-unreasoned-state-sync -- A scope change (thread or presentation) aborts the pending link lookup opened from the old scope.
-  useLayoutEffect(() => () => markdownLinkRequest.current?.abort(), [markdownLinkScope]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A scope change aborts lookups opened from the old thread or presentation.
+  useLayoutEffect(
+    () => () => {
+      markdownLinkRequest.current?.abort();
+      markdownSaveRequest.current?.abort();
+    },
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Scope changes cancel lookups even though cleanup only reads refs.
+    [markdownLinkScope],
+  );
   const [preview, setPreview] = useState<{
     readonly scope: string;
     readonly file: FilePreviewSource | null;
@@ -3633,45 +3649,46 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (!target) return;
       switch (actionId) {
         case "copy-full-path":
-        case "copy-relative-path": {
+        case "copy-relative-path":
+        case "save": {
           const presentation = resolveMarkdownLinkPresentation(href);
           const path =
             presentation.kind === "file"
               ? resolveFileLinkPath(props.workspaceRoot, presentation.path)
               : null;
           if (presentation.kind !== "file" || path === null) return;
-          markdownLinkRequest.current?.abort();
+          const lookupRequest = actionId === "save" ? markdownSaveRequest : markdownLinkRequest;
+          lookupRequest.current?.abort();
           const request = new AbortController();
-          markdownLinkRequest.current = request;
+          lookupRequest.current = request;
           void findFileLinkTarget(presentation.path, path, request.signal, reply).then((found) => {
             if (request.signal.aborted) return;
             const fullPath =
               props.workspaceRoot && !isAbsolutePath(found)
                 ? resolveWorkspaceFilePath(props.workspaceRoot, found)
                 : found;
-            const clipboardPath = fileChipClipboardPath(
-              {
-                ...target,
-                ...(target.fullPath ? { fullPath } : {}),
-                ...(target.relativePath
-                  ? {
-                      relativePath:
-                        resolveWorkspaceRelativeFilePath(props.workspaceRoot, fullPath) ??
-                        target.relativePath,
-                    }
-                  : {}),
-              },
-              actionId,
-            );
+            const resolvedTarget = {
+              ...target,
+              ...(target.fullPath ? { fullPath } : {}),
+              ...(target.relativePath
+                ? {
+                    relativePath:
+                      resolveWorkspaceRelativeFilePath(props.workspaceRoot, fullPath) ??
+                      target.relativePath,
+                  }
+                : {}),
+            };
+            if (actionId === "save") {
+              void shareFileChip(resolvedTarget);
+              return;
+            }
+            const clipboardPath = fileChipClipboardPath(resolvedTarget, actionId);
             if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
           });
           return;
         }
         case "open-file":
           onMarkdownLinkPress(href, false, reply);
-          return;
-        case "save":
-          shareFileChip(target);
           return;
       }
     },
