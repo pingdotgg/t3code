@@ -3,15 +3,27 @@ name: verify
 description: |
   Browser-based verification of implemented changes and related functionality. Generates a
   test checklist from what changed, gets user approval, then systematically tests each item
-  in a browser (in T3 Code: the preview tools). Run after implementation is complete.
+  in a browser (T3 Code's preview tools first). Run after implementation is complete.
 ---
 
 # Verify: browser-based testing
 
 Systematically verify that implemented changes work correctly AND haven't broken related
-functionality. Use a browser to test everything visually. In T3 Code that is the preview tools:
-`preview_open`, `preview_navigate`, `preview_snapshot`, `preview_act`, `preview_wait_for` and
-`preview_evaluate`. Outside T3 Code, use whatever browser tools your harness offers.
+functionality. Use a browser to test everything visually.
+
+## Which browser
+
+This order holds for every skill that checks a page, and it outranks a general "browser first" rule:
+
+1. **T3 Code's browser**, the `preview_*` tools: `preview_open`, `preview_navigate`,
+   `preview_snapshot`, `preview_act`, `preview_wait_for` and `preview_evaluate`. They load
+   late, so look them up (`ToolSearch` "preview") before deciding they are missing. Each agent
+   gets its own tab, and nothing extra runs on the host.
+2. **A remote browser** on another machine, such as `brave-windows`, when the preview tools are
+   absent or can't reach the page. Work in new tabs only and close the ones you opened.
+3. **A local browser** (`chrome-devtools`, Playwright) only when both fail. It starts a browser on
+   the machine that runs the server and every other agent, and eats its RAM. Say in your report
+   that you fell back to it, and why.
 
 ## Phase 1: build the checklist
 

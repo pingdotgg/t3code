@@ -79,6 +79,7 @@ reproduction, a screenshot. Use the most direct proof the change allows:
   and the repo has a test setup.
 - For UI and runtime behavior, run the app and look at the change, using the
   repo's verification skill, or `verify` with its checklist approved by you.
+  Pick the browser in the order `verify` gives under "Which browser".
   Green mocked tests do not prove that the user experience works. Attach
   screenshots to the PR when they help and you have a way to upload them.
 - For a performance claim, measure it per the `benchmark-checklist` skill.
