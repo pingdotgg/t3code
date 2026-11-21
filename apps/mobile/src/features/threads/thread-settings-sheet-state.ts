@@ -30,6 +30,7 @@ export function modelMatchesCatalogQuery(input: {
   return [
     input.model.label,
     input.model.subtitle,
+    input.model.description ?? "",
     input.model.selection.model,
     input.providerLabel,
   ].some((value) => value.toLocaleLowerCase().includes(query));

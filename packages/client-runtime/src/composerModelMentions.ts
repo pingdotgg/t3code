@@ -31,6 +31,7 @@ export function rankComposerModelMentions<T>(
         model.name,
         model.shortName,
         model.subProvider,
+        model.description,
         model.driverKind,
         model.providerDisplayName,
       ]
