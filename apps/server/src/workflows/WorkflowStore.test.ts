@@ -79,6 +79,27 @@ it.effect("a run still waits while one of the things it started side by side is 
       yield* store.stepEnded("r1", "approve", "completed", null);
       yield* store.runResumed("r1");
       assert.deepStrictEqual(yield* now, ["running", null]);
+
+      // One of them failed and paused the run: the others ending do not take that back.
+      yield* store.stepStarted("r1", "again", "agent");
+      yield* store.stepStarted("r1", "beside", "agent");
+      yield* store.stepStarted("r1", "later", "wait");
+      yield* store.runPaused("r1", "again gave up", true);
+      yield* store.stepEnded("r1", "beside", "completed", null);
+      yield* store.runResumed("r1");
+      yield* store.runStatus("r1", "waiting", "later");
+      const paused = yield* store.run("r1");
+      assert.deepStrictEqual(
+        [paused?.status, paused?.detail, Number(paused?.pauses), Number(paused?.held)],
+        ["paused", "again gave up", 1, 1],
+      );
+      // The sweep's resume is for the pause it read, not for one that came after it.
+      assert.isTrue(yield* store.runUnpaused("r1"));
+      yield* store.runPaused("r1", "gave up again");
+      assert.isFalse(
+        yield* store.runUnpaused("r1", { pauses: 1, updatedAt: paused?.updated_at ?? "" }),
+      );
+      assert.equal((yield* store.run("r1"))?.status, "paused");
     }),
   ),
 );

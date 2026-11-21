@@ -114,7 +114,18 @@ export class WorkflowStore extends Context.Service<
      * side by side is still out, which it then waits on.
      */
     readonly runResumed: (runId: string) => Effect.Effect<void>;
+    /** `held` unsaid keeps what the run had: a run put back to paused is still held. */
     readonly runPaused: (runId: string, detail: string, held?: boolean) => Effect.Effect<void>;
+    /**
+     * A paused run is running again. With `current`, only while that is still the pause: the
+     * sweep's deadline was worked out from it. False when the run was not changed.
+     */
+    readonly runUnpaused: (
+      runId: string,
+      current?: { readonly pauses: number; readonly updatedAt: string },
+    ) => Effect.Effect<boolean>;
+    /** The person's resume has reached the engine, so the run no longer waits for one. */
+    readonly runUnheld: (runId: string) => Effect.Effect<void>;
     readonly runEnded: (
       runId: string,
       status: "completed" | "stopped" | "skipped" | "cancelled",
@@ -295,44 +306,60 @@ export const make = Effect.gen(function* () {
         sql`
           UPDATE workflow_runs
           SET status = ${status}, detail = ${detail}, updated_at = ${at}
-          WHERE run_id = ${runId} AND ended_at IS NULL
+          WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
         `,
       );
     }),
     runResumed: Effect.fn("WorkflowStore.runResumed")(function* (runId) {
       const at = yield* now;
-      const out = yield* sql<{ name: string; kind: string }>`
-        SELECT name, kind FROM workflow_steps
-        WHERE run_id = ${runId} AND status = 'running' AND kind IN ('wait', 'ask', 'agent', 'sleep')
-        ORDER BY started_at, rowid LIMIT 1
-      `.pipe(Effect.orDie);
-      const waiting = out[0];
-      const detail =
-        waiting === undefined
-          ? null
-          : waiting.kind === "agent" || waiting.kind === "sleep"
-            ? `${waiting.kind} ${waiting.name}`
-            : waiting.name;
+      // One statement, so two of them ending at once cannot leave the run on one that has ended.
       yield* write(
         runId,
         sql`
+          WITH out AS (
+            SELECT CASE WHEN kind IN ('agent', 'sleep') THEN kind || ' ' || name ELSE name END
+              AS detail
+            FROM workflow_steps
+            WHERE run_id = ${runId} AND status = 'running'
+              AND kind IN ('wait', 'ask', 'agent', 'sleep')
+            ORDER BY started_at, rowid LIMIT 1
+          )
           UPDATE workflow_runs
-          SET status = ${waiting === undefined ? "running" : "waiting"}, detail = ${detail},
-              updated_at = ${at}
-          WHERE run_id = ${runId} AND ended_at IS NULL
+          SET status = CASE WHEN EXISTS (SELECT 1 FROM out) THEN 'waiting' ELSE 'running' END,
+              detail = (SELECT detail FROM out), updated_at = ${at}
+          WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
         `,
       );
     }),
-    runPaused: Effect.fn("WorkflowStore.runPaused")(function* (runId, detail, held = false) {
+    runPaused: Effect.fn("WorkflowStore.runPaused")(function* (runId, detail, held) {
       const at = yield* now;
       yield* write(
         runId,
         sql`
           UPDATE workflow_runs
           SET status = 'paused', detail = ${detail.slice(0, 2000)}, pauses = pauses + 1,
-            held = ${held ? 1 : 0}, updated_at = ${at}
+            held = ${held === undefined ? sql`held` : held ? 1 : 0}, updated_at = ${at}
           WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
         `,
+      );
+    }),
+    runUnpaused: Effect.fn("WorkflowStore.runUnpaused")(function* (runId, current) {
+      const at = yield* now;
+      const rows = yield* sql`
+        UPDATE workflow_runs SET status = 'running', detail = NULL, updated_at = ${at}
+        WHERE run_id = ${runId} AND ended_at IS NULL AND status = 'paused'
+          AND (${current === undefined ? 1 : 0} = 1
+            OR (pauses = ${current?.pauses ?? 0} AND updated_at = ${current?.updatedAt ?? ""}))
+        RETURNING run_id
+      `.pipe(Effect.orDie);
+      yield* PubSub.publish(changes, runId);
+      return rows.length > 0;
+    }),
+    runUnheld: Effect.fn("WorkflowStore.runUnheld")(function* (runId) {
+      // A pause since then set its own `held`.
+      yield* write(
+        runId,
+        sql`UPDATE workflow_runs SET held = 0 WHERE run_id = ${runId} AND status != 'paused'`,
       );
     }),
     runEnded: Effect.fn("WorkflowStore.runEnded")(function* (runId, status, detail, result) {
@@ -389,7 +416,11 @@ export const make = Effect.gen(function* () {
             `,
             // A step that finished is progress: the next pause is the first in a row again.
             status === "completed"
-              ? sql`UPDATE workflow_runs SET pauses = 0 WHERE run_id = ${runId} AND ended_at IS NULL`
+              ? // Not while paused: a step beside the one that failed is no progress past it.
+                sql`
+                  UPDATE workflow_runs SET pauses = 0
+                  WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
+                `
               : Effect.void,
           ),
         ),

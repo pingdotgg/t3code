@@ -470,36 +470,57 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     },
   );
 
-  const resume: Workflows["Service"]["resume"] = Effect.fn("Workflows.resume")(function* (runId) {
+  // Runs being resumed now: until the engine has them, the sweep must not take them for paused.
+  const resuming = new Set<string>();
+  /** With `pause`, the sweep's own resume, which only resumes that pause and not a later one. */
+  const resumeRun = Effect.fn("WorkflowEngine.resumeRun")(function* (
+    runId: string,
+    pause?: WorkflowStore.RunRow,
+  ) {
     const row = yield* requireRun(runId);
     const engine = byTag.get(row.engine_tag);
     if (engine === undefined) {
       return yield* new WorkflowNotRegisteredError({ workflow: row.engine_tag });
     }
     if (row.ended_at !== null) return;
-    // Marked first: once the engine is resumed, the step may fail again and pause the run, and
-    // that must be the last word. A crash in between leaves `running`, which the sweep corrects.
-    if (row.status === "paused") yield* store.runStatus(runId, "running", null);
-    // The step marks its run paused from inside the engine, a moment before the engine records
-    // the failure. Resuming in that moment would do nothing, so the record is waited for.
-    yield* withEngine(engine.poll(runId)).pipe(
-      Effect.repeat({
-        until: (result) => Option.isSome(result) && result.value._tag === "Suspended",
-        schedule: Schedule.spaced(RESUME_LOOK_EVERY),
-        times: RESUME_LOOKS,
-      }),
-    );
-    yield* withEngine(engine.resume(runId));
+    resuming.add(runId);
+    yield* Effect.gen(function* () {
+      // Marked first: once the engine is resumed, the step may fail again and pause the run, and
+      // that must be the last word. A crash in between leaves `running`, which the sweep corrects.
+      if (row.status === "paused") {
+        const unpaused = yield* store.runUnpaused(
+          runId,
+          pause === undefined
+            ? undefined
+            : { pauses: Number(pause.pauses), updatedAt: pause.updated_at },
+        );
+        if (!unpaused && pause !== undefined) return;
+      }
+      // The step marks its run paused from inside the engine, a moment before the engine records
+      // the failure. Resuming in that moment would do nothing, so the record is waited for.
+      yield* withEngine(engine.poll(runId)).pipe(
+        Effect.repeat({
+          until: (result) => Option.isSome(result) && result.value._tag === "Suspended",
+          schedule: Schedule.spaced(RESUME_LOOK_EVERY),
+          times: RESUME_LOOKS,
+        }),
+      );
+      yield* withEngine(engine.resume(runId));
+      yield* store.runUnheld(runId);
+    }).pipe(Effect.ensuring(Effect.sync(() => resuming.delete(runId))));
   });
+  const resume: Workflows["Service"]["resume"] = (runId) => resumeRun(runId);
 
-  /** A run the engine holds as failed while its row still says running: paused, after all. */
+  /** A run the engine holds as failed while its row says it goes on: paused, after all. */
   const reconcile = Effect.fn("WorkflowEngine.reconcile")(function* (row: WorkflowStore.RunRow) {
+    if (resuming.has(row.run_id)) return;
     const engine = byTag.get(row.engine_tag);
     if (engine === undefined) return;
     const result = yield* withEngine(engine.poll(row.run_id));
     if (Option.isNone(result) || result.value._tag !== "Suspended") return;
     if (result.value.failed !== true) return;
     const cause = result.value.cause;
+    // Held as it was: a run that waited for a person still does.
     yield* store.runPaused(
       row.run_id,
       cause === undefined ? "A step failed." : text(Cause.squash(cause)),
@@ -572,7 +593,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     for (const row of yield* store.everyRun("paused")) {
       const due = resumesAt(row);
       if (due === undefined || DateTime.isLessThan(at, due)) continue;
-      yield* Effect.ignore(resume(row.run_id));
+      yield* Effect.ignore(resumeRun(row.run_id, row));
     }
   }).pipe(Effect.withSpan("Workflows.sweep"));
 

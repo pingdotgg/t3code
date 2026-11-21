@@ -114,7 +114,8 @@ gets rows it cannot decode.
 **The pause is recorded in two places, a moment apart.** A failing step marks its run paused from
 inside the engine, just before the engine records the failure. `resume` waits for the engine's
 record, or it would resume a run the engine does not yet consider stopped and do nothing. The sweep
-puts back a run that still says `running` while the engine holds it as failed.
+puts back a run that still says it goes on while the engine holds it as failed, held for a person if
+it was, and leaves alone one a resume is under way for.
 
 **A step in flight cannot be interrupted.** The engine runs a step's body to its end. `cancel`
 therefore ends the run's row first, so nothing the step still does is recorded as the outcome, and
