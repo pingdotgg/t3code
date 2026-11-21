@@ -1,7 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -23,7 +25,6 @@ import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   type ClaudeModelCatalog,
   getClaudeCatalogModelCapabilities,
-  isClaudeCatalogUltracodeEffort,
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
@@ -34,6 +35,9 @@ import {
   hasClaudeManagedMcpConfig,
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
+import { readClaudeLaunchArgSettings } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
 /** `--tools` takes bare names; patterns go in the allow list. */
@@ -70,7 +74,13 @@ const decodeClaudeOutput = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Union([ClaudeOutputEnvelope, Schema.Array(ClaudeOutputMessage)])),
 );
 
-const ClaudeErrorResult = Schema.Struct({ is_error: Schema.Literal(true), result: Schema.String });
+// Only `success` results carry `result`; error subtypes such as
+// error_max_structured_output_retries report through `errors` instead.
+const ClaudeErrorResult = Schema.Struct({
+  is_error: Schema.Literal(true),
+  result: Schema.optionalKey(Schema.String),
+  errors: Schema.optionalKey(Schema.Array(Schema.String)),
+});
 const isClaudeErrorResult = Schema.is(ClaudeErrorResult);
 const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
@@ -80,7 +90,14 @@ function claudeErrorResult(stdout: string): string | undefined {
   const messages: ReadonlyArray<unknown> = Array.isArray(output) ? output : [output];
   return messages
     .filter(isClaudeErrorResult)
-    .map((message) => message.result.trim())
+    .map((message) =>
+      (
+        message.result ??
+        // error_during_execution mixes CLI telemetry into the list.
+        message.errors?.filter((error) => !error.startsWith("[ede_diagnostic]")).join("\n") ??
+        ""
+      ).trim(),
+    )
     .findLast((result) => result.length > 0);
 }
 
@@ -88,9 +105,15 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
+  routeModelCatalog: (
+    catalog: ClaudeModelCatalog,
+    cwd: string,
+  ) => Effect.Effect<ClaudeModelCatalog> = Effect.succeed,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
@@ -127,6 +150,36 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
+  const readImageBlocks = Effect.fn("readImageBlocks")(function* (
+    attachments: TextGenerationOperations.Request<Schema.Top>["attachments"],
+  ) {
+    const blocks: Array<{
+      type: "image";
+      source: { type: "base64"; media_type: string; data: string };
+    }> = [];
+    for (const attachment of attachments ?? []) {
+      if (attachment.type !== "image") continue;
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment,
+      });
+      if (!attachmentPath) continue;
+      const bytes = yield* fileSystem
+        .readFile(attachmentPath)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (!bytes) continue;
+      blocks.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: attachment.mimeType,
+          data: Buffer.from(bytes).toString("base64"),
+        },
+      });
+    }
+    return blocks;
+  });
+
   const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
@@ -134,12 +187,23 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchema: outputSchemaJson,
     modelSelection,
     investigate,
+    attachments,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
-    S["DecodingServices"]
+    S["DecodingServices"] | Scope.Scope
   > {
-    const catalog = yield* scopedModelCatalog;
+    const workingDirectory =
+      operation === "generateThreadTitle"
+        ? yield* fileSystem
+            .makeTempDirectoryScoped({ prefix: "lathe-claude-title-" })
+            .pipe(
+              Effect.mapError((cause) =>
+                normalizeCliError("claude", operation, cause, "Failed to create title directory"),
+              ),
+            )
+        : cwd;
+    const catalog = yield* routeModelCatalog(yield* scopedModelCatalog, workingDirectory);
     const resolvedModelSelection = {
       ...modelSelection,
       model: resolveClaudeModelSlug(catalog, modelSelection.model),
@@ -166,7 +230,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       resolvedEffort,
       resolvedModelSelection.model,
     );
-    const ultracode = isClaudeCatalogUltracodeEffort(resolvedEffort);
+    const ultracode = findDescriptor("ultracode")?.currentValue;
     const thinkingDescriptor = findDescriptor("thinking");
     const fastModeDescriptor = findDescriptor("fastMode");
     // Only a chosen value; otherwise Claude Code's own default applies, as in chat turns.
@@ -176,11 +240,22 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         : undefined;
     const fastMode =
       fastModeDescriptor?.type === "boolean" ? fastModeDescriptor.currentValue : undefined;
+    const launchArgSettings = yield* readClaudeLaunchArgSettings({
+      settings: claudeSettings,
+      cwd,
+      fileSystem,
+      path,
+    }).pipe(
+      Effect.mapError(
+        (cause) => new TextGenerationError({ operation, detail: cause.message, cause }),
+      ),
+    );
     const settings = {
+      ...launchArgSettings,
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
-      ...(ultracode ? { ultracode: true } : {}),
+      ...(typeof ultracode === "boolean" ? { ultracode } : {}),
     };
     const settingsJson = yield* encodeJsonForOperation(
       operation,
@@ -188,26 +263,34 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       "Failed to encode Claude CLI settings.",
     );
 
+    // `claude -p` accepts images only as content blocks of a stream-json user message.
+    const imageBlocks = yield* readImageBlocks(attachments);
+    const imageStdin =
+      imageBlocks.length > 0
+        ? `${yield* encodeJsonForOperation(
+            operation,
+            {
+              type: "user",
+              message: { role: "user", content: [{ type: "text", text: prompt }, ...imageBlocks] },
+            },
+            "Failed to encode Claude CLI input.",
+          )}\n`
+        : undefined;
+
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
+      withImages: boolean,
     ) {
-      const workingDirectory =
-        operation === "generateThreadTitle"
-          ? yield* fileSystem
-              .makeTempDirectoryScoped({ prefix: "lathe-claude-title-" })
-              .pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
-                ),
-              )
-          : cwd;
+      const streamJson = withImages && imageStdin !== undefined;
+      const stdin = streamJson ? imageStdin : prompt;
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
         [
           "-p",
-          "--output-format",
-          "json",
+          ...(streamJson
+            ? ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+            : ["--output-format", "json"]),
           "--json-schema",
           jsonSchemaStr,
           "--model",
@@ -225,6 +308,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 CLAUDE_INVESTIGATION_DENIED,
               ]
             : ["--tools", ""]),
+          ...(investigate ? ["--setting-sources", "user"] : []),
           "--disable-slash-commands",
           ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
           // managed-mcp.json already isolates servers and makes Claude reject this flag.
@@ -239,7 +323,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
-          stream: Stream.encodeText(Stream.make(prompt)),
+          stream: Stream.encodeText(Stream.make(stdin)),
         },
         forceKillAfter: "1 second",
       });
@@ -265,14 +349,28 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         { concurrency: "unbounded" },
       );
 
-      return { stdout, stderr, exitCode };
+      // stream-json prints one message per line and ends with the result message.
+      return {
+        stdout: streamJson ? (stdout.trim().split("\n").at(-1) ?? "") : stdout,
+        stderr,
+        exitCode,
+      };
     });
 
-    const rawStdout = yield* runClaudeCommand(true).pipe(
+    const runClaudeAttempt = (withImages: boolean) =>
+      runClaudeCommand(true, withImages).pipe(
+        Effect.filterOrElse(
+          (result) =>
+            result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
+          () => runClaudeCommand(false, withImages),
+        ),
+      );
+
+    const rawStdout = yield* runClaudeAttempt(true).pipe(
+      // Text-only models (custom models behind Anthropic-compatible endpoints) reject image blocks.
       Effect.filterOrElse(
-        (result) =>
-          result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
-        () => runClaudeCommand(false),
+        (result) => result.exitCode === 0 || imageStdin === undefined,
+        () => runClaudeAttempt(false),
       ),
       Effect.flatMap(({ stdout, stderr, exitCode }) => {
         if (exitCode === 0) return Effect.succeed(stdout);
@@ -343,5 +441,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
   });
 
-  return TextGenerationOperations.fromRunner("ClaudeTextGeneration", runClaudeJson);
+  return TextGenerationOperations.fromRunner(
+    "ClaudeTextGeneration",
+    <S extends Schema.Top>(request: TextGenerationOperations.Request<S>) =>
+      Effect.scoped(runClaudeJson(request)),
+  );
 });

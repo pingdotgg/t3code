@@ -11,7 +11,7 @@ import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
 import { useSshEnvironmentOutput } from "~/connection/sshOutput";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { usePrimarySettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
@@ -93,7 +93,9 @@ export function ConnectionDetails({
   const sshOutput = useSshEnvironmentOutput(sshTarget);
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const time = getTimestampFormatter(timestampFormat, true);
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "connection details" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget("connection details"),
+  });
 
   return (
     <div className="flex min-w-0 flex-col gap-2">

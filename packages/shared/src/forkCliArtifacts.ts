@@ -12,6 +12,9 @@ const LEGACY_CLI_NAME = "t3";
 /** Executable base names, the one to run first. */
 const CLI_NAMES = [FORK_IDENTITY.cliBin, LEGACY_CLI_NAME] as const;
 
+/** Either executable base name, as a regex group, for matching paths into a runtime directory. */
+export const FORK_CLI_EXECUTABLE_NAME_PATTERN = `(?:${CLI_NAMES.join("|")})`;
+
 /** The executable's file names in a runtime directory, the one to run first. */
 export const forkCliExecutableNames = (platform: string): ReadonlyArray<string> =>
   CLI_NAMES.map((name) => (platform === "win32" ? `${name}.exe` : name));

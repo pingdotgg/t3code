@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { memo, use, useEffect, useRef, useState } from "react";
 import {
   CheckIcon,
@@ -33,6 +34,7 @@ function DiagramCanvas({
   theme: DiagramTheme;
   onToggleTheme: () => void;
 }) {
+  const gt = useGT();
   const imageSource = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
   const canvas = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
@@ -53,33 +55,33 @@ function DiagramCanvas({
     <>
       <div
         className="flex flex-wrap items-center gap-1 border-b border-border px-4 py-2"
-        aria-label="Diagram controls"
+        aria-label={gt("Diagram controls")}
       >
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Zoom out"
+          aria-label={gt("Zoom out")}
           onClick={() => controls.current?.zoom(1 / 1.2)}
         >
           <ZoomOutIcon />
         </Button>
-        <output className="w-14 text-center text-xs tabular-nums" aria-label="Zoom level">
+        <output className="w-14 text-center text-xs tabular-nums" aria-label={gt("Zoom level")}>
           {Math.round(scale * 100)}%
         </output>
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Zoom in"
+          aria-label={gt("Zoom in")}
           onClick={() => controls.current?.zoom(1.2)}
         >
           <ZoomInIcon />
         </Button>
         <span className="mx-2 h-4 border-l border-border" />
         <Button variant="ghost" size="sm" onClick={() => controls.current?.fit()}>
-          Fit
+          <T>Fit</T>
         </Button>
         <Button variant="ghost" size="sm" onClick={() => controls.current?.center()}>
-          Center
+          <T>Center</T>
         </Button>
         <Button variant="ghost" size="sm" onClick={() => controls.current?.actualSize()}>
           100%
@@ -88,32 +90,36 @@ function DiagramCanvas({
         <Button
           variant="ghost"
           size="sm"
-          aria-label={theme === "dark" ? "Switch diagram to light" : "Switch diagram to dark"}
+          aria-label={
+            theme === "dark" ? gt("Switch diagram to light") : gt("Switch diagram to dark")
+          }
           aria-pressed={theme === "light"}
           onClick={onToggleTheme}
         >
           {theme === "dark" ? <SunIcon /> : <MoonIcon />}
-          {theme === "dark" ? "Light" : "Dark"}
+          {theme === "dark" ? gt("Light") : gt("Dark")}
         </Button>
       </div>
       <div
         ref={canvas}
         tabIndex={0}
         role="region"
-        aria-label="Diagram canvas"
+        aria-label={gt("Diagram canvas")}
         aria-describedby="mermaid-viewer-help"
         data-diagram-theme={theme}
         className="relative min-h-0 flex-1 touch-none cursor-grab overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         style={{ backgroundColor: CANVAS_BACKGROUND[theme] }}
       >
-        <img ref={image} src={imageSource} alt="Mermaid diagram" draggable={false} />
+        <img ref={image} src={imageSource} alt={gt("Mermaid diagram")} draggable={false} />
       </div>
       <p
         id="mermaid-viewer-help"
         className="border-t border-border px-4 py-3 text-xs text-muted-foreground"
       >
-        Drag to pan · Scroll or pinch to zoom · Arrow keys to pan · + / - zoom · F fit · C center ·
-        0 actual size · Esc close
+        <T>
+          Drag to pan · Scroll or pinch to zoom · Arrow keys to pan · + / - zoom · F fit · C center
+          · 0 actual size · Esc close
+        </T>
       </p>
     </>
   );
@@ -134,6 +140,7 @@ export function ExpandedDiagram({
   theme: DiagramTheme;
   svg: string;
 }) {
+  const gt = useGT();
   const [viewerTheme, setViewerTheme] = useState<DiagramTheme>(appTheme);
   const [rendered, setRendered] = useState<{ theme: DiagramTheme; svg: string } | null>(null);
   const [failed, setFailed] = useState(false);
@@ -171,7 +178,9 @@ export function ExpandedDiagram({
       />
       {failed ? (
         <p role="status" className="border-t border-border px-4 py-2 text-xs text-destructive">
-          {`The ${viewerTheme} version could not be rendered.`}
+          {viewerTheme === "dark"
+            ? gt("The dark version could not be rendered.")
+            : gt("The light version could not be rendered.")}
         </p>
       ) : null}
     </>
@@ -189,12 +198,14 @@ export const MermaidDiagram = memo(function MermaidDiagram({
   pending: boolean;
   onRepair?: ((prompt: string) => void) | undefined;
 }) {
+  const gt = useGT();
   const [result, setResult] = useState<{
     source: string;
     theme: string;
     attempt: number;
     svg?: string;
-    error?: string;
+    /** Null when the failure carried no message of its own. */
+    error?: string | null;
   } | null>(null);
   const [showSource, setShowSource] = useState(false);
   const searching = use(MarkdownFindContext);
@@ -218,7 +229,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
             source,
             theme,
             attempt,
-            error: error instanceof Error ? error.message : "The diagram could not be rendered.",
+            error: error instanceof Error ? error.message : null,
           });
       },
     );
@@ -234,7 +245,10 @@ export const MermaidDiagram = memo(function MermaidDiagram({
   const imageSource = svg
     ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
     : undefined;
-  const error = pending ? undefined : current?.error;
+  const error =
+    pending || current?.error === undefined
+      ? undefined
+      : (current.error ?? gt("The diagram could not be rendered."));
   const copy = async () => {
     try {
       await writeTextToClipboard(source);
@@ -264,7 +278,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={showSource ? "View diagram" : "View source"}
+            aria-label={showSource ? gt("View diagram") : gt("View source")}
             aria-pressed={showSource}
             onClick={() => setShowSource(!showSource)}
           >
@@ -273,7 +287,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label={copied ? "Source copied" : "Copy source"}
+            aria-label={copied ? gt("Source copied") : gt("Copy source")}
             onClick={() => void copy()}
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
@@ -281,14 +295,14 @@ export const MermaidDiagram = memo(function MermaidDiagram({
           {svg && (
             <Dialog>
               <DialogTrigger
-                render={<Button variant="ghost" size="sm" aria-label="Expand diagram" />}
+                render={<Button variant="ghost" size="sm" aria-label={gt("Expand diagram")} />}
               >
                 <ExpandIcon />
-                Expand
+                <T>Expand</T>
               </DialogTrigger>
               <DialogPopup
                 className="flex h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none flex-col overflow-hidden"
-                aria-label="Mermaid diagram"
+                aria-label={gt("Mermaid diagram")}
                 aria-describedby="mermaid-viewer-help"
                 bottomStickOnMobile={false}
                 initialFocus={false}
@@ -297,7 +311,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
                 }}
               >
                 <h2 className="border-b border-border px-4 py-4 text-sm leading-none font-semibold">
-                  Mermaid diagram
+                  <T>Mermaid diagram</T>
                 </h2>
                 <ExpandedDiagram source={source} theme={theme} svg={svg} />
               </DialogPopup>
@@ -307,14 +321,18 @@ export const MermaidDiagram = memo(function MermaidDiagram({
       </div>
       {copyError && (
         <p data-thread-find-ignore role="status" className="px-4 py-2 text-xs text-destructive">
-          Could not copy. You can select the source below.
+          <T>Could not copy. You can select the source below.</T>
         </p>
       )}
       {error ? (
         <div data-thread-find-ignore className="space-y-3 p-4">
-          <p className="text-sm font-medium">Couldn’t render this diagram</p>
+          <p className="text-sm font-medium">
+            <T>Couldn’t render this diagram</T>
+          </p>
           <details className="text-xs text-muted-foreground">
-            <summary className="cursor-pointer">Error details</summary>
+            <summary className="cursor-pointer">
+              <T>Error details</T>
+            </summary>
             <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap">{error}</pre>
           </details>
           <div className="flex flex-wrap gap-2">
@@ -326,7 +344,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
                 setAttempt((value) => value + 1);
               }}
             >
-              Retry
+              <T>Retry</T>
             </Button>
             {onRepair && (
               <Button
@@ -334,7 +352,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
                 size="sm"
                 onClick={() => onRepair(mermaidRepairPrompt(source, error))}
               >
-                Ask agent to fix
+                <T>Ask agent to fix</T>
               </Button>
             )}
           </div>
@@ -345,7 +363,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
           role="status"
           className="flex min-h-32 items-center justify-center p-6 text-xs text-muted-foreground"
         >
-          {pending ? "Waiting for diagram…" : "Rendering diagram…"}
+          {pending ? gt("Waiting for diagram…") : gt("Rendering diagram…")}
         </div>
       ) : null}
       {showSource || error || copyError ? (
@@ -356,7 +374,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
         <img
           className="mx-auto block max-h-[420px] max-w-full p-5"
           src={imageSource}
-          alt="Mermaid diagram"
+          alt={gt("Mermaid diagram")}
         />
       ) : null}
       {/* While find is open the source stays searchable; a selected match here shows it. */}

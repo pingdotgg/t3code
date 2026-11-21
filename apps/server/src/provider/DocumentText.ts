@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the isolated parser process is an external runtime boundary.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeURL from "node:url";
+import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -48,13 +49,17 @@ const make = Effect.gen(function* () {
   const isExecutable = yield* HostProcess.IsExecutable;
   const environment = yield* HostProcess.Environment;
   const clock = yield* Clock.Clock;
-  const lock = yield* Semaphore.make(1);
+  // A large DOCX worker peaks near 270 MiB RSS, so two slots bound parser memory near 540 MiB.
+  const lock = yield* Semaphore.make(2);
   const failed = new Map<string, number>();
+  // A cancelled extraction can still be publishing while its retry runs in the other slot.
+  let attempt = 0;
   // In a bundle import.meta.url is bin.mjs; development and tests use this source module.
   const entry = NodeURL.fileURLToPath(
     new URL(import.meta.url.endsWith(".ts") ? "../bin.ts" : "./bin.mjs", import.meta.url),
   );
-  const extract = Effect.fn("DocumentText.extract")(function* (path: string, extension: string) {
+  const extract = Effect.fn("DocumentText.extract")(function* (path: string) {
+    const extension = path.split(".").at(-1)!.toLowerCase();
     const sidecar = `${path}.txt`;
     if (yield* fs.exists(sidecar)) return sidecar;
     if ((failed.get(path) ?? 0) > clock.currentTimeMillisUnsafe()) return;
@@ -94,7 +99,7 @@ const make = Effect.gen(function* () {
         return Effect.logWarning("Document text extraction failed.", { extension });
       }),
     );
-    const pending = `${sidecar}.part`;
+    const pending = `${sidecar}.${attempt++}.part`;
     yield* fs
       .writeFileString(pending, content)
       .pipe(
@@ -104,13 +109,14 @@ const make = Effect.gen(function* () {
       );
     return sidecar;
   }, lock.withPermits(1));
+  const extracting = yield* Cache.make({ capacity: Infinity, timeToLive: 0, lookup: extract });
   const ensure = Effect.fn("DocumentText.ensure")(
     function* (path: string) {
       const extension = path.split(".").at(-1)?.toLowerCase();
       if (!extension || !extensions.has(extension)) return;
       const sidecar = `${path}.txt`;
       if (yield* fs.exists(sidecar)) return sidecar;
-      return yield* extract(path, extension);
+      return yield* Cache.get(extracting, path);
     },
     Effect.orElseSucceed(() => undefined),
   );

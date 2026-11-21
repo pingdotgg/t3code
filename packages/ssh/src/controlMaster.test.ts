@@ -184,8 +184,8 @@ const makeHarness = (input: {
     if (args.includes("-O")) return `control.${args[args.indexOf("-O") + 1]}`;
     if (args.includes("-N")) return "tunnel";
     if (args.at(-1) === "true") return "probe";
-    // Every ssh ends its options with `--`; only the launch passes a second one to the remote sh.
-    if (args.indexOf("--") !== args.lastIndexOf("--")) return "launch";
+    // Only the launch passes arguments to the remote sh.
+    if (/ sh (?:-l )?-s -- /u.test(args.join(" "))) return "launch";
     return "script";
   };
 
@@ -303,7 +303,8 @@ const makeHarness = (input: {
         NetService.NetService.of({
           canListenOnHost: () => Effect.succeed(true),
           isPortAvailableOnLoopback: () => Effect.succeed(true),
-          hasListenerOnHost: () => Effect.succeed(false),
+          // The tunnel's forward is up as soon as it is probed.
+          hasListenerOnHost: () => Effect.succeed(true),
           reserveLoopbackPort: () => Effect.succeed(41_773),
           findAvailablePort: (preferred) => Effect.succeed(preferred),
         }),

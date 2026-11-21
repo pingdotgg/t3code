@@ -16,6 +16,9 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m } from "~/i18n/messages";
 
 import type { TurnItemSource } from "../chat/timelineRowContext";
 
@@ -49,7 +52,7 @@ const guestItemDetailAtom = Atom.family((key: string) => {
   return Atom.make(
     Effect.tryPromise({
       try: () => fetchGuestItemDetail(shareId, itemId),
-      catch: () => new GuestItemReadError({ message: "Could not load this item." }),
+      catch: () => new GuestItemReadError({ message: m(msg("Could not load this item.")) }),
     }),
   );
 });
@@ -75,7 +78,9 @@ const guestCommandOutputAtom = Atom.family((key: string) => {
           if (source.readyState === EventSource.CLOSED) {
             Queue.failCauseUnsafe(
               queue,
-              Cause.fail(new GuestItemReadError({ message: "Output is no longer available." })),
+              Cause.fail(
+                new GuestItemReadError({ message: m(msg("Output is no longer available.")) }),
+              ),
             );
           }
         });

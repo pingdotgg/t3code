@@ -176,6 +176,46 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
       return true;
     });
 
+  /**
+   * Applies `change` to the message as it stands when this mutation's turn comes, so concurrent
+   * changes compose instead of failing on each other's revision. `null` leaves it unchanged.
+   */
+  const modify = (
+    messageId: MessageId,
+    change: (message: QueuedThreadMessage) => QueuedThreadMessage | null,
+  ): Promise<boolean> =>
+    serialize(async () => {
+      const current = currentMessages().find((candidate) => candidate.messageId === messageId);
+      const next = current === undefined ? null : change(current);
+      if (current === undefined || next === null) return false;
+      const revision = revisions.get(messageId) ?? 0;
+      try {
+        await options.storage.write(next);
+      } catch (cause) {
+        throw new ThreadOutboxManagerError({
+          operation: "update",
+          environmentId: next.environmentId,
+          threadId: next.threadId,
+          messageId,
+          cause,
+        });
+      }
+      // An enqueue publishes without waiting its turn; when one replaced the message during the
+      // write, it wins and stays durable.
+      if ((revisions.get(messageId) ?? 0) !== revision || !currentMessages().includes(current)) {
+        const winner = currentMessages().find((candidate) => candidate.messageId === messageId);
+        if (winner !== undefined) {
+          try {
+            await options.storage.write(winner);
+          } catch {}
+        }
+        return false;
+      }
+      bumpRevision(messageId);
+      setMessages(currentMessages().map((candidate) => (candidate === current ? next : candidate)));
+      return true;
+    });
+
   // Check live ownership too; editor locks can change without message revision updates.
   const remove = (
     message: QueuedThreadMessage,
@@ -347,6 +387,7 @@ export function createThreadOutboxManager(options: ThreadOutboxManagerOptions) {
     confirmQueued,
     revisionOf: (messageId: MessageId): number => revisions.get(messageId) ?? 0,
     update,
+    modify,
     remove,
     clearEnvironment,
   };

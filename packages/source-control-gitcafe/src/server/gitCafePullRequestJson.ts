@@ -88,9 +88,17 @@ export const GitCafePullDetail = Schema.Struct({
   mergeRoute: Schema.optional(Schema.Literals(["native", "provider", "unsupported"])),
   lockedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   viewerActorId: Schema.optional(Schema.NullOr(Schema.String)),
+  mergeResultOid: Schema.optional(Schema.NullOr(Schema.String)),
   // Set once GitHub has merged a pull request GitCafe routed there, which can be before the
   // sync brings the merged state back.
-  providerMerge: Schema.optional(Schema.NullOr(Schema.Struct({ mergedAt: IsoDateTime }))),
+  providerMerge: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        mergedAt: IsoDateTime,
+        mergeCommitOid: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
   capabilities: Schema.Struct({
     comment: Schema.Boolean,
     review: Schema.Boolean,

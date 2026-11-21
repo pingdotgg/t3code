@@ -1,4 +1,5 @@
 import type { OrchestrationV2TurnItem } from "@lathe/contracts";
+import { HTML_RENDER_TOOL_NAME } from "@lathe/shared/htmlRender";
 import { resolveLatheMcpToolId } from "@lathe/shared/latheMcpToolPresentation";
 import { formatReadToolLabel, formatSearchToolLabel } from "@lathe/shared/toolActivity";
 import {
@@ -74,6 +75,14 @@ function recordString(input: unknown, ...keys: ReadonlyArray<string>): string | 
   return undefined;
 }
 
+function recordText(input: Record<string, unknown>, ...keys: ReadonlyArray<string>) {
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
 function recordNumber(input: unknown, ...keys: ReadonlyArray<string>): number | undefined {
   if (typeof input !== "object" || input === null) return undefined;
   for (const key of keys) {
@@ -115,6 +124,26 @@ export function openCodeCommandFailed(toolName: string, completedMetadata: unkno
   );
 }
 
+/** Code Mode reports nested calls with their input but no result, so pages are found by input. */
+export function openCodeCodeModeHtmlRenders(
+  completedMetadata: unknown,
+  mcpServerName: string,
+): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
+  if (typeof completedMetadata !== "object" || completedMetadata === null) return [];
+  const toolCalls = (completedMetadata as Record<string, unknown>)["toolCalls"];
+  if (!Array.isArray(toolCalls)) return [];
+  return toolCalls.flatMap((call: unknown, index) => {
+    if (typeof call !== "object" || call === null) return [];
+    const { tool, status, input } = call as Record<string, unknown>;
+    return tool === `${mcpServerName}.${HTML_RENDER_TOOL_NAME}` &&
+      status === "completed" &&
+      typeof input === "object" &&
+      input !== null
+      ? [{ index, input: input as Record<string, unknown> }]
+      : [];
+  });
+}
+
 export function openCodeToolTurnItem(
   base: ToolItemBase,
   tool: {
@@ -138,8 +167,8 @@ export function openCodeToolTurnItem(
       };
     }
     case "file_change": {
-      const oldStr = recordString(input, "oldString", "oldText");
-      const newStr = recordString(input, "newString", "content", "newText");
+      const oldStr = recordText(input, "oldString", "oldText");
+      const newStr = recordText(input, "newString", "content", "newText");
       const diffStr =
         recordString(tool.completedMetadata, "diff", "patch") ??
         (base.status === "failed" && output?.trim() ? output : undefined);

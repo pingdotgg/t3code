@@ -4,6 +4,7 @@ import {
   type OrchestrationProjectShell,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
+  type PullRequestSummary,
   type ThreadId,
   type ThreadLinkedPullRequest,
 } from "@lathe/contracts";
@@ -17,17 +18,21 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitManager from "../git/GitManager.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import { makeLinkedThreadsChangeDetector } from "../pullRequest/linkedThreads.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
@@ -65,6 +70,19 @@ function failureTag(cause: Cause.Cause<unknown>): string {
         : typeof error;
   const message = error instanceof Error ? error.message : String(error);
   return `${name}: ${message.split("\n", 1)[0] ?? ""}`;
+}
+
+function pullRequestPredatesThread(
+  pullRequest: Pick<PullRequestSummary, "state" | "closedAt" | "mergedAt">,
+  createdAt: DateTime.Utc,
+): boolean {
+  const terminalAt =
+    pullRequest.state === "merged"
+      ? pullRequest.mergedAt
+      : pullRequest.state === "closed"
+        ? pullRequest.closedAt
+        : null;
+  return terminalAt != null && Date.parse(terminalAt) < DateTime.toEpochMillis(createdAt);
 }
 
 function pullRequestMatchesProject(
@@ -124,6 +142,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const pendingBackfill = new Map<ThreadId, number>();
+  const noPullRequestRechecks = makeNoPullRequestRechecks();
 
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
@@ -199,6 +218,7 @@ export const make = Effect.gen(function* () {
           )
         : threadSnapshot.threads;
     const projects = new Map(projectShells.map((project) => [project.id, project]));
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     if (request.backfill) {
       for (const thread of snapshotThreads) {
         if (
@@ -229,13 +249,34 @@ export const make = Effect.gen(function* () {
       JSON.stringify([thread.projectId, thread.worktreePath, thread.branch]),
     );
 
+    // A thread's own events and a backfill read at once; only scheduled sweeps wait.
+    const scheduled = new Map(
+      request.threadId !== null
+        ? []
+        : [...groups].filter(
+            ([, group]) =>
+              group[0]!.branch !== null &&
+              group.every(
+                (thread) => thread.branchPullRequest == null && !pendingBackfill.has(thread.id),
+              ),
+          ),
+    );
+    const scheduledLookups = noPullRequestRechecks.select(
+      nowMs,
+      Array.from(scheduled, ([key, group]) => ({
+        key,
+        activityAtMs: Math.max(...group.map((thread) => DateTime.toEpochMillis(thread.updatedAt))),
+      })),
+    );
+
     yield* Effect.forEach(
       groups,
-      ([groupKey, group]) =>
+      ([key, group]) =>
         Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
+          if (scheduled.has(key) && !scheduledLookups.has(key)) return;
           const { project: resolvedProject, repository } =
             yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
               refresh: request.refresh,
@@ -250,13 +291,15 @@ export const make = Effect.gen(function* () {
               .pipe(Effect.orElseSucceed(() => true)))
               ? first.worktreePath
               : project.workspaceRoot;
+          // A detected PR is confirmed against fresh git state before it is saved.
           const detected =
             first.branch === null
               ? null
               : yield* git.branchPullRequest(
                   { cwd, branch: first.branch },
-                  { refresh: request.refresh },
+                  { refresh: request.refresh, confirmTerminal: false },
                 );
+          if (first.branch !== null) noPullRequestRechecks.record(key, nowMs, detected !== null);
           if (detected !== null && !pullRequestMatchesProject(detected, resolvedProject)) {
             return finishBackfill(group);
           }
@@ -270,9 +313,22 @@ export const make = Effect.gen(function* () {
                 }
               : null;
 
+          // Only a new association is refused: a thread keeps a PR it already saved, and a PR the
+          // user checked out stays with the threads made for it, however long ago it closed.
+          const isHistoricalFor = (thread: (typeof group)[number]) =>
+            detected !== null &&
+            pullRequestPredatesThread(detected, thread.createdAt) &&
+            !samePullRequest(thread.branchPullRequest, detectedReference);
+          const dropsHistorical =
+            detected !== null &&
+            first.branch !== null &&
+            group.some(isHistoricalFor) &&
+            !(yield* git.checkedOutPullRequest({ cwd, branch: first.branch, url: detected.url }));
+
           const plans = yield* Effect.forEach(group, (thread) =>
             Effect.gen(function* () {
-              let branchPullRequest = detectedReference;
+              let branchPullRequest =
+                dropsHistorical && isHistoricalFor(thread) ? null : detectedReference;
               if (
                 branchPullRequest === null &&
                 thread.branch !== null &&
@@ -395,12 +451,12 @@ export const make = Effect.gen(function* () {
         }).pipe(
           // Any pass that reaches the end without failing clears the group's failure record,
           // so the next failure warns again rather than hiding behind an old one.
-          Effect.tap(() => Effect.sync(() => lookupFailures.delete(groupKey))),
+          Effect.tap(() => Effect.sync(() => lookupFailures.delete(key))),
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
             (cause) =>
               reportLookupFailure(
-                groupKey,
+                key,
                 group.map((thread) => thread.id),
                 cause,
               ).pipe(Effect.tap(() => Effect.sync(() => failBackfill(group)))),
@@ -411,6 +467,7 @@ export const make = Effect.gen(function* () {
     );
     // Only a full pass sees every group; a single-thread refresh must not forget the others.
     if (request.threadId === null) {
+      noPullRequestRechecks.retain(groups);
       for (const key of lookupFailures.keys()) {
         if (!groups.has(key)) lookupFailures.delete(key);
       }
@@ -418,8 +475,16 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // At most one queued request per thread, so a turn end's events share one lookup.
+  // A request after that lookup starts queues another, so later host changes are still read.
+  const queuedThreadRequests = new Map<ThreadId, { threadId: ThreadId; refresh: boolean }>();
+
   const worker = yield* makeDrainableWorker((request: RefreshRequest) =>
-    synchronize(request).pipe(
+    Effect.suspend(() => {
+      if (request.threadId !== null) queuedThreadRequests.delete(request.threadId);
+      return synchronize(request);
+    }).pipe(
+      Effect.provideService(GitVcsDriver.BackgroundGitWork, true),
       Effect.catchCauseIf(
         (cause) => !Cause.hasInterruptsOnly(cause),
         (cause) =>
@@ -430,15 +495,46 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const processEvent = (event: OrchestrationV2DomainEvent) => {
+  const enqueueThread = (threadId: ThreadId, refresh: boolean) =>
+    Effect.suspend(() => {
+      const queued = queuedThreadRequests.get(threadId);
+      if (queued !== undefined) {
+        queued.refresh ||= refresh;
+        return Effect.void;
+      }
+      const request = { threadId, refresh };
+      queuedThreadRequests.set(threadId, request);
+      return worker.enqueue(request);
+    });
+
+  const linkedThreadsChange = makeLinkedThreadsChangeDetector();
+  // A running linked thread can reorder its answers on every event, so reorders refresh readers at
+  // most once per 10s, the cadence clients used to poll at.
+  const linkedThreadReorders = yield* Queue.dropping<void>(1);
+
+  const notifyLinkedThreads = (event: OrchestrationV2DomainEvent) => {
+    switch (linkedThreadsChange(event)) {
+      case "changed":
+        return pullRequests.notifyLinkedThreadsChanged;
+      case "reordered":
+        return Queue.offer(linkedThreadReorders, undefined).pipe(Effect.asVoid);
+      case null:
+        return Effect.void;
+    }
+  };
+
+  const processEvent = (event: OrchestrationV2DomainEvent) =>
+    Effect.andThen(notifyLinkedThreads(event), refreshForEvent(event));
+
+  const refreshForEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.created":
       case "thread.unarchived":
       case "thread.metadata-updated":
-        return worker.enqueue({ threadId: event.threadId, refresh: false });
+        return enqueueThread(event.threadId, false);
       case "thread.unsettled":
       case "checkpoint.captured":
-        return worker.enqueue({ threadId: event.threadId, refresh: true });
+        return enqueueThread(event.threadId, true);
       case "run.updated":
         if (
           event.payload.status === "completed" ||
@@ -446,7 +542,7 @@ export const make = Effect.gen(function* () {
           event.payload.status === "cancelled" ||
           event.payload.status === "interrupted"
         ) {
-          return worker.enqueue({ threadId: event.threadId, refresh: true });
+          return enqueueThread(event.threadId, true);
         }
         break;
     }
@@ -457,6 +553,13 @@ export const make = Effect.gen(function* () {
     "ThreadPullRequestServiceV2.start",
   )(function* () {
     yield* forkParked(Stream.runForEach(orchestrator.streamDomainEvents, processEvent));
+    yield* forkParked(
+      Queue.take(linkedThreadReorders).pipe(
+        Effect.andThen(pullRequests.notifyLinkedThreadsChanged),
+        Effect.andThen(Effect.sleep("10 seconds")),
+        Effect.forever,
+      ),
+    );
     yield* forkParked(
       Effect.gen(function* () {
         yield* worker.enqueue({ threadId: null, refresh: false, backfill: true });

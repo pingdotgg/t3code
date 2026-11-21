@@ -56,7 +56,7 @@ export function AgentThreadHistorySettings() {
         resetAction={
           settings.agentThreadHistoryAccess !== DEFAULT_SERVER_SETTINGS.agentThreadHistoryAccess ? (
             <SettingResetButton
-              label="default thread history access"
+              ariaLabel="Reset default thread history access to default"
               onClick={() =>
                 updateSettings({
                   agentThreadHistoryAccess: DEFAULT_SERVER_SETTINGS.agentThreadHistoryAccess,
@@ -104,7 +104,7 @@ export function AgentThreadHistorySettings() {
           settings.agentThreadHistoryRecentTurns !==
           DEFAULT_SERVER_SETTINGS.agentThreadHistoryRecentTurns ? (
             <SettingResetButton
-              label="default recent turns"
+              ariaLabel="Reset default recent turns to default"
               onClick={() =>
                 updateSettings({
                   agentThreadHistoryRecentTurns:

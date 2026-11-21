@@ -10,7 +10,7 @@
 #   LATHE_VERSION           exact version to install (overrides LATHE_CHANNEL)
 #   LATHE_HOME              home directory (default: ~/.lathe, or an existing
 #                            pre-rename ~/.t3f, which stays in use)
-#   LATHE_INSTALL_BIN_DIR   where the `lathe` symlink goes (default: ~/.local/bin)
+#   LATHE_INSTALL_BIN_DIR   where the `lathe` command goes (default: ~/.local/bin)
 #   LATHE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
 # The archive is unpacked into $LATHE_HOME/runtime/versions/<version>, the
@@ -38,6 +38,11 @@ case "$lathe_home" in
     ;;
 esac
 bin_dir="${LATHE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+# Trailing slashes would put `//` in the paths the lathe command guard compares.
+while [ "${lathe_home%/}" != "$lathe_home" ] && [ "$lathe_home" != / ]; do lathe_home="${lathe_home%/}"; done
+while [ "${bin_dir%/}" != "$bin_dir" ] && [ "$bin_dir" != / ]; do bin_dir="${bin_dir%/}"; done
+# Absolute, so the PATH hint never adds a folder that changes with the working directory.
+case "$bin_dir" in /*) ;; *) bin_dir="$PWD/$bin_dir" ;; esac
 
 fail() {
   printf '\nlathe install: %s\n' "$1" >&2
@@ -69,10 +74,24 @@ if "$interactive"; then
 fi
 step "Finding your release..."
 
+# Sleeps 1, 2, then 4 s before retrying a 408, 429, 5xx, or network error. Not curl
+# --retry: older curl waits out any Retry-After, however long.
+backoff() {
+  case "$1" in 408 | 429) ;; 4??) return 1 ;; esac
+  [ "$2" -lt 4 ] && sleep "$((1 << ($2 - 1)))"
+}
+
 # Exit 44 on a 404 so callers can tell "no such asset" from a network failure.
 fetch() {
   if command -v curl >/dev/null 2>&1; then
-    status="$(curl -sSL -H "Accept: ${3:-*/*}" -w '%{http_code}' "$1" -o "$2")" || return 1
+    attempt=1
+    while :; do
+      code=0; status="$(curl -sSL -H "Accept: ${3:-*/*}" -w '%{http_code}' "$1" -o "$2")" || code=$?
+      case "$code:$status" in 0:2??) break ;; esac
+      backoff "$status" "$attempt" || break
+      attempt=$((attempt + 1))
+    done
+    [ "$code" -eq 0 ] || return 1
     case "$status" in
       2??) return 0 ;;
       404) return 44 ;;
@@ -91,18 +110,30 @@ mb() {
   tenths=$((($1 * 10 + 524288) / 1048576))
   printf '%s.%s' "$((tenths / 10))" "$((tenths % 10))"
 }
-# Poll the file written by the downloader; no progress-output parsing or extra request.
-download() {
-  if ! "$interactive"; then fetch "$1" "$2"; return; fi
+download_start() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -D "$2.headers" "$1" -o "$2" 2>"$2.errors" &
+    curl -fsSL -w '%{http_code}' -D "$2.headers" "$1" -o "$2" >"$2.status" 2>"$2.errors" &
   else
     wget -q --server-response "$1" -O "$2" 2>"$2.headers" &
   fi
   download_pid=$!
+}
+# Reaps the finished download, then restarts it if curl hit a transient error.
+download_retry() {
+  result=0; wait "$download_pid" || result=$?
+  download_pid=
+  [ "$result" -ne 0 ] && [ -f "$2.status" ] && backoff "$(cat "$2.status")" "$attempt" || return 1
+  attempt=$((attempt + 1))
+  download_start "$1" "$2"
+}
+# Poll the file written by the downloader; no progress-output parsing or extra request.
+download() {
+  if ! "$interactive"; then fetch "$1" "$2"; return; fi
+  attempt=1
+  download_start "$1" "$2"
   previous=-1
   cr="$(printf '\r')"
-  while kill -0 "$download_pid" 2>/dev/null; do
+  while kill -0 "$download_pid" 2>/dev/null || download_retry "$1" "$2"; do
     bytes=0; total=0
     if [ -f "$2" ]; then bytes="$(wc -c < "$2")"; fi
     if [ -f "$2.headers" ]; then
@@ -130,8 +161,6 @@ download() {
     fi
     sleep 0.1
   done
-  result=0; wait "$download_pid" || result=$?
-  download_pid=
   if [ "$result" -ne 0 ]; then
     printf '\n' >&2
     if [ -f "$2.errors" ]; then cat "$2.errors" >&2; else cat "$2.headers" >&2; fi
@@ -139,7 +168,7 @@ download() {
   fi
   size="$(mb "$(wc -c < "$2")")"
   printf '\r\033[2K  %s■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■%s 100%%  %s%s / %s MB%s\n' "$accent" "$reset" "$muted" "$size" "$size" "$reset" >&2
-  rm -f "$2.headers" "$2.errors"
+  rm -f "$2.headers" "$2.errors" "$2.status"
 }
 
 case "$(uname -s)" in
@@ -243,7 +272,7 @@ else
   done
   expected="$(grep " \*\{0,1\}${archive}\$" "${staging}/SHA256SUMS" | cut -d' ' -f1)"
   [ -n "$expected" ] || fail "lathe ${version} has no release archive for ${platform}-${arch}"
-  download "${base_url}/v${version}/${archive}" "${staging}/${archive}"
+  download "${base_url}/v${version}/${archive}" "${staging}/${archive}" || fail "could not download ${archive}"
 
   step "Verifying the download..."
   actual="$(checksum "${staging}/${archive}")"
@@ -257,19 +286,141 @@ else
 
   rm -rf "$target_dir"
   mv "$staging" "$target_dir"
+  # When a concurrent install published first, mv moved this copy inside it; keep only theirs.
+  rm -rf "${target_dir}/${staging##*/}"
   trap - EXIT
 fi
 
 step "Setting up the lathe command..."
 mkdir -p "$bin_dir"
-ln -sfn "$(cli_executable "$target_dir")" "${bin_dir}/lathe"
+# Exec by absolute path: through a symlink, argv0 is the link, and the Cursor SDK looks for its
+# helpers beside it. lathe update and lathe install write the same script.
+nl='
+'
+launcher_head="#!/bin/sh${nl}exec '"
+launcher_tail="' \"\$@\"${nl}"
+# The x keeps a trailing newline in the path through command substitution.
+launcher_script() {
+  quoted="$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"
+  printf '%s%s%s' "$launcher_head" "${quoted%x}" "$launcher_tail"
+}
+# The executable an unedited launcher script at $1 runs; a user's own wrapper prints nothing.
+script_lathe() {
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(wc -c < "$1")" -le 4096 ] || return 0
+  contents="$(cat "$1"; printf x)"
+  contents="${contents%x}"
+  case "$contents" in "$launcher_head"*"$launcher_tail") ;; *) return 0 ;; esac
+  quoted="${contents#"$launcher_head"}"
+  unquoted="$(printf '%sx' "${quoted%"$launcher_tail"}" | sed "s/'\\\\''/'/g")"
+  unquoted="${unquoted%x}"
+  [ -n "$unquoted" ] && [ "$(launcher_script "$unquoted"; printf x)" = "${contents}x" ] && printf '%s' "$unquoted"
+  return 0
+}
+# Replace only this home's own lathe launchers: into its versions, or the desktop app's launcher.
+# Anything else (a user's script, a copied binary) belongs to someone else.
+# Exactly <versions>/<version>/lathe, or t3 from before the rename ($1 under $2), never another
+# program inside a version.
+version_lathe() {
+  case "$1" in "$2"/*) ;; *) return 1 ;; esac
+  case "${1#"$2"/}" in */*/*) return 1 ;; */lathe | */t3) return 0 ;; *) return 1 ;; esac
+}
+slot_empty=true
+if [ -e "${bin_dir}/lathe" ] || [ -L "${bin_dir}/lathe" ]; then
+  slot_empty=false
+  owned=false
+  real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
+  if [ -L "${bin_dir}/lathe" ]; then
+    existing="$(readlink "${bin_dir}/lathe" 2>/dev/null || true)"
+    case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
+  else
+    existing="$(script_lathe "${bin_dir}/lathe")"
+  fi
+  if [ -n "$existing" ]; then
+    # Through a symlinked Lathe home the path names the alias; resolve its folder to compare.
+    existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd || true)"
+    # The text alone counts only without . or .. segments (a pruned version leaves a dangling path).
+    case "$existing" in
+      */./* | */../* | */. | */..) ;;
+      *)
+        if version_lathe "$existing" "$versions_dir" || version_lathe "$existing" "$real_versions_dir" ||
+          [ "$existing" = "${lathe_home}/bin/lathe" ]; then owned=true; fi
+        ;;
+    esac
+    if [ -n "$existing_dir" ] && version_lathe "${existing_dir}/${existing##*/}" "$real_versions_dir"; then
+      owned=true
+    fi
+  fi
+  "$owned" || fail "another lathe is already at ${bin_dir}/lathe. Remove it and run this again, or run $(cli_executable "$target_dir") directly."
+fi
+launcher_tmp="$(mktemp "${bin_dir}/.lathe.XXXXXX")"
+trap 'rm -f "$launcher_tmp"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+launcher_script "$(cli_executable "$target_dir")" > "$launcher_tmp"
+chmod 755 "$launcher_tmp"
+# An empty spot is hard-linked without -f, so a file that appears after the check above is kept.
+if "$slot_empty"; then
+  ln "$launcher_tmp" "${bin_dir}/lathe" || fail "could not write ${bin_dir}/lathe; something else was created there."
+else
+  # Known race, accepted: a file written here after the ownership check above is overwritten.
+  # mv replaces a legacy symlink rather than writing through it.
+  mv -f "$launcher_tmp" "${bin_dir}/lathe"
+fi
+rm -f "$launcher_tmp"
+trap - EXIT
 # Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
 launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/lathe"
 launchers="${lathe_home}/runtime/launchers"
 grep -qxF "$launcher" "$launchers" 2>/dev/null || printf '%s\n' "$launcher" >> "$launchers"
 if "$interactive"; then printf '\r\033[2K' >&2; fi
 printf '  %sInstalled Lathe %s%s\n\n' "$green" "$version" "$reset" >&2
-case ":${PATH}:" in
-  *":${bin_dir}:"*) printf '  Run %slathe%s to use Lathe here, or %slathe up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
-  *) printf '  Add %s to your PATH, then run %slathe%s.\n\n' "$bin_dir" "$bold" "$reset" ;;
-esac
+# The folder a shell reads its startup file from: $1 when set and safe to paste, else $2 when
+# unset. A set but unsafe folder prints nothing, since the default would never be read.
+read_from() {
+  case "$1" in
+    "") printf '%s' "$2" ;;
+    /*) case "$1" in *[!A-Za-z0-9_./-]*) ;; *) printf '%s' "$1" ;; esac ;;
+  esac
+}
+# A command to paste for zsh, Linux bash, or fish, like `lathe install` prints. macOS bash reads only
+# one of several startup files, so no single file is safe to change there.
+path_command=
+path_rest="$bin_dir"
+path_prefix=
+case "$bin_dir" in "$HOME"/*) path_rest="${bin_dir#"$HOME"}" path_prefix='$HOME' ;; esac
+case "$path_rest" in *[!A-Za-z0-9_./-]*) path_rest= ;; esac
+if [ -n "$path_rest" ]; then
+  # Last on PATH, so it never shadows another lathe.
+  path_line="export PATH=\"\$PATH:${path_prefix}${path_rest}\""
+  shell_name="${SHELL:-}"
+  case "${shell_name##*/}" in
+    zsh)
+      # zsh reads .zshrc from ZDOTDIR when it is set; ~/.zshrc would never be read then.
+      zsh_dir="$(read_from "${ZDOTDIR:-}" '~')"
+      [ -z "$zsh_dir" ] || path_command="printf '\\n%s\\n' '${path_line}' >> ${zsh_dir}/.zshrc" ;;
+    bash) [ "$platform" = darwin ] || path_command="printf '\\n%s\\n' '${path_line}' >> ~/.bashrc" ;;
+    fish)
+      # --path changes $PATH itself; fish_user_paths would go ahead of the system folders.
+      config_dir="$(read_from "${XDG_CONFIG_HOME:-}" '~/.config')"
+      fish_dir="${config_dir}/fish"
+      [ -z "$config_dir" ] || path_command="mkdir -p ${fish_dir} && printf '\\n%s\\n' 'fish_add_path --append --path ${path_prefix}${path_rest}' >> ${fish_dir}/config.fish" ;;
+  esac
+fi
+# A lathe earlier on PATH runs instead; the PATH command adds this folder last.
+# A PATH entry with a trailing slash gives `dir//lathe`.
+first_lathe="$(command -v lathe 2>/dev/null | tr -s / || true)"
+case "$first_lathe" in "" | "${bin_dir}/lathe") first_lathe= ;; esac
+if [ -n "$first_lathe" ]; then
+  printf '  Another lathe at %s runs first, so run %s%s/lathe%s to use this one.\n\n' "$first_lathe" "$bold" "$bin_dir" "$reset"
+else
+  case ":${PATH}:" in
+    *":${bin_dir}:"* | *":${bin_dir}/:"*) printf '  Run %slathe%s to use Lathe here, or %slathe up%s to use it from your other devices.\n\n' "$bold" "$reset" "$bold" "$reset" ;;
+    *)
+      if [ -n "$path_command" ]; then
+        printf '  %s is not on your PATH yet. Add it with:\n\n    %s\n\n  Then open a new terminal and run %slathe%s.\n\n' "$bin_dir" "$path_command" "$bold" "$reset"
+      else
+        printf '  Add %s to your PATH, then run %slathe%s.\n\n' "$bin_dir" "$bold" "$reset"
+      fi
+      ;;
+  esac
+fi

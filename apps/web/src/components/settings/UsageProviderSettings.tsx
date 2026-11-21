@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, UnifiedSettings, UsageLimitSourceSnapshot } from "@lathe/contracts";
+import { T, useGT, Var } from "gt-react";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -16,52 +17,35 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
-import { Switch } from "../ui/switch";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
-const KIND_LABEL = { cliproxy: "CLI Proxy", modelproxy: "modelproxy gateway" } as const;
+const CLI_PROXY_NAME = "CLI Proxy";
+
+type SourceKind = "cliproxy" | "modelproxy";
 
 /** Source management follows the selected device and access rules of provider settings. */
 export function UsageProviderSettings({
   environmentId,
   environmentLabel,
   sources,
-  cursorKeychainUsageEnabled,
   readOnly,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly sources: UnifiedSettings["usageLimitSources"];
-  readonly cursorKeychainUsageEnabled: boolean;
   readonly readOnly: boolean;
 }) {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const snapshots = serverConfig?.usageLimitSources ?? [];
-  const updateCursorSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "update Cursor account usage",
-  });
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
-  const platform = serverConfig?.environment.platform;
+  const kindName = (kind: SourceKind) =>
+    kind === "cliproxy" ? CLI_PROXY_NAME : gt("modelproxy gateway");
   const [adding, setAdding] = useState(false);
-  const [updatingCursor, setUpdatingCursor] = useState(false);
   const entries = Object.entries(sources);
-
-  const setCursorUsageEnabled = async (enabled: boolean) => {
-    setUpdatingCursor(true);
-    const result = await updateCursorSettings({
-      environmentId,
-      input: { patch: { cursorKeychainUsageEnabled: enabled } },
-    });
-    if (result._tag === "Success") {
-      await refreshProviders({ environmentId, input: {} });
-    }
-    setUpdatingCursor(false);
-  };
 
   return (
     <>
@@ -71,28 +55,13 @@ export function UsageProviderSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3" aria-hidden />
-              Add source
+              <T>Add source</T>
             </Button>
           ) : null
         }
       >
-        {platform?.os === "darwin" ? (
-          <SettingsRow
-            id="cursor-keychain-usage"
-            title="Cursor account usage"
-            description="Read your existing Cursor CLI login from macOS Keychain to show account history and monthly limits. macOS may ask you to allow access."
-            control={
-              <Switch
-                aria-label="Cursor account usage"
-                checked={cursorKeychainUsageEnabled}
-                disabled={readOnly || updatingCursor}
-                onCheckedChange={(enabled) => void setCursorUsageEnabled(enabled)}
-              />
-            }
-          />
-        ) : null}
         {entries.length === 0 ? (
-          <SettingsRow title="No hubs configured." />
+          <SettingsRow title={gt("No hubs configured.")} />
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
@@ -103,8 +72,9 @@ export function UsageProviderSettings({
                 title={label}
                 description={
                   <span className="break-all">
-                    {KIND_LABEL[source.kind]}
-                    {source.enabled ? "" : " · Disabled"}
+                    {source.enabled
+                      ? kindName(source.kind)
+                      : gt("{name} · Disabled", { name: kindName(source.kind) })}
                     {label !== source.url ? ` · ${source.url}` : ""}
                     {source.kind === "modelproxy" ? (
                       <GatewayAuthStatus snapshot={snapshot} />
@@ -154,28 +124,44 @@ function GatewayAuthStatus({
 }) {
   const auth = snapshot?.proxy?.auth;
   if (!auth) return null;
-  if (auth.state === "signedIn") return <> · Signed in</>;
-  if (auth.state === "pending") {
+  if (auth.state === "signedIn") {
     return (
       <>
-        {" "}
-        · Confirm device code <code className="font-mono tracking-widest">
-          {auth.userCode}
-        </code> at{" "}
-        <a
-          className="underline"
-          href={auth.verificationUrlComplete ?? auth.verificationUrl}
-          target="_blank"
-          rel="noreferrer"
-        >
-          {auth.verificationUrl}
-        </a>
-        , then sign in with your password and a passkey or authenticator code. This row updates when
-        you finish.
+        {" · "}
+        <T>Signed in</T>
       </>
     );
   }
-  return <> · Not signed in</>;
+  if (auth.state === "pending") {
+    return (
+      <>
+        {" · "}
+        <T>
+          Confirm device code{" "}
+          <code className="font-mono tracking-widest">
+            <Var>{auth.userCode}</Var>
+          </code>{" "}
+          at{" "}
+          <a
+            className="underline"
+            href={auth.verificationUrlComplete ?? auth.verificationUrl}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <Var>{auth.verificationUrl}</Var>
+          </a>
+          , then sign in with your password and a passkey or authenticator code. This row updates
+          when you finish.
+        </T>
+      </>
+    );
+  }
+  return (
+    <>
+      {" · "}
+      <T>Not signed in</T>
+    </>
+  );
 }
 
 function GatewayAuthButton({
@@ -196,7 +182,13 @@ function GatewayAuthButton({
       variant="ghost"
       onClick={() => void auth({ environmentId, input: { sourceId: sourceId as never, action } })}
     >
-      {state === "signedIn" ? "Sign out" : state === "pending" ? "Cancel sign-in" : "Sign in"}
+      {state === "signedIn" ? (
+        <T>Sign out</T>
+      ) : state === "pending" ? (
+        <T>Cancel sign-in</T>
+      ) : (
+        <T>Sign in</T>
+      )}
     </Button>
   );
 }
@@ -208,30 +200,43 @@ function RemoveUsageProviderButton({
   onConfirm,
 }: {
   readonly label: string;
-  readonly kind: keyof typeof KIND_LABEL;
+  readonly kind: SourceKind;
   readonly onConfirm: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const noun = kind === "cliproxy" ? "hub" : "gateway";
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Remove
+        <T>Remove</T>
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              <T>
+                Remove <Var>{label}</Var>?
+              </T>
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {kind === "cliproxy"
-                ? "The hub's management key is deleted from this server."
-                : "The gateway's client secret and your sign-in session are deleted from this server."}{" "}
-              Its accounts leave the Limits view; the {noun} itself is untouched. Add it again to
-              bring them back.
+              {kind === "cliproxy" ? (
+                <T>
+                  The hub's management key is deleted from this server. Its accounts leave the
+                  Limits view; the hub itself is untouched. Add it again with the URL and key to
+                  bring them back.
+                </T>
+              ) : (
+                <T>
+                  The gateway's client secret and your sign-in session are deleted from this server.
+                  Its accounts leave the Limits view; the gateway itself is untouched. Add it again
+                  to bring them back.
+                </T>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -239,7 +244,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove {noun}
+              {kind === "cliproxy" ? <T>Remove hub</T> : <T>Remove gateway</T>}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

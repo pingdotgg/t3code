@@ -52,6 +52,7 @@ export function formatStartupCrashReport(
   app: { readonly version: string; readonly build: string },
 ): string {
   const header = `Lathe ${app.version} (${app.build})`;
+  // oxlint-disable-next-line lathe/no-untranslated-copy -- crash report text shared with maintainers
   if (records.length === 0) return `${header}\nNo startup crashes recorded.`;
   return [
     header,

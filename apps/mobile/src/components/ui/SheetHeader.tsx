@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { Pressable, View } from "react-native";
 
 import { NativeStackScreenOptions } from "../../native/StackHeader";
@@ -6,14 +7,16 @@ import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 import { IconButton } from "./IconButton";
 import { Toolbar } from "./Toolbar";
+import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { useControlTheme } from "./useControlTheme";
 import type { SheetCloseButtonProps, SheetHeaderProps } from "./SheetHeader.types";
 
 export function SheetCloseButton(props: SheetCloseButtonProps) {
+  const gt = useGT();
   return (
     <IconButton
       icon="xmark"
-      accessibilityLabel={props.accessibilityLabel ?? (props.onCancel ? "Cancel" : "Close")}
+      accessibilityLabel={props.accessibilityLabel ?? (props.onCancel ? gt("Cancel") : gt("Close"))}
       disabled={props.disabled}
       onPress={props.onCancel ?? props.onClose}
     />
@@ -21,17 +24,30 @@ export function SheetCloseButton(props: SheetCloseButtonProps) {
 }
 
 export function SheetHeader(props: SheetHeaderProps) {
-  return props.presentation !== "inline" ? (
-    <NativeSheetHeader {...props} />
-  ) : (
-    <InlineSheetHeader {...props} />
+  return (
+    <>
+      <SheetDismissGuard dismissDisabled={props.dismissDisabled} />
+      {props.presentation !== "inline" ? (
+        <NativeSheetHeader {...props} />
+      ) : (
+        <InlineSheetHeader {...props} />
+      )}
+    </>
+  );
+}
+
+/** A sheet that can't be closed with its button can't be swiped away either. */
+function SheetDismissGuard(props: { readonly dismissDisabled: boolean | undefined }) {
+  return props.dismissDisabled === undefined ? null : (
+    <NativeStackScreenOptions options={{ gestureEnabled: !props.dismissDisabled }} />
   );
 }
 
 function NativeSheetHeader(props: SheetHeaderProps) {
+  const gt = useGT();
   const { colors } = useControlTheme();
   const onDismiss = props.onCancel ?? props.onClose;
-  const dismissLabel = props.accessibilityLabel ?? (props.onCancel ? "Cancel" : "Close");
+  const dismissLabel = props.accessibilityLabel ?? (props.onCancel ? gt("Cancel") : gt("Close"));
   const confirmation = props.confirm;
 
   // Toolbar children are parsed as native items, so keep the actual Button
@@ -53,8 +69,19 @@ function NativeSheetHeader(props: SheetHeaderProps) {
           disabled={props.dismissDisabled}
         />
       </Toolbar>
-      {confirmation || props.trailing ? (
+      {confirmation || props.trailing || props.actions?.length || props.menus?.length ? (
         <Toolbar placement="right">
+          {props.actions?.map((action) => (
+            <Toolbar.Button
+              key={action.accessibilityLabel}
+              icon={typeof action.icon === "string" ? action.icon : action.icon.ios}
+              accessibilityLabel={action.accessibilityLabel}
+              disabled={action.disabled || action.loading}
+              tintColor={action.tintColor}
+              onPress={action.onPress}
+            />
+          ))}
+          {props.menus?.map(createNativeHeaderMenu)}
           {props.trailing ? (
             <Toolbar.Custom>
               <View>{props.trailing}</View>
@@ -135,8 +162,17 @@ function InlineSheetHeader(props: SheetHeaderProps) {
   );
   const confirm = props.confirm ? <InlineConfirmation confirmation={props.confirm} /> : null;
   const trailing =
-    props.trailing || confirm ? (
+    props.trailing || confirm || props.actions?.length ? (
       <View className="flex-row items-center gap-2">
+        {props.actions?.map((action) => (
+          <IconButton
+            key={action.accessibilityLabel}
+            icon={action.icon}
+            accessibilityLabel={action.accessibilityLabel}
+            disabled={action.disabled || action.loading}
+            onPress={action.onPress}
+          />
+        ))}
         {props.trailing}
         {confirm}
       </View>

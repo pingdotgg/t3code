@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { T, useGT } from "gt-react";
 import { useNavigate } from "@tanstack/react-router";
 import { create } from "zustand";
 import { SNOOZE_REMINDER_MAX_CHARS } from "@lathe/contracts";
@@ -79,6 +80,7 @@ export function CustomSnoozeDialogHost() {
 }
 
 function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
+  const gt = useGT();
   const id = useId();
   const navigate = useNavigate();
   const initialSnoozedUntil = options.snoozedUntil ?? null;
@@ -114,7 +116,7 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
       }}
     >
       <DialogPopup
-        className="sm:max-w-sm"
+        className="sm:max-w-md"
         {...(options.reminder?.focus ? { initialFocus: reminderRef } : {})}
       >
         <form
@@ -130,8 +132,8 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
             if (!snoozedUntil) {
               setError(
                 mode === "date"
-                  ? "Choose a valid date and time in the future."
-                  : "Enter a positive duration.",
+                  ? gt("Choose a valid date and time in the future.")
+                  : gt("Enter a positive duration."),
               );
               return;
             }
@@ -142,17 +144,19 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
           }}
         >
           <DialogHeader>
-            <DialogTitle>{editing ? "Edit snooze" : "Custom snooze"}</DialogTitle>
+            <DialogTitle>{editing ? gt("Edit snooze") : gt("Custom snooze")}</DialogTitle>
             <DialogDescription>
               {options.reminder
-                ? "Choose when this thread returns. An optional reminder appears in the chat when it wakes."
-                : "Choose when snoozed threads return to your inbox."}
+                ? gt(
+                    "Choose when this thread returns. An optional reminder appears in the chat when it wakes.",
+                  )
+                : gt("Choose when snoozed threads return to your inbox.")}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <div className="flex flex-col gap-4">
               <ToggleGroup
-                aria-label="Schedule type"
+                aria-label={gt("Schedule type")}
                 className="w-full *:flex-1"
                 value={[mode]}
                 onValueChange={(next) => {
@@ -161,14 +165,20 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
                   scheduleChanged();
                 }}
               >
-                <Toggle value="date">Date and time</Toggle>
-                <Toggle value="duration">Duration</Toggle>
+                <Toggle value="date">
+                  <T>Date and time</T>
+                </Toggle>
+                <Toggle value="duration">
+                  <T>Duration</T>
+                </Toggle>
               </ToggleGroup>
               <div className="flex flex-col gap-4">
                 {mode === "date" ? (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="flex min-w-0 flex-col gap-2">
-                      <Label htmlFor={`${id}-date`}>Date</Label>
+                      <Label htmlFor={`${id}-date`}>
+                        <T context="calendar date">Date</T>
+                      </Label>
                       <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
                         <PopoverTrigger
                           render={
@@ -186,7 +196,7 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
                           })}
                           <CalendarIcon className="size-4 text-muted-foreground" />
                         </PopoverTrigger>
-                        <PopoverPopup align="start" aria-label="Choose snooze date">
+                        <PopoverPopup align="start" aria-label={gt("Choose snooze date")}>
                           <Calendar
                             mode="single"
                             required
@@ -204,7 +214,7 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
                       </Popover>
                     </div>
                     <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-time`}>
-                      Time
+                      <T context="time of day">Time</T>
                       <Input
                         nativeInput
                         id={`${id}-time`}
@@ -231,18 +241,20 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
                         scheduleChanged();
                       }}
                     >
-                      <Label htmlFor={`${id}-amount`}>Snooze for</Label>
+                      <Label htmlFor={`${id}-amount`}>
+                        <T>Snooze for</T>
+                      </Label>
                       <NumberFieldGroup>
-                        <NumberFieldDecrement aria-label="Decrease duration" />
+                        <NumberFieldDecrement aria-label={gt("Decrease duration")} />
                         <NumberFieldInput required />
-                        <NumberFieldIncrement aria-label="Increase duration" />
+                        <NumberFieldIncrement aria-label={gt("Increase duration")} />
                       </NumberFieldGroup>
                     </NumberField>
                     <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-unit`}>
-                      Unit
+                      <T context="unit of time">Unit</T>
                       <Select
                         value={unit}
-                        items={{ minutes: "Minutes", hours: "Hours", days: "Days" }}
+                        items={{ minutes: gt("Minutes"), hours: gt("Hours"), days: gt("Days") }}
                         onValueChange={(value) => {
                           if (value === "minutes" || value === "hours" || value === "days")
                             setUnit(value);
@@ -253,9 +265,15 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectPopup>
-                          <SelectItem value="minutes">Minutes</SelectItem>
-                          <SelectItem value="hours">Hours</SelectItem>
-                          <SelectItem value="days">Days</SelectItem>
+                          <SelectItem value="minutes">
+                            <T>Minutes</T>
+                          </SelectItem>
+                          <SelectItem value="hours">
+                            <T>Hours</T>
+                          </SelectItem>
+                          <SelectItem value="days">
+                            <T>Days</T>
+                          </SelectItem>
                         </SelectPopup>
                       </Select>
                     </Label>
@@ -264,13 +282,13 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
               </div>
               {options.reminder ? (
                 <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-reminder`}>
-                  Reminder
+                  <T>Reminder</T>
                   <Textarea
                     ref={reminderRef}
                     id={`${id}-reminder`}
                     value={reminder}
                     maxLength={SNOOZE_REMINDER_MAX_CHARS}
-                    placeholder="Optional. Shown in the chat when the thread wakes."
+                    placeholder={gt("Optional. Shown in the chat when the thread wakes.")}
                     onChange={(event) => setReminder(event.target.value)}
                   />
                 </Label>
@@ -296,12 +314,14 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
               }}
             >
               <Settings2Icon />
-              Edit snooze options
+              <T>Edit snooze options</T>
             </Button>
             <Button type="button" variant="outline" onClick={() => finish(null)}>
-              Cancel
+              <T>Cancel</T>
             </Button>
-            <Button type="submit">{editing ? "Save" : "Snooze"}</Button>
+            <Button type="submit">
+              {editing ? gt("Save") : gt("Snooze", { $context: "verb" })}
+            </Button>
           </DialogFooter>
         </form>
       </DialogPopup>

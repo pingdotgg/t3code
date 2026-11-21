@@ -47,7 +47,7 @@ export function ChatEventTimestampSettings() {
         resetAction={
           style !== DEFAULT_UNIFIED_SETTINGS.chatEventTimestampStyle ? (
             <SettingResetButton
-              label="event timestamp style"
+              ariaLabel="Reset event timestamp style to default"
               onClick={() =>
                 updateSettings({
                   chatEventTimestampStyle: DEFAULT_UNIFIED_SETTINGS.chatEventTimestampStyle,
@@ -84,7 +84,7 @@ export function ChatEventTimestampSettings() {
         resetAction={
           seconds !== DEFAULT_UNIFIED_SETTINGS.chatEventTimestampSeconds ? (
             <SettingResetButton
-              label="event timestamp seconds"
+              ariaLabel="Reset event timestamp seconds to default"
               onClick={() =>
                 updateSettings({
                   chatEventTimestampSeconds: DEFAULT_UNIFIED_SETTINGS.chatEventTimestampSeconds,

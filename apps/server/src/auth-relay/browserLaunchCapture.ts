@@ -17,7 +17,7 @@ import { AuthRelayError } from "./AuthRelayError.ts";
  */
 
 export const BROWSER_LAUNCH_URL_MAX_LENGTH = 16_384;
-const PREFLIGHT_TIMEOUT = "5 seconds";
+const PREFLIGHT_TIMEOUT = "30 seconds";
 const PREFLIGHT_URL = "https://example.invalid/lathe-browser-launch-preflight";
 const MAX_MARKER_LINE_LENGTH = 128 + BROWSER_LAUNCH_URL_MAX_LENGTH + 2;
 const decodeHelperUrl = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.String));

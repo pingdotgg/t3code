@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2SubscribeShellInput,
@@ -56,6 +58,7 @@ import {
   withoutEnvironmentThemes,
 } from "../state/serverConfigProjection.ts";
 import { environmentMismatchError } from "../connection/errors.ts";
+import { recordServerClock } from "../clock.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 const PING_TIMEOUT_MILLIS = Duration.toMillis(PING_TIMEOUT);
@@ -77,6 +80,9 @@ export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
+  readonly providerCatalogsOnDemand?: boolean;
+  readonly providerCatalogDigests?: boolean;
+  readonly providerStatusDeltas?: boolean;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -186,6 +192,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+    ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
+    ...(options.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
+    ...(options.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
   };
   // Config state merges the snapshots it fetches back in, so no subscriber needs them broadcast.
   const onDemandSnapshots = (input: ServerConfigSubscriptionInput) => ({
@@ -230,13 +239,13 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       });
       return socket;
     };
-    const failDisconnected = (detail: string) =>
+    const failDisconnected = (text: ReturnType<typeof translatableDetail>) =>
       Effect.suspend(() =>
         Deferred.fail(
           disconnected,
           new ConnectionTransientErrorClass({
             reason: "transport",
-            detail: `${connection.label} ${detail}`,
+            ...text,
             ...socketFailureLocation(via),
             ...(socketClose === undefined ? {} : { socketClose }),
           }),
@@ -251,8 +260,13 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           // often overloaded or asleep than blocked.
           failDisconnected(
             wasConnected
-              ? "disconnected."
-              : `could not establish a WebSocket connection.${networkHint}`,
+              ? translatableDetail(msg("{host} disconnected.", { host: connection.label }))
+              : translatableDetail(
+                  msg("{host} could not establish a WebSocket connection.", {
+                    host: connection.label,
+                  }),
+                  ...(via === "relay" ? [NETWORK_BLOCKING_HINT] : []),
+                ),
           ),
         ),
       ),
@@ -287,7 +301,18 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         pingInterval: Duration.infinity,
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
-      }),
+      }).pipe(
+        // Teardown sends an interrupt per open stream, and a write to a closed
+        // socket waits out the client's 1s interrupt timeout before reconnecting.
+        // Requests still go through, so they fail with the protocol error.
+        Effect.map((protocol) => ({
+          ...protocol,
+          send: (clientId, request, transferables) =>
+            request._tag !== "Request" && Deferred.isDoneUnsafe(disconnected)
+              ? Effect.void
+              : protocol.send(clientId, request, transferables),
+        })),
+      ),
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -331,7 +356,13 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       ),
       Effect.andThen(
         failDisconnected(
-          `stopped responding for ${PING_TIMEOUT_SECONDS}s. ${UNRESPONSIVE_HOST_HINT}`,
+          translatableDetail(
+            msg("{host} stopped responding for {seconds}s.", {
+              host: connection.label,
+              seconds: String(PING_TIMEOUT_SECONDS),
+            }),
+            UNRESPONSIVE_HOST_HINT,
+          ),
         ),
       ),
       Effect.andThen(Effect.sync(() => liveSocket?.close())),
@@ -346,6 +377,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       reason: "remote-unavailable",
       detail: `${connection.label} config subscription ended.`,
     });
+    const configRequestedAtMs = yield* Clock.currentTimeMillis;
     const serverConfigSource = protocolClient[WS_METHODS.subscribeServerConfig](
       onDemandSnapshots(serverConfigInput),
     ).pipe(
@@ -383,6 +415,16 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             yield* PubSub.publish(serverConfigUpdates, buffered.value);
           }
           if (event.type === "snapshot") {
+            // Later snapshots may repeat the first one's serverTime. Record
+            // before readiness so the first timers already use its clock.
+            if (!(yield* Deferred.isDone(initialConfigDeferred))) {
+              const { serverTime } = event.config;
+              recordServerClock(connection.environmentId, {
+                serverTimeMs: serverTime === undefined ? undefined : Date.parse(serverTime),
+                requestedAtMs: configRequestedAtMs,
+                receivedAtMs: yield* Clock.currentTimeMillis,
+              });
+            }
             yield* Deferred.succeed(initialConfigDeferred, event.config);
           }
         }),

@@ -7,11 +7,13 @@ import { Suspense, use } from "react";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { HighlightedTokens } from "./HighlightedTokens";
 
-const WORD_CLASS_NAME = "inline-block max-w-full [overflow-wrap:anywhere]";
+const WORD_CLASS_NAME = "[overflow-wrap:anywhere]";
 
-let embeddedScriptsModule: Promise<typeof import("../../lib/embeddedScripts")> | undefined;
+let embeddedScriptsModule:
+  | Promise<typeof import("@lathe/client-runtime/work-log/embedded-scripts")>
+  | undefined;
 function loadEmbeddedScripts() {
-  embeddedScriptsModule ??= import("../../lib/embeddedScripts");
+  embeddedScriptsModule ??= import("@lathe/client-runtime/work-log/embedded-scripts");
   return embeddedScriptsModule;
 }
 

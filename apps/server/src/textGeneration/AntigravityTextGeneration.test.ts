@@ -67,6 +67,8 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     readonly sessionId?: string;
     readonly modelName?: string;
     readonly startupSkills?: boolean;
+    readonly initialModel?: string;
+    readonly rejectThinkingUpdate?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -89,6 +91,8 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     prompts: [] as Array<Parameters<TextRuntime["prompt"]>[0]>,
     selectedModels: [] as Array<string>,
     selectedModes: [] as Array<string>,
+    promptThinkingLevels: [] as Array<string>,
+    thinkingUpdates: [] as Array<string>,
     nativeFilesAtClose: [] as Array<boolean>,
     cancellations: 0,
     stop: undefined as Effect.Effect<void> | undefined,
@@ -137,6 +141,8 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
         }),
       );
       let sessionUpdate: Parameters<TextRuntime["handleSessionUpdate"]>[0] = () => Effect.void;
+      let currentModel = options.initialModel ?? modelSelection.model;
+      let thinkingLevel = "high";
 
       return {
         start: () =>
@@ -169,25 +175,58 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
             state.selectedModes.push(mode);
             return {};
           }),
-        getConfigOptions: Effect.succeed([
-          {
-            id: "model",
-            name: "Model",
-            category: "model",
-            type: "select",
-            currentValue: modelSelection.model,
-            options: [{ value: modelSelection.model, name: options.modelName ?? "Gemini test" }],
-          },
-        ]),
+        getConfigOptions: Effect.sync(() => {
+          const config: Array<AcpSchema.SessionConfigOption> = [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: currentModel,
+              options: [
+                { value: modelSelection.model, name: options.modelName ?? "Gemini test" },
+                { value: "gemini-native-default", name: "Gemini native default" },
+              ],
+            },
+          ];
+          if (currentModel === modelSelection.model) {
+            config.push({
+              id: "thinking_level",
+              name: "Thinking level",
+              category: "thought_level",
+              type: "select",
+              currentValue: thinkingLevel,
+              options: [
+                { value: "low", name: "Low" },
+                { value: "high", name: "High" },
+              ],
+            });
+          }
+          return config;
+        }),
         getEvents: () => Stream.fromQueue(events),
         setModel: (model) =>
           Effect.sync(() => {
             state.selectedModels.push(model);
+            currentModel = model;
           }),
-        setConfigOption: () => Effect.succeed({ configOptions: [] }),
+        setConfigOption: (id, value) =>
+          Effect.gen(function* () {
+            if (id === "thinking_level" && typeof value === "string") {
+              state.thinkingUpdates.push(value);
+              if (options.rejectThinkingUpdate) {
+                return yield* AcpRequestError.invalidParams(
+                  "Thinking level is no longer available.",
+                );
+              }
+              thinkingLevel = value;
+            }
+            return { configOptions: [] };
+          }),
         prompt: (request) =>
           Effect.gen(function* () {
             state.prompts.push(request);
+            state.promptThinkingLevels.push(thinkingLevel);
             yield* Deferred.succeed(enteredPrompt, undefined);
             const emit: PromptContext["emit"] = (update, sessionId = nativeSessionId) =>
               sessionUpdate({ sessionId, update });
@@ -348,7 +387,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
           { type: "text", text: expect.stringContaining("+handleRemoteCallback()") },
         ]);
         yield* fixture.assertCleaned;
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each(["tool_call", "tool_call_update"] as const)(
@@ -367,7 +406,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         expect(error.detail).toContain("tool work");
         expect(fixture.state.cancellations).toBe(1);
         yield* fixture.assertCleaned;
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("rejects native permission and choice requests instead of answering them", () =>
@@ -392,7 +431,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       expect(reply).toEqual({ outcome: { outcome: "cancelled" } });
       expect(error.detail).toContain("permission or user input");
       yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["file", "terminal", "extension"] as const)(
@@ -421,7 +460,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         const error = yield* Fiber.join(child).pipe(Effect.flip);
         expect(error.detail).toContain("tool or user input");
         yield* fixture.assertCleaned;
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect.each([
@@ -437,7 +476,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .pipe(Effect.flip);
       expect(error.detail).toContain(detail);
       yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("does not return partial JSON after native cancellation", () =>
@@ -454,7 +493,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .pipe(Effect.flip);
       expect(error.detail).toContain("cancelled");
       yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -475,7 +514,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       expect(error.detail).toBe(detail);
       expect(error.detail).not.toContain("Raw provider failure text.");
       yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -522,20 +561,52 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         expect(error.detail).toContain("wrote files");
         if (target !== undefined) expect(yield* fs.exists(target)).toBe(true);
         yield* fixture.assertCleaned;
-      }).pipe(Effect.scoped),
+      }),
   );
 
-  it.effect("uses the native default without sending Lathe's default selection as a model ID", () =>
-    Effect.gen(function* () {
-      const fixture = yield* makeFixture();
-      const result = yield* fixture.textGeneration.generateThreadTitle({
-        ...fixture.titleInput,
-        modelSelection: { ...modelSelection, model: ANTIGRAVITY_DEFAULT_MODEL },
-      });
-      expect(result).toEqual({ title: "Repair login" });
-      expect(fixture.state.selectedModels).toEqual([]);
-      yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
+  it.effect.each([
+    { name: "native default", selected: undefined, expected: "high", updates: [] },
+    {
+      name: "after switching models",
+      selected: "low",
+      expected: "low",
+      updates: ["low"],
+      initialModel: "gemini-native-default",
+    },
+    { name: "when not advertised", selected: "medium", expected: "high", updates: [] },
+    {
+      name: "when rejected",
+      selected: "low",
+      expected: "high",
+      updates: ["low"],
+      rejectThinkingUpdate: true,
+    },
+  ])(
+    "generates a title with the thinking level $name",
+    ({ selected, expected, updates, initialModel, rejectThinkingUpdate }) =>
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture({
+          initialModel: initialModel ?? modelSelection.model,
+          rejectThinkingUpdate: rejectThinkingUpdate === true,
+        });
+        const result = yield* fixture.textGeneration.generateThreadTitle({
+          ...fixture.titleInput,
+          modelSelection: {
+            ...modelSelection,
+            model: initialModel === undefined ? ANTIGRAVITY_DEFAULT_MODEL : modelSelection.model,
+            ...(selected === undefined
+              ? {}
+              : { options: [{ id: "thinking_level", value: selected }] }),
+          },
+        });
+        expect(result).toEqual({ title: "Repair login" });
+        expect(fixture.state.selectedModels).toEqual(
+          initialModel === undefined ? [] : [modelSelection.model],
+        );
+        expect(fixture.state.thinkingUpdates).toEqual(updates);
+        expect(fixture.state.promptThinkingLevels).toEqual([expected]);
+        yield* fixture.assertCleaned;
+      }),
   );
 
   it.effect.each([
@@ -554,6 +625,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
     { name: "hooks.json", value: "{}", available: true },
     { name: "hooks.json", value: '{"hooks":{}}', available: true },
     { name: "mcp_config.json", value: '{"mcpServers":{}}', available: true },
+    { name: "mcp_config.json", value: "", available: true },
   ])("checks $name before starting a helper, available=$available", ({ name, value, available }) =>
     Effect.gen(function* () {
       const fixture = yield* makeFixture();
@@ -567,7 +639,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       expect(Exit.isSuccess(result)).toBe(available);
       expect(fixture.state.workspaces.length).toBe(available ? 1 : 0);
       yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("does not launch during sign-out or before sign-in", () =>
@@ -580,7 +652,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       expect(error.detail).toBe("Sign in before starting Antigravity.");
       expect(fixture.state.workspaces).toEqual([]);
       yield* fixture.assertCleaned;
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["caller", "sign-out"] as const)(
@@ -601,7 +673,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         }
         expect(fixture.state.cancellations).toBe(1);
         yield* fixture.assertCleaned;
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("records the prompt's usage under the model name the usage scan uses", () =>
@@ -636,7 +708,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         {
           provider: "antigravity",
           sessionId: SESSION_ID,
-          model: "gemini-3.1-pro",
+          model: "gemini-3.1-pro-high",
           usage: {
             totals: {
               uncachedInputTokens: 600,
@@ -676,7 +748,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       expect(fixture.state.prompts).toEqual([]);
       expect(yield* fixture.fs.readFileString(`${fixture.sessionBase}.db`)).toBe("helper session");
       expect(fixture.state.closed).toEqual(fixture.state.workspaces);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps native sessions whose metadata belongs to a different workspace", () =>
@@ -694,7 +766,7 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         "keep this session",
       );
       expect(yield* fixture.fs.readFileString(`${fixture.sessionBase}.meta`)).toBe(metadata);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -707,5 +779,5 @@ it.effect("retains filesystem services supplied only during construction", () =>
       title: "Repair login",
     });
     yield* fixture.assertCleaned;
-  }).pipe(Effect.scoped),
+  }),
 );

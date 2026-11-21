@@ -4,7 +4,8 @@ import {
   type UnifiedSettings,
   UsageLimitSourceId,
 } from "@lathe/contracts";
-import { useState } from "react";
+import { T, useGT } from "gt-react";
+import { useId, useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
@@ -25,20 +26,6 @@ import { Label } from "../ui/label";
 
 type SourceKind = "cliproxy" | "modelproxy";
 
-const KIND_COPY: Record<SourceKind, { title: string; description: string; action: string }> = {
-  cliproxy: {
-    title: "CLIProxyAPI hub",
-    description: "Show the quota of every account the hub pools. The management key stays on",
-    action: "Add hub",
-  },
-  modelproxy: {
-    title: "modelproxy gateway",
-    description:
-      "Show which account the gateway is serving and how much headroom the pool has. You sign in as yourself; the client secret and your session stay on",
-    action: "Add gateway",
-  },
-};
-
 /** Send the secret once to server secret storage; settings retain only a redaction marker. */
 export function AddUsageLimitSourceDialog({
   open,
@@ -53,6 +40,8 @@ export function AddUsageLimitSourceDialog({
   readonly environmentLabel: string;
   readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
+  const gt = useGT();
+  const formId = useId();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [kind, setKind] = useState<SourceKind>("cliproxy");
   const [label, setLabel] = useState("");
@@ -114,7 +103,28 @@ export function AddUsageLimitSourceDialog({
     onOpenChange(false);
   };
 
-  const copy = KIND_COPY[kind];
+  const kindTitle: Record<SourceKind, string> = {
+    cliproxy: gt("CLIProxyAPI hub"),
+    modelproxy: gt("modelproxy gateway"),
+  };
+  const copy =
+    kind === "cliproxy"
+      ? {
+          title: gt("Add a CLIProxyAPI hub"),
+          description: gt(
+            "Show the quota of every account the hub pools. The management key stays on {environment}.",
+            { environment: environmentLabel },
+          ),
+          action: gt("Add hub"),
+        }
+      : {
+          title: gt("Add a modelproxy gateway"),
+          description: gt(
+            "Show which account the gateway is serving and how much headroom the pool has. You sign in as yourself; the client secret and your session stay on {environment}.",
+            { environment: environmentLabel },
+          ),
+          action: gt("Add gateway"),
+        };
 
   return (
     <Dialog
@@ -126,13 +136,12 @@ export function AddUsageLimitSourceDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add a {copy.title}</DialogTitle>
-          <DialogDescription>
-            {copy.description} {environmentLabel}.
-          </DialogDescription>
+          <DialogTitle>{copy.title}</DialogTitle>
+          <DialogDescription>{copy.description}</DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <form
+            id={formId}
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
@@ -140,8 +149,10 @@ export function AddUsageLimitSourceDialog({
             }}
           >
             <div className="grid gap-1.5">
-              <Label>Kind</Label>
-              <div className="flex gap-1" role="radiogroup" aria-label="Source kind">
+              <Label>
+                <T>Kind</T>
+              </Label>
+              <div className="flex gap-1" role="radiogroup" aria-label={gt("Source kind")}>
                 {(["cliproxy", "modelproxy"] as const).map((option) => (
                   <Button
                     key={option}
@@ -152,14 +163,14 @@ export function AddUsageLimitSourceDialog({
                     variant={kind === option ? "default" : "outline"}
                     onClick={() => setKind(option)}
                   >
-                    {KIND_COPY[option].title}
+                    {kindTitle[option]}
                   </Button>
                 ))}
               </div>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-url">
-                {kind === "cliproxy" ? "Hub URL" : "Gateway URL"}
+                {kind === "cliproxy" ? <T>Hub URL</T> : <T>Gateway URL</T>}
               </Label>
               <Input
                 id="usage-source-url"
@@ -176,7 +187,9 @@ export function AddUsageLimitSourceDialog({
             {kind === "modelproxy" ? (
               <>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="usage-source-issuer">OIDC issuer</Label>
+                  <Label htmlFor="usage-source-issuer">
+                    <T>OIDC issuer</T>
+                  </Label>
                   <Input
                     id="usage-source-issuer"
                     placeholder="https://auth.example.com/realms/main"
@@ -185,7 +198,9 @@ export function AddUsageLimitSourceDialog({
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="usage-source-client-id">Client ID</Label>
+                  <Label htmlFor="usage-source-client-id">
+                    <T>Client ID</T>
+                  </Label>
                   <Input
                     id="usage-source-client-id"
                     placeholder="lathe"
@@ -197,14 +212,15 @@ export function AddUsageLimitSourceDialog({
             ) : null}
             <div className="grid gap-1.5">
               <Label htmlFor="usage-source-key">
-                {kind === "cliproxy" ? "Management key" : "Client secret"}
+                {kind === "cliproxy" ? <T>Management key</T> : <T>Client secret</T>}
               </Label>
               {kind === "cliproxy" ? (
                 <SecretSourceInput
                   id="usage-source-key"
-                  aria-label="Management key"
+                  aria-label={gt("Management key")}
                   value={keyDraft}
                   sources={secretSources}
+                  environmentId={environmentId}
                   onChange={(event) => setKeyDraft(event.target.value)}
                   onSecretChange={(reference) => setKeyDraft(reference ?? "")}
                   onValidityChange={setKeyValid}
@@ -218,10 +234,12 @@ export function AddUsageLimitSourceDialog({
               )}
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-label">Label (optional)</Label>
+              <Label htmlFor="usage-source-label">
+                <T>Label (optional)</T>
+              </Label>
               <Input
                 id="usage-source-label"
-                placeholder="Defaults to the host name"
+                placeholder={gt("Defaults to the host name")}
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
               />
@@ -236,9 +254,9 @@ export function AddUsageLimitSourceDialog({
               onOpenChange(false);
             }}
           >
-            Cancel
+            <T>Cancel</T>
           </Button>
-          <Button onClick={save} disabled={!canSave}>
+          <Button type="submit" form={formId} disabled={!canSave}>
             {copy.action}
           </Button>
         </DialogFooter>

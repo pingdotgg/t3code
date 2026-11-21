@@ -17,6 +17,7 @@ type ScheduledTaskEditorSession = {
   readonly id: number;
   readonly initial: ScheduledTaskEditor | null;
   readonly current: ScheduledTaskEditor | null;
+  readonly saving: boolean;
 };
 
 export const scheduledTaskEditorSessionAtom = Atom.make<ScheduledTaskEditorSession | null>(
@@ -43,6 +44,7 @@ export function startScheduledTaskEditor(next: ScheduledTaskEditor | null): void
     id: ++nextEditorId,
     initial: next,
     current: next,
+    saving: false,
   });
 }
 
@@ -59,7 +61,22 @@ export function updateScheduledTaskEditor(
     id: session?.id ?? 0,
     initial: session ? session.initial : previous,
     current: typeof update === "function" ? update(previous) : update,
+    saving: session?.saving ?? false,
   });
+}
+
+/** The pending save lives with the draft so a new-task link cannot clear the task it writes. */
+export function setScheduledTaskEditorSaving(
+  saving: boolean,
+  defaultEditor: ScheduledTaskEditor | null,
+): void {
+  const session = appAtomRegistry.get(scheduledTaskEditorSessionAtom);
+  appAtomRegistry.set(
+    scheduledTaskEditorSessionAtom,
+    session
+      ? { ...session, saving }
+      : { id: 0, initial: defaultEditor, current: defaultEditor, saving },
+  );
 }
 
 /**
@@ -93,6 +110,8 @@ export function takeScheduledTaskNewLink(
 ): PartialState<NavigationState> | undefined {
   if (findLinkedRoute(state, ["SettingsScheduledTaskNew"])) {
     const session = appAtomRegistry.get(scheduledTaskEditorSessionAtom);
+    // The open editor's removal guard refuses the link while the save is pending.
+    if (session?.saving) return state;
     if (session && scheduledTaskEditorHasChanges(session.initial, session.current)) {
       newTaskLinkAwaitsDiscard = true;
     } else {

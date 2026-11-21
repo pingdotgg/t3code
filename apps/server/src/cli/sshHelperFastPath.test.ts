@@ -81,11 +81,21 @@ describe("waitReady", () => {
         response.end("ok");
       }),
     );
-    expect(await waitReady(port, 2_000, 500)).toBe(true);
+    expect(await waitReady(port, 2_000, 500)).toBe("ready");
   });
 
-  it("fails when nothing listens before the deadline", async () => {
-    expect(await waitReady(await closedPort(), 150, 50)).toBe(false);
+  it("reports refused when nothing listens before the deadline", async () => {
+    expect(await waitReady(await closedPort(), 150, 50)).toBe("refused");
+  });
+
+  it("reports not ready when a listener never answers 2xx", async () => {
+    const port = await listen(
+      NodeHttp.createServer((_request, response) => {
+        response.writeHead(503);
+        response.end();
+      }),
+    );
+    expect(await waitReady(port, 150, 50)).toBe("not-ready");
   });
 });
 

@@ -1,6 +1,7 @@
 import { VcsProcessExitError } from "@lathe/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as TestSourceControlHost from "@lathe/source-control-testing/TestSourceControlHost";
 
@@ -33,6 +34,7 @@ it.effect("reports activity as rate limited when only the reactions endpoint is"
               },
             }),
           ),
+          Layer.provide(FileSystem.layerNoop({})),
         ),
       ),
     );

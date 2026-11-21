@@ -38,8 +38,13 @@ export function menuBarRemoteSources(
 ): ReadonlyArray<MenuBarRemoteSource> {
   const disabled = new Set(catalog.disabledEnvironmentIds);
   const profiles = new Map(catalog.profiles.map((profile) => [profile.connectionId, profile]));
+  // A DPoP token needs proofs from the renderer's device key, so only bearer tokens work here.
   const tokens = new Map(
-    catalog.credentials.map((entry) => [entry.connectionId, entry.credential.token]),
+    catalog.credentials.flatMap((entry) =>
+      entry.credential._tag === "BearerConnectionCredential"
+        ? [[entry.connectionId, entry.credential.token] as const]
+        : [],
+    ),
   );
   const sources: Array<MenuBarRemoteSource> = [];
   for (const target of catalog.targets) {

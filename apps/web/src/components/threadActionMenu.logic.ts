@@ -1,5 +1,8 @@
 import type { ContextMenuItem, RoadmapItemType, ThreadHighlightPalette } from "@lathe/contracts";
 import type { SnoozePreset } from "@lathe/client-runtime/state/thread-settled";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 // Fork: roadmap.
 import { ROADMAP_TYPE_LABELS, ROADMAP_TYPES } from "./roadmap/roadmap.logic";
 
@@ -57,30 +60,53 @@ export type DraftActionMenuId =
   | "project-settings"
   | "discard";
 
-export function buildDraftActionMenuItems(options: {
-  readonly hasPath: boolean;
-  readonly hasBranch: boolean;
-  readonly hasProject: boolean;
-}): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
+export function buildDraftActionMenuItems(
+  options: {
+    readonly hasPath: boolean;
+    readonly hasBranch: boolean;
+    readonly hasProject: boolean;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
   return [
     {
       id: "copy",
-      label: "Copy",
+      label: resolve(msg("Copy", { $context: "submenu of things to copy" })),
       icon: "copy",
       disabled: !options.hasPath && !options.hasBranch,
       children: [
-        ...(options.hasPath ? [{ id: "copy-path" as const, label: "Path", icon: "folder" }] : []),
+        ...(options.hasPath
+          ? [
+              {
+                id: "copy-path" as const,
+                label: resolve(msg("Path", { $context: "copy the file path" })),
+                icon: "folder",
+              },
+            ]
+          : []),
         ...(options.hasBranch
-          ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
+          ? [
+              {
+                id: "copy-branch" as const,
+                label: resolve(msg("Branch", { $context: "copy the git branch name" })),
+                icon: "git-branch",
+              },
+            ]
           : []),
       ],
     },
     ...(options.hasProject
-      ? [{ id: "project-settings" as const, label: "Project settings", icon: "settings" }]
+      ? [
+          {
+            id: "project-settings" as const,
+            label: resolve(msg("Project settings")),
+            icon: "settings",
+          },
+        ]
       : []),
     {
       id: "discard",
-      label: "Discard draft",
+      label: resolve(msg("Discard draft")),
       icon: "trash",
       destructive: true,
       separatorBefore: true,
@@ -91,6 +117,8 @@ export function buildDraftActionMenuItems(options: {
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly canFind?: boolean;
+  /** False where no inline title editor is rendered, such as sidebar search results. */
+  readonly canRename?: boolean;
   readonly branch: string | null;
   /**
    * The project lets agents read thread history, so a new thread can pick up
@@ -158,6 +186,7 @@ const ROADMAP_MENU_TITLE_MAX = 40;
 // Fork: roadmap.
 function roadmapMenuItems(
   state: ThreadActionMenuState,
+  resolve: MessageResolver,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const roadmap = state.roadmap;
   if (state.supports.roadmap !== true || roadmap === undefined) return [];
@@ -166,7 +195,7 @@ function roadmapMenuItems(
   return [
     {
       id: "roadmap-create",
-      label: "Create work item from thread",
+      label: resolve(msg("Create work item from thread")),
       icon: "plus",
       separatorBefore: true,
       disabled,
@@ -178,7 +207,7 @@ function roadmapMenuItems(
         })),
         {
           id: "roadmap-create:new-thread" as const,
-          label: "Start a new thread for it",
+          label: resolve(msg("Start a new thread for it")),
           checked: roadmap.createInNewThread,
           separatorBefore: true,
           disabled,
@@ -186,14 +215,22 @@ function roadmapMenuItems(
       ],
     },
     title === null
-      ? { id: "roadmap-attach", label: "Attach to work item…", icon: "link", disabled }
+      ? {
+          id: "roadmap-attach",
+          label: resolve(msg("Attach to work item…")),
+          icon: "link",
+          disabled,
+        }
       : {
           id: "roadmap-detach",
-          label: `Detach from ${
-            title.length > ROADMAP_MENU_TITLE_MAX
-              ? `${title.slice(0, ROADMAP_MENU_TITLE_MAX - 1)}…`
-              : title
-          }`,
+          label: resolve(
+            msg("Detach from {title}", {
+              title:
+                title.length > ROADMAP_MENU_TITLE_MAX
+                  ? `${title.slice(0, ROADMAP_MENU_TITLE_MAX - 1)}…`
+                  : title,
+            }),
+          ),
           icon: "unlink",
           disabled,
         },
@@ -221,16 +258,17 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
 
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canFind
-      ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
+      ? [{ id: "find" as const, label: resolve(msg("Find in thread")), icon: "text-search" }]
       : []),
     ...(state.branch
       ? [
           {
             id: "new-thread-on-branch" as const,
-            label: `New thread on ${state.branch}`,
+            label: resolve(msg("New thread on {branch}", { branch: state.branch })),
             icon: "message-square-plus",
           },
         ]
@@ -239,7 +277,7 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "continue-in-new-thread" as const,
-            label: "Continue in new thread",
+            label: resolve(msg("Continue in new thread")),
             icon: "link",
           },
         ]
@@ -247,8 +285,8 @@ export function buildThreadActionMenuItems(
     ...(state.supports.pinning
       ? [
           state.isPinned
-            ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
-            : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+            ? { id: "unpin" as const, label: resolve(msg("Unpin thread")), icon: "pin-off" }
+            : { id: "pin" as const, label: resolve(msg("Pin thread")), icon: "pin" },
         ]
       : []),
     // A highlight is a visual marker only: it survives settle, snooze, and
@@ -257,12 +295,15 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "highlight" as const,
-            label: "Highlight",
+            label: resolve(msg("Highlight", { $context: "submenu of thread highlight colors" })),
             icon: "palette",
             children: [
               {
                 id: "highlight:default" as const,
-                label: state.highlightColor === null ? "Default ✓" : "Default",
+                label:
+                  state.highlightColor === null
+                    ? resolve(msg("Default ✓", { $context: "highlight color, selected" }))
+                    : resolve(msg("Default", { $context: "highlight color" })),
               },
               ...state.highlightPalette.map((entry, index) => ({
                 id: `highlight:${index}` as const,
@@ -280,27 +321,33 @@ export function buildThreadActionMenuItems(
     ...(state.supports.settlement
       ? [
           state.isSettled
-            ? { id: "unsettle" as const, label: "Un-settle thread", icon: "circle-check" }
-            : { id: "settle" as const, label: "Settle thread", icon: "circle-check" },
+            ? {
+                id: "unsettle" as const,
+                label: resolve(msg("Un-settle thread")),
+                icon: "circle-check",
+              }
+            : { id: "settle" as const, label: resolve(msg("Settle thread")), icon: "circle-check" },
         ]
       : []),
     // A thread waits either for a time or for other threads, never both, so
     // the parking group shows one set at a time: the way out while it waits,
     // otherwise snooze beside the two ways to park it on another thread.
     ...(state.supports.dependencies && state.isBlocked
-      ? [{ id: "release" as const, label: "Wake thread", icon: "clock" }]
+      ? [{ id: "release" as const, label: resolve(msg("Wake thread")), icon: "clock" }]
       : [
           ...(state.supports.snooze
             ? state.isSnoozed
               ? [
-                  { id: "unsnooze" as const, label: "Wake thread", icon: "clock" },
+                  { id: "unsnooze" as const, label: resolve(msg("Wake thread")), icon: "clock" },
                   // The snooze submenu is gone while snoozed, so the note
                   // stays editable and removable from here.
                   ...(state.supports.snoozeReminder
                     ? [
                         {
                           id: "snooze:reminder" as const,
-                          label: state.snoozeReminder ? "Edit reminder…" : "Add reminder…",
+                          label: state.snoozeReminder
+                            ? resolve(msg("Edit reminder…"))
+                            : resolve(msg("Add reminder…")),
                           icon: "pencil",
                         },
                       ]
@@ -309,21 +356,27 @@ export function buildThreadActionMenuItems(
               : [
                   {
                     id: "snooze" as const,
-                    label: "Snooze",
+                    label: resolve(msg("Snooze", { $context: "verb, snooze the thread" })),
                     icon: "clock",
                     disabled: !state.canSnoozeNow,
                     children: [
                       ...state.snoozePresets.map((preset) => ({
                         id: `snooze:${preset.id}` as const,
-                        label: `${preset.label} (${preset.whenLabel})`,
+                        label: preset.label,
+                        detail: preset.whenLabel,
                       })),
                       {
                         id: "snooze:custom" as const,
-                        label: "Custom…",
+                        label: resolve(msg("Custom…")),
                         separatorBefore: state.snoozePresets.length > 0,
                       },
                       ...(state.supports.snoozeReminder
-                        ? [{ id: "snooze:reminder" as const, label: "Snooze with reminder…" }]
+                        ? [
+                            {
+                              id: "snooze:reminder" as const,
+                              label: resolve(msg("Snooze with reminder…")),
+                            },
+                          ]
                         : []),
                     ],
                   },
@@ -336,13 +389,13 @@ export function buildThreadActionMenuItems(
             ? [
                 {
                   id: "depends-on" as const,
-                  label: "Depends on…",
+                  label: resolve(msg("Depends on…")),
                   icon: "link",
                   disabled: !state.canAddDependencyNow,
                 },
                 {
                   id: "new-thread-to-unblock" as const,
-                  label: "Start a thread to unblock this",
+                  label: resolve(msg("Start a thread to unblock this")),
                   icon: "message-square-plus",
                   disabled: !state.canAddDependencyNow,
                 },
@@ -350,29 +403,37 @@ export function buildThreadActionMenuItems(
             : []),
         ]),
     // Fork: roadmap.
-    ...roadmapMenuItems(state),
-    { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
+    ...roadmapMenuItems(state, resolve),
+    {
+      id: "rename",
+      label: resolve(msg("Rename thread")),
+      icon: "pencil",
+      disabled: state.canRename === false,
+      separatorBefore: true,
+    },
     ...(state.supports.titleRegeneration
       ? [
           {
             id: "regenerate-title" as const,
-            label: state.isRegeneratingTitle ? "Regenerating…" : "Regenerate title",
+            label: state.isRegeneratingTitle
+              ? resolve(msg("Regenerating…"))
+              : resolve(msg("Regenerate title")),
             icon: "refresh-cw",
             disabled: state.isRegeneratingTitle,
           },
         ]
       : []),
-    { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
     ...(state.canShareWithGuest
-      ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
+      ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
       : []),
     ...(state.projectFilter
       ? [
           {
             id: "filter-by-project" as const,
             label: state.projectFilter.isActive
-              ? "Show all projects"
-              : `Filter by ${state.projectFilter.label}`,
+              ? resolve(msg("Show all projects"))
+              : resolve(msg("Filter by {project}", { project: state.projectFilter.label })),
             icon: "folder-tree",
           },
         ]
@@ -381,7 +442,7 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "turn-into-project" as const,
-            label: "Turn into project",
+            label: resolve(msg("Turn into project")),
             icon: "folder-plus",
             disabled: state.isRunning,
           },
@@ -391,17 +452,17 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "auto-settle" as const,
-            label: "Auto-settle behavior",
+            label: resolve(msg("Auto-settle behavior")),
             icon: "timer",
             children: [
               {
                 id: "auto-settle:enabled" as const,
-                label: "Enabled",
+                label: resolve(msg("Follow settings")),
                 checked: state.autoSettleEnabled,
               },
               {
                 id: "auto-settle:disabled" as const,
-                label: "Disabled",
+                label: resolve(msg("Never", { $context: "auto-settle never" })),
                 checked: !state.autoSettleEnabled,
               },
             ],
@@ -410,30 +471,44 @@ export function buildThreadActionMenuItems(
       : []),
     {
       id: "copy",
-      label: "Copy",
+      label: resolve(msg("Copy", { $context: "submenu of things to copy" })),
       icon: "copy",
       separatorBefore: true,
       children: [
-        { id: "copy-path", label: "Path", icon: "folder" },
+        {
+          id: "copy-path",
+          label: resolve(msg("Path", { $context: "copy the file path" })),
+          icon: "folder",
+        },
         ...(state.branch
-          ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
+          ? [
+              {
+                id: "copy-branch" as const,
+                label: resolve(msg("Branch", { $context: "copy the git branch name" })),
+                icon: "git-branch",
+              },
+            ]
           : []),
-        { id: "copy-thread", label: "Thread", icon: "message-square" },
-        { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
-        { id: "copy-thread-chip", label: "Thread chip", icon: "link" },
+        {
+          id: "copy-thread",
+          label: resolve(msg("Thread", { $context: "copy the thread contents" })),
+          icon: "message-square",
+        },
+        { id: "copy-thread-id", label: resolve(msg("Thread ID")), icon: "hash" },
+        { id: "copy-thread-chip", label: resolve(msg("Thread chip")), icon: "link" },
       ],
     },
-    { id: "project-settings", label: "Project settings", icon: "settings" },
+    { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
     {
       id: "archive",
-      label: "Archive thread",
+      label: resolve(msg("Archive thread")),
       icon: "archive",
       disabled: state.isRunning,
       separatorBefore: true,
     },
     {
       id: "delete",
-      label: "Delete",
+      label: resolve(msg("Delete", { $context: "verb, delete the thread" })),
       destructive: true,
       icon: "trash",
     },

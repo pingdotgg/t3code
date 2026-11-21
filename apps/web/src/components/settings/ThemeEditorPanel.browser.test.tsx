@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import type { ReactNode } from "react";
+
 import { act, render } from "../../../test/render";
+import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { ThemeEditorPanel } from "./ThemeEditorPanel";
 
 function dragHeader(panel: HTMLElement, toX: number, toY: number) {
@@ -45,9 +48,9 @@ function pointerAt(target: HTMLElement, type: string, xFraction: number) {
   );
 }
 
-async function renderPanel() {
+async function renderPanel(appContent?: ReactNode) {
   await page.viewport(1280, 900);
-  const stack = new AsyncDisposableStack();
+  await using stack = new AsyncDisposableStack();
   // Synthetic pointer ids are not active pointers, so the browser would reject capture.
   stack.use(vi.spyOn(HTMLElement.prototype, "setPointerCapture").mockImplementation(() => {}));
   // Tailwind is not loaded here; give the panel its fixed, card-sized box.
@@ -56,22 +59,67 @@ async function renderPanel() {
   stack.defer(() => style.remove());
   const screen = stack.use(
     await render(
-      <ThemeEditorPanel
-        open
-        onOpenChange={() => {}}
-        onSaved={() => true}
-        editingTheme={null}
-        initialAppearance="dark"
-        restoreTheme={() => {}}
-      />,
+      <>
+        {appContent}
+        <ThemeEditorPanel
+          open
+          onOpenChange={() => {}}
+          onSaved={() => true}
+          editingTheme={null}
+          initialAppearance="dark"
+          restoreTheme={() => {}}
+        />
+      </>,
     ),
   );
   const panel = screen.getByRole("dialog", { name: "Create theme" });
   await expect.element(panel).toBeVisible();
+  const owned = stack.move();
   return {
     panel: panel.element() as HTMLElement,
-    [Symbol.asyncDispose]: () => stack.disposeAsync(),
+    [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
+}
+
+// The editor floats beside the Settings dialog, whose Esc handler sits on the document.
+async function renderBesideSettings() {
+  const onSettingsOpenChange = vi.fn();
+  const onEditorOpenChange = vi.fn();
+  await using stack = new AsyncDisposableStack();
+  stack.use(
+    await render(
+      <>
+        <Dialog onOpenChange={onSettingsOpenChange} open>
+          <DialogPopup>
+            <DialogTitle>Settings</DialogTitle>
+          </DialogPopup>
+        </Dialog>
+        <ThemeEditorPanel
+          open
+          onOpenChange={onEditorOpenChange}
+          onSaved={() => true}
+          editingTheme={null}
+          initialAppearance="light"
+          restoreTheme={() => {}}
+        />
+      </>,
+    ),
+  );
+  // Settings moves focus in on a later frame; landing after the test focuses the editor, it steals it.
+  await expect.element(page.getByRole("button", { name: "Close" })).toHaveFocus();
+  const screen = stack.move();
+  return {
+    onSettingsOpenChange,
+    onEditorOpenChange,
+    [Symbol.asyncDispose]: () => screen.disposeAsync(),
+  };
+}
+
+// The modal Settings dialog marks the editor inert, hiding it from role queries and pointer input.
+async function editorElement(selector: string) {
+  const query = () => document.querySelector<HTMLElement>(`[data-theme-editor-panel] ${selector}`);
+  await expect.poll(query).toBeTruthy();
+  return query()!;
 }
 
 describe("ThemeEditorPanel", () => {
@@ -147,5 +195,60 @@ describe("ThemeEditorPanel", () => {
       pointerAt(hueSlider, "pointerup", 0.75);
     });
     expect((hex.element() as HTMLInputElement).value).toBe(original);
+  });
+
+  it("keeps the typed text while backspacing the background hex past valid shorthand", async () => {
+    await using _view = await renderPanel();
+    const hex = page.getByRole("textbox", { name: "Background hex value" });
+    await userEvent.fill(hex, "#222222");
+    await expect.element(hex).toHaveValue("#222222");
+
+    // Four- and three-digit prefixes are valid shorthand; the guided palette must not rewrite them.
+    for (const expected of ["#22222", "#2222", "#222", "#22", "#2", "#", ""]) {
+      await userEvent.keyboard("{Backspace}");
+      await expect.element(hex).toHaveValue(expected);
+    }
+
+    await userEvent.keyboard("#3366cc");
+    await expect.element(hex).toHaveValue("#3366cc");
+    await act(async () => (hex.element() as HTMLInputElement).blur());
+    await expect.element(hex).toHaveValue("#3366cc");
+  });
+
+  it("commits a typed shorthand hex when inspecting an advanced color switches modes", async () => {
+    await using _view = await renderPanel(<div className="bg-sidebar" data-testid="app-sidebar" />);
+    await userEvent.click(page.getByRole("button", { name: "Inspect app colors" }));
+    await userEvent.fill(page.getByRole("textbox", { name: "Background hex value" }), "#abc");
+
+    // Inspect mode cancels the pointerdown, so the hex field keeps focus while it unmounts.
+    const sidebar = page.getByTestId("app-sidebar").element() as HTMLElement;
+    await act(async () => pointerAt(sidebar, "pointerdown", 0.5));
+
+    await expect
+      .element(page.getByRole("switch", { name: "Use advanced theme colors" }))
+      .toBeChecked();
+    await expect
+      .element(page.getByRole("textbox", { name: "Background hex value" }))
+      .toHaveValue("#aabbcc");
+  });
+
+  it("closes on Escape without closing Settings", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement("input")).focus();
+    await userEvent.keyboard("{Escape}");
+
+    expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("leaves inspection on Escape without closing the editor or Settings", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement('[aria-label="Inspect app colors"]')).click();
+    await editorElement('[aria-label="Cancel inspecting app colors"]');
+    await userEvent.keyboard("{Escape}");
+
+    await editorElement('[aria-label="Inspect app colors"]');
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
   });
 });

@@ -58,16 +58,24 @@ const resolveEnvironmentPortTarget = (
   };
 };
 
-// Desktop renders primary and WSL tabs locally; loopback servers require localhost even for LAN backends.
+// Loopback servers on the desktop's own primary and WSL backends answer on this machine's localhost.
 const reachesEnvironmentLoopback = (target: ConnectionTarget): boolean =>
   isElectron &&
   (target._tag === "PrimaryConnectionTarget" || isDesktopLocalConnectionTarget(target));
 
-export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl: string): string {
+/** Desktop carries every other environment's loopback traffic through the preview tunnel. */
+export const tunnelsEnvironmentLoopback = (target: ConnectionTarget | undefined): boolean =>
+  isElectron && !(target !== undefined && reachesEnvironmentLoopback(target));
+
+const resolveLoopbackUrl = (
+  environmentId: EnvironmentId,
+  rawUrl: string,
+  tunnelled: boolean,
+): string => {
   try {
     const normalizedUrl = normalizePreviewUrl(rawUrl);
     const parsed = new URL(normalizedUrl);
-    if (!isLoopbackHost(parsed.hostname)) return normalizedUrl;
+    if (tunnelled || !isLoopbackHost(parsed.hostname)) return normalizedUrl;
     const target = readPreparedConnection(environmentId)?.target;
     if (target && reachesEnvironmentLoopback(target)) return normalizedUrl;
     return resolveEnvironmentPortTarget(
@@ -85,4 +93,12 @@ export function resolveDiscoveredServerUrl(environmentId: EnvironmentId, rawUrl:
   } catch {
     return rawUrl;
   }
-}
+};
+
+/** The URL an in-app tab loads. A desktop webview keeps localhost; its partition reaches the environment. */
+export const resolveDiscoveredServerUrl = (environmentId: EnvironmentId, rawUrl: string): string =>
+  resolveLoopbackUrl(environmentId, rawUrl, isElectron);
+
+/** The URL for the system browser, which has no tunnel and needs an address it can reach itself. */
+export const resolveExternalServerUrl = (environmentId: EnvironmentId, rawUrl: string): string =>
+  resolveLoopbackUrl(environmentId, rawUrl, false);

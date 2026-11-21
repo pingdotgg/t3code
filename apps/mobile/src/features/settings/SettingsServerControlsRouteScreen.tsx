@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { useNavigation } from "@react-navigation/native";
 import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@lathe/contracts";
@@ -26,17 +27,15 @@ import {
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { SettingsScreen } from "./components/SettingsScreen";
-import {
-  useSettingsEnvironmentMenu,
-  SettingsEnvironmentFilterHeader,
-} from "./components/SettingsEnvironmentFilterHeader";
+import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { BranchNamingSettings } from "./components/BranchNamingSettings";
 import { DatabaseStorageNotice } from "./components/DatabaseStorageNotice";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsControlRow } from "./components/SettingsControlRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
-import { SourceControlSignInSection } from "./components/SourceControlSignInSection";
+import { IssueTrackerSection } from "./components/IssueTrackerSection";
+import { SourceControlProvidersSection } from "./components/SourceControlProvidersSection";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { useSettingsWriter } from "./useSettingsWriter";
@@ -56,10 +55,10 @@ import { supportsSharedSettingsSync } from "@lathe/client-runtime/state/shared-s
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
 
 const PAGE_TITLES: Record<SettingsPage, string> = {
-  threads: "Threads",
-  "source-control": "Source control",
-  worktrees: "Worktrees",
-  maintenance: "Maintenance",
+  threads: msg("Threads", { $context: "settings page title" }),
+  "source-control": msg("Source control & issues"),
+  worktrees: msg("Worktrees"),
+  maintenance: msg("Maintenance"),
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
@@ -91,16 +90,24 @@ const SUBMODULE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: null,
-    label: "Inherit",
-    description: "Use the repository's lathe.json, or initialize recursively.",
+    label: msg("Inherit", { $context: "use the inherited value" }),
+    description: msg("Use the repository's lathe.json, or initialize recursively."),
   },
-  { mode: "recursive", label: "Recursive", description: "Initialize nested submodules too." },
+  {
+    mode: "recursive",
+    label: msg("Recursive", { $context: "initialize submodules recursively" }),
+    description: msg("Initialize nested submodules too."),
+  },
   {
     mode: "top-level",
-    label: "Top level only",
-    description: "Skip submodules declared inside other submodules.",
+    label: msg("Top level only"),
+    description: msg("Skip submodules declared inside other submodules."),
   },
-  { mode: "none", label: "Skip", description: "Leave submodules empty for a setup script." },
+  {
+    mode: "none",
+    label: msg("Skip", { $context: "do not initialize submodules" }),
+    description: msg("Leave submodules empty for a setup script."),
+  },
 ];
 
 const WORKSPACE_CHOICES: ReadonlyArray<{
@@ -110,18 +117,18 @@ const WORKSPACE_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: null,
-    label: "Inherit",
-    description: "Use the repository's lathe.json, or the current checkout.",
+    label: msg("Inherit", { $context: "use the inherited value" }),
+    description: msg("Use the repository's lathe.json, or the current checkout."),
   },
   {
     mode: "local",
-    label: "Current checkout",
-    description: "Start new threads in the existing workspace.",
+    label: msg("Current checkout"),
+    description: msg("Start new threads in the existing workspace."),
   },
   {
     mode: "worktree",
-    label: "New worktree",
-    description: "Give each new thread a separate checkout.",
+    label: msg("New worktree"),
+    description: msg("Give each new thread a separate checkout."),
   },
 ];
 
@@ -132,13 +139,13 @@ const STREAMING_CHOICES: ReadonlyArray<{
 }> = [
   {
     mode: "turn",
-    label: "After the turn",
-    description: "Show the answer when the agent finishes.",
+    label: msg("After the turn"),
+    description: msg("Show the answer when the agent finishes."),
   },
   {
     mode: "paragraph",
-    label: "Finished paragraphs",
-    description: "Show each paragraph or code block as it completes.",
+    label: msg("Finished paragraphs"),
+    description: msg("Show each paragraph or code block as it completes."),
   },
 ];
 
@@ -147,21 +154,25 @@ const THREAD_HISTORY_CHOICES: ReadonlyArray<{
   readonly label: string;
   readonly description: string;
 }> = [
-  { mode: "off", label: "Off", description: "Agents cannot read other threads." },
+  {
+    mode: "off",
+    label: msg("Off", { $context: "setting disabled" }),
+    description: msg("Agents cannot read other threads."),
+  },
   {
     mode: "referenced",
-    label: "Referenced threads",
-    description: "Agents can read threads you attach to a message.",
+    label: msg("Referenced threads"),
+    description: msg("Agents can read threads you attach to a message."),
   },
   {
     mode: "project",
-    label: "This project",
-    description: "Agents can read any thread in the same project.",
+    label: msg("This project"),
+    description: msg("Agents can read any thread in the same project."),
   },
   {
     mode: "environment",
-    label: "All projects",
-    description: "Agents can read any thread on this environment.",
+    label: msg("All projects"),
+    description: msg("Agents can read any thread on this environment."),
   },
 ];
 
@@ -208,6 +219,8 @@ export function SettingsEnvironmentMaintenanceRouteScreen() {
 }
 
 function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
+  const gt = useGT();
+  const m = useMessages();
   const environmentMenu = useSettingsEnvironmentMenu();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -332,15 +345,16 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     });
   };
   const disabled = !canWriteSettings || pendingWrites > 0 || !hasConnectedSelection;
-  const managed = (...keys: string[]) => managedSettingReason(targets, ...keys);
+  const managed = (...keys: string[]) => managedSettingReason(targets, keys, m);
   // A locked row keeps its explanation and says who manages it.
   const managedSubtitle = (key: string, subtitle: string) => {
     const reason = managed(key);
-    return reason === undefined ? subtitle : `${subtitle} ${reason}`;
+    return reason === undefined ? subtitle : gt("{subtitle} {reason}", { subtitle, reason });
   };
   const runtimeModeChoices = withManagedRuntimeModeLimits(
     RUNTIME_MODE_CHOICES,
     targets.map((target) => target.environment.serverConfig.managedPolicy),
+    m,
   );
   const disabledFor = (key: string) =>
     disabled ||
@@ -351,404 +365,431 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       ));
 
   return (
-    <>
-      <SettingsEnvironmentFilterHeader />
-      <SettingsScreen title={PAGE_TITLES[props.page]} menus={[environmentMenu]}>
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          showsVerticalScrollIndicator={false}
-          className="flex-1"
-          contentContainerClassName="gap-6 px-5 pt-4"
-          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        >
-          {!hasConnectedSelection || reference === null ? (
-            <Text className="px-2 text-base text-foreground-muted">
-              {projectSelected
-                ? "Select a project with a checkout on a connected environment."
-                : "Use the filter above to select a connected environment."}
-            </Text>
-          ) : (
-            <>
-              <ManagedPolicyNotice targets={targets} />
-              {projectSelected ? (
-                <SettingsProjectOverridesSection
-                  projectLabel={selectedProject?.label ?? "Unavailable project"}
-                  hasOverrides={targets.some((target) =>
-                    PAGE_PROJECT_KEYS[props.page].some((key) => target.sources[key] === "project"),
-                  )}
-                  pending={pendingWrites > 0}
-                  disabled={!canWriteSettings}
-                  onClear={() => clearProjectOverrides()}
-                />
-              ) : null}
-              {props.page === "threads" ? (
-                <>
-                  <SettingsSection
-                    title="Default workspace"
-                    footer={managed("defaultThreadEnvMode")}
-                    trailing={
-                      pendingWrites === 0 && isMixed("defaultThreadEnvMode") ? (
-                        <MixedValuesLabel projectSelected={projectSelected} />
-                      ) : null
-                    }
-                  >
-                    {WORKSPACE_CHOICES.filter(
-                      (choice) => choice.mode !== null || !projectSelected,
-                    ).map((choice, index) => (
-                      <SettingsChoiceRow
-                        key={choice.mode ?? "inherit"}
-                        label={choice.label}
-                        description={choice.description}
-                        selected={
-                          !isMixed("defaultThreadEnvMode") &&
-                          uniform("defaultThreadEnvMode") === choice.mode
-                        }
-                        separated={index > 0}
-                        disabled={disabledFor("defaultThreadEnvMode")}
-                        onPress={() => write({ defaultThreadEnvMode: choice.mode })}
-                      />
-                    ))}
-                  </SettingsSection>
-                  <SettingsSection
-                    title="Default permissions"
-                    footer={managed("defaultRuntimeMode")}
-                    trailing={
-                      pendingWrites === 0 && uniform("defaultRuntimeMode") === null ? (
-                        <MixedValuesLabel projectSelected={projectSelected} />
-                      ) : null
-                    }
-                  >
-                    {runtimeModeChoices.map((choice, index) => (
-                      <SettingsChoiceRow
-                        key={choice.mode}
-                        label={choice.label}
-                        description={choice.disabledReason ?? choice.description}
-                        selected={uniform("defaultRuntimeMode") === choice.mode}
-                        separated={index > 0}
-                        disabled={
-                          disabledFor("defaultRuntimeMode") || choice.disabledReason !== undefined
-                        }
-                        onPress={() => write({ defaultRuntimeMode: choice.mode })}
-                      />
-                    ))}
-                  </SettingsSection>
-                  <SettingsSection
-                    title="Response streaming"
-                    footer={managed("responseStreamingMode")}
-                    trailing={
-                      pendingWrites === 0 && uniform("responseStreamingMode") === null ? (
-                        <MixedValuesLabel projectSelected={projectSelected} />
-                      ) : null
-                    }
-                  >
-                    {STREAMING_CHOICES.map((choice, index) => (
-                      <SettingsChoiceRow
-                        key={choice.mode}
-                        label={choice.label}
-                        description={choice.description}
-                        selected={uniform("responseStreamingMode") === choice.mode}
-                        separated={index > 0}
-                        disabled={disabledFor("responseStreamingMode")}
-                        onPress={() => write({ responseStreamingMode: choice.mode })}
-                      />
-                    ))}
-                  </SettingsSection>
-                  <SettingsSection title="Preview browser">
-                    <SettingsSwitchRow
-                      icon="globe"
-                      label="Agent browser access"
-                      subtitle={managedSubtitle(
-                        "enableAgentBrowserAccess",
-                        "Allow agents to use the in-app preview browser.",
-                      )}
-                      value={uniform("enableAgentBrowserAccess")}
-                      disabled={disabledFor("enableAgentBrowserAccess")}
-                      onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
+    <SettingsScreen title={m(PAGE_TITLES[props.page])} menus={[environmentMenu]}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        className="flex-1"
+        contentContainerClassName="gap-6 px-5 pt-4"
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+      >
+        {!hasConnectedSelection || reference === null ? (
+          <Text className="px-2 text-base text-foreground-muted">
+            {projectSelected
+              ? gt("Select a project with a checkout on a connected environment.")
+              : gt("Use the filter above to select a connected environment.")}
+          </Text>
+        ) : (
+          <>
+            <ManagedPolicyNotice targets={targets} />
+            {projectSelected ? (
+              <SettingsProjectOverridesSection
+                projectLabel={selectedProject?.label ?? gt("Unavailable project")}
+                hasOverrides={targets.some((target) =>
+                  PAGE_PROJECT_KEYS[props.page].some((key) => target.sources[key] === "project"),
+                )}
+                pending={pendingWrites > 0}
+                disabled={!canWriteSettings}
+                onClear={() => clearProjectOverrides()}
+              />
+            ) : null}
+            {props.page === "threads" ? (
+              <>
+                <SettingsSection
+                  title={gt("Default workspace")}
+                  footer={managed("defaultThreadEnvMode")}
+                  trailing={
+                    pendingWrites === 0 && isMixed("defaultThreadEnvMode") ? (
+                      <MixedValuesLabel projectSelected={projectSelected} />
+                    ) : null
+                  }
+                >
+                  {WORKSPACE_CHOICES.filter(
+                    (choice) => choice.mode !== null || !projectSelected,
+                  ).map((choice, index) => (
+                    <SettingsChoiceRow
+                      key={choice.mode ?? "inherit"}
+                      label={m(choice.label)}
+                      description={m(choice.description)}
+                      selected={
+                        !isMixed("defaultThreadEnvMode") &&
+                        uniform("defaultThreadEnvMode") === choice.mode
+                      }
+                      separated={index > 0}
+                      disabled={disabledFor("defaultThreadEnvMode")}
+                      onPress={() => write({ defaultThreadEnvMode: choice.mode })}
                     />
-                  </SettingsSection>
+                  ))}
+                </SettingsSection>
+                <SettingsSection
+                  title={gt("Default permissions")}
+                  footer={managed("defaultRuntimeMode")}
+                  trailing={
+                    pendingWrites === 0 && uniform("defaultRuntimeMode") === null ? (
+                      <MixedValuesLabel projectSelected={projectSelected} />
+                    ) : null
+                  }
+                >
+                  {runtimeModeChoices.map((choice, index) => (
+                    <SettingsChoiceRow
+                      key={choice.mode}
+                      label={m(choice.label)}
+                      description={choice.disabledReason ?? m(choice.description)}
+                      selected={uniform("defaultRuntimeMode") === choice.mode}
+                      separated={index > 0}
+                      disabled={
+                        disabledFor("defaultRuntimeMode") || choice.disabledReason !== undefined
+                      }
+                      onPress={() => write({ defaultRuntimeMode: choice.mode })}
+                    />
+                  ))}
+                </SettingsSection>
+                <SettingsSection
+                  title={gt("Response streaming")}
+                  footer={managed("responseStreamingMode")}
+                  trailing={
+                    pendingWrites === 0 && uniform("responseStreamingMode") === null ? (
+                      <MixedValuesLabel projectSelected={projectSelected} />
+                    ) : null
+                  }
+                >
+                  {STREAMING_CHOICES.map((choice, index) => (
+                    <SettingsChoiceRow
+                      key={choice.mode}
+                      label={m(choice.label)}
+                      description={m(choice.description)}
+                      selected={uniform("responseStreamingMode") === choice.mode}
+                      separated={index > 0}
+                      disabled={disabledFor("responseStreamingMode")}
+                      onPress={() => write({ responseStreamingMode: choice.mode })}
+                    />
+                  ))}
+                </SettingsSection>
+                <SettingsSection title={gt("Preview browser")}>
+                  <SettingsSwitchRow
+                    icon="globe"
+                    label={gt("Agent browser access")}
+                    subtitle={managedSubtitle(
+                      "enableAgentBrowserAccess",
+                      gt("Allow agents to use the in-app preview browser."),
+                    )}
+                    value={uniform("enableAgentBrowserAccess")}
+                    disabled={disabledFor("enableAgentBrowserAccess")}
+                    onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
+                  />
+                </SettingsSection>
+                <SettingsSection
+                  title={gt("Agent thread history")}
+                  trailing={
+                    pendingWrites === 0 && uniform("agentThreadHistoryAccess") === null ? (
+                      <MixedValuesLabel projectSelected={projectSelected} />
+                    ) : null
+                  }
+                >
+                  {THREAD_HISTORY_CHOICES.map((choice, index) => (
+                    <SettingsChoiceRow
+                      key={choice.mode}
+                      label={m(choice.label)}
+                      description={m(choice.description)}
+                      selected={uniform("agentThreadHistoryAccess") === choice.mode}
+                      separated={index > 0}
+                      disabled={disabledFor("agentThreadHistoryAccess")}
+                      onPress={() => write({ agentThreadHistoryAccess: choice.mode })}
+                    />
+                  ))}
+                  <Text className="px-4 pb-4 text-sm text-foreground-muted">
+                    <T>Turning it on applies from a thread's next session.</T>
+                  </Text>
+                </SettingsSection>
+                {/* The stepper shows mixed values itself, so the section has no Mixed label. */}
+                <SettingsSection title={gt("Recent turns in full")}>
+                  <RecentTurnsStepperRow
+                    projectSelected={projectSelected}
+                    value={uniform("agentThreadHistoryRecentTurns")}
+                    disabled={disabledFor("agentThreadHistoryRecentTurns")}
+                    onValueChange={(value) => write({ agentThreadHistoryRecentTurns: value })}
+                  />
+                </SettingsSection>
+                <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
+              </>
+            ) : null}
+
+            {props.page === "source-control" ? (
+              <>
+                {projectSelected ? null : (
+                  <SourceControlProvidersSection
+                    environments={selectedTargets}
+                    canWrite={(environmentId) => writableEnvironments.has(environmentId)}
+                  />
+                )}
+                {projectSelected ? null : <IssueTrackerSection environments={selectedTargets} />}
+                <SettingsSection title={gt("Pull requests")}>
+                  <SettingsSwitchRow
+                    icon={PullRequestGlyph.merged}
+                    label={gt("Remove agent credits when merging")}
+                    subtitle={managedSubtitle(
+                      "removeAgentCreditsOnMerge",
+                      gt(
+                        "Remove recognized agent credits from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.",
+                      ),
+                    )}
+                    value={uniform("removeAgentCreditsOnMerge")}
+                    disabled={disabledFor("removeAgentCreditsOnMerge")}
+                    onValueChange={(value) => write({ removeAgentCreditsOnMerge: value })}
+                  />
+                </SettingsSection>
+                <SettingsSection title={gt("Default branch")}>
+                  <SettingsSwitchRow
+                    icon="arrow.down.circle"
+                    label={gt("Automatically pull")}
+                    subtitle={managedSubtitle(
+                      "defaultAutoPull",
+                      gt("Keep the default branch current when there are no local changes."),
+                    )}
+                    value={uniform("defaultAutoPull")}
+                    disabled={disabledFor("defaultAutoPull")}
+                    onValueChange={(value) => write({ defaultAutoPull: value })}
+                  />
+                </SettingsSection>
+                {projectSelected && supportsGitHubAccounts && gitHubAccounts.length > 0 ? (
                   <SettingsSection
-                    title="Agent thread history"
+                    title={gt("GitHub account")}
                     trailing={
-                      pendingWrites === 0 && uniform("agentThreadHistoryAccess") === null ? (
-                        <MixedValuesLabel projectSelected={projectSelected} />
+                      pendingWrites === 0 && gitHubAccountUniform.mixed ? (
+                        <MixedValuesLabel projectSelected />
                       ) : null
                     }
                   >
-                    {THREAD_HISTORY_CHOICES.map((choice, index) => (
+                    <SettingsChoiceRow
+                      label={gt("Inherit", { $context: "use the inherited value" })}
+                      description={gt(
+                        "Use the environment's account rules, or the active gh account.",
+                      )}
+                      selected={
+                        !gitHubAccountUniform.mixed && gitHubAccountUniform.value === undefined
+                      }
+                      separated={false}
+                      disabled={disabledFor("gitHubAccount")}
+                      onPress={() => clearProjectOverrides(["gitHubAccount"])}
+                    />
+                    {gitHubAccounts.map((account) => (
                       <SettingsChoiceRow
-                        key={choice.mode}
-                        label={choice.label}
-                        description={choice.description}
-                        selected={uniform("agentThreadHistoryAccess") === choice.mode}
-                        separated={index > 0}
-                        disabled={disabledFor("agentThreadHistoryAccess")}
-                        onPress={() => write({ agentThreadHistoryAccess: choice.mode })}
+                        key={account.account}
+                        label={account.account}
+                        description={
+                          account.active
+                            ? gt("The active gh account on this machine.")
+                            : gt("Run gh commands in this project's checkouts as this account.")
+                        }
+                        selected={
+                          !gitHubAccountUniform.mixed &&
+                          gitHubAccountUniform.value === account.account
+                        }
+                        separated
+                        disabled={disabledFor("gitHubAccount")}
+                        onPress={() => write({ gitHubAccount: account.account })}
                       />
+                    ))}
+                  </SettingsSection>
+                ) : null}
+                {!projectSelected && supportsGitHubAccounts && gitHubRules.length > 0 ? (
+                  <SettingsSection
+                    title={gt("GitHub account rules")}
+                    trailing={
+                      gitHubRulesUniform ? null : <MixedValuesLabel projectSelected={false} />
+                    }
+                  >
+                    {gitHubRules.map((rule, index) => (
+                      <View
+                        key={`${rule.host}/${rule.owner}:${rule.login}`}
+                        className={
+                          index === 0
+                            ? "flex-row items-center gap-4 p-4"
+                            : "flex-row items-center gap-4 border-t border-border-subtle p-4"
+                        }
+                      >
+                        <Text className="min-w-0 flex-1 text-base text-foreground">
+                          {rule.owner}
+                        </Text>
+                        <Text className="text-base text-foreground-muted">{rule.login}</Text>
+                      </View>
                     ))}
                     <Text className="px-4 pb-4 text-sm text-foreground-muted">
-                      Turning it on applies from a thread's next session.
+                      <T>
+                        The first matching owner decides the account. Edit rules on web or desktop.
+                      </T>
                     </Text>
                   </SettingsSection>
-                  {/* The stepper shows mixed values itself, so the section has no Mixed label. */}
-                  <SettingsSection title="Recent turns in full">
-                    <RecentTurnsStepperRow
-                      projectSelected={projectSelected}
-                      value={uniform("agentThreadHistoryRecentTurns")}
-                      disabled={disabledFor("agentThreadHistoryRecentTurns")}
-                      onValueChange={(value) => write({ agentThreadHistoryRecentTurns: value })}
-                    />
-                  </SettingsSection>
-                  <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
-                </>
-              ) : null}
+                ) : null}
+                <SettingsSection title={gt("Clones")}>
+                  <SettingsSwitchRow
+                    icon="folder"
+                    label={gt("Clone into host folders")}
+                    subtitle={gt("Clones go to {path} under the Add project folder, like {tool}.", {
+                      path: "github.com/owner/repo",
+                      tool: "ghq",
+                    })}
+                    value={uniform("ghqCloneLayout")}
+                    disabled={disabledFor("ghqCloneLayout")}
+                    onValueChange={(value) => write({ ghqCloneLayout: value })}
+                  />
+                </SettingsSection>
+              </>
+            ) : null}
 
-              {props.page === "source-control" ? (
-                <>
-                  {projectSelected ? null : (
-                    <SourceControlSignInSection
-                      environments={selectedTargets}
-                      canWrite={(environmentId) => writableEnvironments.has(environmentId)}
-                    />
-                  )}
-                  <SettingsSection title="Pull requests">
-                    <SettingsSwitchRow
-                      icon={PullRequestGlyph.merged}
-                      label="Remove agent credits when merging"
-                      subtitle={managedSubtitle(
-                        "removeAgentCreditsOnMerge",
-                        "Remove recognized agent credits from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.",
-                      )}
-                      value={uniform("removeAgentCreditsOnMerge")}
-                      disabled={disabledFor("removeAgentCreditsOnMerge")}
-                      onValueChange={(value) => write({ removeAgentCreditsOnMerge: value })}
-                    />
-                  </SettingsSection>
-                  <SettingsSection title="Default branch">
-                    <SettingsSwitchRow
-                      icon="arrow.down.circle"
-                      label="Automatically pull"
-                      subtitle={managedSubtitle(
-                        "defaultAutoPull",
-                        "Keep the default branch current when there are no local changes.",
-                      )}
-                      value={uniform("defaultAutoPull")}
-                      disabled={disabledFor("defaultAutoPull")}
-                      onValueChange={(value) => write({ defaultAutoPull: value })}
-                    />
-                  </SettingsSection>
-                  {projectSelected && supportsGitHubAccounts && gitHubAccounts.length > 0 ? (
-                    <SettingsSection
-                      title="GitHub account"
-                      trailing={
-                        pendingWrites === 0 && gitHubAccountUniform.mixed ? (
-                          <MixedValuesLabel projectSelected />
-                        ) : null
-                      }
-                    >
-                      <SettingsChoiceRow
-                        label="Inherit"
-                        description="Use the environment's account rules, or the active gh account."
-                        selected={
-                          !gitHubAccountUniform.mixed && gitHubAccountUniform.value === undefined
-                        }
-                        separated={false}
-                        disabled={disabledFor("gitHubAccount")}
-                        onPress={() => clearProjectOverrides(["gitHubAccount"])}
-                      />
-                      {gitHubAccounts.map((account) => (
-                        <SettingsChoiceRow
-                          key={account.account}
-                          label={account.account}
-                          description={
-                            account.active
-                              ? "The active gh account on this machine."
-                              : "Run gh commands in this project's checkouts as this account."
-                          }
-                          selected={
-                            !gitHubAccountUniform.mixed &&
-                            gitHubAccountUniform.value === account.account
-                          }
-                          separated
-                          disabled={disabledFor("gitHubAccount")}
-                          onPress={() => write({ gitHubAccount: account.account })}
-                        />
-                      ))}
-                    </SettingsSection>
-                  ) : null}
-                  {!projectSelected && supportsGitHubAccounts && gitHubRules.length > 0 ? (
-                    <SettingsSection
-                      title="GitHub account rules"
-                      trailing={
-                        gitHubRulesUniform ? null : <MixedValuesLabel projectSelected={false} />
-                      }
-                    >
-                      {gitHubRules.map((rule, index) => (
-                        <View
-                          key={`${rule.host}/${rule.owner}:${rule.login}`}
-                          className={
-                            index === 0
-                              ? "flex-row items-center gap-4 p-4"
-                              : "flex-row items-center gap-4 border-t border-border-subtle p-4"
-                          }
-                        >
-                          <Text className="min-w-0 flex-1 text-base text-foreground">
-                            {rule.owner}
-                          </Text>
-                          <Text className="text-base text-foreground-muted">{rule.login}</Text>
-                        </View>
-                      ))}
-                      <Text className="px-4 pb-4 text-sm text-foreground-muted">
-                        The first matching owner decides the account. Edit rules on web or desktop.
-                      </Text>
-                    </SettingsSection>
-                  ) : null}
-                  <SettingsSection title="Clones">
-                    <SettingsSwitchRow
-                      icon="folder"
-                      label="Clone into host folders"
-                      subtitle="Clones go to github.com/owner/repo under the Add project folder, like ghq."
-                      value={uniform("ghqCloneLayout")}
-                      disabled={disabledFor("ghqCloneLayout")}
-                      onValueChange={(value) => write({ ghqCloneLayout: value })}
-                    />
-                  </SettingsSection>
-                </>
-              ) : null}
-
-              {props.page === "worktrees" ? (
-                <>
-                  <SettingsSection title="New worktrees">
-                    <SettingsSwitchRow
-                      icon="arrow.triangle.branch"
-                      label="Start from remote"
-                      subtitle={managedSubtitle(
-                        "newWorktreesStartFromOrigin",
+            {props.page === "worktrees" ? (
+              <>
+                <SettingsSection title={gt("New worktrees")}>
+                  <SettingsSwitchRow
+                    icon="arrow.triangle.branch"
+                    label={gt("Start from remote")}
+                    subtitle={managedSubtitle(
+                      "newWorktreesStartFromOrigin",
+                      gt(
                         "Uses the latest commit of the base branch’s tracked remote branch, even if its name differs. Otherwise uses the same-named branch on origin. Uses your local branch if that remote branch is missing.",
-                      )}
-                      value={uniform("newWorktreesStartFromOrigin")}
-                      disabled={disabledFor("newWorktreesStartFromOrigin")}
-                      onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
+                      ),
+                    )}
+                    value={uniform("newWorktreesStartFromOrigin")}
+                    disabled={disabledFor("newWorktreesStartFromOrigin")}
+                    onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
+                  />
+                </SettingsSection>
+                <SettingsSection
+                  title={gt("Worktree submodules")}
+                  footer={managed("worktreeSubmodules")}
+                  trailing={
+                    pendingWrites === 0 && isMixed("worktreeSubmodules") ? (
+                      <MixedValuesLabel projectSelected={projectSelected} />
+                    ) : null
+                  }
+                >
+                  {SUBMODULE_CHOICES.filter(
+                    (choice) => choice.mode !== null || !projectSelected,
+                  ).map((choice, index) => (
+                    <SettingsChoiceRow
+                      key={choice.mode ?? "inherit"}
+                      label={m(choice.label)}
+                      description={m(choice.description)}
+                      selected={
+                        !isMixed("worktreeSubmodules") &&
+                        uniform("worktreeSubmodules") === choice.mode
+                      }
+                      separated={index > 0}
+                      disabled={disabledFor("worktreeSubmodules")}
+                      onPress={() => write({ worktreeSubmodules: choice.mode })}
                     />
-                  </SettingsSection>
-                  <SettingsSection
-                    title="Worktree submodules"
-                    footer={managed("worktreeSubmodules")}
-                    trailing={
-                      pendingWrites === 0 && isMixed("worktreeSubmodules") ? (
-                        <MixedValuesLabel projectSelected={projectSelected} />
-                      ) : null
-                    }
-                  >
-                    {SUBMODULE_CHOICES.filter(
-                      (choice) => choice.mode !== null || !projectSelected,
-                    ).map((choice, index) => (
-                      <SettingsChoiceRow
-                        key={choice.mode ?? "inherit"}
-                        label={choice.label}
-                        description={choice.description}
-                        selected={
-                          !isMixed("worktreeSubmodules") &&
-                          uniform("worktreeSubmodules") === choice.mode
+                  ))}
+                </SettingsSection>
+                <BranchNamingSettings
+                  key={targetsKey}
+                  mode={uniform("branchNamingMode")}
+                  prefix={uniform("branchNamePrefix")}
+                  instructions={uniform("branchNameInstructions")}
+                  disabled={{
+                    mode: disabledFor("branchNamingMode"),
+                    prefix: disabledFor("branchNamePrefix"),
+                    instructions: disabledFor("branchNameInstructions"),
+                  }}
+                  onChange={write}
+                />
+              </>
+            ) : null}
+
+            {props.page === "maintenance" ? (
+              <>
+                {!projectSelected ? (
+                  <DatabaseStorageNotice
+                    targets={selectedTargets.filter(
+                      (target) =>
+                        target.serverConfig.environment.capabilities.databaseStorage === true,
+                    )}
+                  />
+                ) : null}
+                {!projectSelected ? (
+                  <SettingsSection title={gt("Manage environments")}>
+                    {selectedTargets.map((target) => (
+                      <SettingsRow
+                        key={target.environmentId}
+                        icon="server.rack"
+                        label={target.label}
+                        value={gt("Server and provider updates")}
+                        onPress={() =>
+                          navigation.navigate("SettingsEnvironmentDetail", {
+                            environmentId: target.environmentId,
+                          })
                         }
-                        separated={index > 0}
-                        disabled={disabledFor("worktreeSubmodules")}
-                        onPress={() => write({ worktreeSubmodules: choice.mode })}
                       />
                     ))}
                   </SettingsSection>
-                  <BranchNamingSettings
-                    key={targetsKey}
-                    mode={uniform("branchNamingMode")}
-                    prefix={uniform("branchNamePrefix")}
-                    instructions={uniform("branchNameInstructions")}
-                    disabled={{
-                      mode: disabledFor("branchNamingMode"),
-                      prefix: disabledFor("branchNamePrefix"),
-                      instructions: disabledFor("branchNameInstructions"),
-                    }}
-                    onChange={write}
+                ) : null}
+                <SettingsSection title={gt("Updates")}>
+                  <SettingsSwitchRow
+                    icon="arrow.clockwise"
+                    label={gt("Check provider updates")}
+                    subtitle={managedSubtitle(
+                      "enableProviderUpdateChecks",
+                      projectSelected
+                        ? gt("Environment-wide setting. Select All projects to change it.")
+                        : gt(
+                            "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear.",
+                          ),
+                    )}
+                    value={uniform("enableProviderUpdateChecks")}
+                    disabled={disabledFor("enableProviderUpdateChecks")}
+                    onValueChange={(value) => write({ enableProviderUpdateChecks: value })}
                   />
-                </>
-              ) : null}
-
-              {props.page === "maintenance" ? (
-                <>
-                  {!projectSelected ? (
-                    <DatabaseStorageNotice
-                      targets={selectedTargets.filter(
-                        (target) =>
-                          target.serverConfig.environment.capabilities.databaseStorage === true,
-                      )}
-                    />
-                  ) : null}
-                  {!projectSelected ? (
-                    <SettingsSection title="Manage environments">
-                      {selectedTargets.map((target) => (
-                        <SettingsRow
-                          key={target.environmentId}
-                          icon="server.rack"
-                          label={target.label}
-                          value="Server and provider updates"
-                          onPress={() =>
-                            navigation.navigate("SettingsEnvironmentDetail", {
-                              environmentId: target.environmentId,
-                            })
-                          }
-                        />
-                      ))}
-                    </SettingsSection>
-                  ) : null}
-                  <SettingsSection title="Updates">
+                  <View className="border-t border-border-subtle">
                     <SettingsSwitchRow
-                      icon="arrow.clockwise"
-                      label="Check provider updates"
+                      icon="arrow.uturn.forward"
+                      label={gt("Continue after restart")}
                       subtitle={managedSubtitle(
-                        "enableProviderUpdateChecks",
-                        projectSelected
-                          ? "Environment-wide setting. Select All projects to change it."
-                          : "Check installed provider CLIs for newer versions and fetch model catalog updates. When off, new models may not appear.",
+                        "continueThreadsAfterServerUpdate",
+                        gt("Resume interrupted threads after an update or restart."),
                       )}
-                      value={uniform("enableProviderUpdateChecks")}
-                      disabled={disabledFor("enableProviderUpdateChecks")}
-                      onValueChange={(value) => write({ enableProviderUpdateChecks: value })}
+                      value={uniform("continueThreadsAfterServerUpdate")}
+                      disabled={disabledFor("continueThreadsAfterServerUpdate")}
+                      onValueChange={(value) => write({ continueThreadsAfterServerUpdate: value })}
                     />
-                    <View className="border-t border-border-subtle">
-                      <SettingsSwitchRow
-                        icon="arrow.uturn.forward"
-                        label="Continue after restart"
-                        subtitle={managedSubtitle(
-                          "continueThreadsAfterServerUpdate",
-                          "Resume interrupted threads after an update or restart.",
-                        )}
-                        value={uniform("continueThreadsAfterServerUpdate")}
-                        disabled={disabledFor("continueThreadsAfterServerUpdate")}
-                        onValueChange={(value) =>
-                          write({ continueThreadsAfterServerUpdate: value })
-                        }
-                      />
-                    </View>
-                  </SettingsSection>
-                </>
-              ) : null}
-            </>
-          )}
-        </ScrollView>
-      </SettingsScreen>
-    </>
+                  </View>
+                  <View className="border-t border-border-subtle">
+                    <SettingsSwitchRow
+                      icon="bolt.circle"
+                      label={gt("Keep awake while agents work")}
+                      subtitle={managedSubtitle(
+                        "keepAwakeWhileAgentsWork",
+                        projectSelected
+                          ? gt("Environment-wide setting. Select All projects to change it.")
+                          : gt(
+                              "Stop the computer from sleeping while agents work. Closing a laptop lid still sleeps it.",
+                            ),
+                      )}
+                      value={uniform("keepAwakeWhileAgentsWork")}
+                      disabled={disabledFor("keepAwakeWhileAgentsWork")}
+                      onValueChange={(value) => write({ keepAwakeWhileAgentsWork: value })}
+                    />
+                  </View>
+                </SettingsSection>
+              </>
+            ) : null}
+          </>
+        )}
+      </ScrollView>
+    </SettingsScreen>
   );
 }
 
 function MixedValuesLabel(props: { readonly projectSelected: boolean }) {
+  const gt = useGT();
   return (
     <Text
       accessibilityLabel={
         props.projectSelected
-          ? "Selected project checkouts use different values"
-          : "Selected environments use different values"
+          ? gt("Selected project checkouts use different values")
+          : gt("Selected environments use different values")
       }
       className="px-2 text-sm text-foreground-muted android:px-4"
     >
-      Mixed
+      <T>Mixed</T>
     </Text>
   );
 }
@@ -759,8 +800,9 @@ function RecentTurnsStepperRow(props: {
   readonly disabled: boolean;
   readonly onValueChange: (value: number) => void;
 }) {
-  const label = "Recent turns in full";
-  const subtitle = "Earlier turns are reduced to one-line outcomes.";
+  const gt = useGT();
+  const label = gt("Recent turns in full");
+  const subtitle = gt("Earlier turns are reduced to one-line outcomes.");
   // Mixed values resolve to the default in one tap, like a mixed switch resolves to on.
   if (props.value === null) {
     const fallback = DEFAULT_SERVER_SETTINGS.agentThreadHistoryRecentTurns;
@@ -772,15 +814,23 @@ function RecentTurnsStepperRow(props: {
         subtitle={subtitle}
       >
         <Pressable
-          accessibilityLabel={`Set recent turns in full to ${fallback} for selected ${
-            props.projectSelected ? "project checkouts" : "environments"
-          }`}
+          accessibilityLabel={
+            props.projectSelected
+              ? gt("Set recent turns in full to {count} for selected project checkouts", {
+                  count: fallback,
+                })
+              : gt("Set recent turns in full to {count} for selected environments", {
+                  count: fallback,
+                })
+          }
           accessibilityRole="button"
           disabled={props.disabled}
           className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
           onPress={() => props.onValueChange(fallback)}
         >
-          <Text className="text-sm font-t3-medium text-foreground">{`Mixed · Set ${fallback}`}</Text>
+          <Text className="text-sm font-t3-medium text-foreground">
+            {gt("Mixed · Set {count}", { count: fallback })}
+          </Text>
         </Pressable>
       </SettingsControlRow>
     );
@@ -796,7 +846,7 @@ function RecentTurnsStepperRow(props: {
     >
       <View className="flex-row items-center gap-3">
         <Pressable
-          accessibilityLabel="Fewer recent turns"
+          accessibilityLabel={gt("Fewer recent turns")}
           accessibilityRole="button"
           disabled={props.disabled || value <= 0}
           className="size-9 items-center justify-center rounded-full bg-subtle active:opacity-70 disabled:opacity-40"
@@ -805,13 +855,13 @@ function RecentTurnsStepperRow(props: {
           <Text className="text-lg text-foreground">−</Text>
         </Pressable>
         <Text
-          accessibilityLabel={`${value} recent turns in full`}
+          accessibilityLabel={gt("{count} recent turns in full", { count: value })}
           className="min-w-6 text-center text-base text-foreground"
         >
           {String(value)}
         </Text>
         <Pressable
-          accessibilityLabel="More recent turns"
+          accessibilityLabel={gt("More recent turns")}
           accessibilityRole="button"
           disabled={props.disabled || value >= AGENT_THREAD_HISTORY_RECENT_TURNS_MAX}
           className="size-9 items-center justify-center rounded-full bg-subtle active:opacity-70 disabled:opacity-40"
@@ -839,7 +889,10 @@ function ManagedPolicyNotice(props: { readonly targets: readonly ScopedMobileSet
   if (organizations.length === 0) return null;
   return (
     <Text className="px-2 text-sm text-foreground-muted android:px-4">
-      Some settings are managed by {organizations.join(", ")} and cannot be changed here.
+      <T>
+        Some settings are managed by <Var>{organizations.join(", ")}</Var> and cannot be changed
+        here.
+      </T>
     </Text>
   );
 }

@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { FORK_IDENTITY, forkDesktopSchemes } from "./forkIdentity.ts";
+import { parseUrl } from "./url.ts";
 
 const PAIRING_TOKEN_PARAM = "token";
 const HOSTED_PAIRING_HOST_PARAM = "host";
@@ -196,8 +197,8 @@ export const buildPairingAppLink = (pairingUrl: string): string =>
 
 /** Reads the pairing URL from a pair link on any of the desktop's schemes. */
 export const readPairingAppLink = (value: string): string | null => {
-  if (!URL.canParse(value)) return null;
-  const url = new URL(value);
+  const url = parseUrl(value);
+  if (!url) return null;
   if (!APP_LINK_PROTOCOLS.includes(url.protocol) || url.host !== "pair") return null;
   if (url.pathname !== "" && url.pathname !== "/") return null;
   return url.searchParams.get(PAIRING_APP_LINK_PARAM)?.trim() || null;

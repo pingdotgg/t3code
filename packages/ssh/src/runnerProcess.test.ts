@@ -171,6 +171,12 @@ server.listen(0, "127.0.0.1", () => {
 `,
                 mode,
                 signalPath,
+                // The stop script only signals a process that looks like a managed server.
+                "serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "0",
               ],
               { cwd: fixture, detached: false },
             ),

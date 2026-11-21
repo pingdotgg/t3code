@@ -11,6 +11,7 @@ import {
   collectCitations,
   expandCitationsForProvider,
   formatDocumentCitationHref,
+  isDocumentCitation,
   parseCitationHref,
   parseDocumentCitationHref,
   renderCitationsAsText,
@@ -140,5 +141,16 @@ describe("document citation references", () => {
       "> Quote from rfcs/RFC\\-20260923\\-1 titan \\(v2\\)/storage &amp; state\\.md, lines 16 to 18:",
     );
     expect(rendered).toContain("Comment: Why?");
+  });
+
+  it("flattens only the quotes the caller selects", () => {
+    const assistantMarker = serializeCitation(assistant);
+    const rendered = renderCitationsAsText(
+      `${assistantMarker} ${serializeCitation(document)}`,
+      isDocumentCitation,
+    );
+
+    expect(rendered.startsWith(`${assistantMarker} `)).toBe(true);
+    expect(rendered).toContain("> Quote from rfcs/");
   });
 });

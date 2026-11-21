@@ -70,7 +70,7 @@ type HeadingHastNode = {
   children?: HeadingHastNode[];
 };
 
-function githubHeadingSlug(text: string): string {
+export function githubHeadingSlug(text: string): string {
   return text
     .trim()
     .toLowerCase()

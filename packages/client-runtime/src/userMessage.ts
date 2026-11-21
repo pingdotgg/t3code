@@ -16,17 +16,18 @@ import {
 import { filePreviewKind } from "@lathe/shared/filePreview";
 import { imageMimeType } from "@lathe/shared/image";
 import { videoMimeType } from "@lathe/shared/video";
+import { msg } from "gt-i18n";
 
 /** The working row while Lathe's own compaction runs. */
 export const IDLE_COMPACTING_LABELS = {
-  beforeCacheExpires: "Compacting before the cache expires…",
-  onReturn: "Compacting…",
+  beforeCacheExpires: msg("Compacting before the cache expires…"),
+  onReturn: msg("Compacting…"),
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
 
 /** Leads the finished compaction's token counts, in place of "Context compacted". */
 export const IDLE_COMPACTION_TITLES = {
-  beforeCacheExpires: "Context automatically compacted before cache expiry",
-  onReturn: "Context compacted before sending",
+  beforeCacheExpires: msg("Auto-compacted before cache expiry"),
+  onReturn: msg("Context compacted before sending"),
 } satisfies Record<OrchestrationV2IdleCompaction, string>;
 
 const LEGACY_AUTOMATION_PREFIX = /^\[Triggered by schedule task: [^\r\n]+\]\r?\n\r?\n/;

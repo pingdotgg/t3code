@@ -32,6 +32,11 @@ describe("renameForkText", () => {
       'const message = "Restart Lathe?";',
     ],
     [
+      "apps/web/src/components/mcp/mcpApps.ts",
+      "`https://poke.com/integrations/new?name=T3%20Code&url=${url}`",
+      "`https://poke.com/integrations/new?name=Lathe&url=${url}`",
+    ],
+    [
       "apps/server/src/cli/config.ts",
       'Config.String("T3CODE_HOME")',
       'Config.String("LATHE_HOME")',
@@ -65,6 +70,11 @@ describe("renameForkText", () => {
       "`Updated to t3@${version}.`",
       "`Updated to @jamesainslie/lathe@${version}.`",
     ],
+    [
+      "apps/web/src/i18n/translations/sv.json",
+      '"x": "Skapar T3-trådar och T3:s systemavtryck",',
+      '"x": "Skapar Lathe-trådar och Lathe:s systemavtryck",',
+    ],
   ])("renames %s: %s", (path, input, expected) => {
     expect(rename(path, input)).toBe(expected);
   });
@@ -78,6 +88,7 @@ describe("renameForkText", () => {
     ["README.md", "Fork of https://github.com/pingdotgg/t3code"],
     ["packages/shared/src/imageDimensions.ts", "const n = data.getUint32(0);"],
     ["packages/shared/src/forkLegacyEnv.ts", 'const LEGACY_PREFIX = "T3CODE_";'],
+    ["apps/web/src/i18n/translations/de.json", '"x": "Dein T3-Connect-Konto und T3-Chat-Abo",'],
   ])("leaves kept, wire, upstream and false-positive names alone: %s", (path, input) => {
     expect(rename(path, input)).toBe(input);
   });
@@ -94,6 +105,10 @@ describe("renameForkText", () => {
     [
       'const T3_MCP_SERVER_ALIASES = new Set(["t3-code", "t3_code", "t3code"]);',
       'const LATHE_MCP_SERVER_ALIASES = new Set(["lathe", "t3-code", "t3_code", "t3code"]);',
+    ],
+    [
+      "      /^editor_t3_?code_[0-9a-f]{8}$/.test(qualified[1]) &&",
+      "      /^editor_(?:lathe|t3_?code)_[0-9a-f]{8}$/.test(qualified[1]) &&",
     ],
   ])("widens an MCP name matcher to accept lathe: %s", (input, expected) => {
     const once = rename("packages/shared/src/t3McpToolPresentation.ts", input);
@@ -127,6 +142,8 @@ describe("renameForkPath", () => {
     ],
     ["apps/web/src/components/T3Wordmark.tsx", "apps/web/src/components/LatheWordmark.tsx"],
     ["packaging/aur/t3code-bin/PKGBUILD", "packaging/aur/t3code-bin/PKGBUILD"],
+    // prove-scenario.ts finds iOS scenarios by this module's name, which renames with it.
+    ["scripts/scenarios/t3-mobile.ts", "scripts/scenarios/lathe-mobile.ts"],
   ])("renames %s", (path, expected) => {
     expect(renameForkPath(path)).toBe(expected);
   });

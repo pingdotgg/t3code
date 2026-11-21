@@ -73,7 +73,7 @@ export class GitHubAppSessionError extends Schema.TaggedError<GitHubAppSessionEr
   { host: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Could not refresh the ${GitHubClient.APP_SIGN_IN.appName} sign-in for ${this.host}. Check the server's connection to GitHub, or sign in again in Settings → Source Control.`;
+    return `Could not refresh the ${GitHubClient.APP_SIGN_IN.appName} sign-in for ${this.host}. Check the server's connection to GitHub, or sign in again in Settings → Source control & issues.`;
   }
 }
 
@@ -213,9 +213,15 @@ export const make = Effect.gen(function* () {
       },
       TokenResponse,
     ).pipe(Effect.mapError((cause) => new GitHubAppSessionError({ host, cause })));
-    if (response.error === "bad_refresh_token") {
-      // Final: the user revoked the app or the session lapsed.
-      yield* Effect.logWarning("GitHub refused the app sign-in refresh; signing out.", { host });
+    if (
+      response.error === "bad_refresh_token" ||
+      response.error === "incorrect_client_credentials"
+    ) {
+      // Final: the user revoked the app, the session lapsed, or this server's client cannot refresh it.
+      yield* Effect.logWarning("GitHub refused the app sign-in refresh; signing out.", {
+        host,
+        error: response.error,
+      });
       yield* replaceSession(host, session, null).pipe(Effect.ignore);
       return Option.none<string>();
     }

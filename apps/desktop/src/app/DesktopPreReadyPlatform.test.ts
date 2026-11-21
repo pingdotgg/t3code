@@ -16,6 +16,7 @@ const {
   copyFileSyncMock,
   execFileSyncMock,
   readFileSyncMock,
+  symlinkSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -27,6 +28,7 @@ const {
   copyFileSyncMock: vi.fn(),
   execFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
+  symlinkSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -53,6 +55,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
+  symlinkSync: symlinkSyncMock,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -74,6 +77,7 @@ describe("DesktopPreReadyPlatform", () => {
     copyFileSyncMock.mockReset();
     execFileSyncMock.mockReset();
     readFileSyncMock.mockReset().mockReturnValue("{}");
+    symlinkSyncMock.mockReset();
   });
 
   it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
@@ -131,14 +135,19 @@ describe("DesktopPreReadyPlatform", () => {
     let desktopName = "lathe.desktop";
     let desktopEntry = previousEntry;
     let iconInstalled = false;
-    copyFileSyncMock.mockImplementation((_source: string, destination: string) => {
-      iconInstalled = destination === "/xdg/icons/lathe.desktop.png";
+    const iconSource = "/tmp/.mount_Lathe/resources/app.asar/apps/desktop/prod-resources/icon.png";
+    const iconPath = "/xdg/icons/lathe.desktop.png";
+    const iconBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path === iconSource) return iconBytes;
+      return "{}";
     });
     setDesktopNameMock.mockImplementation((name: string) => {
       desktopName = name;
     });
-    writeFileSyncMock.mockImplementation((path: string, contents: string) => {
-      if (path === "/xdg/applications/lathe.desktop") desktopEntry = contents;
+    writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+      if (path === "/xdg/applications/lathe.desktop") desktopEntry = String(contents);
+      if (path === iconPath) iconInstalled = Buffer.compare(Buffer.from(contents), iconBytes) === 0;
     });
 
     return Effect.scoped(
@@ -165,10 +174,56 @@ describe("DesktopPreReadyPlatform", () => {
         assert.include(identity.desktopEntry ?? "", "Name=Lathe (Beta)");
         assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/lathe;");
         assert.include(identity.desktopEntry ?? "", "Icon=/xdg/icons/lathe.desktop.png");
-        assert.isTrue(identity.iconInstalled);
+        assert.equal(
+          copyFileSyncMock.mock.calls.length,
+          0,
+          "icon must not be copied out of the app bundle",
+        );
+        assert.isTrue(identity.iconInstalled, "icon must be written from the bundled bytes");
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
+
+  it.effect.each([
+    { relaunchedByUpdater: "true", restored: true },
+    { relaunchedByUpdater: "", restored: false },
+  ])(
+    "restores the versioned AppImage path an update removed (updater relaunch: $relaunchedByUpdater)",
+    ({ relaunchedByUpdater, restored }) => {
+      vi.stubEnv("VITE_DEV_SERVER_URL", "");
+      getSwitchValueMock.mockReturnValue("");
+      const entryPath = "/xdg/applications/lathe.desktop";
+      const files = new Map([[entryPath, "Exec=/Applications/Lathe-0.1.8-x86_64.AppImage %U\n"]]);
+      readFileSyncMock.mockImplementation((path: string) => files.get(path) ?? "{}");
+      writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+        files.set(path, String(contents));
+      });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            DesktopPreReadyPlatform.layer.pipe(
+              Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+              Layer.provide(
+                DesktopConfig.layerTest({
+                  XDG_DATA_HOME: "/xdg",
+                  APPIMAGE: "/Applications/Lathe-x86_64.AppImage",
+                  APPIMAGE_SILENT_INSTALL: relaunchedByUpdater,
+                }),
+              ),
+            ),
+          );
+          assert.deepEqual(
+            symlinkSyncMock.mock.calls,
+            restored
+              ? [["Lathe-x86_64.AppImage", "/Applications/Lathe-0.1.8-x86_64.AppImage"]]
+              : [],
+          );
+          assert.include(files.get(entryPath), "Exec=/Applications/Lathe-x86_64.AppImage %U");
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+    },
+  );
 
   it.effect("points the early portal entry at a configured distribution launcher", () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "");

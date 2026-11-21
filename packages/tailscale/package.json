@@ -13,6 +13,7 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@lathe/contracts": "workspace:*",
     "@lathe/shared": "workspace:*",
     "effect": "catalog:"
   },

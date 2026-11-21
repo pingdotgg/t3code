@@ -292,11 +292,18 @@ describe("mapModelproxyStatus reset credits", () => {
       usableNowCount: 1,
       nextCreditId: "weekly",
       nextExpiresAt: "2026-12-10T22:00:00.000Z",
-      fable: {
-        availableCount: 2,
-        nextCreditId: "fable",
-        nextExpiresAt: "2027-03-09T07:59:00.000Z",
-      },
+      options: [
+        expect.objectContaining({
+          creditId: "weekly",
+          availableCount: 1,
+          expiresAt: "2026-12-10T22:00:00.000Z",
+        }),
+        expect.objectContaining({
+          creditId: "fable",
+          availableCount: 2,
+          expiresAt: "2027-03-09T07:59:00.000Z",
+        }),
+      ],
     });
     expect(byId.get("codex-james")?.usageLimits.resetCredits).toEqual({
       availableCount: 3,

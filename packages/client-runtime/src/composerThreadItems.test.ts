@@ -54,6 +54,34 @@ it("ranks thread mentions like the palette and leaves out subagent threads", () 
   expect(items.map((item) => item.thread.threadId)).toEqual(["word", "newer-mid-word"]);
 });
 
+it("offers the composer thread's own used side chats, but not other threads' side chats", () => {
+  const sideChatOf = (parent: string) => ({
+    rootThreadId: ThreadId.make(parent),
+    parentThreadId: ThreadId.make(parent),
+    relationshipToParent: "fork" as const,
+    sideChat: true,
+  });
+  const latestUserMessageAt = "2026-10-22T00:00:00.000Z";
+  const items = matchComposerThreadItems({
+    shells: [
+      shell("mine", "Why is the build slow?", { lineage: sideChatOf("main"), latestUserMessageAt }),
+      shell("unused", "Slow side chat", { lineage: sideChatOf("main") }),
+      shell("theirs", "Why is the test slow?", {
+        lineage: sideChatOf("other"),
+        latestUserMessageAt,
+      }),
+    ],
+    environmentId,
+    linkedEnvironments: new Map(),
+    excludeThreadId: ThreadId.make("main"),
+    query: "slow",
+    now: Date.parse("2026-10-23T00:00:00.000Z"),
+  });
+  expect(items.map(({ thread, description }) => ({ id: thread.threadId, description }))).toEqual([
+    { id: "mine", description: "Side chat" },
+  ]);
+});
+
 it("also offers threads on linked machines, naming the machine, but no other machine's", () => {
   const vps = EnvironmentId.make("env-vps");
   const items = matchComposerThreadItems({

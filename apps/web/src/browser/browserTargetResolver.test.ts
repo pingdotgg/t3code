@@ -40,7 +40,8 @@ describe("browser target resolver", () => {
 
   it("keeps localhost for servers on the desktop's own WSL or primary backend", async () => {
     // WSL NAT advertises a distro IP, but loopback-bound servers only answer on localhost.
-    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    const { resolveDiscoveredServerUrl, resolveExternalServerUrl } =
+      await import("./browserTargetResolver");
     env.isElectron = true;
     try {
       for (const target of [
@@ -56,9 +57,13 @@ describe("browser target resolver", () => {
         httpBaseUrl: "http://192.168.1.25:3773",
         target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" },
       });
+      // The webview's partition tunnels to the environment; the system browser has no tunnel.
       expect(
         resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/"),
-      ).toBe("http://192.168.1.25:3001/");
+      ).toBe("http://localhost:3001/");
+      expect(resolveExternalServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/")).toBe(
+        "http://192.168.1.25:3001/",
+      );
     } finally {
       env.isElectron = false;
     }

@@ -4,6 +4,7 @@ import {
   canEditPullRequestComment,
   canEditPullRequestMaintainerEdits,
 } from "@lathe/client-runtime/pull-request-editing";
+import { canReactPullRequestComment } from "@lathe/client-runtime/pull-request-reactions";
 import type { PullRequestComment, PullRequestDetail } from "@lathe/contracts";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { composerPullRequests } from "../../state/pull-requests";
@@ -54,6 +55,8 @@ export function usePullRequestPermissions(params: PullRequestParams, pr: PullReq
       connected && canUpdate && pr !== null && canEditPullRequestMaintainerEdits(pr),
     canEditComment: (comment: Pick<PullRequestComment, "author" | "canEdit" | "kind">) =>
       connected && canUpdateComment && pr !== null && canEditPullRequestComment(pr, comment),
+    canReactComment: (comment: Pick<PullRequestComment, "kind">) =>
+      connected && canSetReaction && pr !== null && canReactPullRequestComment(pr, comment),
     canReact: connected && canSetReaction && pr?.capabilities.reactions === true,
     canComment:
       connected && canComment && pr?.capabilities.comment === true && pr.viewerPermissions.comment,

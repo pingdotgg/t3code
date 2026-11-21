@@ -1,4 +1,4 @@
-import { useAtomSet } from "@effect/atom-react";
+import { useGT } from "gt-react-native";
 
 import {
   MAX_TERMINAL_FONT_SIZE,
@@ -13,27 +13,29 @@ import {
   TerminalAppearancePreview,
 } from "../components/AppearancePreviews";
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
-import { updateMobilePreferencesAtom } from "../../../../state/preferences";
+import { saveMobilePreferences } from "../../../../state/preferences";
+import { useAtomCommand } from "../../../../state/use-atom-command";
 import { useCommandDisplayMode } from "../../../../state/use-command-display-mode";
 
 export function TerminalAppearanceSection() {
+  const gt = useGT();
   const { isReady, appearance, setTerminalFontSize } = useAppearancePreferences();
   const custom = appearance.isTerminalFontSizeCustom;
   const commandDisplayMode = useCommandDisplayMode();
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
 
   const handleToggleCustom = (enabled: boolean) => {
     setTerminalFontSize(enabled ? appearance.terminalFontSize : null);
   };
 
   return (
-    <SettingsSection title="Terminal">
+    <SettingsSection title={gt("Terminal", { $context: "settings section for the terminal" })}>
       <TerminalAppearancePreview fontSize={appearance.terminalFontSize} />
       <AppearancePreviewSeparator />
       <SettingsSwitchRow
         disabled={!isReady}
         icon="terminal"
-        label="Custom font size"
+        label={gt("Custom font size")}
         onValueChange={handleToggleCustom}
         value={custom}
       />
@@ -41,23 +43,23 @@ export function TerminalAppearanceSection() {
         <FontSizeSliderRow
           disabled={!isReady}
           icon="textformat.size"
-          label="Font size"
+          label={gt("Font size")}
           max={MAX_TERMINAL_FONT_SIZE}
           min={MIN_TERMINAL_FONT_SIZE}
           onChange={setTerminalFontSize}
           step={TERMINAL_FONT_SIZE_STEP}
           value={appearance.terminalFontSize}
-          valueLabel={`${appearance.terminalFontSize.toFixed(1)} pt`}
+          valueLabel={gt("{size} pt", { size: appearance.terminalFontSize.toFixed(1) })}
         />
       ) : null}
       <SettingsSwitchRow
         disabled={!isReady}
         icon="chevron.left.forwardslash.chevron.right"
-        label="Expose commands"
-        subtitle="Show every command's output in threads. Off still opens failed commands."
-        onValueChange={(exposed) =>
-          savePreferences({ commandDisplayMode: exposed ? "exposed" : "collapsed" })
-        }
+        label={gt("Expose commands")}
+        subtitle={gt("Show every command's output in threads. Off still opens failed commands.")}
+        onValueChange={(exposed) => {
+          void savePreferences({ commandDisplayMode: exposed ? "exposed" : "collapsed" });
+        }}
         value={commandDisplayMode === "exposed"}
       />
     </SettingsSection>

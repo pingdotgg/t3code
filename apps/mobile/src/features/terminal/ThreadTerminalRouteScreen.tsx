@@ -1,7 +1,9 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  chunkTerminalWrite,
   DEFAULT_TERMINAL_ID,
   EnvironmentId,
   ThreadId,
@@ -11,9 +13,11 @@ import { type KnownTerminalSession } from "@lathe/client-runtime/state/terminal"
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppBar } from "../../components/ui/AppBar";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useAtomMount } from "@effect/atom-react";
-import { useMemo, useRef, useState } from "react";
+import { msg, T, useGT, useMessages } from "gt-react-native";
+import { useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -34,13 +38,11 @@ import {
   ComposerToolbarScroller,
 } from "../../components/ComposerToolbar";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { useSoftKeyboardShowing } from "../keyboard/useSoftKeyboardShowing";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { Button } from "../../components/ui/Button";
 import { IconButton } from "../../components/ui/IconButton";
-import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
 import { environmentSession, readEnvironmentScope } from "../../state/session";
@@ -65,6 +67,7 @@ import { usePendingTerminalBrowserLaunches } from "../../state/use-terminal-brow
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadProjection } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
+import { useRetryEnvironment } from "../connection/useRetryEnvironment";
 import { TerminalSurface, type TerminalSurfaceHandle } from "./NativeTerminalSurface";
 import { TerminalBrowserLaunchBanner } from "./TerminalBrowserLaunchBanner";
 import { getMobileTerminalTheme } from "./terminalTheme";
@@ -91,6 +94,7 @@ import {
 } from "./terminalInput";
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
+import { getKeyboardShowEpoch, subscribeKeyboardShowing } from "./terminalKeyboardShowing";
 
 function TerminalHeader(props: {
   readonly subtitle: string;
@@ -107,38 +111,50 @@ function TerminalHeader(props: {
   readonly onOpenNewTerminal: () => void;
   readonly onSelectTerminal: (terminalId: string) => void;
 }) {
+  const gt = useGT();
+  const resolveMessage = useMessages();
   return (
     <AppBar
-      title="Terminal"
+      title={gt("Terminal", { $context: "screen title" })}
       subtitle={props.subtitle}
       onBack={props.onCloseTerminal}
       backInSplitView={{
-        accessibilityLabel: "Back to chat",
+        accessibilityLabel: gt("Back to chat"),
         icon: "chevron.left",
       }}
       menus={
         props.isEnvironmentReady
           ? [
               {
-                title: "Terminal options",
+                title: gt("Terminal options"),
                 icon: "terminal",
-                status: getTerminalStatusLabel(props.status),
+                status: getTerminalStatusLabel(props.status, resolveMessage),
                 items: [
                   {
                     id: "text-size",
-                    title: "Text size",
+                    title: gt("Text size"),
                     icon: "textformat.size",
                     inline: true,
                     items: [
                       {
                         id: "font-decrease",
-                        title: `A- ${Math.max(MIN_TERMINAL_FONT_SIZE, props.fontSize - TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`,
+                        title: gt("A- {size} pt", {
+                          size: Math.max(
+                            MIN_TERMINAL_FONT_SIZE,
+                            props.fontSize - TERMINAL_FONT_SIZE_STEP,
+                          ).toFixed(1),
+                        }),
                         disabled: props.fontSize <= MIN_TERMINAL_FONT_SIZE,
                         onPress: props.onDecreaseFontSize,
                       },
                       {
                         id: "font-increase",
-                        title: `A+ ${Math.min(MAX_TERMINAL_FONT_SIZE, props.fontSize + TERMINAL_FONT_SIZE_STEP).toFixed(1)} pt`,
+                        title: gt("A+ {size} pt", {
+                          size: Math.min(
+                            MAX_TERMINAL_FONT_SIZE,
+                            props.fontSize + TERMINAL_FONT_SIZE_STEP,
+                          ).toFixed(1),
+                        }),
                         disabled: props.fontSize >= MAX_TERMINAL_FONT_SIZE,
                         onPress: props.onIncreaseFontSize,
                       },
@@ -149,10 +165,13 @@ function TerminalHeader(props: {
                     title: session.displayLabel,
                     icon: "terminal",
                     subtitle: [
-                      getTerminalStatusLabel({
-                        status: session.status,
-                        hasRunningSubprocess: session.hasRunningSubprocess,
-                      }),
+                      getTerminalStatusLabel(
+                        {
+                          status: session.status,
+                          hasRunningSubprocess: session.hasRunningSubprocess,
+                        },
+                        resolveMessage,
+                      ),
                       basename(session.cwd),
                     ]
                       .filter(Boolean)
@@ -163,9 +182,13 @@ function TerminalHeader(props: {
                   {
                     id: "terminal-new",
                     disabled: !props.canOperateTerminal,
-                    title: "Open new terminal",
+                    title: gt("Open new terminal"),
                     icon: "plus",
-                    subtitle: `Start another shell in ${basename(props.workspaceRoot) ?? "this workspace"}`,
+                    subtitle: basename(props.workspaceRoot)
+                      ? gt("Start another shell in {folder}", {
+                          folder: basename(props.workspaceRoot),
+                        })
+                      : gt("Start another shell in this workspace"),
                     onPress: props.onOpenNewTerminal,
                   },
                 ],
@@ -194,7 +217,6 @@ class TerminalClipboardReadError extends Schema.TaggedError<TerminalClipboardRea
 type TerminalToolbarAction =
   | { readonly kind: "send"; readonly key: string; readonly label: string; readonly data: string }
   | { readonly kind: "clear"; readonly key: string; readonly label: string }
-  | { readonly kind: "paste"; readonly key: string; readonly label: string }
   | {
       readonly kind: "modifier";
       readonly key: string;
@@ -304,17 +326,18 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }
   const explicitTerminalId = requestedTerminalId ?? bootstrapTerminalId;
   const terminalId = explicitTerminalId ?? DEFAULT_TERMINAL_ID;
+  const gt = useGT();
 
   if (!selectedThread) {
     if (!connectionsReady) {
-      return <LoadingScreen message="Opening terminal…" />;
+      return <LoadingScreen message={gt("Opening terminal…")} />;
     }
 
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Thread unavailable"
-          detail="This terminal route needs an active thread and workspace."
+          title={gt("Thread unavailable")}
+          detail={gt("This terminal route needs an active thread and workspace.")}
         />
       </View>
     );
@@ -349,7 +372,7 @@ function readLiveTerminalSessions(
       cwd: summary.cwd,
       status: summary.status,
       hasRunningSubprocess: summary.hasRunningSubprocess,
-      displayLabel: resolveTerminalSessionLabel(summary.terminalId, summary),
+      displayLabel: resolveTerminalSessionLabel(summary.terminalId, summary, m),
       updatedAt: summary.updatedAt,
     }));
 }
@@ -365,6 +388,8 @@ function ThreadTerminal(props: {
   readonly knownSessions: ReturnType<typeof useKnownTerminalSessions>;
 }) {
   const { params, routeEnvironmentId, thread: selectedThread, terminalId } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const { selectedThreadProject, selectedEnvironmentConnection } = props.selection;
   const {
     session: terminalSession,
@@ -379,10 +404,11 @@ function ThreadTerminal(props: {
   } = props.knownSessions;
   const insets = useSafeAreaInsets();
   const nativeColumnMetrics = useNativeColumnLayoutMetrics();
+  const contentTopInset = useContentTopInset();
   const navigation = useNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
-  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
+  const retryEnvironment = useRetryEnvironment();
   const selectedThreadDetail = useSelectedThreadProjection();
   const selectedThreadDetailWorktreePath =
     selectedThreadDetail?.projection.thread.worktreePath ?? null;
@@ -487,6 +513,7 @@ function ThreadTerminal(props: {
             cols: initialAttachGridSize.cols,
             rows: initialAttachGridSize.rows,
             ...(pendingLaunch?.env ? { env: pendingLaunch.env } : {}),
+            ...(pendingLaunch ? { stopOnSettle: pendingLaunch.stopOnSettle ?? false } : {}),
             ...(pendingLaunch ? { restartIfNotRunning: true } : {}),
           }
         : null,
@@ -560,7 +587,6 @@ function ThreadTerminal(props: {
       { kind: "send", key: "esc", label: "esc", data: "\u001b" },
       ...modifierActions,
       { kind: "send", key: "tab", label: "tab", data: "\t" },
-      { kind: "paste", key: "paste", label: "paste" },
       { kind: "clear", key: "clear", label: "clear" },
       { kind: "send", key: "tilde", label: "~", data: "~" },
       { kind: "send", key: "pipe", label: "|", data: "|" },
@@ -568,42 +594,41 @@ function ThreadTerminal(props: {
       { kind: "send", key: "dash", label: "-", data: "-" },
     ];
   }, [hostPlatform]);
-  const keyboardState = useKeyboardState((state) => ({
-    height: state.height,
-    isVisible: state.isVisible,
-  }));
-  // The accessory leaves as soon as the keyboard starts hiding.
-  const keyboardShowing = useSoftKeyboardShowing();
+  const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
+  const keyboardHeight = useKeyboardState((state) => state.height);
+  const keyboardShowEpoch = useSyncExternalStore(subscribeKeyboardShowing, getKeyboardShowEpoch);
   // The accessory follows the keyboard, except that the dismiss and show
   // buttons flip it ahead of the keyboard animation.
-  const [accessory, setAccessory] = useState({ keyboardShowing, dismissed: false });
-  if (accessory.keyboardShowing !== keyboardShowing) {
-    setAccessory({ keyboardShowing, dismissed: !keyboardShowing });
+  const [accessory, setAccessory] = useState({ keyboardShowEpoch, dismissed: false });
+  if (accessory.keyboardShowEpoch !== keyboardShowEpoch) {
+    setAccessory({ keyboardShowEpoch, dismissed: keyboardShowEpoch === 0 });
   }
   const isAccessoryDismissed = accessory.dismissed;
-  const isAccessoryVisible = canOperateTerminal && keyboardState.isVisible && !isAccessoryDismissed;
+  const isAccessoryVisible = canOperateTerminal && isKeyboardVisible && !isAccessoryDismissed;
   // Android's terminal owns an EditText; turning off autoFocus also clears its native focus.
   const terminalAutoFocus =
     Platform.OS === "android"
       ? !isAccessoryDismissed &&
-        (!SHOWCASE_ENABLED || keyboardFocusRequest > 0 || keyboardState.isVisible)
+        (!SHOWCASE_ENABLED || keyboardFocusRequest > 0 || isKeyboardVisible)
       : !SHOWCASE_ENABLED;
   const terminalBottomInset =
-    (keyboardState.isVisible ? keyboardState.height : 0) +
-    (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
+    (isKeyboardVisible ? keyboardHeight : 0) + (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
 
-  const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions({
-    knownSessions: knownSessions ?? [],
-    workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
-    currentSession: {
-      terminalId,
-      cwd: cwd ?? null,
-      status: terminal.status,
-      hasRunningSubprocess: terminal.hasRunningSubprocess,
-      displayLabel: resolveTerminalSessionLabel(terminalId, terminal.summary),
-      updatedAt: terminal.updatedAt,
+  const terminalMenuSessions: ReadonlyArray<TerminalMenuSession> = buildTerminalMenuSessions(
+    {
+      knownSessions: knownSessions ?? [],
+      workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
+      currentSession: {
+        terminalId,
+        cwd: cwd ?? null,
+        status: terminal.status,
+        hasRunningSubprocess: terminal.hasRunningSubprocess,
+        displayLabel: resolveTerminalSessionLabel(terminalId, terminal.summary, messages),
+        updatedAt: terminal.updatedAt,
+      },
     },
-  });
+    messages,
+  );
 
   const writeInput = async (data: string): Promise<boolean> => {
     if (
@@ -613,20 +638,26 @@ function ThreadTerminal(props: {
       return false;
     }
 
-    const result = await writeTerminal({
-      environmentId: selectedThread.environmentId,
-      input: {
-        threadId: selectedThread.id,
-        terminalId,
-        data,
-      },
-    });
-    return result._tag === "Success";
+    // Android's IME delivers a system paste as one input, which can exceed one write.
+    const isSameShell = pasteSession.liveness();
+    for (const chunk of chunkTerminalWrite(data)) {
+      if (!isSameShell()) return false;
+      const result = await writeTerminal({
+        environmentId: selectedThread.environmentId,
+        input: {
+          threadId: selectedThread.id,
+          terminalId,
+          data: chunk,
+        },
+      });
+      if (result._tag !== "Success") return false;
+    }
+    return true;
   };
 
-  const pasteFromClipboard = async () => {
+  const pasteText = async (readText: () => Promise<string>) => {
     await pasteSession.paste({
-      readText: Clipboard.getStringAsync,
+      readText,
       write: writeInput,
       onReadError: (cause) => {
         console.error(new TerminalClipboardReadError({ terminalId, cause }));
@@ -647,7 +678,7 @@ function ThreadTerminal(props: {
       hostPlatform,
     });
     if (resolved.kind === "paste") {
-      void pasteFromClipboard();
+      void pasteText(Clipboard.getStringAsync);
       return;
     }
     void writeInput(resolved.data);
@@ -752,18 +783,22 @@ function ThreadTerminal(props: {
       return;
     }
 
+    // Toolbar input bypasses the native field, so a syllable it holds must not be recomposed.
+    surfaceRef.current?.resetInput();
+
     if (action.kind === "clear") {
       handleClearTerminal();
       return;
     }
 
-    if (action.kind === "paste") {
-      setPendingModifier(null);
-      void pasteFromClipboard();
-      return;
-    }
-
     writeModifiedInput(action.data);
+  };
+
+  const handlePaste = (readText: () => Promise<string>) => {
+    // Pasted text bypasses the native field, so a syllable it holds must not be recomposed.
+    surfaceRef.current?.resetInput();
+    setPendingModifier(null);
+    void pasteText(readText);
   };
 
   const handleDismissKeyboard = () => {
@@ -787,15 +822,17 @@ function ThreadTerminal(props: {
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
-          title="Terminal unavailable"
-          detail="This thread does not have a workspace root yet, so there is nowhere to open a shell."
+          title={gt("Terminal unavailable")}
+          detail={gt(
+            "This thread does not have a workspace root yet, so there is nowhere to open a shell.",
+          )}
         />
       </View>
     );
   }
 
   if (!environment.isReady && environment.presentation === null) {
-    return <LoadingScreen message="Opening terminal…" />;
+    return <LoadingScreen message={gt("Opening terminal…")} />;
   }
 
   return (
@@ -806,7 +843,7 @@ function ThreadTerminal(props: {
           environmentId={selectedThread.environmentId}
           threadId={selectedThread.id}
           terminalId={terminalId}
-          terminalLabel={resolveTerminalSessionLabel(terminalId, terminal.summary)}
+          terminalLabel={resolveTerminalSessionLabel(terminalId, terminal.summary, messages)}
           onClose={() => setCapturedOutput(null)}
           onAttach={() => {
             setCapturedOutput(null);
@@ -842,10 +879,8 @@ function ThreadTerminal(props: {
                 ? themeVariables["--color-card-alt"]
                 : terminalTheme.background,
             // Measured top reservation is zero when UIKit already inset the body or moved the bar.
-            paddingTop:
-              Platform.OS === "ios" ? (nativeColumnMetrics?.safeArea.top ?? insets.top) : 0,
-            paddingBottom:
-              Platform.OS === "android" && !keyboardState.isVisible ? insets.bottom : 0,
+            paddingTop: contentTopInset,
+            paddingBottom: Platform.OS === "android" && !isKeyboardVisible ? insets.bottom : 0,
           }}
         >
           {!isEnvironmentReady ? (
@@ -854,7 +889,7 @@ function ThreadTerminal(props: {
               environmentLabel={
                 environment.presentation?.entry.target.label ??
                 selectedEnvironmentConnection?.environmentLabel ??
-                "Environment"
+                gt("Environment", { $context: "fallback environment name" })
               }
               connection={
                 environment.presentation?.connection ?? {
@@ -863,43 +898,49 @@ function ThreadTerminal(props: {
                   traceId: null,
                 }
               }
-              resourceName="terminal"
+              resource="terminal"
               onRetry={handleRetryEnvironment}
             />
           ) : terminalSession.data === null && terminalSession.error === null ? (
             <EmptyState
-              title="Checking terminal access"
-              detail="Waiting for this connection's permissions."
+              title={gt("Checking terminal access")}
+              detail={gt("Waiting for this connection's permissions.")}
             />
           ) : !canReadTerminal && !canOperateTerminal ? (
             <EmptyState
               title={
                 terminalSession.error
-                  ? "Could not check terminal access"
-                  : "Terminal access unavailable"
+                  ? gt("Could not check terminal access")
+                  : gt("Terminal access unavailable")
               }
               detail={
                 terminalSession.error ??
-                "This connection does not have permission to view terminals."
+                gt("This connection does not have permission to view terminals.")
               }
             />
           ) : canOperateTerminal && launchLocation === null ? (
             sessionsError !== null ? (
-              <EmptyState title="Could not load terminals" detail={sessionsError} />
+              <EmptyState title={gt("Could not load terminals")} detail={sessionsError} />
             ) : (
-              <EmptyState title="Loading terminals" detail="Reading existing terminal sessions." />
+              <EmptyState
+                title={gt("Loading terminals")}
+                detail={gt("Reading existing terminal sessions.")}
+              />
             )
           ) : !canOperateTerminal && !hasTerminalTarget && sessionsPending ? (
-            <EmptyState title="Loading terminals" detail="Reading existing terminal sessions." />
+            <EmptyState
+              title={gt("Loading terminals")}
+              detail={gt("Reading existing terminal sessions.")}
+            />
           ) : !canOperateTerminal && !hasTerminalTarget && sessionsError !== null ? (
-            <EmptyState title="Could not load terminals" detail={sessionsError} />
+            <EmptyState title={gt("Could not load terminals")} detail={sessionsError} />
           ) : !canOperateTerminal && !hasTerminalTarget ? (
             <EmptyState
-              title="No terminal sessions"
-              detail="Existing terminals will appear here when another client opens one."
+              title={gt("No terminal sessions")}
+              detail={gt("Existing terminals will appear here when another client opens one.")}
             />
-          ) : !canOperateTerminal && terminal.error !== null ? (
-            <EmptyState title="Terminal unavailable" detail={terminal.error} />
+          ) : terminal.error !== null && (!canOperateTerminal || terminal.status === "error") ? (
+            <EmptyState title={gt("Terminal unavailable")} detail={terminal.error} />
           ) : (
             <>
               <View
@@ -947,9 +988,13 @@ function ThreadTerminal(props: {
                     setCaptureRequest(0);
                     if (text.trim()) setCapturedOutput(text);
                     else
-                      Dialog.alert("No terminal output", "There is no visible output to attach.");
+                      Dialog.alert(
+                        m(msg("No terminal output")),
+                        m(msg("There is no visible output to attach.")),
+                      );
                   }}
                   onInput={handleInput}
+                  onPaste={(text) => handlePaste(async () => text)}
                   onResize={handleResize}
                   style={{ flex: 1 }}
                   terminalKey={terminalKey}
@@ -957,14 +1002,14 @@ function ThreadTerminal(props: {
                 />
               </View>
 
-              {Platform.OS === "android" && !keyboardState.isVisible ? (
+              {Platform.OS === "android" && !isKeyboardVisible ? (
                 <View className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2">
                   {hasNativeTerminalSurface() ? (
-                    <Button label="Attach output" tone="text" onPress={requestCapture} />
+                    <Button label={gt("Attach output")} tone="text" onPress={requestCapture} />
                   ) : null}
                   <View className="flex-1" />
                   <IconButton
-                    accessibilityLabel="Show keyboard"
+                    accessibilityLabel={gt("Show keyboard")}
                     disabled={!canOperateTerminal}
                     icon="keyboard"
                     onPress={handleShowKeyboard}
@@ -981,12 +1026,14 @@ function ThreadTerminal(props: {
                   style={{
                     paddingBottom:
                       8 +
-                      (keyboardState.isVisible
+                      (isKeyboardVisible
                         ? 0
                         : (nativeColumnMetrics?.safeArea.bottom ?? insets.bottom)),
                   }}
                 >
-                  <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
+                  <Text style={{ color: terminalTheme.foreground }}>
+                    <T>Attach visible output</T>
+                  </Text>
                 </Pressable>
               ) : null}
               {isAccessoryVisible ? (
@@ -1031,7 +1078,13 @@ function ThreadTerminal(props: {
                         })}
                       </ComposerToolbarScroller>
                       <ComposerToolbarButton
-                        accessibilityLabel="Dismiss keyboard"
+                        accessibilityLabel={gt("Paste", { $context: "verb" })}
+                        icon={{ ios: "doc.on.clipboard", android: "content_paste" }}
+                        onPress={() => handlePaste(Clipboard.getStringAsync)}
+                        showChevron={false}
+                      />
+                      <ComposerToolbarButton
+                        accessibilityLabel={gt("Dismiss keyboard")}
                         icon={{ ios: "keyboard.chevron.compact.down", android: "keyboard_hide" }}
                         onPress={handleDismissKeyboard}
                         showChevron={false}
@@ -1039,9 +1092,9 @@ function ThreadTerminal(props: {
                     </ComposerToolbarRow>
                   </View>
                 </KeyboardStickyView>
-              ) : canOperateTerminal && !keyboardState.isVisible && Platform.OS !== "android" ? (
+              ) : canOperateTerminal && !isKeyboardVisible && Platform.OS !== "android" ? (
                 <Pressable
-                  accessibilityLabel="Show keyboard"
+                  accessibilityLabel={gt("Show keyboard")}
                   accessibilityRole="button"
                   onPress={handleShowKeyboard}
                   style={({ pressed }) => ({

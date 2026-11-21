@@ -30,7 +30,7 @@ export function EditionSettingsSection() {
       headerAction={
         settings.edition !== DEFAULT_UNIFIED_SETTINGS.edition ? (
           <SettingResetButton
-            label="edition"
+            ariaLabel="Reset edition to default"
             onClick={() => updateSettings({ edition: DEFAULT_UNIFIED_SETTINGS.edition })}
           />
         ) : null
@@ -61,7 +61,7 @@ export function EditionSettingsSection() {
           resetAction={
             settings.editionAppIcon !== DEFAULT_UNIFIED_SETTINGS.editionAppIcon ? (
               <SettingResetButton
-                label="match app icon"
+                ariaLabel="Reset match app icon to default"
                 onClick={() =>
                   updateSettings({ editionAppIcon: DEFAULT_UNIFIED_SETTINGS.editionAppIcon })
                 }
@@ -83,7 +83,7 @@ export function EditionSettingsSection() {
         resetAction={
           settings.editionAccent !== DEFAULT_UNIFIED_SETTINGS.editionAccent ? (
             <SettingResetButton
-              label="edition accent"
+              ariaLabel="Reset edition accent to default"
               onClick={() =>
                 updateSettings({ editionAccent: DEFAULT_UNIFIED_SETTINGS.editionAccent })
               }

@@ -21,17 +21,6 @@ query LatheExpoViewer {
   }
 }
 
-query LatheEasSimulatorAvailability($appId: String!, $filter: [String!]) {
-  app {
-    byId(appId: $appId) {
-      ownerAccount {
-        name
-        accountFeatureGates(filter: $filter)
-      }
-    }
-  }
-}
-
 mutation LatheCreateEasSimulatorSession($input: CreateDeviceRunSessionInput!) {
   deviceRunSession {
     createDeviceRunSession(deviceRunSessionInput: $input) {

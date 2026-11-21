@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type AssetUrlState,
@@ -72,7 +73,10 @@ export function useLongLivedAssetUrl(
   environmentId: EnvironmentId | null,
   resource: AssetResource,
 ): AssetUrlState {
-  const blocked = blockedAssetUrlState(resource, useFilesystemReadAccess(environmentId));
+  const blocked = blockedAssetUrlState(
+    resource,
+    useFilesystemReadAccess(environmentId, useMessages()),
+  );
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     blocked !== null || environmentId === null

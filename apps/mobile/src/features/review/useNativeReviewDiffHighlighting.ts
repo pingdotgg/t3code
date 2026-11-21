@@ -137,7 +137,11 @@ export function useNativeReviewDiffHighlighting(input: {
                 : highlightedRowIdsRef.current,
             signal: abortController.signal,
             onChunk: (chunk) => {
-              for (const rowId of Object.keys(chunk.tokensByRowId)) deliveredRowIds.add(rowId);
+              // Provisional rows still need the final result's tokens.
+              const retryable = new Set(chunk.retryableRowIds);
+              for (const rowId of Object.keys(chunk.tokensByRowId)) {
+                if (!retryable.has(rowId)) deliveredRowIds.add(rowId);
+              }
               enqueueChunk(chunk);
             },
           }),

@@ -172,7 +172,7 @@ const withEditionIcon = <A, E>(
               }),
             }),
             Layer.mock(ElectronWindow.ElectronWindow)({
-              syncAllAppearance: (sync) => sync(window),
+              syncAllAppearance: (sync) => sync(window, { titleBarOverlay: false }),
             }),
             DesktopClientSettings.layerTest(
               Option.some({ ...DEFAULT_CLIENT_SETTINGS, edition: "amber" }),

@@ -13,6 +13,13 @@ import {
 
 const now = Date.parse("2026-09-23T12:00:00Z");
 const at = (hours: number) => new Date(now + hours * 3_600_000).toISOString();
+const fableOption = (availableCount: number, expiresAt?: string) => ({
+  creditId: "fable" as never,
+  label: "Fable reset" as never,
+  description: "Refills your Fable allowance." as never,
+  availableCount,
+  ...(expiresAt ? { expiresAt: expiresAt as never } : {}),
+});
 
 function account(
   id: string,
@@ -422,7 +429,7 @@ describe("resetCreditsView", () => {
         usableNowCount: 1,
         nextCreditId: "weekly" as never,
         nextExpiresAt: at(48) as never,
-        fable: { availableCount: 3, nextCreditId: "fable" as never },
+        options: [fableOption(3)],
       },
       now,
     );
@@ -479,11 +486,7 @@ describe("resetCreditsView expiry and Fable", () => {
       {
         availableCount: 0,
         usableNowCount: 0,
-        fable: {
-          availableCount: 3,
-          nextCreditId: "fable" as never,
-          nextExpiresAt: at(-2) as never,
-        },
+        options: [fableOption(3, at(-2))],
       },
       now,
     );
@@ -504,11 +507,11 @@ describe("resetCreditsView expiry and Fable", () => {
         availableCount: 1,
         usableNowCount: 1,
         nextCreditId: "weekly" as never,
-        fable: { availableCount: 2, nextCreditId: "fable" as never },
+        options: [fableOption(2)],
       },
       now,
     );
-    expect(view?.weekly).not.toHaveProperty("fable");
+    expect(view?.weekly).not.toHaveProperty("options");
   });
 });
 
@@ -553,10 +556,7 @@ describe("resetCreditSlots", () => {
   const weeklyOnly = { availableCount: 1, usableNowCount: 1, nextCreditId: "weekly" as never };
 
   it("offers each bucket with resets banked", () => {
-    const slots = resetCreditSlots(
-      row({ ...weeklyOnly, fable: { availableCount: 2, nextCreditId: "fable" as never } }),
-      new Map(),
-    );
+    const slots = resetCreditSlots(row({ ...weeklyOnly, options: [fableOption(2)] }), new Map());
     expect(slots.map((slot) => [slot.kind, slot.credits.availableCount, slot.redeem])).toEqual([
       ["weekly", 1, null],
       ["fable", 2, null],
@@ -598,7 +598,7 @@ describe("deriveProxyPill Fable reset guard", () => {
   const fableOnly = {
     availableCount: 0,
     usableNowCount: 0,
-    fable: { availableCount: 1, nextCreditId: "fable" as never },
+    options: [fableOption(1)],
   };
   const rowFor = (
     windows: Array<[id: string, usedPercent: number, resetsAt?: string]>,

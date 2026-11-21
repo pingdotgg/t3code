@@ -66,6 +66,21 @@ describe("Lathe device instructions", () => {
     assert.include(laterRun(false), LATHE_DEVICE_TOOL_INSTRUCTIONS);
     assert.notInclude(laterRun(false), LATHE_ORCHESTRATION_INSTRUCTIONS.trim());
     assert.equal(laterRun(true), "Check the login screen.");
+
+    // A provider's own guidance reaches a conversation that already had the rest.
+    const providerRun = (providerInstructionsDelivered: boolean) =>
+      latheOrchestrationPrompt({
+        prompt: "Check the login screen.",
+        hasLatheMcp: true,
+        hasDeviceTools: false,
+        orchestrationDelivered: true,
+        deviceInstructionsDelivered: false,
+        providerInstructions: "Mark awaited shells.",
+        providerInstructionsDelivered,
+      });
+    assert.include(providerRun(false), "Mark awaited shells.");
+    assert.notInclude(providerRun(false), LATHE_ORCHESTRATION_INSTRUCTIONS.trim());
+    assert.equal(providerRun(true), "Check the login screen.");
   });
 
   it("reach ACP agents again when device access changes mid-thread", () => {

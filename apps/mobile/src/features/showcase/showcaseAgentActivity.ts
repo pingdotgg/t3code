@@ -1,3 +1,6 @@
+import { msg } from "gt-react-native";
+
+import { m } from "../../i18n/messages";
 import type { EnvironmentProject, EnvironmentThreadShell } from "@lathe/client-runtime/state/shell";
 
 import type {
@@ -65,7 +68,7 @@ export function buildShowcaseAgentActivity(
   }
   return {
     title: "Lathe",
-    subtitle: "Agent work in progress",
+    subtitle: m(msg("Agent work in progress")),
     activeCount: rows.filter((row) => ACTIVE_PHASES.has(row.phase)).length,
     updatedAt: new Date(now).toISOString(),
     activities: rows,

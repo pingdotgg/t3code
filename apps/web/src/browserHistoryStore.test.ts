@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { scopeProjectRef } from "@lathe/client-runtime/environment";
-import { EnvironmentId, type PreviewSessionSnapshot, ProjectId, ThreadId } from "@lathe/contracts";
+import {
+  type BrowserProfileId,
+  EnvironmentId,
+  INCOGNITO_BROWSER_PROFILE_ID,
+  type PreviewSessionSnapshot,
+  ProjectId,
+  ThreadId,
+} from "@lathe/contracts";
 
 const { readPreparedConnection, entities, settingsHydration } = vi.hoisted(() => ({
   readPreparedConnection: vi.fn<() => { httpBaseUrl: string } | null>(() => null),
@@ -152,7 +159,13 @@ const threadRef = {
 
 let settledAt = 0;
 
-function settle(url: string, title: string, tabId = "tab_a", ref = threadRef): void {
+function settle(
+  url: string,
+  title: string,
+  tabId = "tab_a",
+  ref = threadRef,
+  profileId?: BrowserProfileId,
+): void {
   settledAt += 1;
   const snapshot: PreviewSessionSnapshot = {
     threadId: ref.threadId,
@@ -161,6 +174,7 @@ function settle(url: string, title: string, tabId = "tab_a", ref = threadRef): v
     canGoBack: false,
     canGoForward: false,
     updatedAt: new Date(settledAt).toISOString(),
+    ...(profileId ? { profileId } : {}),
   };
   applyPreviewServerSnapshot(ref, snapshot);
 }
@@ -201,6 +215,17 @@ describe("useBrowserHistoryStore", () => {
     settle("http://a.test/", "Old", "tab_b");
     settle("http://a.test/", "New", "tab_a");
     expect(useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.[0]?.title).toBe("New");
+  });
+
+  it("never titles history from an Incognito page, whichever settles first", () => {
+    useBrowserHistoryStore.getState().registerThreadProject(threadRef, "proj-a");
+    settle("http://a.test/", "Private A", "tab_incognito", threadRef, INCOGNITO_BROWSER_PROFILE_ID);
+    recordVisitForThread(threadRef, "http://a.test/", 1);
+    recordVisitForThread(threadRef, "http://b.test/", 2);
+    settle("http://b.test/", "Private B", "tab_incognito", threadRef, INCOGNITO_BROWSER_PROFILE_ID);
+    expect(
+      useBrowserHistoryStore.getState().byProjectKey["proj-a"]?.map((entry) => entry.title),
+    ).toEqual([undefined, undefined]);
   });
 
   it("keeps another thread's newer title when an unrelated tab settles", () => {

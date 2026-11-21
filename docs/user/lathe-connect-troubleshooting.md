@@ -78,6 +78,12 @@ Fix:
 1. Make sure the host is awake and online.
 2. On the host, run `lathe connect status`.
 3. If the check fails only on the host, check the host's DNS, VPN, or proxy.
+   If it says the host's network has an old cached answer, wait: it usually
+   clears within about 30 minutes.
+4. If it says the address no longer points to this machine's tunnel, the
+   environment was likely removed from T3 Connect. Link it again: on a desktop
+   host, turn **T3 Connect** off and on in **Settings > Sharing & access**. On a
+   command-line host, run `lathe connect link`, then restart Lathe.
 
 ## This device can't reach T3 Connect
 
@@ -89,7 +95,7 @@ Fix:
 
 1. Check this device's internet connection. On a captive or dead Wi-Fi network,
    the device can look online but cannot reach anything.
-2. A VPN, firewall, ad blocker, or DNS filter on this device can block Lathe
+2. A VPN, firewall, ad blocker, or DNS filter on this device can block T3
    Connect. Turn it off for a moment to test.
 3. On iPhone, Connectivity Assist in the Wi-Fi settings can break T3 Connect.
    Turn it off to test.
@@ -116,6 +122,10 @@ an active link between your account and the host.
 - **This device is still loading its T3 Connect sign-in.** Wait a moment;
   Lathe retries on its own. If it keeps waiting, reload or restart Lathe on
   this device.
+- **The host is waiting for you to approve this device.** The host requires
+  approval for new devices. Approve the code this device shows from a device
+  that is already connected, or run `lathe auth connect-device approve <code>` on
+  the host. See [Approve new devices](./remote-access.md#approve-new-devices).
 - **Your account reached its tunnel limit.** Remove an environment you do not
   use from your T3 account's T3 Connect page, or
   [link a paid T3 Chat account](./remote-access.md#more-machines-with-t3-chat)
@@ -134,13 +144,13 @@ This app needs a newer Lathe on the host. Update Lathe on the host. See
 
 ## T3 Connect returned an error
 
-| Error                                                     | Fix                                                                                                                                                  |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment_link_limit_exceeded` or managed tunnel limit | Remove an unused environment or link a paid T3 Chat account, then restart Lathe on the host.                                                         |
-| `auth_invalid` or `invalid_bearer`                        | Run `lathe connect login`. If credentials were revoked, run `lathe connect logout`, then `lathe connect` again. Restart the server after signing in. |
-| Expired or invalid link proof                             | Check the host's date and time, update Lathe, then restart it.                                                                                       |
-| HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                                        |
-| HTTP 408, 429, or 5xx                                     | Wait a few minutes. Lathe retries temporary failures on its own.                                                                                     |
+| Error                                                     | Fix                                                                                                                                                                                                |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `environment_link_limit_exceeded` or managed tunnel limit | Remove an unused environment or link a paid T3 Chat account, then restart Lathe on the host.                                                                                                       |
+| `auth_invalid` or `invalid_bearer`                        | Run `lathe connect login`. If credentials were revoked, run `lathe connect logout`, then `lathe connect` again. Restart the server after signing in.                                               |
+| Expired or invalid link proof                             | Check the host's date and time, update Lathe, then restart it.                                                                                                                                     |
+| HTTP 403 without a recognized error                       | If the host requires approval for new devices, update Lathe on this device and approve it. Otherwise check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report. |
+| HTTP 408, 429, or 5xx                                     | Wait a few minutes. Lathe retries temporary failures on its own.                                                                                                                                   |
 
 After you fix a permanent rejection, restart the host's server with
 `lathe service restart`. For a foreground server, stop it and run `lathe serve` again.

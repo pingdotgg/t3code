@@ -1,9 +1,13 @@
 import type { EnvironmentId } from "@lathe/contracts";
+import { errorDisplayMessage } from "@lathe/client-runtime/errors";
 import type { AtomCommandResult } from "@lathe/client-runtime/state/runtime";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@lathe/client-runtime/state/runtime";
+import { msg } from "gt-react-native";
+
+import { m } from "../../i18n/messages";
 
 type RefreshProvidersTarget = {
   readonly environmentId: EnvironmentId;
@@ -29,5 +33,5 @@ export function providerCatalogRefreshError(
 ): string | null {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return null;
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "Provider discovery failed.";
+  return errorDisplayMessage(error, m) ?? m(msg("Provider discovery failed."));
 }

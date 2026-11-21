@@ -262,7 +262,7 @@ function RoadmapAreaSection({
       <SettingsRow
         {...(searchAnchor ? searchableSetting("roadmap-steward") : {})}
         title="Steward"
-        description="After each turn on an attached thread, ticks criteria the turn proves met, with evidence, and notes what it is unsure of. It never unticks, changes fields or marks work done. Every environment's steward follows this switch."
+        description="After each turn on an attached thread, ticks criteria the turn proves met, with evidence, and notes doubts. It never unticks, edits fields or marks work done. Applies to every environment."
         control={
           <Switch
             checked={settings.stewardEnabled}
