@@ -495,6 +495,24 @@ it.effect.each(["reads_as_caller", "acts_as_caller"] as const)(
     ),
 );
 
+// A provider can load an approved T3 MCP client beside the thread's own server.
+it.effect("an environment change refused for a client's approved access names that access", () =>
+  Effect.gen(function* () {
+    const built = yield* ProbeToolkit;
+    const { result } = yield* built
+      .handle("writes_environment", {})
+      .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption));
+    expect(result).toMatchObject({ code: "capability_denied" });
+    const { message } = result as OrchestratorMcpFailure;
+    expect(message).not.toContain("calling thread");
+    expect(message).toContain("auto");
+  }).pipe(
+    Effect.provide(McpToolAccess.HandlersLayer.layer(layerProbeHandlers)),
+    Effect.provideService(McpInvocationContext.McpInvocationContext, clientCaller("auto")),
+    Effect.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
+  ),
+);
+
 it.effect("refuses to build a thread-bound tool that outside clients would be offered", () =>
   Effect.gen(function* () {
     const CallerToolkit = Toolkit.make(Tool.make("reads_as_caller", probe));
