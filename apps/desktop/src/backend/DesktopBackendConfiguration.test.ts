@@ -233,7 +233,9 @@ describe("DesktopBackendConfiguration", () => {
         const second = yield* configuration.resolvePrimary;
 
         assert.equal(first.executablePath, process.execPath);
-        assert.deepEqual(first.args.slice(0, 3), [
+        assert.deepEqual(first.args.slice(0, 5), [
+          "--require",
+          environment.disclaimResponsibilityPath,
           "--require",
           environment.compileCachePath,
           environment.backendEntryPath,
