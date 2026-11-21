@@ -1064,6 +1064,7 @@ function queueTailModelSelection(
   return (
     queuedRunsInDeliveryOrder(projection).findLast(
       (run) =>
+        run.threadPickSuperseded !== true &&
         !followsCurrentConversation(
           projection.messages.find((message) => message.id === run.userMessageId),
         ),
@@ -2735,9 +2736,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.modelSelection,
         queuedRun.modelSelection,
       );
-      // The picker may already have moved ahead of the native conversation.
+      // The picker, or a superseded queued start, may have left the thread ahead of the native conversation.
       const switchFromActiveProvider =
-        followsCurrent &&
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
       const switchPlan =
@@ -3189,7 +3189,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "Provider or model selection changed.";
       yield* writeSystemEvents(
         [
-          ...(selectionChanged
+          // A scheduled task's pinned model still moves the thread back when it starts.
+          ...(selectionChanged &&
+          (queuedRun.threadPickSuperseded !== true ||
+            (queuedMessage.scheduledTaskId !== undefined &&
+              queuedMessage.followsThreadSelection !== true))
             ? [
                 {
                   type:
@@ -5540,6 +5544,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: updatedThread,
     });
+    if (command.type === "thread.model-selection.set" || command.type === "provider.switch") {
+      const { runs } = yield* loadProjectionForCommand(command, ["runs"], {
+        runStatuses: ["queued"],
+      });
+      for (const run of runs) {
+        if (run.threadPickSuperseded === true) continue;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...run, threadPickSuperseded: true },
+        });
+      }
+    }
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
