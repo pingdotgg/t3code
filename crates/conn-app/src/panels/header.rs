@@ -14,6 +14,7 @@ use gpui_kit::{
 };
 
 use super::color::to_hsla;
+use crate::a11y::ConnA11yExt as _;
 
 /// Header height (`--shell-header-height`, 44px).
 pub(crate) const HEADER_HEIGHT_PX: f32 = 44.0;
@@ -175,6 +176,7 @@ pub(crate) fn render_panel_header(
 
     let mut tab_strip = h_flex()
         .id("right-panel-tab-strip")
+        .a11y(gpui_kit::Role::TabList, "panel.tabs", "Right panel tabs")
         .min_w_0()
         .flex_shrink(1.0)
         .h_full()
@@ -239,8 +241,13 @@ pub(crate) fn render_panel_header(
                     .child(superhero_icon("superhero/close.svg", HEADER_ICON_PX, fg)),
             );
 
+        let tab_ax_id = SharedString::from(format!(
+            "panel.tab.{}",
+            label.to_ascii_lowercase().replace(' ', "-")
+        ));
         let tab_el = h_flex()
             .id(SharedString::from(format!("right-panel-tab-{idx}-{label}")))
+            .a11y_tab(tab_ax_id, label.clone(), active)
             .group(group)
             .h(px(TAB_HEIGHT_PX))
             .max_w(px(TAB_MAX_WIDTH_PX))
@@ -285,6 +292,8 @@ pub(crate) fn render_panel_header(
     let mut add_anchor = div().relative().flex_shrink_0().child(
         div()
             .id("right-panel-add-btn")
+            .a11y_button("panel.add-tab", "Add panel tab")
+            .aria_expanded(props.add_menu_open)
             .size(px(ADD_BUTTON_SIZE_PX))
             .rounded(px(CONTROL_RADIUS_PX))
             .flex()
@@ -338,6 +347,12 @@ pub(crate) fn render_panel_header(
         .gap(px(4.0))
         .child(header_icon_toggle(
             "right-panel-maximize-btn",
+            "panel.maximize",
+            if props.maximized {
+                "Restore right panel"
+            } else {
+                "Maximize right panel"
+            },
             max_icon,
             props.maximized,
             fg,
@@ -347,6 +362,8 @@ pub(crate) fn render_panel_header(
         ))
         .child(header_icon_toggle(
             "right-panel-dock-bottom-btn",
+            "panel.dock-bottom",
+            "Dock panel to bottom",
             "superhero/panel-bottom.svg",
             props.bottom_dock_open,
             fg,
@@ -356,6 +373,8 @@ pub(crate) fn render_panel_header(
         ))
         .child(header_icon_toggle(
             "right-panel-toggle-btn",
+            "panel.toggle",
+            "Toggle right panel",
             "superhero/sidebar-right.svg",
             props.panel_open,
             fg,
@@ -365,6 +384,12 @@ pub(crate) fn render_panel_header(
         ));
 
     h_flex()
+        .id("right-panel-header-bar")
+        .a11y(
+            gpui_kit::Role::Toolbar,
+            "panel.header",
+            "Right panel header",
+        )
         .w_full()
         .h(px(HEADER_HEIGHT_PX))
         .flex_shrink_0()
@@ -384,8 +409,14 @@ pub(crate) fn render_panel_header(
         .child(right_controls)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "renders one right-panel header icon toggle button with accessibility metadata"
+)]
 fn header_icon_toggle(
     id: &'static str,
+    ax_id: &'static str,
+    ax_label: &'static str,
     icon_path: &'static str,
     pressed: bool,
     fg: Hsla,
@@ -396,6 +427,8 @@ fn header_icon_toggle(
     let icon_color = if pressed { fg } else { muted };
     div()
         .id(id)
+        .a11y_button(ax_id, ax_label)
+        .aria_selected(pressed)
         .size(px(LAYOUT_BUTTON_SIZE_PX))
         .rounded(px(CONTROL_RADIUS_PX))
         .flex()

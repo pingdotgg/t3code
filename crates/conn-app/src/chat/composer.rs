@@ -41,6 +41,7 @@ use self::menus::{
 use self::model_picker::{ModelCatalog, ModelPickerView, render_model_picker};
 use super::color::{hsla, hsla_alpha};
 use super::icons;
+use crate::a11y::ConnA11yExt as _;
 use crate::panels::chrome::ConnTooltipExt as _;
 
 pub(super) const COMPOSER_PLACEHOLDER: &str = "Ask anything. @ files, $ skills, / commands";
@@ -1179,6 +1180,15 @@ impl Composer {
 
         let plan_btn = div()
             .id("composer-plan-mode-toggle")
+            .a11y_button(
+                "composer.plan-mode",
+                if plan_active {
+                    "Plan mode (enabled)"
+                } else {
+                    "Toggle Plan mode"
+                },
+            )
+            .aria_selected(plan_active)
             .flex()
             .flex_row()
             .items_center()
@@ -1211,6 +1221,14 @@ impl Composer {
         let mut runtime_slot = div().relative().child(
             div()
                 .id("composer-runtime-mode-trigger")
+                .a11y_button(
+                    "composer.runtime-mode",
+                    format!(
+                        "Runtime permissions: {}",
+                        runtime_mode_label(&self.runtime_mode)
+                    ),
+                )
+                .aria_expanded(self.runtime_menu_open)
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1288,6 +1306,12 @@ impl Composer {
         }
 
         div()
+            .id("composer-context-strip")
+            .a11y(
+                gpui_kit::Role::Toolbar,
+                "composer.context-strip",
+                "Thread context",
+            )
             .flex()
             .flex_row()
             .items_center()
@@ -1351,6 +1375,11 @@ impl Render for Composer {
 
         let model_trigger = div()
             .id("chat-composer-model-picker")
+            .a11y_button(
+                "composer.model-picker",
+                format!("Select model: {model_label}"),
+            )
+            .aria_expanded(self.model_picker_open)
             .flex()
             .flex_row()
             .items_center()
@@ -1406,6 +1435,11 @@ impl Render for Composer {
                 let mut slot = div().relative().child(
                     div()
                         .id("chat-composer-effort-picker")
+                        .a11y_button(
+                            "composer.effort-picker",
+                            format!("{}: {current_label}", reasoning.label),
+                        )
+                        .aria_expanded(self.effort_menu_open)
                         .flex()
                         .flex_row()
                         .items_center()
@@ -1489,6 +1523,7 @@ impl Render for Composer {
 
         let attach_btn = div()
             .id("chat-composer-attach")
+            .a11y_button("composer.attach", "Attach files")
             .flex()
             .items_center()
             .justify_center()
@@ -1573,6 +1608,8 @@ impl Render for Composer {
         );
 
         let mut card = div()
+            .id("chat-composer-card")
+            .a11y_group("composer.card", "Message input card")
             .w_full()
             .rounded(px(COMPOSER_RADIUS_PX))
             .bg(card_bg)
@@ -1701,6 +1738,7 @@ impl Render for Composer {
 
         let mut root = div()
             .id("chat-composer-root")
+            .a11y(gpui_kit::Role::Form, "composer.root", "Message composer")
             .relative()
             .w_full()
             .on_drop(
@@ -1852,6 +1890,7 @@ where
 
     let mut btn = div()
         .id("chat-composer-mic")
+        .a11y_button("composer.mic", tooltip)
         .flex()
         .items_center()
         .justify_center()
@@ -1886,6 +1925,7 @@ where
     if working {
         div()
             .id("chat-composer-stop")
+            .a11y_button("composer.stop", "Stop generation")
             .flex()
             .items_center()
             .justify_center()
@@ -1904,6 +1944,7 @@ where
     } else if has_text {
         div()
             .id("chat-composer-send")
+            .a11y_button("composer.send", "Send message")
             .flex()
             .items_center()
             .justify_center()
@@ -1923,6 +1964,7 @@ where
         // Conn: `disabled:bg-foreground/12 disabled:text-muted-foreground`.
         div()
             .id("chat-composer-send-disabled")
+            .a11y_button("composer.send", "Send message (disabled)")
             .flex()
             .items_center()
             .justify_center()

@@ -26,6 +26,7 @@ use self::cache::{CachedRow, RowCache, TimelineItem, group_rows};
 use self::color::{hsla, message_highlight, muted_icon, prose_foreground};
 use self::composer::{Composer, ComposerEvent};
 use self::spinner::TurningArc;
+use crate::a11y::ConnA11yExt as _;
 
 /// Centered chat content lane width matching Conn's `--chat-content-max-width` (`46rem`).
 const CHAT_CONTENT_MAX_WIDTH_PX: f32 = 736.0;
@@ -410,6 +411,10 @@ impl ChatView {
             .child(
                 div()
                     .id(SharedString::from(format!("turn-changed-files-{idx}")))
+                    .a11y_button(
+                        SharedString::from(format!("chat.changed-files.{idx}")),
+                        format!("{label} +{} -{}", cp.additions, cp.deletions),
+                    )
                     .flex()
                     .flex_row()
                     .items_center()
@@ -546,7 +551,12 @@ impl ChatView {
                     if *created_by_agent {
                         self.render_agent_prompt_row(id, text, cx)
                     } else {
-                        self.render_user_bubble(text, *grouped_with_previous, *grouped_with_next)
+                        self.render_user_bubble(
+                            id,
+                            text,
+                            *grouped_with_previous,
+                            *grouped_with_next,
+                        )
                     }
                 } else {
                     div().into_any_element()
@@ -582,6 +592,12 @@ impl ChatView {
                     };
                     // Conn `AssistantTimelineRow`: `px-1 py-0.5`, row spacing `pb-2` before work or `pb-4`.
                     div()
+                        .id(SharedString::from(format!("chat-assistant-{id}")))
+                        .a11y(
+                            gpui_kit::Role::Article,
+                            SharedString::from(format!("chat.message.assistant.{id}")),
+                            "Assistant message",
+                        )
                         .w_full()
                         .min_w_0()
                         .pb(px(if *followed_by_work { 8.0 } else { 16.0 }))
@@ -622,13 +638,21 @@ impl ChatView {
 
     fn render_user_bubble(
         &self,
+        id: &str,
         text: &str,
         grouped_with_previous: bool,
         grouped_with_next: bool,
     ) -> AnyElement {
         // Conn `TimelineUserMessageRow`: `max-w-[80%] rounded-bubble border-t border-t-(--message-highlight)!
         // bg-message text-message-foreground px-4 pt-2.5 pb-3 text-sm leading-relaxed`.
+        let preview: String = text.chars().take(120).collect();
         let mut bubble = div()
+            .id(SharedString::from(format!("chat-user-{id}")))
+            .a11y(
+                gpui_kit::Role::Article,
+                SharedString::from(format!("chat.message.user.{id}")),
+                preview,
+            )
             .max_w(relative(0.8))
             .min_w_0()
             .rounded(px(BUBBLE_RADIUS_PX))
@@ -773,8 +797,11 @@ impl ChatView {
             // text-muted-foreground hover:text-foreground`, `size-3.5` (14px) chevron.
             let duration_ms = self.work_group_duration_ms(rows);
             let worked_label = format_worked_label(duration_ms);
+            let worked_ax_id = SharedString::from(format!("chat.work-group.{group_id}"));
             let fold_btn = div()
                 .id(SharedString::from(format!("fold-{group_id}")))
+                .a11y_button(worked_ax_id, worked_label.clone())
+                .aria_expanded(expanded)
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1402,6 +1429,11 @@ impl Render for ChatView {
 
         let timeline = div()
             .id("chat-timeline-scroll")
+            .a11y(
+                gpui_kit::Role::Log,
+                "chat.timeline",
+                "Conversation timeline",
+            )
             .flex_1()
             .min_h_0()
             .w_full()

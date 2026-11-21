@@ -26,6 +26,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, WindowControlArea, div, px,
 };
 
+use crate::a11y::ConnA11yExt as _;
 use crate::app::ConnApp;
 use crate::icons;
 use crate::panels::chrome::ConnTooltipExt as _;
@@ -52,7 +53,7 @@ pub(crate) fn render_chat_header(
     tokens: &Tokens,
     geometry: &ShellGeometry,
     cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Div {
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     let fg = hsla(tokens.foreground);
     let muted = hsla(tokens.muted_foreground);
     let separator_color = hsla_alpha(tokens.muted_foreground, 0.55);
@@ -89,6 +90,8 @@ pub(crate) fn render_chat_header(
         left_group = left_group.child(
             div()
                 .id("header-open-sidebar")
+                .a11y_button("header.open-sidebar", "Show sidebar")
+                .aria_keyshortcuts("Meta+B")
                 .flex()
                 .items_center()
                 .justify_center()
@@ -109,6 +112,8 @@ pub(crate) fn render_chat_header(
     // 14px breadcrumb (`ChatHeader.tsx` + `WorkspaceBreadcrumb.tsx`, `sm:gap-3` = 12px):
     // [14px project favicon + 6px gap + muted project label] / [medium foreground thread title].
     let mut breadcrumb = div()
+        .id("header-breadcrumb")
+        .a11y_group("header.breadcrumb", "Thread breadcrumb")
         .flex()
         .flex_row()
         .items_center()
@@ -122,6 +127,12 @@ pub(crate) fn render_chat_header(
         breadcrumb = breadcrumb
             .child(
                 div()
+                    .id("header-project-chip")
+                    .a11y(
+                        gpui_kit::Role::Label,
+                        "header.project",
+                        project.title.clone(),
+                    )
                     .flex()
                     .flex_row()
                     .items_center()
@@ -143,6 +154,12 @@ pub(crate) fn render_chat_header(
 
     breadcrumb = breadcrumb.child(
         div()
+            .id("header-thread-title")
+            .a11y(
+                gpui_kit::Role::Heading,
+                "header.thread-title",
+                thread_title.to_owned(),
+            )
             .min_w_0()
             .flex_1()
             .overflow_hidden()
@@ -175,6 +192,8 @@ pub(crate) fn render_chat_header(
                     app.activate_or_toggle_right_panel_tab(RightPanelTab::LinkedItems, cx);
                 }),
             )
+            .a11y_button("header.linked-items", "Linked items")
+            .aria_selected(details_active)
             .conn_tooltip("Linked items", tokens),
         );
 
@@ -190,6 +209,7 @@ pub(crate) fn render_chat_header(
                         app.activate_or_toggle_right_panel_tab(RightPanelTab::Terminal, cx);
                     }),
                 )
+                .a11y_button("header.toggle-terminal", "Toggle terminal")
                 .conn_tooltip("Terminal", tokens),
             )
             .child(
@@ -202,11 +222,15 @@ pub(crate) fn render_chat_header(
                         app.toggle_right_panel(cx);
                     }),
                 )
+                .a11y_button("header.toggle-right-panel", "Toggle right panel")
+                .aria_keyshortcuts("Meta+Alt+B")
                 .conn_tooltip("Toggle right panel (⌘⌥B)", tokens),
             );
     }
 
     div()
+        .id("chat-header-bar")
+        .a11y(gpui_kit::Role::Toolbar, "header.bar", "Thread header")
         .flex()
         .flex_row()
         .items_center()

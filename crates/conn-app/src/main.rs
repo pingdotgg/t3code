@@ -1,5 +1,6 @@
 //! Conn native desktop application entry point (GPUI).
 
+mod a11y;
 mod app;
 #[cfg(feature = "automation")]
 mod automation;

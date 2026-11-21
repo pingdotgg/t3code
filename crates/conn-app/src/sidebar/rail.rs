@@ -24,6 +24,7 @@ use gpui_kit::{
     SharedString, StatefulInteractiveElement as _, Styled as _, WindowControlArea, div, px,
 };
 
+use crate::a11y::ConnA11yExt as _;
 use crate::app::ConnApp;
 use crate::icons;
 use crate::orbit_sync::{workspace_monogram, workspace_tile_color};
@@ -52,7 +53,7 @@ pub(crate) fn render_workspace_rail(
     tokens: &Tokens,
     geometry: &ShellGeometry,
     cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Div {
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     let all_active = active_workspace.is_none();
     let muted = hsla(tokens.sidebar_muted_foreground);
 
@@ -81,6 +82,8 @@ pub(crate) fn render_workspace_rail(
             app.select_workspace(None, cx);
         }),
     )
+    .a11y_button("rail.all-projects", "All projects")
+    .aria_selected(all_active)
     .conn_tooltip("All projects", tokens);
 
     let workspace_btns: Vec<_> = workspaces
@@ -108,6 +111,7 @@ pub(crate) fn render_workspace_rail(
                 .text_color(text_color)
                 .child(workspace_monogram(&ws.name));
 
+            let ax_id = SharedString::from(format!("rail.workspace.{}", ws.id));
             rail_button(
                 SharedString::from(format!("rail-ws-{idx}-{}", ws.id)),
                 is_active,
@@ -117,6 +121,8 @@ pub(crate) fn render_workspace_rail(
                     app.select_workspace(Some(ws_id.clone()), cx);
                 }),
             )
+            .a11y_button(ax_id, format!("Workspace {}", ws.name))
+            .aria_selected(is_active)
             .conn_tooltip(ws.name.clone(), tokens)
         })
         .collect();
@@ -130,6 +136,7 @@ pub(crate) fn render_workspace_rail(
             app.add_project_via_picker(window, cx);
         }),
     )
+    .a11y_button("rail.add-project", "Add project")
     .conn_tooltip("Add project", tokens);
 
     let usage_btn = rail_button(
@@ -141,6 +148,7 @@ pub(crate) fn render_workspace_rail(
             app.activate_or_toggle_right_panel_tab(RightPanelTab::Tasks, cx);
         }),
     )
+    .a11y_button("rail.tasks", "Tasks & usage")
     .conn_tooltip("Tasks & usage", tokens);
 
     let pull_requests_btn = rail_button(
@@ -152,6 +160,7 @@ pub(crate) fn render_workspace_rail(
             app.activate_or_toggle_right_panel_tab(RightPanelTab::LinkedItems, cx);
         }),
     )
+    .a11y_button("rail.pull-requests", "Pull requests")
     .conn_tooltip("Pull requests", tokens);
 
     let settings_btn = rail_button(
@@ -163,9 +172,13 @@ pub(crate) fn render_workspace_rail(
             app.open_settings(window, cx);
         }),
     )
+    .a11y_button("rail.settings", "Settings")
+    .aria_keyshortcuts("Meta+,")
     .conn_tooltip("Settings (⌘,)", tokens);
 
     div()
+        .id("workspace-rail")
+        .a11y(gpui_kit::Role::Navigation, "rail.container", "Workspace rail")
         .flex()
         .flex_col()
         .w(px(WORKSPACE_RAIL_WIDTH_PX))

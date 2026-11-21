@@ -166,6 +166,7 @@ fn add_vibrancy(window: &Window) {
             .unwrap_or(STATE_FOLLOWS_WINDOW_ACTIVE_STATE);
         let _: () = objc2::msg_send![&*effect, setState: state];
         let _: () = objc2::msg_send![&*effect, setAutoresizingMask: AUTORESIZE_WIDTH_AND_HEIGHT];
+        let _: () = objc2::msg_send![&*effect, setAccessibilityElement: false];
         let nil: *mut AnyObject = std::ptr::null_mut();
         let _: () = objc2::msg_send![
             &*content,

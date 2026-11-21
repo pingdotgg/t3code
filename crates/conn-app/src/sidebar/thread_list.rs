@@ -27,9 +27,11 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::{
     Context, Entity, InteractiveElement as _, IntoElement as _, MouseButton, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WindowControlArea, deferred, div, px,
+    SharedString, StatefulInteractiveElement as _, Styled as _, WindowControlArea, deferred, div,
+    px,
 };
 
+use crate::a11y::ConnA11yExt as _;
 use crate::app::ConnApp;
 use crate::fixture::thread_activity;
 use crate::icons;
@@ -110,7 +112,7 @@ pub(crate) fn render_thread_sidebar(
     tokens: &Tokens,
     geometry: &ShellGeometry,
     cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Div {
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     let fg = hsla(tokens.sidebar_foreground);
     let muted = hsla(tokens.sidebar_muted_foreground);
     let search_icon_color = hsla_alpha(tokens.sidebar_muted_foreground, 0.85);
@@ -142,6 +144,8 @@ pub(crate) fn render_thread_sidebar(
         .child(
             div()
                 .id("sidebar-collapse-btn")
+                .a11y_button("sidebar.collapse", "Hide sidebar")
+                .aria_keyshortcuts("Meta+B")
                 .flex()
                 .items_center()
                 .justify_center()
@@ -169,6 +173,8 @@ pub(crate) fn render_thread_sidebar(
                     app.toggle_sidebar_filter_menu(cx);
                 }),
             )
+            .a11y_button("sidebar.filter-projects", "Filter by project")
+            .aria_expanded(filter_menu_open)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .conn_tooltip(
                 if active_workspace.is_some() {
@@ -195,6 +201,7 @@ pub(crate) fn render_thread_sidebar(
                 tokens,
                 cx.listener(|app, _event, window, cx| app.add_project_via_picker(window, cx)),
             )
+            .a11y_button("sidebar.add-project", "Add project")
             .conn_tooltip("Add project", tokens),
         );
     }
@@ -205,11 +212,14 @@ pub(crate) fn render_thread_sidebar(
             tokens,
             cx.listener(|app, _event, _window, cx| app.start_new_thread(None, cx)),
         )
+        .a11y_button("sidebar.new-thread", "New thread")
+        .aria_keyshortcuts("Meta+N")
         .conn_tooltip("New thread (⌘N)", tokens),
     );
 
     let mut search_box = div()
         .id("sidebar-search")
+        .a11y(gpui_kit::Role::Search, "sidebar.search", "Search threads")
         .flex()
         .flex_row()
         .items_center()
@@ -337,6 +347,7 @@ pub(crate) fn render_thread_sidebar(
 
     let mut list_scroll = div()
         .id("sidebar-thread-scroll")
+        .a11y(gpui_kit::Role::List, "sidebar.thread-list", "Threads")
         .flex()
         .flex_col()
         .flex_1()
@@ -362,6 +373,11 @@ pub(crate) fn render_thread_sidebar(
     {
         let settled_header = div()
             .id("sidebar-settled-footer")
+            .a11y_button(
+                "sidebar.settled-toggle",
+                format!("Settled ({settled_count})"),
+            )
+            .aria_expanded(settled_expanded)
             .flex()
             .flex_row()
             .items_center()
@@ -432,6 +448,12 @@ pub(crate) fn render_thread_sidebar(
     .child(list_scroll);
 
     div()
+        .id("sidebar-column")
+        .a11y(
+            gpui_kit::Role::Navigation,
+            "sidebar.container",
+            "Thread sidebar",
+        )
         .flex()
         .flex_col()
         .w(px(layout.sidebar_width))
@@ -762,8 +784,11 @@ fn render_thread_card(
             .child(div().flex_shrink_0().child(age));
     }
 
+    let thread_ax_id = SharedString::from(format!("sidebar.thread.{}", thread.id));
     let mut card = div()
         .id(("thread-row", row_key))
+        .a11y(gpui_kit::Role::ListItem, thread_ax_id, thread.title.clone())
+        .aria_selected(selected)
         .group("sidebar-row")
         .flex()
         .flex_col()

@@ -102,6 +102,31 @@ async fn run(
         "dump" => app
             .read_with(cx, |app, _| app.automation_dump())
             .map_err(|e| err(e.into())),
+        "a11y-tree" => {
+            let tree = window
+                .update(cx, |_, window, cx| {
+                    window.refresh();
+                    window.draw(cx).clear(cx);
+                    window.debug_a11y_tree_json()
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(match tree {
+                Some(raw) => serde_json::from_str(&raw).unwrap_or_else(|_| json!(raw)),
+                None => json!({ "active": false }),
+            })
+        }
+        #[cfg(target_os = "macos")]
+        "ax-hit-test" => {
+            let x = cmd.get("x").and_then(Value::as_f64).unwrap_or(20.0);
+            let y = cmd.get("y").and_then(Value::as_f64).unwrap_or(60.0);
+            window
+                .update(cx, |_, window, cx| {
+                    window.refresh();
+                    window.draw(cx).clear(cx);
+                    macos_ax_hit_test(window, x, y)
+                })
+                .map_err(|e| e.to_string())?
+        }
         "theme" => {
             let id = text(cmd, "id").to_owned();
             let ok = app
@@ -300,5 +325,152 @@ mod anyhow_like {
         fn from(e: E) -> Self {
             Self(e.to_string())
         }
+    }
+}
+
+/// Calls AppKit's `-[NSView accessibilityChildren]` and `-[NSView accessibilityHitTest:]`
+/// directly on the window's content view (the same Objective-C methods invoked by macOS
+/// `AXUIElementCopyElementAtPosition`) so automated tests can verify live macOS AX output
+/// without cross-process TCC grants.
+#[cfg(target_os = "macos")]
+fn macos_ax_hit_test(
+    window: &gpui_kit::Window,
+    x_from_left: f64,
+    y_from_top: f64,
+) -> Result<Value, String> {
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use std::ffi::CStr;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NsPoint {
+        x: f64,
+        y: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NsSize {
+        width: f64,
+        height: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NsRect {
+        origin: NsPoint,
+        size: NsSize,
+    }
+    // SAFETY: `NsPoint` matches AppKit `NSPoint` (`CGPoint`: two f64s).
+    unsafe impl objc2::Encode for NsPoint {
+        const ENCODING: objc2::Encoding =
+            objc2::Encoding::Struct("CGPoint", &[f64::ENCODING, f64::ENCODING]);
+    }
+    // SAFETY: `NsSize` matches AppKit `NSSize` (`CGSize`: two f64s).
+    unsafe impl objc2::Encode for NsSize {
+        const ENCODING: objc2::Encoding =
+            objc2::Encoding::Struct("CGSize", &[f64::ENCODING, f64::ENCODING]);
+    }
+    // SAFETY: `NsRect` matches AppKit `NSRect` (`CGRect`: `CGPoint` + `CGSize`).
+    unsafe impl objc2::Encode for NsRect {
+        const ENCODING: objc2::Encoding =
+            objc2::Encoding::Struct("CGRect", &[NsPoint::ENCODING, NsSize::ENCODING]);
+    }
+
+    let handle = HasWindowHandle::window_handle(window).map_err(|e| e.to_string())?;
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return Err("window is not AppKit".to_owned());
+    };
+
+    // Helper: read an `NSString *` returned by an accessibility getter.
+    unsafe fn ax_string(obj: &AnyObject, sel: objc2::runtime::Sel) -> Option<String> {
+        // SAFETY: Caller passes a live Objective-C object on the main thread whose selector
+        // returns a nullable `NSString *`.
+        let s: Option<Retained<AnyObject>> = unsafe { objc2::msg_send![obj, performSelector: sel] };
+        let s = s?;
+        // SAFETY: `s` is a valid `NSString`; `UTF8String` returns a NUL-terminated C string
+        // valid for the lifetime of `s` (or null).
+        let ptr: *const std::ffi::c_char = unsafe { objc2::msg_send![&*s, UTF8String] };
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: `ptr` is non-null and NUL-terminated, backed by `s` for this block.
+        let cstr = unsafe { CStr::from_ptr(ptr) };
+        Some(cstr.to_string_lossy().into_owned())
+    }
+
+    // SAFETY: Executed synchronously on the AppKit main thread inside `window.update`, with a
+    // live `NSView` handle from GPUI. Every `msg_send!` selector is a documented `NSView`,
+    // `NSWindow`, `NSArray`, or `NSAccessibility` protocol method.
+    unsafe {
+        let view: &AnyObject = handle.ns_view.cast::<AnyObject>().as_ref();
+        let ns_window: Option<Retained<AnyObject>> = objc2::msg_send![view, window];
+        let ns_window = ns_window.ok_or("no NSWindow")?;
+        let content: Option<Retained<AnyObject>> = objc2::msg_send![&*ns_window, contentView];
+        let content = content.ok_or("no contentView")?;
+
+        let cls_name_ptr: *const std::ffi::c_char = {
+            let cls_str: Retained<AnyObject> = objc2::msg_send![&*content, className];
+            objc2::msg_send![&*cls_str, UTF8String]
+        };
+        let content_class = if cls_name_ptr.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(cls_name_ptr).to_string_lossy().into_owned()
+        };
+
+        let children: Option<Retained<AnyObject>> =
+            objc2::msg_send![&*content, accessibilityChildren];
+        let child_count: usize = children
+            .as_ref()
+            .map_or(0, |arr| objc2::msg_send![&**arr, count]);
+
+        let bounds: NsRect = objc2::msg_send![&*content, bounds];
+        let flipped: bool = objc2::msg_send![&*content, isFlipped];
+        let view_pt = NsPoint {
+            x: x_from_left,
+            y: if flipped {
+                y_from_top
+            } else {
+                bounds.size.height - y_from_top
+            },
+        };
+        let nil: *mut AnyObject = std::ptr::null_mut();
+        let win_pt: NsPoint = objc2::msg_send![&*content, convertPoint: view_pt, toView: nil];
+        let screen_pt: NsPoint = objc2::msg_send![&*ns_window, convertPointToScreen: win_pt];
+
+        let hit: Option<Retained<AnyObject>> =
+            objc2::msg_send![&*content, accessibilityHitTest: screen_pt];
+        let hit_json = match hit {
+            Some(el) => {
+                let role = ax_string(&el, objc2::sel!(accessibilityRole));
+                let subrole = ax_string(&el, objc2::sel!(accessibilitySubrole));
+                let identifier = ax_string(&el, objc2::sel!(accessibilityIdentifier));
+                let title = ax_string(&el, objc2::sel!(accessibilityTitle));
+                let help = ax_string(&el, objc2::sel!(accessibilityHelp));
+                let frame: NsRect = objc2::msg_send![&*el, accessibilityFrame];
+                json!({
+                    "role": role,
+                    "subrole": subrole,
+                    "identifier": identifier,
+                    "title": title,
+                    "help": help,
+                    "frame": {
+                        "x": frame.origin.x,
+                        "y": frame.origin.y,
+                        "width": frame.size.width,
+                        "height": frame.size.height,
+                    },
+                })
+            }
+            None => Value::Null,
+        };
+
+        Ok(json!({
+            "content_class": content_class,
+            "child_count": child_count,
+            "query": { "x": x_from_left, "y": y_from_top },
+            "hit": hit_json,
+        }))
     }
 }

@@ -10,6 +10,7 @@ use gpui_kit::{
     IntoElement, KeyBinding, ParentElement as _, Render, Styled as _, Window, actions, div, px,
 };
 
+use crate::a11y::ConnA11yExt as _;
 use crate::fixture::demo_shell_state;
 use crate::header::render_chat_header;
 use crate::shell::{CardJoin, inset_card, two_tone_divider};
@@ -1216,6 +1217,8 @@ impl ConnApp {
             .child(self.chat.clone());
 
         div()
+            .id("conn-chat-column")
+            .a11y(gpui_kit::Role::Main, "shell.chat-column", "Conversation")
             .flex()
             .flex_col()
             .flex_1()
@@ -1354,7 +1357,16 @@ impl ConnApp {
         .bg(hsla(self.tokens.shell_card))
         .child(self.right_panel.clone());
 
-        let column = div().flex().flex_col().h_full();
+        let column = div()
+            .id("conn-right-panel-column")
+            .a11y(
+                gpui_kit::Role::Complementary,
+                "shell.right-panel-column",
+                "Right panel",
+            )
+            .flex()
+            .flex_col()
+            .h_full();
         let column = if self.right_panel_maximized {
             column.flex_1().min_w_0()
         } else {
@@ -1797,6 +1809,7 @@ impl Render for ConnApp {
         RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut root = div()
             .id("conn-shell-root")
+            .a11y_group("shell.root", "Conn workspace")
             .track_focus(&self.focus_handle)
             .capture_key_down(
                 cx.listener(|app, event: &gpui_kit::KeyDownEvent, _window, cx| {

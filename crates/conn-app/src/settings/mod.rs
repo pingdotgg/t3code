@@ -25,6 +25,7 @@ use gpui_kit::{
     deferred, div, point, px,
 };
 
+use crate::a11y::ConnA11yExt as _;
 use crate::icons;
 use crate::orbit_sync::{OrbitSettingsInfo, OrbitSyncStatus};
 use crate::shell::{DIVIDER_WIDTH_PX, INNER_BORDER_PX};
@@ -334,6 +335,7 @@ impl SettingsModal {
             .child(
                 div()
                     .id("conn-settings-close")
+                    .a11y_button("settings.close", "Close settings")
                     .flex()
                     .items_center()
                     .justify_center()
@@ -367,8 +369,13 @@ impl SettingsModal {
         for (idx, page) in ALL_PAGES.into_iter().enumerate() {
             let active = self.active_page == page;
             let icon_color = if active { fg } else { muted };
+            let nav_ax_id = SharedString::from(format!(
+                "settings.nav.{}",
+                page.label().to_ascii_lowercase()
+            ));
             let mut row = div()
                 .id(("conn-settings-nav", idx))
+                .a11y_tab(nav_ax_id, page.label(), active)
                 .flex()
                 .flex_row()
                 .items_center()
@@ -400,6 +407,8 @@ impl SettingsModal {
         let search_to_clear = self.search_input.clone();
 
         let mut search_bar = div()
+            .id("conn-settings-search")
+            .a11y(gpui_kit::Role::Search, "settings.search", "Search settings")
             .flex()
             .flex_row()
             .items_center()
@@ -771,6 +780,11 @@ impl SettingsModal {
 
         let mut row = div()
             .id(SharedString::from(format!("conn-theme-row-{}", theme.id)))
+            .a11y_button(
+                SharedString::from(format!("settings.theme.{}", theme.id)),
+                theme.name.clone(),
+            )
+            .aria_selected(is_active)
             .flex()
             .flex_row()
             .items_center()
@@ -1324,6 +1338,7 @@ impl Render for SettingsModal {
 
         let modal = div()
             .id("conn-settings-modal")
+            .a11y(gpui_kit::Role::Dialog, "settings.modal", "Settings")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 if event.keystroke.key == "escape" {

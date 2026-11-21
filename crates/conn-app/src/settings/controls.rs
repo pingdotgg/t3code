@@ -6,9 +6,11 @@
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::{
     AnyElement, Div, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
+    Window, div, px,
 };
 
+use crate::a11y::ConnA11yExt as _;
 use crate::theme::hsla;
 
 const SWITCH_TRACK_W_PX: f32 = 34.0;
@@ -58,8 +60,16 @@ pub(crate) fn pill_switch(
         0.0
     };
 
+    let switch_id = id.into();
+    let raw_slug = match &switch_id {
+        ElementId::Name(name) => name.trim_start_matches("conn-settings-").to_owned(),
+        other => format!("{other:?}"),
+    };
+    let ax_id = SharedString::from(format!("settings.switch.{raw_slug}"));
+    let label = humanize_slug(&raw_slug);
     div()
-        .id(id.into())
+        .id(switch_id)
+        .a11y_switch(ax_id, label, checked)
         .flex()
         .flex_row()
         .items_center()
@@ -90,7 +100,7 @@ pub(crate) fn settings_section(
     rows: Vec<AnyElement>,
     tokens: &Tokens,
     geometry: &ShellGeometry,
-) -> Div {
+) -> Stateful<Div> {
     let fg = hsla(tokens.foreground);
     let card_bg = hsla(tokens.shell_settings_card);
     let card_border = hsla(tokens.shell_settings_card_border);
@@ -114,7 +124,13 @@ pub(crate) fn settings_section(
         }
     }
 
+    let slug = title.to_ascii_lowercase().replace(' ', "-");
     div()
+        .id(SharedString::from(format!("settings-section-{slug}")))
+        .a11y_region(
+            SharedString::from(format!("settings.section.{slug}")),
+            title.to_owned(),
+        )
         .flex()
         .flex_col()
         .gap(px(8.0))
@@ -171,7 +187,13 @@ pub(crate) fn settings_row(
         );
     }
 
+    let slug = title.to_ascii_lowercase().replace(' ', "-");
     div()
+        .id(SharedString::from(format!("settings-row-{slug}")))
+        .a11y_group(
+            SharedString::from(format!("settings.row.{slug}")),
+            title.to_owned(),
+        )
         .flex()
         .flex_row()
         .items_start()
@@ -183,4 +205,13 @@ pub(crate) fn settings_row(
         .child(text_col)
         .child(div().flex_shrink_0().child(trailing))
         .into_any_element()
+}
+
+fn humanize_slug(slug: &str) -> String {
+    let words = slug.replace(['-', '_'], " ");
+    let mut chars = words.chars();
+    match chars.next() {
+        Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+        None => "Toggle setting".to_owned(),
+    }
 }

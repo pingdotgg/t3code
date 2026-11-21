@@ -17,6 +17,7 @@ use gpui_kit::{
     actions, anchored, deferred, div, point, px,
 };
 
+use crate::a11y::ConnA11yExt as _;
 use crate::icons;
 use crate::settings::controls::kbd_cap;
 use crate::theme::{hsla, hsla_alpha};
@@ -557,6 +558,7 @@ impl Render for CommandPalette {
 
         let card = div()
             .id("conn-command-palette")
+            .a11y(gpui_kit::Role::Dialog, "palette.modal", "Command palette")
             .flex()
             .flex_col()
             .w(px(width))

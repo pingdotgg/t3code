@@ -45,6 +45,7 @@ use self::mcp::McpPanel;
 use self::pull_request::PullRequestPanel;
 use self::tasks::TasksPanel;
 use self::terminal::TerminalPanel;
+use crate::a11y::ConnA11yExt as _;
 
 /// What the right panel asks of the shell.
 #[derive(Clone, Debug)]
@@ -474,17 +475,30 @@ impl Render for RightPanel {
             RightPanelTab::Device => self.device.clone().into_any_element(),
         };
 
+        let surface_label = header::panel_tab_label(self.tab);
+        let surface_ax_id = gpui_kit::SharedString::from(format!(
+            "panel.surface.{}",
+            surface_label.to_ascii_lowercase().replace(' ', "-")
+        ));
+        let wrapped_body = div()
+            .id(gpui_kit::SharedString::from(format!(
+                "right-panel-surface-{surface_label}"
+            )))
+            .a11y(gpui_kit::Role::TabPanel, surface_ax_id, surface_label)
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .child(body);
+
         if !self.chrome {
-            return v_flex()
-                .size_full()
-                .child(div().flex_1().min_h_0().w_full().child(body));
+            return v_flex().size_full().child(wrapped_body);
         }
         v_flex()
             .size_full()
             .bg(card_bg)
             .child(self.render_tabs(cx))
             .child(div().w_full().h(px(1.0)).bg(divider))
-            .child(div().flex_1().min_h_0().w_full().child(body))
+            .child(wrapped_body)
     }
 }
 

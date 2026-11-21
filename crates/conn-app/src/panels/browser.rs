@@ -11,6 +11,7 @@ use std::sync::Arc;
 #[cfg(feature = "cef")]
 use std::time::Duration;
 
+use crate::a11y::ConnA11yExt as _;
 use conn_theme::Tokens;
 #[cfg(feature = "cef")]
 use conn_web::{
@@ -798,6 +799,7 @@ impl BrowserPanel {
 
         let back_btn = div()
             .id("browser-nav-back")
+            .a11y_button("browser.nav.back", "Back")
             .size(px(TOOLBAR_BUTTON_SIZE_PX))
             .rounded(px(9999.0))
             .flex()
@@ -814,6 +816,7 @@ impl BrowserPanel {
 
         let forward_btn = div()
             .id("browser-nav-forward")
+            .a11y_button("browser.nav.forward", "Forward")
             .size(px(TOOLBAR_BUTTON_SIZE_PX))
             .rounded(px(9999.0))
             .flex()
@@ -830,6 +833,7 @@ impl BrowserPanel {
 
         let reload_btn = div()
             .id("browser-nav-reload")
+            .a11y_button("browser.nav.reload", "Reload")
             .size(px(TOOLBAR_BUTTON_SIZE_PX))
             .rounded(px(9999.0))
             .flex()
@@ -975,6 +979,11 @@ impl Render for BrowserPanel {
 
             let mut container = div()
                 .id("browser-page-viewport")
+                .a11y(
+                    gpui_kit::Role::Document,
+                    "browser.viewport",
+                    format!("Browser page {}", self.url),
+                )
                 .relative()
                 .flex_1()
                 .min_h_0()
@@ -1097,7 +1106,15 @@ impl Render for BrowserPanel {
         v_flex()
             .size_full()
             .child(
-                h_flex()
+                div()
+                    .id("browser-toolbar")
+                    .a11y(
+                        gpui_kit::Role::Toolbar,
+                        "browser.toolbar",
+                        "Browser toolbar",
+                    )
+                    .flex()
+                    .flex_row()
                     .w_full()
                     .pt(px(TOOLBAR_PAD_Y_PX))
                     .pb(px(TOOLBAR_PAD_Y_PX))
@@ -1107,7 +1124,11 @@ impl Render for BrowserPanel {
                     .items_center()
                     .child(self.render_nav_toolbar_group(cx))
                     .child(
-                        h_flex()
+                        div()
+                            .id("browser-url-bar")
+                            .a11y_group("browser.url-bar", format!("Address bar: {}", self.url))
+                            .flex()
+                            .flex_row()
                             .flex_1()
                             .min_w_0()
                             .h(px(TOOLBAR_HEIGHT_PX))
