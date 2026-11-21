@@ -26,7 +26,11 @@ import {
   DesktopTelemetryControlMessage,
   type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
 } from "@t3tools/contracts";
-import { isRunningDatabaseMigrations } from "@t3tools/shared/databaseMigrationLog";
+import {
+  type DatabaseMigrationProgress,
+  isRunningDatabaseMigrations,
+  readDatabaseMigrationProgress,
+} from "@t3tools/shared/databaseMigrationLog";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -259,6 +263,8 @@ export interface DesktopBackendInstance {
   readonly currentConfig: Effect.Effect<Option.Option<DesktopBackendStartConfig>>;
   readonly snapshot: Effect.Effect<DesktopBackendSnapshot>;
   readonly waitForReady: (timeout: Duration.Duration) => Effect.Effect<boolean>;
+  /** The database upgrade the starting server reports; null once ready or when none runs. */
+  readonly databaseMigrationProgress: Effect.Effect<DatabaseMigrationProgress | null>;
 }
 
 export interface BackendInstanceSpec {
@@ -763,6 +769,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     })),
   );
   const currentConfig = SubscriptionRef.get(state).pipe(Effect.map((current) => current.config));
+  const databaseMigrationProgress = Effect.gen(function* () {
+    if ((yield* SubscriptionRef.get(state)).ready) return null;
+    return readDatabaseMigrationProgress(yield* Ref.get(outputTail));
+  });
 
   const cancelRestart = Effect.gen(function* () {
     const restartFiber = yield* SubscriptionRef.modify(state, (current) => [
@@ -1271,5 +1281,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     currentConfig,
     snapshot,
     waitForReady,
+    databaseMigrationProgress,
   } satisfies DesktopBackendInstance;
 });

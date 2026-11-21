@@ -12,3 +12,26 @@ export function isRunningDatabaseMigrations(output: string): boolean {
     ) > output.lastIndexOf(DATABASE_MIGRATIONS_FINISHED_MESSAGE)
   );
 }
+
+export interface DatabaseMigrationProgress {
+  /** The migration now running, from 1. Null before the first progress line, as on a new database. */
+  readonly step: number | null;
+  readonly total: number | null;
+}
+
+// Matches logfmt (`progress="3 of 14"`) and the server's pretty console logger (`progress: 3 of 14`).
+const PROGRESS_ANNOTATION = /progress(?:=|:\s*)"?(\d+) of (\d+)/;
+
+export function readDatabaseMigrationProgress(output: string): DatabaseMigrationProgress | null {
+  if (!isRunningDatabaseMigrations(output)) return null;
+  const progressAt = output.lastIndexOf(DATABASE_MIGRATION_PROGRESS_MESSAGE);
+  const match =
+    progressAt === -1
+      ? null
+      : PROGRESS_ANNOTATION.exec(
+          output.slice(progressAt + DATABASE_MIGRATION_PROGRESS_MESSAGE.length),
+        );
+  return match === null
+    ? { step: null, total: null }
+    : { step: Number(match[1]), total: Number(match[2]) };
+}

@@ -30,6 +30,7 @@ function makeStubInstance(input: {
     stop: () => Effect.void,
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(input.snapshot),
+    databaseMigrationProgress: Effect.succeed(null),
     waitForReady: (_timeout: Duration.Duration) => Effect.succeed(false),
   };
 }

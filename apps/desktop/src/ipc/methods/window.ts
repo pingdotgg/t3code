@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   ContextMenuSource,
   DesktopAppBrandingSchema,
+  DesktopDatabaseUpgradeProgressSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopMediaReadSchema,
   DesktopThemeSchema,
@@ -217,6 +218,16 @@ export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBearerToken")(function* () {
     const localAuth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
     return yield* localAuth.getBearerToken;
+  }),
+});
+
+export const getDatabaseUpgradeProgress = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.GET_DATABASE_UPGRADE_PROGRESS_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(DesktopDatabaseUpgradeProgressSchema),
+  handler: Effect.fn("desktop.ipc.window.getDatabaseUpgradeProgress")(function* () {
+    const primary = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
+    return yield* primary.databaseMigrationProgress;
   }),
 });
 

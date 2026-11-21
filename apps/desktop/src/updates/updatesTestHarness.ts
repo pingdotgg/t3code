@@ -163,6 +163,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       restartAttempt: 0,
       restartScheduled: false,
     })),
+    databaseMigrationProgress: Effect.succeed(null),
     waitForReady: () => Effect.succeed(true),
   };
   const layerBackend = DesktopBackendPool.layerTest(

@@ -445,6 +445,42 @@
         object-fit: contain;
       }
 
+      #boot-upgrade {
+        position: absolute;
+        top: calc(50% + 64px);
+        left: 50%;
+        z-index: 1;
+        width: min(360px, calc(100% - 48px));
+        transform: translateX(-50%);
+        text-align: center;
+        font-size: 13px;
+        line-height: 20px;
+      }
+
+      #boot-upgrade-title {
+        font-weight: 500;
+      }
+
+      #boot-upgrade-bar {
+        height: 4px;
+        margin: 10px 0;
+        overflow: hidden;
+        border-radius: 2px;
+        background: color-mix(in srgb, currentColor 15%, transparent);
+      }
+
+      #boot-upgrade-fill {
+        height: 100%;
+        background: currentColor;
+      }
+
+      #boot-upgrade-note {
+        margin-top: 4px;
+        font-size: 12px;
+        line-height: 18px;
+        opacity: 0.7;
+      }
+
       /* App CSS locks body and #root scrolling once main loads, so the error screen scrolls itself. */
       #boot-shell:has(> #boot-error) {
         height: 100%;
