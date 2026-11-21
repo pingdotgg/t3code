@@ -35,7 +35,6 @@ import { threadEnvironment } from "../../state/threads";
 import { canShareWithGuestAtom } from "./guestShareAvailability";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { BotAvatar } from "../bots/BotAvatar";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   PANE_GHOST_TAB_TITLE_CLASS,
@@ -147,8 +146,6 @@ export const ChatHeader = memo(function ChatHeader({
   const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
-  // Subagents share their parent's project, so only the bot's own thread gets the bot header.
-  const bot = activeProject?.bot?.threadId === activeThreadId ? activeProject.bot : null;
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
     AuthOrchestrationOperateScope,
@@ -256,7 +253,7 @@ export const ChatHeader = memo(function ChatHeader({
     startRename();
   };
   const handleHeaderContextMenu = (event: ReactMouseEvent) => {
-    if (renamingTitle !== null || bot !== null) return;
+    if (renamingTitle !== null) return;
     if (!isServerThread) {
       const layoutItems = layoutMenuItems();
       if (onOpenProjectSettings === undefined && layoutItems.length === 0) return;
@@ -304,26 +301,24 @@ export const ChatHeader = memo(function ChatHeader({
       stopRenaming();
     }
   };
-  // A bot is its one chat, so its tab names the bot rather than a project and thread.
-  const tabTitle = bot ? (activeProjectName ?? activeThreadTitle) : activeThreadTitle;
   // `parentThreadLink` is set only for a subagent, however its tab was opened.
-  const tabIcon = bot ? (
-    <BotAvatar avatar={bot.avatar} threadRef={activeThreadRef} className="size-4" />
-  ) : ghostOf || parentThreadLink ? (
-    <GitForkIcon aria-hidden className="size-3.5 shrink-0" />
-  ) : isServerThread ? (
-    activeProject ? (
-      <ProjectFavicon project={activeProject} className="size-3.5" />
-    ) : null
-  ) : (
-    <SquarePenIcon aria-hidden className="size-3.5 shrink-0 text-foreground" />
-  );
+  const tabIcon =
+    ghostOf || parentThreadLink ? (
+      <GitForkIcon aria-hidden className="size-3.5 shrink-0" />
+    ) : isServerThread ? (
+      activeProject ? (
+        <ProjectFavicon project={activeProject} className="size-3.5" />
+      ) : null
+    ) : (
+      <SquarePenIcon aria-hidden className="size-3.5 shrink-0 text-foreground" />
+    );
   // The project name left the header with the breadcrumb; the tab's tooltip
   // keeps it, in the breadcrumb's old order.
-  const plainTooltip =
-    bot === null && activeProjectName ? `${activeProjectName} / ${activeThreadTitle}` : tabTitle;
+  const plainTooltip = activeProjectName
+    ? `${activeProjectName} / ${activeThreadTitle}`
+    : activeThreadTitle;
   const tabTooltip = ghostShown
-    ? ghostTabTooltip(ghostOf ? tabTitle : plainTooltip, ghostParent?.title, messages)
+    ? ghostTabTooltip(ghostOf ? activeThreadTitle : plainTooltip, ghostParent?.title, messages)
     : plainTooltip;
   // The parent's own tab, when it leads this one in the strip, becomes the back link.
   const parentTabId =
@@ -403,7 +398,7 @@ export const ChatHeader = memo(function ChatHeader({
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    isServerThread && bot === null ? (
+                    isServerThread ? (
                       <PaneTabButton
                         data-layout-pane-tab={layoutTabId ?? undefined}
                         type="button"
@@ -431,9 +426,9 @@ export const ChatHeader = memo(function ChatHeader({
                       PANE_TAB_TITLE_CLASS,
                       ghostShown && PANE_GHOST_TAB_TITLE_CLASS,
                     )}
-                    dir={textDirection(tabTitle)}
+                    dir={textDirection(activeThreadTitle)}
                   >
-                    {tabTitle}
+                    {activeThreadTitle}
                   </h2>
                 </TooltipTrigger>
                 <TooltipPopup side="bottom" className="whitespace-pre-line">
@@ -441,7 +436,7 @@ export const ChatHeader = memo(function ChatHeader({
                 </TooltipPopup>
               </Tooltip>
               {layoutTabId !== null ? (
-                <LayoutTabCloseButton tabId={layoutTabId} title={tabTitle} />
+                <LayoutTabCloseButton tabId={layoutTabId} title={activeThreadTitle} />
               ) : null}
             </span>
           )}
@@ -498,7 +493,7 @@ export const ChatHeader = memo(function ChatHeader({
             </span>
           ) : null}
         </LayoutPaneTabStrip>
-        {layoutTabId !== null && bot === null ? <LayoutNewTabButton tabId={layoutTabId} /> : null}
+        {layoutTabId !== null ? <LayoutNewTabButton tabId={layoutTabId} /> : null}
         {renamingTitle === null && activeThreadLinkOrigin ? (
           <Tooltip>
             <TooltipTrigger render={<Badge variant="info" size="sm" />}>

@@ -1,4 +1,3 @@
-import { useGT } from "gt-react-native";
 import { useAndroidFloatingTabs } from "../../settings/appearance/AppearancePreferencesProvider";
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
@@ -8,8 +7,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAndroidControlSizing } from "../../../components/ui/useAndroidControlSizing";
 import { FLOATING_TABS } from "./floating-workspace-tabs";
 import { View } from "react-native";
-import { AppBar } from "../../../components/ui/AppBar";
-import { BotsScreen, useOpenNewBot } from "../../bots/BotsScreen";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { PullRequestsScreen } from "../../pull-requests/PullRequestsScreen";
 import { ListSearchToolbar } from "./ListSearchToolbar.android";
@@ -26,7 +23,6 @@ import { WorkspaceAppBarScope } from "../../../components/ui/WorkspaceAppBar.and
 
 /** The Home route in the sidebar column: the selected tab's list. */
 export function AndroidWorkspaceSidebar() {
-  const gt = useGT();
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
@@ -35,13 +31,13 @@ export function AndroidWorkspaceSidebar() {
   const { revealPrimarySidebar, startNewTask } = useAdaptiveWorkspaceLayout();
   const selectedPullRequest = useNavigationState(selectedPullRequestKey);
   const selectedIssue = useNavigationState(selectedIssueKey);
-  // Settings covers the sidebar.
-  const coveredByPage = useAndroidWorkspaceRoot()?.settingsOpen ?? false;
+  // Settings and Usage cover the sidebar.
+  const coveredByPage =
+    (useAndroidWorkspaceRoot()?.settingsOpen ?? false) || workspace.state.selectedTab === "usage";
   const bottomClearance = floatingTabsEnabled
     ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
     : 16;
   const context = { ...workspace, bottomClearance };
-  const openNewBot = useOpenNewBot();
   if (enabled.length === 0) return <WorkspaceNoTabs />;
   return (
     <WorkspaceAppBarScope>
@@ -53,21 +49,8 @@ export function AndroidWorkspaceSidebar() {
             <AndroidHomeFabLayout sidebar disabled={coveredByPage} onStartNewTask={startNewTask}>
               <WorkspaceThreadSidebar />
             </AndroidHomeFabLayout>
-          ) : tab === "bots" ? (
-            <WorkspaceTabsContext value={context}>
-              <View className="flex-1 bg-header">
-                <AppBar
-                  embedded
-                  title={gt("Bots", { $context: "screen title, list of bots" })}
-                  actions={[
-                    { accessibilityLabel: gt("New bot"), icon: "plus", onPress: openNewBot },
-                  ]}
-                />
-                <ScreenContent insetHorizontal>
-                  <BotsScreen sidebar />
-                </ScreenContent>
-              </View>
-            </WorkspaceTabsContext>
+          ) : tab === "usage" ? (
+            <View className="flex-1 bg-screen" />
           ) : tab === "issues" ? (
             <WorkspaceTabsContext value={context}>
               <IssuesScreen

@@ -2,8 +2,7 @@ import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { isSharedSlotTab } from "./navigation-tab-order";
 import { SharedSlotTitle } from "./SharedSlotTitle";
 import { WORKSPACE_TAB_LABELS, useEnabledNavigationTabs } from "./navigation-tabs";
-import { BotsScreen, useOpenNewBot } from "../../bots/BotsScreen";
-import { Toolbar } from "../../../components/ui/Toolbar";
+import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { WorkspaceSettingsList } from "../../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
 import { useNavigation } from "@react-navigation/native";
@@ -107,7 +106,6 @@ function WorkspaceRootContent() {
   const insets = useSafeAreaInsets();
   const keyboardHeight = useKeyboardState((keyboard) => keyboard.height);
   const workspace = useWorkspaceTabs()!;
-  const openNewBot = useOpenNewBot();
   const { state } = workspace;
   // Settings is a workspace tab too; its list takes the place of the selected tab's.
   const settingsOpen = workspace.settingsOpen;
@@ -119,17 +117,20 @@ function WorkspaceRootContent() {
     />
   );
   const tab = state.tabs[settingsOpen ? "settings" : state.selectedTab];
-  const bottomClearance = isDuoDevice(deviceType)
-    ? // The column's safe area holds the Duo's search toolbar, but not the sidebar's own tab bar.
-      Math.max(insets.bottom + (sidebarPicker ? 64 : 0), keyboardHeight) + 16
-    : compactTabs || deviceType === "pad"
+  const bottomClearance =
+    layout.variant === "medium" && state.selectedTab === "usage"
       ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
-      : Math.max(insets.bottom, keyboardHeight) +
-        (systemTabBar || sidebarTabs || tab.searchMode !== "resting"
-          ? sidebarPicker
-            ? 80
-            : 16
-          : WORKSPACE_DOCK.height + WORKSPACE_DOCK.bottomGap + 16);
+      : isDuoDevice(deviceType)
+        ? // The column's safe area holds the Duo's search toolbar, but not the sidebar's own tab bar.
+          Math.max(insets.bottom + (sidebarPicker ? 64 : 0), keyboardHeight) + 16
+        : compactTabs || deviceType === "pad"
+          ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
+          : Math.max(insets.bottom, keyboardHeight) +
+            (systemTabBar || sidebarTabs || tab.searchMode !== "resting"
+              ? sidebarPicker
+                ? 80
+                : 16
+              : WORKSPACE_DOCK.height + WORKSPACE_DOCK.bottomGap + 16);
   const context = { ...workspace, bottomClearance };
 
   return (
@@ -163,11 +164,15 @@ function WorkspaceRootContent() {
             unstable_headerLeftItems: () => [],
             // Beside a detail column the tab bar names the tab and the detail header the page,
             // so the sidebar keeps the brand.
-            headerTitle: sidebarNavigation || !settingsOpen ? renderHeaderTitle : undefined,
+            headerTitle:
+              sidebarNavigation || (!settingsOpen && state.selectedTab !== "usage")
+                ? renderHeaderTitle
+                : undefined,
           }}
         />
         <SafeAreaInsetsContext value={compactTabs ? { ...insets, bottom: 0 } : insets}>
-          {headerOnly ? null : settingsOpen ? (
+          {/* Usage draws its own header, and skips its body itself. */}
+          {headerOnly && (settingsOpen || state.selectedTab !== "usage") ? null : settingsOpen ? (
             <WorkspaceSettingsList />
           ) : enabled.length === 0 ? (
             <WorkspaceNoTabs />
@@ -178,22 +183,17 @@ function WorkspaceRootContent() {
           ) : state.selectedTab === "issues" ? (
             <IssuesScreen />
           ) : (
-            <BotsScreen />
+            <WorkspaceExtraTab tab={state.selectedTab} />
           )}
         </SafeAreaInsetsContext>
         {deviceType !== "pad" && deviceType !== "phone" && sidebarPicker ? (
           <WorkspaceSidebarTabs />
         ) : null}
         {enabled.length === 0 && !settingsOpen ? null : settingsOpen ||
-          state.selectedTab !== "bots" ? (
+          state.selectedTab !== "usage" ? (
           <WorkspaceToolbar sidebar={sidebarNavigation} onNewTask={startNewTask} />
         ) : (
-          <>
-            <Toolbar placement="right">
-              <Toolbar.Button accessibilityLabel={gt("New bot")} icon="plus" onPress={openNewBot} />
-            </Toolbar>
-            <WorkspaceSectionToolbar onNewTask={startNewTask} showCompose={false} />
-          </>
+          <WorkspaceSectionToolbar onNewTask={startNewTask} showCompose={false} />
         )}
       </View>
     </WorkspaceTabsContext>

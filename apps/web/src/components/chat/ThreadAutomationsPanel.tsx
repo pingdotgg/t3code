@@ -50,8 +50,6 @@ const STATUS_DOT_TONE: Record<ScheduledTask["lastRunStatus"], StatusDotTone> = {
 export function ThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly title?: string;
-  readonly emptyText?: string;
 }) {
   const canOperate = useAtomValue(
     serverEnvironment.runScheduledTaskNow.permissionAtom(props.environmentId),
@@ -75,10 +73,7 @@ export function ThreadAutomationsPanel(props: {
     (task) => task.threadId === props.threadId,
   );
 
-  // Thread details hide an empty card; callers with emptyText keep it as a place to add one.
-  if (boundTasks.length === 0 && tasksQuery.error === null && props.emptyText === undefined) {
-    return null;
-  }
+  if (boundTasks.length === 0 && tasksQuery.error === null) return null;
 
   const nextRun = boundTasks
     .filter((task) => task.enabled && task.nextRunAt !== null)
@@ -121,7 +116,7 @@ export function ThreadAutomationsPanel(props: {
 
   return (
     <ThreadDetailsSection
-      title={props.title ?? gt("Automations")}
+      title={gt("Automations")}
       summary={
         boundTasks.length ? (
           nextRun ? (
@@ -131,9 +126,7 @@ export function ThreadAutomationsPanel(props: {
           ) : (
             boundTasks.length
           )
-        ) : (
-          props.emptyText
-        )
+        ) : undefined
       }
       action={
         <ThreadDetailsControl

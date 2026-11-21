@@ -25,7 +25,6 @@ import {
 } from "../provider/codexLaunchArgs.ts";
 import { codexAppServerEnvironment } from "../provider/CodexProvider.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
-import type { ImageGenerationInput } from "@t3tools/provider-core/server/textGeneration";
 import {
   normalizeCliError,
   toJsonSchemaObject,
@@ -436,21 +435,5 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     }).pipe(Effect.ensuring(cleanup));
   });
 
-  // Codex saves hosted image tool output under its home and reports the path.
-  const generateImage = Effect.fn("CodexTextGeneration.generateImage")(function* (
-    input: ImageGenerationInput,
-  ) {
-    return yield* runCodexJson({
-      operation: "generateImage",
-      cwd: input.cwd,
-      prompt: input.prompt,
-      outputSchema: Schema.Struct({ imagePath: Schema.String }),
-      modelSelection: input.modelSelection,
-    });
-  });
-
-  return {
-    ...TextGenerationOperations.fromRunner("CodexTextGeneration", runCodexJson),
-    generateImage,
-  };
+  return TextGenerationOperations.fromRunner("CodexTextGeneration", runCodexJson);
 });

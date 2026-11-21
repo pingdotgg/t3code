@@ -135,9 +135,6 @@ import {
 } from "./features/settings/SettingsOpenSourceLicensesRouteScreen";
 import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
 import { SettingsProjectOverviewRouteScreen } from "./features/settings/SettingsProjectOverviewRouteScreen";
-import { NewBotRouteScreen } from "./features/bots/NewBotRouteScreen";
-import { BotModelPickerRouteScreen } from "./features/bots/BotModelPickerRouteScreen";
-import { BotDetailsRouteScreen } from "./features/bots/BotDetailsRouteScreen";
 import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
@@ -204,8 +201,6 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsOpenSourceLicenses: msg("Open source licenses"),
   SettingsOpenSourceLicense: msg("License notice"),
   SettingsUsage: msg("Usage"),
-  BotNew: msg("New bot"),
-  BotDetails: msg("Bot", { $context: "screen title, details of one bot" }),
   ComponentCatalog: msg("UI components"),
   NewTaskProject: msg("Choose project"),
   NewTaskEnvironment: msg("Environment"),
@@ -657,19 +652,6 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ThreadRouteScreen,
       linking: { path: "threads/:environmentId?/:threadId?", alias: ["new/draft"] },
       options: pageRoute({ duoMinimize: "onScrollUp" }),
-    }),
-    BotNew: createNativeStackScreen({
-      screen: NewBotRouteScreen,
-      linking: "bots/new",
-      options: settingsPage(),
-    }),
-    BotModel: createNativeStackScreen({
-      screen: BotModelPickerRouteScreen,
-      options: THREAD_SETTINGS_ROUTE,
-    }),
-    BotDetails: createNativeStackScreen({
-      screen: BotDetailsRouteScreen,
-      options: settingsPage(),
     }),
     NewTaskProject: createNativeStackScreen({
       screen: NewTaskRouteScreen,

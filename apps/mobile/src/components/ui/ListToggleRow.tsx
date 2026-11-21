@@ -25,7 +25,6 @@ export function ListToggleRow(
   return (
     <ListRowLayout
       icon={props.icon}
-      leading={props.leading}
       label={props.label}
       description={props.description}
       disabled={props.disabled}

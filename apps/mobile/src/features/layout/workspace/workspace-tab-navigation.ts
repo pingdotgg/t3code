@@ -116,18 +116,14 @@ function sameIssue(left: IssueSelection | undefined, right: Omit<IssueSelection,
 export function workspaceSelectionsIn(
   routes: readonly RouteLike[],
   previous: WorkspaceSelections,
-  /** A bot's chat belongs to the Bots tab, so it never replaces the Threads chat or draft. */
-  isBotThread: (environmentId: string, threadId: string) => boolean = () => false,
 ): WorkspaceSelections {
   let next = previous;
   const thread = routes.findLast((route) => route.name === "Thread");
   const environmentId = stringParam(thread?.params, "environmentId");
   const threadId = stringParam(thread?.params, "threadId");
-  const botChat = environmentId && threadId ? isBotThread(environmentId, threadId) : false;
   if (
     environmentId &&
     threadId &&
-    !botChat &&
     (next.threads?.environmentId !== environmentId ||
       next.threads.threadId !== threadId ||
       next.threads.key !== thread?.key ||
@@ -286,9 +282,8 @@ export function workspaceTabNavigationState<
     return { ...settings, index: routes.length - 1, routes };
   }
   const home = state.routes.find((route) => route.name === "Home") ?? { name: "Home" };
-  // Bots opens on its list; a remembered chat belongs to Threads.
   const detail =
-    options.columns && tab !== "bots"
+    options.columns && tab !== "usage"
       ? detailRoute(state, tab, selections, options.check, options.seedPullRequest)
       : undefined;
   const routes = [keyed(home), ...(detail ? [keyedPage(detail)] : []), ...overlays];

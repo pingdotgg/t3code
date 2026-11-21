@@ -15,7 +15,6 @@ import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 
 import { moveWorkspaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
-import { sidebarModeAtom } from "../state/bots";
 import { isElectron } from "../env";
 import {
   releaseThreadUndoShortcut,
@@ -54,7 +53,6 @@ import {
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
-import BotsSidebar from "./bots/BotsSidebar";
 import ThreadSidebar from "./Sidebar";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import { resolveThreadRouteTarget } from "../threadRoutes";
@@ -576,7 +574,6 @@ export function AppSidebarLayout({
 }) {
   const gt = useGT();
   const sidebarArea = workspaceAreaProps("sidebar", 0, gt("Threads"));
-  const sidebarMode = useAtomValue(sidebarModeAtom);
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,
@@ -732,8 +729,6 @@ export function AppSidebarLayout({
                       <DesignSystemSidebarNav />
                     </Suspense>
                   </>
-                ) : sidebarMode === "bots" ? (
-                  <BotsSidebar />
                 ) : (
                   <ThreadSidebar routeReveal={sidebarRouteReveal} />
                 )}

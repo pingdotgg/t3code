@@ -12,7 +12,6 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
-import { ProjectBot } from "./bot.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import type { OrchestrationV2StoredEvent } from "./orchestrationV2.ts";
 import { ProjectScript, StoredProjectIcon } from "./project.ts";
@@ -44,7 +43,6 @@ export const ApplicationProjectCreatedPayload = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   projectIcon: Schema.optional(Schema.NullOr(StoredProjectIcon)),
   scripts: Schema.Array(ProjectScript),
-  bot: Schema.optional(Schema.NullOr(ProjectBot)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -64,7 +62,6 @@ export const ApplicationProjectMetaUpdatedPayload = Schema.Struct({
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
-  bot: Schema.optional(Schema.NullOr(ProjectBot)),
   updatedAt: IsoDateTime,
 });
 export type ApplicationProjectMetaUpdatedPayload = typeof ApplicationProjectMetaUpdatedPayload.Type;

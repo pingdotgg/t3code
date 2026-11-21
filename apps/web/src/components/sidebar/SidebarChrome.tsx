@@ -2,18 +2,12 @@ import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
-import { useAtom, useAtomValue } from "@effect/atom-react";
-import { Link, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { observeResize } from "../../lib/observeResize";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
-import { botListAtom, sidebarModeAtom, unreadBotAtom } from "../../state/bots";
-import { isThreadRoutePathname } from "../../threadRoutes";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { BotAvatar } from "../bots/BotAvatar";
-import { BotFaceIcon } from "../bots/BotFaceIcon";
 import {
   resolveEnvironmentIdentificationPillLabel,
   useSidebarStageBackdropVariant,
@@ -165,13 +159,11 @@ function SidebarStagePill({ className }: { className?: string }) {
 function SidebarUtilityItem({
   icon,
   label,
-  isActive = false,
   onClick,
   onPointerDown,
 }: {
   icon: ReactNode;
   label: string;
-  isActive?: boolean;
   onClick: () => void;
   onPointerDown?: ((event: ReactPointerEvent) => void) | undefined;
 }) {
@@ -179,58 +171,11 @@ function SidebarUtilityItem({
     <SidebarHeaderIconButton
       label={label}
       size="footer"
-      isActive={isActive}
       onClick={onClick}
       onPointerDown={onPointerDown}
     >
       {icon}
     </SidebarHeaderIconButton>
-  );
-}
-
-/** Switches the sidebar between threads and bots; shows a bot's avatar while it has an unread reply. */
-function SidebarBotsItem() {
-  const gt = useGT();
-  const [mode, setMode] = useAtom(sidebarModeAtom);
-  const unreadBot = useAtomValue(unreadBotAtom);
-  const navigate = useNavigate();
-  const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
-  const showingBots = mode === "bots";
-  const toggle = () => {
-    const { pathname } = router.state.location;
-    if (showingBots) {
-      setMode("threads");
-      const bots = appAtomRegistry.get(botListAtom);
-      const onBotPage =
-        pathname === "/bots" || bots.some((bot) => isThreadRoutePathname(pathname, bot.threadRef));
-      if (onBotPage) void navigate({ to: "/" });
-      return;
-    }
-    setMode("bots");
-    // With no bots the create form is the whole page, so the sheet would only cover it.
-    if (isMobile && appAtomRegistry.get(botListAtom).length === 0) setOpenMobile(false);
-    void navigate({ to: "/bots" });
-  };
-  return (
-    <SidebarUtilityItem
-      icon={
-        unreadBot && !showingBots ? (
-          <BotAvatar avatar={unreadBot.avatar} threadRef={unreadBot.threadRef} className="size-4" />
-        ) : (
-          <BotFaceIcon />
-        )
-      }
-      label={
-        showingBots
-          ? gt("Threads")
-          : unreadBot
-            ? gt("Bots, {name} replied", { name: unreadBot.name })
-            : gt("Bots")
-      }
-      isActive={showingBots}
-      onClick={toggle}
-    />
   );
 }
 
@@ -319,7 +264,6 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
                 label={gt("Usage")}
                 onClick={handleUsageClick}
               />
-              <SidebarBotsItem />
             </div>
           </SidebarMenuItem>
         )}

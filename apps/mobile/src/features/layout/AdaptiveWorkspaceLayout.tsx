@@ -83,7 +83,7 @@ import {
   type WorkspaceDetail,
   type WorkspaceDetailSheet,
 } from "./workspace/workspace-detail-selection";
-import { startOpeningDetail, workspaceTabForDetail } from "./workspace/useSelectWorkspaceDetail";
+import { startOpeningDetail } from "./workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { buildHomeProjectScopes, resolveHomeProjectFilterScope } from "../home/homeThreadList";
@@ -116,7 +116,7 @@ import {
   workspaceTabColumns,
   workspaceTabNavigationState,
 } from "./workspace/workspace-tab-navigation";
-import type { WorkspaceTab } from "./workspace/workspace-tabs-state";
+import { workspaceTabOf, type WorkspaceTab } from "./workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
@@ -268,10 +268,11 @@ function AdaptiveWorkspaceLayoutContent(
   const { width: viewportWidth, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const workspace = useWorkspaceTabs();
-  // Android Settings occupies the workspace rather than a list/detail pair.
+  // Settings and Usage occupy the workspace rather than a list/detail pair.
   const androidSettingsOpen = useAndroidWorkspaceRoot()?.settingsOpen ?? false;
   const safeAreaInsets = useSafeAreaInsets();
-  const workspacePage = Platform.OS === "android" && androidSettingsOpen;
+  const workspacePage =
+    Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
   const navigation = useNavigation();
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
@@ -574,7 +575,7 @@ function AdaptiveWorkspaceLayoutContent(
       setFileInspectorPreferredVisible(false);
       setInspectorSheetRoute(null);
       if (layout.variant === "medium") setPrimarySidebarVisible(false);
-      workspace?.dispatch({ type: "select", tab: workspaceTabForDetail(detail) });
+      workspace?.dispatch({ type: "select", tab: workspaceTabOf(detail.name) });
       startOpeningDetail(detail);
       navigation.dispatch(selectWorkspaceDetail(detail, sheet));
     });

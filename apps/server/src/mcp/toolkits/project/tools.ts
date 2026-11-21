@@ -17,9 +17,6 @@ import {
   ProjectId,
   OrchestratorMcpClientRequestId,
   OrchestratorMcpEnvironmentTarget,
-  BotDescription,
-  BotMutationResult,
-  BotName,
   OrchestratorMcpFailure,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -33,8 +30,7 @@ import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchServ
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
-import { McpSchema, Tool, Toolkit } from "effect/ai";
-import * as BotService from "../../../bots/BotService.ts";
+import { Tool, Toolkit } from "effect/ai";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ProjectCloneTracker from "../../../project/ProjectCloneTracker.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
@@ -188,24 +184,6 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-const BotUpdateTool = Tool.make("t3_bot_update", {
-  description: "Bots only: set this bot's description or name.",
-  parameters: Schema.Struct({
-    description: Schema.optional(BotDescription),
-    name: Schema.optional(BotName),
-  }),
-  success: BotMutationResult,
-  failure: OrchestratorMcpFailure,
-  failureMode: "return" as const,
-  dependencies: [
-    McpInvocationContext.McpInvocationContext,
-    ThreadManagementService.ThreadManagementService,
-    BotService.BotService,
-  ],
-})
-  .annotate(Tool.Destructive, false)
-  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
-
 export const ProjectToolkit = Toolkit.make(
   ThreadLaunchTool,
   ProjectListTool,
@@ -214,5 +192,4 @@ export const ProjectToolkit = Toolkit.make(
   ProjectUpdateTool,
   ProjectDeleteTool,
   ProjectCloneTool,
-  BotUpdateTool,
 );

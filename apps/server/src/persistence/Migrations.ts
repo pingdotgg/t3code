@@ -110,7 +110,6 @@ import Migration0099 from "./Migrations/099_BackgroundRecoveryIndexes.ts";
 import Migration0100 from "./Migrations/100_TurnStartReadIndexes.ts";
 import Migration0101 from "./Migrations/101_DelegatedTaskReadIndexes.ts";
 import Migration0102 from "./Migrations/102_ThreadItemCounts.ts";
-import Migration0103 from "./Migrations/103_ProjectionProjectBot.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -216,7 +215,6 @@ const migrationEntries = [
   [100, "TurnStartReadIndexes", Migration0100],
   [101, "DelegatedTaskReadIndexes", Migration0101],
   [102, "ThreadItemCounts", Migration0102],
-  [103, "ProjectionProjectBot", Migration0103],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -275,31 +273,22 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   });
 });
 
-// Bot builds recorded ProjectionProjectBot as 78, 80, 81, 82, 86, 92 or 99 before upstream claimed those
-// ids. Its migration is idempotent, so forget the old record and let upstream's migrations and 103 run.
-const LEGACY_PROJECT_BOT_MIGRATION_IDS: ReadonlyArray<number> = [78, 80, 81, 82, 86, 92, 99];
+// The removed Bots feature recorded this migration (as 103, or an older id before upstream claimed
+// it). The rows go so those ids stay free for upstream's migrations; its bot_json column stays, unused.
+export const REMOVED_BOT_MIGRATION_NAME = "ProjectionProjectBot";
 
-/** The history as startup's bot reconciliation leaves it, for the read-only preflight. */
-export function withoutLegacyProjectBotMigration(
-  recorded: ReadonlyArray<{ readonly id: number; readonly name: string }>,
-) {
-  return recorded.filter(
-    (row) =>
-      row.name !== "ProjectionProjectBot" || !LEGACY_PROJECT_BOT_MIGRATION_IDS.includes(row.id),
-  );
-}
-
-const reconcileProjectBotMigration = Effect.fn("reconcileProjectBotMigration")(function* () {
+const forgetRemovedBotMigration = Effect.fn("forgetRemovedBotMigration")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const tables = yield* sql`
     SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
   `;
   if (tables.length === 0) return;
-  yield* sql`
-    DELETE FROM effect_sql_migrations
-    WHERE migration_id IN ${sql.in(LEGACY_PROJECT_BOT_MIGRATION_IDS)}
-      AND name = 'ProjectionProjectBot'
+  // The read keeps the write lock off every startup once the rows are gone.
+  const rows = yield* sql`
+    SELECT 1 FROM effect_sql_migrations WHERE name = ${REMOVED_BOT_MIGRATION_NAME} LIMIT 1
   `;
+  if (rows.length === 0) return;
+  yield* sql`DELETE FROM effect_sql_migrations WHERE name = ${REMOVED_BOT_MIGRATION_NAME}`;
 });
 
 const latestMigrationId = Math.max(...migrationEntries.map(([id]) => id));
@@ -330,6 +319,7 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  yield* forgetRemovedBotMigration();
   // The desktop waits past its readiness budget until the finished line follows this one.
   const hasPending = yield* hasPendingMigrations();
   if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
@@ -338,8 +328,6 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
   const previewMigrations = includesV2 && hasPending ? yield* reconcileV2PreviewMigration() : [];
   if (includesV2) {
-    // A legacy bot record always leaves 103 pending, so a settled database skips this write.
-    if (hasPending) yield* reconcileProjectBotMigration();
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
   const sql = yield* SqlClient.SqlClient;

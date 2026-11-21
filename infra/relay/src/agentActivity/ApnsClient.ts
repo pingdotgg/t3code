@@ -79,11 +79,9 @@ const decodeApnsErrorResponseJson = Schema.decodeUnknownOption(
   ),
 );
 function contentState(state: RelayAgentActivityAggregateState) {
-  // The widget never shows a bot's reply, so it stays out of the 4 KB budget.
-  const activities = state.activities.map(({ message: _message, ...row }) => row);
   return {
     name: LIVE_ACTIVITY_NAME,
-    props: JSON.stringify({ ...state, activities }),
+    props: JSON.stringify(state),
   };
 }
 

@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { act, createElement, createContext, useState, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
+import { WorkspaceRootScreen } from "./WorkspaceRootScreen.android";
 import {
   initialWorkspaceTabsState,
   workspaceTabsReducer,
@@ -7,6 +10,9 @@ import {
   resolveWorkspaceTabOrder,
   workspaceSearchBottomClearance,
   workspaceDockBottomClearance,
+  workspaceUsesColumns,
+  type WorkspaceTab,
+  type WorkspaceTabsState,
 } from "./workspace-tabs-state";
 
 describe("compact list clearance", () => {
@@ -49,12 +55,19 @@ describe("Duo list clearance", () => {
 });
 
 describe("workspace root navigation", () => {
+  it("pairs Settings, chats and pull requests with a detail column, and keeps Usage one page", () => {
+    expect(workspaceUsesColumns("usage")).toBe(false);
+    expect(workspaceUsesColumns("usage", true)).toBe(true);
+    expect(workspaceUsesColumns("threads")).toBe(true);
+    expect(workspaceUsesColumns("pullRequests")).toBe(true);
+  });
+
   it("keeps the registered defaults while customization is unavailable", () => {
     expect(resolveWorkspaceTabOrder(undefined)).toEqual([
       "threads",
-      "bots",
       "pullRequests",
       "issues",
+      "usage",
     ]);
     expect(resolveWorkspaceTabOrder(["home", "usage", "issues", "threads"])).toEqual(
       resolveWorkspaceTabOrder(undefined),
@@ -165,11 +178,160 @@ describe("workspace root navigation", () => {
     expect(shouldRestoreNativeSearch(initialWorkspaceTabsState().tabs.threads, true)).toBe(false);
   });
 
+  it("returns from Usage without losing list state", () => {
+    let state = workspaceTabsReducer(initialWorkspaceTabsState(), {
+      type: "query",
+      query: "retained",
+      tab: "threads",
+    });
+    for (const tab of ["usage"] as const) {
+      state = workspaceTabsReducer(state, { type: "select", tab });
+      expect(state.selectedTab).toBe(tab);
+      expect(workspaceTabsReducer(state, { type: "search" })).toBe(state);
+    }
+    state = workspaceTabsReducer(state, { type: "select", tab: "threads" });
+    expect(state.tabs.threads.query).toBe("retained");
+  });
   it("opens Settings on native reselection instead of selecting its overflow section", () => {
-    const order = ["threads", "bots", "pullRequests"] as const;
+    const order = ["threads", "pullRequests", "usage"] as const;
     expect(workspaceTabForNativeSlot(order, "settings")).toBe("settings");
     expect(workspaceTabForNativeSlot(order, "first")).toBe("threads");
-    expect(workspaceTabForNativeSlot(order, "third")).toBe("pullRequests");
+    expect(workspaceTabForNativeSlot(order, "third")).toBe("usage");
     expect(workspaceTabForNativeSlot(order, "removed")).toBeNull();
   });
 });
+
+const mocks = vi.hoisted(() => ({
+  split: false,
+  floating: false,
+  state: undefined as WorkspaceTabsState | undefined,
+  openWorkspaceTab: (_tab: string) => {},
+  backListeners: new Set<() => boolean>(),
+}));
+
+vi.mock("../../settings/appearance/AppearancePreferencesProvider", () => ({
+  useAndroidFloatingTabs: () => mocks.floating,
+}));
+vi.mock("react-native", () => ({
+  BackHandler: {
+    addEventListener: (_event: string, listener: () => boolean) => {
+      mocks.backListeners.add(listener);
+      return { remove: () => mocks.backListeners.delete(listener) };
+    },
+  },
+  Keyboard: { dismiss: () => undefined },
+  useWindowDimensions: () => ({ width: 400, height: 800 }),
+  View: ({ children }: { children: ReactNode }) => createElement("div", null, children),
+}));
+vi.mock("react-native-safe-area-context", () => ({
+  SafeAreaInsetsContext: createContext({ top: 0, right: 0, bottom: 24, left: 0 }),
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 24, left: 0 }),
+}));
+vi.mock("../AdaptiveWorkspaceLayout", () => ({
+  useAdaptiveWorkspaceLayout: () => ({
+    layout: { usesSplitView: mocks.split },
+    startNewTask: () => undefined,
+  }),
+}));
+vi.mock("@react-navigation/native", () => ({ useIsFocused: () => true }));
+vi.mock("../adaptive-workspace-context", () => ({
+  useAdaptiveWorkspaceLayout: () => ({ openWorkspaceTab: mocks.openWorkspaceTab }),
+}));
+vi.mock("./navigation-tabs", () => ({
+  useEnabledNavigationTabs: () => ["threads", "pullRequests", "usage"],
+}));
+vi.mock("./WorkspaceTabsContext", () => ({
+  WorkspaceTabsContext: createContext(null),
+  useWorkspaceTabs: () => ({ state: mocks.state, dispatch: () => undefined }),
+}));
+vi.mock("./WorkspaceExtraTab", () => ({
+  WorkspaceExtraTab: function UsageProbe() {
+    const [tab, setTab] = useState("Limits");
+    return createElement("button", { onClick: () => setTab("Usage") }, tab);
+  },
+}));
+vi.mock("../../../native/StackHeader", () => ({ NativeStackScreenOptions: () => null }));
+vi.mock("../../../components/ui/AppBar", () => ({ AppBar: () => null }));
+vi.mock("../WorkspaceEmptyDetail", () => ({ WorkspaceEmptyDetail: () => null }));
+vi.mock("../../../components/ui/ScreenContent", () => ({
+  ScreenContent: ({ children }: { children: ReactNode }) => createElement("div", null, children),
+}));
+vi.mock("../../../components/ui/useAndroidControlSizing", () => ({
+  useAndroidControlSizing: () => ({ fabClearance: 64, scale: 1, fabSize: 56 }),
+}));
+vi.mock("../../home/HomeRouteScreen", () => ({ HomeRouteScreen: () => null }));
+vi.mock("../../pull-requests/PullRequestFilterMenuContext", () => ({
+  PullRequestFilterMenuProvider: ({ children }: { children: ReactNode }) =>
+    createElement("div", null, children),
+}));
+vi.mock("../../pull-requests/PullRequestsScreen", () => ({ PullRequestsScreen: () => null }));
+vi.mock("../../issues/IssuesScreen", () => ({ IssuesScreen: () => null }));
+vi.mock("./ListSearchToolbar.android", () => ({ ListSearchToolbar: () => null }));
+vi.mock("./AndroidWorkspaceNavigation", () => ({
+  AndroidWorkspaceNavigation: () => null,
+  FloatingWorkspaceTabs: () => null,
+}));
+vi.mock("./WorkspaceNoTabs", () => ({ WorkspaceNoTabs: () => null }));
+vi.mock("../../../components/ui/Pane", () => ({ usePaneRole: () => "screen" }));
+vi.mock("./AndroidWorkspaceSidebar.android", () => ({ AndroidWorkspaceSidebar: () => null }));
+vi.mock("../../../components/ui/WorkspaceAppBar.android", () => ({
+  WorkspaceAppBarScope: ({ children }: { children: ReactNode }) => children,
+}));
+
+function setup(split: boolean, floating: boolean, state = selected("usage")) {
+  mocks.split = split;
+  mocks.floating = floating;
+  mocks.state = state;
+  mocks.openWorkspaceTab = () => undefined;
+  mocks.backListeners.clear();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  return { [Symbol.dispose]: () => vi.unstubAllGlobals() };
+}
+
+function selected(tab: WorkspaceTab) {
+  return workspaceTabsReducer(initialWorkspaceTabsState(), { type: "select", tab });
+}
+
+/** Android calls the newest listener first and stops at the first that handles Back. */
+function pressBack() {
+  return [...mocks.backListeners].reverse().some((listener) => listener());
+}
+
+it("Back from the Pulls tab returns to Threads instead of leaving the app", async () => {
+  using _actEnvironment = setup(false, false, selected("pullRequests"));
+  const opened: string[] = [];
+  mocks.openWorkspaceTab = (tab) => opened.push(tab);
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  await act(async () => root.render(createElement(WorkspaceRootScreen)));
+
+  expect(pressBack()).toBe(true);
+  expect(opened).toEqual(["threads"]);
+});
+
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true],
+])(
+  "keeps the Usage page mounted through layout transitions (split: %s, floating: %s)",
+  async (split, floating) => {
+    using _actEnvironment = setup(split, floating);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    await act(async () => root.render(createElement(WorkspaceRootScreen)));
+
+    const button = container.querySelector("button")!;
+    await act(async () => button.click());
+    expect(button.textContent).toBe("Usage");
+
+    for (const nextSplit of [!split, split, !split, split]) {
+      mocks.split = nextSplit;
+      await act(async () => root.render(createElement(WorkspaceRootScreen)));
+      expect(container.querySelector("button")?.textContent).toBe("Usage");
+      expect(container.querySelector("button")).toBe(button);
+    }
+  },
+);

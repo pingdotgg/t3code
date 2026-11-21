@@ -114,17 +114,6 @@ export interface TranscriptionPostProcessingResult {
   transcription: string;
 }
 
-export interface ImageGenerationInput {
-  cwd: string;
-  prompt: string;
-  modelSelection: ModelSelection;
-}
-
-export interface ImageGenerationResult {
-  /** Where the provider saved the image. Model output: validate before reading it. */
-  imagePath: string;
-}
-
 export interface ProviderTextGeneration {
   readonly generateTranscriptionPostProcessing: (
     input: TranscriptionPostProcessingInput,
@@ -149,9 +138,4 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
-
-  /** Only providers with a hosted image tool implement this. */
-  readonly generateImage?: (
-    input: ImageGenerationInput,
-  ) => Effect.Effect<ImageGenerationResult, TextGenerationError>;
 }

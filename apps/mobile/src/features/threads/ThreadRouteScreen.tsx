@@ -74,7 +74,6 @@ import {
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useSelectedThreadDetailState } from "../../state/use-thread-detail";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useBotProjectForThread } from "../../state/bots";
 import { GitActionProgressOverlay } from "./GitActionProgressOverlay";
 import {
   buildTerminalMenuSessions,
@@ -382,10 +381,6 @@ function ThreadRouteContent(
     selectedEnvironmentConnection,
   } = useThreadSelection();
   useRememberThreadProject(selectedThreadProject);
-  const botProject = useBotProjectForThread(
-    selectedThread?.environmentId ?? null,
-    selectedThread?.id ?? null,
-  );
   const canOperateThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -556,8 +551,7 @@ function ThreadRouteContent(
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useThreadShell(delegatedFromRef);
   const headerSubtitle = [
-    // A bot's thread already carries the bot's name as its title.
-    botProject ? null : (selectedThreadProject?.title ?? null),
+    selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
     // A linked environment's delegated task names its parent; other linked work its origin.
     delegatedFrom !== null
@@ -849,7 +843,6 @@ function ThreadRouteContent(
         )
       : [],
     terminalSessions: terminalMenuSessions,
-    showGitMenu: botProject === null,
     onOpenTerminal: handleOpenTerminal,
     onOpenNewTerminal: handleOpenNewTerminal,
     onRunProjectScript: handleRunProjectScript,
@@ -1042,22 +1035,13 @@ function ThreadRouteContent(
           header={
             props.inspectorPresentation ? null : (
               <ThreadHeader
-                title={botProject?.title ?? selectedThread.title}
+                title={selectedThread.title}
                 subtitle={threadStatusLabel ?? headerSubtitle}
                 gitControls={threadGitControlProps}
                 hasThreadCwd={selectedThreadCwd !== null}
                 inspectorMode={inspectorMode}
                 onOpenFilesInspector={handleOpenFilesInspector}
                 onReturnToThread={props.onReturnToThread}
-                onOpenBotDetails={
-                  botProject
-                    ? () =>
-                        navigation.navigate("BotDetails", {
-                          environmentId: botProject.environmentId,
-                          projectId: botProject.id,
-                        })
-                    : undefined
-                }
               />
             )
           }

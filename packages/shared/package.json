@@ -31,10 +31,6 @@
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"
     },
-    "./markdownPreview": {
-      "types": "./src/markdownPreview.ts",
-      "import": "./src/markdownPreview.ts"
-    },
     "./socketFrameParts": {
       "types": "./src/socketFrameParts.ts",
       "import": "./src/socketFrameParts.ts"

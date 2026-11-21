@@ -2,13 +2,11 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
 import { startOpeningEnvironmentThread } from "../../../state/threads";
-import { isBotThread } from "../../../state/bots";
 import {
   selectWorkspaceDetail,
   type WorkspaceDetail,
   type WorkspaceDetailSheet,
 } from "./workspace-detail-selection";
-import { workspaceTabOf } from "./workspace-tabs-state";
 
 const first = (value: string | readonly string[] | undefined) =>
   typeof value === "string" ? value : value?.[0];
@@ -21,14 +19,6 @@ export function startOpeningDetail(detail: WorkspaceDetail) {
   if (environmentId && threadId) {
     startOpeningEnvironmentThread(EnvironmentId.make(environmentId), ThreadId.make(threadId));
   }
-}
-
-/** The tab whose list a detail belongs to: a bot's chat lives under Bots. */
-export function workspaceTabForDetail(detail: WorkspaceDetail) {
-  if (detail.name !== "Thread") return workspaceTabOf(detail.name);
-  const environmentId = first(detail.params?.environmentId);
-  const threadId = first(detail.params?.threadId);
-  return environmentId && threadId && isBotThread(environmentId, threadId) ? "bots" : "threads";
 }
 
 /**

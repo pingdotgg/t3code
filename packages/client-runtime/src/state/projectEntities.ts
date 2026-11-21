@@ -11,7 +11,6 @@ import { Atom } from "effect/reactivity";
 import type { EnvironmentProject } from "./models.ts";
 import { scopeProject } from "./models.ts";
 import { isScratchProject } from "./projects.ts";
-import { isBotProject } from "./bots.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import { arrayElementsEqual, parseProjectKey, projectKey, projectRefsEqual } from "./entities.ts";
 
@@ -44,26 +43,20 @@ export function createEnvironmentProjectAtoms(input: {
     }).pipe(Atom.withLabel(`environment-project-index:${environmentId}`)),
   );
 
-  // Bots are projects, but they live in the Bots list rather than among projects.
-  const makeRefsAtom = (environmentId: EnvironmentId, bots: boolean, label: string) => {
+  const environmentProjectRefsAtom = Atom.family((environmentId: EnvironmentId) => {
     let previous: ReadonlyArray<ScopedProjectRef> = [];
     return Atom.make((get) => {
-      const next = get(environmentProjectsAtom(environmentId)).flatMap((project) =>
-        isBotProject(project) === bots ? [{ environmentId, projectId: project.id }] : [],
-      );
+      const next = get(environmentProjectsAtom(environmentId)).map((project) => ({
+        environmentId,
+        projectId: project.id,
+      }));
       if (projectRefsEqual(previous, next)) {
         return previous;
       }
       previous = next;
       return next;
-    }).pipe(Atom.withLabel(`${label}:${environmentId}`));
-  };
-  const environmentProjectRefsAtom = Atom.family((environmentId: EnvironmentId) =>
-    makeRefsAtom(environmentId, false, "environment-project-refs"),
-  );
-  const environmentBotRefsAtom = Atom.family((environmentId: EnvironmentId) =>
-    makeRefsAtom(environmentId, true, "environment-bot-refs"),
-  );
+    }).pipe(Atom.withLabel(`environment-project-refs:${environmentId}`));
+  });
 
   const projectAtomFamily = Atom.family((key: string) => {
     const ref = parseProjectKey(key);
@@ -122,20 +115,6 @@ export function createEnvironmentProjectAtoms(input: {
     return previousProjects;
   }).pipe(Atom.withLabel("environment-project-list"));
 
-  let previousBots: ReadonlyArray<EnvironmentProject> = [];
-  const botsAtom = Atom.make((get) => {
-    const next: EnvironmentProject[] = [];
-    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
-      for (const ref of get(environmentBotRefsAtom(environmentId))) {
-        const project = get(projectAtomFamily(projectKey(ref)));
-        if (project !== null) next.push(project);
-      }
-    }
-    if (arrayElementsEqual(previousBots, next)) return previousBots;
-    previousBots = next;
-    return next;
-  }).pipe(Atom.withLabel("environment-bot-list"));
-
   const projectConfigsReadyAtom = Atom.make((get) => {
     const catalog = get(input.catalogValueAtom);
     if (!catalog.isReady) return false;
@@ -153,7 +132,6 @@ export function createEnvironmentProjectAtoms(input: {
     environmentProjectRefsAtom,
     projectRefsAtom,
     projectsAtom,
-    botsAtom,
     projectConfigsReadyAtom,
     projectAtom: (ref: ScopedProjectRef) => projectAtomFamily(projectKey(ref)),
   };

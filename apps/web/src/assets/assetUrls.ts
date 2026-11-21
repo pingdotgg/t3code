@@ -1,4 +1,4 @@
-import { msg, useMessages } from "gt-react";
+import { useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type AssetUrlState as RuntimeAssetUrlState,
@@ -12,7 +12,6 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
-import { m } from "~/i18n/messages";
 import { assetEnvironment } from "~/state/assets";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { usePreparedConnection } from "~/state/session";
@@ -53,23 +52,6 @@ export function useAssetUrlState(
     ),
     ...(result.waiting ? { waiting: true } : {}),
   };
-}
-
-/** Saves `blob` as `fileName`. A blob URL keeps desktop's app scheme from opening a browser. */
-export function saveBlobAsFile(blob: Blob, fileName: string) {
-  const downloadUrl = URL.createObjectURL(blob);
-  // Scheduled before the click so the URL is revoked even if the click throws.
-  setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
-  const anchor = document.createElement("a");
-  anchor.href = downloadUrl;
-  anchor.download = fileName;
-  anchor.click();
-}
-
-export async function saveUrlAsFile(url: string, fileName: string) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(m(msg("The file could not be loaded. Try again.")));
-  saveBlobAsFile(await response.blob(), fileName);
 }
 
 export function useAssetUrlRefresh(

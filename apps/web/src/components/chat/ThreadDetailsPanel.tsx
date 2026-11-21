@@ -42,7 +42,6 @@ import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
 import { SlidersHorizontalIcon } from "lucide-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { Menu, MenuItemLabel, MenuPopup } from "../ui/menu";
-import { BotDetails } from "../bots/BotDetails";
 
 type DetailsControl = "branch" | "composer.host" | "composer.workspace";
 
@@ -158,7 +157,6 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
   const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
-  const bot = project?.bot ?? null;
   const serverConfig = useServerConfigs().get(props.environmentId);
   // A No project thread's folder sits inside the shared scratch root, so it must never get git.
   // Until the config and project load, a No project thread looks like any other folder.
@@ -227,9 +225,6 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
       }}
     >
       {(density) => {
-        if (project !== null && bot !== null && bot.threadId === props.threadId) {
-          return <BotDetails project={project} bot={bot} threadRef={activeThreadRef} />;
-        }
         const show = {
           environment: density === "full" && visible.environment,
           openIn: density !== "essential" && visible.openIn && props.showOpenInPicker,

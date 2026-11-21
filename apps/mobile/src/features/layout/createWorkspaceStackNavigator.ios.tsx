@@ -47,6 +47,7 @@ import {
   WorkspaceNativeTabs,
   WorkspaceSidebarTabsFooter,
 } from "./workspace/WorkspaceNativeTabs.ios";
+import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { useWorkspaceCompose } from "./workspace/useWorkspaceCompose";
 import { NAVIGATION_TAB_ORDER } from "./workspace/navigation-tab-order";
 import { selectedIssueKeyOf } from "../issues/issueParams";
@@ -188,7 +189,6 @@ function ColumnScreen(props: {
             <ColumnContent
               primary={sidebar}
               column={props.primary ? "primary" : undefined}
-              insetTop={options.headerShown !== false}
               insetHorizontally={
                 (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
               }
@@ -531,6 +531,7 @@ function WorkspaceColumns(
 function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean }) {
   const { layout } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
+  const workspace = useWorkspaceTabs()!;
   // Native dismiss commits the route pop after the transition. Restore the dock
   // when the primary screen starts appearing, including interactive back gestures.
   const [primaryVisible, setPrimaryVisible] = useState(false);
@@ -553,6 +554,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const descriptors = props.descriptors;
   const baseRoute = { key: `${props.state.key}:workspace`, name: "Workspace" };
   const visibleRoute = projection.detail.at(-1) ?? primaryRoute;
+  const workspacePage = !workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen);
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
     navigation: props.descriptors[visibleRoute.key]!.navigation,
@@ -561,7 +563,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     options: { headerShown: false },
     render: () => (
       <WorkspaceNativeTabs
-        tabsInSidebarColumn={props.nativeColumns && deviceType === "pad"}
+        tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}
         hidden={
           projection.detail.length > 0 &&
           !primaryVisible &&
@@ -585,7 +587,8 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
             page && !descriptors[page.key]
               ? { ...descriptors, [page.key]: props.describe(page, true) }
               : descriptors;
-          return props.nativeColumns ? (
+          return props.nativeColumns &&
+            workspaceUsesColumns(slotWorkspace.state.selectedTab, slotWorkspace.settingsOpen) ? (
             <WorkspaceColumns
               {...props}
               descriptors={slotDescriptors}

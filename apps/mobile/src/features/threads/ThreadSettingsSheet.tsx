@@ -6,11 +6,7 @@ import { T, useGT, useLocale, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { useSheetStackOptions } from "../layout/nested-stacks";
-import {
-  DEFAULT_RUNTIME_MODE,
-  DEFAULT_SERVER_SETTINGS,
-  ProviderInstanceId,
-} from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId } from "@t3tools/contracts";
 import {
   modelPreferencesMigrationPatch,
   resolveModelPreferences,
@@ -306,9 +302,8 @@ type ThreadSettingsSessionProps = {
   readonly restoreSelection?: (selection: ModelSelection) => ModelSelection;
   readonly optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly onUpdateOptionSelections: (selections: ReadonlyArray<ProviderOptionSelection>) => void;
-  /** Without these the picker has no Runtime row. */
-  readonly runtimeMode?: RuntimeMode;
-  readonly onUpdateRuntimeMode?: (mode: RuntimeMode) => void;
+  readonly runtimeMode: RuntimeMode;
+  readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
 };
 
 /** The composer draft the sheet edits: the thread's own, or a queued message being edited. */
@@ -331,7 +326,7 @@ type ThreadSettingsSessionValue = {
   readonly setManageHidden: (value: boolean) => void;
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModeChoices: ReadonlyArray<RuntimeModeChoice>;
-  readonly onUpdateRuntimeMode: ((mode: RuntimeMode) => void) | undefined;
+  readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
   readonly promptTraits: ReturnType<typeof getPromptControlledTraits>;
   readonly displayedModelSelection: ModelSelection | null;
@@ -545,7 +540,7 @@ function ThreadSettingsSessionProvider(
     messages,
   );
   const compatibleRuntimeMode = compatibleRuntimeModeForChoices(
-    props.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+    props.runtimeMode,
     runtimeModeChoices,
   );
 
@@ -990,23 +985,18 @@ function ThreadSettingsOptionsItem(props: {
         .get(session.environmentId)
         ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
     : null;
-  const showRuntime = session.onUpdateRuntimeMode !== undefined;
-  const showOptions = showRuntime || session.displayedDescriptors.length > 0;
 
   return (
     <View style={{ paddingBottom: insets.bottom + props.bottomInset + 12 }}>
       <ChatGptSharingStatus provider={selectedProvider} />
-      {showOptions ? (
-        <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">
-          <T>Options</T>
-        </Text>
-      ) : null}
+      <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">
+        <T>Options</T>
+      </Text>
       <Animated.View
         className="mx-4 overflow-hidden rounded-2xl bg-grouped-card"
         layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
       >
-        {session.displayedDescriptors.map((descriptor, index) => {
-          const isLast = !showRuntime && index === session.displayedDescriptors.length - 1;
+        {session.displayedDescriptors.map((descriptor) => {
           if (descriptor.type === "select") {
             return (
               <Animated.View
@@ -1018,7 +1008,6 @@ function ThreadSettingsOptionsItem(props: {
                 layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
               >
                 <DisclosureRow
-                  isLast={isLast}
                   label={descriptor.label}
                   value={
                     session.promptTraits.ultrathinkPromptControlled &&
@@ -1043,7 +1032,6 @@ function ThreadSettingsOptionsItem(props: {
               layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
             >
               <SwitchRow
-                isLast={isLast}
                 label={descriptor.label}
                 value={descriptor.currentValue ?? false}
                 onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
@@ -1051,21 +1039,19 @@ function ThreadSettingsOptionsItem(props: {
             </Animated.View>
           );
         })}
-        {showRuntime ? (
-          <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
-            <DisclosureRow
-              isLast
-              label={gt("Runtime", { $context: "agent permission mode setting" })}
-              value={(() => {
-                const label = session.runtimeModeChoices.find(
-                  (choice) => choice.mode === session.runtimeMode,
-                )?.label;
-                return label === undefined ? undefined : m(label);
-              })()}
-              onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
-            />
-          </Animated.View>
-        ) : null}
+        <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
+          <DisclosureRow
+            isLast
+            label={gt("Runtime", { $context: "agent permission mode setting" })}
+            value={(() => {
+              const label = session.runtimeModeChoices.find(
+                (choice) => choice.mode === session.runtimeMode,
+              )?.label;
+              return label === undefined ? undefined : m(label);
+            })()}
+            onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
+          />
+        </Animated.View>
       </Animated.View>
 
       <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">
@@ -1255,7 +1241,7 @@ function ThreadSettingsChoiceContent(props: {
             selected: choice.mode === session.runtimeMode,
             onPress: () => {
               void Haptics.selectionAsync();
-              session.onUpdateRuntimeMode?.(choice.mode);
+              session.onUpdateRuntimeMode(choice.mode);
               props.onSelected();
             },
           })),

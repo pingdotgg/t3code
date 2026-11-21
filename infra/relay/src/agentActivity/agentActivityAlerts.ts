@@ -6,8 +6,6 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-import { alertBodyForActivity } from "./agentActivityPayloads.ts";
-
 export interface AgentActivityAlert {
   readonly title: string;
   readonly body: string;
@@ -121,7 +119,7 @@ export function alertForActivityRows(
   const first = rows[0];
   if (!first) return null;
   if (rows.length === 1) {
-    return { title: first.threadTitle, body: alertBodyForActivity(first) };
+    return { title: first.threadTitle, body: `${first.status}: ${first.projectTitle}` };
   }
   return {
     title: `${rows.length} agents ${isAttentionPhase(first.phase) ? "need attention" : "finished"}`,

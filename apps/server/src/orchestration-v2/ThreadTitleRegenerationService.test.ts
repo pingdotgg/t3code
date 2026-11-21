@@ -87,7 +87,6 @@ function makeHarness(
               autoPull: false,
               faviconPath: null,
               projectIcon: null,
-              bot: null,
               scripts: [],
               pinnedAt: null,
               archivedAt: null,

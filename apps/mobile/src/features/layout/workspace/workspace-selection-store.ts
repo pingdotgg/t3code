@@ -18,7 +18,6 @@ import { rootStackState, type RootStackNavigation } from "../../../lib/root-stac
 import { workspaceRoutesOf } from "../workspace-overlay-routes";
 import type { WorkspaceSelections } from "../../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../../state/atom-registry";
-import { isBotThread } from "../../../state/bots";
 import { environmentPresentations } from "../../../state/presentation";
 import {
   environmentThreadShells,
@@ -97,11 +96,7 @@ export function currentWorkspaceSelections() {
  */
 export function recordWorkspaceSelections(state: NavigationState | undefined) {
   if (!REMEMBERS || !state) return;
-  selections = workspaceSelectionsIn(
-    state.routes.slice(0, state.index + 1),
-    selections,
-    isBotThread,
-  );
+  selections = workspaceSelectionsIn(state.routes.slice(0, state.index + 1), selections);
 }
 
 function environmentRemoved(environmentId: string) {
@@ -116,13 +111,11 @@ function environmentRemoved(environmentId: string) {
 
 /**
  * A remembered chat is gone once its environment was removed, or once that environment's
- * snapshot has loaded without it. Before it loads there is nothing to contradict it. A bot's
- * chat belongs to the Bots tab, so Threads never reopens it.
+ * snapshot has loaded without it. Before it loads there is nothing to contradict it.
  */
 export const workspaceSelectionCheck: WorkspaceSelectionCheck = {
   thread: (selection) => {
     if (environmentRemoved(selection.environmentId)) return false;
-    if (isBotThread(selection.environmentId, selection.threadId)) return false;
     const environmentId = selection.environmentId as EnvironmentId;
     if (!appAtomRegistry.get(threadEnvironment.snapshotAtom(environmentId))) return true;
     return appAtomRegistry

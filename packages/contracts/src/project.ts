@@ -1,7 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
-import { ProjectBot } from "./bot.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
   CommandId,
@@ -166,7 +165,6 @@ export const Project = Schema.Struct({
   scripts: Schema.Array(ProjectScript),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
-  bot: Schema.optional(Schema.NullOr(ProjectBot)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),

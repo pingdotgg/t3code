@@ -1838,27 +1838,6 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
     }),
-    createBot: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:bot:create",
-      tag: WS_METHODS.botsCreate,
-    }),
-    updateBot: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:bot:update",
-      tag: WS_METHODS.botsUpdate,
-    }),
-    deleteBot: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:bot:delete",
-      tag: WS_METHODS.botsDelete,
-    }),
-    // Image generation takes about a minute; one at a time per bot.
-    generateBotAvatar: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:server:bot:generate-avatar",
-      tag: WS_METHODS.botsGenerateAvatar,
-      concurrency: {
-        mode: "singleFlight",
-        key: ({ environmentId, input }) => `${environmentId}:${input.projectId}`,
-      },
-    }),
     upsertScheduledTask: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:upsert",
       tag: WS_METHODS.scheduledTasksUpsert,

@@ -3,7 +3,6 @@ import {
   type EventId,
   MAX_SCRIPT_ID_LENGTH,
   type ModelSelection,
-  type ProjectBot,
   type ProjectIconOverride,
   ProjectId,
   type ProjectScript,
@@ -24,7 +23,6 @@ export interface ProjectCreateCommand {
   readonly title: string;
   readonly workspaceRoot: string;
   readonly scripts?: ReadonlyArray<ProjectScript>;
-  readonly bot?: ProjectBot;
 }
 
 export interface ProjectMetaUpdateCommand {
@@ -41,7 +39,6 @@ export interface ProjectMetaUpdateCommand {
   readonly scripts?: ReadonlyArray<ProjectScript>;
   readonly pinned?: boolean;
   readonly archived?: boolean;
-  readonly bot?: ProjectBot | null;
 }
 
 export interface ProjectDeleteCommand {
@@ -166,7 +163,6 @@ export function planProjectCommand(input: {
           faviconPath: null,
           projectIcon: null,
           scripts: command.scripts ?? [],
-          ...(command.bot === undefined ? {} : { bot: command.bot }),
           createdAt: occurredAt,
           updatedAt: occurredAt,
         },
@@ -221,7 +217,6 @@ export function planProjectCommand(input: {
           ...(command.archived === undefined
             ? {}
             : { archivedAt: command.archived ? (project.archivedAt ?? occurredAt) : null }),
-          ...(command.bot === undefined ? {} : { bot: command.bot }),
           updatedAt: occurredAt,
         },
       });

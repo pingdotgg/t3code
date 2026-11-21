@@ -14,8 +14,6 @@ import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useCompactWorkspaceTabs, useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
-const BOT_ICON = require("../../../../assets/icons/bot-face.png");
-const BOT_SELECTED_ICON = require("../../../../assets/icons/bot-face-fill.png");
 const ISSUE_ICON = require("../../../../assets/icons/issue.png");
 
 export function WorkspaceTabToolbarButtons() {
@@ -42,15 +40,9 @@ export function WorkspaceTabToolbarButtons() {
           icon={
             tab === "pullRequests"
               ? { type: "image", source: PULL_REQUEST_ICON, tinted: true }
-              : tab === "bots"
-                ? {
-                    type: "image",
-                    source: selected === tab ? BOT_SELECTED_ICON : BOT_ICON,
-                    tinted: true,
-                  }
-                : tab === "issues"
-                  ? { type: "image", source: ISSUE_ICON, tinted: true }
-                  : NAVIGATION_TAB_ICONS[tab]
+              : tab === "issues"
+                ? { type: "image", source: ISSUE_ICON, tinted: true }
+                : NAVIGATION_TAB_ICONS[tab]
           }
           tintColor={selected === tab ? selectedTint : undefined}
           onPress={() => selectTab(tab)}

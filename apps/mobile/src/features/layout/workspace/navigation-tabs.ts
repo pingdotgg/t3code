@@ -28,9 +28,9 @@ export const WORKSPACE_TAB_LABELS = {
 
 export const NAVIGATION_TAB_ICONS = {
   threads: "text.bubble",
-  bots: "face.smiling",
   pullRequests: PullRequestGlyph.pullRequest,
   issues: "git.issue",
+  usage: "chart.bar.xaxis",
 } as const satisfies Readonly<Record<NavigationTab, AppSymbolName>>;
 
 export function useNavigationTabOrder() {

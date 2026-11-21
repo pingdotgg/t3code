@@ -119,8 +119,6 @@ export type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly canOpenFiles: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
-  /** Off for a bot's chat, which has no branch to manage. */
-  readonly showGitMenu?: boolean;
   readonly onOpenTerminal: (terminalId?: string | null) => void;
   readonly onOpenNewTerminal: () => void;
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;

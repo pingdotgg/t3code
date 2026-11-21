@@ -18,7 +18,11 @@ import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "rea
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { NavigationTab } from "./navigation-tab-order";
-import { NATIVE_WORKSPACE_TAB_SLOTS, workspaceTabForNativeSlot } from "./workspace-tabs-state";
+import {
+  NATIVE_WORKSPACE_TAB_SLOTS,
+  workspaceTabForNativeSlot,
+  workspaceUsesColumns,
+} from "./workspace-tabs-state";
 import {
   NativeWorkspaceTabActivityContext,
   WorkspaceColumnMetricsContext,
@@ -38,8 +42,6 @@ import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useWorkspaceCompose } from "./useWorkspaceCompose";
 
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
-const BOT_ICON = require("../../../../assets/icons/bot-face.png");
-const BOT_SELECTED_ICON = require("../../../../assets/icons/bot-face-fill.png");
 const ISSUE_ICON = require("../../../../assets/icons/issue.png");
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
@@ -161,7 +163,10 @@ export function WorkspaceNativeTabs(props: {
   const { panes } = useWorkspacePaneState();
   // The tabs belong to the sidebar; over a page with the sidebar hidden they'd cover the composer.
   const hiddenWithSidebar =
-    deviceType === "pad" && layout.usesSplitView && !panes.primarySidebarVisible;
+    deviceType === "pad" &&
+    layout.usesSplitView &&
+    workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
+    !panes.primarySidebarVisible;
   const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
@@ -243,16 +248,11 @@ export function WorkspaceNativeTabs(props: {
                       ? { type: "templateSource", templateSource: PULL_REQUEST_ICON }
                       : tab === "issues"
                         ? { type: "templateSource", templateSource: ISSUE_ICON }
-                        : tab === "bots"
-                          ? { type: "templateSource", templateSource: BOT_ICON }
-                          : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
-                  selectedIcon: settings
-                    ? undefined
-                    : tab === "threads"
+                        : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
+                  selectedIcon:
+                    !settings && tab === "threads"
                       ? { type: "sfSymbol", name: "text.bubble.fill" }
-                      : tab === "bots"
-                        ? { type: "templateSource", templateSource: BOT_SELECTED_ICON }
-                        : undefined,
+                      : undefined,
                   overrideScrollViewContentInsetAdjustmentBehavior: false,
                 }}
               >
@@ -271,7 +271,10 @@ export function WorkspaceNativeTabs(props: {
           })}
         </Tabs.Host>
       </WorkspaceColumnMetricsContext>
-      {(deviceType === "pad" || compactTabs) &&
+      {(deviceType === "pad" ||
+        compactTabs ||
+        (layout.variant === "medium" &&
+          !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
       !props.hidden &&
       !props.tabsInSidebarColumn &&
       !hiddenWithSidebar ? (

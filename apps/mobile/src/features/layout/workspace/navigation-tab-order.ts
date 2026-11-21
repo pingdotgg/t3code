@@ -1,6 +1,6 @@
 import { msg } from "gt-react-native";
 
-export const NAVIGATION_TAB_ORDER = ["threads", "bots", "pullRequests", "issues"] as const;
+export const NAVIGATION_TAB_ORDER = ["threads", "pullRequests", "issues", "usage"] as const;
 export type NavigationTab = (typeof NAVIGATION_TAB_ORDER)[number];
 
 const SHARED_SLOT_TABS = ["pullRequests", "issues"] as const;
@@ -27,9 +27,9 @@ export function navigationCustomizationAvailable(
 
 export const NAVIGATION_TAB_LABELS: Readonly<Record<NavigationTab, string>> = {
   threads: msg("Threads", { $context: "navigation tab, list of chat threads" }),
-  bots: msg("Bots", { $context: "navigation tab, scheduled bots that run agents" }),
   pullRequests: msg("Pulls", { $context: "navigation tab, pull requests" }),
   issues: msg("Issues", { $context: "navigation tab, issues from an issue tracker" }),
+  usage: msg("Usage", { $context: "navigation tab, provider usage limits" }),
 };
 
 function isNavigationTab(value: unknown): value is NavigationTab {

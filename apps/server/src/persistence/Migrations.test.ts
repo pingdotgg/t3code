@@ -29,8 +29,8 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect.each([78, 80, 81, 82, 86, 92, 99])(
-    "upgrades bot builds that recorded ProjectionProjectBot as %i",
+  it.effect.each([78, 80, 81, 82, 86, 92, 99, 103])(
+    "forgets the removed Bots migration recorded as %i and runs the later ones",
     (id) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
@@ -42,7 +42,7 @@ describe("runMigrations", () => {
 
         yield* runMigrations();
 
-        assert.deepStrictEqual((yield* history).slice(-26), [
+        assert.deepStrictEqual((yield* history).slice(-25), [
           [78, "DropOrchestrationEventCorrelationIndex"],
           [79, "DelegatedRecoveryIndexes"],
           [80, "ScheduledTaskThreadMode"],
@@ -68,7 +68,6 @@ describe("runMigrations", () => {
           [100, "TurnStartReadIndexes"],
           [101, "DelegatedTaskReadIndexes"],
           [102, "ThreadItemCounts"],
-          [103, "ProjectionProjectBot"],
         ]);
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

@@ -183,7 +183,6 @@ describe("ApnsClient", () => {
           threadId: ThreadId.make(id),
           projectTitle: "界".repeat(200),
           threadTitle: "界".repeat(200),
-          message: "界".repeat(200),
         })),
       });
       const request = apns.makeLiveActivityRequest({
@@ -202,8 +201,6 @@ describe("ApnsClient", () => {
       const sent = JSON.parse(payload.aps["content-state"].props) as typeof longState;
       expect(sent.activities.map((row) => row.threadId)).toEqual(["a", "b", "c", "d", "e"]);
       expect(sent.activities[0]?.threadTitle).toMatch(/^界+\.\.\.$/);
-      // The widget never shows a bot's reply, so it cannot crowd out rows.
-      expect(sent.activities.some((row) => row.message !== undefined)).toBe(false);
     }).pipe(Effect.provide(layerTest)),
   );
 

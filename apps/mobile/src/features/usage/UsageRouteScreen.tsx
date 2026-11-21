@@ -86,9 +86,9 @@ const WIDE_WIDTH = 600;
 const MAX_CONTENT_WIDTH = 1080;
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_LABEL[provider];
 
-export function UsageRouteScreen() {
+export function UsageRouteScreen(props: { readonly workspace?: boolean }) {
   const route = useRoute<RouteProp<{ Usage: { tab?: string } | undefined }, "Usage">>();
-  return <UsageScreen tabParam={route.params?.tab} />;
+  return <UsageScreen workspace={props.workspace} tabParam={route.params?.tab} />;
 }
 
 function UsageScreen(props: {

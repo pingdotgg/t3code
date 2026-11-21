@@ -195,9 +195,14 @@ function finishDispatchingQueuedMessage(queuedMessageId: MessageId): void {
   appAtomRegistry.set(dispatchingQueuedMessageIdsAtom, others);
 }
 
-// By id, not from thread lists, which leave out bot chats.
-function findThread(message: QueuedThreadMessage): EnvironmentThreadShell | undefined {
-  return appAtomRegistry.get(environmentThreadShells.threadShellAtom(message)) ?? undefined;
+function findThread(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+  message: QueuedThreadMessage,
+): EnvironmentThreadShell | undefined {
+  return threads.find(
+    (candidate) =>
+      candidate.environmentId === message.environmentId && candidate.id === message.threadId,
+  );
 }
 
 function findCreationProject(
@@ -669,16 +674,11 @@ const deliveryInputsAtom = Atom.make((get) => {
       operableEnvironments.add(environmentId);
     }
   }
-  const queuedMessagesByThreadKey = get(threadOutboxManager.queuedMessagesByThreadKeyAtom);
   return {
     editingQueuedMessageIds: get(editingQueuedMessageIdsAtom),
-    queuedMessagesByThreadKey,
+    queuedMessagesByThreadKey: get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
     shellStatuses: get(threadOutboxShellStatusesAtom),
-    // Each queued thread's shell, so a pass re-runs when one arrives or changes.
-    threads: Object.values(queuedMessagesByThreadKey).flatMap(([message]) => {
-      const thread = message ? get(environmentThreadShells.threadShellAtom(message)) : null;
-      return thread ? [thread] : [];
-    }),
+    threads: get(environmentThreadShells.threadShellsAtom),
     projects: get(environmentProjects.projectsAtom),
     serverConfigs: get(environmentServerConfigsAtom),
     connectedEnvironments,
@@ -690,17 +690,20 @@ const deliveryInputsAtom = Atom.make((get) => {
 // outcome is recorded, and that entry must still be collected when it does.
 const settledCreationOutcomeKeysAtom = Atom.make((get): ReadonlyArray<string> => {
   const outcomes = get(pendingThreadCreationOutcomesAtom);
-  return Object.entries(outcomes).flatMap(([threadKey, outcome]) => {
-    if (outcome.kind !== "delivered") return [];
-    const thread = get(environmentThreadShells.threadShellAtom(outcome.message));
-    return thread !== null &&
-      (thread.latestRun !== null ||
-        thread.runtime?.status === "failed" ||
-        thread.runtime?.status === "cancelled" ||
-        thread.runtime?.status === "interrupted")
+  const threads = get(environmentThreadShells.threadShellsAtom);
+  return Object.entries(outcomes).flatMap(([threadKey, outcome]) =>
+    outcome.kind === "delivered" &&
+    threads.some(
+      (thread) =>
+        scopedThreadKey(thread.environmentId, thread.id) === threadKey &&
+        (thread.latestRun !== null ||
+          thread.runtime?.status === "failed" ||
+          thread.runtime?.status === "cancelled" ||
+          thread.runtime?.status === "interrupted"),
+    )
       ? [threadKey]
-      : [];
-  });
+      : [],
+  );
 }).pipe(Atom.withLabel("mobile:thread-outbox:settled-creation-outcomes"));
 
 function deliveredSequence(
@@ -1275,11 +1278,7 @@ export function createThreadOutboxDelivery(): {
     if (retryNotBefore(messageId) > Date.now()) {
       return { _tag: "Wait", until: retryNotBefore(messageId) };
     }
-    let thread = threads.find(
-      (candidate) =>
-        candidate.environmentId === nextQueuedMessage.environmentId &&
-        candidate.id === nextQueuedMessage.threadId,
-    );
+    let thread = findThread(threads, nextQueuedMessage);
     if (thread && scopedThreadKey(thread.environmentId, thread.id) !== threadKey) {
       return { _tag: "Wait" };
     }
@@ -1316,7 +1315,10 @@ export function createThreadOutboxDelivery(): {
       if (familyRead === "settled") {
         // The rows read at the start of this pass can lag the family that just settled;
         // decide from the merged rows as they are now.
-        thread = findThread(nextQueuedMessage);
+        thread = findThread(
+          appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+          nextQueuedMessage,
+        );
       } else if (familyRead === "failed") {
         threadFamilies.refresh(
           appAtomRegistry,
@@ -1414,7 +1416,10 @@ export function createThreadOutboxDelivery(): {
       // An editor that took the message after confirmation owns it; that is not a failure.
       if (isEditingQueuedMessage(messageId)) return;
       if (deliveryAction === "send") {
-        const liveThread = findThread(nextQueuedMessage);
+        const liveThread = findThread(
+          appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+          nextQueuedMessage,
+        );
         const liveDeliveryAction = resolveThreadOutboxDeliveryAction({
           isCreation: creation !== undefined,
           threadExists: liveThread !== undefined && !resendLaunch,

@@ -52,17 +52,6 @@ describe("workspace tab selections", () => {
     expect(workspaceSelectionsIn([home, thread], afterSettings)).toBe(afterSettings);
   });
 
-  it("keeps the Threads chat when a bot's chat opens, since bots have their own tab", () => {
-    const isBot = (_environmentId: string, threadId: string) => threadId === "bot-thread";
-    const bot = {
-      key: "bot",
-      name: "Thread",
-      params: { environmentId: "env", threadId: "bot-thread" },
-    };
-    const afterThread = workspaceSelectionsIn([home, thread], {});
-    expect(workspaceSelectionsIn([home, bot], afterThread, isBot)).toBe(afterThread);
-  });
-
   it("doesn't remember pages a Settings row doesn't open", () => {
     for (const name of ["SettingsEnvironmentNew", "SettingsProjectOverview", "SettingsAuth"]) {
       expect(workspaceSelectionsIn([home, settings, { key: name, name }], {}).settings).toBe(

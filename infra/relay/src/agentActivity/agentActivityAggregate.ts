@@ -40,7 +40,6 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     modelTitle: state.modelTitle,
     phase: state.phase,
     status: statusForPhase(state.phase),
-    ...(state.message === undefined ? {} : { message: state.message }),
     updatedAt: state.updatedAt,
     deepLink: state.deepLink,
   };

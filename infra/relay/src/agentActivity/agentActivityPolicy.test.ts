@@ -2,9 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityState } from "@t3tools/contracts/relay";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
-import { notificationForActivity } from "./agentActivityPayloads.ts";
 import {
-  alertForActivityRows,
   attentionTransitionRows,
   terminalTransitionRows,
   shouldAlertForActivity,
@@ -54,16 +52,6 @@ describe("shared agent activity policy", () => {
       ).toMatchObject([{ threadId: state.threadId }]);
     },
   );
-
-  it("alerts with a reply message when a row has one, and the status otherwise", () => {
-    const done = { ...state, phase: "completed" as const };
-    const [plain] = aggregate([done]).activities;
-    const [replied] = aggregate([{ ...done, message: "m".repeat(200) }]).activities;
-    expect(alertForActivityRows([plain!])).toEqual({ title: "Thread", body: "Done: Project" });
-    expect(alertForActivityRows([replied!])?.body).toBe("m".repeat(117) + "...");
-    expect(notificationForActivity(replied!).body).toBe("m".repeat(117) + "...");
-    expect(alertForActivityRows([replied!, plain!])?.body).toBe("Thread, Thread");
-  });
 
   it("allows fresh unobserved completions for events, but not reconciliation or repeats", () => {
     const previousAggregate = aggregate([

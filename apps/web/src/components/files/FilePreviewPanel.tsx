@@ -70,7 +70,7 @@ import {
 } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
-import { saveUrlAsFile, useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
+import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
@@ -2208,7 +2208,15 @@ export function WorkspaceLargeTextPreview(props: {
             void (async () => {
               const url = await refreshAssetUrl();
               if (!url) throw new Error(gt("Reconnect to the environment and try again."));
-              await saveUrlAsFile(url, props.name.split(/[\\/]/).at(-1) || props.name);
+              const response = await fetch(url);
+              if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
+              // Blob downloads keep desktop's custom app scheme from navigating to an external browser.
+              const downloadUrl = URL.createObjectURL(await response.blob());
+              setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
+              const anchor = document.createElement("a");
+              anchor.href = downloadUrl;
+              anchor.download = props.name.split(/[\\/]/).at(-1) || props.name;
+              anchor.click();
             })()
               .catch(showError)
               .finally(() => setSaving(false));

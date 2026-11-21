@@ -5,7 +5,6 @@ import {
   type EnvironmentProject,
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
-import { isBotProject } from "@t3tools/client-runtime/state/bots";
 import { threadSearchSubject } from "@t3tools/client-runtime/state/thread-search";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
@@ -59,7 +58,6 @@ export function buildArchivedThreadGroups(input: {
     }
 
     for (const rawProject of entry.snapshot.projects) {
-      if (isBotProject(rawProject)) continue;
       const project = scopeProject(entry.environmentId, rawProject);
       const projectThreads = threadsByProjectId.get(project.id) ?? [];
       const groupMatches =

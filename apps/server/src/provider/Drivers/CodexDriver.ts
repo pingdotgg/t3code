@@ -197,22 +197,12 @@ export const CodexDriver: ProviderDriver<
         : config;
     const homeLayout = yield* resolveCodexHomeLayout(homeConfig);
     const continuationIdentity = codexContinuationIdentity(homeLayout);
-    const stampInstance = withInstanceIdentity({
+    const stampIdentity = withInstanceIdentity({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName,
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
-    });
-    // Image generation saves under these homes; readers check paths against them.
-    const runtimePaths = {
-      homePath: homeLayout.sharedHomePath,
-      shadowHomePath:
-        homeLayout.mode === "authOverlay" ? (homeLayout.effectiveHomePath ?? null) : null,
-    };
-    const stampIdentity = (draft: Parameters<typeof stampInstance>[0]) => ({
-      ...stampInstance(draft),
-      runtimePaths,
     });
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.mapError(

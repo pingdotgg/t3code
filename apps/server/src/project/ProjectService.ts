@@ -1,7 +1,6 @@
 import {
   CommandId,
   type OrchestrationProjectShell,
-  type ProjectBot,
   ProjectId,
   type Project,
   type ProjectCreatePayload,
@@ -46,14 +45,11 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
-  /** Server-only: bots are created through BotService, never by project mutations. */
-  readonly bot?: ProjectBot;
 }
 
 export interface ProjectUpdateInput extends ProjectUpdatePayload {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
-  readonly bot?: ProjectBot | null;
 }
 
 export interface ProjectBootstrapInput extends ProjectCreateInput {}
@@ -213,7 +209,6 @@ export const make = Effect.gen(function* () {
     scripts: row.scripts,
     pinnedAt: row.pinnedAt,
     archivedAt: row.archivedAt,
-    bot: row.bot,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     deletedAt: row.deletedAt,
@@ -429,7 +424,6 @@ export const make = Effect.gen(function* () {
         title: input.title,
         workspaceRoot,
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-        ...(input.bot === undefined ? {} : { bot: input.bot }),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
@@ -474,7 +468,6 @@ export const make = Effect.gen(function* () {
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),
-        ...(input.bot === undefined ? {} : { bot: input.bot }),
       });
       if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);

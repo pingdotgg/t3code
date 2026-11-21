@@ -14,8 +14,6 @@ import { AsyncResult, type Atom } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { threadOutboxRetryDelayMs, type QueuedThreadMessage } from "./thread-outbox-model";
 
-type TestThreadShell = { readonly environmentId: string; readonly id: string; readonly bot?: true };
-
 const state = vi.hoisted(() => ({
   draftText: "Keep this draft separate",
   cleanups: [] as Array<() => void>,
@@ -46,7 +44,7 @@ const state = vi.hoisted(() => ({
   }),
   modelUnavailable: vi.fn(() => false),
   familyMount: vi.fn(() => () => {}),
-  threadShells: null as unknown as Atom.Writable<ReadonlyArray<TestThreadShell>>,
+  threadShells: null as unknown as Atom.Writable<ReadonlyArray<unknown>>,
   manager: null as unknown as ReturnType<
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
@@ -101,16 +99,7 @@ vi.mock("./server", async () => {
 vi.mock("./threads", async () => {
   const { Atom, AsyncResult } = await import("effect/reactivity");
   const Effect = await import("effect/Effect");
-  state.threadShells = Atom.make<ReadonlyArray<TestThreadShell>>([state.thread]).pipe(
-    Atom.keepAlive,
-  );
-  const threadShell = Atom.family((key: string) =>
-    Atom.make(
-      (get) =>
-        get(state.threadShells).find((shell) => `${shell.environmentId}:${shell.id}` === key) ??
-        null,
-    ),
-  );
+  state.threadShells = Atom.make<ReadonlyArray<unknown>>([state.thread]).pipe(Atom.keepAlive);
   return {
     threadEnvironment: {
       startTurn: state.command(Effect, state.start),
@@ -118,12 +107,7 @@ vi.mock("./threads", async () => {
       setRuntimeMode: state.command(Effect, state.runtime),
       setInteractionMode: state.command(Effect, state.interaction),
     },
-    environmentThreadShells: {
-      // Lists leave bot chats out, as the real atoms do; lookups by id still reach them.
-      threadShellsAtom: Atom.make((get) => get(state.threadShells).filter((shell) => !shell.bot)),
-      threadShellAtom: (ref: { readonly environmentId: string; readonly threadId: string }) =>
-        threadShell(`${ref.environmentId}:${ref.threadId}`),
-    },
+    environmentThreadShells: { threadShellsAtom: state.threadShells },
     threadFamilies: {
       mount: state.familyMount,
       familyAtom: () => Atom.make(AsyncResult.success({})),
@@ -377,18 +361,6 @@ describe("queued task operation access", () => {
     expect(state.prepare).not.toHaveBeenCalled();
     expect(remaining()).toEqual([queued]);
     setOperateGrant("secondary", true);
-    await runDrain();
-    expect(state.start).toHaveBeenCalledOnce();
-    expect(remaining()).toEqual([]);
-  });
-
-  it("delivers a queued bot chat message, though thread lists leave bot chats out", async () => {
-    setOperateGrant("secondary", true);
-    appAtomRegistry.set(state.threadShells, [
-      state.thread,
-      { ...state.thread, id: "bot", bot: true },
-    ]);
-    await state.manager.enqueue(message({ threadId: ThreadId.make("bot") }));
     await runDrain();
     expect(state.start).toHaveBeenCalledOnce();
     expect(remaining()).toEqual([]);

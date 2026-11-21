@@ -3,20 +3,21 @@ import { useAndroidFloatingTabs } from "../../settings/appearance/AppearancePref
 import { WorkspaceNoTabs } from "./WorkspaceNoTabs";
 import { useEnabledNavigationTabs } from "./navigation-tabs";
 import { NAVIGATION_TAB_ORDER } from "./navigation-tab-order";
+import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
+import type { ReactNode } from "react";
 import { View } from "react-native";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { AppBar } from "../../../components/ui/AppBar";
-import { EmptyState } from "../../../components/ui/EmptyState";
 import { WorkspaceEmptyDetail } from "../WorkspaceEmptyDetail";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { useAndroidControlSizing } from "../../../components/ui/useAndroidControlSizing";
 import { HomeRouteScreen } from "../../home/HomeRouteScreen";
-import { BotsScreen, useOpenNewBot } from "../../bots/BotsScreen";
 import { PullRequestsScreen } from "../../pull-requests/PullRequestsScreen";
 import { ListSearchToolbar } from "./ListSearchToolbar.android";
 import { IssuesScreen } from "../../issues/IssuesScreen";
 import { useAdaptiveWorkspaceLayout } from "../AdaptiveWorkspaceLayout";
+import { WorkspaceSettledContentWidthContext } from "../workspace-content-width";
 import { AndroidWorkspaceNavigation, FloatingWorkspaceTabs } from "./AndroidWorkspaceNavigation";
 import { FLOATING_TABS } from "./floating-workspace-tabs";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -37,7 +38,7 @@ export function WorkspaceRootScreen() {
 function WorkspaceRoot() {
   const gt = useGT();
   const floatingTabsEnabled = useAndroidFloatingTabs();
-  const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
+  const { layout, startNewTask, workspacePageWidth } = useAdaptiveWorkspaceLayout();
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
   const insets = useSafeAreaInsets();
@@ -53,7 +54,6 @@ function WorkspaceRoot() {
           : 16,
   };
   const tab = workspace.state.selectedTab;
-  const openNewBot = useOpenNewBot();
   const selectTab = useSelectWorkspaceTab();
   // Tabs are panes of Home, not routes, so Back has nothing to pop and would leave the app.
   // An open search keeps Back for itself.
@@ -75,7 +75,13 @@ function WorkspaceRoot() {
         ) : null}
         <SafeAreaInsetsContext
           value={
-            layout.usesSplitView ? insets : floatingTabsEnabled ? insets : { ...insets, bottom: 0 }
+            layout.usesSplitView
+              ? insets
+              : floatingTabsEnabled
+                ? tab === "usage"
+                  ? { ...insets, bottom: context.bottomClearance }
+                  : insets
+                : { ...insets, bottom: 0 }
           }
         >
           {enabled.length === 0 ? (
@@ -92,40 +98,10 @@ function WorkspaceRoot() {
                 renderTab={(tab) =>
                   tab === "threads" ? (
                     <HomeRouteScreen />
-                  ) : tab === "bots" ? (
-                    layout.usesSplitView ? (
-                      <>
-                        <NativeStackScreenOptions options={{ headerShown: false }} />
-                        <AppBar
-                          embedded
-                          title={gt("Bots", { $context: "screen title, list of bots" })}
-                        />
-                        <View className="flex-1 items-center justify-center px-10">
-                          <EmptyState
-                            title={gt("Select a bot")}
-                            detail={gt("Choose a bot from the sidebar.")}
-                            variant="plain"
-                          />
-                        </View>
-                      </>
-                    ) : (
-                      <>
-                        <AppBar
-                          embedded
-                          title={gt("Bots", { $context: "screen title, list of bots" })}
-                          actions={[
-                            {
-                              accessibilityLabel: gt("New bot"),
-                              icon: "plus",
-                              onPress: openNewBot,
-                            },
-                          ]}
-                        />
-                        <ScreenContent>
-                          <BotsScreen />
-                        </ScreenContent>
-                      </>
-                    )
+                  ) : tab === "usage" ? (
+                    <WorkspacePageFrame width={workspacePageWidth ?? null}>
+                      <WorkspaceExtraTab tab={tab} />
+                    </WorkspacePageFrame>
                   ) : layout.usesSplitView ? (
                     <>
                       <NativeStackScreenOptions options={{ headerShown: false }} />
@@ -170,5 +146,19 @@ function WorkspaceRoot() {
         )}
       </View>
     </WorkspaceTabsContext>
+  );
+}
+
+// Hidden, the page sits in the narrower pane beside the list; laying it out at the width it opens
+// at keeps measured bars and breakpoints from catching up a frame after it appears.
+function WorkspacePageFrame(props: {
+  readonly width: number | null;
+  readonly children: ReactNode;
+}) {
+  if (props.width === null) return props.children;
+  return (
+    <WorkspaceSettledContentWidthContext value={props.width}>
+      <View style={{ flex: 1, width: props.width }}>{props.children}</View>
+    </WorkspaceSettledContentWidthContext>
   );
 }

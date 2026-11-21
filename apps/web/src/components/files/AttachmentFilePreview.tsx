@@ -25,7 +25,7 @@ import { msg, useGT, useMessages } from "gt-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { m } from "~/i18n/messages";
 
-import { saveBlobAsFile, saveUrlAsFile, useAssetUrlRefresh } from "~/assets/assetUrls";
+import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -242,13 +242,22 @@ export function AttachmentFilePreview(props: {
   const save = () => {
     setSaving(true);
     void settlePromise(async () => {
-      if (props.file) {
-        saveBlobAsFile(props.file, props.name);
-        return;
+      let file = props.file;
+      if (!file) {
+        const target = await prepareDownload();
+        if (!target) throw new Error(gt("Reconnect to the environment and try again."));
+        const response = await fetch(target);
+        if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
+        file = await response.blob();
       }
-      const target = await prepareDownload();
-      if (!target) throw new Error(gt("Reconnect to the environment and try again."));
-      await saveUrlAsFile(target, props.name);
+      // Blob downloads keep desktop's custom app scheme from navigating to an external browser.
+      const downloadUrl = URL.createObjectURL(file);
+      // Scheduled before the click so the URL is revoked even if the click throws.
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
+      const anchor = document.createElement("a");
+      anchor.href = downloadUrl;
+      anchor.download = props.name;
+      anchor.click();
     }).then((result) => {
       if (!AsyncResult.isSuccess(result)) {
         const cause = Cause.squash(result.cause);

@@ -3,12 +3,22 @@ import { Platform } from "react-native";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../../native/native-glass";
 import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
 import { useDeviceType, useNativeLayoutMetrics } from "../../../native/native-layout-metrics";
+import { useWorkspaceTabs } from "./WorkspaceTabsContext";
+import { workspaceUsesColumns } from "./workspace-tabs-state";
+
+function useWorkspacePage() {
+  const workspace = useWorkspaceTabs();
+  return (
+    workspace !== null && !workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen)
+  );
+}
 
 export function useSidebarWorkspaceTabs(): "picker" | "toolbar" | null {
   const { layout } = useAdaptiveWorkspaceLayout();
   const deviceType = useDeviceType();
   const metrics = useNativeLayoutMetrics();
-  if (Platform.OS !== "ios" || !layout.usesSplitView) return null;
+  const page = useWorkspacePage();
+  if (Platform.OS !== "ios" || !layout.usesSplitView || page) return null;
   if (deviceType === "pad") return null;
   // Portrait Duo has no system rail; keep its tabs in the sidebar like iPad.
   if (deviceType === "duo-unfolded" && (metrics?.verticalBarEdge ?? "none") === "none")
