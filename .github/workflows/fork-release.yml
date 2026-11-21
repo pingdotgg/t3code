@@ -1,0 +1,440 @@
+name: Fork release
+
+# Tags and packages this fork on demand. The version comes from the manifests
+# plus this fork's own tags and is handed to the builds as --build-version, so a
+# release never writes a version into a tracked file: syncing upstream main
+# cannot conflict here.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Two dispatches would compute the same tag and the second would fail on it.
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      tag: ${{ steps.next.outputs.tag }}
+    steps:
+      # actions/checkout enumerates submodules and dies here: the tree carries
+      # gitlinks under .repos/alchemy-effect/submodules with no root .gitmodules.
+      - name: Checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          token="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $token"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q --depth=1 --no-tags --no-recurse-submodules origin "$GITHUB_REF"
+          git checkout -q --force FETCH_HEAD
+
+      - id: next
+        name: Compute the next version
+        run: |
+          set -euo pipefail
+          base="$(jq -r .version apps/server/package.json)"
+          next=1
+          while read -r tag; do
+            n="${tag##*-fork.}"
+            if [[ "$n" =~ ^[0-9]+$ ]] && (( n >= next )); then
+              next=$((n + 1))
+            fi
+          done < <(git ls-remote --tags --refs origin "refs/tags/v${base}-fork.*" | sed 's|.*refs/tags/||')
+
+          echo "version=${base}-fork.${next}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${base}-fork.${next}" >> "$GITHUB_OUTPUT"
+
+      - name: Create the tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.next.outputs.tag }}
+          VERSION: ${{ steps.next.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Rerunning a failed build must not trip over its own release. The tag
+          # is what every later job fetches, so test it with git rather than
+          # `gh release view`, which reports success for a missing release often
+          # enough to leave the tag uncreated.
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "$TAG already exists; reusing it."
+            exit 0
+          fi
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "T3 Code $VERSION" \
+            --generate-notes
+          git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null
+
+  # Linux and macOS build on their own hosts.
+  desktop:
+    name: Desktop ${{ matrix.key }}
+    needs: tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: linux-x64
+            os: ubuntu-24.04
+            platform: linux
+            target: rpm
+            arch: x64
+          - key: mac-arm64
+            os: macos-15
+            platform: mac
+            target: dmg
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          token="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $token"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q --depth=1 --no-tags --no-recurse-submodules origin "$REF"
+          git checkout -q --force FETCH_HEAD
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      # cargo ships with the hosted images; the build's own preflight reports
+      # anything else that is missing.
+      - name: Install Linux desktop build libraries
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libsecret-1-dev pkg-config libgtk-3-0t64 libnss3 libasound2t64 libgbm1 \
+            imagemagick rpm cpio
+          # Every Electron app ships the same Chromium binaries, so rpmbuild's
+          # /usr/lib/.build-id links are identical across apps and dnf refuses to
+          # install a second one. Nothing reads those links for an app bundle.
+          sudo install -d /etc/rpm
+          echo '%_build_id_links none' | sudo tee /etc/rpm/macros >/dev/null
+
+      - name: Build the installer
+        run: |
+          node scripts/build-desktop-artifact.ts \
+            --platform "${{ matrix.platform }}" \
+            --target "${{ matrix.target }}" \
+            --arch "${{ matrix.arch }}" \
+            --build-version "${{ needs.tag.outputs.version }}" \
+            --verbose
+
+      - name: Attach the artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-upload
+          shopt -s nullglob
+          for file in release/*.rpm release/*.dmg release/*.zip release/*.blockmap release/*.yml; do
+            # builder-debug.yml is electron-builder's config dump, not a feed.
+            [[ "$file" == "release/builder-debug.yml" ]] && continue
+            cp "$file" release-upload/
+          done
+          # A prerelease version makes electron-builder name the update feed
+          # after it (fork-mac.yml), but the installed app reports the "latest"
+          # channel and would look for a file this release lacks.
+          for file in release-upload/fork*.yml; do
+            mv "$file" "release-upload/latest${file#release-upload/fork}"
+          done
+          gh release upload "$TAG" release-upload/* --clobber
+
+  # Cross-compiled on Linux the way upstream does it: a Windows host compiles
+  # node-pty from source and unpacks more native files than the packaged payload
+  # guard allows, while the staged install resolves prebuilt win32 packages.
+  desktop-win:
+    name: Desktop win-x64
+    needs: [tag, cli]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          token="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $token"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q --depth=1 --no-tags --no-recurse-submodules origin "$REF"
+          git checkout -q --force FETCH_HEAD
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      # Packing on a Linux host still compiles the Linux browser import helper.
+      - name: Install Linux build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libsecret-1-dev
+
+      - name: Install cargo-xwin
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin
+
+      - name: Build the resource monitor for Windows
+        run: |
+          set -euo pipefail
+          rustup target add x86_64-pc-windows-msvc
+          cargo xwin build --locked --release \
+            --manifest-path native/resource-monitor/Cargo.toml \
+            --target x86_64-pc-windows-msvc
+
+      # The Windows app runs the server inside WSL, so it embeds the same-arch
+      # Linux CLI archive the CLI job publishes.
+      - name: Fetch the WSL runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p wsl-runtime
+          gh release download "$TAG" --dir wsl-runtime --pattern 't3-*-linux-x64.tar.gz'
+
+      - name: Build the installer
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archives=(wsl-runtime/*.tar.gz)
+          if [[ ${#archives[@]} -ne 1 ]]; then
+            echo "Expected one linux CLI archive, found ${#archives[@]}." >&2
+            exit 1
+          fi
+          node scripts/build-desktop-artifact.ts \
+            --platform win \
+            --target nsis \
+            --arch x64 \
+            --build-version "${{ needs.tag.outputs.version }}" \
+            --wsl-runtime "${archives[0]}" \
+            --verbose
+
+      - name: Attach the artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-upload
+          shopt -s nullglob
+          for file in release/*.exe release/*.blockmap release/*.yml; do
+            [[ "$file" == "release/builder-debug.yml" ]] && continue
+            cp "$file" release-upload/
+          done
+          for file in release-upload/fork*.yml; do
+            mv "$file" "release-upload/latest${file#release-upload/fork}"
+          done
+          gh release upload "$TAG" release-upload/* --clobber
+
+  cli:
+    name: CLI ${{ matrix.key }}
+    needs: tag
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: linux-x64
+            os: ubuntu-24.04
+            platform: linux
+            arch: x64
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
+          - key: mac-arm64
+            os: macos-15
+            platform: mac
+            arch: arm64
+            rust_target: aarch64-apple-darwin
+            resource_key: mac-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          token="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $token"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q --depth=1 --no-tags --no-recurse-submodules origin "$REF"
+          git checkout -q --force FETCH_HEAD
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      # patchelf: the Linux archive ships libatomic.so.1 and points RUNPATH at it.
+      # libsecret: a native module builds against it while bundling.
+      - name: Install Linux build libraries
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config patchelf
+
+      - name: Build the resource monitor
+        run: |
+          set -euo pipefail
+          rustup target add "${{ matrix.rust_target }}"
+          cargo build --locked --release \
+            --manifest-path native/resource-monitor/Cargo.toml \
+            --target "${{ matrix.rust_target }}"
+
+      - name: Stage the resource monitor
+        run: |
+          set -euo pipefail
+          binary="t3-resource-monitor"
+          target_dir="$RUNNER_TEMP/cli-resource-monitor/${{ matrix.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/${binary}" "$target_dir/${binary}"
+
+      # t3 --version reads the aligned manifests, and the smoke test compares it
+      # with the release version. Nothing here is committed.
+      - name: Align package versions
+        run: node scripts/update-release-package-versions.ts "${{ needs.tag.outputs.version }}"
+
+      - name: Build the server bundle and the single executable
+        run: |
+          set -euo pipefail
+          vp run build:desktop:bundle
+          node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Build the archive
+        run: |
+          node scripts/build-cli-archive.ts \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --version "${{ needs.tag.outputs.version }}" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+
+      - name: Smoke-test the archive
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.tag.outputs.version }}"
+
+      - name: Attach the archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: gh release upload "$TAG" release-cli/* --clobber
+
+  # t3 update verifies an archive against SHA256SUMS in the same release, so the
+  # file is regenerated once every CLI archive is published.
+  checksums:
+    name: Checksums
+    needs: [tag, cli]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Publish SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p archives
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir archives --clobber \
+            --pattern 't3-*'
+          cd archives
+          shopt -s nullglob
+          archives=(t3-*)
+          if [[ ${#archives[@]} -eq 0 ]]; then
+            echo "No CLI archives were published." >&2
+            exit 1
+          fi
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+
+  android:
+    name: Android APK
+    needs: tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ needs.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git init -q .
+          token="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $token"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch -q --depth=1 --no-tags --no-recurse-submodules origin "$REF"
+          git checkout -q --force FETCH_HEAD
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # apps/mobile/android is generated, never tracked, and expo resolves from
+      # that package's node_modules/.bin rather than the workspace root.
+      - name: Prebuild the native project
+        working-directory: apps/mobile
+        run: vp exec expo prebuild --clean --platform android --no-install
+
+      - name: Build the release APK
+        working-directory: apps/mobile/android
+        run: ./gradlew app:assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+
+      - name: Attach the APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apks=(apps/mobile/android/app/build/outputs/apk/release/*.apk)
+          if [[ ${#apks[@]} -eq 0 ]]; then
+            echo "No release APK was produced." >&2
+            ls -R apps/mobile/android/app/build/outputs >&2 || true
+            exit 1
+          fi
+          mkdir -p release-apk
+          cp "${apks[0]}" "release-apk/T3-Code-${VERSION}-arm64-v8a.apk"
+          gh release upload "$TAG" release-apk/* --clobber

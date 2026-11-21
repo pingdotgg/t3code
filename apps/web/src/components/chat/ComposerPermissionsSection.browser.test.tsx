@@ -216,3 +216,43 @@ it("opens permissions directly from the context strip and applies a supported mo
   await userEvent.keyboard("{Escape}");
   await expect.element(trigger).toHaveFocus();
 });
+
+function PerProviderPermissions() {
+  const [mode, setMode] = useState<RuntimeMode>("workspace-write");
+  return (
+    <ComposerContextPermissions
+      environmentId={null}
+      runtimeMode={mode}
+      supportedRuntimeModes={["read-only", "workspace-write", "full-access"]}
+      providerRuntimeModes={[
+        { mode: "read-only", label: "Read only", description: "Reads only", icon: "eye" },
+        {
+          mode: "workspace-write",
+          label: "Workspace write",
+          description: "Workspace edits and confined shell",
+          icon: "shield-check",
+        },
+        {
+          mode: "full-access",
+          label: "Full access",
+          description: "No write sandbox",
+          icon: "shield-off",
+        },
+      ]}
+      onRuntimeModeChange={setMode}
+    />
+  );
+}
+
+it("renders custom per-provider permission choices when providerRuntimeModes is supplied", async () => {
+  await using screen = await render(<PerProviderPermissions />, { router: false }); // no routes involved
+  await userEvent.click(screen.getByRole("button", { name: "Permissions: Workspace write" }));
+  await expect.element(page.getByRole("menuitemradio", { name: "Read only" })).toBeInTheDocument();
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "Supervised" }))
+    .not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("menuitemradio", { name: "Read only" }));
+  await expect
+    .element(screen.getByRole("button", { name: "Permissions: Read only" }))
+    .toBeVisible();
+});

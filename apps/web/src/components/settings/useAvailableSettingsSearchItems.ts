@@ -1,12 +1,17 @@
 import { useMessages } from "gt-react";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
+import { hasEnabledSparrowProvider } from "@t3tools/shared/serverSettings";
 
 import { usePrimaryCloudLinkState } from "~/cloud/cloudLinkState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
-import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
+import {
+  useEnvironmentProviders,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "~/state/environments";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
@@ -19,6 +24,7 @@ import {
 
 export function useAvailableSettingsSearchItems() {
   const { environments } = useEnvironments();
+  const providersByEnvironment = useEnvironmentProviders();
   // Explicit booleans keep flags out of the filter cache so environment updates do not rebuild the list.
   const hasEnvironment =
     environments.some((environment) => environment.serverConfig !== null) === true;
@@ -41,6 +47,15 @@ export function useAvailableSettingsSearchItems() {
       (environment) =>
         environment.serverConfig !== null &&
         environment.serverConfig.managedPolicy?.limits?.providers?.allowedDrivers === undefined,
+    ) === true;
+  const hasSparrowProvider =
+    environments.some(
+      (environment) =>
+        environment.serverConfig !== null &&
+        hasEnabledSparrowProvider({
+          settings: environment.serverConfig.settings,
+          providers: providersByEnvironment.get(environment.environmentId),
+        }),
     ) === true;
   const hasThreadAutoSettlement =
     getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
@@ -74,6 +89,7 @@ export function useAvailableSettingsSearchItems() {
     hasPeerLinkHost,
     hasFastWorktreeCheckoutEnvironment,
     hasTextGeneratorsEnvironment,
+    hasSparrowProvider,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,
   });
 }

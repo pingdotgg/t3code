@@ -1,5 +1,7 @@
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
+import * as Schema from "effect/Schema";
 import { SettingsRow } from "./components/SettingsRow";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
@@ -9,17 +11,20 @@ import {
   type ResponseStreamingMode,
   type ServerSettings,
   type ServerSettingsPatch,
+  SparrowRuntimeMode,
   type ThreadEnvMode,
   type WorktreeSubmodules,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
+import { hasEnabledSparrowProvider } from "@t3tools/shared/serverSettings";
 import { useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import {
   RUNTIME_MODE_CHOICES,
+  runtimeModeChoicesForSupportedModes,
   withManagedRuntimeModeLimits,
 } from "../threads/thread-settings-options";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -43,8 +48,11 @@ import {
   type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { environmentPresentations } from "../../state/presentation";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
+
+const isSparrowRuntimeMode = Schema.is(SparrowRuntimeMode);
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
 
@@ -59,6 +67,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
   threads: [
     "defaultThreadEnvMode",
     "defaultRuntimeMode",
+    "sparrowDefaultRuntimeMode",
     "responseStreamingMode",
     "enableAgentBrowserAccess",
     "sidebarAutoSettleOnMerge",
@@ -190,6 +199,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const selectedProject = projectGroups.find((group) => group.key === selectedProjectKey);
   const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
   const projectSelected = selectedProjectKey !== null;
@@ -285,6 +295,18 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
     targets.map((target) => target.environment.serverConfig.managedPolicy),
     m,
   );
+  const sparrowEnabled = targets.some((target) =>
+    hasEnabledSparrowProvider({
+      settings: target.settings,
+      providers: providersByEnvironment.get(target.environment.environmentId),
+      projectId: target.projectId,
+    }),
+  );
+  const sparrowRuntimeModeChoices = withManagedRuntimeModeLimits(
+    runtimeModeChoicesForSupportedModes(SparrowRuntimeMode.literals),
+    targets.map((target) => target.environment.serverConfig.managedPolicy),
+    m,
+  );
   const disabledFor = (key: string) =>
     disabled ||
     managed(key) !== undefined ||
@@ -373,6 +395,36 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                   ))}
                 </SettingsSection>
+                {sparrowEnabled ? (
+                  <SettingsSection
+                    title={gt("Sparrow permissions")}
+                    footer={managed("sparrowDefaultRuntimeMode")}
+                    trailing={
+                      pendingWrites === 0 && uniform("sparrowDefaultRuntimeMode") === null ? (
+                        <MixedValuesLabel projectSelected={projectSelected} />
+                      ) : null
+                    }
+                  >
+                    {sparrowRuntimeModeChoices.map((choice, index) => (
+                      <SettingsChoiceRow
+                        key={choice.mode}
+                        label={m(choice.label)}
+                        description={choice.disabledReason ?? m(choice.description)}
+                        selected={uniform("sparrowDefaultRuntimeMode") === choice.mode}
+                        separated={index > 0}
+                        disabled={
+                          disabledFor("sparrowDefaultRuntimeMode") ||
+                          choice.disabledReason !== undefined
+                        }
+                        onPress={() => {
+                          if (isSparrowRuntimeMode(choice.mode)) {
+                            write({ sparrowDefaultRuntimeMode: choice.mode });
+                          }
+                        }}
+                      />
+                    ))}
+                  </SettingsSection>
+                ) : null}
                 <SettingsSection
                   title={gt("Response streaming")}
                   footer={managed("responseStreamingMode")}

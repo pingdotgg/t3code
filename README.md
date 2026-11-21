@@ -1,108 +1,68 @@
-<p align="center">
-  <a href="https://t3.codes">
-    <img src="./assets/prod/t3-black-web-icon-192x192.png" width="80" height="80" alt="T3 Code logo" />
-  </a>
-</p>
+# T3 Code (personal fork)
 
-<h1 align="center">T3 Code</h1>
+My own fork of [T3 Code](https://github.com/pingdotgg/t3code), a minimal GUI for coding
+agents. It exists so I can carry a few local modifications and build my own installers.
+Nothing here is meant for anyone else.
 
-<p align="center">The open-source control plane for coding agents.</p>
+- Upstream project: <https://github.com/pingdotgg/t3code>
+- Docs: [docs/README.md](docs/README.md) — still the upstream docs
+- License: [MIT](LICENSE)
 
-<p align="center">
-  <a href="https://t3.codes/download"><strong>Download</strong></a> ·
-  <a href="https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824">iOS</a> ·
-  <a href="https://play.google.com/store/apps/details?id=com.t3tools.t3code">Android</a> ·
-  <a href="https://app.t3.codes">Web</a> ·
-  <a href="./docs/README.md">Docs</a> ·
-  <a href="https://discord.gg/jn4EGJjrvv">Discord</a>
-</p>
+## What differs from upstream
 
-<p align="center">
-  <a href="https://t3.codes">
-    <img src="./.github/readme/hero.webp" width="100%" alt="T3 Code on desktop with a finished Claude thread, next to the phone app asking to approve a command from Codex" />
-  </a>
-</p>
+This fork keeps no CI. Every upstream workflow is deleted, and
+`.github/workflows/fork-release.yml` is the only one that runs — upstream's are
+disabled, so a sync cannot start one. On dispatch it reads the version from the
+manifests, tags `v<version>-fork.<n>`, and attaches to a GitHub Release:
 
-T3 Code runs the coding agents on your machine and gives them one fast interface. Start a thread at your desk, then approve the next step from your phone.
+- desktop installers for linux x64 (rpm), windows x64 (nsis) and macOS arm64 (dmg)
+- the `t3` CLI archives for linux x64 and macOS arm64, plus `SHA256SUMS` for `t3 update`
+- an Android APK for arm64-v8a
 
-It works with Claude Code, Codex, Cursor, OpenCode, Grok Build, Antigravity, Kiro, Pi, Muse Code, fx, and any [ACP](./docs/user/providers-acp.md) agent. If an agent is set up on your computer, T3 Code can control it.
+Nothing runs on push, and no release ever writes a version number into a tracked file.
 
-## What you get
+## Branches
 
-- **Your subscriptions.** T3 Code does not resell tokens. It drives the agents you are already signed in to.
-- **Every agent in one place.** Change models in the middle of a thread. Let Claude hand a task to Codex.
-- **Desktop, web, and phone.** One server, and every client shows the same threads. There are apps for iOS and Android.
-- **Remote ready.** Run agents on any machine. Connect over your local network, Tailscale, or [T3 Connect](./docs/user/remote-access.md).
-- **Git built in.** Each thread can work in its own worktree. Review the diff, then commit, push, and open a pull request with one button.
-- **Fast.** Performance is a feature here. We measure it, and we treat a dropped frame as a bug.
-- **Open.** MIT licensed. If you don't like something, fork it.
+- `main` mirrors upstream `main` and carries nothing of ours.
+- `customized` (default) is where this fork lives, and where releases are cut from.
 
-## Install
-
-### Desktop app
-
-[Download T3 Code](https://t3.codes/download) for macOS, Windows, or Linux. You can also use a package manager:
-
-| Platform       | Command                                                              |
-| -------------- | -------------------------------------------------------------------- |
-| macOS          | `brew install --cask t3-code`                                        |
-| Windows        | `winget install T3Tools.T3Code` or `scoop install extras/t3code`     |
-| Arch Linux     | `yay -S t3code-bin`                                                  |
-| Nix            | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code`         |
-| Debian, Ubuntu | `.deb` from [Releases](https://github.com/pingdotgg/t3code/releases) |
-
-### Command line
-
-This installs the `t3` command. Run `t3` to start the server and open the web app.
+## Sync and release
 
 ```bash
-curl -fsSL https://t3.codes/install.sh | sh
+git switch customized
+git fetch upstream main
+git merge upstream/main
 ```
 
-On Windows, in PowerShell:
+A scheduled task does this every night at 06:00 and finishes the merge in its own
+thread, then dispatches **Fork release**. To publish one yourself, run **Fork
+release** in the Actions tab.
+[docs/operations/fork-changes.md](docs/operations/fork-changes.md) is what a merge has
+to keep, and [AGENTS.md](AGENTS.md) explains why the version is never committed here.
 
-```powershell
-irm https://t3.codes/install.ps1 | iex
+## Install on Fedora
+
+```bash
+sudo dnf install https://github.com/657kbps/t3code/releases/download/v0.1.11-fork.2/T3-Code-0.1.11-fork.2-x86_64.rpm
 ```
 
-To try it once without an install, run `npx t3@latest`.
+There is no package repository: GitHub refuses any file over 100 MB, and the rpm is
+163 MB.
 
-### Phone
+## Install the CLI
 
-Get the app from the [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or [Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code). Then follow [remote access](./docs/user/remote-access.md) to connect it to your computer.
+Each release carries a self-contained `t3` (no Node needed). `t3 install` only works
+from the runtime layout, so extract there first and let it write its own launcher:
 
-### Sign in to an agent
+```bash
+version=0.1.11-fork.3
+mkdir -p ~/.t3/runtime/versions
+curl -fsSL -o /tmp/t3.tar.gz \
+  "https://github.com/657kbps/t3code/releases/download/v$version/t3-$version-linux-x64.tar.gz"
+tar -xzf /tmp/t3.tar.gz -C ~/.t3/runtime/versions
+mv ~/.t3/runtime/versions/t3-$version-linux-x64 ~/.t3/runtime/versions/$version
+~/.t3/runtime/versions/$version/t3 install
+```
 
-T3 Code needs one agent that is installed and signed in. For example, install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`, or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`.
-
-[Provider setup](./docs/user/install.md#providers) has the steps for each agent. [Install T3 Code](./docs/user/install.md) covers nightly builds, AppImage, WSL, and NixOS.
-
-## "Wait, what are you selling me?"
-
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
-
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the tool that you want.
-
-## Documentation
-
-- [Install and first run](./docs/user/install.md)
-- [Remote access from a phone or another machine](./docs/user/remote-access.md)
-- [Permission modes](./docs/user/permission-modes.md)
-- [Source control](./docs/user/source-control.md)
-- [Connect outside agents over MCP](./docs/user/outside-agents.md)
-- [FAQ](./docs/user/faq.md)
-
-[All docs](./docs/README.md) has the full list.
-
-## Contributing
-
-We have limited review capacity. Small, focused fixes are the most likely to be merged. Features need an approved discussion first.
-
-- Read [CONTRIBUTING.md](./CONTRIBUTING.md) before you report a bug or open a pull request.
-- Put feature requests in [Ideas](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
-- Build from source with the [development runbook](./docs/operations/development.md#first-checkout). The [architecture overview](./docs/internals/overview.md) explains how it works.
-- Get help in [Discord](https://discord.gg/jn4EGJjrvv).
-
-## License
-
-[MIT](./LICENSE)
+On macOS arm64 the archive is `t3-$version-darwin-arm64.tar.gz`. That puts `t3` in
+`~/.local/bin`, and `t3 update` then moves you to the next release of this fork.

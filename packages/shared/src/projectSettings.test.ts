@@ -14,7 +14,7 @@ import {
   resolveSendEnvMode,
   resolveWorktreeCleanup,
 } from "./projectSettings.ts";
-import { applyServerSettingsPatch } from "./serverSettings.ts";
+import { applyServerSettingsPatch, hasEnabledSparrowProvider } from "./serverSettings.ts";
 
 const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
@@ -68,6 +68,45 @@ describe("resolveProjectSettings", () => {
     expect(resolved.sources.sidebarAutoSettleAfterDays).toBe("project");
     expect(resolved.sources.defaultThreadEnvMode).toBe("environment");
     expect(resolveProjectSettings(settings, otherProjectId).settings.defaultAutoPull).toBe(true);
+  });
+
+  it("defaults Sparrow permissions to workspace-write and honours project overrides and provider visibility", () => {
+    expect(DEFAULT_SERVER_SETTINGS.sparrowDefaultRuntimeMode).toBe("workspace-write");
+    const patched = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: {
+        [projectId]: { sparrowDefaultRuntimeMode: "read-only" },
+      },
+    });
+    expect(resolveProjectSettings(patched, projectId).settings.sparrowDefaultRuntimeMode).toBe(
+      "read-only",
+    );
+    expect(resolveProjectSettings(patched, otherProjectId).settings.sparrowDefaultRuntimeMode).toBe(
+      "workspace-write",
+    );
+
+    const disabledProviders = [
+      {
+        instanceId: ProviderInstanceId.make("sparrow"),
+        driver: ProviderDriverKind.make("sparrow"),
+      },
+    ];
+    expect(
+      hasEnabledSparrowProvider({
+        settings: DEFAULT_SERVER_SETTINGS,
+        providers: disabledProviders,
+      }),
+    ).toBe(false);
+    const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      providerInstances: {
+        [ProviderInstanceId.make("sparrow")]: {
+          driver: ProviderDriverKind.make("sparrow"),
+          enabled: true,
+        },
+      },
+    });
+    expect(hasEnabledSparrowProvider({ settings: enabled, providers: disabledProviders })).toBe(
+      true,
+    );
   });
 
   it("honours the aggregate's own fields only until the server has folded them", () => {

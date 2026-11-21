@@ -4,6 +4,29 @@ T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provid
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
 
+## This checkout is a fork
+
+Two branches, and this one is the fork's own:
+
+- `main` mirrors upstream `main` exactly. It never carries a commit of ours, so syncing it cannot conflict.
+- `customized` is the default branch and holds everything this fork changes. Releases come from here.
+
+`customized` keeps upstream's workflow files so a sync merges them instead of reporting a modify/delete conflict for each one. They are disabled through the API; `.github/workflows/fork-release.yml` is the only one enabled. Do not add a workflow that runs on push.
+
+GitHub runs a push's workflows from the pushed tree, not from the default branch, so the upstream workflows are disabled through the API, which sticks to the workflow id across upstream edits. A workflow upstream newly adds arrives active; disable it after the sync. [docs/operations/fork-changes.md](docs/operations/fork-changes.md) records how a mirror push covers both.
+
+Sync by merging `upstream/main` into `customized`; there is no script. [docs/operations/fork-changes.md](docs/operations/fork-changes.md) is the inventory a merge keeps: what this fork adds, where that meets upstream, what is deleted on purpose, and how `main` is mirrored. A conflict that page does not cover is one a human decides. A scheduled task does this nightly at 06:00 in this checkout, verifies it with `vp run typecheck`, pushes, and dispatches Fork release.
+
+`fork-release.yml` builds three desktop installers (linux x64 rpm, win x64 nsis, mac arm64 dmg), the `t3` CLI archives for linux x64 and macOS arm64, an Android arm64-v8a APK, and regenerates `SHA256SUMS` for `t3 update`.
+
+The rpm is installed straight from its release URL, never from a repository: GitHub refuses any file over 100 MB, so nothing hosted on GitHub can carry the 163 MB rpm a `repodata` directory would need to point at.
+
+The Windows desktop build is cross-compiled on Linux, as upstream does it: a Windows host compiles native modules from source and unpacks 91 files into the packaged payload, over the 80 the build's own guard allows, while the staged install resolves prebuilt win32 packages on Linux. That job therefore runs `cargo xwin` for the resource monitor, sets `T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR`, and embeds the Linux CLI archive as its WSL runtime — so it runs after the CLI job.
+
+The Windows and Linux installers are updated through package managers, not `electron-updater`: without an AppImage there is no in-app update on Linux, and the Windows build carries no WSL runtime.
+
+Never write a version number into a tracked file. Upstream bumps `apps/{server,desktop,web}/package.json` and `packages/contracts/package.json` on main at release time, so an edit here conflicts on every sync. `fork-release.yml` instead derives `X.Y.Z-fork.N` from the manifests plus this fork's own tags and hands it to the build as `--build-version`, which the packager applies and restores around the build. Prefer a number to a commit hash: semver compares a prerelease part as text, so a hash sorts against time and breaks electron-updater.
+
 ## What makes T3 Code special?
 
 We have over 500,000 users who love T3 Code. It's important we maintain the things they love as we continue to iterate on the product. Here's a brief list of the things we can never compromise on.

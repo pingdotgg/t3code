@@ -38,6 +38,7 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
   const permissionsChipRef = useRef<HTMLButtonElement>(null);
   const runtimeModeOption =
     props.runtimeModeOptions.find((option) => option.mode === props.runtimeMode) ??
+    props.runtimeModeOptions[0] ??
     resolveRuntimeModeOption("approval-required", messages);
   const RuntimeModeIcon = runtimeModeOption.icon;
   // The chip opens the same Permissions toggle used in the model picker and the overflow menu.
@@ -116,6 +117,7 @@ export function ComposerPermissionsSection(props: {
   const shownMode = previewMode ?? props.runtimeMode;
   const shown =
     props.runtimeModeOptions.find((option) => option.mode === shownMode) ??
+    props.runtimeModeOptions[0] ??
     resolveRuntimeModeOption("approval-required", messages);
   const descriptionId = useId();
   return (

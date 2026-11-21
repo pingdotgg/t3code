@@ -207,7 +207,7 @@ describe("remoteFallbackEditors", () => {
     expect(remoteFallbackEditors(identity)).toEqual([]);
   });
 
-  it("keeps the VS Code fallback for remote links on a Mac", () => {
+  it("keeps the Zed fallback for remote links on a Mac", () => {
     expect(
       remoteFallbackEditors({
         userAgent:
@@ -215,7 +215,7 @@ describe("remoteFallbackEditors", () => {
         platform: "MacIntel",
         maxTouchPoints: 0,
       }),
-    ).toEqual(["vscode"]);
+    ).toEqual(["zed"]);
   });
 });
 

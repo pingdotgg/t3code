@@ -718,3 +718,25 @@ export function modelPreferencesMigrationPatch(
         },
       };
 }
+
+/** True when any built-in or custom Sparrow instance is enabled for `projectId` (or the machine). */
+export function hasEnabledSparrowProvider(input: {
+  readonly settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">;
+  readonly providers?: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver">> | undefined;
+  readonly projectId?: ProjectId | null | undefined;
+}): boolean {
+  const projectId = input.projectId ?? null;
+  const candidateIds = new Set<ProviderInstanceId>();
+  for (const provider of input.providers ?? []) {
+    if (provider.driver === "sparrow") candidateIds.add(provider.instanceId);
+  }
+  for (const [instanceId, config] of Object.entries(input.settings.providerInstances)) {
+    if (config.driver === "sparrow") candidateIds.add(ProviderInstanceId.make(instanceId));
+  }
+  for (const instanceId of candidateIds) {
+    if (resolveProjectProviderInstanceEnabled(input.settings, projectId, instanceId)) {
+      return true;
+    }
+  }
+  return false;
+}

@@ -171,8 +171,10 @@ export function managedPolicyDeniedMessage(organization: string, capability: str
 }
 
 const RUNTIME_MODE_LABELS: Record<RuntimeMode, string> = {
+  "read-only": "Read only",
   "approval-required": "Supervised",
   "auto-accept-edits": "Auto-accept edits",
+  "workspace-write": "Workspace write",
   auto: "Auto",
   "full-access": "Full access",
 };

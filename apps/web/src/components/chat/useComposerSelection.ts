@@ -6,10 +6,12 @@ import type { ComposerThreadTarget, DraftSessionState } from "../../composerDraf
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
 import {
+  defaultRuntimeModeForProvider,
   type EnvironmentId,
   type ModelSelection,
   ProviderInstanceId,
   type ServerProvider,
+  type SparrowRuntimeMode,
   type ThreadId,
   RuntimeMode,
 } from "@t3tools/contracts";
@@ -41,7 +43,11 @@ interface ComposerSelectionInput {
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly activeRuntime: ReturnType<typeof deriveThreadStructureRuntime>;
   readonly activeProjectSettings: {
-    readonly settings: { readonly newWorktreesStartFromOrigin: boolean };
+    readonly settings: {
+      readonly newWorktreesStartFromOrigin: boolean;
+      readonly defaultRuntimeMode: RuntimeMode;
+      readonly sparrowDefaultRuntimeMode: SparrowRuntimeMode;
+    };
   };
   readonly settings: UnifiedSettings;
   readonly providerStatuses: ReadonlyArray<ServerProvider>;
@@ -234,6 +240,30 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       replaceOptions: true,
     });
     setStickyComposerModelSelection(nextModelSelection);
+    if (!hasStartedSession && instanceId !== shownInstanceId) {
+      const prevDriver = providerStatuses.find(
+        (snapshot) => snapshot.instanceId === shownInstanceId,
+      )?.driver;
+      const nextDriver = entry?.driver;
+      if ((prevDriver === "sparrow") !== (nextDriver === "sparrow")) {
+        const prevDefault = defaultRuntimeModeForProvider({
+          driverKind: prevDriver,
+          defaultRuntimeMode: activeProjectSettings.settings.defaultRuntimeMode,
+          sparrowDefaultRuntimeMode: activeProjectSettings.settings.sparrowDefaultRuntimeMode,
+        });
+        if (runtimeMode === prevDefault) {
+          const nextDefault = defaultRuntimeModeForProvider({
+            driverKind: nextDriver,
+            defaultRuntimeMode: activeProjectSettings.settings.defaultRuntimeMode,
+            sparrowDefaultRuntimeMode: activeProjectSettings.settings.sparrowDefaultRuntimeMode,
+          });
+          setComposerDraftRuntimeMode(composerDraftTarget, nextDefault);
+          if (isLocalDraftThread) {
+            setDraftThreadContext(composerDraftTarget, { runtimeMode: nextDefault });
+          }
+        }
+      }
+    }
     if (!isLocalDraftThread) applyThreadModelPick(threadRef);
     if (options?.focusComposer !== false) scheduleComposerFocus();
   };

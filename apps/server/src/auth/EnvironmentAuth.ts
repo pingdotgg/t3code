@@ -23,6 +23,7 @@ import {
   type AuthWebSocketTicketUse,
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
+  mcpClientAccessFromRuntimeMode,
   mcpClientScopes,
 } from "@t3tools/contracts";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
@@ -1622,7 +1623,7 @@ export const make = Effect.gen(function* () {
             sessionId: session.sessionId,
             label: session.client.label ?? "MCP client",
             access: session.scopes.includes(AuthOrchestrationOperateScope)
-              ? (session.runtimeModeCeiling ?? "approval-required")
+              ? mcpClientAccessFromRuntimeMode(session.runtimeModeCeiling ?? "approval-required")
               : "read-only",
             peerLink: session.peerLink === true,
           } satisfies McpClientSession;

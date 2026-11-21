@@ -1,4 +1,5 @@
 import {
+  clampSparrowRuntimeMode,
   DEFAULT_SERVER_SETTINGS,
   isRuntimeModeAbove,
   type ManagedPolicySetting,
@@ -219,10 +220,16 @@ const clampDefaultRuntimeModes = (
 ): ServerSettings => {
   const projectsAbove = Object.entries(settings.projectSettingsOverrides).filter(
     ([, overrides]) =>
-      overrides.defaultRuntimeMode !== undefined &&
-      isRuntimeModeAbove(overrides.defaultRuntimeMode, ceiling),
+      (overrides.defaultRuntimeMode !== undefined &&
+        isRuntimeModeAbove(overrides.defaultRuntimeMode, ceiling)) ||
+      (overrides.sparrowDefaultRuntimeMode !== undefined &&
+        isRuntimeModeAbove(overrides.sparrowDefaultRuntimeMode, ceiling)),
   );
-  if (!isRuntimeModeAbove(settings.defaultRuntimeMode, ceiling) && projectsAbove.length === 0) {
+  if (
+    !isRuntimeModeAbove(settings.defaultRuntimeMode, ceiling) &&
+    !isRuntimeModeAbove(settings.sparrowDefaultRuntimeMode, ceiling) &&
+    projectsAbove.length === 0
+  ) {
     return settings;
   }
   return {
@@ -230,12 +237,28 @@ const clampDefaultRuntimeModes = (
     defaultRuntimeMode: isRuntimeModeAbove(settings.defaultRuntimeMode, ceiling)
       ? ceiling
       : settings.defaultRuntimeMode,
+    sparrowDefaultRuntimeMode: clampSparrowRuntimeMode(settings.sparrowDefaultRuntimeMode, ceiling),
     projectSettingsOverrides: {
       ...settings.projectSettingsOverrides,
       ...Object.fromEntries(
         projectsAbove.map(([projectId, overrides]) => [
           projectId,
-          { ...overrides, defaultRuntimeMode: ceiling },
+          {
+            ...overrides,
+            ...(overrides.defaultRuntimeMode !== undefined &&
+            isRuntimeModeAbove(overrides.defaultRuntimeMode, ceiling)
+              ? { defaultRuntimeMode: ceiling }
+              : {}),
+            ...(overrides.sparrowDefaultRuntimeMode !== undefined &&
+            isRuntimeModeAbove(overrides.sparrowDefaultRuntimeMode, ceiling)
+              ? {
+                  sparrowDefaultRuntimeMode: clampSparrowRuntimeMode(
+                    overrides.sparrowDefaultRuntimeMode,
+                    ceiling,
+                  ),
+                }
+              : {}),
+          },
         ]),
       ),
     },
@@ -370,6 +393,15 @@ export function makeManagedSettings(
     return {
       _tag: "Invalid",
       reason: `"defaultRuntimeMode" is above "limits.maxRuntimeMode"`,
+    };
+  }
+  if (
+    all.some((entry) => entry.path === "sparrowDefaultRuntimeMode") &&
+    isRuntimeModeAbove(decoded.value.sparrowDefaultRuntimeMode, maxRuntimeMode)
+  ) {
+    return {
+      _tag: "Invalid",
+      reason: `"sparrowDefaultRuntimeMode" is above "limits.maxRuntimeMode"`,
     };
   }
 

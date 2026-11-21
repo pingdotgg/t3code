@@ -73,7 +73,7 @@ interface AcpPolicyOperation {
   readonly locations: ReadonlyArray<{ readonly path: string }> | null | undefined;
 }
 
-function acpPolicyRequiresApproval(runtimePolicy: AcpRuntimePolicy): boolean {
+export function acpPolicyRequiresApproval(runtimePolicy: AcpRuntimePolicy): boolean {
   return runtimePolicy.approvalPolicy === undefined
     ? runtimePolicy.runtimeMode === "approval-required"
     : runtimePolicy.approvalPolicy !== "never";
@@ -97,47 +97,55 @@ function acpReadDisposition(runtimePolicy: AcpRuntimePolicy): "allow" | "deny" {
   }
 }
 
-function acpWorkspaceWriteAllowsMutation(
-  runtimePolicy: AcpRuntimePolicy,
-  sandboxPolicy: Record<string, unknown>,
-  locations: AcpPolicyOperation["locations"],
-): boolean {
+export function acpLocationsWithinRoots(input: {
+  readonly cwd: string | null;
+  readonly roots: ReadonlyArray<unknown>;
+  readonly locations: AcpPolicyOperation["locations"];
+}): boolean {
   const cwd =
-    typeof runtimePolicy.cwd === "string" && runtimePolicy.cwd.trim().length > 0
-      ? (resolveAcpPermissionPath(runtimePolicy.cwd, process.cwd()) ?? null)
+    typeof input.cwd === "string" && input.cwd.trim().length > 0
+      ? (resolveAcpPermissionPath(input.cwd, process.cwd()) ?? null)
       : null;
-  const roots: Array<string> = [];
-  if (cwd !== null) {
-    const canonicalCwd = acpCanonicalPathForContainment(cwd);
-    if (canonicalCwd !== undefined) roots.push(canonicalCwd);
+  const canonicalRoots: Array<string> = [];
+  for (const rawRoot of input.roots) {
+    if (typeof rawRoot !== "string") continue;
+    const resolved = resolveAcpPermissionPath(rawRoot, cwd);
+    if (resolved === undefined) continue;
+    const canonicalRoot = acpCanonicalPathForContainment(resolved);
+    if (canonicalRoot !== undefined) canonicalRoots.push(canonicalRoot);
   }
-  const writableRoots = sandboxPolicy.writableRoots;
-  if (Array.isArray(writableRoots)) {
-    for (const writableRoot of writableRoots) {
-      if (typeof writableRoot !== "string") continue;
-      const resolved = resolveAcpPermissionPath(writableRoot, cwd);
-      if (resolved === undefined) continue;
-      const canonicalRoot = acpCanonicalPathForContainment(resolved);
-      if (canonicalRoot !== undefined) roots.push(canonicalRoot);
-    }
-  }
-  if (roots.length === 0) return false;
+  if (canonicalRoots.length === 0) return false;
 
-  if (locations === undefined || locations === null || locations.length === 0) {
+  if (input.locations === undefined || input.locations === null || input.locations.length === 0) {
     return false;
   }
-  for (const location of locations) {
+  for (const location of input.locations) {
     const resolved = resolveAcpPermissionPath(location.path, cwd);
     const canonicalPath =
       resolved === undefined ? undefined : acpCanonicalPathForContainment(resolved);
     if (
       canonicalPath === undefined ||
-      !roots.some((root) => acpPathIsWithinRoot(canonicalPath, root))
+      !canonicalRoots.some((root) => acpPathIsWithinRoot(canonicalPath, root))
     ) {
       return false;
     }
   }
   return true;
+}
+
+function acpWorkspaceWriteAllowsMutation(
+  runtimePolicy: AcpRuntimePolicy,
+  sandboxPolicy: Record<string, unknown>,
+  locations: AcpPolicyOperation["locations"],
+): boolean {
+  return acpLocationsWithinRoots({
+    cwd: runtimePolicy.cwd,
+    roots: [
+      ...(runtimePolicy.cwd === null ? [] : [runtimePolicy.cwd]),
+      ...(Array.isArray(sandboxPolicy.writableRoots) ? sandboxPolicy.writableRoots : []),
+    ],
+    locations,
+  });
 }
 
 function acpOperationDisposition(
@@ -171,6 +179,7 @@ function acpOperationDisposition(
     case "externalSandbox":
       return "allow";
     case undefined:
+      if (runtimePolicy.runtimeMode === "read-only") return "deny";
       if (runtimePolicy.runtimeMode === "approval-required") return "deny";
       if (
         runtimePolicy.runtimeMode === "auto-accept-edits" &&

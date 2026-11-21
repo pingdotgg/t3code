@@ -16,6 +16,7 @@ import type {
 import {
   isManagedDriverAllowed,
   isProviderDriverKind,
+  PROVIDER_DISPLAY_NAMES,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import {
@@ -45,6 +46,7 @@ export type ModelOption = {
   readonly providerLabel: string;
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
+  readonly runtimeModes?: T3ServerConfig["providers"][number]["runtimeModes"];
   readonly providerIconUrl?: string | undefined;
   readonly providerBadge?: {
     readonly displayName: string;
@@ -84,6 +86,9 @@ function providerDisplayLabel(provider: {
   if (provider.driver === "codex") return "Codex";
   if (provider.driver === "claudeAgent") return "Claude";
   if (provider.driver === "pi") return "Pi";
+  if (isProviderDriverKind(provider.driver)) {
+    return PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.instanceId;
+  }
   return provider.instanceId;
 }
 
@@ -425,6 +430,7 @@ export function buildModelOptions(
         ...(provider.supportedRuntimeModes === undefined
           ? {}
           : { supportedRuntimeModes: provider.supportedRuntimeModes }),
+        ...(provider.runtimeModes === undefined ? {} : { runtimeModes: provider.runtimeModes }),
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isHidden: !model.isCustom && hiddenModels.has(model.slug),
         canHide: !model.isCustom,

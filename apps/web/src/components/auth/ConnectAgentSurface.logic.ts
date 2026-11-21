@@ -3,6 +3,7 @@ import {
   type AuthMcpApprovalDetails,
   type AuthMcpClientAccess,
   isRuntimeModeAbove,
+  mcpClientAccessFromRuntimeMode,
   parseMcpApprovalCode,
 } from "@t3tools/contracts";
 import { isLoopbackHost } from "@t3tools/shared/preview";
@@ -20,7 +21,7 @@ export function resolveMcpAccess(
   return access !== "read-only" &&
     ceiling !== undefined &&
     isRuntimeModeAbove(access, ceiling.maxRuntimeMode)
-    ? ceiling.maxRuntimeMode
+    ? mcpClientAccessFromRuntimeMode(ceiling.maxRuntimeMode)
     : access;
 }
 

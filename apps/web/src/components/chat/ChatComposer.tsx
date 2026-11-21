@@ -928,19 +928,35 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Called before the derivation below: a hook between it and its uses stops React Compiler
   // from caching the mode options, and the footer then re-renders on every keystroke.
   const managedPolicy = useManagedPolicy(environmentId);
+  const selectedProviderRuntimeModes = selectedProviderEntry?.snapshot.runtimeModes;
   const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
     resolveCompatibleRuntimeMode(
       runtimeMode,
       selectedProviderEntry?.snapshot.supportedRuntimeModes,
+      selectedProviderRuntimeModes,
     );
+  const compatibleDefaultRuntimeMode =
+    props.defaultRuntimeMode === undefined
+      ? undefined
+      : resolveCompatibleRuntimeMode(
+          props.defaultRuntimeMode,
+          selectedProviderEntry?.snapshot.supportedRuntimeModes,
+          selectedProviderRuntimeModes,
+        ).mode;
   // Modes above an administrator's ceiling stay listed, disabled with the reason.
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
     compatibleRuntimeModes,
     managedPolicy,
     m,
+    selectedProviderRuntimeModes,
   );
   // A thread or draft already above the ceiling would be refused; offer the broadest mode left.
-  const runtimeModeCeilingDenial = runtimeModeDenial(managedPolicy, compatibleRuntimeMode, m);
+  const runtimeModeCeilingDenial = runtimeModeDenial(
+    managedPolicy,
+    compatibleRuntimeMode,
+    m,
+    selectedProviderRuntimeModes,
+  );
   const runtimeModeCeilingFallback =
     runtimeModeCeilingDenial === undefined
       ? undefined
@@ -2518,7 +2534,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptUltrathink={promptUltrathink}
       onPromptEdit={editPromptFromTraitsStable}
       compatibleRuntimeMode={compatibleRuntimeMode}
-      defaultRuntimeMode={props.defaultRuntimeMode}
+      defaultRuntimeMode={compatibleDefaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
       handleRuntimeModeChange={handleRuntimeModeChange}
       composerControlsCollapsed={composerControlsCollapsed}
@@ -2622,7 +2638,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     >
                       <T>
                         Switch to{" "}
-                        <Var>{m(runtimeModeConfig[runtimeModeCeilingFallback].label)}</Var>
+                        <Var>
+                          {compatibleRuntimeModeOptions.find(
+                            (option) => option.mode === runtimeModeCeilingFallback,
+                          )?.label ?? m(runtimeModeConfig[runtimeModeCeilingFallback].label)}
+                        </Var>
                       </T>
                     </Button>
                   ),
