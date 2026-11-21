@@ -256,9 +256,8 @@ function hasCellText(cell: XmlNode): boolean {
 function* table(node: XmlNode): Generator<TextPart, void> {
   let rowCount = 0;
   for (const row of all(node, ["tr", "table-row"])) {
-    const cells = children(row).filter((cell) =>
-      ["tc", "table-cell", "covered-table-cell", "td", "th"].includes(cell.name),
-    );
+    // Word nests a cell inside w:sdt when a content control wraps the whole cell.
+    const cells = [...all(row, ["tc", "table-cell", "covered-table-cell", "td", "th"])];
     // ODS writers pad sheets with repeated empty rows and trailing cells.
     while (cells.length && !hasCellText(cells.at(-1)!)) cells.pop();
     if (!cells.length) continue;
