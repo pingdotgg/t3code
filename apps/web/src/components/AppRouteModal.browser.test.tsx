@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { assert, describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import "../index.css";
 import { render } from "../../test/render";
 import { useCommitOnBlur } from "../hooks/useCommitOnBlur";
 import { AppRouteModal } from "./AppRouteModal";
@@ -66,5 +67,40 @@ describe("AppRouteModal", () => {
     await userEvent.keyboard("{Escape}");
 
     await expect.element(settings).toHaveAttribute("data-open");
+  });
+
+  it("keeps the title bar above the popup draggable at desktop width", async () => {
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    await page.viewport(1280, 800);
+    await using _viewport = {
+      [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+    };
+    // A desktop window's native caption strip, as the window controls overlay reports it.
+    Object.defineProperty(navigator, "windowControlsOverlay", {
+      configurable: true,
+      value: {
+        visible: true,
+        getTitlebarAreaRect: () => new DOMRect(0, 0, 1280, 52),
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      },
+    });
+    using _overlay = {
+      [Symbol.dispose]: () => Reflect.deleteProperty(navigator, "windowControlsOverlay"),
+    };
+    await using _screen = await render(
+      <AppRouteModal label="Settings">
+        <p>Settings</p>
+      </AppRouteModal>,
+      { router: "/settings/general" },
+    );
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    await expect.element(settings).toHaveFocus();
+
+    const strip = document.elementFromPoint(window.innerWidth / 2, 20);
+    assert(strip instanceof HTMLElement);
+    expect(settings.element().contains(strip)).toBe(false);
+    expect(getComputedStyle(strip).getPropertyValue("-webkit-app-region")).toBe("drag");
+    expect(strip.getBoundingClientRect()).toMatchObject({ top: 0, height: 52 });
   });
 });
