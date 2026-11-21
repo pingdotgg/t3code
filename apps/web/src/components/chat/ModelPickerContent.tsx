@@ -6,6 +6,7 @@ import {
   type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
+  type ServerProviderSubProvider,
   MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
@@ -478,14 +479,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           : [],
       ),
   );
-  // The thread's backend opens expanded, so its models show without a click.
-  const [expandedSubProviderKeys, setExpandedSubProviderKeys] = useState(
-    () =>
-      new Set<string>(
-        activeModel?.subProvider
-          ? [modelPickerSubProviderSectionKey(props.activeInstanceId, activeModel.subProvider)]
-          : [],
-      ),
+  const [subProviderStateAtOpen] = useState(() => ({
+    instanceId: props.activeInstanceId,
+    modelKey: activeModelKey,
+    subProvider: activeModel?.subProvider,
+    favorites: favoritesSet,
+  }));
+  const [subProviderExpansion, setSubProviderExpansion] = useState(
+    () => new Map<string, boolean>(),
   );
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
@@ -518,9 +519,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   };
 
   const toggleSubProviderSection = (key: string) => {
-    setExpandedSubProviderKeys((expanded) => {
-      const next = new Set(expanded);
-      if (!next.delete(key)) next.add(key);
+    const section = subProviderSectionByKey.get(key);
+    if (!section) return;
+    setSubProviderExpansion((expanded) => {
+      const next = new Map(expanded);
+      next.set(key, !(expanded.get(key) ?? section.expandedByDefault));
       return next;
     });
   };
@@ -632,13 +635,51 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return out;
   })();
 
-  const subProvidersByInstance = new Map(
-    instanceEntries.flatMap((entry) =>
-      entry.snapshot.subProviders?.length
-        ? [[entry.instanceId, entry.snapshot.subProviders] as const]
-        : [],
-    ),
-  );
+  const subProvidersByInstance = new Map<
+    ProviderInstanceId,
+    { subProviders: ReadonlyArray<ServerProviderSubProvider>; fromOpenCodeCatalog: boolean }
+  >();
+  for (const entry of instanceEntries) {
+    if (entry.snapshot.subProviders?.length) {
+      subProvidersByInstance.set(entry.instanceId, {
+        subProviders: entry.snapshot.subProviders,
+        fromOpenCodeCatalog: false,
+      });
+    }
+  }
+  const openCodeVendorsByInstance = new Map<
+    ProviderInstanceId,
+    { names: Set<string>; namesAtOpen: Set<string> }
+  >();
+  for (const model of flatModels) {
+    if (
+      model.driverKind !== "opencode" ||
+      !model.subProvider ||
+      model.isLegacy ||
+      subProvidersByInstance.has(model.instanceId)
+    ) {
+      continue;
+    }
+    const vendors = openCodeVendorsByInstance.get(model.instanceId) ?? {
+      names: new Set<string>(),
+      namesAtOpen: new Set<string>(),
+    };
+    vendors.names.add(model.subProvider);
+    if (!subProviderStateAtOpen.favorites.has(providerModelKey(model.instanceId, model.slug))) {
+      vendors.namesAtOpen.add(model.subProvider);
+    }
+    openCodeVendorsByInstance.set(model.instanceId, vendors);
+  }
+  for (const [instanceId, vendors] of openCodeVendorsByInstance) {
+    const { names, namesAtOpen } = vendors;
+    if (namesAtOpen.size < 2) continue;
+    subProvidersByInstance.set(instanceId, {
+      subProviders: [...names]
+        .toSorted((a, b) => a.localeCompare(b, locale, { sensitivity: "base" }))
+        .map((name) => ({ name })),
+      fromOpenCodeCatalog: true,
+    });
+  }
   const isLocked = lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
   // Fit the tallest tab so switching tabs never resizes the popup and moves the rail under the cursor.
@@ -663,8 +704,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     for (const instanceId of tabsWithLegacyRow) addRow(instanceId);
-    for (const [instanceId, subProviders] of subProvidersByInstance) {
-      for (const _subProvider of subProviders) addRow(instanceId);
+    for (const [instanceId, grouping] of subProvidersByInstance) {
+      for (const _subProvider of grouping.subProviders) addRow(instanceId);
     }
     return Math.max(0, ...unitsByTab.values());
   })();
@@ -757,30 +798,57 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   })();
 
-  // A provider whose models run on several backends, such as fx, lists each
-  // backend as a collapsible heading. Search and Favorites stay flat.
+  // Search and Favorites stay flat, including models in collapsed sections.
   const subProviderSections = (() => {
-    const subProviders =
-      isSearching || selectedInstanceId === "favorites"
-        ? undefined
-        : subProvidersByInstance.get(selectedInstanceId);
-    if (!subProviders || selectedInstanceId === "favorites") return null;
+    if (isSearching || selectedInstanceId === "favorites") return null;
+    const grouping = subProvidersByInstance.get(selectedInstanceId);
+    if (!grouping) return null;
+    const { subProviders, fromOpenCodeCatalog } = grouping;
+    const openCodeLegacySection = fromOpenCodeCatalog ? legacySection : null;
     const { ungrouped, groups } = groupModelsBySubProvider(
-      filteredModels,
+      openCodeLegacySection?.currentModels ?? filteredModels,
       subProviders,
-      (model) => model.subProvider,
+      (model) =>
+        fromOpenCodeCatalog && favoritesSet.has(providerModelKey(model.instanceId, model.slug))
+          ? undefined
+          : model.subProvider,
     );
+    const activeSubProvider =
+      selectedInstanceId === subProviderStateAtOpen.instanceId
+        ? fromOpenCodeCatalog
+          ? filteredModels.find(
+              (model) =>
+                modelPickerModelKey(model.instanceId, model.slug) ===
+                subProviderStateAtOpen.modelKey,
+            )?.subProvider
+          : subProviderStateAtOpen.subProvider
+        : undefined;
+    const defaultSubProvider =
+      fromOpenCodeCatalog &&
+      (!activeSubProvider ||
+        !openCodeVendorsByInstance.get(selectedInstanceId)?.namesAtOpen.has(activeSubProvider))
+        ? subProviders.find(({ name }) =>
+            openCodeVendorsByInstance.get(selectedInstanceId)?.namesAtOpen.has(name),
+          )?.name
+        : activeSubProvider;
     return {
       ungrouped,
-      sections: groups.map(({ subProvider, models }) => {
+      fromOpenCodeCatalog,
+      legacySection: openCodeLegacySection,
+      sections: groups.flatMap(({ subProvider, models }) => {
+        if (fromOpenCodeCatalog && models.length === 0) return [];
         const key = modelPickerSubProviderSectionKey(selectedInstanceId, subProvider.name);
-        return {
-          key,
-          name: subProvider.name,
-          unavailableReason: subProvider.unavailableReason,
-          models,
-          isExpanded: expandedSubProviderKeys.has(key),
-        };
+        const expandedByDefault = subProvider.name === defaultSubProvider;
+        return [
+          {
+            key,
+            name: subProvider.name,
+            unavailableReason: subProvider.unavailableReason,
+            models,
+            expandedByDefault,
+            isExpanded: subProviderExpansion.get(key) ?? expandedByDefault,
+          },
+        ];
       }),
     };
   })();
@@ -795,6 +863,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         ...subProviderSections.sections.flatMap((section) =>
           section.isExpanded ? section.models : [],
         ),
+        ...(subProviderSections.legacySection?.isExpanded
+          ? subProviderSections.legacySection.legacyModels
+          : []),
       ];
     }
     if (!legacySection) {
@@ -852,7 +923,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         .filter((model) => model.isLegacy)
         .map((model) => modelPickerLegacySectionKey(model.instanceId)),
     ),
-    ...[...subProvidersByInstance].flatMap(([instanceId, subProviders]) =>
+    ...[...subProvidersByInstance].flatMap(([instanceId, { subProviders }]) =>
       subProviders.map((subProvider) =>
         modelPickerSubProviderSectionKey(instanceId, subProvider.name),
       ),
@@ -867,6 +938,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           section.key,
           ...(section.isExpanded ? section.models.map(keyOf) : []),
         ]),
+        ...(subProviderSections.legacySection
+          ? [
+              ...(subProviderSections.legacySection.isExpanded
+                ? subProviderSections.legacySection.legacyModels.map(keyOf)
+                : []),
+              subProviderSections.legacySection.key,
+            ]
+          : []),
       ];
     }
     const modelKeys = visibleModels.map(keyOf);
@@ -893,6 +972,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const modelListExtraData = {
     badgedInstanceIds,
     favoritesSet,
+    legacySection,
+    subProviderSectionByKey,
     modelJumpLabelByKey,
     activeModelKey,
     selectedModelKeySet,
@@ -1209,6 +1290,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 }
                 const disabledReason =
                   getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                const isFavorite = favoritesSet.has(providerModelKey(model.instanceId, model.slug));
+                const showSubProviderBadge = !(
+                  subProviderSections?.fromOpenCodeCatalog &&
+                  !isFavorite &&
+                  !model.isLegacy &&
+                  subProviderSectionByKey.has(
+                    modelPickerSubProviderSectionKey(model.instanceId, model.subProvider ?? ""),
+                  )
+                );
                 return (
                   <ModelListRow
                     key={modelKey}
@@ -1216,13 +1306,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     slug={model.slug}
                     name={model.name}
                     subProvider={model.subProvider}
+                    showSubProviderBadge={showSubProviderBadge}
                     instanceId={model.instanceId}
                     driverKind={model.driverKind}
                     providerDisplayName={model.instanceDisplayName}
                     providerAccentColor={model.instanceAccentColor}
                     acpRegistryAgentId={model.acpRegistryAgentId}
                     acpRegistryIconUrl={model.acpRegistryIconUrl}
-                    isFavorite={favoritesSet.has(providerModelKey(model.instanceId, model.slug))}
+                    isFavorite={isFavorite}
                     isSelected={
                       selectedModelKeys !== undefined
                         ? selectedModelKeySet.has(modelKey)
