@@ -577,6 +577,58 @@ it.effect("mark unread leaves a future snooze untouched", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a thread visit does not wait for another write to release the writer", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:visit-behind-writer");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-visit-behind-writer"),
+      threadId,
+      projectId: ProjectId.make("project:visit-behind-writer"),
+      title: "Visit behind writer",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const writerHeld = yield* Deferred.make<void>();
+    const releaseWriter = yield* Deferred.make<void>();
+    const longWrite = yield* sql
+      .withTransaction(
+        Deferred.succeed(writerHeld, undefined).pipe(Effect.andThen(Deferred.await(releaseWriter))),
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(writerHeld);
+
+    const visitedAt = yield* DateTime.now;
+    const visitCommand = {
+      type: "thread.visit",
+      commandId: CommandId.make("visit-behind-writer"),
+      threadId,
+      visitedAt: DateTime.formatIso(visitedAt),
+    } as const;
+    const visit = yield* orchestrator
+      .dispatch(visitCommand)
+      .pipe(Effect.timeoutOption("1 second"), Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    const settled = yield* Fiber.join(visit);
+    yield* Deferred.succeed(releaseWriter, undefined);
+    yield* Fiber.join(longWrite);
+
+    assert.isTrue(Option.isSome(settled), "thread.visit waited behind the held writer");
+    // The same command id replays the receipt the deferred visit committed.
+    const replayed = yield* orchestrator.dispatch(visitCommand);
+    assert.isTrue(replayed.replayed);
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    assert.deepEqual((yield* projections.getThread(threadId)).lastVisitedAt, visitedAt);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "dispatches metadata, queue resume and request controls without hydrating unrelated history",
   () =>
