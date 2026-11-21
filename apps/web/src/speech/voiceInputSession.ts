@@ -12,6 +12,7 @@ import type {
   CloudSpeechProvider,
   ClientSettings,
   EnvironmentId,
+  EnvironmentSpeechStatus,
   SpeechCustomWords,
   SpeechPostProcessingOptions,
   SpeechStreamText,
@@ -108,6 +109,7 @@ export class VoiceInputSession {
   private readonly listeners = new Set<() => void>();
   private readonly activityListeners = new Set<() => void>();
   private disposed = false;
+  private onSpeechStatus: ((status: EnvironmentSpeechStatus) => void) | undefined;
 
   constructor(key: SessionKey) {
     this.key = key;
@@ -124,6 +126,7 @@ export class VoiceInputSession {
       cloudProvider: key.cloudProvider,
       cloudModel: key.cloudModel,
       hasAudioConsent,
+      getStatusListener: () => this.onSpeechStatus,
       getStreamingEnabled: () =>
         this.target?.readContext().clientSettings.speechStreaming ??
         DEFAULT_CLIENT_SETTINGS.speechStreaming,
@@ -253,13 +256,17 @@ export class VoiceInputSession {
   readonly getActivity = (): VoiceInputSessionActivity => this.activity;
 
   /** Starts recording into `target`, or does nothing while another draft holds the microphone. */
-  start(target: VoiceInputTarget): Promise<void> {
+  start(
+    target: VoiceInputTarget,
+    onSpeechStatus?: (status: EnvironmentSpeechStatus) => void,
+  ): Promise<void> {
     if (this.disposed) return Promise.resolve();
     const busyElsewhere =
       voiceInputBlocksSubmission(this.controller.currentState) &&
       this.target?.ownerKey !== target.ownerKey;
     if (busyElsewhere) return Promise.resolve();
     this.target = target;
+    this.onSpeechStatus = onSpeechStatus;
     this.publishActivity(SILENT_ACTIVITY);
     this.publish({ ...this.snapshot, target });
     return this.controller.start();
