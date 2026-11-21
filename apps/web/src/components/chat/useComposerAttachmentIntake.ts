@@ -36,6 +36,7 @@ import {
 } from "./composerAttachmentFiles";
 import {
   fileAttachmentTooLargeMessage,
+  formatAttachmentLimit,
   formatAttachmentSize,
 } from "@t3tools/client-runtime/state/attachments";
 import { fileContextReference, imageContextReference } from "~/lib/composerContextRecords";
@@ -60,6 +61,14 @@ import {
   movedPreparingImageThread,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
+
+/**
+ * Inserts a path link for each file and reports which were linked and which had no readable
+ * path. A file in neither list was dropped because the draft changed while it resolved.
+ */
+export type LocalFileLinker = (
+  files: File[],
+) => Promise<{ readonly linked: ReadonlyArray<File>; readonly missing: ReadonlyArray<File> }>;
 
 /**
  * Takes files into the draft: validates and reserves slots, compresses images, inserts
@@ -92,6 +101,8 @@ export function useComposerAttachmentIntake(input: {
     selection?: { start: number; end: number },
     pendingInsertion?: ComposerAttachmentInsertion,
   ) => boolean;
+  /** Null unless the server shares this computer's filesystem, so a path link would resolve. */
+  readonly resolveLocalFileLinker: () => LocalFileLinker | null;
 }) {
   const {
     activeThreadId,
@@ -116,11 +127,37 @@ export function useComposerAttachmentIntake(input: {
     addComposerFilesToDraft,
     removeComposerImageFromDraft,
     insertAttachmentReferences,
+    resolveLocalFileLinker,
   } = input;
   const pastedTextFileNamesRef = useRef<{ targetKey: string; names: Set<string> }>({
     targetKey: "",
     names: new Set(),
   });
+
+  const linkFilesByPath = async (
+    linker: LocalFileLinker,
+    filesToLink: File[],
+    stagingLimit: number,
+    threadId: NonNullable<ChatComposerProps["activeThreadId"]>,
+  ): Promise<boolean> => {
+    const { linked, missing } = await linker(filesToLink);
+    for (const file of linked) {
+      toastManager.add({
+        type: "info",
+        title: m(msg("Linked {name} by path", { name: file.name })),
+        description: m(
+          msg("It is over {size}, so the agent will read it from disk instead of an upload.", {
+            size: formatAttachmentLimit(stagingLimit, m),
+          }),
+        ),
+        data: { hideCopyButton: true },
+      });
+    }
+    const unlinked = missing.at(-1);
+    if (unlinked)
+      setThreadError(threadId, fileAttachmentTooLargeMessage(unlinked.name, stagingLimit, m));
+    return linked.length > 0;
+  };
 
   const addComposerAttachments = async (
     files: File[],
@@ -165,9 +202,28 @@ export function useComposerAttachmentIntake(input: {
     const replacedReattachMarkerIds = new Set<string>();
     const acceptedImages: File[] = [];
     const acceptedFiles: ComposerFileAttachment[] = [];
+    const filesToLink: File[] = [];
+    // Question answers carry attachments beside the answer, where a path link would not show.
+    const canLinkByPath = !isLiteralPendingAnswer && pendingUserInputs.length === 0;
+    // Resolved on the first oversized file, so ordinary attachments skip the connection lookup.
+    let localFileLinker: LocalFileLinker | null | undefined;
     let error: string | null = null;
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
+      // A file too large to upload is linked by path instead. A link takes no attachment slot,
+      // so this runs before the per-message cap.
+      if (
+        canLinkByPath &&
+        attachmentKind === "file" &&
+        fileStagingLimit !== null &&
+        file.size > fileStagingLimit
+      ) {
+        if (localFileLinker === undefined) localFileLinker = resolveLocalFileLinker();
+        if (localFileLinker !== null) {
+          filesToLink.push(file);
+          continue;
+        }
+      }
       const fileMimeType =
         attachmentKind === "file" ? composerFileAttachmentMimeType(file) : file.type;
       const matchingReattachMarker =
@@ -235,6 +291,12 @@ export function useComposerAttachmentIntake(input: {
         reservedCount += 1;
       }
     }
+    // Started before any await, but settled last: linking may wait on a path conversion, and
+    // that must not delay reserving the attached files' slots.
+    const linking =
+      localFileLinker != null && fileStagingLimit !== null && filesToLink.length > 0
+        ? linkFilesByPath(localFileLinker, filesToLink, fileStagingLimit, threadId)
+        : Promise.resolve(false);
     setThreadError(threadId, error);
     let insertedAny = false;
     if (acceptedFiles.length > 0) {
@@ -261,7 +323,7 @@ export function useComposerAttachmentIntake(input: {
         });
       }
     }
-    if (acceptedImages.length === 0) return insertedAny;
+    if (acceptedImages.length === 0) return (await linking) || insertedAny;
 
     // The store drops a repeated image only after compressing it, so a likely repeat prepares
     // without a tile instead of flashing one. Only the store decides it is a duplicate.
@@ -396,7 +458,7 @@ export function useComposerAttachmentIntake(input: {
       const serialized = await serializeComposerImages(storedImages, []);
       await draftStore.appendPersistedAttachments(movedThread, storedImages, serialized);
     }
-    return insertedAny;
+    return (await linking) || insertedAny;
   };
 
   const removeComposerImage = (imageId: string) => {

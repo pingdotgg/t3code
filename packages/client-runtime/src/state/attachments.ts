@@ -215,20 +215,26 @@ export function formatAttachmentSize(
     : resolve(msg("{size} KB", { size: kilobytes }));
 }
 
+export function formatAttachmentLimit(
+  maxUploadBytes: number,
+  resolve: MFunctionType = mFallback,
+): string {
+  return maxUploadBytes >= 1024 * 1024 && maxUploadBytes % (1024 * 1024) === 0
+    ? resolve(msg("{count} MB", { count: maxUploadBytes / (1024 * 1024) }))
+    : maxUploadBytes >= 1024 && maxUploadBytes % 1024 === 0
+      ? resolve(msg("{count} KB", { count: maxUploadBytes / 1024 }))
+      : resolve(
+          msg("{count, plural, one {{count} byte} other {{count} bytes}}", {
+            count: maxUploadBytes,
+          }),
+        );
+}
+
 export function fileAttachmentTooLargeMessage(
   name: string,
   maxUploadBytes: number,
   resolve: MFunctionType = mFallback,
 ): string {
-  const size =
-    maxUploadBytes >= 1024 * 1024 && maxUploadBytes % (1024 * 1024) === 0
-      ? resolve(msg("{count} MB", { count: maxUploadBytes / (1024 * 1024) }))
-      : maxUploadBytes >= 1024 && maxUploadBytes % 1024 === 0
-        ? resolve(msg("{count} KB", { count: maxUploadBytes / 1024 }))
-        : resolve(
-            msg("{count, plural, one {{count} byte} other {{count} bytes}}", {
-              count: maxUploadBytes,
-            }),
-          );
+  const size = formatAttachmentLimit(maxUploadBytes, resolve);
   return resolve(msg("''{name}'' exceeds the {size} attachment limit.", { name, size }));
 }

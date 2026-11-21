@@ -20,6 +20,7 @@ import {
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
+import { toastManager } from "../ui/toast";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { questionAttachmentDraftId } from "../../questionAttachments";
 import { readComposerImageBytes } from "./composerAttachmentFiles";
@@ -280,6 +281,7 @@ it("prepares a repeated paste without a tile, and still keeps a different image"
     addComposerFilesToDraft: () => [],
     removeComposerImageFromDraft: () => {},
     insertAttachmentReferences: () => false,
+    resolveLocalFileLinker: () => null,
   } satisfies IntakeInput;
   let intake!: Intake;
   await using _screen = await render(
@@ -364,6 +366,7 @@ it.each(["thread", "session"] as const)(
       addComposerFilesToDraft: () => [],
       removeComposerImageFromDraft: (id) => store.removeImage(target, id),
       insertAttachmentReferences: () => false,
+      resolveLocalFileLinker: () => null,
     } satisfies IntakeInput;
     let intake!: Intake;
     await using screen = await render(
@@ -398,3 +401,170 @@ it.each(["thread", "session"] as const)(
     expect(restored?.images).toEqual([]);
   },
 );
+
+const MB = 1024 * 1024;
+// A file's size is all the intake reads before upload, so a large one needs no real bytes.
+const fileOfSize = (name: string, size: number) => {
+  const file = new File([new Uint8Array(16)], name, { type: "application/gzip" });
+  Object.defineProperty(file, "size", { value: size });
+  return file;
+};
+const tooLarge = (name: string) => `'${name}' exceeds the 50 MB attachment limit.`;
+
+async function renderFileIntake(overrides: Partial<IntakeInput> = {}) {
+  const target = DraftId.make(`intake-link-${Math.random()}`);
+  const threadErrors: Array<string | null> = [];
+  const stored: string[] = [];
+  const input = {
+    activeThreadId: ThreadId.make("thread"),
+    activePendingProgress: null,
+    activePendingIsResponding: false,
+    pendingUserInputs: [],
+    supportsQuestionAttachments: true,
+    isLiteralPendingAnswer: false,
+    projectSelectionRequired: false,
+    questionAttachmentTarget: null,
+    attachmentTargetKey: target,
+    fileStagingLimit: 50 * MB,
+    promptRef: { current: "" },
+    composerImagesRef: { current: [] },
+    composerFilesRef: { current: [] },
+    composerEditorRef: { current: null },
+    isRevertingCheckpointRef: { current: false },
+    setThreadError: (_threadId, error) => {
+      threadErrors.push(error);
+    },
+    countReservedAttachments: () => stored.length,
+    addComposerImage: () => [],
+    addComposerImagesToDraft: () => [],
+    addComposerFilesToDraft: (files) => {
+      stored.push(...files.map((file) => file.name));
+      return files.map((file) => file.id);
+    },
+    removeComposerImageFromDraft: () => {},
+    insertAttachmentReferences: () => true,
+    resolveLocalFileLinker: () => null,
+    ...overrides,
+  } satisfies IntakeInput;
+  let intake!: Intake;
+  const screen = await render(
+    <Harness
+      input={input}
+      ready={(value) => {
+        intake = value;
+      }}
+    />,
+  );
+  return { intake: () => intake, threadErrors, stored, screen };
+}
+
+const linkerThatLinks = () => {
+  const linked: string[] = [];
+  const link = vi.fn(async (files: File[]) => {
+    linked.push(...files.map((file) => file.name));
+    return { linked: files, missing: [] as File[] };
+  });
+  return { linked, link, resolve: () => link };
+};
+
+it("links a file over the upload limit by path when the server shares this computer", async () => {
+  const linker = linkerThatLinks();
+  const { intake, threadErrors, stored, screen } = await renderFileIntake({
+    resolveLocalFileLinker: linker.resolve,
+  });
+  await using _screen = screen;
+  using toast = vi.spyOn(toastManager, "add");
+
+  const inserted = await act(() =>
+    intake().addComposerAttachments([fileOfSize("device-firmware-build.tar.gz", 8192 * MB)]),
+  );
+
+  expect(inserted).toBe(true);
+  expect(linker.linked).toEqual(["device-firmware-build.tar.gz"]);
+  expect(stored).toEqual([]);
+  expect(threadErrors.at(-1) ?? null).toBeNull();
+  expect(toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: "info",
+      title: expect.stringContaining("device-firmware-build.tar.gz"),
+    }),
+  );
+});
+
+it("keeps refusing a file over the upload limit when the server is elsewhere", async () => {
+  const { intake, threadErrors, stored, screen } = await renderFileIntake();
+  await using _screen = screen;
+
+  await act(() => intake().addComposerAttachments([fileOfSize("big.tar.gz", 60 * MB)]));
+
+  expect(stored).toEqual([]);
+  expect(threadErrors.at(-1)).toBe(tooLarge("big.tar.gz"));
+});
+
+it("attaches small files and links large ones dropped together", async () => {
+  const linker = linkerThatLinks();
+  const { intake, stored, screen } = await renderFileIntake({
+    resolveLocalFileLinker: linker.resolve,
+  });
+  await using _screen = screen;
+
+  await act(() =>
+    intake().addComposerAttachments([
+      fileOfSize("server.log", 2048),
+      fileOfSize("recording.mov", 60 * MB),
+    ]),
+  );
+
+  expect(stored).toEqual(["server.log"]);
+  expect(linker.linked).toEqual(["recording.mov"]);
+});
+
+it.each([
+  [
+    "a question is waiting",
+    { pendingUserInputs: [{} as IntakeInput["pendingUserInputs"][number]] },
+  ],
+  ["the prompt is a literal question answer", { isLiteralPendingAnswer: true }],
+])("does not link a large file while %s", async (_case, overrides) => {
+  const linker = linkerThatLinks();
+  const { intake, threadErrors, screen } = await renderFileIntake({
+    ...overrides,
+    resolveLocalFileLinker: linker.resolve,
+  });
+  await using _screen = screen;
+
+  await act(() => intake().addComposerAttachments([fileOfSize("big.tar.gz", 60 * MB)]));
+
+  expect(linker.link).not.toHaveBeenCalled();
+  expect(threadErrors.at(-1)).toBe(tooLarge("big.tar.gz"));
+});
+
+it("links a large file even when the draft has no attachment slots left", async () => {
+  const linker = linkerThatLinks();
+  const { intake, threadErrors, screen } = await renderFileIntake({
+    resolveLocalFileLinker: linker.resolve,
+    countReservedAttachments: () => 1_000,
+  });
+  await using _screen = screen;
+
+  await act(() => intake().addComposerAttachments([fileOfSize("big.tar.gz", 60 * MB)]));
+
+  expect(linker.linked).toEqual(["big.tar.gz"]);
+  expect(threadErrors.at(-1) ?? null).toBeNull();
+});
+
+it("refuses a large file as before when its path cannot be read", async () => {
+  const { intake, threadErrors, screen } = await renderFileIntake({
+    resolveLocalFileLinker: () => async (files) => ({ linked: [], missing: files }),
+  });
+  await using _screen = screen;
+  using toast = vi.spyOn(toastManager, "add");
+
+  const inserted = await act(() =>
+    intake().addComposerAttachments([fileOfSize("big.tar.gz", 60 * MB)]),
+  );
+
+  expect(inserted).toBe(false);
+  expect(threadErrors.at(-1)).toBe(tooLarge("big.tar.gz"));
+  expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ type: "info" }));
+});

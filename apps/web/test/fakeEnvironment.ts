@@ -106,11 +106,18 @@ const decodeServerConfig = Schema.decodeUnknownSync(ServerConfig);
 const makeServerConfig = (
   providers: ReadonlyArray<unknown>,
   supportsIssues = false,
+  maxFileUploadBytes?: number,
 ): ServerConfig => ({
   ...decodeServerConfig({
     environment: {
       ...descriptor,
-      capabilities: { ...descriptor.capabilities, issues: supportsIssues },
+      capabilities: {
+        ...descriptor.capabilities,
+        issues: supportsIssues,
+        ...(maxFileUploadBytes === undefined
+          ? {}
+          : { fileAttachments: { maxUploadBytes: maxFileUploadBytes } }),
+      },
     },
     auth,
     cwd: "/workspace/render",
@@ -607,6 +614,8 @@ export function installFakeEnvironment(
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
+    /** Advertises file uploads up to this size; without it the server accepts no files. */
+    readonly maxFileUploadBytes?: number;
   },
 ): Disposable {
   threads = fixtures;
@@ -614,6 +623,7 @@ export function installFakeEnvironment(
     ...makeServerConfig(
       options?.providers ?? [CODEX_PROVIDER],
       fixtures.some((thread) => (thread.issues?.length ?? 0) > 0),
+      options?.maxFileUploadBytes,
     ),
     keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
   };
