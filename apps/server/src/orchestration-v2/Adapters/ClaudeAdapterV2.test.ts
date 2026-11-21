@@ -12021,6 +12021,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 type: "user",
                 message: { role: "user", content: prompt },
                 parent_tool_use_id: null,
+                origin: { kind: "human" },
               },
             },
           },

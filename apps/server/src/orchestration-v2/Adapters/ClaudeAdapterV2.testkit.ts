@@ -705,6 +705,29 @@ function makeReplayQueryRunner(
     const { uuid: _uuid, ...rest } = message;
     return { ...frame, message: rest };
   };
+  // Transcripts recorded before prompts carried an origin match any origin.
+  const withoutUnrecordedOrigin = (expected: unknown, actual: unknown): unknown => {
+    if (
+      typeof expected !== "object" ||
+      expected === null ||
+      typeof actual !== "object" ||
+      actual === null ||
+      Reflect.get(actual, "type") !== "prompt.offer"
+    ) {
+      return actual;
+    }
+    const expectedMessage: unknown = Reflect.get(expected, "message");
+    if (
+      typeof expectedMessage === "object" &&
+      expectedMessage !== null &&
+      Reflect.has(expectedMessage, "origin")
+    ) {
+      return actual;
+    }
+    const message = Reflect.get(actual, "message") as Record<string, unknown>;
+    const { origin: _origin, ...rest } = message;
+    return { ...actual, message: rest };
+  };
 
   const assertNextOutboundFrame = (actual: ClaudeOutboundFrame) => {
     if (failure !== null) {
@@ -735,7 +758,10 @@ function makeReplayQueryRunner(
     const expectedUuid = promptOfferUuid(expected);
     const actualUuid = promptOfferUuid(actual);
     if (
-      !sameFrame(withoutPromptOfferUuid(expected), withoutPromptOfferUuid(actual)) ||
+      !sameFrame(
+        withoutPromptOfferUuid(expected),
+        withoutPromptOfferUuid(withoutUnrecordedOrigin(expected, actual)),
+      ) ||
       (expectedUuid !== undefined && actualUuid === undefined)
     ) {
       fail(
