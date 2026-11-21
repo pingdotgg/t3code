@@ -993,6 +993,48 @@ it.layer(
       }),
   );
 
+  it.effect("reports whether any terminal session for a thread has an active subprocess", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager(5, {
+        processTable: Effect.succeed([
+          { pid: 9000, ppid: 1, name: "zsh" },
+          { pid: 100, ppid: 9000, name: "zsh" },
+          { pid: 9001, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9001, name: "node" },
+        ]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput({ terminalId: "idle", threadId: "thread-idle" }));
+      yield* manager.open(openInput({ terminalId: "dev-server", threadId: "thread-active" }));
+
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-none" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-idle" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-active" })).toBe(true);
+    }),
+  );
+
+  it.effect.each([
+    ["linux", ["SIGHUP", "SIGTERM"]],
+    ["win32", ["SIGTERM"]],
+  ] as const)("closing a %s terminal hangs up the shell's jobs", ([platform, signals]) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5).pipe(
+        Effect.provide(layerWithHostPlatform(platform)),
+      );
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      const terminated = yield* Deferred.make<void>();
+      shell.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(terminated, Effect.void);
+      };
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(terminated);
+
+      expect(shell.killSignals).toEqual(signals);
+      shell.emitExit({ exitCode: 0, signal: 0 });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps a terminal whose shell was replaced by exec open on settlement", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
@@ -2573,6 +2615,7 @@ it.layer(
         env: {
           PORT: "5173",
           T3CODE_PORT: "3773",
+          T3CODE_THREAD_ID: "server-thread",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
           TEST_TERMINAL_KEEP: "keep-me",
           TMUX: "/tmp/tmux-1000/default,1234,0",
@@ -2582,13 +2625,20 @@ it.layer(
         },
       });
       yield* manager.open(openInput());
-      yield* manager.open(openInput({ terminalId: "explicit", env: { TMUX_PANE: "%9" } }));
+      yield* manager.open(
+        openInput({
+          terminalId: "explicit",
+          env: { TMUX_PANE: "%9", T3CODE_THREAD_ID: "client-thread" },
+        }),
+      );
       const spawnInput = ptyAdapter.spawnInputs[0];
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
 
       expect(spawnInput.env.PORT).toBeUndefined();
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
+      expect(spawnInput.env.T3CODE_THREAD_ID).toBe("thread-1");
+      expect(ptyAdapter.spawnInputs[1]?.env.T3CODE_THREAD_ID).toBe("thread-1");
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
       expect(spawnInput.env.TMUX).toBeUndefined();
@@ -2782,7 +2832,10 @@ it.layer(
       yield* TestClock.adjust("1 second");
       yield* Fiber.join(shutdown);
 
-      expect(process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      const platform = yield* HostProcess.Platform;
+      expect(process.killSignals).toEqual(
+        platform === "win32" ? ["SIGTERM", "SIGKILL"] : ["SIGHUP", "SIGTERM", "SIGKILL"],
+      );
       expect(process.exitListenerCount).toBe(0);
     }).pipe(Effect.provide(TestClock.layer())),
   );
