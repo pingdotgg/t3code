@@ -30,11 +30,94 @@ index c2711344c58758e0ce5b71572d59c930330f0103..f6deb463d075f8ea199e73071e5f0538
          }
        }
 
+diff --git a/android/src/main/java/expo/modules/video/player/ThumbnailHttpSource.kt b/android/src/main/java/expo/modules/video/player/ThumbnailHttpSource.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..617b002210e35819e774ae7f31ffddaa5ad43a91
+--- /dev/null
++++ b/android/src/main/java/expo/modules/video/player/ThumbnailHttpSource.kt
+@@ -0,0 +1,77 @@
++package expo.modules.video.player
++
++import android.media.MediaDataSource
++import android.net.Uri
++import androidx.media3.common.C
++import androidx.media3.common.util.UnstableApi
++import androidx.media3.datasource.DataSpec
++import androidx.media3.datasource.okhttp.OkHttpDataSource
++import okhttp3.Call
++import okhttp3.OkHttpClient
++import java.io.IOException
++
++private val thumbnailHttpClient = OkHttpClient()
++
++@UnstableApi
++internal class ThumbnailHttpSource(private val uri: Uri, headers: Map<String, String>) : MediaDataSource() {
++  private val callLock = Any()
++  private var canceled = false
++  private var activeCall: Call? = null
++  private val source = OkHttpDataSource.Factory { request ->
++    synchronized(callLock) {
++      thumbnailHttpClient.newCall(request).also { call ->
++        if (canceled) {
++          call.cancel()
++        } else {
++          activeCall = call
++        }
++      }
++    }
++  }.setDefaultRequestProperties(headers).createDataSource()
++
++  private var nextPosition = -1L
++  private var length: Long? = null
++
++  override fun getSize(): Long {
++    checkOpen()
++    if (length == null) openAt(0)
++    return length ?: C.LENGTH_UNSET.toLong()
++  }
++
++  override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
++    if (size == 0) return 0
++    checkOpen()
++    if (position != nextPosition) openAt(position)
++    val read = source.read(buffer, offset, size)
++    if (read > 0) nextPosition += read
++    return read
++  }
++
++  private fun openAt(position: Long) {
++    nextPosition = -1
++    source.close()
++    val remaining = source.open(DataSpec.Builder().setUri(uri).setPosition(position).build())
++    if (position == 0L) length = remaining
++    nextPosition = position
++  }
++
++  private fun checkOpen() {
++    synchronized(callLock) {
++      if (canceled) throw IOException("Thumbnail source was canceled")
++    }
++  }
++
++  // The player may be released while the framework is blocked inside readAt.
++  fun cancel() {
++    synchronized(callLock) {
++      canceled = true
++      activeCall?.cancel()
++      activeCall = null
++    }
++  }
++
++  override fun close() {
++    cancel()
++    source.close()
++  }
++}
 diff --git a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt b/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
-index 7ccce9681477328701755792fdc3bab09b428e30..9ce70ad2e3d20032bac22b10779d1f870bd2f837 100644
+index 7ccce9681477328701755792fdc3bab09b428e30..98506fbceea57ade3acb2cf3d5169e2091e28354 100644
 --- a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
 +++ b/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
-@@ -47,12 +47,14 @@ import expo.modules.video.records.TimeUpdate
+@@ -47,16 +47,22 @@ import expo.modules.video.records.TimeUpdate
  import expo.modules.video.records.VideoSource
  import expo.modules.video.records.VideoSize
  import expo.modules.video.records.VideoTrack
@@ -45,13 +128,31 @@ index 7ccce9681477328701755792fdc3bab09b428e30..9ce70ad2e3d20032bac22b10779d1f87
  import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.GlobalScope
  import kotlinx.coroutines.launch
++import kotlinx.coroutines.sync.Mutex
++import kotlinx.coroutines.sync.withLock
 +import kotlinx.coroutines.withContext
  import java.io.FileInputStream
  import java.lang.ref.WeakReference
  import kotlin.time.DurationUnit
-@@ -265,6 +267,10 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+ 
++private val thumbnailRetrieverLock = Mutex()
++
+ // https://developer.android.com/guide/topics/media/media3/getting-started/migration-guide#improvements_in_media3
+ @UnstableApi
+ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSource?, playerBuilderOptions: expo.modules.video.records.PlayerBuilderOptions? = null) : AutoCloseable, SharedObject(appContext), IntervalUpdateEmitter {
+@@ -65,6 +71,9 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+     .forceEnableMediaCodecAsynchronousQueueing()
+     .setEnableDecoderFallback(true)
+   private val listeners: MutableList<WeakReference<VideoPlayerListener>> = mutableListOf()
++  private val thumbnailSourceLock = Any()
++  private var thumbnailPlayerClosed = false
++  private var thumbnailSource: ThumbnailHttpSource? = null
+   private val currentVideoViewRef = MutableWeakReference<VideoView?>(null) { new, old ->
+     sendEvent(PlayerEvent.TargetViewChanged(new, old))
+   }
+@@ -265,6 +274,10 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
    var keepScreenOnWhilePlaying by VideoPlayerKeepAwake(this, appContext)
-
+ 
    private val playerListener = object : Player.Listener {
 +    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
 +      emit("playbackRequestedChange", mapOf("isPlaybackRequested" to playWhenReady))
@@ -60,16 +161,28 @@ index 7ccce9681477328701755792fdc3bab09b428e30..9ce70ad2e3d20032bac22b10779d1f87
      override fun onIsPlayingChanged(isPlaying: Boolean) {
        this@VideoPlayer.playing = isPlaying
      }
-@@ -584,24 +590,28 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+@@ -393,6 +406,11 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+ 
+   @kotlin.OptIn(DelicateCoroutinesApi::class)
+   override fun close() {
++    synchronized(thumbnailSourceLock) {
++      thumbnailPlayerClosed = true
++      thumbnailSource?.cancel()
++    }
++
+     // Releases the listeners from VideoPlayerKeepAwake
+     keepScreenOnWhilePlaying = false
+ 
+@@ -584,24 +602,47 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
      }
    }
-
+ 
 -  fun toMetadataRetriever(): MediaMetadataRetriever {
 +  internal suspend fun <T> withMetadataRetriever(block: suspend MediaMetadataRetriever.() -> T): T {
      val source = uncommittedSource ?: commitedSource
      val uri = source?.uri ?: throw IllegalStateException("Video source is not set")
      val stringUri = uri.toString()
-
+ 
 -    val mediaMetadataRetriever = MediaMetadataRetriever()
 -    if (URLUtil.isFileUrl(stringUri)) {
 -      mediaMetadataRetriever.setDataSource(stringUri.replace("file://", ""))
@@ -77,21 +190,40 @@ index 7ccce9681477328701755792fdc3bab09b428e30..9ce70ad2e3d20032bac22b10779d1f87
 -      context.contentResolver.openFileDescriptor(uri, "r")?.use { parcelFileDescriptor ->
 -        FileInputStream(parcelFileDescriptor.fileDescriptor).use { inputStream ->
 -          mediaMetadataRetriever.setDataSource(inputStream.fd)
-+    // Opening a remote source can block Expo's module queue while Android reads metadata.
-+    return withContext(Dispatchers.IO) {
-+      MediaMetadataRetriever().safeUse {
-+        if (URLUtil.isFileUrl(stringUri)) {
-+          setDataSource(stringUri.replace("file://", ""))
-+        } else if (URLUtil.isContentUrl(stringUri)) {
-+          context.contentResolver.openFileDescriptor(uri, "r")?.use { parcelFileDescriptor ->
-+            FileInputStream(parcelFileDescriptor.fileDescriptor).use { inputStream ->
-+              setDataSource(inputStream.fd)
++    // Wait for a canceled retriever to unwind before creating the next one.
++    return thumbnailRetrieverLock.withLock {
++      withContext(Dispatchers.IO) {
++        val remote = synchronized(thumbnailSourceLock) {
++          check(!thumbnailPlayerClosed) { "Video player was released" }
++          if (URLUtil.isNetworkUrl(stringUri)) {
++            ThumbnailHttpSource(uri, source.headers ?: emptyMap()).also { thumbnailSource = it }
++          } else {
++            null
++          }
++        }
++        try {
++          remote.use {
++            MediaMetadataRetriever().safeUse {
++              when {
++                remote != null -> setDataSource(remote)
++                URLUtil.isFileUrl(stringUri) -> setDataSource(stringUri.replace("file://", ""))
++                URLUtil.isContentUrl(stringUri) -> {
++                  context.contentResolver.openFileDescriptor(uri, "r")?.use { parcelFileDescriptor ->
++                    FileInputStream(parcelFileDescriptor.fileDescriptor).use { inputStream ->
++                      setDataSource(inputStream.fd)
++                    }
++                  }
++                }
++                else -> setDataSource(stringUri, source.headers ?: emptyMap())
++              }
++              block()
 +            }
 +          }
-+        } else {
-+          setDataSource(stringUri, source.headers ?: emptyMap())
++        } finally {
++          synchronized(thumbnailSourceLock) {
++            thumbnailSource = null
++          }
          }
-+        block()
        }
 -    } else {
 -      mediaMetadataRetriever.setDataSource(stringUri, source.headers ?: emptyMap())
@@ -99,7 +231,7 @@ index 7ccce9681477328701755792fdc3bab09b428e30..9ce70ad2e3d20032bac22b10779d1f87
 -    return mediaMetadataRetriever
    }
  }
-
+ 
 diff --git a/ios/VideoPlayerObserver.swift b/ios/VideoPlayerObserver.swift
 index adf5820..ce69210 100644
 --- a/ios/VideoPlayerObserver.swift
