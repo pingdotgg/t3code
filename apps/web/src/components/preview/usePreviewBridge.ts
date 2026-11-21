@@ -1,6 +1,7 @@
 import type {
   DesktopPreviewTabState,
   PreviewReportStatusInput,
+  PreviewSessionSnapshot,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -121,10 +122,30 @@ function shouldClearBrowserPointer(
   return current.url !== previous.url;
 }
 
+function projectDesktopNavStatus(
+  status: DesktopPreviewTabState["navStatus"],
+): PreviewSessionSnapshot["navStatus"] {
+  switch (status.kind) {
+    case "Idle":
+      return { _tag: "Idle" };
+    case "LoadFailed":
+      return {
+        _tag: "LoadFailed",
+        url: status.url,
+        title: status.title,
+        code: status.code,
+        description: status.description,
+      };
+    default:
+      return { _tag: status.kind, url: status.url, title: status.title };
+  }
+}
+
 export function projectDesktopState(state: DesktopPreviewTabState): DesktopPreviewOverlay {
   const navOrigin = state.navStatus.kind === "Idle" ? null : originOf(state.navStatus.url);
   return {
     hasWebContents: state.webContentsId !== null,
+    navStatus: projectDesktopNavStatus(state.navStatus),
     canGoBack: state.canGoBack,
     canGoForward: state.canGoForward,
     loading: state.navStatus.kind === "Loading",
@@ -168,27 +189,10 @@ export function buildReportInput(args: {
     canGoBack: state.canGoBack,
     canGoForward: state.canGoForward,
   };
-  if (status.kind === "LoadFailed") {
-    return {
-      input: {
-        ...base,
-        navStatus: {
-          _tag: "LoadFailed",
-          url: status.url,
-          title: status.title,
-          code: status.code,
-          description: status.description,
-        },
-      },
-      lastReportedUrl: status.url,
-      lastReportedKind: "LoadFailed",
-      lastReportedTitle: status.title,
-    };
-  }
   return {
     input: {
       ...base,
-      navStatus: { _tag: status.kind, url: status.url, title: status.title },
+      navStatus: projectDesktopNavStatus(status),
     },
     lastReportedUrl: status.url,
     lastReportedKind: status.kind,

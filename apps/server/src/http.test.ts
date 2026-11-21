@@ -10,14 +10,17 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
 import { ASSET_ROUTE_PREFIX } from "./assets/AssetAccess.ts";
 import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "./assets/AttachmentUpload.ts";
 import { openMediaFile } from "./assets/MediaFile.ts";
+import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 
 import {
   injectMcpAppCsp,
@@ -26,6 +29,7 @@ import {
   MCP_APP_MAX_HTML_BYTES,
 } from "@t3tools/shared/mcpApp";
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
+import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
 
 import * as ServerConfig from "./config.ts";
 
@@ -96,6 +100,39 @@ describe("MCP app asset responses", () => {
   );
 });
 
+describe("workspace page preview responses", () => {
+  it.effect("append the scroll script only to inline HTML previews", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-file-preview-" });
+      const page = path.join(directory, "report.html");
+      const style = path.join(directory, "report.css");
+      const html = "<!doctype html><html><body>☃</body></html>";
+      yield* fs.writeFileString(page, html);
+      yield* fs.writeFileString(style, "body{}");
+      const read = (asset: Parameters<typeof assetFileResponse>[0]) =>
+        assetFileResponse(asset).pipe(
+          Effect.flatMap((response) =>
+            Effect.promise(() => HttpServerResponse.toWeb(response).text()),
+          ),
+        );
+      const response = HttpServerResponse.toWeb(
+        yield* assetFileResponse({ path: page, renderIntent: "file-preview" }, "bytes=0-1"),
+      );
+      const expected = html + FILE_PREVIEW_SCROLL_SCRIPT;
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe(
+        String(new TextEncoder().encode(expected).byteLength),
+      );
+      expect(yield* Effect.promise(() => response.text())).toBe(expected);
+      expect(yield* read({ path: page, renderIntent: "file-preview", download: true })).toBe(html);
+      expect(yield* read({ path: page })).toBe(html);
+      expect(yield* read({ path: style, renderIntent: "file-preview" })).toBe("body{}");
+    }).pipe(Effect.provide(layerFileResponse)),
+  );
+});
+
 describe("browser API CORS", () => {
   it("accepts protocol negotiation with authenticated browser headers", async () => {
     const layerRoute = Layer.effectDiscard(
@@ -143,9 +180,10 @@ describe("browser API CORS", () => {
 });
 
 describe("untraced requests", () => {
-  it.effect("keeps signed asset and upload URLs out of HTTP server spans", () =>
+  it.effect("keeps signed URLs out of HTTP server spans and request logs", () =>
     Effect.gen(function* () {
       const serverSpans: Array<string> = [];
+      const loggedUrls: Array<unknown> = [];
       const layerTracer = Layer.succeed(
         Tracer.Tracer,
         Tracer.make({
@@ -154,6 +192,15 @@ describe("untraced requests", () => {
             return new Tracer.NativeSpan(options);
           },
         }),
+      );
+      const layerLogger = Logger.layer(
+        [
+          Logger.make(({ fiber }) => {
+            const url = fiber.getRef(References.CurrentLogAnnotations)["http.url"];
+            if (url !== undefined) loggedUrls.push(url);
+          }),
+        ],
+        { mergeWithExisting: false },
       );
       const layerRoutes = Layer.effectDiscard(
         Effect.gen(function* () {
@@ -164,32 +211,37 @@ describe("untraced requests", () => {
             `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
             HttpServerResponse.empty(),
           );
+          yield* router.add("POST", `${WEBHOOK_ROUTE_PREFIX}/*`, HttpServerResponse.empty());
           yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
         }),
-      );
+      ).pipe(Layer.provide(ServerHttp.layerUnloggedSignedRequests));
       const services = yield* Layer.build(
-        HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
+        HttpRouter.serve(layerRoutes, { disableListenLog: true }).pipe(
           ServerHttp.withUntracedRequests,
           Layer.provideMerge(NodeHttpServer.layerTest),
           Layer.provide(layerTracer),
+          Layer.provide(layerLogger),
         ),
       );
       const client = Context.get(services, HttpClient.HttpClient);
 
-      // Each URL is a bearer credential: url.full and url.path would carry it.
+      // Each URL is a bearer credential: url.full, url.path and http.url would carry it.
       for (const request of [
         HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
         HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png?v=1`),
         HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature`),
         HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature?v=1`),
+        HttpClientRequest.post(`${WEBHOOK_ROUTE_PREFIX}/task-1/webhook-token`),
         HttpClientRequest.head(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
       ]) {
         expect((yield* client.execute(request)).status).toBe(204);
       }
       expect(serverSpans).toEqual([]);
+      expect(loggedUrls).toEqual([]);
 
       expect((yield* client.execute(HttpClientRequest.get("/api/environment"))).status).toBe(204);
       expect(serverSpans).toEqual(["GET"]);
+      expect(loggedUrls).toEqual(["/api/environment"]);
 
       for (const path of [
         `${ASSET_ROUTE_PREFIX}-other/file`,
@@ -198,6 +250,45 @@ describe("untraced requests", () => {
         expect((yield* client.execute(HttpClientRequest.get(path))).status).toBe(404);
       }
       expect(serverSpans).toEqual(["GET", "GET", "GET"]);
+      expect(loggedUrls).toHaveLength(3);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("starts a separate trace for each request, not the server's lifetime trace", () =>
+    Effect.gen(function* () {
+      const requestSpans: Array<Tracer.NativeSpan> = [];
+      const layerTracer = Layer.succeed(
+        Tracer.Tracer,
+        Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            if (options.kind === "server") requestSpans.push(span);
+            return span;
+          },
+        }),
+      );
+      const layerRoutes = Layer.effectDiscard(
+        Effect.gen(function* () {
+          const router = yield* HttpRouter.HttpRouter;
+          yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
+        }),
+      );
+      const services = yield* Layer.build(
+        HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
+          ServerHttp.withRootRequestSpans,
+          Layer.provideMerge(NodeHttpServer.layerTest),
+        ),
+      ).pipe(Effect.withSpan("server.lifetime"), Effect.provide(layerTracer));
+      // Without a traceparent header, the server alone decides each request's parent.
+      const client = Context.get(services, HttpClient.HttpClient);
+
+      for (let i = 0; i < 2; i++) {
+        yield* client
+          .execute(HttpClientRequest.get("/api/environment"))
+          .pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false));
+      }
+      expect(requestSpans.map((span) => span.parent._tag)).toEqual(["None", "None"]);
+      expect(new Set(requestSpans.map((span) => span.traceId)).size).toBe(2);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
