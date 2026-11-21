@@ -40,6 +40,7 @@
     "knip:production": "knip --production --preprocessor ./scripts/knip-schemas.ts",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "mobile:install": "node scripts/mobile-native-client.ts ensure",
+    "mobile:audit": "node scripts/mobile-audit.ts",
     "mobile:behavior": "node scripts/mobile-behavior.ts",
     "mobile:e2e": "node scripts/mobile-e2e.ts",
     "scenarios": "vp run --filter @t3tools/scripts scenarios",
