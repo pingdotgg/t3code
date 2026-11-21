@@ -267,6 +267,97 @@ describe("Claude model catalog", () => {
     );
   });
 
+  it("offers 1M and 200K on custom models tagged [1m]", () => {
+    const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
+      "bare-route[1m]",
+      "plain-route",
+      {
+        slug: "tuned-route[1M]",
+        name: "Tuned route",
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Reasoning",
+              type: "select",
+              options: [{ id: "high", label: "High", isDefault: true }],
+            },
+            {
+              id: "contextWindow",
+              label: "Old Context",
+              type: "select",
+              options: [{ id: "default", label: "Default", isDefault: true }],
+            },
+          ],
+        },
+      },
+    ]);
+    const selection = (
+      model: string,
+      options?: ReadonlyArray<{ id: string; value: string }>,
+    ): ModelSelection => ({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model,
+      ...(options === undefined ? {} : { options }),
+    });
+    const contextWindow = (model: string) =>
+      getClaudeCatalogModelCapabilities(catalog, model).optionDescriptors?.find(
+        (descriptor) => descriptor.id === "contextWindow",
+      );
+
+    assert.deepStrictEqual(contextWindow("bare-route[1m]"), {
+      id: "contextWindow",
+      label: "Context Window",
+      type: "select",
+      options: [
+        { id: "1m", label: "1M", isDefault: true },
+        { id: "200k", label: "200k" },
+      ],
+    });
+    assert.isUndefined(contextWindow("plain-route"));
+    assert.deepStrictEqual(
+      getClaudeCatalogModelCapabilities(catalog, "tuned-route[1M]").optionDescriptors?.map(
+        ({ id, type }) => `${id}:${type}`,
+      ),
+      ["effort:select", "contextWindow:select"],
+    );
+
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, selection("bare-route[1m]")),
+      "bare-route[1m]",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogContextWindowTokens(catalog, selection("bare-route[1m]")),
+      1_000_000,
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(
+        catalog,
+        selection("bare-route[1m]", [{ id: "contextWindow", value: "200k" }]),
+      ),
+      "bare-route",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogContextWindowTokens(
+        catalog,
+        selection("bare-route[1m]", [{ id: "contextWindow", value: "200k" }]),
+      ),
+      200_000,
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(
+        catalog,
+        selection("tuned-route[1M]", [{ id: "contextWindow", value: "200k" }]),
+      ),
+      "tuned-route",
+    );
+    assert.strictEqual(
+      resolveClaudeCatalogApiModelId(catalog, selection("plain-route")),
+      "plain-route",
+    );
+    assert.isUndefined(resolveClaudeCatalogContextWindowTokens(catalog, selection("plain-route")));
+  });
+
   // Rows Claude Code 2.1.310 reports from initialization for each configuration.
   it("sends the model id Claude Code reports when it serves a catalog model under another id", () => {
     const apiModel = (

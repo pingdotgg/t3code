@@ -3,12 +3,14 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   ProviderDriverKind,
+  type ProviderOptionDescriptor,
   type ServerProviderModel,
   type ServerProviderUpdateRequiredModel,
 } from "@t3tools/contracts";
 import type { ModelInfo as ClaudeModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import * as Option from "effect/Option";
 import {
+  createModelCapabilities,
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
@@ -27,6 +29,7 @@ import { BUNDLED_MODEL_MANIFEST, resolveProviderCatalog } from "./ModelManifest.
 
 const CLAUDE = ProviderDriverKind.make("claudeAgent");
 const EMPTY_CAPABILITIES: ModelCapabilities = { optionDescriptors: [] };
+const CLAUDE_1M_SUFFIX = "[1m]";
 
 export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
@@ -34,6 +37,7 @@ export interface ClaudeCatalogModel {
   readonly compatibility: ClaudeCodeCompatibility;
   /** What to send Claude Code instead of the slug, from its own model list. */
   readonly apiModel?: string;
+  readonly passthroughOptions?: boolean;
 }
 
 export interface ClaudeModelCatalog {
@@ -124,6 +128,36 @@ export function resolveClaudeModelCatalog(
 
 export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(undefined);
 
+const CLAUDE_1M_CONTEXT_OPTION: ProviderOptionDescriptor = {
+  id: "contextWindow",
+  label: "Context Window",
+  type: "select",
+  options: [
+    { id: "1m", label: "1M", isDefault: true },
+    { id: "200k", label: "200k" },
+  ],
+};
+
+function hasClaude1mSuffix(slug: string): boolean {
+  return slug.toLowerCase().endsWith(CLAUDE_1M_SUFFIX);
+}
+
+/** A custom model ID ending in `[1m]` asks Claude Code for the 1M window, so offer its 200K mode. */
+export function withClaude1mContextChoice(
+  capabilities: ModelCapabilities | null,
+  slug: string,
+): ModelCapabilities | null {
+  if (!hasClaude1mSuffix(slug)) return capabilities;
+  return createModelCapabilities({
+    optionDescriptors: [
+      ...(capabilities?.optionDescriptors ?? []).filter(
+        (descriptor) => descriptor.id !== "contextWindow",
+      ),
+      CLAUDE_1M_CONTEXT_OPTION,
+    ],
+  });
+}
+
 export function scopeClaudeModelCatalog(
   catalog: ClaudeModelCatalog,
   customModels: ReadonlyArray<CustomModelSetting>,
@@ -147,16 +181,20 @@ export function scopeClaudeModelCatalog(
   const builtInSlugs = new Set(builtInModels.map((entry) => entry.model.slug));
   const customCatalogModels: Array<ClaudeCatalogModel> = [];
   for (const entry of customEntries) {
-    if (!entry.capabilities || builtInSlugs.has(entry.slug)) continue;
+    const capabilities = withClaude1mContextChoice(entry.capabilities, entry.slug);
+    if (!capabilities || builtInSlugs.has(entry.slug)) continue;
     customCatalogModels.push({
       model: {
         slug: entry.slug,
         name: entry.name,
         isCustom: true,
-        capabilities: withUltracodeToggle(entry.capabilities),
+        capabilities: withUltracodeToggle(capabilities),
       },
-      runtime: {},
+      runtime: hasClaude1mSuffix(entry.slug)
+        ? { contextWindowTokens: { "1m": 1_000_000, "200k": 200_000 } }
+        : {},
       compatibility: {},
+      ...(!entry.capabilities ? { passthroughOptions: true } : {}),
     });
   }
 
@@ -413,7 +451,6 @@ export interface ClaudeEffortCapSource {
   readonly modelMaxEffortLevels?: ReadonlyMap<string, ClaudeEffortLevel>;
 }
 
-const CLAUDE_1M_SUFFIX = "[1m]";
 const CLAUDE_CODE_FAMILY_ALIASES: ReadonlySet<string> = new Set([
   "opus",
   "sonnet",
@@ -535,7 +572,8 @@ export function resolveClaudeCatalogEffort(
   model: string | null | undefined,
   raw: string | null | undefined,
 ): string | undefined {
-  if (!resolveClaudeCatalogModel(catalog, model)) {
+  const entry = resolveClaudeCatalogModel(catalog, model);
+  if (!entry || entry.passthroughOptions) {
     const effort = raw?.trim();
     return effort && (CLAUDE_EFFORT_LEVELS as ReadonlyArray<string>).includes(effort)
       ? effort
@@ -584,6 +622,11 @@ export function resolveClaudeCatalogApiModelId(
 ): string {
   const entry = resolveClaudeCatalogModel(catalog, modelSelection.model);
   const slug = entry?.apiModel ?? entry?.model.slug ?? modelSelection.model;
+  // The suffix is already in the slug, so 200K removes it instead of appending one.
+  if (entry?.model.isCustom && hasClaude1mSuffix(slug)) {
+    const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);
+    return contextWindow === "200k" ? slug.slice(0, -CLAUDE_1M_SUFFIX.length) : slug;
+  }
   const descriptors = getProviderOptionDescriptors({
     caps: entry?.model.capabilities ?? EMPTY_CAPABILITIES,
     selections: modelSelection.options,

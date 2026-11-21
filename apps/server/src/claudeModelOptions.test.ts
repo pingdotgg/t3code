@@ -32,6 +32,13 @@ describe("compileClaudeModelSelection", () => {
       effort: "max",
       settings: { fastMode: true },
     });
+    const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, ["sonnet[1m]"]);
+    expect(
+      compileClaudeModelSelection(
+        selection("sonnet[1m]", [{ id: "contextWindow", value: "200k" }]),
+        catalog,
+      ),
+    ).toMatchObject({ apiModelId: "sonnet", pinnedAlias: "sonnet" });
   });
 
   it("runs Ultracode at the chosen effort and reads the old Ultracode effort as xhigh", () => {
@@ -113,8 +120,9 @@ describe("compileClaudeModelSelection", () => {
   });
 
   it.each(["gateway-route", "gateway-route[1m]"])(
-    "keeps explicit effort and thinking for %s outside the local catalog",
+    "keeps explicit effort and thinking for unconfigured custom %s",
     (model) => {
+      const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, [model]);
       for (const thinking of [true, false]) {
         expect(
           compileClaudeModelSelection(
@@ -122,6 +130,7 @@ describe("compileClaudeModelSelection", () => {
               { id: "effort", value: "max" },
               { id: "thinking", value: thinking },
             ]),
+            catalog,
           ),
         ).toMatchObject({
           apiModelId: model,
@@ -129,7 +138,7 @@ describe("compileClaudeModelSelection", () => {
           settings: { alwaysThinkingEnabled: thinking },
         });
       }
-      const unconfigured = compileClaudeModelSelection(selection(model, []));
+      const unconfigured = compileClaudeModelSelection(selection(model, []), catalog);
       expect(unconfigured.effort).toBeUndefined();
       expect(unconfigured.settings).toEqual({});
     },

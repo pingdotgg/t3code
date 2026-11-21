@@ -46,7 +46,8 @@ export function compileClaudeModelSelection(
   const fastMode = supportsBoolean("fastMode")
     ? (getModelSelectionBooleanOptionValue(selection, "fastMode") ?? false)
     : undefined;
-  const inCatalog = resolveClaudeCatalogModel(catalog, selection.model) !== undefined;
+  const entry = resolveClaudeCatalogModel(catalog, selection.model);
+  const inCatalog = entry !== undefined && !entry.passthroughOptions;
   const thinking =
     !inCatalog || supportsBoolean("thinking")
       ? getModelSelectionBooleanOptionValue(selection, "thinking")
@@ -62,7 +63,7 @@ export function compileClaudeModelSelection(
   // An alias the catalog routes a built-in model to is Claude Code's own and is not pinned.
   const pinnedAlias =
     CLAUDE_CODE_MODEL_ALIASES.has(apiModelId) &&
-    resolveClaudeModelSlug(catalog, selection.model) === apiModelId
+    resolveClaudeModelSlug(catalog, selection.model).replace(/\[1m\]$/i, "") === apiModelId
       ? apiModelId
       : undefined;
   return {

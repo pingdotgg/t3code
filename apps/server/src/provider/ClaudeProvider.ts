@@ -76,6 +76,7 @@ import {
   formatClaudeVersionUpgradeMessage,
   resolveClaudeModelsForVersion,
   resolveClaudeUpdateRequiredModels,
+  withClaude1mContextChoice,
   withUltracodeToggle,
 } from "./ClaudeModelCatalog.ts";
 
@@ -92,7 +93,14 @@ function claudeProviderModels(
     customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   ).map((model) =>
-    model.isCustom ? { ...model, capabilities: withUltracodeToggle(model.capabilities) } : model,
+    model.isCustom
+      ? {
+          ...model,
+          capabilities: withUltracodeToggle(
+            withClaude1mContextChoice(model.capabilities, model.slug),
+          ),
+        }
+      : model,
   );
 }
 
