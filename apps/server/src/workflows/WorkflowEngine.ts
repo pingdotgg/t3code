@@ -254,15 +254,24 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           if (DateTime.isLessThan(now, dueAt)) continue;
           if (!isMissedFixedTimeRun(trigger.schedule, dueAt, now)) {
             // The key is the time it was due, so a crash before the next line starts no second run.
-            yield* start(
+            const started = yield* start(
               definition.name,
               { scheduledAt: due },
               { idempotencyKey: `trigger:${id}:${due}` },
             ).pipe(
+              Effect.as(true),
               Effect.catch((error) =>
-                Effect.logWarning("A scheduled workflow run did not start", { trigger: id, error }),
+                Effect.as(
+                  Effect.logWarning("A scheduled workflow run did not start", {
+                    trigger: id,
+                    error,
+                  }),
+                  false,
+                ),
               ),
             );
+            // Not moved past a time it has not started: the next sweep tries that one again.
+            if (!started) continue;
           }
         }
         const next = nextScheduledRunAt(trigger.schedule, now);

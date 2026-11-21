@@ -513,10 +513,17 @@ const fakeAgents = () => {
   };
 };
 
+/** While set, `nightly` turns down every tick, so its start fails. */
+const ticks = { refused: false };
 const triggered = [
   workflow(
     "nightly",
-    { version: 1, payload: Tick, returns: Schema.String, triggers: [every("1 hour")] },
+    {
+      version: 1,
+      payload: Tick.check(Schema.makeFilter(() => !ticks.refused || "not now")),
+      returns: Schema.String,
+      triggers: [every("1 hour")],
+    },
     (tick) => Effect.succeed(tick.scheduledAt),
   ),
   workflow(
@@ -1566,7 +1573,12 @@ it.effect(
           // The first look only notes when it is next due.
           yield* workflows.sweep;
           assert.deepStrictEqual(yield* nightly(workflows), []);
+          // A start that fails is tried again, not passed over for the next time it is due.
+          ticks.refused = true;
           yield* TestClock.adjust("61 minutes");
+          yield* workflows.sweep;
+          assert.deepStrictEqual(yield* nightly(workflows), []);
+          ticks.refused = false;
           yield* workflows.sweep;
           yield* workflows.sweep;
           const [run] = yield* nightly(workflows);
