@@ -24,10 +24,16 @@ import {
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
 import {
+  formatModelSelectionEffort,
+  REASONING_EFFORT_OPTION_IDS,
+} from "@t3tools/client-runtime/state/thread-execution";
+import {
   type ContextMenuItem,
   type EnvironmentId,
+  type ModelSelection,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type ServerProviderModel,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
@@ -1467,4 +1473,30 @@ export function sortScopedProjectsForSidebar<
       left.environmentId.localeCompare(right.environmentId) ||
       left.id.localeCompare(right.id),
   );
+}
+
+/**
+ * The thread's reasoning effort: the catalog label when known, the raw saved value when the option
+ * left the catalog, or the model's default effort only when the thread never set one.
+ */
+export function threadEffortLabel(
+  selection: ModelSelection,
+  models: ReadonlyArray<ServerProviderModel> | undefined,
+): string | null {
+  const stated = formatModelSelectionEffort(selection, models);
+  if (stated) return stated;
+  const saved = REASONING_EFFORT_OPTION_IDS.map((id) => {
+    const value = selection.options?.find((option) => option.id === id)?.value;
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  }).find((value): value is string => value !== null);
+  if (saved) return saved;
+  const descriptors =
+    models?.find((model) => model.slug === selection.model)?.capabilities?.optionDescriptors ?? [];
+  for (const descriptor of descriptors) {
+    if (descriptor.type !== "select" || !REASONING_EFFORT_OPTION_IDS.includes(descriptor.id))
+      continue;
+    const fallback = descriptor.options.find((option) => option.isDefault);
+    if (fallback) return fallback.label;
+  }
+  return null;
 }

@@ -36,6 +36,7 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  threadEffortLabel,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -1718,5 +1719,46 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("threadEffortLabel", () => {
+  const models = [
+    {
+      slug: "claude-opus-4-6",
+      name: "Opus 4.6",
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select" as const,
+            options: [
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium", isDefault: true },
+              { id: "high", label: "High" },
+            ],
+          },
+        ],
+      },
+    },
+  ];
+
+  it("uses the catalog label for a known effort, keeps an obsolete saved effort, and falls back to default only when unset", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    expect(
+      threadEffortLabel(
+        { instanceId, model: "claude-opus-4-6", options: [{ id: "effort", value: "high" }] },
+        models,
+      ),
+    ).toBe("High");
+    expect(
+      threadEffortLabel(
+        { instanceId, model: "claude-opus-4-6", options: [{ id: "effort", value: "max" }] },
+        models,
+      ),
+    ).toBe("max");
+    expect(threadEffortLabel({ instanceId, model: "claude-opus-4-6" }, models)).toBe("Medium");
   });
 });

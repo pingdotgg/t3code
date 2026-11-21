@@ -1873,6 +1873,25 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         )
         .map_err(err)?;
     }
+    if version < 4 {
+        // 4: backfill `subagentCount` on existing stored shells so idle parents show their
+        // count immediately after an upgrade instead of waiting for their next write.
+        conn.execute_batch(
+            "UPDATE threads
+             SET shell = json_set(
+               shell,
+               '$.subagentCount',
+               (SELECT COUNT(*) FROM entities WHERE entities.thread_id = threads.id AND entities.kind = 'subagents')
+             )
+             WHERE deleted = 0
+               AND shell IS NOT NULL
+               AND EXISTS (
+                 SELECT 1 FROM entities WHERE entities.thread_id = threads.id AND entities.kind = 'subagents'
+               );
+             PRAGMA user_version = 4;",
+        )
+        .map_err(err)?;
+    }
     Ok(())
 }
 
@@ -2223,7 +2242,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         let index: i64 = store
             .conn
             .query_row(
@@ -2291,6 +2310,63 @@ mod tests {
         tx.append(item("next")).unwrap();
         assert_eq!(ordinal(&tx, "next"), 4);
         tx.commit(None).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migration_backfills_subagent_count_on_stored_shells() {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-engine-{}-migrate-subagent-count",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("engine.sqlite");
+        {
+            let mut store = Store::open(&path).unwrap();
+            let mut tx = store.tx().unwrap();
+            tx.append(Draft::new(
+                "parent",
+                "thread.created",
+                json!({"projectId": "p1", "title": "Parent"}),
+            ))
+            .unwrap();
+            tx.append(Draft::new(
+                "solo",
+                "thread.created",
+                json!({"projectId": "p1", "title": "Solo"}),
+            ))
+            .unwrap();
+            for id in ["sa-1", "sa-2"] {
+                tx.append(Draft::new(
+                    "parent",
+                    "subagent.updated",
+                    json!({"id": id, "status": "completed"}),
+                ))
+                .unwrap();
+            }
+            tx.commit(None).unwrap();
+            // Simulate a v3 database written before `subagentCount` existed on stored shells.
+            store
+                .conn
+                .execute_batch(
+                    "UPDATE threads SET shell = json_remove(shell, '$.subagentCount') WHERE id = 'parent';
+                     PRAGMA user_version = 3;",
+                )
+                .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        let version: i64 = store
+            .conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+        let shell = store.shell_snapshot().unwrap();
+        let threads = shell["threads"].as_array().unwrap();
+        let parent = threads.iter().find(|t| t["id"] == "parent").unwrap();
+        let solo = threads.iter().find(|t| t["id"] == "solo").unwrap();
+        assert_eq!(parent["subagentCount"], json!(2));
+        assert!(solo.get("subagentCount").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

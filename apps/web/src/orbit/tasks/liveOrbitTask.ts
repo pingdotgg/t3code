@@ -13,9 +13,11 @@ import { followTasksUpdates, loadOrbitTasksClient } from "./orbitTasksClient";
 const tasks = new Map<number, OrbitTaskSummary>();
 const watchers = new Map<number, number>();
 const listeners = new Set<() => void>();
+const latestReadSeq = new Map<number, number>();
 let stopFollowing: (() => void) | null = null;
 let stopInvalidation: (() => void) | null = null;
 let generation = 0;
+let readSeq = 0;
 
 function emit() {
   for (const listener of listeners) listener();
@@ -23,10 +25,14 @@ function emit() {
 
 function read(taskId: number) {
   const started = generation;
+  const seq = (readSeq += 1);
+  latestReadSeq.set(taskId, seq);
   void loadOrbitTasksClient().then(async (client) => {
     const result = await client?.getTask(taskId);
-    // An error keeps what the card already shows.
-    if (result?.status !== "ok" || started !== generation) return;
+    // An error or a newer read keeps what the card already shows.
+    if (result?.status !== "ok" || started !== generation || latestReadSeq.get(taskId) !== seq) {
+      return;
+    }
     tasks.set(taskId, result.value);
     emit();
   });
@@ -49,6 +55,7 @@ function start() {
 
 function stop() {
   generation += 1;
+  latestReadSeq.clear();
   stopInvalidation?.();
   stopFollowing?.();
   stopInvalidation = null;
@@ -64,8 +71,12 @@ function watch(taskId: number, listener: () => void) {
   return () => {
     listeners.delete(listener);
     const left = (watchers.get(taskId) ?? 1) - 1;
-    if (left > 0) watchers.set(taskId, left);
-    else watchers.delete(taskId);
+    if (left > 0) {
+      watchers.set(taskId, left);
+    } else {
+      watchers.delete(taskId);
+      latestReadSeq.delete(taskId);
+    }
     if (watchers.size === 0) stop();
   };
 }

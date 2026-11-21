@@ -19,10 +19,6 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
-  formatModelSelectionEffort,
-  REASONING_EFFORT_OPTION_IDS,
-} from "@t3tools/client-runtime/state/thread-execution";
-import {
   resolveSettledThreadTimestamp,
   resolveThreadActivityTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
@@ -105,6 +101,7 @@ import {
   withoutRemovedCheckout,
   useSidebarRowSubscriptionLease,
   setFileDragActive,
+  threadEffortLabel,
 } from "../Sidebar.logic";
 import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic";
 import {
@@ -235,24 +232,6 @@ function SidebarProviderStack(props: {
       />
     </span>
   );
-}
-
-/** The thread's reasoning effort, or the model's default effort when the thread never set one. */
-function threadEffortLabel(
-  selection: SidebarThreadSummary["modelSelection"],
-  models: SidebarProviderEntry["models"] | undefined,
-): string | null {
-  const stated = formatModelSelectionEffort(selection, models);
-  if (stated) return stated;
-  const descriptors =
-    models?.find((model) => model.slug === selection.model)?.capabilities?.optionDescriptors ?? [];
-  for (const descriptor of descriptors) {
-    if (descriptor.type !== "select" || !REASONING_EFFORT_OPTION_IDS.includes(descriptor.id))
-      continue;
-    const fallback = descriptor.options.find((option) => option.isDefault);
-    if (fallback) return fallback.label;
-  }
-  return null;
 }
 
 function SidebarThreadTooltip({

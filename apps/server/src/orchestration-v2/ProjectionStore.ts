@@ -2283,11 +2283,11 @@ function shellFromState(input: {
 // in migration 095, where a tool name counts anywhere after the first toolName. Searching from
 // that first one once avoids rescanning the payload for every nested toolName.
 const INLINE_WORK_OUTPUT = new RegExp(
-  `htmlRender|${MCP_APP_OUTPUT_KEY}|"viewedImagePath"|sentMessage`,
+  `htmlRender|${MCP_APP_OUTPUT_KEY}|"viewedImagePath"|sentMessage|"orbitTask"`,
   "i",
 );
 const TOOL_NAME_PREFIX = /"toolName":"/i;
-const INLINE_TOOL_NAME = /(?:delegate.task|send.to.user)"/is;
+const INLINE_TOOL_NAME = /(?:delegate.task|send.to.user|orbit(?:__|[./:\s]+)task[-_]create)"/is;
 
 const isInlineWorkOutput = (payloadJson: string) => {
   if (INLINE_WORK_OUTPUT.test(payloadJson)) return true;
