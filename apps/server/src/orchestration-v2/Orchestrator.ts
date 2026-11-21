@@ -15174,17 +15174,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const childTransfers = yield* projectionStore.getThreadRecords(childThreadId, [
         "contextTransfers",
       ]);
-      const existingResultTransfer = childTransfers.contextTransfers.find(
-        (transfer) =>
-          transfer.type === "subagent_result" &&
-          transfer.sourceThreadId === childThreadId &&
-          transfer.targetThreadId === parentThreadId &&
-          (transfer.sourcePoint.runId === childRun.id ||
-            (options.task.id === forkedFrom.nodeId && transfer.sourcePoint.runId === undefined)),
-      );
-      if (existingResultTransfer !== undefined) {
-        return;
-      }
+      // Follow-ups whose results share one wake run each get a transfer from it, so a transfer
+      // from this run means this task settled only once the task holds its result.
+      const settled =
+        task.result !== null &&
+        childTransfers.contextTransfers.some(
+          (transfer) =>
+            transfer.type === "subagent_result" &&
+            transfer.sourceThreadId === childThreadId &&
+            transfer.targetThreadId === parentThreadId &&
+            (transfer.sourcePoint.runId === childRun.id ||
+              (options.task.id === forkedFrom.nodeId && transfer.sourcePoint.runId === undefined)),
+        );
+      if (settled) return;
 
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, { ...childRun, status: outcome });
