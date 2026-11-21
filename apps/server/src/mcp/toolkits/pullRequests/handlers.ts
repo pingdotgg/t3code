@@ -899,7 +899,9 @@ const make = Effect.gen(function* () {
                 number: entry.target.number,
                 url: entry.target.url,
               };
-              if (entry.project === undefined) {
+              // The caller's project may hold the repository as a tracked folder; the service decides.
+              const project = entry.project ?? entry.callerProject;
+              if (project === undefined) {
                 return {
                   ...identity,
                   outcome: "failed" as const,
@@ -908,7 +910,7 @@ const make = Effect.gen(function* () {
                   }).message,
                 };
               }
-              return yield* reviewGuides.generate(guideReference(entry.project, entry.target)).pipe(
+              return yield* reviewGuides.generate(guideReference(project, entry.target)).pipe(
                 Effect.map((result) => ({
                   ...identity,
                   outcome: result.started ? ("started" as const) : ("running" as const),
