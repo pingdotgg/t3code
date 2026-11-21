@@ -3577,6 +3577,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       expect(skipped.commit.status).toBe("skipped_no_changes");
       expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(head);
+      expect((yield* runGit(repoDir, ["show", ":README.md"])).stdout).toBe("staged\n");
     }),
   );
 

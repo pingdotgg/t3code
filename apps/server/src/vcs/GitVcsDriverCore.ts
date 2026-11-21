@@ -3376,10 +3376,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     body,
     options?: GitVcsDriver.GitCommitOptions,
   ) {
-    const partialCommitPaths =
-      options?.stage !== undefined
-        ? yield* stageCommitChanges(cwd, options.stage.filePaths)
-        : undefined;
     const diffCached = [
       "-c",
       "diff.relative=false",
@@ -3388,6 +3384,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "--no-ext-diff",
       "--no-textconv",
     ];
+    if (options?.stage !== undefined) {
+      const indexMatchesHead =
+        (yield* executeGit("GitVcsDriver.commit.indexChanges", cwd, [...diffCached, "--quiet"], {
+          allowNonZeroExit: true,
+        })).exitCode === 0;
+      // Staging an empty result would overwrite what is already staged, so check a scratch index.
+      if (
+        !indexMatchesHead &&
+        (yield* prepareCommitContext(cwd, options.stage.filePaths, { includePatch: false })) ===
+          null
+      ) {
+        return yield* new GitVcsDriver.GitNothingToCommitError({
+          operation: "GitVcsDriver.commit",
+          cwd,
+          detail: "Staging found no changes.",
+        });
+      }
+    }
+    const partialCommitPaths =
+      options?.stage !== undefined
+        ? yield* stageCommitChanges(cwd, options.stage.filePaths)
+        : undefined;
     // Preserved unselected conflicts always show as index changes, so only selected paths count.
     const selectedPaths = partialCommitPaths && new Set(options?.stage?.filePaths);
     const hasStagedChanges = selectedPaths
