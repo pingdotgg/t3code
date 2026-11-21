@@ -254,10 +254,12 @@ const EMPTY_PERSISTED_HISTORY: PersistedBrowserHistory = {
 let historyDatabase: Promise<IDBDatabase> | undefined;
 let historyChannel: BroadcastChannel | undefined;
 
-function readLegacyHistory(): PersistedBrowserHistory {
+function readLegacyHistory(
+  missing: PersistedBrowserHistory = EMPTY_PERSISTED_HISTORY,
+): PersistedBrowserHistory {
   try {
     const value = window.localStorage.getItem(BROWSER_HISTORY_STORAGE_KEY);
-    if (value === null) return EMPTY_PERSISTED_HISTORY;
+    if (value === null) return missing;
     const parsed: { state?: unknown } | null = JSON.parse(value);
     return {
       ...migratePersistedBrowserHistoryState(parsed?.state),
@@ -274,6 +276,23 @@ function retireLegacyHistory(): void {
   } catch {
     // The browser can deny access to localStorage independently of IndexedDB.
   }
+}
+
+// Without IndexedDB, merge into the freshest localStorage snapshot so a reload keeps new visits.
+function transactLegacyHistory(update: UpdateHistory, current: PersistedBrowserHistory) {
+  const previous = readLegacyHistory(current);
+  const next = update(previous);
+  if (next === previous) return previous;
+  const history = boundThreadMappings(previous, next);
+  try {
+    window.localStorage.setItem(
+      BROWSER_HISTORY_STORAGE_KEY,
+      JSON.stringify({ state: history, version: 1 }),
+    );
+  } catch {
+    // History stays in memory when the browser denies both storage APIs.
+  }
+  return history;
 }
 
 function invalidateHistoryDatabase(opening: Promise<IDBDatabase>): void {
@@ -352,7 +371,10 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()((set, g
         // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel is scoped to the origin
         if (changed) historyChannel?.postMessage(null);
       },
-      () => publish(update(get())),
+      () => {
+        const { byProjectKey, projectKeyByThreadKey } = get();
+        publish(transactLegacyHistory(update, { byProjectKey, projectKeyByThreadKey }));
+      },
     );
   };
 
