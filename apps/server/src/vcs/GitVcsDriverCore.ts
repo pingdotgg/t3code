@@ -2368,11 +2368,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return null;
   });
 
-  // Git rewrites config and packed-refs by rename and writes each loose ref by a rename in its
-  // directory, so these stats change whenever a base-branch answer could. Cost: one stat and one
-  // listing per directory under refs/heads and refs/remotes.
+  // The effective config listing covers included, global, system and worktree config. Git writes
+  // packed-refs by rename and each loose ref by a rename in its directory, so those stats change
+  // whenever a ref could. Cost: one git process, plus a stat and listing per refs directory.
   const readBaseBranchInputsStamp = Effect.fn("GitVcsDriverCore.readBaseBranchInputsStamp")(
-    function* (gitCommonDir: string) {
+    function* (cwd: string, gitCommonDir: string) {
+      const effectiveConfig = yield* executeGit(
+        "GitVcsDriver.readBaseBranchInputsStamp",
+        cwd,
+        ["config", "--list", "-z"],
+        { allowNonZeroExit: true },
+      );
+      if (effectiveConfig.exitCode !== 0 || effectiveConfig.stdoutTruncated) return null;
+      const configHash = Hex.encode(
+        yield* digest.digest(Digest.sha256, new TextEncoder().encode(effectiveConfig.stdout)),
+      );
       const statToken = (target: string) =>
         fileSystem.stat(target).pipe(
           Effect.map(
@@ -2385,7 +2395,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("-")),
         );
       const tokens = yield* Effect.forEach(
-        ["config", "packed-refs", "reftable/tables.list"],
+        ["packed-refs", "reftable/tables.list"],
         (name) => statToken(path.join(gitCommonDir, name)),
         { concurrency: "unbounded" },
       );
@@ -2403,6 +2413,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           if (entry.type === "Directory") directories.push(path.join(directory, entry.name));
         }
       }
+      tokens.push(configHash);
       return tokens.join("\0");
     },
   );
@@ -2437,7 +2448,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const inputsStamp =
         gitCommonDir === undefined
           ? null
-          : yield* readBaseBranchInputsStamp(gitCommonDir).pipe(Effect.orElseSucceed(() => null));
+          : yield* readBaseBranchInputsStamp(cwd, gitCommonDir).pipe(
+              Effect.orElseSucceed(() => null),
+            );
       if (inputsStamp === null) {
         return yield* findBaseBranchForNoUpstream(cwd, refName, options);
       }

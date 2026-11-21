@@ -913,6 +913,21 @@ it.effect("resolves a branch's base once while its refs and branch config are un
       yield* git(cwd, ["config", "branch.feature/x.t3-merge-base-ref", "refs/heads/main"]);
       yield* driver.statusDetailsLocal(cwd);
       assert.equal(lookups(), 1);
+
+      const includeDir = yield* makeTmpDir();
+      const includedConfig = `${includeDir}/included.gitconfig`;
+      yield* git(cwd, ["config", "include.path", includedConfig]);
+      yield* driver.statusDetailsLocal(cwd);
+      lookups();
+      yield* git(cwd, [
+        "config",
+        "--file",
+        includedConfig,
+        "branch.feature/x.t3-merge-base",
+        "main",
+      ]);
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 1);
     }),
   ).pipe(Effect.provide(layerTest)),
 );
