@@ -4842,6 +4842,19 @@ function isClaudeEmptyTaskNotificationSuccess(message: SDKMessage): boolean {
   );
 }
 
+// Whether the wake that ends with the result at `resultIndex` reported a sign-in failure.
+function claudeWakeSignedOut(frames: ReadonlyArray<SDKMessage>, resultIndex: number): boolean {
+  const wakeStart = frames.slice(0, resultIndex).findLastIndex(isClaudeTurnStartMessage);
+  return frames
+    .slice(wakeStart + 1, resultIndex)
+    .some(
+      (frame) =>
+        frame.type === "assistant" &&
+        frame.parent_tool_use_id === null &&
+        frame.error === "authentication_failed",
+    );
+}
+
 // The CLI throttles unchanged rate_limit_event frames, but repeats this
 // undeclared payload on each blocked assistant response.
 const isClaudeBlockedAssistantRateLimit = Schema.is(
@@ -5225,13 +5238,13 @@ interface ActiveClaudeTurnContext {
   compactionFailure: { readonly message: string | undefined } | null;
   // The title a `session_title_changed` frame reported; a `/rename` result applies it to the thread.
   nativeSessionTitle: string | null;
-  // Steers end segments whose usage is excluded from the final result; bill them too, oldest first.
-  readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
+  // The final result excludes earlier steered segments and buffered wakes; bill them too.
+  readonly earlierSegmentUsage: Array<SDKResultMessage["usage"]>;
   // Set as finalization starts: a steer admitted later would stay pending
   // forever, so it fails and the orchestrator follows up instead.
   steersClosed: boolean;
-  // Ledger growth of the steered segments; undefined once any segment's growth is unknown.
-  steeredLedgerUsage: ClaudeLedgerUsage | undefined;
+  // Ledger growth of those earlier results; undefined once any result's growth is unknown.
+  earlierLedgerUsage: ClaudeLedgerUsage | undefined;
   readonly rootModels: Set<string>;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
@@ -9807,14 +9820,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     input.context.subagentsByTaskId.size > 0 ||
                       input.context.subagentsByToolUseId.size > 0,
                     input.status,
-                    input.context.steeredSegmentUsage,
+                    input.context.earlierSegmentUsage,
                     {
                       rootModels: input.context.rootModels,
                       ...(input.result === undefined
                         ? {}
                         : {
                             ledger: addClaudeLedgerUsage(
-                              input.context.steeredLedgerUsage,
+                              input.context.earlierLedgerUsage,
                               resultLedgerUsage.get(input.result),
                             ),
                           }),
@@ -10021,6 +10034,66 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (yield* Ref.get(interruptedTurns)).has(context.providerTurnId),
           });
         });
+
+        // Assistant frames carry the earlier wake's text; its result only adds usage and errors.
+        const recordEarlierWakeResult = Effect.fn("ClaudeAdapter.recordEarlierWakeResult")(
+          function* (
+            context: ActiveClaudeTurnContext,
+            result: SDKResultMessage,
+            signedOut: boolean,
+          ) {
+            if (isClaudeEmptyTaskNotificationSuccess(result)) return;
+            context.earlierSegmentUsage.push(result.usage);
+            context.earlierLedgerUsage = addClaudeLedgerUsage(
+              context.earlierLedgerUsage,
+              resultLedgerUsage.get(result),
+            );
+            const now = yield* DateTime.now;
+            // As for a live result: a 403 shows its text, and this wake's sign-in failure gives sign-in advice.
+            const permissionDenied =
+              result.subtype === "success" && result.api_error_status === 403;
+            const failure = providerFailureFromResult(
+              result,
+              now,
+              permissionDenied
+                ? result.result
+                : signedOut
+                  ? context.authenticationFailureMessage
+                  : undefined,
+            );
+            if (failure !== null) {
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId: result.uuid,
+                  }),
+                  threadId: context.input.threadId,
+                  runId: context.input.runId,
+                  nodeId: context.input.rootNodeId,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: result.uuid,
+                    strength: "strong",
+                  },
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(context, result.uuid),
+                  type: "system_notice",
+                  status: "completed",
+                  title: failure.message,
+                  message: failure.message,
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                },
+              });
+            }
+          },
+        );
 
         const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
           closedQuery: ClaudeLiveQueryContext,
@@ -12185,9 +12258,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   completedAt,
                 });
               }
-              context.steeredSegmentUsage.push(message.usage);
-              context.steeredLedgerUsage = addClaudeLedgerUsage(
-                context.steeredLedgerUsage,
+              context.earlierSegmentUsage.push(message.usage);
+              context.earlierLedgerUsage = addClaudeLedgerUsage(
+                context.earlierLedgerUsage,
                 resultLedgerUsage.get(message),
               );
               return;
@@ -13676,9 +13749,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               latestAssistantRateLimit: null,
               compactionFailure: null,
               nativeSessionTitle: null,
-              steeredSegmentUsage: [],
+              earlierSegmentUsage: [],
               steersClosed: false,
-              steeredLedgerUsage: { inputTokens: 0, outputTokens: 0 },
+              earlierLedgerUsage: { inputTokens: 0, outputTokens: 0 },
               rootModels: new Set(),
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
@@ -13833,25 +13906,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
                   return;
                 }
-                // Replay results last to avoid rebuffering later frames. An empty turn's result must not settle a newer running turn.
+                // Replay results last to avoid rebuffering later frames; a newer root init owns settlement.
+                const lastTurnStartIndex = drained.findLastIndex(isClaudeTurnStartMessage);
                 const lastResultIndex = drained.findLastIndex((entry) => entry.type === "result");
-                const tailResult = drained[lastResultIndex];
-                const emptyTurnBeforeNextTurn =
-                  tailResult?.type === "result" &&
-                  tailResult.num_turns === 0 &&
-                  !tailResult.is_error &&
-                  terminalStatusFromResult(tailResult) === "completed" &&
-                  drained
-                    .slice(lastResultIndex + 1)
-                    .some((entry) => isClaudeTurnStartMessage(entry));
-                // The CLI can append empty task successes after a failure. Filter
-                // those for replay without changing the raw-tail successor guard.
+                // Preserve the base fallback when the latest wake has only empty
+                // task successes: an earlier non-empty result still owns failure.
                 const replayResultIndex = drained.findLastIndex(
                   (entry) =>
                     entry.type === "result" && !isClaudeEmptyTaskNotificationSuccess(entry),
                 );
                 const lastResult =
-                  drained[replayResultIndex === -1 ? lastResultIndex : replayResultIndex];
+                  lastResultIndex > lastTurnStartIndex
+                    ? drained[replayResultIndex === -1 ? lastResultIndex : replayResultIndex]
+                    : undefined;
                 const opaqueReplayTombstones = taskIdSetForNativeThread(
                   yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
                   nativeThreadId,
@@ -13862,7 +13929,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     entry.subtype === "task_notification" &&
                     opaqueReplayTombstones.has(entry.task_id),
                 );
-                for (const entry of drained) {
+                for (const [index, entry] of drained.entries()) {
                   if (
                     !(yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages.includes(entry)
                   ) {
@@ -13870,6 +13937,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }
                   if (entry.type !== "result") {
                     yield* handleSdkMessage({ query: querySession.query, message: entry });
+                  } else if (index < lastTurnStartIndex && entry !== lastResult) {
+                    yield* recordEarlierWakeResult(
+                      context,
+                      entry,
+                      claudeWakeSignedOut(drained, index),
+                    );
                   }
                   yield* Ref.update(wakeBuffers, (current) => {
                     const buffered = current.get(nativeThreadId);
@@ -13886,7 +13959,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     return next;
                   });
                 }
-                if (lastResult !== undefined && !emptyTurnBeforeNextTurn) {
+                if (lastResult !== undefined) {
                   yield* handleSdkMessage({ query: querySession.query, message: lastResult });
                   if (leavesLaterWake) yield* offerBufferedWake(nativeThreadId);
                   return;
