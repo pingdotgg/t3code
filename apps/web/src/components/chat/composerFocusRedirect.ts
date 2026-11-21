@@ -1,3 +1,9 @@
+import { isInSideChatPane } from "~/lib/sideChatPane";
+import { getClientSettings } from "~/hooks/useSettings";
+
+import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import { readPastedComposerContext } from "../composerInlineTokenPaste";
+
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 
 export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
@@ -73,29 +79,92 @@ function isKeyClaimedInPath(event: KeyboardEvent): boolean {
 
 export function shouldRedirectInputToComposer(event: Event): boolean {
   if (event.defaultPrevented) return false;
+  const selection = window.getSelection();
+  if (
+    isInSideChatPane(event.target) ||
+    isInSideChatPane(selection?.anchorNode?.parentElement ?? null)
+  )
+    return false;
   // Never persist or send secret-request typing through the composer.
   if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
-  if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
   if (document.querySelector('[data-chat-column-maximized-away="true"]')) return false;
+  if (
+    Array.from(document.querySelectorAll(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)).some(
+      (layer) =>
+        !pendingCitation?.commentInput?.pending ||
+        !layer.querySelector("[data-citation-comment-editor]"),
+    )
+  )
+    return false;
+  return true;
+}
+
+let pendingCitation: AssistantCitationSourceAnchor | undefined;
+
+type ActiveCite = (text: string) => AssistantCitationSourceAnchor | null;
+let activeCite: ActiveCite | undefined;
+
+export function registerActiveCite(cite: ActiveCite) {
+  activeCite = cite;
+  return () => {
+    if (activeCite === cite) activeCite = undefined;
+  };
+}
+
+function citeSelectionInput(event: Event, text: string): boolean {
+  if (getClientSettings().typingWithSelection !== "cite") return false;
+  const pending = pendingCitation?.commentInput;
+  if (
+    pending?.pending &&
+    pendingCitation?.source.isConnected &&
+    window.getSelection()?.isCollapsed
+  ) {
+    pending.append(text);
+    pendingCitation.initialComment = pending.text;
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
+  pendingCitation = activeCite?.(text) ?? undefined;
+  if (!pendingCitation) return false;
+  event.preventDefault();
+  event.stopPropagation();
   return true;
 }
 
 export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
-  if (event.isComposing) return false;
+  if (event.isComposing || event.keyCode === 229) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
-  if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
+  const pending = pendingCitation?.commentInput;
+  if (
+    pending?.pending &&
+    pendingCitation?.source.isConnected &&
+    window.getSelection()?.isCollapsed &&
+    ["Backspace", "Delete", "Escape", "Enter"].includes(event.key)
+  ) {
+    if (event.key === "Backspace") pending.backspace();
+    if (event.key === "Escape") pending.cancel();
+    pendingCitation.initialComment = pending.text;
+    event.preventDefault();
+    event.stopPropagation();
+    return false;
+  }
+  if (event.key.length !== 1) return false;
   if (isSurfaceLauncherKey(event)) return false;
   if (isKeyClaimedInPath(event)) return false;
+  if (citeSelectionInput(event, event.key)) return false;
 
   return true;
 }
 
 export function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
   if (!event.clipboardData || event.clipboardData.files.length > 0) return null;
-  if (!shouldRedirectInputToComposer(event)) return null;
+  const hasContext = (readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0;
   const text = event.clipboardData.getData("text/plain");
+  if (!shouldRedirectInputToComposer(event)) return null;
+  if (!hasContext && text.length > 0 && citeSelectionInput(event, text)) return null;
   return text.length > 0 ? text : null;
 }

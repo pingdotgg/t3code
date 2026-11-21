@@ -362,6 +362,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "typing-with-selection",
+    title: msg("Typing with text selected"),
+    to: "/settings/appearance",
+    searchTerms: [msg("cite citation paste dictation composer")],
+  },
+  {
     id: "chat-width",
     title: msg("Chat width"),
     to: "/settings/appearance",

@@ -158,6 +158,7 @@ export interface ComposerPromptEditorHandle {
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
   readSelectionRange: () => { start: number; end: number };
+  canInsertCitation: () => boolean;
   captureAttachmentInsertion: () => ComposerAttachmentInsertion | undefined;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
@@ -1042,6 +1043,12 @@ function ComposerPromptEditorTiptapInner(
   const isApplyingControlledUpdateRef = useRef(false);
   const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
+  const citationInputRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases buffered input when its owning composer unmounts before the comment editor subscribes
+  useLayoutEffect(
+    () => () => citationInputRequestRef.current?.sourceAnchor.commentInput?.release(),
+    [],
+  );
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
   const [isEmpty, setIsEmpty] = useState(value.length === 0);
@@ -1071,6 +1078,11 @@ function ComposerPromptEditorTiptapInner(
     const fromFlat = pmToFlat(map, from);
     const toFlat = pmToFlat(map, to);
     const nextValue = map.value;
+    if (citationInputRequestRef.current?.value !== nextValue) {
+      citationInputRequestRef.current?.sourceAnchor.commentInput?.release();
+      citationInputRequestRef.current = null;
+      citationRequestRef.current = null;
+    }
     const nextExpandedCursor = Math.max(
       0,
       Math.min(map.value.length, flatToMarkdown(map, fromFlat)),
@@ -1659,6 +1671,11 @@ function ComposerPromptEditorTiptapInner(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the controlled value and cursor into the Tiptap document before paint
   useLayoutEffect(() => {
     latestValueRef.current = value;
+    if (citationInputRequestRef.current?.value !== value) {
+      citationInputRequestRef.current?.sourceAnchor.commentInput?.release();
+      citationInputRequestRef.current = null;
+      citationRequestRef.current = null;
+    }
     if (!editor) return;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
@@ -1718,6 +1735,10 @@ function ComposerPromptEditorTiptapInner(
           run.nodeName === "composer-citation" &&
           run.mdStart === pendingCitation.citationStart,
       );
+      if (!target) {
+        pendingCitation.sourceAnchor.commentInput?.release();
+        citationInputRequestRef.current = null;
+      }
       if (target) {
         const node = editor.state.doc.nodeAt(target.pmPos);
         const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
@@ -1826,9 +1847,19 @@ function ComposerPromptEditorTiptapInner(
         readSnapshot();
         return selectionRangeRef.current;
       },
+      canInsertCitation: () => {
+        if (!editor || literalText) return false;
+        const { $from } = editor.state.selection;
+        const citationType = editor.schema.nodes["composer-citation"];
+        return (
+          !!citationType && $from.parent.canReplaceWith($from.index(), $from.index(), citationType)
+        );
+      },
       captureAttachmentInsertion: () =>
         editor ? captureComposerAttachmentInsertion(editor) : undefined,
       requestCitationComment: (request) => {
+        citationInputRequestRef.current?.sourceAnchor.commentInput?.release();
+        citationInputRequestRef.current = request;
         citationRequestRef.current = request;
         if (!editor) return;
         const map = serializeEditorDoc(editor.state.doc);
@@ -1839,7 +1870,12 @@ function ComposerPromptEditorTiptapInner(
             run.nodeName === "composer-citation" &&
             run.mdStart === request.citationStart,
         );
-        if (!target) return;
+        if (!target) {
+          request.sourceAnchor.commentInput?.release();
+          citationInputRequestRef.current = null;
+          citationRequestRef.current = null;
+          return;
+        }
         const node = editor.state.doc.nodeAt(target.pmPos);
         const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
         if (citeKey) {

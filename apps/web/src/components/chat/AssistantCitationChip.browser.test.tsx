@@ -9,7 +9,10 @@ import { useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import {
+  createCitationCommentInput,
+  type AssistantCitationSourceAnchor,
+} from "~/lib/assistantTextSelection";
 import "~/index.css";
 import { act, render } from "../../../test/render";
 
@@ -96,12 +99,28 @@ async function clickButton(label: string) {
 }
 
 describe("citation comment source disappearance", () => {
+  it("focuses an initial comment at the end so typing appends", async () => {
+    using source = setup();
+    source.sourceAnchor.initialComment = "a";
+    source.sourceAnchor.commentInput = createCitationCommentInput("abc");
+    await using _screen = await mount(
+      source.sourceAnchor,
+      vi.fn(() => true),
+    );
+    await vi.waitFor(() => expect(document.activeElement).toBe(textarea()));
+    expect(textarea()?.value).toBe("abc");
+    expect(source.sourceAnchor.commentInput.pending).toBe(false);
+    expect(textarea()?.selectionStart).toBe(3);
+    await userEvent.keyboard("de");
+    expect(textarea()?.value).toBe("abcde");
+  });
+
   it("preserves an over-length draft at the composer until it can be shortened and saved", async () => {
     using source = setup();
     const onSave = vi.fn(() => true);
-    await using _screen = await mount(source.sourceAnchor, onSave);
     const draft = "x".repeat(ASSISTANT_CITATION_MAX_COMMENT_LENGTH + 1);
-    await typeComment(draft);
+    source.sourceAnchor.initialComment = draft;
+    await using _screen = await mount(source.sourceAnchor, onSave);
     await removeSource();
 
     expect(textarea()?.value).toBe(draft);

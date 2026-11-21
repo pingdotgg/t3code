@@ -213,7 +213,7 @@ export function AssistantCitationChip({
   const settleDraftOnClose = (reason: string): boolean => {
     const dismissal = resolveAssistantCitationCommentDismissal({
       reason,
-      draft: draftCommentRef.current,
+      draft: draftCommentRef.current ?? sourceAnchor?.initialComment ?? null,
       savedComment: citation.comment,
     });
     if (dismissal.kind === "commit") return commentEditor?.onSave(dismissal.comment) ?? true;
@@ -337,6 +337,10 @@ export function AssistantCitationChip({
               <AssistantCitationCommentEditor
                 key={serializeAssistantCitation(citation)}
                 citation={citation}
+                {...(sourceAnchor?.initialComment === undefined
+                  ? {}
+                  : { initialComment: sourceAnchor.initialComment })}
+                commentInput={sourceAnchor?.commentInput}
                 inputRef={commentInputRef}
                 onVoiceSetupOpenChange={setVoiceSetupOpen}
                 onDraftChange={(comment) => {
