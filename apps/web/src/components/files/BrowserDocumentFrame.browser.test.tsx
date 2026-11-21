@@ -415,4 +415,81 @@ describe("BrowserDocumentFrame", () => {
       "the next revision was uncovered before it took the reader's position",
     ).toContain(1200);
   });
+
+  // A thread switch unmounts the preview; coming back mounts a new one for the same document.
+  it("returns a remounted page to where the reader left it", async () => {
+    const tall = '<div style="height:5000px">report</div>';
+    using pages = (() => {
+      const urls = [
+        `${tall}<script>addEventListener("load",()=>scrollTo(0,1200))</script>`,
+        tall,
+      ].map((body) =>
+        URL.createObjectURL(new Blob([body + FILE_PREVIEW_SCROLL_SCRIPT], { type: "text/html" })),
+      );
+      return { urls, [Symbol.dispose]: () => urls.forEach((url) => URL.revokeObjectURL(url)) };
+    })();
+    const [first, second] = pages.urls as [string, string];
+    const reports: Array<{ source: MessageEventSource | null; y: number }> = [];
+    const onMessage = (event: MessageEvent) => {
+      const scroll = readFilePreviewScroll(event.data);
+      if (scroll !== undefined) reports.push({ source: event.source, y: scroll.y });
+    };
+    window.addEventListener("message", onMessage);
+    using _listener = { [Symbol.dispose]: () => window.removeEventListener("message", onMessage) };
+    const frame = (src: string) => (
+      <div className="flex h-75 w-100 flex-col">
+        <BrowserDocumentFrame
+          src={src}
+          title="Report"
+          pdf={false}
+          documentKey="remounted-report:1"
+          documentId="remounted-report"
+        />
+      </div>
+    );
+    await using screen = await render(frame(first));
+    await vi.waitFor(() => expect(reports.map((report) => report.y)).toContain(1200));
+
+    await screen.rerender(<div />);
+    await screen.rerender(frame(second));
+    await vi.waitFor(() => {
+      const shown = screen.container.querySelector("iframe")?.contentWindow;
+      expect(reports.filter((report) => report.source === shown).map((report) => report.y)).toEqual(
+        [1200],
+      );
+    });
+  });
+
+  // The native viewer cannot report a position, so the loaded frame itself has to come back.
+  it("returns the same native PDF frame after a remount instead of loading a new one", async () => {
+    using _viewer = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(true);
+    using pdf = (() => {
+      const url = URL.createObjectURL(new Blob(["<p>pdf</p>"], { type: "text/html" }));
+      return { url, [Symbol.dispose]: () => URL.revokeObjectURL(url) };
+    })();
+    const frame = (revision: string) => (
+      <div className="flex h-75 w-100 flex-col">
+        <BrowserDocumentFrame
+          src={pdf.url}
+          title="Paper"
+          pdf
+          documentKey={`paper:${revision}`}
+          documentId="paper"
+        />
+      </div>
+    );
+    await using screen = await render(frame("1"));
+    const shown = () => screen.container.querySelector("iframe");
+    const first = shown();
+    expect(first?.getBoundingClientRect().height).toBe(300);
+
+    await screen.rerender(<div />);
+    expect(shown()).toBeNull();
+    await screen.rerender(frame("1"));
+    expect(shown()).toBe(first);
+    expect(first?.getBoundingClientRect().height).toBe(300);
+
+    await screen.rerender(frame("2"));
+    expect(shown(), "a new revision showed the previous revision's frame").not.toBe(first);
+  });
 });

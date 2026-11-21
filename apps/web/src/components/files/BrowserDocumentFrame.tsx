@@ -38,6 +38,7 @@ import {
   useState,
 } from "react";
 import { isElectron } from "~/env";
+import { documentScroll } from "./filePreviewScroll";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
 import type { PdfViewState } from "./PdfViewer";
 
@@ -101,6 +102,73 @@ function PdfDocument(props: {
   );
 }
 
+const MAX_PARKED_PDF_FRAMES = 3;
+const parkedPdfFrames = new Map<string, HTMLIFrameElement>();
+type MovableParent = HTMLElement & { moveBefore?: (node: Node, child: Node | null) => void };
+
+function pdfFrameParkingLot(): MovableParent {
+  const existing = document.querySelector<HTMLElement>("[data-parked-pdf-frames]");
+  if (existing) return existing;
+  const lot = document.createElement("div");
+  lot.dataset.parkedPdfFrames = "";
+  lot.inert = true;
+  lot.style.cssText =
+    "position:fixed;top:0;left:0;width:0;height:0;overflow:hidden;visibility:hidden";
+  document.body.append(lot);
+  return lot;
+}
+
+/**
+ * The native viewer exposes no reading position, so the loaded frame itself is kept: unmounting
+ * (a thread switch) parks it off screen and the next mount of the same revision takes it back.
+ * Only `moveBefore` moves a frame without reloading it; without it every mount loads afresh.
+ */
+function NativePdfFrame(props: { src: string; title: string; positionKey: string }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns an iframe that outlives this component, which React cannot express
+  useLayoutEffect(() => {
+    const host: MovableParent | null = hostRef.current;
+    if (!host) return;
+    const { positionKey } = props;
+    const parked = parkedPdfFrames.get(positionKey);
+    parkedPdfFrames.delete(positionKey);
+    let frame = parked;
+    if (parked?.isConnected && host.moveBefore) {
+      host.moveBefore(parked, null);
+      parked.style.width = "";
+      parked.style.height = "";
+    } else {
+      parked?.remove();
+      frame = document.createElement("iframe");
+      // Chromium's PDF plugin requires an unsandboxed frame; src is an exact-file asset grant.
+      frame.src = `${props.src.split("#", 1)[0]}#navpanes=0&view=FitH`;
+      frame.title = props.title;
+      frame.className = "block h-full min-h-0 w-full flex-1 border-0 bg-white";
+      host.append(frame);
+    }
+    return () => {
+      const lot = pdfFrameParkingLot();
+      if (!frame?.isConnected || !lot.moveBefore) {
+        frame?.remove();
+        return;
+      }
+      // A parked frame keeps its size, so the viewer does not lay the document out again.
+      frame.style.width = `${frame.offsetWidth}px`;
+      frame.style.height = `${frame.offsetHeight}px`;
+      lot.moveBefore(frame, null);
+      parkedPdfFrames.set(positionKey, frame);
+      if (parkedPdfFrames.size <= MAX_PARKED_PDF_FRAMES) return;
+      for (const [oldestKey, oldest] of parkedPdfFrames) {
+        parkedPdfFrames.delete(oldestKey);
+        oldest.remove();
+        break;
+      }
+    };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- One frame per mount: the parent keys this component by revision and keeps the first URL.
+  }, []);
+  return <div ref={hostRef} className="flex min-h-0 w-full flex-1" />;
+}
+
 // Keep signed URL renewals from reloading the same revision.
 function PdfDocumentRevision(props: {
   src: string;
@@ -119,12 +187,7 @@ function PdfDocumentRevision(props: {
     !/iPad|iPhone|iPod/.test(navigator.userAgent) &&
     !(navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   return native ? (
-    // oxlint-disable-next-line react/iframe-missing-sandbox -- Chromium's PDF plugin requires an unsandboxed frame; src is an exact-file asset grant.
-    <iframe
-      src={`${src.split("#", 1)[0]}#navpanes=0&view=FitH`}
-      title={props.title}
-      className="block h-full min-h-0 w-full flex-1 border-0 bg-white"
-    />
+    <NativePdfFrame src={src} title={props.title} positionKey={props.positionKey} />
   ) : (
     <Suspense fallback={<FileSurfaceLoading />}>
       <PdfViewer
@@ -177,6 +240,7 @@ export function BrowserDocumentFrame(props: {
     <FileDocument
       key={props.documentId ?? key}
       documentKey={key}
+      documentId={props.documentId}
       src={props.src}
       title={props.title}
     />
@@ -207,6 +271,8 @@ const FILE_DOCUMENT_SWAP_TIMEOUT_MS = 5_000;
 // painted, so no blank frame shows and the reader keeps their place.
 function FileDocument(props: {
   readonly documentKey: string;
+  /** Keys the reading position kept across remounts, such as a thread switch. */
+  readonly documentId: string | undefined;
   readonly src: string;
   readonly title: string;
 }) {
@@ -227,13 +293,19 @@ function FileDocument(props: {
   // The page reports its scroll position (see FILE_PREVIEW_SCROLL_SCRIPT); the next revision
   // scrolls there before it is uncovered.
   const scroll = useRef<FilePreviewScroll | null>(null);
+  const [savedScroll] = useState(() =>
+    props.documentId === undefined ? undefined : documentScroll.get(props.documentId),
+  );
+  const restored = useRef(false);
   // Two frames let the browser paint the incoming page before it is uncovered.
   const reveal = (revision: FileDocumentRevision) =>
     requestAnimationFrame(() => requestAnimationFrame(() => setFrames(showRevision(revision))));
   const onFrameMessage = useEffectEvent((event: MessageEvent) => {
     const position = readFilePreviewScroll(event.data);
     if (position !== undefined) {
-      if (event.source === shownFrame.current?.contentWindow) scroll.current = position;
+      if (event.source !== shownFrame.current?.contentWindow) return;
+      scroll.current = position;
+      if (props.documentId !== undefined) documentScroll.set(props.documentId, position);
     } else if (
       next !== null &&
       event.source === nextFrame.current?.contentWindow &&
@@ -281,7 +353,15 @@ function FileDocument(props: {
                       "*",
                     );
                   }
-                : undefined
+                : (event) => {
+                    // Only the first load of this mount: a link followed in the page starts at its top.
+                    if (savedScroll === undefined || restored.current) return;
+                    restored.current = true;
+                    event.currentTarget.contentWindow?.postMessage(
+                      filePreviewRestoreScrollMessage(savedScroll),
+                      "*",
+                    );
+                  }
             }
           />
         ),

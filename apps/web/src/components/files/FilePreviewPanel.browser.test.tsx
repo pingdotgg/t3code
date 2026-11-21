@@ -1,7 +1,7 @@
 import { DEFAULT_THEMES, preloadHighlighter } from "@pierre/diffs";
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { StrictMode, type ReactNode } from "react";
+import { cloneElement, StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { cdp, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   mintUrl: vi.fn<() => Promise<string | null>>(),
   browserAssetMints: 0,
   openedBrowserUrls: [] as string[],
+  threadId: "thread",
+  threads: 0,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
@@ -161,11 +163,13 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
   confirmProjectFileQueryData: () => true,
 }));
 
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import FilePreviewPanel from "./FilePreviewPanel";
 
 const environmentId = EnvironmentId.make("markdown-preview-test");
-const threadRef = { environmentId, threadId: ThreadId.make("thread") };
 function setup() {
+  // Scroll positions are kept per thread for the session, so each test reads in its own thread.
+  state.threadId = `thread-${(state.threads += 1)}`;
   const keys = ["t3code.fileExplorerOpen", "t3code.renderMarkdown"];
   const previous = keys.map((key) => localStorage.getItem(key));
   localStorage.setItem(keys[0]!, "false");
@@ -199,6 +203,7 @@ function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of 
 }
 
 function filePreview(relativePath: string, workspaceMutationId: string | null = null) {
+  const threadRef = { environmentId, threadId: ThreadId.make(state.threadId) };
   return (
     <FilePreviewPanel
       environmentId={environmentId}
@@ -370,6 +375,87 @@ describe("source file scroll", () => {
     await vi.waitFor(() => expect(scroller()).toBeNull());
     await screen.rerender(sourceFile("a.ts", 2000));
     await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+
+    // Two threads on one workspace share the panel, so it stays mounted between them.
+    const thread = state.threadId;
+    state.threadId = `${thread}-other`;
+    await screen.rerender(sourceFile("a.ts", 2000));
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+    expect(scroller()?.scrollTop).toBe(0);
+    state.threadId = thread;
+    await screen.rerender(sourceFile("a.ts", 2000));
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+  });
+
+  it("reveals a newly cited line in a file whose earlier tab was closed", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const contents = Array.from({ length: 2000 }, (_, i) => `const line${i} = ${i};`).join("\n");
+    state.file = { relativePath: "a.ts", contents, byteLength: contents.length, truncated: false };
+    const threadRef = { environmentId, threadId: ThreadId.make(state.threadId) };
+    // Reveal ids come from the panel store, where a new tab starts again at one.
+    const cited = (line: number) => {
+      useRightPanelStore.getState().openFile(threadRef, "a.ts", line);
+      const surface = selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        threadRef,
+      ).surfaces.find((entry) => entry.id === "file:a.ts");
+      if (surface?.kind !== "file") throw new Error("a.ts has no file tab");
+      return (
+        <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+          {cloneElement(filePreview("a.ts"), {
+            revealLine: surface.revealLine,
+            revealRequestId: surface.revealRequestId,
+          })}
+        </div>
+      );
+    };
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+
+    await using screen = await render(cited(200));
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBeGreaterThan(2000));
+    const firstReveal = scroller()!.scrollTop;
+
+    await screen.rerender(<div />);
+    useRightPanelStore.getState().closeSurface(threadRef, "file:a.ts");
+    await screen.rerender(cited(1500));
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBeGreaterThan(firstReveal + 10_000));
+  });
+
+  it("returns rendered Markdown to where it was scrolled after another thread was shown", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    const contents = Array.from({ length: 400 }, (_, i) => `Paragraph ${i}`).join("\n\n");
+    const rendered = () => (
+      <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+        {markdownPreview(false, contents)}
+      </div>
+    );
+    const scroller = () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-slot="scroll-area-viewport"]')).find(
+        (viewport) => viewport.textContent.includes("Paragraph 0"),
+      );
+
+    await using screen = await render(rendered());
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+    // The position is taken from scroll events, which the browser delivers with the next frame.
+    const scrolled = new Promise((resolve) =>
+      scroller()!.addEventListener("scroll", resolve, { once: true }),
+    );
+    scroller()!.scrollTop = 4200;
+    await scrolled;
+
+    await screen.rerender(<div />);
+    await vi.waitFor(() => expect(scroller()).toBeUndefined());
+    await screen.rerender(rendered());
     await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
   });
 

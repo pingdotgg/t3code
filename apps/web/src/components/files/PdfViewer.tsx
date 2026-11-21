@@ -470,6 +470,7 @@ export default function PdfViewer(props: {
       </div>
       <div
         ref={scroll}
+        data-pdf-scroll
         role="region"
         aria-label={props.title}
         tabIndex={0}
