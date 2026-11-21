@@ -157,6 +157,45 @@ describe("AntigravityAdapterV2 flavor", () => {
       outcome: { outcome: "selected", optionId: "opt-dev" },
     });
   });
+
+  it("wires ask_question form elicitation into the Antigravity flavor", () => {
+    const form = flavor.extractElicitationForm?.({
+      sessionId: "session-1",
+      mode: "form",
+      message: "The agent has a question.",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          q1: {
+            type: "string",
+            title: "Which backend should the generator target?",
+            oneOf: [
+              { const: "1", title: "OpenAI-compatible" },
+              { const: "2", title: "Local only" },
+            ],
+          },
+          q1_other: {
+            type: "string",
+            title: "Other",
+            description: "Optional free-form answer to: Which backend should the generator target?",
+          },
+        },
+      },
+    } as EffectAcpSchema.CreateElicitationRequest);
+    assert.isDefined(form);
+    assert.deepEqual(form?.questions, [
+      {
+        id: "q1",
+        header: "Question 1",
+        question: "Which backend should the generator target?",
+        options: [
+          { label: "OpenAI-compatible", value: "1", description: "OpenAI-compatible" },
+          { label: "Local only", value: "2", description: "Local only" },
+        ],
+      },
+    ]);
+    assert.deepEqual(form?.respond({ q1: "1" }), { action: "accept", content: { q1: "1" } });
+  });
 });
 
 const layerSession = Layer.mergeAll(
