@@ -11,8 +11,8 @@ use conn_theme::{Appearance, Tokens};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClipboardItem, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled, StyledText,
-    UnderlineStyle, Window, div, px,
+    InteractiveText, IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    StyledText, UnderlineStyle, Window, div, px,
 };
 use markdown::mdast::Node;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
@@ -90,6 +90,10 @@ pub(crate) struct MarkdownOptions<'a> {
     pub(crate) wrapped_code_keys: Option<&'a HashSet<String>>,
     /// Optional callback invoked when a code block's wrap-lines toggle button is clicked.
     pub(crate) on_toggle_wrap_code: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+    /// Active workspace root for resolving clicked `file://` links or inline-code file paths.
+    pub(crate) workspace_root: Option<&'a str>,
+    /// Optional callback invoked when a user clicks a workspace file link or inline file path.
+    pub(crate) on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
 }
 
 impl fmt::Debug for MarkdownOptions<'_> {
@@ -102,6 +106,7 @@ impl fmt::Debug for MarkdownOptions<'_> {
                 "has_on_toggle_wrap_code",
                 &self.on_toggle_wrap_code.is_some(),
             )
+            .field("has_on_open_file", &self.on_open_file.is_some())
             .finish()
     }
 }
@@ -505,7 +510,7 @@ fn render_block(
             .text_size(px(BODY_FONT_PX))
             .line_height(px(BODY_LINE_HEIGHT_PX))
             .text_color(prose_foreground(tokens))
-            .child(render_inline_spans(block_id, spans, tokens, BODY_FONT_PX))
+            .child(render_inline_spans(block_id, spans, tokens, options))
             .into_any_element(),
 
         MarkdownBlock::Heading { level, spans } => {
@@ -536,7 +541,7 @@ fn render_block(
                 .line_height(px(line_px))
                 .font_weight(weight)
                 .text_color(text_color)
-                .child(render_inline_spans(block_id, spans, tokens, font_px));
+                .child(render_inline_spans(block_id, spans, tokens, options));
             if !is_first {
                 // `.chat-markdown h1..h6 { margin: 1.25rem 0 0.5rem }` (20px top total with 10.4px gap).
                 el = el.pt(px(9.6));
@@ -655,7 +660,9 @@ fn render_block(
             inner_col.into_any_element()
         }
 
-        MarkdownBlock::Table { headers, rows } => render_table(block_id, headers, rows, tokens),
+        MarkdownBlock::Table { headers, rows } => {
+            render_table(block_id, headers, rows, tokens, options)
+        }
 
         MarkdownBlock::ThematicBreak => {
             let hr_color = match tokens.appearance {
@@ -882,6 +889,7 @@ fn render_table(
     headers: &[Vec<InlineSpan>],
     rows: &[Vec<Vec<InlineSpan>>],
     tokens: &Tokens,
+    options: &MarkdownOptions<'_>,
 ) -> AnyElement {
     let row_border = hsla_alpha(tokens.border, 0.60);
     let mut table = div().w_full().min_w_0().flex().flex_col();
@@ -912,7 +920,7 @@ fn render_table(
                         &format!("{block_id}-th{c_idx}"),
                         cell,
                         tokens,
-                        BODY_FONT_PX,
+                        options,
                     )),
             );
         }
@@ -944,7 +952,7 @@ fn render_table(
                         &format!("{block_id}-td{r_idx}-{c_idx}"),
                         cell,
                         tokens,
-                        BODY_FONT_PX,
+                        options,
                     )),
             );
         }
@@ -954,62 +962,61 @@ fn render_table(
     table.into_any_element()
 }
 
-/// Renders inline spans into either a single `StyledText` (with highlights for bold, italic,
-/// inline code chips, strikethrough, and links) or clickable link runs when links are present.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ClickTarget {
+    Url(String),
+    WorkspaceFile(String),
+}
+
+/// Renders inline spans as a single continuously flowing `StyledText` (or `InteractiveText` when
+/// clickable URLs or workspace file paths are present).
 fn render_inline_spans(
     span_id: &str,
     spans: &[InlineSpan],
     tokens: &Tokens,
-    _font_px: f32,
+    options: &MarkdownOptions<'_>,
 ) -> AnyElement {
-    let has_links = spans.iter().any(|s| s.link.is_some());
-    if !has_links {
-        return build_styled_text(spans, tokens).into_any_element();
+    let (styled, ranges, targets) = build_styled_text_with_targets(
+        spans,
+        tokens,
+        options.workspace_root,
+        options.on_open_file.is_some(),
+    );
+    if ranges.is_empty() {
+        return styled.into_any_element();
     }
-
-    // Group contiguous non-link spans into `StyledText` and render link spans as clickable
-    // inline elements so clicking opens the URL in the system browser.
-    let mut row = div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .items_baseline()
-        .min_w_0();
-    let mut plain_buf: Vec<InlineSpan> = Vec::new();
-    for (idx, span) in spans.iter().enumerate() {
-        if let Some(url) = &span.link {
-            if !plain_buf.is_empty() {
-                row = row.child(build_styled_text(&plain_buf, tokens));
-                plain_buf.clear();
+    let on_open_file = options.on_open_file.clone();
+    InteractiveText::new(SharedString::from(format!("inline-{span_id}")), styled)
+        .on_click(ranges, move |ix, window, cx| {
+            let Some(target) = targets.get(ix) else {
+                return;
+            };
+            match target {
+                ClickTarget::Url(url) => cx.open_url(url),
+                ClickTarget::WorkspaceFile(path) => {
+                    if let Some(cb) = &on_open_file {
+                        cb(path.clone(), window, cx);
+                    }
+                }
             }
-            let target_url = url.clone();
-            // Conn `.chat-markdown a`: `color: var(--info-foreground)`, no default underline.
-            let link_el = div()
-                .id(SharedString::from(format!("link-{span_id}-{idx}")))
-                .cursor_pointer()
-                .text_color(hsla(tokens.info_foreground))
-                .hover(|s| s.underline())
-                .on_click(move |_, _, cx| {
-                    cx.open_url(&target_url);
-                })
-                .child(span.text.clone());
-            row = row.child(link_el);
-        } else {
-            plain_buf.push(span.clone());
-        }
-    }
-    if !plain_buf.is_empty() {
-        row = row.child(build_styled_text(&plain_buf, tokens));
-    }
-    row.into_any_element()
+        })
+        .into_any_element()
 }
 
-fn build_styled_text(spans: &[InlineSpan], tokens: &Tokens) -> StyledText {
+fn build_styled_text_with_targets(
+    spans: &[InlineSpan],
+    tokens: &Tokens,
+    workspace_root: Option<&str>,
+    file_links_enabled: bool,
+) -> (StyledText, Vec<Range<usize>>, Vec<ClickTarget>) {
     // Runs, not highlights: inline code switches font family (SF Mono), which a highlight
     // cannot. Every run therefore carries its own font and color.
     let prose = super::color::prose_foreground(tokens);
     let mut text = String::new();
     let mut runs: Vec<gpui_kit::TextRun> = Vec::new();
+    let mut ranges: Vec<Range<usize>> = Vec::new();
+    let mut targets: Vec<ClickTarget> = Vec::new();
+
     for span in spans {
         let start = text.len();
         if span.style.code {
@@ -1020,10 +1027,32 @@ fn build_styled_text(spans: &[InlineSpan], tokens: &Tokens) -> StyledText {
         } else {
             text.push_str(&span.text);
         }
-        let len = text.len() - start;
+        let end = text.len();
+        let len = end - start;
         if len == 0 {
             continue;
         }
+
+        let target = if let Some(url) = &span.link {
+            if file_links_enabled
+                && let Some(rel) = resolve_clickable_file_path(url, workspace_root)
+            {
+                Some(ClickTarget::WorkspaceFile(rel))
+            } else {
+                Some(ClickTarget::Url(url.clone()))
+            }
+        } else if span.style.code && file_links_enabled {
+            resolve_clickable_file_path(&span.text, workspace_root).map(ClickTarget::WorkspaceFile)
+        } else {
+            None
+        };
+
+        let is_clickable_file = matches!(target, Some(ClickTarget::WorkspaceFile(_)));
+        if let Some(t) = target {
+            ranges.push(start..end);
+            targets.push(t);
+        }
+
         let family = if span.style.code {
             MONO_FONT_FAMILY
         } else {
@@ -1045,9 +1074,13 @@ fn build_styled_text(spans: &[InlineSpan], tokens: &Tokens) -> StyledText {
             },
         };
         let (color, background_color, underline) = if span.style.code {
-            // Conn: `.chat-markdown :not(pre) > code` = foreground 10% chip, foreground text.
+            let fg_color = if is_clickable_file {
+                hsla(tokens.info_foreground)
+            } else {
+                hsla(tokens.foreground)
+            };
             (
-                hsla(tokens.foreground),
+                fg_color,
                 Some(hsla(tokens.foreground.with_alpha(0.10))),
                 None,
             )
@@ -1080,12 +1113,153 @@ fn build_styled_text(spans: &[InlineSpan], tokens: &Tokens) -> StyledText {
             strikethrough,
         });
     }
-    StyledText::new(SharedString::from(text)).with_runs(runs)
+    (
+        StyledText::new(SharedString::from(text)).with_runs(runs),
+        ranges,
+        targets,
+    )
+}
+
+/// Resolves a `file://` URL or inline-code token (e.g. `src/main.rs:42`, `Cargo.toml`, or
+/// `/abs/workspace/src/lib.rs#L10-L20`) to a workspace-relative path when it looks like a file.
+fn resolve_clickable_file_path(raw: &str, workspace_root: Option<&str>) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.contains(char::is_whitespace) {
+        return None;
+    }
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return None;
+    }
+
+    let without_scheme = trimmed.strip_prefix("file://").unwrap_or(trimmed);
+    let without_frag = without_scheme.split('#').next().unwrap_or(without_scheme);
+    let candidate = strip_line_col_suffix(without_frag);
+    if candidate.is_empty() || candidate.contains("..") {
+        return None;
+    }
+
+    if candidate.starts_with('/') {
+        let root = workspace_root?.trim_end_matches('/');
+        if root.is_empty() {
+            return None;
+        }
+        let private_root = format!("/private{root}");
+        let rel = candidate
+            .strip_prefix(&format!("{root}/"))
+            .or_else(|| candidate.strip_prefix(&format!("{private_root}/")))?;
+        return looks_like_file_path(rel).then(|| rel.to_owned());
+    }
+
+    let rel = candidate.strip_prefix("./").unwrap_or(candidate);
+    looks_like_file_path(rel).then(|| rel.to_owned())
+}
+
+fn strip_line_col_suffix(path: &str) -> &str {
+    let mut current = path;
+    for _ in 0..2 {
+        if let Some((prefix, suffix)) = current.rsplit_once(':')
+            && !suffix.is_empty()
+            && suffix.bytes().all(|b| b.is_ascii_digit())
+        {
+            current = prefix;
+        } else {
+            break;
+        }
+    }
+    current
+}
+
+fn looks_like_file_path(rel: &str) -> bool {
+    if rel.is_empty() || rel.ends_with('/') {
+        return false;
+    }
+    let file_name = rel.rsplit('/').next().unwrap_or(rel);
+    if matches!(
+        file_name,
+        "Cargo.toml"
+            | "Cargo.lock"
+            | "Dockerfile"
+            | "Makefile"
+            | "Justfile"
+            | "README.md"
+            | "AGENTS.md"
+            | "package.json"
+            | "tsconfig.json"
+    ) {
+        return true;
+    }
+    let Some((_, ext)) = file_name.rsplit_once('.') else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "rs" | "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "mjs"
+            | "cjs"
+            | "json"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "md"
+            | "mdx"
+            | "css"
+            | "scss"
+            | "html"
+            | "svg"
+            | "sql"
+            | "sh"
+            | "zsh"
+            | "py"
+            | "go"
+            | "swift"
+            | "c"
+            | "h"
+            | "cpp"
+            | "hpp"
+            | "php"
+            | "rb"
+            | "java"
+            | "kt"
+            | "zig"
+            | "lua"
+            | "lock"
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_clickable_workspace_file_paths_and_rejects_non_files() {
+        assert_eq!(
+            resolve_clickable_file_path("crates/conn-app/src/app.rs:42:10", Some("/repo")),
+            Some("crates/conn-app/src/app.rs".to_owned())
+        );
+        assert_eq!(
+            resolve_clickable_file_path("file:///repo/Cargo.toml#L10-L20", Some("/repo")),
+            Some("Cargo.toml".to_owned())
+        );
+        assert_eq!(
+            resolve_clickable_file_path("./src/main.rs", None),
+            Some("src/main.rs".to_owned())
+        );
+        assert_eq!(
+            resolve_clickable_file_path("https://example.com/a.rs", Some("/repo")),
+            None
+        );
+        assert_eq!(
+            resolve_clickable_file_path("cargo test", Some("/repo")),
+            None
+        );
+        assert_eq!(
+            resolve_clickable_file_path("/etc/passwd", Some("/repo")),
+            None
+        );
+    }
 
     #[test]
     fn parses_headings_paragraphs_and_inline_styles() {

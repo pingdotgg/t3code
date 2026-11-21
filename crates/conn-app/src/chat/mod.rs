@@ -46,9 +46,12 @@ const UI_LINE_HEIGHT_PX: f32 = 20.0;
 const MONO_FONT_FAMILY: &str = crate::theme::MONO_FONT;
 
 /// Events emitted by [`ChatView`] to the host shell.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ChatEvent {
-    Send(String),
+    Send {
+        text: String,
+        attachments: Vec<conn_contract::ChatAttachment>,
+    },
     Stop,
     /// Answer an approval row: `decision` is `accept` or `decline`.
     Approval {
@@ -61,6 +64,8 @@ pub(crate) enum ChatEvent {
     },
     /// Open the right panel's Diff tab (e.g. clicking a turn's changed-files summary card).
     OpenDiff,
+    /// Open a workspace-relative file in the right panel's File preview tab.
+    OpenFile(String),
     /// A built-in `/` slash command selected from the composer command menu.
     SlashCommand(String),
 }
@@ -114,9 +119,12 @@ impl ChatView {
         let input_sub = cx.subscribe(
             &composer,
             |this, _, event: &ComposerEvent, cx| match event {
-                ComposerEvent::Send(text) => {
+                ComposerEvent::Send { text, attachments } => {
                     this.stick_to_bottom = true;
-                    cx.emit(ChatEvent::Send(text.clone()));
+                    cx.emit(ChatEvent::Send {
+                        text: text.clone(),
+                        attachments: attachments.clone(),
+                    });
                     cx.notify();
                 }
                 ComposerEvent::Stop => cx.emit(ChatEvent::Stop),
@@ -516,6 +524,7 @@ impl ChatView {
                     let blocks = row.blocks.as_deref().unwrap_or(&[]);
                     let entity_copy = cx.entity().downgrade();
                     let entity_wrap = cx.entity().downgrade();
+                    let entity_file = cx.entity().downgrade();
                     let options = markdown::MarkdownOptions {
                         heading_style: markdown::HeadingStyle::Scale,
                         copied_code_key: self.copied_code_key.as_deref(),
@@ -527,6 +536,12 @@ impl ChatView {
                         on_toggle_wrap_code: Some(Rc::new(move |key, _window, cx| {
                             let _ =
                                 entity_wrap.update(cx, |view, cx| view.toggle_code_wrap(key, cx));
+                        })),
+                        workspace_root: self.workspace_root.as_deref(),
+                        on_open_file: Some(Rc::new(move |path, _window, cx| {
+                            let _ = entity_file.update(cx, |_view, cx| {
+                                cx.emit(ChatEvent::OpenFile(path));
+                            });
                         })),
                     };
                     // Conn `AssistantTimelineRow`: `px-1 py-0.5`, row spacing `pb-2` before work or `pb-4`.

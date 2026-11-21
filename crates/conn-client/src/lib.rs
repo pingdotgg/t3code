@@ -26,6 +26,11 @@ pub use crate::device_hub::{
     DEFAULT_DEVICE_HUB_BASE_PATH, DeviceHubAccess, DeviceHubVendor, mint_device_hub_access,
 };
 
+use conn_contract::{
+    AttachmentCreateUploadUrlInput, AttachmentCreateUploadUrlInputFile,
+    AttachmentCreateUploadUrlInputImage, AttachmentCreateUploadUrlInputImageMimeType,
+    ChatAttachment, ChatFileAttachment, ChatImageAttachment, lit,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -209,6 +214,97 @@ impl Connection {
     #[must_use]
     pub fn http_client(&self) -> &reqwest::Client {
         &self.http
+    }
+
+    /// Allocates a signed upload URL via `attachments.createUploadUrl`, uploads `bytes` via HTTP
+    /// POST, and returns the ready [`ChatAttachment`] descriptor for `message.dispatch` or
+    /// `orchestration.launchThread`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ClientError`] if the RPC fails, URL resolution fails, or the HTTP upload returns
+    /// a non-success status.
+    pub async fn upload_chat_attachment(
+        &self,
+        name: String,
+        mime_type: String,
+        bytes: Vec<u8>,
+    ) -> Result<ChatAttachment, ClientError> {
+        let size_bytes = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
+        let image_mime = match mime_type.to_ascii_lowercase().as_str() {
+            "image/png" => Some(AttachmentCreateUploadUrlInputImageMimeType::ImagePng),
+            "image/jpeg" | "image/jpg" => {
+                Some(AttachmentCreateUploadUrlInputImageMimeType::ImageJpeg)
+            }
+            "image/gif" => Some(AttachmentCreateUploadUrlInputImageMimeType::ImageGif),
+            "image/webp" => Some(AttachmentCreateUploadUrlInputImageMimeType::ImageWebp),
+            _ => None,
+        };
+        let payload = match image_mime {
+            Some(img_mime) => {
+                AttachmentCreateUploadUrlInput::Image(AttachmentCreateUploadUrlInputImage {
+                    r#type: Some(lit::Image),
+                    name: name.clone(),
+                    mime_type: img_mime,
+                    size_bytes,
+                })
+            }
+            None => AttachmentCreateUploadUrlInput::File(AttachmentCreateUploadUrlInputFile {
+                r#type: lit::File,
+                name: name.clone(),
+                mime_type: mime_type.clone(),
+                size_bytes,
+            }),
+        };
+
+        let prepared = self
+            .call::<conn_contract::rpc::attachments::create_upload_url::Payload, conn_contract::rpc::attachments::create_upload_url::Success>(
+                "attachments.createUploadUrl",
+                &payload,
+            )
+            .await?;
+
+        let upload_url = self.http_base_url.join(&prepared.relative_url)?;
+
+        let mut req = self
+            .http
+            .post(upload_url)
+            .header(reqwest::header::CONTENT_TYPE, mime_type.as_str())
+            .body(bytes);
+        if let Some(token) = self.bearer.read().ok().and_then(|g| g.clone()) {
+            req = req.bearer_auth(token);
+        }
+        let resp = req
+            .send()
+            .await
+            .map_err(|err| ClientError::Connection(err.to_string()))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ClientError::Connection(format!(
+                "attachment upload failed ({status}): {body}"
+            )));
+        }
+
+        if image_mime.is_some() {
+            Ok(ChatAttachment::Image(ChatImageAttachment {
+                r#type: lit::Image,
+                id: prepared.attachment_id,
+                name,
+                mime_type,
+                size_bytes,
+                source: None,
+            }))
+        } else {
+            Ok(ChatAttachment::File(ChatFileAttachment {
+                r#type: lit::File,
+                id: prepared.attachment_id,
+                name,
+                mime_type,
+                size_bytes,
+                source: None,
+            }))
+        }
     }
 
     /// Subscribes to `orchestration.subscribeShell`.

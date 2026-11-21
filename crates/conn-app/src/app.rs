@@ -133,7 +133,9 @@ impl ConnApp {
         cx.subscribe(
             &chat,
             |app, _chat, event: &crate::chat::ChatEvent, cx| match event {
-                crate::chat::ChatEvent::Send(text) => app.send_prompt(text.clone(), cx),
+                crate::chat::ChatEvent::Send { text, attachments } => {
+                    app.send_prompt_with_attachments(text.clone(), attachments.clone(), cx);
+                }
                 crate::chat::ChatEvent::Stop => app.stop_selected(cx),
                 crate::chat::ChatEvent::Approval { entry_id, decision } => {
                     app.respond_approval(entry_id, decision, cx);
@@ -143,6 +145,9 @@ impl ConnApp {
                 }
                 crate::chat::ChatEvent::OpenDiff => {
                     app.select_right_panel_tab(RightPanelTab::Diff, cx);
+                }
+                crate::chat::ChatEvent::OpenFile(path) => {
+                    app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
                 }
                 crate::chat::ChatEvent::SlashCommand(command) => {
                     app.handle_slash_command(command, cx);
@@ -580,8 +585,14 @@ impl ConnApp {
         cx.notify();
     }
 
-    /// Launches the draft thread with `text` as its first message.
-    fn launch_draft(&mut self, project_id: String, text: String, cx: &mut Context<'_, Self>) {
+    /// Launches the draft thread with `text` and `attachments` as its first message.
+    fn launch_draft(
+        &mut self,
+        project_id: String,
+        text: String,
+        attachments: Vec<conn_contract::ChatAttachment>,
+        cx: &mut Context<'_, Self>,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -613,6 +624,7 @@ impl ConnApp {
             &thread_id,
             &project_id,
             &text,
+            &attachments,
             conn_contract::to_json(&model),
             runtime.as_str().unwrap_or("full-access"),
             interaction.as_str().unwrap_or("default"),
@@ -631,10 +643,20 @@ impl ConnApp {
         .detach();
     }
 
-    /// Sends `text` to the selected thread over `orchestration.dispatchCommand`.
+    /// Sends `text` (without attachments) to the selected thread.
     pub(crate) fn send_prompt(&mut self, text: String, cx: &mut Context<'_, Self>) {
+        self.send_prompt_with_attachments(text, Vec::new(), cx);
+    }
+
+    /// Sends `text` and `attachments` to the selected thread over `orchestration.dispatchCommand`.
+    pub(crate) fn send_prompt_with_attachments(
+        &mut self,
+        text: String,
+        attachments: Vec<conn_contract::ChatAttachment>,
+        cx: &mut Context<'_, Self>,
+    ) {
         if let Some(project_id) = self.draft_project.clone() {
-            self.launch_draft(project_id, text, cx);
+            self.launch_draft(project_id, text, attachments, cx);
             return;
         }
         let (Some(connection), Some(thread_id)) = (
@@ -644,7 +666,8 @@ impl ConnApp {
             return;
         };
         let working = self.threads.get(&thread_id).is_some_and(|t| t.working);
-        let command = match crate::commands::send_message(&thread_id, &text, working) {
+        let command = match crate::commands::send_message(&thread_id, &text, &attachments, working)
+        {
             Ok(command) => command,
             Err(e) => {
                 eprintln!("send: could not build message.dispatch: {e}");

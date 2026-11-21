@@ -18,7 +18,7 @@ use std::fmt;
 use conn_client::Connection;
 use conn_contract::rpc::projects::search_entries;
 use conn_contract::rpc::server::get_config;
-use conn_contract::{ProjectSearchEntriesInput, ServerProbePayload};
+use conn_contract::{ChatAttachment, ProjectSearchEntriesInput, ServerProbePayload};
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::input::{
     Enter, Escape, InputEvent, InputState, MoveDown, MoveUp, Textarea, TextareaState,
@@ -26,8 +26,9 @@ use gpui_kit::component::input::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, deferred, div, px,
+    InteractiveElement as _, IntoElement, ParentElement as _, PathPromptOptions, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, deferred,
+    div, px,
 };
 
 use self::menus::{
@@ -37,6 +38,7 @@ use self::menus::{
 use self::model_picker::{ModelCatalog, ModelPickerView, render_model_picker};
 use super::color::{hsla, hsla_alpha};
 use super::icons;
+use crate::panels::chrome::ConnTooltipExt as _;
 
 pub(super) const COMPOSER_PLACEHOLDER: &str = "Ask anything. @ files, $ skills, / commands";
 pub(super) const COMPOSER_MIN_LINES: usize = 2;
@@ -55,13 +57,37 @@ const FILE_SEARCH_LIMIT: i64 = 25;
 
 /// Superheroicons 16/solid path for the microphone button (`Mic` -> `microphone`).
 const ICON_MICROPHONE: &str = "superhero/microphone.svg";
+/// Superheroicons 16/solid path for the attach-files button (`Paperclip` -> `attach`).
+const ICON_ATTACH: &str = "superhero/attach.svg";
+
+/// State of one staged file/image attachment in the composer strip.
+#[derive(Clone, Debug)]
+struct PendingAttachment {
+    local_id: u64,
+    name: String,
+    size_bytes: usize,
+    status: AttachmentUploadStatus,
+}
+
+#[derive(Clone, Debug)]
+enum AttachmentUploadStatus {
+    Uploading,
+    Ready(ChatAttachment),
+    Error(String),
+}
 
 /// Events emitted by [`Composer`] to its host view (`ChatView` -> `ConnApp`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ComposerEvent {
-    Send(String),
+    Send {
+        text: String,
+        attachments: Vec<ChatAttachment>,
+    },
     Stop,
-    ModelSelected { instance_id: String, model: String },
+    ModelSelected {
+        instance_id: String,
+        model: String,
+    },
     SlashCommand(String),
 }
 
@@ -88,6 +114,8 @@ pub(crate) struct Composer {
     file_mentions: Vec<FileMentionEntry>,
     file_mentions_loading: bool,
     file_search_generation: u64,
+    attachments: Vec<PendingAttachment>,
+    next_attachment_id: u64,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -185,6 +213,8 @@ impl Composer {
             file_mentions: Vec::new(),
             file_mentions_loading: false,
             file_search_generation: 0,
+            attachments: Vec::new(),
+            next_attachment_id: 1,
             _subscriptions: vec![textarea_sub, search_sub],
         };
         if composer.connection.is_some() {
@@ -333,20 +363,125 @@ impl Composer {
         }
     }
 
-    /// Submits the current non-empty draft via [`ComposerEvent::Send`].
+    /// Opens the native file picker to attach one or more files or images to the draft.
+    pub(crate) fn pick_attachments(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(conn) = self.connection.clone() else {
+            return;
+        };
+        let prompt = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Attach".into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = prompt.await else {
+                return;
+            };
+            for path in paths {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("attachment")
+                    .to_owned();
+                let mime_type = infer_mime_type(&path).to_owned();
+                let bytes = match std::fs::read(&path) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        let _ = this.update(cx, |composer, cx| {
+                            let local_id = composer.next_attachment_id;
+                            composer.next_attachment_id =
+                                composer.next_attachment_id.wrapping_add(1);
+                            composer.attachments.push(PendingAttachment {
+                                local_id,
+                                name: name.clone(),
+                                size_bytes: 0,
+                                status: AttachmentUploadStatus::Error(err.to_string()),
+                            });
+                            cx.notify();
+                        });
+                        continue;
+                    }
+                };
+                let size_bytes = bytes.len();
+                let local_id = this
+                    .update(cx, |composer, cx| {
+                        let id = composer.next_attachment_id;
+                        composer.next_attachment_id = composer.next_attachment_id.wrapping_add(1);
+                        composer.attachments.push(PendingAttachment {
+                            local_id: id,
+                            name: name.clone(),
+                            size_bytes,
+                            status: AttachmentUploadStatus::Uploading,
+                        });
+                        cx.notify();
+                        id
+                    })
+                    .ok();
+                let Some(local_id) = local_id else {
+                    break;
+                };
+                let upload_res = conn.upload_chat_attachment(name, mime_type, bytes).await;
+                let _ = this.update(cx, |composer, cx| {
+                    if let Some(slot) = composer
+                        .attachments
+                        .iter_mut()
+                        .find(|a| a.local_id == local_id)
+                    {
+                        slot.status = match upload_res {
+                            Ok(att) => AttachmentUploadStatus::Ready(att),
+                            Err(err) => AttachmentUploadStatus::Error(err.to_string()),
+                        };
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn remove_attachment(&mut self, local_id: u64, cx: &mut Context<'_, Self>) {
+        let before = self.attachments.len();
+        self.attachments.retain(|a| a.local_id != local_id);
+        if self.attachments.len() != before {
+            cx.notify();
+        }
+    }
+
+    /// Submits the current non-empty draft (and any uploaded attachments) via [`ComposerEvent::Send`].
     pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let raw = self.textarea.read(cx).value().to_string();
         let trimmed = raw.trim().to_owned();
-        if trimmed.is_empty() {
+        let still_uploading = self
+            .attachments
+            .iter()
+            .any(|a| matches!(a.status, AttachmentUploadStatus::Uploading));
+        if still_uploading {
+            return;
+        }
+        let ready_attachments: Vec<ChatAttachment> = self
+            .attachments
+            .iter()
+            .filter_map(|a| match &a.status {
+                AttachmentUploadStatus::Ready(att) => Some(att.clone()),
+                _ => None,
+            })
+            .collect();
+        if trimmed.is_empty() && ready_attachments.is_empty() {
             return;
         }
         self.textarea.update(cx, |input, cx| {
             input.set_value("", window, cx);
         });
+        self.attachments.clear();
         self.active_trigger = None;
         self.dismissed_trigger_text = None;
         self.model_picker_open = false;
-        cx.emit(ComposerEvent::Send(trimmed));
+        cx.emit(ComposerEvent::Send {
+            text: trimmed,
+            attachments: ready_attachments,
+        });
         cx.notify();
     }
 
@@ -585,7 +720,17 @@ impl Composer {
 
 impl Render for Composer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let has_text = !self.textarea.read(cx).value().trim().is_empty();
+        let has_ready_attachments = self
+            .attachments
+            .iter()
+            .any(|a| matches!(a.status, AttachmentUploadStatus::Ready(_)));
+        let is_uploading = self
+            .attachments
+            .iter()
+            .any(|a| matches!(a.status, AttachmentUploadStatus::Uploading));
+        let has_sendable = (!self.textarea.read(cx).value().trim().is_empty()
+            || has_ready_attachments)
+            && !is_uploading;
         let (model_label, driver) = self.display_model_and_driver();
         let tokens = self.tokens.clone();
 
@@ -629,11 +774,26 @@ impl Render for Composer {
                     .child(model_label),
             );
 
+        let attach_btn = div()
+            .id("chat-composer-attach")
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(FOOTER_CONTROL_HEIGHT_PX))
+            .rounded_full()
+            .cursor_pointer()
+            .hover(move |s| s.bg(highlight_bg).text_color(fg))
+            .on_click(cx.listener(|composer, _, window, cx| {
+                composer.pick_attachments(window, cx);
+            }))
+            .conn_tooltip("Attach files", &tokens)
+            .child(icons::icon(ICON_ATTACH, 16.0, muted));
+
         let mic_btn = render_microphone_button(&tokens);
 
         let action_btn = render_primary_action_button(
             self.working,
-            has_text,
+            has_sendable,
             &tokens,
             cx.listener(|_composer, _, _, cx| {
                 cx.emit(ComposerEvent::Stop);
@@ -643,13 +803,99 @@ impl Render for Composer {
             }),
         );
 
-        let card = div()
+        let mut card = div()
             .w_full()
             .rounded(px(COMPOSER_RADIUS_PX))
             .bg(card_bg)
             .border_1()
             .border_color(card_border)
-            .overflow_hidden()
+            .overflow_hidden();
+
+        if !self.attachments.is_empty() {
+            let mut strip = div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(px(6.0))
+                .px(px(14.0))
+                .pt(px(12.0));
+            for att in &self.attachments {
+                let local_id = att.local_id;
+                let file_icon = crate::file_icons::file_icon(&att.name);
+                let icon_color = file_icon
+                    .color
+                    .map(|c| hsla(c.for_appearance(tokens.appearance)))
+                    .unwrap_or(muted);
+                let status_label = match &att.status {
+                    AttachmentUploadStatus::Uploading => "Uploading…".to_owned(),
+                    AttachmentUploadStatus::Ready(_) => format_byte_size(att.size_bytes),
+                    AttachmentUploadStatus::Error(err) => err.clone(),
+                };
+                let is_err = matches!(att.status, AttachmentUploadStatus::Error(_));
+                strip = strip.child(
+                    div()
+                        .id(SharedString::from(format!("composer-att-{local_id}")))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0))
+                        .h(px(28.0))
+                        .max_w(px(220.0))
+                        .px(px(8.0))
+                        .rounded(px(8.0))
+                        .bg(hsla(tokens.shell_control))
+                        .border_1()
+                        .border_color(if is_err {
+                            hsla(tokens.destructive)
+                        } else {
+                            hsla(tokens.shell_inner_border)
+                        })
+                        .child(icons::icon(file_icon.asset, 14.0, icon_color))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(12.0))
+                                .line_height(px(16.0))
+                                .text_color(fg)
+                                .child(att.name.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(11.0))
+                                .line_height(px(16.0))
+                                .text_color(if is_err {
+                                    hsla(tokens.destructive)
+                                } else {
+                                    muted
+                                })
+                                .child(status_label),
+                        )
+                        .child(
+                            div()
+                                .id(SharedString::from(format!("composer-att-rm-{local_id}")))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(16.0))
+                                .flex_shrink_0()
+                                .rounded(px(4.0))
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(highlight_bg))
+                                .on_click(cx.listener(move |composer, _, _, cx| {
+                                    composer.remove_attachment(local_id, cx);
+                                }))
+                                .child(icons::icon("superhero/close.svg", 11.0, muted)),
+                        ),
+                );
+            }
+            card = card.child(strip);
+        }
+
+        card = card
             .child(
                 div().px(px(16.0)).pt(px(16.0)).pb(px(8.0)).child(
                     Textarea::new(&self.textarea)
@@ -665,13 +911,21 @@ impl Render for Composer {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_end()
+                    .justify_between()
                     .gap(px(8.0))
                     .px(px(8.0))
                     .pb(px(8.0))
-                    .child(model_trigger)
-                    .child(mic_btn)
-                    .child(action_btn),
+                    .child(attach_btn)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(model_trigger)
+                            .child(mic_btn)
+                            .child(action_btn),
+                    ),
             );
 
         let mut root = div()
@@ -885,9 +1139,64 @@ fn step_index(current: usize, delta: isize, len: usize) -> usize {
     usize::try_from(next).unwrap_or(0)
 }
 
+fn infer_mime_type(path: &std::path::Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match ext.as_deref() {
+        Some("png") => "image/png",
+        Some("jpg" | "jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml",
+        Some("pdf") => "application/pdf",
+        Some("json") => "application/json",
+        Some("md" | "markdown") => "text/markdown",
+        Some(
+            "txt" | "log" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "toml" | "yaml"
+            | "yml" | "css" | "html",
+        ) => "text/plain",
+        _ => "application/octet-stream",
+    }
+}
+
+fn format_byte_size(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn infer_mime_and_byte_size_formatting() {
+        assert_eq!(
+            infer_mime_type(std::path::Path::new("shot.PNG")),
+            "image/png"
+        );
+        assert_eq!(
+            infer_mime_type(std::path::Path::new("photo.jpg")),
+            "image/jpeg"
+        );
+        assert_eq!(
+            infer_mime_type(std::path::Path::new("main.rs")),
+            "text/plain"
+        );
+        assert_eq!(
+            infer_mime_type(std::path::Path::new("archive.bin")),
+            "application/octet-stream"
+        );
+        assert_eq!(format_byte_size(512), "512 B");
+        assert_eq!(format_byte_size(2048), "2.0 KB");
+        assert_eq!(format_byte_size(2 * 1024 * 1024), "2.0 MB");
+    }
 
     #[test]
     fn step_index_wraps_in_both_directions() {
