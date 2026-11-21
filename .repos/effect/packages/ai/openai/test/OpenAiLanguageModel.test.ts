@@ -797,6 +797,93 @@ describe("OpenAiLanguageModel", () => {
             strictEqual(inlineBody.useItemReferences, undefined)
           }).pipe(Effect.provide(makeTestLayer())))
 
+        it.effect("references a stored provider-executed item once when replaying response parts", () =>
+          Effect.gen(function*() {
+            const options = {
+              toolkit: Toolkit.make(OpenAiTool.WebSearch({})),
+              disableToolCallResolution: true
+            } as const
+            const first = yield* LanguageModel.generateText({ ...options, prompt: "Search" })
+
+            yield* LanguageModel.generateText({
+              ...options,
+              prompt: Prompt.concat(Prompt.fromResponseParts(first.content), Prompt.make("Continue"))
+            })
+
+            const body = yield* getRequestBody((yield* MockHttpClient.requests)[1])
+            assert.deepStrictEqual(body.input, [
+              { type: "item_reference", id: "ws_123" },
+              { type: "item_reference", id: "msg_123" },
+              { role: "user", content: [{ type: "input_text", text: "Continue" }] }
+            ])
+          }).pipe(
+            Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini", { store: true })),
+            Effect.provide(makeTestLayer({ body: { output: [makeWebSearchCall(), makeTextOutput("Answer")] } }))
+          ))
+
+        it.effect("references stored provider-executed items by their stored item ID", () =>
+          Effect.gen(function*() {
+            const cases = [
+              {
+                toolkit: McpToolkit,
+                content: [
+                  Prompt.toolCallPart({
+                    id: "mcp_tool_call_1",
+                    name: "OpenAiMcp",
+                    params: { packageName: "effect" },
+                    providerExecuted: true
+                  }),
+                  Prompt.toolResultPart({
+                    id: "mcp_tool_call_1",
+                    name: "OpenAiMcp",
+                    isFailure: false,
+                    result: { type: "mcp_call", name: "CheckPackage", output: "ok" },
+                    providerExecuted: true,
+                    options: { openai: { itemId: "mcp_call_123" } }
+                  })
+                ],
+                expected: [{ type: "item_reference", id: "mcp_call_123" }]
+              },
+              {
+                toolkit: Toolkit.make(OpenAiTool.WebSearch({})),
+                content: [providerExecutedCall, providerExecutedResult],
+                expected: [{ type: "item_reference", id: "ws_1" }]
+              },
+              {
+                toolkit: Toolkit.make(OpenAiTool.WebSearch({})),
+                content: [
+                  providerExecutedCall,
+                  Prompt.toolResultPart({
+                    ...providerExecutedResult,
+                    id: "ws_2",
+                    options: { openai: { itemId: "ws_2" } }
+                  })
+                ],
+                expected: [{ type: "item_reference", id: "ws_1" }, { type: "item_reference", id: "ws_2" }]
+              }
+            ]
+
+            yield* Effect.forEach(cases, ({ content, toolkit }) =>
+              LanguageModel.generateText({
+                prompt: Prompt.make([{ role: "assistant", content }]),
+                toolkit,
+                disableToolCallResolution: true
+              }))
+
+            const requests = yield* MockHttpClient.requests
+            const inputs = yield* Effect.forEach(requests, (request) =>
+              getRequestBody(request).pipe(Effect.map((body) => body.input)))
+            assert.deepStrictEqual(
+              inputs,
+              cases.map(({ expected }) =>
+                expected
+              )
+            )
+          }).pipe(
+            Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini", { store: true })),
+            Effect.provide(makeTestLayer())
+          ))
+
         it.effect("replays matched provider-executed history inline", () =>
           Effect.gen(function*() {
             yield* LanguageModel.generateText({
@@ -1171,6 +1258,11 @@ describe("OpenAiLanguageModel", () => {
             )
 
             deepStrictEqual(outputs.map((item: any) => item.type), ["shell_call_output"])
+            deepStrictEqual(outputs[0].output, [{
+              stdout: "hello\n",
+              stderr: "",
+              outcome: { type: "exit", exit_code: 0 }
+            }])
           }).pipe(Effect.provide(makeTestLayer())))
 
         it.effect("emits only the specialized output for local_shell results", () =>
@@ -1216,6 +1308,52 @@ describe("OpenAiLanguageModel", () => {
             )
 
             deepStrictEqual(outputs.map((item: any) => item.type), ["local_shell_call_output"])
+            strictEqual(outputs[0].output, "hello\n")
+          }).pipe(Effect.provide(makeTestLayer())))
+
+        it.effect("sends returned local_shell failures as the output string", () =>
+          Effect.gen(function*() {
+            const toolkit = Toolkit.make(OpenAiTool.LocalShell({ failureMode: "return" }).setFailure(Schema.String))
+            yield* LanguageModel.generateText({
+              prompt: Prompt.make([
+                { role: "user", content: "Run a local shell command" },
+                {
+                  role: "assistant",
+                  content: [Prompt.toolCallPart({
+                    id: "call_local_shell",
+                    name: "OpenAiLocalShell",
+                    params: {
+                      action: {
+                        type: "exec",
+                        command: ["echo", "hello"],
+                        env: {}
+                      }
+                    },
+                    providerExecuted: false
+                  })]
+                },
+                {
+                  role: "tool",
+                  content: [Prompt.toolResultPart({
+                    id: "call_local_shell",
+                    name: "OpenAiLocalShell",
+                    isFailure: true,
+                    result: "permission denied",
+                    providerExecuted: false
+                  })]
+                }
+              ]),
+              toolkit,
+              disableToolCallResolution: true
+            }).pipe(Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")))
+
+            const requests = yield* MockHttpClient.requests
+            const body = yield* getRequestBody(requests[0])
+            const output = body.input.find((item: any) =>
+              item.call_id === "call_local_shell" && item.type === "local_shell_call_output"
+            )
+
+            strictEqual(output.output, "permission denied")
           }).pipe(Effect.provide(makeTestLayer())))
       })
     })
@@ -1450,7 +1588,7 @@ describe("OpenAiLanguageModel", () => {
     })
 
     describe("response format", () => {
-      it.effect("uses text format by default", () =>
+      it.effect("omits text configuration for plain text by default", () =>
         Effect.gen(function*() {
           yield* LanguageModel.generateText({
             prompt: "Hello"
@@ -1459,7 +1597,19 @@ describe("OpenAiLanguageModel", () => {
           const requests = yield* MockHttpClient.requests
           const body = yield* getRequestBody(requests[0])
 
-          strictEqual(body.text?.format?.type, "text")
+          assert.notProperty(body, "text")
+        }).pipe(Effect.provide(makeTestLayer())))
+
+      it.effect("sends verbosity without a format for plain text", () =>
+        Effect.gen(function*() {
+          yield* LanguageModel.generateText({
+            prompt: "Hello"
+          }).pipe(Effect.provide(OpenAiLanguageModel.model("gpt-5", { text: { verbosity: "low" } })))
+
+          const requests = yield* MockHttpClient.requests
+          const body = yield* getRequestBody(requests[0])
+
+          deepStrictEqual(body.text, { verbosity: "low" })
         }).pipe(Effect.provide(makeTestLayer())))
 
       it.effect("uses json_schema format for structured output", () =>
@@ -1480,6 +1630,42 @@ describe("OpenAiLanguageModel", () => {
         }).pipe(Effect.provide(makeTestLayer({
           body: {
             output: [makeTextOutput(JSON.stringify({ name: "John", age: 30 }))]
+          }
+        }))))
+
+      it.effect("ignores commentary messages for structured output", () =>
+        Effect.gen(function*() {
+          const result = yield* LanguageModel.generateObject({
+            prompt: "Give me a person",
+            schema: Schema.Struct({
+              name: Schema.String,
+              age: Schema.Number
+            })
+          }).pipe(Effect.provide(OpenAiLanguageModel.model("gpt-5.6")))
+
+          deepStrictEqual(result.value, { name: "John", age: 30 })
+        }).pipe(Effect.provide(makeTestLayer({
+          body: {
+            output: [
+              makeTextOutput("Building the person.", { id: "msg_commentary", phase: "commentary" }),
+              makeTextOutput(JSON.stringify({ name: "John", age: 30 }), { phase: "final_answer" })
+            ]
+          }
+        }))))
+
+      it.effect("keeps commentary messages for text output", () =>
+        Effect.gen(function*() {
+          const result = yield* LanguageModel.generateText({
+            prompt: "Hello"
+          }).pipe(Effect.provide(OpenAiLanguageModel.model("gpt-5.6")))
+
+          strictEqual(result.text, "Thinking. Hello!")
+        }).pipe(Effect.provide(makeTestLayer({
+          body: {
+            output: [
+              makeTextOutput("Thinking. ", { id: "msg_commentary", phase: "commentary" }),
+              makeTextOutput("Hello!", { phase: "final_answer" })
+            ]
           }
         }))))
     })
@@ -1656,6 +1842,23 @@ describe("OpenAiLanguageModel", () => {
             body: { output: [makeFunctionCall("ReturnModeTool", { input: 123 })] }
           }))
         ))
+
+      it.effect("advertises and handles non-strict record parameters", () =>
+        Effect.gen(function*() {
+          const received = yield* Ref.make<unknown>(undefined)
+          const toolkit = Toolkit.make(Tool.make("Search", { parameters: Schema.Record(Schema.String, Schema.String) }))
+          yield* LanguageModel.generateText({ prompt: "Search", toolkit }).pipe(
+            Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini", { strictJsonSchema: false })),
+            Effect.provide(toolkit.toLayer({ Search: (params) => Ref.set(received, params) }))
+          )
+          const requests = yield* MockHttpClient.requests
+          const body = yield* getRequestBody(requests[0])
+          strictEqual(body.tools[0].strict, false)
+          deepStrictEqual(body.tools[0].parameters, { type: "object", additionalProperties: { type: "string" } })
+          deepStrictEqual(yield* Ref.get(received), { status: "open" })
+        }).pipe(Effect.provide(makeTestLayer({
+          body: { output: [makeFunctionCall("Search", { status: "open" })] }
+        }))))
 
       it.effect("converts transformed tool call params to the tool's standard encoded form", () =>
         Effect.gen(function*() {
@@ -2022,6 +2225,70 @@ describe("OpenAiLanguageModel", () => {
   })
 
   describe("streamText", () => {
+    it.effect("preserves refusal metadata in the reconstructed prompt", () =>
+      Effect.gen(function*() {
+        const item = makeTextOutput("", {
+          content: [
+            { type: "refusal", refusal: "First explanation." },
+            { type: "refusal", refusal: "Second explanation." }
+          ]
+        })
+        const refusal = "First explanation.\n\nSecond explanation."
+
+        const parts = yield* LanguageModel.streamText({ prompt: "Do something bad" }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(makeStreamTestLayer([
+            {
+              type: "response.output_item.added",
+              sequence_number: 1,
+              output_index: 0,
+              item: { ...item, status: "in_progress", content: [] }
+            },
+            { type: "response.output_item.done", sequence_number: 2, output_index: 0, item }
+          ]))
+        )
+
+        strictEqual(parts.some((part) => part.type === "text-delta"), false)
+        deepStrictEqual(parts.find((part) => part.type === "text-end")?.metadata.openai, { itemId: item.id, refusal })
+        const message = Prompt.fromResponseParts(parts).content[0]
+        assert(message?.role === "assistant")
+        const text = message.content[0]
+        assert(text.type === "text")
+        deepStrictEqual(
+          [text.text, text.options.openai?.itemId, text.options.openai?.refusal],
+          ["", item.id, refusal]
+        )
+      }))
+
+    it.effect("uses call_id for streamed shell calls and keeps the item ID in metadata", () =>
+      Effect.gen(function*() {
+        const item = {
+          type: "shell_call",
+          id: "shell_item_123",
+          call_id: "call_shell_456",
+          status: "completed",
+          environment: null,
+          action: { commands: ["ls"], timeout_ms: null, max_output_length: null }
+        } as const
+
+        const parts = yield* LanguageModel.streamText({
+          prompt: "Run a shell command",
+          toolkit: Toolkit.make(OpenAiTool.Shell({})),
+          disableToolCallResolution: true
+        }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(makeStreamTestLayer([
+            { type: "response.output_item.done", sequence_number: 1, output_index: 0, item }
+          ]))
+        )
+
+        const call = parts.find((part) => part.type === "tool-call")
+        assert.isDefined(call)
+        deepStrictEqual([call.id, call.metadata.openai?.itemId], [item.call_id, item.id])
+      }))
+
     it.effect.each(
       [
         {

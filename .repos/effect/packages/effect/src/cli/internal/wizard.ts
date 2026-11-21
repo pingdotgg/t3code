@@ -84,6 +84,10 @@ const promptCommand: (
 
     if (config.arguments.length > 0) {
       yield* Console.log(renderSection(sectionName, "ARGUMENTS", colors))
+      // Keep positional answers from binding to preceding boolean flags.
+      if (visibleSubcommands.length === 0) {
+        commandLine.push(commandLineArg("--"))
+      }
       for (const param of config.arguments) {
         commandLine.push(...yield* promptParam(param))
       }
