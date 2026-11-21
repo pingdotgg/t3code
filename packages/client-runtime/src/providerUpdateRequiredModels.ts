@@ -47,3 +47,26 @@ export function formatProviderUpdateRequiredNotice(
     ),
   );
 }
+
+/** Explains models the account's organization turned off, which pickers never list. */
+export function formatProviderRestrictedModelsNotice(
+  provider: Pick<ServerProvider, "restrictedModels">,
+  searchQuery = "",
+  resolve: MFunctionType = mFallback,
+  locale = "en",
+): string | null {
+  const query = searchQuery.trim().toLocaleLowerCase();
+  const models = (provider.restrictedModels ?? []).filter(
+    (model) =>
+      query.length === 0 ||
+      model.name.toLocaleLowerCase().includes(query) ||
+      model.slug.toLocaleLowerCase().includes(query),
+  );
+  if (models.length === 0) return null;
+  const names = formatConjunctionList(
+    models.map((model) => model.name),
+    locale,
+    resolve,
+  );
+  return resolve(msg("Your organization has turned off {names}.", { names }));
+}

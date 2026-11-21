@@ -124,7 +124,10 @@ import {
   pendingModelAfterPress,
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
-import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import {
+  formatProviderRestrictedModelsNotice,
+  formatProviderUpdateRequiredNotice,
+} from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import type { MessageResolver } from "../../i18n/messages";
 
 const PRIMARY_PROVIDER_DRIVERS: ReadonlySet<string> = new Set([
@@ -382,6 +385,9 @@ function ThreadSettingsSessionProvider(
             props.projectId,
             true,
           ),
+          config,
+          props.projectId,
+          props.lockedProviderInstanceId,
         )
       : props.providerGroups;
   const legacyFavorites = AsyncResult.isSuccess(preferences)
@@ -895,7 +901,8 @@ function buildThreadSettingsCatalogItems(
     ) {
       return [];
     }
-    const driver = group.models[0]?.providerDriver ?? group.providerKey;
+    const driver =
+      group.models[0]?.providerDriver ?? group.withheldModels?.driver ?? group.providerKey;
     const catalogModels =
       session.manageHidden ||
       session.showLegacy ||
@@ -918,16 +925,15 @@ function buildThreadSettingsCatalogItems(
       ),
       session.favoriteKeys,
     );
-    const updateRequiredNotice =
-      group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
-        ? formatProviderUpdateRequiredNotice(
-            group.updateRequired,
-            session.searchQuery,
-            resolve,
-            locale,
-          )
-        : null;
-    if (visibleModels.length === 0 && !updateRequiredNotice) {
+    const withheldModels =
+      session.providerFilter !== FAVORITES_PROVIDER_FILTER ? group.withheldModels : undefined;
+    const updateRequiredNotice = withheldModels
+      ? formatProviderUpdateRequiredNotice(withheldModels, session.searchQuery, resolve, locale)
+      : null;
+    const restrictedNotice = withheldModels
+      ? formatProviderRestrictedModelsNotice(withheldModels, session.searchQuery, resolve, locale)
+      : null;
+    if (visibleModels.length === 0 && !updateRequiredNotice && !restrictedNotice) {
       return [];
     }
     const isPrimary = driver !== undefined && PRIMARY_PROVIDER_DRIVERS.has(driver);
@@ -963,6 +969,15 @@ function buildThreadSettingsCatalogItems(
               kind: "notice" as const,
               key: `notice:${group.providerKey}`,
               text: updateRequiredNotice,
+            },
+          ]
+        : []),
+      ...(!collapsed && restrictedNotice
+        ? [
+            {
+              kind: "notice" as const,
+              key: `restricted:${group.providerKey}`,
+              text: restrictedNotice,
             },
           ]
         : []),
@@ -1548,7 +1563,12 @@ export function ExistingThreadSettingsRouteScreen({
       cwd={selectedThreadCwd}
       providerInstanceId={modelSelection.instanceId}
       {...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {})}
-      providerGroups={groupByProvider(modelOptions)}
+      providerGroups={groupByProvider(
+        modelOptions,
+        serverConfig,
+        selectedThread.projectId,
+        lockedProviderInstanceId,
+      )}
       selectedModel={modelSelection}
       prompt={prompt}
       onPromptChange={(text) => setComposerDraftText(draftKey, text)}

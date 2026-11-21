@@ -108,6 +108,16 @@ export const ServerProviderUpdateRequiredModel = Schema.Struct({
 });
 export type ServerProviderUpdateRequiredModel = typeof ServerProviderUpdateRequiredModel.Type;
 
+/**
+ * A model the account's organization has turned off. It is never selectable;
+ * clients show it so users learn why the model is missing.
+ */
+export const ServerProviderRestrictedModel = Schema.Struct({
+  slug: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+});
+export type ServerProviderRestrictedModel = typeof ServerProviderRestrictedModel.Type;
+
 export const ServerProviderSlashCommandInput = Schema.Struct({
   hint: TrimmedNonEmptyString,
 });
@@ -283,6 +293,8 @@ export const ServerProvider = Schema.Struct({
   modelsRetained: Schema.optionalKey(Schema.Boolean),
   // Kept apart from `models` so clients that predate it never offer them.
   updateRequiredModels: Schema.optionalKey(Schema.Array(ServerProviderUpdateRequiredModel)),
+  // Kept apart from `models` for the same reason.
+  restrictedModels: Schema.optionalKey(Schema.Array(ServerProviderRestrictedModel)),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

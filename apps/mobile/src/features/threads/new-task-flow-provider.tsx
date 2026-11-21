@@ -526,7 +526,11 @@ export function NewTaskFlowProvider(
     setStickyComposerModelSelection(nextSelection);
   };
 
-  const providerGroups = groupByProvider(modelOptions);
+  const providerGroups = groupByProvider(
+    modelOptions,
+    selectedEnvironmentServerConfig,
+    selectedProject?.id ?? null,
+  );
   const setPrompt = (value: string) => {
     if (!selectedProjectDraftKey) {
       return;

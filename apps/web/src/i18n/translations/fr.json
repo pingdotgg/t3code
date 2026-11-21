@@ -118,6 +118,7 @@
   "f42c2a36b3507308": "{label} activé",
   "77cc5f738cb7d459": "{label} désactivé",
   "2159a4897d4a4d73": "{runtime, select, codex {Mettez à jour la CLI Codex vers la version {version} ou ultérieure pour utiliser {names}.} other {Mettez à jour {providerName} vers la version {version} ou ultérieure pour utiliser {names}.}}",
+  "9270ec4a080a2720": "Votre organisation a désactivé {names}.",
   "d887bea446534de5": "Aucun projet de cet environnement ne peut lire {host}/{repository}.",
   "4e466d60e2f7736b": "Collez l’URL complète de la pull request ; ce fil n’a pas de dépôt auquel rattacher le numéro.",
   "302625058bacbe38": "Collez une URL complète ; l’hôte de ce projet n’a pas de format d’URL connu pour {changeRequest}.",
