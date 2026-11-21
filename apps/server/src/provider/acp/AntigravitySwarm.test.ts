@@ -317,8 +317,8 @@ describe("AntigravitySwarm", () => {
       }),
     ).toBe("deny");
 
-    // Once the session records worker-a's worktree (while rejecting root "/" paths),
-    // edits inside the tracked worktree are allowed and outside paths remain denied.
+    // Once the session records worker-a's worktree, edits inside it are allowed. Reported roots
+    // that contain the session cwd ("/" and "/tmp") never widen workspaceWrite.
     tracker.applyNotification({
       sessionId: "root-1",
       head: 1,
@@ -330,14 +330,11 @@ describe("AntigravitySwarm", () => {
           name: "alpha",
           role: "worker",
           conversationId: "worker-a",
-          workspaces: ["/tmp/isolated-worktree", "/"],
+          workspaces: ["/tmp/isolated-worktree", "/", "/tmp"],
           state: "working",
         },
       ],
     });
-    expect(tracker.childPermissionWorkspaces(childWorktreeRequest)).toEqual([
-      "/tmp/isolated-worktree",
-    ]);
     expect(
       acpPermissionDisposition(policy, childWorktreeRequest, {
         extraWritableRoots: tracker.childPermissionWorkspaces(childWorktreeRequest),

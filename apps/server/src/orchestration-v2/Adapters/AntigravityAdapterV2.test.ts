@@ -2544,6 +2544,7 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         const rootSessionId = "11111111-1111-4000-8000-000000000001";
         const alphaSessionId = "11111111-1111-4000-8000-00000000000a";
         const betaSessionId = "11111111-1111-4000-8000-00000000000b";
+        const gammaSessionId = "11111111-1111-4000-8000-00000000000c";
 
         const continuationRequests = {
           offer: () => Effect.succeed(true),
@@ -2878,6 +2879,7 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         );
 
         // Between turns @beta wakes and is killed; turn 2 must not replay the queued running update.
+        // New worker @gamma spawns and finishes in the same gap; turn 2 must still show its report.
         yield* onSwarmNotification!({
           sessionId: rootSessionId,
           head: 4,
@@ -2887,6 +2889,13 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
           members: [
             { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
             { name: "beta", role: "worker", conversationId: betaSessionId, state: "working" },
+            {
+              name: "gamma",
+              role: "worker",
+              conversationId: gammaSessionId,
+              brief: "Inspect docs",
+              state: "working",
+            },
           ],
         });
         yield* onSwarmNotification!({
@@ -2898,8 +2907,18 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
           members: [
             { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
             { name: "beta", role: "worker", conversationId: betaSessionId, state: "killed" },
+            {
+              name: "gamma",
+              role: "worker",
+              conversationId: gammaSessionId,
+              brief: "Inspect docs",
+              state: "killed",
+            },
           ],
-          posts: [{ seq: 4, agent: "beta", text: "@coordinator Backend wrap-up." }],
+          posts: [
+            { seq: 4, agent: "beta", text: "@coordinator Backend wrap-up." },
+            { seq: 5, agent: "gamma", text: "@coordinator Docs wrap-up." },
+          ],
         });
 
         // Turn 2 wakes @alpha again on the exact same child thread, then kills @alpha after reporting.
@@ -2952,6 +2971,8 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         assert.equal(subagentsByTitle().get("@alpha")?.result, "Follow-up complete.");
         assert.equal(subagentsByTitle().get("@beta")?.status, "completed");
         assert.equal(subagentsByTitle().get("@beta")?.result, "Backend wrap-up.");
+        assert.equal(subagentsByTitle().get("@gamma")?.status, "completed");
+        assert.equal(subagentsByTitle().get("@gamma")?.result, "Docs wrap-up.");
 
         yield* Fiber.interrupt(reader);
       }).pipe(Effect.provide(layerSession), Effect.scoped),

@@ -7205,23 +7205,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* applyExtensionSubagentToTurn(context, update, allowReopenFromIdle);
             return;
           }
+          const isSameQueuedWorker = (entry: {
+            sessionId: string;
+            subagent: AcpAdapterV2SubagentUpdate;
+          }) =>
+            entry.sessionId === notice.sessionId &&
+            (entry.subagent.nativeTaskId === update.nativeTaskId ||
+              (update.childSessionId !== null &&
+                entry.subagent.childSessionId === update.childSessionId));
           if (acpSubagentStatusIsTerminal(update.status)) {
-            yield* Ref.update(pendingExtensionSubagents, (current) =>
-              current.filter(
-                (entry) =>
-                  entry.sessionId !== notice.sessionId ||
-                  (entry.subagent.nativeTaskId !== update.nativeTaskId &&
-                    (update.childSessionId === null ||
-                      entry.subagent.childSessionId !== update.childSessionId)),
-              ),
-            );
+            const queued = yield* Ref.modify(pendingExtensionSubagents, (current) => [
+              current.find(isSameQueuedWorker),
+              current.filter((entry) => !isSameQueuedWorker(entry)),
+            ]);
             if (update.childSessionId !== null) {
-              pendingBetweenTurnChildNotifications.delete(update.childSessionId);
               yield* cancelPendingChildRuntimeRequests(update.childSessionId);
               const dormant = (yield* Ref.get(dormantSubagentsByChildSessionId)).get(
                 update.childSessionId,
               );
               if (dormant !== undefined) {
+                pendingBetweenTurnChildNotifications.delete(update.childSessionId);
                 const nextResult = update.result ?? dormant.task.result;
                 if (dormant.task.status !== update.status || dormant.task.result !== nextResult) {
                   yield* projectCarryoverSubagentStatus(dormant, update.status, nextResult);
@@ -7236,7 +7239,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return;
               }
               const carryover = yield* Ref.get(carryoverSubagents);
-              yield* updateCarryoverSubagentStatus(
+              const handledByCarryover = yield* updateCarryoverSubagentStatus(
                 update.childSessionId,
                 update.status,
                 update.result,
@@ -7247,18 +7250,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     carryover.projectsLateTerminals,
                 },
               );
+              if (!handledByCarryover && queued !== undefined) {
+                // A worker first seen between turns exists only in the queue; keep its final state
+                // and buffered frames so the next turn still projects it.
+                yield* Ref.update(pendingExtensionSubagents, (current) => [
+                  ...current,
+                  {
+                    ...queued,
+                    subagent: {
+                      ...queued.subagent,
+                      status: update.status,
+                      result: update.result ?? queued.subagent.result,
+                    },
+                  },
+                ]);
+                return;
+              }
+              pendingBetweenTurnChildNotifications.delete(update.childSessionId);
             }
             return;
           }
           if (postSettleContinuationEnabled && wakeContinuation) {
             yield* Ref.update(pendingExtensionSubagents, (current) => [
-              ...current.filter(
-                (entry) =>
-                  entry.sessionId !== notice.sessionId ||
-                  (entry.subagent.nativeTaskId !== update.nativeTaskId &&
-                    (update.childSessionId === null ||
-                      entry.subagent.childSessionId !== update.childSessionId)),
-              ),
+              ...current.filter((entry) => !isSameQueuedWorker(entry)),
               { sessionId: notice.sessionId, subagent: update, allowReopenFromIdle },
             ]);
             if (!(yield* Ref.get(loadingSessionId))) {

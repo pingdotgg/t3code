@@ -91,14 +91,6 @@ interface TrackedSwarmSession {
   readonly briefsByMention: Map<string, string>;
 }
 
-function isNonRootWorkspacePath(candidate: string): boolean {
-  const normalized = candidate.replaceAll("\\", "/").replace(/\/+$/, "");
-  if (normalized.length === 0) return false;
-  if (/^[a-z]:$/i.test(normalized)) return false;
-  if (/^\/\/[^/]+(?:\/[^/]+)?$/.test(normalized)) return false;
-  return true;
-}
-
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed !== undefined && trimmed.length > 0 ? trimmed : undefined;
@@ -353,9 +345,7 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
         }
         for (const extraWorkspace of member.workspaces ?? []) {
           const trimmed = nonEmpty(extraWorkspace);
-          if (trimmed !== undefined && isNonRootWorkspacePath(trimmed)) {
-            tracked.workspaces.add(trimmed);
-          }
+          if (trimmed !== undefined) tracked.workspaces.add(trimmed);
         }
 
         const latestPost = session.latestPostsByAgent.get(nameKey) ?? tracked.latestReport;
@@ -444,9 +434,7 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
         if (childSessionId === undefined) continue;
         const tracked = session.membersByConversationId.get(childSessionId);
         if (tracked === undefined) continue;
-        for (const workspace of tracked.workspaces) {
-          if (isNonRootWorkspacePath(workspace)) roots.add(workspace);
-        }
+        for (const workspace of tracked.workspaces) roots.add(workspace);
       }
       return [...roots];
     },
