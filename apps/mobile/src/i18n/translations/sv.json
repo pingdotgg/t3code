@@ -1706,8 +1706,10 @@
   "bdb25fc7329e1ea7": "Ingen veckogräns rapporterades",
   "2a868f5893b8a3d0": "Kvar av prenumerationen",
   "07f5912af296f9ea": "{remaining} % kvar",
+  "d996426072afbeb2": "{used} % använt",
   "f60ed5fcf4fd471c": "{window} · {remaining} % kvar",
   "30106fc3a8643199": "kvar",
+  "cb3b0988d4d24449": "använt",
   "bd8554c7671b01a1": "Saknas",
   "8963e62b7e4f94cf": "Öppna {app}",
   "b6ce773a43c1b2a9": "Inga prenumerationsgränser tillgängliga.",
@@ -1715,6 +1717,7 @@
   "29519653f14c6817": "Tryck för att ansluta i {app}",
   "0a3b9942c9a76f23": "{provider}. {detail}.",
   "5270189c209360dd": "{provider}, {window}, {remaining} procent kvar. {reset}. {detail}.",
+  "d44dbb9c4d5a5c59": "{provider}, {window}, {used} procent använt. {reset}. {detail}.",
   "f7288c2957dc484a": "{count, plural, one {{count} till i {app}} other {{count} till i {app}}}",
   "67651da8154563a1": "Inga gränser tillgängliga",
   "ebd3a4d6fb5d987b": "{count, plural, one {{count} konto · poolat} other {{count} konton · poolade}}",
@@ -4997,9 +5000,14 @@
   "b16fdf56b16d99c9": "I takt",
   "90f977e97ae8b6c6": "Under takten",
   "897aceb6c7196649": "Konto",
+  "49d4bcb2d2b83296": "Segment {index}, {account}, {used} % använt",
+  "21e4463c7c2ea9b0": "Segment {index}, {account}, {used} % använt, {elapsed} % av fönstret har gått",
   "811008ce95331531": "Segment {index}, {account}, {remaining} % kvar",
   "bfb2d0ef476d295b": "Segment {index}, {account}, {remaining} % kvar, {timeLeft} % av fönstret kvar",
   "e71c96e5114f7718": "Visa kontodetaljer",
+  "1aa64ce1ba713045": "Segment {index}, {account}, {used} % använt, {resetsIn}, {credits, plural, one {{credits} återställningskredit sparad} other {{credits} återställningskrediter sparade}}",
+  "7005baacced874ff": "Segment {index}, {account}, {used} % använt, {resetsIn}",
+  "d8f09fa55ee25b77": "Segment {index}, {account}, {used} % använt, {credits, plural, one {{credits} återställningskredit sparad} other {{credits} återställningskrediter sparade}}",
   "27cd137302298f71": "Segment {index}, {account}, {remaining} % kvar, {resetsIn}, {credits, plural, one {{credits} återställningskredit sparad} other {{credits} återställningskrediter sparade}}",
   "288ade531cfcf90c": "Segment {index}, {account}, {remaining} % kvar, {resetsIn}",
   "f78edbddd70ee41d": "Segment {index}, {account}, {remaining} % kvar, {credits, plural, one {{credits} återställningskredit sparad} other {{credits} återställningskrediter sparade}}",
@@ -5010,6 +5018,22 @@
   "0d3e9f1f27c0e780": "Visa kontots e-postadress",
   "9217e0c91cee3cf8": "Inloggad",
   "5f12a194d158f9b1": "Källa",
+  "8ee47ebca67e9746": [
+    {
+      "t": "Text",
+      "i": 1,
+      "c": [
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        " %"
+      ]
+    },
+    " ",
+    "använt"
+  ],
   "65a7507ffde6d3f8": [
     {
       "t": "Text",
@@ -5035,6 +5059,14 @@
     " kunde inte uppdatera gränserna. Visar de senast kända värdena."
   ],
   "726ece0c7139ce8a": "Kontot rapporterar inte längre gränser i de valda miljöerna.",
+  "e6a37782de1fc4b2": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " % använt"
+  ],
   "412e3b93454812aa": [
     {
       "i": 1,
@@ -5051,6 +5083,15 @@
       "k": "_gt_value_1",
       "v": "v"
     }
+  ],
+  "9da6c2afc7c2b0af": [
+    "Jämn takt: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " % använt vid det här laget"
   ],
   "23d0be01844d163c": [
     "Jämn takt: ",
@@ -5082,6 +5123,9 @@
   "8864ac914d8205e8": "Använda en återställningskredit?",
   "e32c2c7e61a16f4b": "Använd kredit",
   "b58a90dc5356f80a": "återställs nu",
+  "114ba73b78ee362c": "↻ −{percent} % nu",
+  "a7bb182bbb86d11d": "↻ −{percent} % Återställs strax",
+  "4e03d00e37f33012": "↻ −{percent} % om {duration}",
   "1d8c701d90e48e07": "↻ +{percent} % nu",
   "949db5acc5a82add": "↻ +{percent} % Återställs strax",
   "96f9e0677375a802": "↻ +{percent} % om {duration}",
@@ -5462,5 +5506,8 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "0e3ed6b33be1a9f6": "Kvar",
+  "aa77d8906957af91": "Använt",
+  "464689c7533f1655": "Visa användningsgränser och deras staplar som andelen kvar av varje gräns eller andelen som använts."
 }

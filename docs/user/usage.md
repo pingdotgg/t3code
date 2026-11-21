@@ -135,6 +135,11 @@ the bar show each account's quota, countdown, and credits. Tap a row to open its
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 
+To read limits as quota used instead of quota left, set **Settings → Appearance → Usage limits
+display** to **Used** on web and desktop, or **Settings → Appearance → Usage limits** on mobile.
+Percentages, bars, and the even-pace line then count up as you spend, and a reset's hatching sits at
+the end of the fill. The mobile setting also applies to its home screen widgets.
+
 When a Claude or Codex account has no overall weekly quota left, its pooled session contribution
 shows 0% left. The next refill depends on both reset times: an exhausted session must also reset,
 and a partly spent session may only regain its unused portion when the week resets. Missing or

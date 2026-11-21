@@ -100,11 +100,12 @@ describe("subscription widget snapshots", () => {
     );
     const session = snapshot.providers[0]?.windows.find((w) => w.kind === "session");
     expect(session?.accounts).toStrictEqual([
-      { name: "RE", remaining: 60, refill: 0 },
+      { name: "RE", remaining: 60, used: 40, refill: 0 },
       {
         name: "smol",
         color: "#4c6ef5",
         remaining: 71,
+        used: 29,
         refill: 29,
         resetsAt: Date.parse(window.resetsAt),
         reset: expect.any(String),

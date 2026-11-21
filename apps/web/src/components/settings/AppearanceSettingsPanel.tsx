@@ -6,6 +6,7 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type ChatWidth,
   type EffortDisplay,
+  type UsageLimitDisplay,
   type EnvironmentIdentificationMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_GLASS_OPACITY,
@@ -83,6 +84,11 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
 const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   label: msg("Word", { $context: "show effort as a word" }),
   bars: msg("Bars", { $context: "show effort as bars" }),
+};
+
+const USAGE_LIMIT_DISPLAY_LABELS: Record<UsageLimitDisplay, string> = {
+  left: msg("Left", { $context: "show usage limits as quota left" }),
+  used: msg("Used", { $context: "show usage limits as quota used" }),
 };
 
 export function AppearanceSettingsPanel() {
@@ -329,6 +335,45 @@ export function AppearanceSettingsPanel() {
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem value="label">{gt("Word (default)")}</SelectItem>
                   <SelectItem value="bars">{m(EFFORT_DISPLAY_LABELS.bars)}</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("usage-limit-display")}
+          description={gt("Show usage limits as the share of each limit left, or the share used.")}
+          resetAction={
+            settings.usageLimitDisplay !== DEFAULT_UNIFIED_SETTINGS.usageLimitDisplay ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset usage limits display to default")}
+                onClick={() =>
+                  updateSettings({ usageLimitDisplay: DEFAULT_UNIFIED_SETTINGS.usageLimitDisplay })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.usageLimitDisplay}
+                onValueChange={(value) => {
+                  if (value === "left" || value === "used")
+                    updateSettings({ usageLimitDisplay: value });
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full min-w-0"
+                  aria-label={gt("Usage limits display")}
+                >
+                  <SelectValue>
+                    {m(USAGE_LIMIT_DISPLAY_LABELS[settings.usageLimitDisplay])}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="left">{gt("Left (default)")}</SelectItem>
+                  <SelectItem value="used">{m(USAGE_LIMIT_DISPLAY_LABELS.used)}</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
