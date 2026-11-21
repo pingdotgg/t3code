@@ -1,11 +1,11 @@
 import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
-import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
@@ -295,36 +295,35 @@ export class RpcInstrumentation extends RpcMiddleware.Service<RpcInstrumentation
   "t3/server/RpcInstrumentation",
 ) {}
 
-export const rpcInstrumentationLayer = builtinSucceedLayer("t3.server")(RpcInstrumentation)(
-  (effect, { rpc }) => {
-    const method = rpc._tag;
-    const measured = effect.pipe(
-      withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
-    );
+// Runs on every RPC and is provided per socket, so it stays out of the plugin kernel.
+export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect, { rpc }) => {
+  const method = rpc._tag;
+  const measured = effect.pipe(
+    withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
+  );
 
-    if (RPC_METHODS_WITH_TRACING_DISABLED.has(method)) {
-      return measured.pipe(Effect.provideService(References.TracerEnabled, false));
-    }
-    // The ambient span is the socket's `GET /ws` request, open for the whole connection. Parenting
-    // every call to it grows one trace past the collector's per-trace limit, which then drops it.
-    return Effect.currentParentSpan.pipe(
-      Effect.option,
-      Effect.flatMap((connection) =>
-        measured.pipe(
-          Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
-            root: true,
-            links: Option.match(connection, {
-              onNone: () => [],
-              onSome: (span) => [{ span, attributes: {} }],
-            }),
-            attributes: {
-              ...DEFAULT_RPC_SPAN_ATTRIBUTES,
-              "rpc.method": method,
-              "rpc.aggregate": RPC_AGGREGATES[method as WsRpcMethod],
-            },
+  if (RPC_METHODS_WITH_TRACING_DISABLED.has(method)) {
+    return measured.pipe(Effect.provideService(References.TracerEnabled, false));
+  }
+  // The ambient span is the socket's `GET /ws` request, open for the whole connection. Parenting
+  // every call to it grows one trace past the collector's per-trace limit, which then drops it.
+  return Effect.currentParentSpan.pipe(
+    Effect.option,
+    Effect.flatMap((connection) =>
+      measured.pipe(
+        Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
+          root: true,
+          links: Option.match(connection, {
+            onNone: () => [],
+            onSome: (span) => [{ span, attributes: {} }],
           }),
-        ),
+          attributes: {
+            ...DEFAULT_RPC_SPAN_ATTRIBUTES,
+            "rpc.method": method,
+            "rpc.aggregate": RPC_AGGREGATES[method as WsRpcMethod],
+          },
+        }),
       ),
-    );
-  },
-);
+    ),
+  );
+});

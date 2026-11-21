@@ -1,5 +1,4 @@
 import { builtinHttpRoute } from "./plugins/httpComposition.ts";
-import { builtinSucceedLayer } from "./plugins/PluginKernel.ts";
 import * as Plugins from "./plugins/PluginService.ts";
 import { wrapBuiltinHandlers } from "./plugins/builtinCommands.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
@@ -4413,22 +4412,12 @@ export const layer = Layer.unwrap(
               // Handler-context reporters see only request defects, not server-wide defects.
               Layer.provide(DefectReporter.layer),
               Layer.provide(AcpRegistrySessions.layer),
-              Layer.provide(builtinSucceedLayer("t3.server")(SqlClient.SqlClient, sql)),
+              Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(Layer.succeed(NpmRelease.NpmRelease, npmRelease)),
-              Layer.provide(
-                builtinSucceedLayer("t3.server")(
-                  ServerSelfUpdate.ServerSelfUpdate,
-                  serverSelfUpdate,
-                ),
-              ),
+              Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // Share server-lifetime PR caches so WS mutations invalidate every client's HTTP diffs.
-              Layer.provide(
-                builtinSucceedLayer("t3.server")(
-                  PullRequestService.PullRequestService,
-                  pullRequests,
-                ),
-              ),
+              Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
               Layer.provide(Layer.succeed(IssueService.IssueService, issues)),
               Layer.provide(Layer.succeed(ThreadIssueService.ThreadIssueService, threadIssues)),
               Layer.provide(
@@ -4436,7 +4425,7 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(OtlpEndpointCheck.layer),
               Layer.provide(
-                builtinSucceedLayer("t3.server")(
+                Layer.succeed(
                   PullRequestReviewGuideService.PullRequestReviewGuideService,
                   reviewGuides,
                 ),
