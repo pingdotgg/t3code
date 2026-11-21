@@ -26,7 +26,12 @@ import { type ReactNode, useId, useRef, useState } from "react";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { useEnvironment } from "~/state/environments";
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
-import { peerLinkEnvironment, useLinkableMachines, useLinkBackOffers } from "~/state/peerLinks";
+import {
+  peerLinkEnvironment,
+  useLinkableMachines,
+  useLinkBackOffers,
+  useLinkThroughRoutes,
+} from "~/state/peerLinks";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
@@ -252,7 +257,24 @@ export function LinkEnvironmentDialog({
   const setOpen = onOpenChange;
   // Named in the title: from the map, nothing else on screen says which machine is linking.
   const source = useEnvironment(environmentId);
-  const machines = useLinkableMachines(environmentId, open);
+  const saved = useLinkableMachines(environmentId, open);
+  const routes = useLinkThroughRoutes(environmentId, open);
+  // Machines this app has no entry for are still pickable when one of its environments links
+  // to them at full access.
+  const machines = [
+    ...saved,
+    ...[...routes.values()]
+      .filter((route) => saved.every((machine) => machine.environmentId !== route.environmentId))
+      .map((route) => ({
+        environmentId: route.environmentId,
+        label: route.label,
+        machine: "server" as const,
+        connected: false,
+        connectOnly: false,
+        linked: false,
+        urls: route.urls,
+      })),
+  ];
   // Null until the user picks; with no other machines known, only an address is left.
   const [choice, setChoice] = useState<string | null>(prefill?.choice ?? null);
   const [address, setAddress] = useState(prefill?.address ?? "");
@@ -277,16 +299,13 @@ export function LinkEnvironmentDialog({
     reportFailure: false,
     reportDefect: false,
   });
-  const via = useEnvironment(prefill?.through?.viaEnvironmentId ?? null);
-  // Set once the linked machine would not give a code, so the dialog asks for one instead.
-  const [throughFailed, setThroughFailed] = useState(false);
+  // Machines that would not give a code through a link, so the dialog asks for one instead.
+  const [throughFailed, setThroughFailed] = useState<ReadonlySet<EnvironmentId>>(new Set());
   const [alsoLinkBack, setAlsoLinkBack] = useState(false);
   const selected = choice ?? (machines.length === 0 ? ANOTHER_ADDRESS : null);
   // Only for the machine the dialog opened for: another choice or address is another machine.
-  const through =
+  const prefilledThrough =
     prefill?.through !== undefined &&
-    via !== null &&
-    !throughFailed &&
     selected === ANOTHER_ADDRESS &&
     address === (prefill.address ?? "")
       ? prefill.through
@@ -306,6 +325,14 @@ export function LinkEnvironmentDialog({
     Option.isSome(connected) &&
     mayMint &&
     !mintFailed.has(targetId);
+  // Minting with this client's own session there comes first: it needs no third machine.
+  const throughCandidate =
+    prefilledThrough ?? (targetId === null || canMint ? null : (routes.get(targetId) ?? null));
+  const via = useEnvironment(throughCandidate?.viaEnvironmentId ?? null);
+  const through =
+    throughCandidate !== null && via !== null && !throughFailed.has(throughCandidate.environmentId)
+      ? throughCandidate
+      : null;
   const linkBack = useLinkBackOffers(environmentId, targetId === null ? [] : [targetId], open);
   const backOffer = linkBack.offerFor(targetId);
   const ready =
@@ -321,7 +348,7 @@ export function LinkEnvironmentDialog({
       setPairingCode("");
       setAccess("approval-required");
       setMintFailed(new Set());
-      setThroughFailed(false);
+      setThroughFailed(new Set());
       setAlsoLinkBack(false);
     }
   };
@@ -344,7 +371,7 @@ export function LinkEnvironmentDialog({
       }
     }
     if (asked._tag === "Failure" && isAtomCommandInterrupted(asked)) return null;
-    setThroughFailed(true);
+    setThroughFailed((failed) => new Set(failed).add(target.environmentId));
     failureToast(
       gt("{via} could not get a pairing code from {target}", {
         via: via?.label ?? "",
@@ -477,7 +504,7 @@ export function LinkEnvironmentDialog({
               void submit();
             }}
           >
-            {machines.length > 0 && through === null ? (
+            {machines.length > 0 && (through === null || through !== prefilledThrough) ? (
               <LinkMachineSelect
                 machines={machines}
                 value={selected}
