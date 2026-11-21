@@ -223,6 +223,9 @@ it("keeps a screen reader's place when scrolling the description condenses the h
   const expanded = openOnHost.element() as HTMLButtonElement;
   expanded.focus();
   await expect.element(screen.getByText("Line 79")).toBeInTheDocument();
+  // The description starts collapsed; read all of it so the panel can scroll.
+  (screen.getByRole("button", { name: "Read more" }).element() as HTMLButtonElement).click();
+  expanded.focus();
   let scroller = screen.getByText("Line 79").element().parentElement;
   while (scroller && getComputedStyle(scroller).overflowY !== "auto") {
     scroller = scroller.parentElement;
