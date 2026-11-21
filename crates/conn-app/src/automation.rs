@@ -91,6 +91,20 @@ fn text<'a>(cmd: &'a Value, key: &str) -> &'a str {
     cmd.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
+#[cfg(feature = "cef")]
+async fn await_preview_reply(
+    rx: oneshot::Receiver<Result<Value, String>>,
+) -> Result<Value, String> {
+    RT.spawn(async move {
+        tokio::time::timeout(std::time::Duration::from_secs(15), rx)
+            .await
+            .map_err(|_| "Timed out waiting for browser preview reply.".to_owned())?
+            .map_err(|_| "Browser preview channel closed.".to_owned())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 async fn run(
     app: &WeakEntity<ConnApp>,
     window: AnyWindowHandle,
@@ -194,6 +208,36 @@ async fn run(
         "browser-title" => app
             .read_with(cx, |app, cx| json!(app.browser_title(cx)))
             .map_err(|e| err(e.into())),
+        #[cfg(feature = "cef")]
+        "browser-eval" => {
+            let expression = text(cmd, "expression").to_owned();
+            let rx = app
+                .update(cx, |app, cx| app.browser_preview_eval(&expression, cx))
+                .map_err(|e| err(e.into()))??;
+            await_preview_reply(rx).await
+        }
+        #[cfg(feature = "cef")]
+        "browser-snapshot" => {
+            let rx = app
+                .update(cx, |app, cx| {
+                    app.browser_preview_call("snapshot", &json!({}), cx)
+                })
+                .map_err(|e| err(e.into()))??;
+            await_preview_reply(rx).await
+        }
+        #[cfg(feature = "cef")]
+        "browser-act" => {
+            let rx = app
+                .update(cx, |app, cx| app.browser_preview_call("act", cmd, cx))
+                .map_err(|e| err(e.into()))??;
+            await_preview_reply(rx).await
+        }
+        #[cfg(feature = "cef")]
+        "browser-screenshot" => {
+            let path = std::path::PathBuf::from(text(cmd, "path"));
+            app.read_with(cx, |app, cx| app.browser_screenshot(&path, cx))
+                .map_err(|e| err(e.into()))?
+        }
         "new-thread" => {
             let project = cmd
                 .get("project")

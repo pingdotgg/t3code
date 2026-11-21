@@ -980,6 +980,36 @@ impl ConnApp {
         self.right_panel.read(cx).browser_title(cx)
     }
 
+    #[cfg(all(feature = "cef", feature = "automation"))]
+    pub(crate) fn browser_preview_eval(
+        &mut self,
+        expression: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
+        self.right_panel
+            .update(cx, |panel, cx| panel.browser_preview_eval(expression, cx))
+    }
+
+    #[cfg(all(feature = "cef", feature = "automation"))]
+    pub(crate) fn browser_preview_call(
+        &mut self,
+        op: &str,
+        params: &serde_json::Value,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
+        self.right_panel
+            .update(cx, |panel, cx| panel.browser_preview_call(op, params, cx))
+    }
+
+    #[cfg(all(feature = "cef", feature = "automation"))]
+    pub(crate) fn browser_screenshot(
+        &self,
+        path: &std::path::Path,
+        cx: &App,
+    ) -> Result<serde_json::Value, String> {
+        self.right_panel.read(cx).browser_screenshot(path, cx)
+    }
+
     /// State read-out for the automation hook.
     #[cfg(feature = "automation")]
     pub(crate) fn automation_dump(&self) -> serde_json::Value {

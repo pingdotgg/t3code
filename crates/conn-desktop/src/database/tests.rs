@@ -246,7 +246,7 @@ async fn sqlite_reports_a_missing_file_and_bad_sql() -> TestResult {
 }
 
 #[tokio::test]
-async fn vault_connections_need_conn() {
+async fn vault_connections_report_missing_or_locked_vault() {
     let connection = DatabaseConnection {
         driver: DatabaseDriver::Mysql,
         host: "db.test".into(),
@@ -257,10 +257,13 @@ async fn vault_connections_need_conn() {
         vault_item_id: Some("entry-1".into()),
         ssh: None,
     };
-    let result = DatabaseRunner::new()
+    let result = DatabaseRunner::with_vault_binary("/nonexistent/Vault")
         .run(&DatabaseRequest::tables(connection))
         .await;
-    assert_eq!(result.error.as_deref(), Some(VAULT_UNSUPPORTED));
+    assert_eq!(
+        result.error.as_deref(),
+        Some("Vault is not installed on this Mac.")
+    );
 }
 
 #[tokio::test]

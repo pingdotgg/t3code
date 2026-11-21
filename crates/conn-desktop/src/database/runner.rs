@@ -28,8 +28,9 @@ use super::sql::{assert_reading, first_statement};
 use super::ssh_tunnel::{SSH_BINARY, SshTunnel, SshTunnelTarget, open_ssh_tunnel};
 use super::types::{
     DatabaseColumn, DatabaseConnection, DatabaseDriver, DatabaseOperation, DatabaseRequest,
-    DatabaseResponse, DatabaseRow,
+    DatabaseResponse, DatabaseRow, DatabaseSsh,
 };
+use crate::vault::{VaultClient, VaultTls};
 
 /// The panel keeps the first rows of a result.
 pub const ROW_LIMIT: usize = 500;
@@ -213,13 +214,20 @@ async fn open_mysql(
     host: &str,
     port: u16,
     connection: &DatabaseConnection,
+    tls: Option<VaultTls>,
 ) -> CallResult<MySqlConnection> {
+    let ssl_mode = match tls {
+        None | Some(VaultTls::Disabled) => MySqlSslMode::Disabled,
+        Some(VaultTls::Required) => MySqlSslMode::Required,
+        Some(VaultTls::VerifyCa) => MySqlSslMode::VerifyCa,
+        Some(VaultTls::VerifyFull) => MySqlSslMode::VerifyIdentity,
+    };
     let mut options = MySqlConnectOptions::new()
         .host(host)
         .port(port)
         .username(&connection.username)
         .password(&connection.password)
-        .ssl_mode(MySqlSslMode::Disabled)
+        .ssl_mode(ssl_mode)
         // Leave the server's time zone and SQL mode alone, as `mysql2` does.
         .timezone(None)
         .pipes_as_concat(false)
@@ -334,13 +342,20 @@ async fn open_postgres(
     host: &str,
     port: u16,
     connection: &DatabaseConnection,
+    tls: Option<VaultTls>,
 ) -> CallResult<PgConnection> {
+    let ssl_mode = match tls {
+        None | Some(VaultTls::Disabled) => PgSslMode::Disable,
+        Some(VaultTls::Required) => PgSslMode::Require,
+        Some(VaultTls::VerifyCa) => PgSslMode::VerifyCa,
+        Some(VaultTls::VerifyFull) => PgSslMode::VerifyFull,
+    };
     let mut options = PgConnectOptions::new_without_pgpass()
         .host(host)
         .port(port)
         .username(&connection.username)
         .password(&connection.password)
-        .ssl_mode(PgSslMode::Disable);
+        .ssl_mode(ssl_mode);
     if !connection.database.is_empty() {
         options = options.database(&connection.database);
     }
@@ -575,7 +590,11 @@ impl Session {
 }
 
 /// Opens the driver connection, through an SSH tunnel when the connection names an SSH host.
-async fn open_session(connection: &DatabaseConnection, ssh_binary: &Path) -> CallResult<Session> {
+async fn open_session(
+    connection: &DatabaseConnection,
+    tls: Option<VaultTls>,
+    ssh_binary: &Path,
+) -> CallResult<Session> {
     let mut host = if connection.host.is_empty() {
         "127.0.0.1".to_owned()
     } else {
@@ -603,8 +622,10 @@ async fn open_session(connection: &DatabaseConnection, ssh_binary: &Path) -> Cal
     }
     // On an error the tunnel drops here, which stops `ssh`.
     let client = match connection.driver {
-        DatabaseDriver::Mysql => Client::Mysql(open_mysql(&host, port, connection).await?),
-        DatabaseDriver::Pgsql => Client::Postgres(open_postgres(&host, port, connection).await?),
+        DatabaseDriver::Mysql => Client::Mysql(open_mysql(&host, port, connection, tls).await?),
+        DatabaseDriver::Pgsql => {
+            Client::Postgres(open_postgres(&host, port, connection, tls).await?)
+        }
         DatabaseDriver::Sqlite => {
             return Err(CallError::plain("SQLite files open per call."));
         }
@@ -645,6 +666,7 @@ impl Entry {
 struct Inner {
     sessions: Mutex<HashMap<String, Arc<Entry>>>,
     ssh_binary: PathBuf,
+    vault: VaultClient,
 }
 
 /// The Database panel's runner. Cheap to clone; clones share open connections.
@@ -703,12 +725,29 @@ impl DatabaseRunner {
 
     /// A runner that tunnels with `ssh_binary`.
     pub fn with_ssh_binary(ssh_binary: impl Into<PathBuf>) -> Self {
+        Self::with_binaries(ssh_binary, VaultClient::new())
+    }
+
+    /// A runner using a custom Vault bridge binary (used by tests).
+    pub fn with_vault_binary(vault_binary: impl Into<PathBuf>) -> Self {
+        Self::with_binaries(SSH_BINARY, VaultClient::with_binary(vault_binary))
+    }
+
+    /// A runner with explicit `ssh` and Vault clients.
+    pub fn with_binaries(ssh_binary: impl Into<PathBuf>, vault: VaultClient) -> Self {
         Self {
             inner: Arc::new(Inner {
                 sessions: Mutex::new(HashMap::new()),
                 ssh_binary: ssh_binary.into(),
+                vault,
             }),
         }
+    }
+
+    /// Reference to the runner's Vault Mac bridge client.
+    #[must_use]
+    pub fn vault(&self) -> &VaultClient {
+        &self.inner.vault
     }
 
     /// Runs one call. Failures come back in `error`, never as a panic or `Err`.
@@ -760,12 +799,11 @@ impl DatabaseRunner {
             }
             assert_reading(sql)?;
         }
-        if request.connection.vault_item_id.is_some() {
-            return Err(VAULT_UNSUPPORTED.to_owned());
-        }
         let result = match request.connection.driver {
-            DatabaseDriver::Sqlite => run_sqlite(request).await,
-            DatabaseDriver::Mysql | DatabaseDriver::Pgsql => self.with_session(request).await,
+            DatabaseDriver::Sqlite if request.connection.vault_item_id.is_none() => {
+                run_sqlite(request).await
+            }
+            _ => self.with_session(request).await,
         };
         result.map_err(|error| error.message)
     }
@@ -829,11 +867,46 @@ impl DatabaseRunner {
         }
     }
 
+    async fn resolve_connection(
+        &self,
+        request: &DatabaseRequest,
+    ) -> CallResult<(DatabaseConnection, Option<VaultTls>)> {
+        let Some(item_id) = request.connection.vault_item_id.as_deref() else {
+            return Ok((request.connection.clone(), None));
+        };
+        let cred = self
+            .inner
+            .vault
+            .database_credential(item_id, request.allow_unlock)
+            .await
+            .map_err(|err| CallError::plain(err.message))?;
+        let ssh = cred.database.ssh_host.map(|host| DatabaseSsh {
+            host,
+            port: cred.database.ssh_port,
+            user: cred.database.ssh_user,
+            agent: cred.ssh_agent,
+        });
+        let resolved = DatabaseConnection {
+            driver: cred.database.driver,
+            host: cred.database.host,
+            port: Some(cred.database.port),
+            database: cred.database.database,
+            username: cred.database.username,
+            password: cred.password,
+            vault_item_id: None,
+            ssh,
+        };
+        Ok((resolved, Some(cred.database.tls)))
+    }
+
     async fn call(&self, entry: &Entry, request: &DatabaseRequest) -> CallResult<DatabaseResponse> {
         let mut guard = entry.session.lock().await;
         let session = match &mut *guard {
             Some(session) => session,
-            empty => empty.insert(open_session(&request.connection, &self.inner.ssh_binary).await?),
+            empty => {
+                let (resolved, tls) = self.resolve_connection(request).await?;
+                empty.insert(open_session(&resolved, tls, &self.inner.ssh_binary).await?)
+            }
         };
         match &mut session.client {
             Client::Mysql(client) => run_mysql(client, request).await,

@@ -3,6 +3,8 @@
 
 #[cfg(feature = "cef")]
 use std::cell::{Cell, RefCell};
+#[cfg(feature = "cef")]
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 #[cfg(feature = "cef")]
@@ -12,6 +14,15 @@ use std::time::Duration;
 
 use crate::a11y::ConnA11yExt as _;
 use conn_client::Connection;
+use conn_desktop::api_request::toolbar::ToolbarHistoryRow;
+#[cfg(feature = "cef")]
+use conn_desktop::api_request::toolbar::{
+    ToolbarData, ToolbarHeaderPayload, decode_toolbar_headers, minimal_toolbar_row, row_from_data,
+};
+use conn_desktop::vault::{
+    VaultClient, VaultLoginField, VaultLoginFillLookup, VaultLoginItem, VaultLoginsStatus,
+    https_origin,
+};
 use conn_state::AnnotationRecord;
 use conn_theme::Tokens;
 #[cfg(feature = "cef")]
@@ -78,6 +89,30 @@ enum OverlayBridgeMessage {
     Mode {
         active: bool,
     },
+    LaravelToolbar {
+        kind: String,
+        #[serde(default)]
+        data: serde_json::Value,
+    },
+    LaravelToolbarHeaders {
+        #[serde(default)]
+        full: Option<String>,
+        #[serde(default)]
+        summary: Option<String>,
+        #[serde(default)]
+        method: Option<String>,
+        #[serde(default)]
+        url: Option<String>,
+    },
+    PreviewResult {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        ok: bool,
+        #[serde(default)]
+        value: serde_json::Value,
+        #[serde(default)]
+        error: Option<String>,
+    },
 }
 
 #[cfg(feature = "cef")]
@@ -88,7 +123,40 @@ enum BrowserOverlayEvent {
         payload: serde_json::Value,
     },
     Mode(bool),
+    LaravelToolbar {
+        kind: String,
+        data: serde_json::Value,
+    },
+    LaravelToolbarHeaders {
+        full: Option<String>,
+        summary: Option<String>,
+        method: Option<String>,
+        url: Option<String>,
+    },
+    PreviewResult {
+        request_id: String,
+        ok: bool,
+        value: serde_json::Value,
+        error: Option<String>,
+    },
     LoadEnd,
+}
+
+#[derive(Clone, Debug)]
+struct LaravelToolbarEntry {
+    row: ToolbarHistoryRow,
+    queries_count: Option<usize>,
+    memory: Option<String>,
+}
+
+#[derive(Default)]
+struct VaultLoginUiState {
+    open: bool,
+    loading: bool,
+    status: Option<VaultLoginsStatus>,
+    items: Vec<VaultLoginItem>,
+    error: Option<String>,
+    feedback: Option<String>,
 }
 
 #[cfg(feature = "cef")]
@@ -148,8 +216,19 @@ pub(crate) struct BrowserPanel {
     /// Hidden state last sent to CEF.
     #[cfg(feature = "cef")]
     applied_hidden: Rc<Cell<Option<bool>>>,
+    /// Pending `preview_*` JS evaluations / snapshots / actions awaiting console reply.
+    #[cfg(feature = "cef")]
+    pending_preview:
+        HashMap<String, tokio::sync::oneshot::Sender<Result<serde_json::Value, String>>>,
+    #[cfg(feature = "cef")]
+    preview_seq: u64,
     /// Shared project annotations queue & click-to-annotate state.
     annotations: AnnotationUiState,
+    /// Vault login autofill popover state for HTTPS pages.
+    vault_logins: VaultLoginUiState,
+    /// Docked Laravel Toolbar entries reported by the active page (`x-toolbar` / `__LARAVEL_TOOLBAR_DATA__`).
+    laravel_toolbar: Vec<LaravelToolbarEntry>,
+    laravel_toolbar_selected: usize,
 }
 
 impl EventEmitter<AnnotationAction> for BrowserPanel {}
@@ -245,7 +324,14 @@ impl BrowserPanel {
             applied_size: Rc::new(Cell::new(None)),
             #[cfg(feature = "cef")]
             applied_hidden: Rc::new(Cell::new(None)),
+            #[cfg(feature = "cef")]
+            pending_preview: HashMap::new(),
+            #[cfg(feature = "cef")]
+            preview_seq: 0,
             annotations,
+            vault_logins: VaultLoginUiState::default(),
+            laravel_toolbar: Vec::new(),
+            laravel_toolbar_selected: 0,
         }
     }
 
@@ -327,6 +413,13 @@ impl BrowserPanel {
     }
 
     #[cfg(feature = "cef")]
+    fn ensure_bridge_injected(&self) {
+        if let Some(view) = self.view.borrow().as_ref() {
+            view.execute_javascript(BROWSER_OVERLAY_BRIDGE_JS);
+        }
+    }
+
+    #[cfg(feature = "cef")]
     fn ensure_overlay_injected(&self, force: bool) {
         let guard = self.view.borrow();
         let Some(view) = guard.as_ref() else {
@@ -343,6 +436,295 @@ impl BrowserPanel {
         view.execute_javascript(CONN_ANNOTATION_OVERLAY_JS);
         view.execute_javascript("window.__CONN_GPUI_OVERLAY_BRIDGE__?.attachModeSync();");
         self.overlay_injected_load_count.set(Some(load_count));
+    }
+
+    #[cfg(feature = "cef")]
+    fn record_laravel_toolbar_data(&mut self, reset: bool, data: &ToolbarData) {
+        if reset {
+            self.laravel_toolbar.clear();
+            self.laravel_toolbar_selected = 0;
+        }
+        let Some(row) = row_from_data(data) else {
+            return;
+        };
+        let queries_count = data
+            .get("queries")
+            .and_then(|q| q.get("queries").and_then(serde_json::Value::as_array))
+            .map(Vec::len)
+            .or_else(|| {
+                data.get("queries")
+                    .and_then(|q| q.get("count").and_then(serde_json::Value::as_u64))
+                    .map(|n| n as usize)
+            });
+        let memory = data
+            .get("memory")
+            .and_then(|m| {
+                m.get("peak_usage_formatted")
+                    .or_else(|| m.get("formatted"))
+                    .and_then(serde_json::Value::as_str)
+            })
+            .map(ToOwned::to_owned);
+        let entry = LaravelToolbarEntry {
+            row,
+            queries_count,
+            memory,
+        };
+        if let Some(pos) = self
+            .laravel_toolbar
+            .iter()
+            .position(|existing| existing.row.id == entry.row.id)
+        {
+            self.laravel_toolbar[pos] = entry;
+            self.laravel_toolbar_selected = pos;
+        } else {
+            self.laravel_toolbar.insert(0, entry);
+            self.laravel_toolbar.truncate(20);
+            self.laravel_toolbar_selected = 0;
+        }
+    }
+
+    #[cfg(feature = "cef")]
+    fn record_laravel_toolbar_headers(
+        &mut self,
+        full: Option<&str>,
+        summary: Option<&str>,
+        method: Option<&str>,
+        url: Option<&str>,
+    ) {
+        let Some(payload) = decode_toolbar_headers(full, summary) else {
+            return;
+        };
+        match payload {
+            ToolbarHeaderPayload::Full { data } => {
+                self.record_laravel_toolbar_data(false, &data);
+            }
+            ToolbarHeaderPayload::Summary { id, row } => {
+                let row = row.unwrap_or_else(|| minimal_toolbar_row(&id, method, url));
+                let entry = LaravelToolbarEntry {
+                    row,
+                    queries_count: None,
+                    memory: None,
+                };
+                self.laravel_toolbar.insert(0, entry);
+                self.laravel_toolbar.truncate(20);
+                self.laravel_toolbar_selected = 0;
+            }
+        }
+    }
+
+    /// Evaluates JS in the active CEF page and returns its JSON result via the bridge.
+    #[cfg(all(feature = "cef", feature = "automation"))]
+    pub(crate) fn start_preview_eval(
+        &mut self,
+        expression: &str,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
+        self.ensure_bridge_injected();
+        let guard = self.view.borrow();
+        let Some(view) = guard.as_ref() else {
+            return Err("No active browser view.".to_owned());
+        };
+        self.preview_seq += 1;
+        let req_id = format!("p{}", self.preview_seq);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending_preview.insert(req_id.clone(), tx);
+        let id_json = serde_json::to_string(&req_id).unwrap_or_else(|_| "\"\"".to_owned());
+        let expr_json = serde_json::to_string(expression).unwrap_or_else(|_| "\"\"".to_owned());
+        view.execute_javascript(&format!(
+            "window.__CONN_GPUI_OVERLAY_BRIDGE__?.previewEval({id_json}, {expr_json});"
+        ));
+        Ok(rx)
+    }
+
+    /// Runs a structured `preview_*` helper (`snapshot` or `act`) in the active CEF page.
+    #[cfg(all(feature = "cef", feature = "automation"))]
+    pub(crate) fn start_preview_call(
+        &mut self,
+        op: &str,
+        params: &serde_json::Value,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
+        self.ensure_bridge_injected();
+        let guard = self.view.borrow();
+        let Some(view) = guard.as_ref() else {
+            return Err("No active browser view.".to_owned());
+        };
+        self.preview_seq += 1;
+        let req_id = format!("p{}", self.preview_seq);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending_preview.insert(req_id.clone(), tx);
+        let id_json = serde_json::to_string(&req_id).unwrap_or_else(|_| "\"\"".to_owned());
+        let op_json = serde_json::to_string(op).unwrap_or_else(|_| "\"\"".to_owned());
+        let params_json = serde_json::to_string(params).unwrap_or_else(|_| "{}".to_owned());
+        view.execute_javascript(&format!(
+            "window.__CONN_GPUI_OVERLAY_BRIDGE__?.previewCall({id_json}, {op_json}, {params_json});"
+        ));
+        Ok(rx)
+    }
+
+    /// Saves the active CEF view's latest BGRA frame as a PNG file.
+    #[cfg(all(feature = "cef", feature = "automation"))]
+    pub(crate) fn save_browser_screenshot(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<serde_json::Value, String> {
+        use image::ImageEncoder as _;
+
+        let frame = self
+            .view
+            .borrow()
+            .as_ref()
+            .and_then(BrowserView::latest_frame)
+            .ok_or_else(|| "No browser frame available yet.".to_owned())?;
+        if frame.width == 0 || frame.height == 0 {
+            return Err("Empty browser frame.".to_owned());
+        }
+        let mut rgba = Vec::with_capacity((frame.width as usize) * (frame.height as usize) * 4);
+        for px in frame.bgra.as_chunks::<4>().0 {
+            rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+        }
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &rgba,
+                frame.width,
+                frame.height,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|e| e.to_string())?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(path, &png).map_err(|e| e.to_string())?;
+        Ok(serde_json::json!({
+            "path": path.display().to_string(),
+            "width": frame.width,
+            "height": frame.height,
+            "bytes": png.len(),
+        }))
+    }
+
+    fn toggle_vault_logins_popover(&mut self, allow_unlock: bool, cx: &mut Context<'_, Self>) {
+        if !allow_unlock && self.vault_logins.open {
+            self.vault_logins.open = false;
+            cx.notify();
+            return;
+        }
+        self.vault_logins.open = true;
+        self.vault_logins.loading = true;
+        self.vault_logins.error = None;
+        self.vault_logins.feedback = None;
+        self.annotations.queue_open = false;
+        cx.notify();
+
+        #[cfg(feature = "cef")]
+        let url = self.current_url();
+        #[cfg(not(feature = "cef"))]
+        let url = self.url.clone();
+
+        let task = crate::live::RT
+            .spawn(async move { VaultClient::new().list_logins(&url, allow_unlock).await });
+        cx.spawn(async move |this, cx| {
+            let outcome = task.await;
+            let _ = this.update(cx, |panel, cx| {
+                panel.vault_logins.loading = false;
+                match outcome {
+                    Ok(resp) => {
+                        panel.vault_logins.status = Some(resp.status);
+                        panel.vault_logins.items = resp.items;
+                        panel.vault_logins.error = resp.error;
+                    }
+                    Err(err) => {
+                        panel.vault_logins.status = Some(VaultLoginsStatus::Error);
+                        panel.vault_logins.error = Some(err.to_string());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn fill_vault_login(
+        &mut self,
+        item_id: String,
+        field: VaultLoginField,
+        cx: &mut Context<'_, Self>,
+    ) {
+        #[cfg(feature = "cef")]
+        let page_url = self.current_url();
+        #[cfg(not(feature = "cef"))]
+        let page_url = self.url.clone();
+
+        let Some(expected_origin) = https_origin(&page_url) else {
+            self.vault_logins.feedback = Some("Autofill requires an HTTPS page.".to_owned());
+            cx.notify();
+            return;
+        };
+        #[cfg(feature = "cef")]
+        let expected_origin_after = expected_origin.clone();
+        let task = crate::live::RT.spawn(async move {
+            VaultClient::new()
+                .login_credential(&page_url, &expected_origin, &item_id, field)
+                .await
+        });
+        cx.spawn(async move |this, cx| {
+            let outcome = task.await;
+            let _ = this.update(cx, |panel, cx| {
+                match outcome {
+                    Ok(VaultLoginFillLookup::Value(secret)) => {
+                        #[cfg(feature = "cef")]
+                        {
+                            let live_url = panel.current_url();
+                            if https_origin(&live_url).as_deref()
+                                != Some(expected_origin_after.as_str())
+                            {
+                                panel.vault_logins.feedback =
+                                    Some("Page origin changed before fill.".to_owned());
+                            } else {
+                                panel.ensure_bridge_injected();
+                                if let Some(view) = panel.view.borrow().as_ref() {
+                                    let field_json = serde_json::to_string(field.as_str())
+                                        .unwrap_or_else(|_| "\"\"".to_owned());
+                                    let origin_json = serde_json::to_string(&expected_origin_after)
+                                        .unwrap_or_else(|_| "\"\"".to_owned());
+                                    let val_json = serde_json::to_string(&secret)
+                                        .unwrap_or_else(|_| "\"\"".to_owned());
+                                    view.execute_javascript(&format!(
+                                        "window.__CONN_GPUI_OVERLAY_BRIDGE__?.fillCredential({field_json}, {origin_json}, {val_json});"
+                                    ));
+                                    panel.vault_logins.feedback =
+                                        Some(format!("Filled {}.", field.as_str()));
+                                    panel.vault_logins.open = false;
+                                }
+                            }
+                        }
+                        #[cfg(not(feature = "cef"))]
+                        {
+                            let _ = secret;
+                            panel.vault_logins.feedback =
+                                Some("CEF browser not built.".to_owned());
+                        }
+                    }
+                    Ok(VaultLoginFillLookup::OriginMismatch) => {
+                        panel.vault_logins.feedback = Some("Page origin mismatch.".to_owned());
+                    }
+                    Ok(VaultLoginFillLookup::Denied) => {
+                        panel.vault_logins.feedback = Some("Vault unlock cancelled.".to_owned());
+                    }
+                    Ok(VaultLoginFillLookup::NoValue) => {
+                        panel.vault_logins.feedback =
+                            Some(format!("Login has no {}.", field.as_str()));
+                    }
+                    Ok(VaultLoginFillLookup::ItemNotFound) => {
+                        panel.vault_logins.feedback = Some("Login item not found.".to_owned());
+                    }
+                    Ok(_) | Err(_) => {
+                        panel.vault_logins.feedback = Some("Could not fill from Vault.".to_owned());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     #[cfg(feature = "cef")]
@@ -966,6 +1348,31 @@ impl BrowserPanel {
                                     OverlayBridgeMessage::Mode { active } => {
                                         BrowserOverlayEvent::Mode(active)
                                     }
+                                    OverlayBridgeMessage::LaravelToolbar { kind, data } => {
+                                        BrowserOverlayEvent::LaravelToolbar { kind, data }
+                                    }
+                                    OverlayBridgeMessage::LaravelToolbarHeaders {
+                                        full,
+                                        summary,
+                                        method,
+                                        url,
+                                    } => BrowserOverlayEvent::LaravelToolbarHeaders {
+                                        full,
+                                        summary,
+                                        method,
+                                        url,
+                                    },
+                                    OverlayBridgeMessage::PreviewResult {
+                                        request_id,
+                                        ok,
+                                        value,
+                                        error,
+                                    } => BrowserOverlayEvent::PreviewResult {
+                                        request_id,
+                                        ok,
+                                        value,
+                                        error,
+                                    },
                                 };
                                 let _ = overlay_tx.send(ev);
                             }
@@ -1007,9 +1414,55 @@ impl BrowserPanel {
                                                 cx.notify();
                                             }
                                         }
+                                        BrowserOverlayEvent::LaravelToolbar { kind, data } => {
+                                            if let Some(map) = data.as_object() {
+                                                panel.record_laravel_toolbar_data(
+                                                    kind == "page",
+                                                    map,
+                                                );
+                                                cx.notify();
+                                            }
+                                        }
+                                        BrowserOverlayEvent::LaravelToolbarHeaders {
+                                            full,
+                                            summary,
+                                            method,
+                                            url,
+                                        } => {
+                                            panel.record_laravel_toolbar_headers(
+                                                full.as_deref(),
+                                                summary.as_deref(),
+                                                method.as_deref(),
+                                                url.as_deref(),
+                                            );
+                                            cx.notify();
+                                        }
+                                        BrowserOverlayEvent::PreviewResult {
+                                            request_id,
+                                            ok,
+                                            value,
+                                            error,
+                                        } => {
+                                            if let Some(tx) =
+                                                panel.pending_preview.remove(&request_id)
+                                            {
+                                                let reply = if ok {
+                                                    Ok(value)
+                                                } else {
+                                                    Err(error.unwrap_or_else(|| {
+                                                        "Preview script failed.".to_owned()
+                                                    }))
+                                                };
+                                                let _ = tx.send(reply);
+                                            }
+                                        }
                                         BrowserOverlayEvent::LoadEnd => {
                                             panel.overlay_injected_load_count.set(None);
                                             panel.annotations.annotating = false;
+                                            panel.vault_logins.open = false;
+                                            panel.laravel_toolbar.clear();
+                                            panel.laravel_toolbar_selected = 0;
+                                            panel.ensure_bridge_injected();
                                             panel.maybe_show_existing_pins();
                                             cx.notify();
                                         }
@@ -1364,6 +1817,343 @@ impl BrowserPanel {
             .child(back_btn)
             .child(forward_btn)
             .child(reload_btn)
+    }
+
+    fn render_vault_logins_popover(
+        &self,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<gpui_kit::AnyElement> {
+        if !self.vault_logins.open {
+            return None;
+        }
+        let fg = to_hsla(self.tokens.foreground);
+        let muted = to_hsla(self.tokens.muted_foreground);
+        let bg = to_hsla(self.tokens.popover);
+        let border = to_hsla(self.tokens.shell_inner_border);
+        let hover = to_hsla(self.tokens.shell_highlight);
+        let btn_bg = to_hsla(self.tokens.shell_control_raised);
+        let btn_border = to_hsla(self.tokens.shell_control_raised_border);
+
+        let mut list = v_flex()
+            .id("browser-vault-popover")
+            .a11y_group("browser.vault.popover", "Vault logins")
+            .w(px(280.0))
+            .max_h(px(320.0))
+            .p(px(8.0))
+            .gap(px(6.0))
+            .rounded(px(12.0))
+            .bg(bg)
+            .border_1()
+            .border_color(border)
+            .shadow_lg()
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .px(px(4.0))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(superhero_icon("superhero/key.svg", 13.0, fg))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(fg)
+                                    .child("Vault logins"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("browser-vault-close")
+                            .a11y_button("browser.vault.close", "Close Vault logins")
+                            .px(px(5.0))
+                            .py(px(2.0))
+                            .rounded(px(5.0))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.vault_logins.open = false;
+                                cx.notify();
+                            }))
+                            .child(superhero_icon("superhero/close.svg", 11.0, muted)),
+                    ),
+            );
+
+        if let Some(feedback) = &self.vault_logins.feedback {
+            list = list.child(
+                div()
+                    .px(px(6.0))
+                    .text_size(px(11.0))
+                    .text_color(muted)
+                    .child(feedback.clone()),
+            );
+        }
+
+        if self.vault_logins.loading {
+            list = list.child(
+                div()
+                    .px(px(6.0))
+                    .py(px(8.0))
+                    .text_size(px(12.0))
+                    .text_color(muted)
+                    .child("Checking Vault…"),
+            );
+        } else if self.vault_logins.status == Some(VaultLoginsStatus::Locked) {
+            list = list.child(
+                v_flex()
+                    .gap(px(6.0))
+                    .px(px(4.0))
+                    .py(px(4.0))
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(muted)
+                            .child("Vault is locked."),
+                    )
+                    .child(
+                        div()
+                            .id("browser-vault-unlock")
+                            .a11y_button("browser.vault.unlock", "Unlock Vault")
+                            .px(px(10.0))
+                            .py(px(5.0))
+                            .rounded(px(6.0))
+                            .bg(btn_bg)
+                            .border_1()
+                            .border_color(btn_border)
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(fg)
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(hover))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.toggle_vault_logins_popover(true, cx);
+                            }))
+                            .child("Unlock Vault…"),
+                    ),
+            );
+        } else if let Some(err) = &self.vault_logins.error {
+            list = list.child(
+                div()
+                    .px(px(6.0))
+                    .py(px(4.0))
+                    .text_size(px(12.0))
+                    .text_color(muted)
+                    .child(err.clone()),
+            );
+        } else if self.vault_logins.items.is_empty() {
+            list = list.child(
+                div()
+                    .px(px(6.0))
+                    .py(px(6.0))
+                    .text_size(px(12.0))
+                    .text_color(muted)
+                    .child("No saved Vault logins for this HTTPS origin."),
+            );
+        } else {
+            for item in &self.vault_logins.items {
+                let id_u = item.id.clone();
+                let id_p = item.id.clone();
+                let id_o = item.id.clone();
+                let pill =
+                    |id: String, label: &'static str, field: VaultLoginField, item_id: String| {
+                        div()
+                            .id(gpui_kit::SharedString::from(id))
+                            .a11y_button(
+                                gpui_kit::SharedString::from(format!(
+                                    "browser.vault.fill.{}.{}",
+                                    item_id,
+                                    field.as_str()
+                                )),
+                                format!("Fill {label}"),
+                            )
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .rounded(px(5.0))
+                            .bg(btn_bg)
+                            .border_1()
+                            .border_color(btn_border)
+                            .text_size(px(11.0))
+                            .text_color(fg)
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(hover))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.fill_vault_login(item_id.clone(), field, cx);
+                            }))
+                            .child(label)
+                    };
+                list = list.child(
+                    v_flex()
+                        .gap(px(4.0))
+                        .px(px(6.0))
+                        .py(px(6.0))
+                        .rounded(px(8.0))
+                        .bg(to_hsla(self.tokens.shell_settings_card))
+                        .border_1()
+                        .border_color(to_hsla(self.tokens.shell_settings_card_border))
+                        .child(
+                            div()
+                                .text_size(px(12.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(fg)
+                                .truncate()
+                                .child(item.title.clone()),
+                        )
+                        .children(item.username.as_ref().map(|u| {
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(muted)
+                                .truncate()
+                                .child(u.clone())
+                        }))
+                        .child(
+                            h_flex()
+                                .gap(px(4.0))
+                                .pt(px(2.0))
+                                .child(pill(
+                                    format!("vault-fill-user-{}", item.id),
+                                    "User",
+                                    VaultLoginField::Username,
+                                    id_u,
+                                ))
+                                .child(pill(
+                                    format!("vault-fill-pass-{}", item.id),
+                                    "Password",
+                                    VaultLoginField::Password,
+                                    id_p,
+                                ))
+                                .child(pill(
+                                    format!("vault-fill-otp-{}", item.id),
+                                    "OTP",
+                                    VaultLoginField::Otp,
+                                    id_o,
+                                )),
+                        ),
+                );
+            }
+        }
+
+        Some(
+            div()
+                .absolute()
+                .top(px(42.0))
+                .right(px(72.0))
+                .child(list)
+                .into_any_element(),
+        )
+    }
+
+    fn render_laravel_toolbar(&self, cx: &mut Context<'_, Self>) -> Option<gpui_kit::AnyElement> {
+        let entry = self
+            .laravel_toolbar
+            .get(self.laravel_toolbar_selected)
+            .or_else(|| self.laravel_toolbar.first())?;
+
+        let fg = to_hsla(self.tokens.foreground);
+        let muted = to_hsla(self.tokens.muted_foreground);
+        let divider = to_hsla(self.tokens.shell_divider_header);
+        let bar_bg = to_hsla(self.tokens.shell_control);
+        let hover = to_hsla(self.tokens.shell_highlight);
+        let status_color = match entry.row.status_code {
+            Some(code) if code >= 500 => to_hsla(self.tokens.destructive),
+            Some(code) if code >= 400 => to_hsla(self.tokens.warning),
+            Some(code) if (200..400).contains(&code) => to_hsla(self.tokens.success),
+            _ => muted,
+        };
+
+        let mut bar = h_flex()
+            .id("browser-laravel-toolbar")
+            .a11y_group("browser.laravel-toolbar", "Laravel Toolbar")
+            .w_full()
+            .h(px(28.0))
+            .px(px(10.0))
+            .gap(px(10.0))
+            .items_center()
+            .bg(bar_bg)
+            .border_t_1()
+            .border_color(divider)
+            .text_size(px(12.0))
+            .child(
+                div()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(fg)
+                    .child("Laravel"),
+            )
+            .child(
+                div()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(status_color)
+                    .child(format!(
+                        "{} {}",
+                        entry.row.method,
+                        entry
+                            .row
+                            .status_code
+                            .map_or_else(|| "—".to_owned(), |c| c.to_string())
+                    )),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(fg)
+                    .child(entry.row.uri.clone()),
+            );
+
+        if let Some(duration) = &entry.row.duration {
+            bar = bar.child(div().text_color(muted).child(duration.clone()));
+        }
+        if let Some(queries) = entry.queries_count {
+            bar = bar.child(div().text_color(muted).child(format!("{queries} SQL")));
+        }
+        if let Some(mem) = &entry.memory {
+            bar = bar.child(div().text_color(muted).child(mem.clone()));
+        }
+        if self.laravel_toolbar.len() > 1 {
+            bar = bar.child(
+                div()
+                    .id("browser-laravel-history-next")
+                    .a11y_button("browser.laravel.history", "Cycle Laravel Toolbar requests")
+                    .px(px(5.0))
+                    .py(px(1.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .text_color(muted)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if !this.laravel_toolbar.is_empty() {
+                            this.laravel_toolbar_selected =
+                                (this.laravel_toolbar_selected + 1) % this.laravel_toolbar.len();
+                            cx.notify();
+                        }
+                    }))
+                    .child(format!(
+                        "{}/{}",
+                        self.laravel_toolbar_selected + 1,
+                        self.laravel_toolbar.len()
+                    )),
+            );
+        }
+        bar = bar.child(
+            div()
+                .id("browser-laravel-clear")
+                .a11y_button("browser.laravel.clear", "Clear Laravel Toolbar")
+                .px(px(4.0))
+                .py(px(2.0))
+                .rounded(px(4.0))
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.laravel_toolbar.clear();
+                    this.laravel_toolbar_selected = 0;
+                    cx.notify();
+                }))
+                .child(superhero_icon("superhero/close.svg", 11.0, muted)),
+        );
+
+        Some(bar.into_any_element())
     }
 
     fn render_annotations_toolbar_group(&self, cx: &mut Context<'_, Self>) -> gpui_kit::Div {
@@ -1797,7 +2587,36 @@ impl Render for BrowserPanel {
                 )
         };
 
+        let is_https = https_origin(&self.url).is_some();
+        let vault_hover = to_hsla(self.tokens.shell_highlight);
+        let vault_btn = is_https.then(|| {
+            div()
+                .id("browser-vault-logins-btn")
+                .a11y_button("browser.vault.open", "Vault logins")
+                .size(px(22.0))
+                .rounded(px(9999.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .when(self.vault_logins.open, |el| el.bg(vault_hover))
+                .hover(move |s| s.bg(vault_hover))
+                .conn_tooltip("Fill login from Vault", &self.tokens)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.toggle_vault_logins_popover(false, cx);
+                }))
+                .child(superhero_icon(
+                    "superhero/key.svg",
+                    13.0,
+                    if self.vault_logins.open { fg } else { muted },
+                ))
+        });
+
+        let vault_popover = self.render_vault_logins_popover(cx);
+        let laravel_bar = self.render_laravel_toolbar(cx);
+
         v_flex()
+            .relative()
             .size_full()
             .child(
                 div()
@@ -1831,7 +2650,7 @@ impl Render for BrowserPanel {
                             .border_1()
                             .border_color(field_border)
                             .pl(px(8.0))
-                            .pr(px(10.0))
+                            .pr(px(6.0))
                             .gap(px(6.0))
                             .items_center()
                             .child(superhero_icon("superhero/globe.svg", 14.0, muted))
@@ -1841,12 +2660,15 @@ impl Render for BrowserPanel {
                                         .appearance(false)
                                         .text_size(px(UI_TEXT_PX)),
                                 ),
-                            ),
+                            )
+                            .children(vault_btn),
                     )
                     .child(self.render_annotations_toolbar_group(cx)),
             )
             .child(div().w_full().h(px(1.0)).bg(divider))
             .child(body)
+            .children(laravel_bar)
+            .children(vault_popover)
     }
 }
 

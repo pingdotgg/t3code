@@ -9,9 +9,10 @@ mod views;
 use conn_desktop::database::api::{
     CallOptions, ConnectionSource, DatabaseQueryResult, PanelConnection, browse_table_sql,
     connection_key, connection_target, describe_database_table, list_database_tables,
-    new_connection, run_read_only_query,
+    new_connection, panel_connection_from_vault, run_read_only_query,
 };
 use conn_desktop::database::{DatabaseColumn, DatabaseRunner};
+use conn_desktop::vault::VaultErrorKind;
 use conn_theme::Tokens;
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::{h_flex, v_flex};
@@ -77,6 +78,10 @@ pub(crate) struct DatabasePanel {
     store: DatabaseStore,
     runner: DatabaseRunner,
     env_connection: Option<PanelConnection>,
+    vault_connections: Vec<PanelConnection>,
+    vault_status: Option<VaultErrorKind>,
+    vault_error: Option<String>,
+    allow_unlock_next: bool,
     pub(super) editing: Option<ConnectionFormState>,
     menu_open: bool,
     filter: String,
@@ -147,6 +152,10 @@ impl DatabasePanel {
             store: load_store(),
             runner: DatabaseRunner::new(),
             env_connection: None,
+            vault_connections: Vec::new(),
+            vault_status: None,
+            vault_error: None,
+            allow_unlock_next: false,
             editing: None,
             menu_open: false,
             filter: String::new(),
@@ -193,8 +202,46 @@ impl DatabasePanel {
         self.query = None;
         self.tables_load = None;
         self.columns_load = None;
+        self.load_vault_databases(false, cx);
         self.ensure_tables_loaded(cx);
         cx.notify();
+    }
+
+    pub(super) fn load_vault_databases(&mut self, allow_unlock: bool, cx: &mut Context<'_, Self>) {
+        let vault = self.runner.vault().clone();
+        if !vault.is_installed() {
+            self.vault_connections.clear();
+            self.vault_status = Some(VaultErrorKind::Unavailable);
+            self.vault_error = None;
+            return;
+        }
+        let task = crate::live::RT.spawn(async move { vault.list_databases(allow_unlock).await });
+        cx.spawn(async move |this, cx| {
+            let outcome = task.await;
+            let _ = this.update(cx, |panel, cx| {
+                match outcome {
+                    Ok(Ok(dbs)) => {
+                        panel.vault_connections =
+                            dbs.iter().map(panel_connection_from_vault).collect();
+                        panel.vault_status = None;
+                        panel.vault_error = None;
+                    }
+                    Ok(Err(err)) => {
+                        panel.vault_connections.clear();
+                        panel.vault_status = Some(err.kind);
+                        panel.vault_error = Some(err.message);
+                    }
+                    Err(join_err) => {
+                        panel.vault_connections.clear();
+                        panel.vault_status = Some(VaultErrorKind::Error);
+                        panel.vault_error = Some(join_err.to_string());
+                    }
+                }
+                panel.ensure_tables_loaded(cx);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn connections(&self) -> Vec<PanelConnection> {
@@ -202,7 +249,9 @@ impl DatabasePanel {
             .project_key
             .as_deref()
             .map_or(&[][..], |key| self.store.saved_connections(key));
-        project_connections(self.env_connection.as_ref(), saved)
+        let mut all = project_connections(self.env_connection.as_ref(), saved);
+        all.extend(self.vault_connections.iter().cloned());
+        all
     }
 
     fn selected_connection(&self) -> Option<PanelConnection> {
@@ -222,8 +271,13 @@ impl DatabasePanel {
 
     fn take_call_options(&mut self) -> CallOptions {
         let reconnect = self.reconnect_next;
+        let allow_unlock = self.allow_unlock_next;
         self.reconnect_next = false;
-        CallOptions { reconnect }
+        self.allow_unlock_next = false;
+        CallOptions {
+            reconnect,
+            allow_unlock,
+        }
     }
 
     fn sync_inputs(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
@@ -798,8 +852,14 @@ impl DatabasePanel {
                 .child(trigger),
         );
         if self.menu_open {
-            connection_anchor =
-                connection_anchor.child(render_connection_menu(tokens, connections, selected, cx));
+            connection_anchor = connection_anchor.child(render_connection_menu(
+                tokens,
+                connections,
+                selected,
+                self.vault_status,
+                self.vault_error.as_deref(),
+                cx,
+            ));
         }
 
         let refresh_icon = if tables_loading {

@@ -6,6 +6,7 @@ use conn_desktop::database::DatabaseColumn;
 use conn_desktop::database::api::{
     ConnectionSource, DatabaseQueryResult, PanelConnection, connection_target,
 };
+use conn_desktop::vault::VaultErrorKind;
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -25,11 +26,12 @@ use super::store::{CellDisplay, format_cell_value, format_column_details, measur
 use crate::theme::MONO_FONT;
 
 /// Conn's `ConnectionMenu` popup (`dropdown-glass`, `sideOffset={6}`, `align="start"`).
-/// Vault entries are omitted because Vault's relay only accepts Conn's signed app.
 pub(crate) fn render_connection_menu(
     tokens: &Tokens,
     connections: &[PanelConnection],
     selected: Option<&PanelConnection>,
+    vault_status: Option<VaultErrorKind>,
+    vault_error: Option<&str>,
     cx: &mut Context<'_, DatabasePanel>,
 ) -> AnyElement {
     let entity = cx.entity();
@@ -136,6 +138,44 @@ pub(crate) fn render_connection_menu(
         "Add connection…",
         Box::new(|panel, window, cx| panel.begin_add_connection(true, window, cx)),
     ));
+
+    match vault_status {
+        Some(VaultErrorKind::Locked) => {
+            list = list.child(div().mx(px(8.0)).my(px(4.0)).h(px(1.0)).bg(divider));
+            list = list.child(menu_action(
+                "db-menu-unlock-vault",
+                "Unlock Vault…",
+                Box::new(|panel, _, cx| {
+                    panel.menu_open = false;
+                    panel.allow_unlock_next = true;
+                    panel.load_vault_databases(true, cx);
+                    cx.notify();
+                }),
+            ));
+        }
+        Some(VaultErrorKind::Error) => {
+            list = list.child(div().mx(px(8.0)).my(px(4.0)).h(px(1.0)).bg(divider));
+            let msg = vault_error.unwrap_or("Vault unavailable").to_owned();
+            list = list.child(
+                div()
+                    .px(px(8.0))
+                    .py(px(4.0))
+                    .text_size(px(12.0))
+                    .text_color(muted)
+                    .child(msg),
+            );
+            list = list.child(menu_action(
+                "db-menu-retry-vault",
+                "Retry Vault",
+                Box::new(|panel, _, cx| {
+                    panel.menu_open = false;
+                    panel.load_vault_databases(true, cx);
+                    cx.notify();
+                }),
+            ));
+        }
+        _ => {}
+    }
 
     if let Some(selected) = selected
         && selected.source != ConnectionSource::Vault

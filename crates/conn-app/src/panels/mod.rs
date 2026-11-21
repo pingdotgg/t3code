@@ -224,6 +224,36 @@ impl RightPanel {
         self.browser.read(cx).title()
     }
 
+    #[cfg(all(feature = "cef", feature = "automation"))]
+    pub fn browser_preview_eval(
+        &mut self,
+        expression: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
+        self.browser
+            .update(cx, |b, _| b.start_preview_eval(expression))
+    }
+
+    #[cfg(all(feature = "cef", feature = "automation"))]
+    pub fn browser_preview_call(
+        &mut self,
+        op: &str,
+        params: &serde_json::Value,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<serde_json::Value, String>>, String> {
+        self.browser
+            .update(cx, |b, _| b.start_preview_call(op, params))
+    }
+
+    #[cfg(all(feature = "cef", feature = "automation"))]
+    pub fn browser_screenshot(
+        &self,
+        path: &std::path::Path,
+        cx: &App,
+    ) -> Result<serde_json::Value, String> {
+        self.browser.read(cx).save_browser_screenshot(path)
+    }
+
     /// Places an agent-provided SQL query in the Database editor without executing it.
     pub fn set_database_sql(&mut self, sql: String, cx: &mut Context<'_, Self>) {
         self.database
