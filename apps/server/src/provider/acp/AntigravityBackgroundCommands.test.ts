@@ -525,4 +525,36 @@ describe("readAntigravityRunningCommands", () => {
         assert.deepEqual(result, [scheduleTool.toolCallId]);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("returns undefined when an active row has oversized metadata", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      yield* writeSessionDb({
+        profileDirectory,
+        rows: [
+          {
+            idx: 14,
+            stepType: RUN_COMMAND_STEP_TYPE,
+            status: STATUS_RUNNING,
+            metadata: new Uint8Array(256 * 1024 + 1),
+            payload: null,
+          },
+        ],
+      });
+      assert.isUndefined(
+        yield* readAntigravityRunningCommands({
+          profileDirectory,
+          sessionId: SESSION_ID,
+          tools: [
+            makeToolCall({
+              toolCallId: `${SESSION_ID}:13`,
+              commandLine: "pytest -q tests/",
+              cwd: "/repo",
+            }),
+          ],
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
