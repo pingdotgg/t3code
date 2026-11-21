@@ -1765,14 +1765,19 @@ describe("MuseAdapterV2", () => {
       yield* harness.takeEvent("turn.terminal");
       assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
 
-      const stopped = yield* harness.runtime
+      const stop = harness.runtime
         .interruptTurn({
           providerThread: harness.providerThread,
           providerTurnId: turn.providerTurn.id,
           requestRuntimeRestart: true,
         })
         .pipe(Effect.exit);
-      assert.strictEqual(stopped._tag, "Success");
+      fake.queueResponse("task/stopAll", new Error("stop rejected"));
+      assert.strictEqual((yield* stop)._tag, "Failure");
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+      yield* fake.takeCall("task/stopAll");
+
+      assert.strictEqual((yield* stop)._tag, "Success");
       assert.strictEqual((yield* fake.takeCall("task/stopAll")).method, "task/stopAll");
       yield* harness.takeEvent(
         "provider_thread.updated",
