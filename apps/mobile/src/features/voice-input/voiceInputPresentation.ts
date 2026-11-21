@@ -7,6 +7,7 @@ export type VoiceComposerPresentation = {
   readonly leadingAction: "cancel" | null;
   readonly trailingAction: "mic" | "confirm";
   readonly showsSend: boolean;
+  readonly showsDictationSend: boolean;
   readonly statusKind: "active" | "error" | null;
   readonly statusLabel: string | null;
   readonly confirmationEnabled: boolean;
@@ -23,6 +24,7 @@ export function resolveVoiceComposerPresentation(
         leadingAction: null,
         trailingAction: "mic",
         showsSend: true,
+        showsDictationSend: false,
         statusKind: null,
         statusLabel: null,
         confirmationEnabled: false,
@@ -32,6 +34,7 @@ export function resolveVoiceComposerPresentation(
         leadingAction: null,
         trailingAction: "mic",
         showsSend: true,
+        showsDictationSend: false,
         statusKind: "error",
         statusLabel: state.error,
         confirmationEnabled: false,
@@ -41,6 +44,7 @@ export function resolveVoiceComposerPresentation(
         leadingAction: "cancel",
         trailingAction: "confirm",
         showsSend: false,
+        showsDictationSend: true,
         statusKind: "active",
         statusLabel: resolve(msg("Preparing", { $context: "voice input status" })),
         confirmationEnabled: false,
@@ -51,6 +55,7 @@ export function resolveVoiceComposerPresentation(
         leadingAction: "cancel",
         trailingAction: "confirm",
         showsSend: false,
+        showsDictationSend: true,
         statusKind: "active",
         statusLabel: resolve(
           msg("Recording {time}", {
@@ -66,9 +71,28 @@ export function resolveVoiceComposerPresentation(
         leadingAction: "cancel",
         trailingAction: "confirm",
         showsSend: false,
+        showsDictationSend: false,
         statusKind: "active",
         statusLabel: resolve(msg("Transcribing", { $context: "voice input status" })),
         confirmationEnabled: false,
       };
   }
+}
+
+export type PendingVoiceSendAction = "send" | "clear" | "wait";
+
+/**
+ * Decides what a stop-and-send tap does once dictation settles. Idle alone is not enough:
+ * cancelling during transcription also lands in idle, so only a committed transcript sends.
+ */
+export function resolvePendingVoiceSend(input: {
+  readonly pending: boolean;
+  readonly committed: boolean;
+  readonly phase: VoiceInputState["phase"];
+  readonly canSend: boolean;
+}): PendingVoiceSendAction {
+  if (!input.pending) return "wait";
+  if (input.phase === "error") return "clear";
+  if (input.phase !== "idle") return "wait";
+  return input.committed && input.canSend ? "send" : "clear";
 }

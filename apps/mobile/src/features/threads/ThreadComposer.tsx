@@ -121,7 +121,10 @@ import {
   ComposerDictationToolbar,
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
-import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
+import {
+  resolvePendingVoiceSend,
+  resolveVoiceComposerPresentation,
+} from "../voice-input/voiceInputPresentation";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
 import {
   useThreadSettingsSheetPresentation,
@@ -448,12 +451,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     ...(props.onFreshSession === undefined ? {} : { onFreshSession: props.onFreshSession }),
     offersSideChat: props.offersSideChat === true,
   });
+  // Stop-and-send: the transcript lands asynchronously, so the send waits for its commit.
+  const voiceSendRef = useRef({ pending: false, committed: false });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
     label: props.selectedThread.title || gt("Untitled thread"),
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     selection: composerMenu.selection,
-    onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
+    onChangeDraftMessage: (text) => {
+      if (voiceSendRef.current.pending) voiceSendRef.current.committed = true;
+      setComposerDraftText(composerDraftKey, text);
+    },
     onChangeSelection: composerMenu.onSelectionChange,
   });
   const isSubmissionLocked =
@@ -464,6 +472,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     messages,
   );
   const isVoiceInputPresented = voicePresentation.statusKind === "active";
+  // Stop agent keeps its place, as on web; otherwise recording offers a one-tap send.
+  const showsDictationSend = voicePresentation.showsDictationSend && !showStopAction;
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { usesLargeControls, paddingVertical: surfacePaddingVertical } = useComposerChrome();
   const [compactRowWidth, setCompactRowWidth] = useState(0);
@@ -594,6 +604,23 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     blocked: isSubmissionLocked || sendBlockedReason !== null,
     onPasteImages: props.onNativePasteImages,
     onSubmit: (followUp) => void handleSend(followUp),
+  });
+
+  const sendDictation = () => {
+    voiceSendRef.current = { pending: true, committed: false };
+    void voiceInput.stop();
+  };
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a stop-and-send tap sends only after the transcript commits; handleSend reads this render's draft and locks, which are stale at tap time
+  useEffect(() => {
+    const action = resolvePendingVoiceSend({
+      ...voiceSendRef.current,
+      phase: voiceInput.state.phase,
+      canSend,
+    });
+    if (action === "wait") return;
+    voiceSendRef.current = { pending: false, committed: false };
+    if (action === "send") void handleSend();
   });
 
   const lockedProviderInstanceId = props.canSwitchProvider
@@ -1105,6 +1132,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     onStart={voiceInput.start}
                     onConfirm={voiceInput.stop}
                     onCancel={voiceInput.cancel}
+                    secondary={showsDictationSend}
                   />
                   {showStopAction ? (
                     <ComposerActionButton
@@ -1114,6 +1142,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       variant="danger"
                       disabled={!props.canOperateThread}
                       onPress={props.onStopThread}
+                    />
+                  ) : showsDictationSend ? (
+                    <ComposerActionButton
+                      size={usesLargeControls ? "large" : "regular"}
+                      accessibilityLabel={sendLabel}
+                      icon={sendPresentation.icon}
+                      variant="primary"
+                      disabled={!voicePresentation.confirmationEnabled}
+                      onPress={sendDictation}
                     />
                   ) : showResumeAction && voicePresentation.showsSend ? (
                     <ComposerActionButton
