@@ -225,14 +225,22 @@ const loadProblem = (
   return { message: text(cause), file, ...(line === undefined ? {} : { line }) };
 };
 
-/** What is wrong between files that each loaded, given the runs that have not ended. */
+/**
+ * What is wrong between files that each loaded, given the runs that have not ended, with the
+ * files that could each be the cause.
+ */
 const definitionProblems = (
   files: ReadonlyArray<{
     readonly name: string;
     readonly definitions: ReadonlyArray<WorkflowDefinition>;
   }>,
   unfinished: ReadonlyArray<{ readonly workflow: string; readonly version: number }>,
-): ReadonlyArray<WorkflowDefinitionProblem> => {
+  before: ReadonlyMap<string, ReadonlyArray<WorkflowDefinition>> = new Map(),
+): ReadonlyArray<{
+  readonly problem: WorkflowDefinitionProblem;
+  readonly files: ReadonlyArray<string>;
+  readonly clash: boolean;
+}> => {
   const where = new Map<string, Array<string>>();
   for (const file of files) {
     for (const definition of file.definitions) {
@@ -248,10 +256,22 @@ const definitionProblems = (
     ...[...where]
       .filter(([, names]) => names.length > 1)
       .map(([tag, names]) => ({
-        message: `${tag} is defined twice, in ${[...new Set(names)].join(" and ")}. A workflow's name and version name one body.`,
+        problem: {
+          message: `${tag} is defined twice, in ${[...new Set(names)].join(" and ")}. A workflow's name and version name one body.`,
+        },
+        files: [...new Set(names)],
+        clash: true,
       })),
     ...[...waiting].map(([tag, runs]) => ({
-      message: `${tag} is no longer defined, and ${runs} of its runs ${runs === 1 ? "has" : "have"} not ended. Keep that version until they end, or cancel them first.`,
+      problem: {
+        message: `${tag} is no longer defined, and ${runs} of its runs ${runs === 1 ? "has" : "have"} not ended. Keep that version until they end, or cancel them first.`,
+      },
+      files: [...before]
+        .filter(([, definitions]) =>
+          definitions.some((definition) => engineTag(definition) === tag),
+        )
+        .map(([name]) => name),
+      clash: false,
     })),
   ];
 };
@@ -291,6 +311,8 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   /** Files that loaded or went away since, kept apart until the change as a whole is taken. */
   const pending = new Map<string, ReadonlyArray<WorkflowDefinition> | null>();
   const broken = new Map<string, WorkflowDefinitionProblem>();
+  /** Files whose change clashes with another file or drops what a run needs, and why. */
+  const held = new Map<string, Array<WorkflowDefinitionProblem>>();
   let between: ReadonlyArray<WorkflowDefinitionProblem> = [];
   let retrying = false;
   const state = yield* SubscriptionRef.make<{ revision: number; problem: string | null }>({
@@ -300,7 +322,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   const told = (problem: WorkflowDefinitionProblem) =>
     problem.file === undefined ? problem.message : `${problem.file}: ${problem.message}`;
   const report = Effect.suspend(() => {
-    const problems = [...broken.values(), ...between];
+    const problems = [...broken.values(), ...[...held.values()].flat(), ...between];
     return SubscriptionRef.update(state, (current) => ({
       revision: current.revision + 1,
       problem: problems.length === 0 ? null : problems.map(told).join("\n"),
@@ -430,23 +452,54 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       changed = true;
     }
     // Asked again while something stands between files: the runs that held a version may be over.
-    if (!changed && between.length === 0) return true;
-    const next = new Map(good);
-    for (const [name, definitions] of pending) {
-      if (definitions === null) next.delete(name);
-      else next.set(name, definitions);
+    if (!changed && between.length === 0 && held.size === 0) return true;
+    const runs = yield* unfinished;
+    // A change that clashes is held back like a file that does not load: that file keeps its last
+    // good version, a new one stays out, and every other change is taken.
+    held.clear();
+    let next = new Map(good);
+    let problems: ReturnType<typeof definitionProblems> = [];
+    let blamed = true;
+    while (blamed) {
+      blamed = false;
+      next = new Map(good);
+      for (const [name, definitions] of pending) {
+        if (held.has(name)) continue;
+        if (definitions === null) next.delete(name);
+        else next.set(name, definitions);
+      }
+      problems = definitionProblems(gathered(next), runs, good);
+      for (const { problem, files: involved, clash } of problems) {
+        const changing = involved.filter((name) => pending.has(name) && !held.has(name));
+        // Between new files that define the same workflow, the first in the folder's order stays.
+        const culprits =
+          clash && changing.length === involved.length ? changing.slice(1) : changing;
+        for (const name of culprits) {
+          held.set(name, [...(held.get(name) ?? []), { ...problem, file: name }]);
+          blamed = true;
+        }
+      }
     }
-    const files = gathered(next);
-    between = definitionProblems(files, yield* unfinished);
+    if (held.size > 0) {
+      yield* Effect.logWarning("Some workflow definition changes were not taken", {
+        problems: [...held.values()].flat(),
+      });
+    }
+    between = problems.map((entry) => entry.problem);
     if (between.length > 0) {
       yield* Effect.logWarning("Workflow definitions were not changed", { problems: between });
       yield* report;
       return true;
     }
+    const taking = [...pending.keys()].filter((name) => !held.has(name));
+    if (taking.length === 0 && held.size > 0) {
+      yield* report;
+      return true;
+    }
     good.clear();
     for (const [name, definitions] of next) good.set(name, definitions);
-    pending.clear();
-    const failed = yield* boot(files.flatMap((file) => file.definitions));
+    for (const name of taking) pending.delete(name);
+    const failed = yield* boot(gathered(next).flatMap((file) => file.definitions));
     between = failed === null ? [] : [{ message: failed }];
     yield* report;
     return true;
@@ -575,7 +628,9 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   ) {
     const files = new Map(good);
     change(files);
-    return definitionProblems(gathered(files), yield* unfinished);
+    return definitionProblems(gathered(files), yield* unfinished, good).map(
+      (entry) => entry.problem,
+    );
   });
 
   const refusal = (problems: ReadonlyArray<WorkflowDefinitionProblem>) => ({
@@ -589,7 +644,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     return {
       changed: true,
       problems: listed
-        ? [...(problem === undefined ? [] : [problem]), ...between]
+        ? [...(problem === undefined ? [] : [problem]), ...(held.get(name) ?? []), ...between]
         : [{ message: `${directory} could not be read just now, so the change does not run yet.` }],
     };
   });
@@ -649,13 +704,20 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
                     name,
                     source,
                     workflows: (good.get(name) ?? []).map(engineTag),
-                    problems: problem === undefined ? [] : [problem],
+                    problems: [
+                      ...(problem === undefined ? [] : [problem]),
+                      ...(held.get(name) ?? []),
+                    ],
                   };
                 }),
               ),
           );
           const at = yield* SubscriptionRef.get(state);
-          return { directory, single, files, problems: between, ...at };
+          // A file held back after it was deleted has no entry of its own to say so.
+          const gone = [...held]
+            .filter(([name]) => !files.some((file) => file.name === name))
+            .flatMap(([, problems]) => problems);
+          return { directory, single, files, problems: [...between, ...gone], ...at };
         }),
         save: Effect.fn("WorkflowDefinitions.save")(function* (name, source) {
           return yield* lock.withPermits(1)(save(name, source));

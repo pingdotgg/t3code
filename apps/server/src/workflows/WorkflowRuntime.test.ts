@@ -156,6 +156,25 @@ it.effect(
           (yield* definitions.read).files.map((file) => file.workflows),
           [["hold@1"]],
         );
+        // Only that file is held back: another file's change still runs, and the held one says why.
+        const other =
+          'T3.workflow("other", { version: 1, payload: Schema.Struct({}) }, () => Effect.void);\n';
+        assert.deepStrictEqual(yield* definitions.save("other.ts", other), {
+          changed: true,
+          problems: [],
+        });
+        yield* workflows.start("other", {}, { idempotencyKey: "o" });
+        assert.deepStrictEqual(
+          (yield* definitions.read).files.map((file) => [file.name, file.problems.length]),
+          [
+            ["hold.ts", 1],
+            ["other.ts", 0],
+          ],
+        );
+        assert.deepStrictEqual(yield* definitions.remove("other.ts"), {
+          changed: true,
+          problems: [],
+        });
         yield* fileSystem.writeFileString(at("hold.ts"), hold);
         yield* told(false);
 
