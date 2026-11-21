@@ -10,6 +10,7 @@ import {
   canSnooze,
   effectiveSnoozed,
   hasQueuedTurnStart,
+  hasSettleBlockingRun,
   hasUnseenRunFailure,
   pickSnoozePreset,
   resolveSnoozePresets,
@@ -76,6 +77,20 @@ type QueuedTurnShell = Parameters<typeof hasQueuedTurnStart>[0];
 function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTurnShell {
   return { latestUserMessageAt: null, latestTurn: null, session: null, ...overrides };
 }
+
+describe("hasSettleBlockingRun", () => {
+  it.each([
+    { reason: "running run", run: "running", runtime: "running", blocks: true },
+    { reason: "waiting run", run: "waiting", runtime: "waiting", blocks: true },
+    { reason: "completed run", run: "completed", runtime: "ready", blocks: false },
+    // Background work (a subagent, a PR watch) parks a finished thread at idle.
+    { reason: "parked by background work", run: "completed", runtime: "idle", blocks: false },
+  ])("$reason", ({ run, runtime, blocks }) => {
+    expect(hasSettleBlockingRun({ latestRun: { status: run }, runtime: { status: runtime } })).toBe(
+      blocks,
+    );
+  });
+});
 
 describe("effectiveSnoozed", () => {
   it("never hides on malformed wake data", () => {
