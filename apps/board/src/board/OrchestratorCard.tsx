@@ -133,7 +133,7 @@ export function OrchestratorCard({
               {docs.length}
             </span>
           </p>
-          <ul className="max-h-12 overflow-y-auto" onWheel={(event) => event.stopPropagation()}>
+          <ul data-scroll className="max-h-12 overflow-y-auto">
             {docs.map((doc) => (
               <li key={doc.id} className="truncate text-[11px] text-muted">
                 {doc.name}

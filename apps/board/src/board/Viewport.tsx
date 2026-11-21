@@ -68,6 +68,7 @@ export function Viewport({
   const attachSurface = useCallback((surface: HTMLDivElement) => {
     surfaceRef.current = surface;
     const onWheel = (event: WheelEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-scroll]") !== null) return;
       event.preventDefault();
       const rect = surface.getBoundingClientRect();
       setView((current) =>

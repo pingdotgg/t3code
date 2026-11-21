@@ -106,7 +106,7 @@ export function AgentCard({
           />
         </span>
       )}
-      {setup?.kind === "failed" && (
+      {selected && setup?.kind === "failed" && (
         <SetupFailure environmentId={environmentId} threadId={agent.threadId} line={setup} />
       )}
     </div>

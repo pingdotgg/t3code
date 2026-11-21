@@ -21,8 +21,6 @@ import { environmentSession } from "./server";
 
 const attachmentEnvironment = createAttachmentEnvironmentAtoms(connectionAtomRuntime);
 
-const UPLOAD_FAILED = "Upload failed";
-
 async function postBytes(url: string, file: File, mimeType: string, signal: AbortSignal) {
   const response = await fetch(url, {
     method: "POST",
@@ -66,7 +64,7 @@ export async function uploadAttachments(
       }),
     );
     if (result.status !== "uploaded") {
-      throw new Error(errorDisplayMessage(result.error) ?? UPLOAD_FAILED);
+      throw new Error(errorDisplayMessage(result.error) ?? "Upload failed");
     }
     attachments.push(sentAttachment(upload, result.attachmentId));
   }
@@ -80,6 +78,7 @@ export async function addDocs(
   orchestratorThreadId: string | null,
   files: ReadonlyArray<File>,
 ): Promise<string | null> {
+  if (orchestratorThreadId === null) return "Start this board's orchestrator before adding docs.";
   const checked = attachmentInputs(files);
   if ("error" in checked) return checked.error;
   try {
