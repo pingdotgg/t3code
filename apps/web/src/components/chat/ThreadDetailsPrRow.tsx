@@ -502,6 +502,7 @@ export function ThreadDetailsPrRow({
             variant="ghost"
             size="sm"
             part={wrap ? "title" : part}
+            multiline={wrap}
             aria-label={openAriaLabel}
             onClick={onOpen}
             onAuxClick={onOpen}
