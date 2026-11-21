@@ -8,12 +8,19 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-reqwest.workspace = true
+base64 = "=0.22.1"
+# Also trust the macOS system keychain, so Orbit's local CA for `*.test` hosts works (as in
+# Conn, whose API sender uses Chromium's network stack).
+reqwest = { workspace = true, features = ["rustls-tls-native-roots"] }
 serde.workspace = true
-serde_json.workspace = true
+# Pretty JSON keeps the body's key order, as JSON.stringify does.
+serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror.workspace = true
 tokio.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util"] }
 
 [lints]
 workspace = true
