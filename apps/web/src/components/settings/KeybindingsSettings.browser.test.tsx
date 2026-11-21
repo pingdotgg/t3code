@@ -212,17 +212,17 @@ it("filters actions and allows additional shortcuts for assigned commands", asyn
   const search = dialog.getByRole("combobox", { name: "Search", exact: true });
   await expect.element(search).toHaveFocus();
   await userEvent.keyboard("sidebar.toggle");
-  const assigned = page.getByRole("option", { name: /Sidebar: Toggle/ });
+  const assigned = page.getByRole("option", { name: /Toggle sidebar/ });
   await expect.element(assigned).not.toHaveAttribute("aria-disabled", "true");
   await expect.element(assigned.element().querySelector("kbd")!).toBeVisible();
   await vi.waitFor(() => expect(page.getByRole("option").elements()).toHaveLength(1));
   await assigned.click();
   const command = screen.getByRole("combobox", { name: "Command", exact: true });
-  await expect.element(command).toHaveTextContent("Sidebar: Toggle");
+  await expect.element(command).toHaveTextContent("Toggle sidebar");
   await command.click();
-  await search.fill("Opposite Queue");
+  await search.fill("opposite queue");
   await expect
-    .element(page.getByRole("option", { name: /Composer: Opposite Queue or Steer Action/ }))
+    .element(page.getByRole("option", { name: /Send with the opposite queue or steer action/ }))
     .toBeVisible();
   await vi.waitFor(() => expect(page.getByRole("option").elements()).toHaveLength(1));
   await search.fill("no-such-action");
