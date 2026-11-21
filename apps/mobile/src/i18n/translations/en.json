@@ -4393,6 +4393,8 @@
   "9605dc349bd2c872": "{label} reference in {source}",
   "51e507aa054ee63b": "Save securely",
   "4ba3eff83827c2d4": "Decline",
+  "ee71ac7e8e9b000c": "Ultrafast mode on",
+  "e649c08fbd9a1a30": "Fast mode on",
   "1c4391ec5c411ba7": "Could not stop workflow",
   "fece74611dcf4173": "Could not stop agent",
   "9ce30f31a483c017": "Stopping workflow {label}",
