@@ -12652,8 +12652,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const fileRequest = yield* answerNext;
         yield* harness.firstTerminal;
 
-        assert.include(approvalItem(harness.events, commandRequest)?.prompt ?? "", command);
-        assert.include(approvalItem(harness.events, fileRequest)?.prompt ?? "", "/w/a.ts");
+        const commandItem = approvalItem(harness.events, commandRequest);
+        const fileItem = approvalItem(harness.events, fileRequest);
+        assert.include(commandItem?.prompt ?? "", command);
+        assert.strictEqual(commandItem?.reason, "command failed; retry without sandbox?");
+        assert.include(fileItem?.prompt ?? "", "/w/a.ts");
+        assert.strictEqual(fileItem?.reason, "write outside the workspace");
       }).pipe(
         Effect.scoped,
         Effect.provide(
