@@ -1,5 +1,5 @@
 import { Effect, hole, Schema, Tuple } from "effect"
-import type { Array as Arr } from "effect"
+import type { Array as Arr, Types } from "effect"
 import { describe, expect, it } from "tstyche"
 
 describe("Union", () => {
@@ -181,6 +181,8 @@ describe("Union", () => {
           Schema.Struct({ event: Schema.Literal("2") })
         ]).pipe(Schema.toTaggedUnion("event"))
         expect(schema.discriminants).type.toBe<readonly [1, "2"]>()
+        expect(schema.isAnyOf).type.toBeCallableWith([1, "2"])
+        expect(schema.isAnyOf).type.not.toBeCallableWith([2])
       })
 
       it("isAnyOf should narrow custom tags", () => {
@@ -199,7 +201,12 @@ describe("Union", () => {
             | { readonly kind: "a"; readonly a: number }
             | { readonly kind: "b"; readonly b: string }
           >()
+        } else {
+          expect(value).type.toBe<{ readonly kind: "c"; readonly c: boolean }>()
         }
+        expect(schema.isAnyOf).type.toBeCallableWith([])
+        expect(schema.isAnyOf).type.not.toBeCallableWith(["a", "d"])
+        expect(schema.isAnyOf).type.not.toBeCallableWith(hole<ReadonlyArray<string>>())
       })
 
       it("should flatten discriminants", () => {
@@ -373,6 +380,34 @@ describe("Union", () => {
         expect(A).type.toBe<Schema.TaggedStruct<"A", { readonly a: Schema.String }>>()
         expect(B).type.toBe<Schema.TaggedStruct<"B", { readonly b: Schema.FiniteFromString }>>()
         expect(C).type.toBe<Schema.TaggedStruct<"C", { readonly c: Schema.Boolean }>>()
+      })
+
+      it("isAnyOf should only accept case keys", () => {
+        const Shape = Schema.TaggedUnion({
+          Circle: { radius: Schema.Number },
+          Square: { side: Schema.Number },
+          Triangle: { base: Schema.Number }
+        })
+        type Shape = typeof Shape.Type
+        const { Circle, Square, Triangle } = Shape.cases
+        const shape = hole<Shape>()
+
+        if (Shape.isAnyOf(["Circle", "Square"])(shape)) {
+          expect(shape).type.toBe<typeof Circle.Type | typeof Square.Type>()
+        } else {
+          expect(shape).type.toBe<typeof Triangle.Type>()
+        }
+        expect(Shape.isAnyOf).type.toBeCallableWith([])
+        expect(Shape.isAnyOf).type.not.toBeCallableWith(["Circle", "Sqaure"])
+        expect(Shape.isAnyOf).type.not.toBeCallableWith(hole<ReadonlyArray<string>>())
+
+        const shapes = hole<Array<Shape>>()
+        const filterTags = <K extends Types.Tags<Shape>>(keys: ReadonlyArray<K>) => shapes.filter(Shape.isAnyOf(keys))
+        expect(filterTags(["Circle"])).type.toBe<Array<typeof Circle.Type>>()
+        const filterOpen = <K extends string>(keys: ReadonlyArray<K>) => {
+          expect(Shape.isAnyOf).type.not.toBeCallableWith(keys)
+        }
+        filterOpen(["Circle"])
       })
     })
   })
