@@ -110,6 +110,7 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
 function readStoredEntries(): ReadonlyArray<PromptStashEntry> | null {
   try {
     const raw = baseStashStorage.getItem(PROMPT_STASH_STORAGE_KEY);
+    if (raw === null) return [];
     if (typeof raw !== "string" || raw.length === 0) return null;
     const parsed: unknown = JSON.parse(raw);
     const state = (parsed as { state?: unknown } | null)?.state;
@@ -125,7 +126,7 @@ function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
 }
 
 /**
- * Starts each write from storage so other tabs' stashes, takes and finalized images survive.
+ * Reconciles the local queue with storage before writes and after changes in other tabs.
  * Local encoding and failed finalize writes retain ownership while the stored entry exists.
  */
 function latestEntries(memory: ReadonlyArray<PromptStashEntry>): ReadonlyArray<PromptStashEntry> {
@@ -223,6 +224,18 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
   if (persisted) {
     usePromptStashStore.setState({ entries: persisted });
   }
+}
+
+if (storageIsDurable && typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.storageArea !== baseStashStorage) return;
+    if (event.key !== PROMPT_STASH_STORAGE_KEY && event.key !== null) return;
+
+    // A queued event can describe an older write than the value now in storage.
+    const { entries } = usePromptStashStore.getState();
+    const latest = latestEntries(entries);
+    if (latest !== entries) usePromptStashStore.setState({ entries: latest });
+  });
 }
 
 export function writePromptStashStorageForTest(raw: string): void {
