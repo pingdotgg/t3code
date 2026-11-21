@@ -270,6 +270,12 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     });
     expect(laterPage.thread.pullRequests).toBeUndefined();
     expect(laterPage.thread.pullRequestCount).toBe(8);
+    // A read from past the tail is the newest page, which a linked environment asks for.
+    const newestPage = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      beforePosition: Number.MAX_SAFE_INTEGER,
+    });
+    expect(newestPage.thread.pullRequests?.map((link) => link.number)).toEqual([2, 8, 7, 6, 5]);
 
     Object.assign(projection, {
       runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
@@ -508,14 +514,28 @@ it("readThread returns the newest items that fit the response budget", async () 
       maxCharsPerItem: 1_500,
     };
     const result = yield* service.readThread(makeScope(), read);
-    // Linked environments and the CLI read as clients without a cursor and follow only hasMore.
+    // The CLI reads as a client without a cursor and follows only hasMore.
     const first = yield* service.readThread({ ...makeScope(), thread: undefined }, read);
     const fromStart = yield* service.readThread(makeScope(), { ...read, afterPosition: -1 });
+    const linked = yield* service.readThread(
+      {
+        ...makeScope(),
+        thread: undefined,
+        client: {
+          sessionId: "laptop",
+          label: "T3 Code · laptop",
+          access: "auto",
+          linked: true,
+        },
+      },
+      read,
+    );
 
     expect(pageOptions).toEqual([
       { beforePosition: Number.POSITIVE_INFINITY, limit: 100, view: "activity" },
       { limit: 100, view: "activity" },
       { afterPosition: -1, limit: 100, view: "activity" },
+      { beforePosition: Number.POSITIVE_INFINITY, limit: 100, view: "activity" },
     ]);
     // Claude Code saves results over ~50k chars of this JSON to a file instead of showing them.
     expect(JSON.stringify(result).length).toBeLessThan(31_000);
@@ -527,6 +547,9 @@ it("readThread returns the newest items that fit the response budget", async () 
     expect(first.hasMore).toBe(true);
     expect(first.nextPosition).toBe(first.items.at(-1)?.position);
     expect(fromStart.items[0]?.position).toBe(0);
+    expect(linked.items.at(-1)?.position).toBe(99);
+    expect(linked.earlierPosition).toBe(linked.items[0]?.position);
+    expect(linked.hasMore).toBe(false);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

@@ -166,6 +166,8 @@ export class GitManager extends Context.Service<
         readonly refresh?: boolean;
         readonly freshGitState?: boolean;
         readonly confirmTerminal?: boolean;
+        /** Also accept a pull request merged inside a fork when the host searched upstream. */
+        readonly includeHeadRepository?: boolean;
       },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
     /** Whether T3 checked this pull request out onto the branch, which ties it to later threads. */
@@ -187,7 +189,7 @@ export class GitManager extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
-    /** Opens a PR for the checkout's pushed branch, or returns the one already open. */
+    /** Pushes the checkout's branch when needed, then opens its PR or returns the one already open. */
     readonly createPullRequest: (input: {
       readonly cwd: string;
       readonly projectId: ProjectId;
@@ -239,6 +241,35 @@ type GitActionProgressEmitter = (event: GitActionProgressPayload) => Effect.Effe
 
 function isNotGitRepositoryError(error: GitCommandError): boolean {
   return isNonRepositoryGitStderr(error.message);
+}
+
+interface RememberedPrLookupValue {
+  readonly readAtMs: number;
+  readonly value: string | null;
+}
+
+// Inherited by fibers forked inside one lookup (including prLookupCache loaders), so it is
+// closed and cleared when the lookup ends and bypassed if invalidateStatus bumps the epoch.
+interface SharedPrLookupGitReads {
+  open: boolean;
+  queriedProvider: boolean;
+  readonly cwd: string;
+  readonly epoch: number;
+  remotes: ReadonlyArray<string> | undefined;
+  readonly configValues: Map<string, RememberedPrLookupValue>;
+  readonly remoteUrls: Map<string, RememberedPrLookupValue>;
+}
+
+const prLookupGitReads = Context.Reference<SharedPrLookupGitReads | null>(
+  "t3/GitManager/prLookupGitReads",
+  { defaultValue: () => null },
+);
+
+function parseRemoteNames(stdout: string): ReadonlyArray<string> {
+  return stdout
+    .split("\n")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
 }
 
 interface OpenPrInfo {
@@ -845,6 +876,22 @@ export const make = Effect.gen(function* () {
     }
     return result;
   });
+  const createPrNeedsPush = Effect.fn("GitManager.createPrNeedsPush")(function* (
+    cwd: string,
+    status: {
+      readonly branch: string | null;
+      readonly hasUpstream: boolean;
+      readonly aheadCount: number;
+    },
+  ) {
+    if (!status.branch) return false;
+    if (!status.hasUpstream || status.aheadCount > 0) return true;
+    // A current upstream says nothing about a separate push remote, which may lack HEAD.
+    const target = yield* gitCore
+      .resolvePushTarget(cwd, { branch: status.branch, hasUpstream: true })
+      .pipe(Effect.orElseSucceed(() => null));
+    return target?.viaPushRemote === true;
+  });
   const readWorktreeCreationSettings = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => ({
       worktreesDirectory: settings.worktreesDirectory,
@@ -1239,7 +1286,7 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
-    const hostingProvider = details.isRepo
+    const hostingProvider = details.hasOriginRemote
       ? yield* resolveHostingProvider(cwd, details.branch)
       : null;
 
@@ -1278,6 +1325,39 @@ export const make = Effect.gen(function* () {
       Effect.map((cacheKey) => {
         prLookupEpochByCwd.set(cacheKey, prLookupEpoch(cacheKey) + 1);
       }),
+    );
+  const isActivePrLookupGitReads = (
+    shared: SharedPrLookupGitReads | null,
+    cwd: string,
+  ): shared is SharedPrLookupGitReads =>
+    shared !== null && shared.open && shared.cwd === cwd && prLookupEpoch(cwd) === shared.epoch;
+  const withPrLookupGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
+    Effect.suspend(() => {
+      const shared: SharedPrLookupGitReads = {
+        open: true,
+        queriedProvider: false,
+        cwd,
+        epoch: prLookupEpoch(cwd),
+        remotes: undefined,
+        configValues: new Map(),
+        remoteUrls: new Map(),
+      };
+      return effect.pipe(
+        Effect.provideService(prLookupGitReads, shared),
+        Effect.ensuring(
+          Effect.sync(() => {
+            shared.open = false;
+            shared.queriedProvider = false;
+            shared.remotes = undefined;
+            shared.configValues.clear();
+            shared.remoteUrls.clear();
+          }),
+        ),
+      );
+    });
+  const withActivePrLookupGitReads = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(prLookupGitReads, (shared) =>
+      isActivePrLookupGitReads(shared, cwd) ? effect : withPrLookupGitReads(effect, cwd),
     );
   const prLookupCacheKey = (
     cwd: string,
@@ -1353,22 +1433,29 @@ export const make = Effect.gen(function* () {
         localBranchExists: branchExists !== "0",
         ...(remoteName.length > 0 ? { remoteName } : {}),
       };
-      return Effect.gen(function* () {
-        const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
-        if (!lookup) {
-          return { latest: null, headContext };
-        }
-        if (
-          details.localBranchExists &&
-          (details.upstreamRef === null || headContext.remoteName === null) &&
-          (yield* isUnpublishedBranch(cwd, headContext))
-        ) {
-          return { latest: null, headContext };
-        }
-        const latest = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
-        if (latest !== null) yield* noteLookupState(latest);
-        return { latest, headContext };
-      });
+      return withActivePrLookupGitReads(
+        cwd,
+        Effect.gen(function* () {
+          const { headContext, lookup } = yield* resolveLookupHeadContext(cwd, details);
+          if (!lookup) {
+            return { latest: null, headContext };
+          }
+          if (
+            details.localBranchExists &&
+            (details.upstreamRef === null || headContext.remoteName === null) &&
+            (yield* isUnpublishedBranch(cwd, headContext))
+          ) {
+            return { latest: null, headContext };
+          }
+          const shared = yield* prLookupGitReads;
+          if (isActivePrLookupGitReads(shared, cwd)) {
+            shared.queriedProvider = true;
+          }
+          const latest = yield* findLatestPrForHeadContext(cwd, headContext, details.defaultBranch);
+          if (latest !== null) yield* noteLookupState(latest);
+          return { latest, headContext };
+        }),
+      );
     },
     {
       capacity: PR_LOOKUP_CACHE_CAPACITY,
@@ -1524,7 +1611,7 @@ export const make = Effect.gen(function* () {
     }
 
     const { pr, headSha } =
-      details.branch !== null
+      details.branch !== null && details.hasPrimaryRemote
         ? yield* lookupStatusPr(
             cwd,
             {
@@ -1576,10 +1663,74 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((cacheKey) => Cache.invalidate(remoteStatusResultCache, cacheKey)),
     );
 
+  const readLookupRemotes = (cwd: string, operation: string) =>
+    Effect.flatMap(prLookupGitReads, (shared) => {
+      if (isActivePrLookupGitReads(shared, cwd) && shared.remotes !== undefined) {
+        return Effect.succeed(shared.remotes);
+      }
+      return gitCore
+        .execute({
+          operation,
+          cwd,
+          args: ["remote"],
+          timeoutMs: 5_000,
+        })
+        .pipe(
+          Effect.map((result) => parseRemoteNames(result.stdout)),
+          Effect.tap((remoteNames) =>
+            Effect.sync(() => {
+              if (isActivePrLookupGitReads(shared, cwd)) {
+                shared.remotes = remoteNames;
+              }
+            }),
+          ),
+        );
+    });
+  const readLookupConfigValue = (cwd: string, key: string) =>
+    Effect.flatMap(prLookupGitReads, (shared) => {
+      if (isActivePrLookupGitReads(shared, cwd)) {
+        const cached = shared.configValues.get(key);
+        if (cached !== undefined) return Effect.succeed(cached.value);
+      }
+      return Clock.currentTimeMillis.pipe(
+        Effect.flatMap((readAtMs) =>
+          gitCore.readConfigValue(cwd, key).pipe(
+            Effect.tap((value) =>
+              Effect.sync(() => {
+                if (isActivePrLookupGitReads(shared, cwd)) {
+                  shared.configValues.set(key, { readAtMs, value });
+                }
+              }),
+            ),
+          ),
+        ),
+      );
+    });
+  const readLookupRemoteUrl = (cwd: string, remoteName: string) =>
+    Effect.flatMap(prLookupGitReads, (shared) => {
+      if (isActivePrLookupGitReads(shared, cwd)) {
+        const cached = shared.remoteUrls.get(remoteName);
+        if (cached !== undefined) return Effect.succeed(cached.value);
+      }
+      return Clock.currentTimeMillis.pipe(
+        Effect.flatMap((readAtMs) =>
+          readRemoteUrl(cwd, remoteName).pipe(
+            Effect.tap((remoteUrl) =>
+              Effect.sync(() => {
+                if (isActivePrLookupGitReads(shared, cwd)) {
+                  shared.remoteUrls.set(remoteName, { readAtMs, value: remoteUrl });
+                }
+              }),
+            ),
+          ),
+        ),
+      );
+    });
+
   const readConfigValueNullable = (cwd: string, key: string) =>
-    gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
+    readLookupConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
   const readRemoteUrlNullable = (cwd: string, remoteName: string) =>
-    readRemoteUrl(cwd, remoteName).pipe(Effect.orElseSucceed(() => null));
+    readLookupRemoteUrl(cwd, remoteName).pipe(Effect.orElseSucceed(() => null));
 
   // Whether the remote's host creates change requests in this remote's repository. A host's tools
   // can let configuration, such as gh's default repository, name another one.
@@ -1705,19 +1856,10 @@ export const make = Effect.gen(function* () {
       remoteName !== null &&
       remoteName !== "origin" &&
       originRepository.remoteUrlKey === null &&
-      (yield* gitCore
-        .execute({
-          operation: "GitManager.resolveBranchHeadContext.remotes",
-          cwd,
-          args: ["remote"],
-          timeoutMs: 5_000,
-        })
-        .pipe(
-          Effect.map(
-            (result) => result.stdout.split("\n").filter((name) => name.trim().length > 0).length,
-          ),
-          Effect.orElseSucceed(() => 0),
-        )) === 1 &&
+      (yield* readLookupRemotes(cwd, "GitManager.resolveBranchHeadContext.remotes").pipe(
+        Effect.map((remotes) => remotes.length),
+        Effect.orElseSucceed(() => 0),
+      )) === 1 &&
       (yield* targetsRemote(cwd, remoteName, remoteRepository));
     const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
 
@@ -1786,15 +1928,10 @@ export const make = Effect.gen(function* () {
   ) {
     if (branch.length === 0) return null;
     return yield* Effect.gen(function* () {
-      const remoteNames = (yield* gitCore.execute({
-        operation: "GitManager.findRemoteTrackingRemote.remotes",
+      const remoteNames = yield* readLookupRemotes(
         cwd,
-        args: ["remote"],
-        timeoutMs: 5_000,
-      })).stdout
-        .split("\n")
-        .map((name) => name.trim())
-        .filter((name) => name.length > 0);
+        "GitManager.findRemoteTrackingRemote.remotes",
+      );
       if (remoteNames.length === 0) return null;
       const refs = new Set(
         (yield* gitCore.execute({
@@ -1825,15 +1962,10 @@ export const make = Effect.gen(function* () {
     branch: string,
   ) {
     const localRef = `refs/heads/${branch}`;
-    const remoteNames = (yield* gitCore.execute({
-      operation: "GitManager.findPublishedBranchRemote.remotes",
+    const remoteNames = yield* readLookupRemotes(
       cwd,
-      args: ["remote"],
-      timeoutMs: 5_000,
-    })).stdout
-      .split("\n")
-      .map((name) => name.trim())
-      .filter((name) => name.length > 0);
+      "GitManager.findPublishedBranchRemote.remotes",
+    );
     if (remoteNames.length === 0) return null;
 
     const refs = yield* gitCore.execute({
@@ -1975,7 +2107,7 @@ export const make = Effect.gen(function* () {
     return yield* Effect.gen(function* () {
       const [configuredRemote, configuredMerge] = yield* Effect.all(
         [
-          gitCore.readConfigValue(cwd, `branch.${headContext.localBranch}.remote`),
+          readLookupConfigValue(cwd, `branch.${headContext.localBranch}.remote`),
           gitCore.readConfigValue(cwd, `branch.${headContext.localBranch}.merge`),
         ],
         { concurrency: "unbounded" },
@@ -2030,6 +2162,31 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
+  // A host that targets another repository (gh's upstream) misses a pull request merged
+  // inside the branch's own repository. Kept out of status so it cannot hide Create PR upstream.
+  const findMergedPrInHeadRepository = Effect.fn("findMergedPrInHeadRepository")(function* (
+    cwd: string,
+    headContext: BranchHeadContext,
+  ) {
+    if (!headContext.isCrossRepository || headContext.headRepositoryNameWithOwner === null) {
+      return null;
+    }
+    const provider = yield* sourceControlProvider(cwd);
+    if (provider.createsChangeRequestsIn === undefined) return null;
+    const sameRepository = { ...headContext, isCrossRepository: false };
+    const pullRequests = yield* provider.listChangeRequests({
+      cwd,
+      headSelector: headContext.headBranch,
+      state: "all",
+      limit: 20,
+      repository: headContext.headRepositoryNameWithOwner,
+    });
+    const merged = pullRequests
+      .map(toPullRequestInfo)
+      .filter((pr) => pr.state === "merged" && matchesBranchHeadContext(pr, sameRepository));
+    return Arr.sort(merged, pullRequestUpdatedAtDescOrder)[0] ?? null;
+  });
+
   const findLatestPrForHeadContext = Effect.fn("findLatestPrForHeadContext")(function* (
     cwd: string,
     headContext: BranchHeadContext,
@@ -2063,7 +2220,6 @@ export const make = Effect.gen(function* () {
         parsedByNumber.set(pr.number, pr);
       }
     }
-
     const parsed = Arr.sort(parsedByNumber.values(), pullRequestUpdatedAtDescOrder);
 
     const latestOpenPr = parsed.find((pr) => pr.state === "open");
@@ -2100,7 +2256,9 @@ export const make = Effect.gen(function* () {
     const finalStatus =
       result.action === "commit"
         ? null
-        : yield* gitCore.statusDetails(cwd).pipe(Effect.orElseSucceed(() => null));
+        : yield* gitCore
+            .statusDetailsRemote(cwd, { refreshUpstream: false, includeAheadOfDefault: false })
+            .pipe(Effect.orElseSucceed(() => null));
     if (finalStatus?.branch) {
       finalBranchContext = {
         branch: finalStatus.branch,
@@ -2338,7 +2496,13 @@ export const make = Effect.gen(function* () {
           } as GitActionProgressEvent)
         : Effect.void;
 
-    let suggestion: CommitAndBranchSuggestion | null | undefined = preResolvedSuggestion;
+    const customCommit = parseCustomCommitMessage(commitMessage ?? "");
+    let suggestion: CommitAndBranchSuggestion | null | undefined =
+      preResolvedSuggestion ??
+      (customCommit && {
+        ...customCommit,
+        commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
+      });
     if (!suggestion) {
       const needsGeneration = !commitMessage?.trim();
       if (needsGeneration) {
@@ -2410,11 +2574,20 @@ export const make = Effect.gen(function* () {
             },
           }
         : null;
-    const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
-      timeoutMs: COMMIT_TIMEOUT_MS,
-      stage: filePaths ? { filePaths } : {},
-      ...(commitProgress ? { progress: commitProgress } : {}),
-    });
+    const committed = yield* gitCore
+      .commit(cwd, suggestion.subject, suggestion.body, {
+        timeoutMs: COMMIT_TIMEOUT_MS,
+        stage: {
+          ...(filePaths ? { filePaths } : {}),
+          ...(!preResolvedSuggestion && customCommit ? { unverified: true } : {}),
+        },
+        ...(commitProgress ? { progress: commitProgress } : {}),
+      })
+      .pipe(Effect.catchTags({ GitNothingToCommitError: () => Effect.succeed(null) }));
+    if (!committed) {
+      return { status: "skipped_no_changes" as const };
+    }
+    const { commitSha } = committed;
     if (currentHookName !== null) {
       yield* emit({
         kind: "hook_finished",
@@ -2511,8 +2684,9 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    // A PR opened from the remote branch would leave out commits not pushed yet.
-    if (details.aheadCount > 0) {
+    // A PR opened from the remote branch would leave out commits not pushed yet. The ahead
+    // count is against the upstream, which a push to a separate push remote leaves behind.
+    if (!pushRemoteRef && details.aheadCount > 0) {
       return yield* new GitManagerError({
         operation: "runPrStep",
         cwd,
@@ -2649,17 +2823,57 @@ export const make = Effect.gen(function* () {
   const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
     "GitManager.createPullRequest",
   )(function* (input) {
-    const result = yield* openPrFromBranch(
-      input.cwd,
-      null,
-      () => Effect.void,
-      undefined,
-      input.baseBranch,
-      input.draft === true,
-      () => Effect.succeed({ title: input.title, body: input.body }),
+    const status = yield* gitCore.statusDetails(input.cwd);
+    const needsPush = yield* createPrNeedsPush(input.cwd, status);
+    if (needsPush && status.branch) {
+      yield* ensurePrHeadIsNotBase(
+        input.cwd,
+        { ...status, branch: status.branch },
+        (yield* changeRequestTermsFor(input.cwd)).shortLabelWithArticle,
+      );
+    }
+    const push = needsPush
+      ? yield* pushCurrentBranch(input.cwd, status.branch).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitManagerError({
+                operation: "createPullRequest",
+                cwd: input.cwd,
+                detail: `Could not push ${status.branch}: ${cause.detail}${cause.reason === undefined ? "" : ` (${cause.reason})`}`,
+                cause,
+              }),
+          ),
+        )
+      : null;
+    const result = yield* Effect.gen(function* () {
+      // Publishing records the upstream, which the PR step needs to find the head branch.
+      if (!status.hasUpstream && push?.status === "pushed" && push.setUpstream === false) {
+        return yield* new GitManagerError({
+          operation: "createPullRequest",
+          cwd: input.cwd,
+          detail: `Pushed ${status.branch} to ${push.upstreamBranch}, but could not record it as the branch's upstream. Set the upstream, then try again.`,
+        });
+      }
+      return yield* openPrFromBranch(
+        input.cwd,
+        null,
+        () => Effect.void,
+        push && "pushRemote" in push && push.pushRemote && push.upstreamBranch
+          ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
+          : undefined,
+        input.baseBranch,
+        input.draft === true,
+        () => Effect.succeed({ title: input.title, body: input.body }),
+      );
+    }).pipe(
+      // A push changes the ahead count, and a new PR changes the branch's PR lookup, so
+      // both leave cached status stale whatever the PR step does next.
+      Effect.onExit((exit) =>
+        push?.status === "pushed" || (Exit.isSuccess(exit) && exit.value.status === "created")
+          ? invalidateStatus(input.cwd)
+          : Effect.void,
+      ),
     );
-    // The thread's branch PR comes from status, which may hold the lookup from before.
-    if (result.status === "created") yield* invalidateStatus(input.cwd);
     const openedAsDraft =
       result.status === "created" &&
       (yield* sourceControlProvider(input.cwd)).createsDraftChangeRequests === true;
@@ -2684,7 +2898,7 @@ export const make = Effect.gen(function* () {
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
       );
-      const key = createdPullRequestKey({ pr: result }, project);
+      const key = createdPullRequestKey({ pr: result }, project?.repositoryIdentity);
       if (key === null) return false;
       const ref = { projectId: input.projectId, ...key };
       const isDraft =
@@ -2735,30 +2949,32 @@ export const make = Effect.gen(function* () {
   });
   // Closed PR results can settle threads or remove worktrees; confirm fresh git state before
   // persisting, and before acting when a caller skipped confirmation (`confirmTerminal: false`).
-  const prLookupGitStateByKey = new Map<
-    string,
-    { readonly readAtMs: number; readonly value: string | null }
-  >();
+  const prLookupGitStateByKey = new Map<string, RememberedPrLookupValue>();
   const rememberPrLookupGitState = Effect.fn("GitManager.rememberPrLookupGitState")(function* <E>(
     cwd: string,
     key: string,
     fresh: boolean,
     read: Effect.Effect<string | null, E>,
+    memoized?: RememberedPrLookupValue,
   ) {
     const entryKey = `${cwd}\u0000${key}`;
-    const readAtMs = yield* Clock.currentTimeMillis;
+    const now = yield* Clock.currentTimeMillis;
     const remembered = prLookupGitStateByKey.get(entryKey);
     if (
       !fresh &&
       remembered !== undefined &&
-      readAtMs - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
+      now - remembered.readAtMs < Duration.toMillis(PR_LOOKUP_GIT_STATE_TTL)
     ) {
       return remembered.value;
     }
     // invalidateStatus bumps the epoch. A read that started before a T3 git
     // action, or before a newer read finished, must not replace their state.
     const epoch = prLookupEpoch(cwd);
-    const value = yield* read;
+    const useMemoized =
+      memoized !== undefined &&
+      (remembered === undefined || remembered.readAtMs <= memoized.readAtMs);
+    const readAtMs = useMemoized ? memoized.readAtMs : now;
+    const value = useMemoized ? memoized.value : yield* read;
     const latest = prLookupGitStateByKey.get(entryKey);
     if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
       return value;
@@ -2792,21 +3008,32 @@ export const make = Effect.gen(function* () {
       remoteNameOverride: string | undefined,
       fresh: boolean,
     ) {
+      // Reads after a provider call must re-read git to catch external remote changes.
+      const canReuseMemo = (
+        shared: SharedPrLookupGitReads | null,
+      ): shared is SharedPrLookupGitReads =>
+        isActivePrLookupGitReads(shared, cwd) && !shared.queriedProvider;
       const readConfig = (key: string) =>
-        rememberPrLookupGitState(
-          cwd,
-          `config\u0000${key}`,
-          fresh,
-          gitCore.readConfigValue(cwd, key),
+        Effect.flatMap(prLookupGitReads, (shared) =>
+          rememberPrLookupGitState(
+            cwd,
+            `config\u0000${key}`,
+            fresh,
+            gitCore.readConfigValue(cwd, key),
+            canReuseMemo(shared) ? shared.configValues.get(key) : undefined,
+          ),
         ).pipe(Effect.orElseSucceed(() => null));
       const readRemoteUrlKey = (remoteName: string | null) =>
         remoteName === null
           ? Effect.succeed(null)
-          : rememberPrLookupGitState(
-              cwd,
-              `remoteUrl\u0000${remoteName}`,
-              fresh,
-              readRemoteUrl(cwd, remoteName),
+          : Effect.flatMap(prLookupGitReads, (shared) =>
+              rememberPrLookupGitState(
+                cwd,
+                `remoteUrl\u0000${remoteName}`,
+                fresh,
+                readRemoteUrl(cwd, remoteName),
+                canReuseMemo(shared) ? shared.remoteUrls.get(remoteName) : undefined,
+              ),
             ).pipe(
               Effect.orElseSucceed(() => null),
               Effect.map((remoteUrl) =>
@@ -2865,24 +3092,22 @@ export const make = Effect.gen(function* () {
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
     cacheCwd: string,
     branch: string,
-    options: { readonly refresh: boolean; readonly freshGitState: boolean },
+    options: {
+      readonly refresh: boolean;
+      readonly freshGitState: boolean;
+      readonly includeHeadRepository?: boolean | undefined;
+    },
   ) {
     const remember = <E>(key: string, read: Effect.Effect<string | null, E>) =>
       rememberPrLookupGitState(cacheCwd, key, options.freshGitState, read);
+    // Seed shared.remotes only when git remote actually runs, never from a TTL hit.
     const remotes = yield* remember(
       "remotes",
-      gitCore
-        .execute({
-          operation: "GitManager.branchPullRequest.remotes",
-          cwd: cacheCwd,
-          args: ["remote"],
-        })
-        .pipe(Effect.map((result) => result.stdout)),
+      readLookupRemotes(cacheCwd, "GitManager.branchPullRequest.remotes").pipe(
+        Effect.map((names) => names.join("\n")),
+      ),
     );
-    const remoteNames = (remotes ?? "")
-      .split("\n")
-      .map((remoteName) => remoteName.trim())
-      .filter((remoteName) => remoteName.length > 0);
+    const remoteNames = parseRemoteNames(remotes ?? "");
     const [firstRemoteName] = remoteNames;
     if (firstRemoteName === undefined) return null;
     const branchRef = yield* readPrLookupBranchRef(cacheCwd, branch, options.freshGitState);
@@ -2989,12 +3214,16 @@ export const make = Effect.gen(function* () {
     }
     if (!hasSameIdentity(cached.headContext, currentIdentity)) {
       yield* Cache.invalidate(prLookupCache, cacheKey);
-      cached = yield* getPrLookup(cacheKey);
-      const refreshedIdentity = yield* resolvePrLookupRepositoryIdentity(
-        cacheCwd,
-        branch,
-        identityRemoteName(cached.headContext),
-        true,
+      cached = yield* withPrLookupGitReads(getPrLookup(cacheKey), cacheCwd);
+      const refreshedIdentity = yield* Effect.provideService(
+        resolvePrLookupRepositoryIdentity(
+          cacheCwd,
+          branch,
+          identityRemoteName(cached.headContext),
+          true,
+        ),
+        prLookupGitReads,
+        null,
       );
       if (
         !canVerifyIdentity(cached.headContext, refreshedIdentity) ||
@@ -3007,7 +3236,11 @@ export const make = Effect.gen(function* () {
         });
       }
     }
-    const { latest } = cached;
+    const latest =
+      cached.latest ??
+      (options.includeHeadRepository === true
+        ? yield* findMergedPrInHeadRepository(cacheCwd, cached.headContext)
+        : null);
     if (latest === null) return null;
     if (
       (branch === defaultBranch ||
@@ -3024,7 +3257,7 @@ export const make = Effect.gen(function* () {
       // Hosting CLIs may target upstream; the PR URL identifies its actual repository.
       repositoryKey: pullRequestRepositoryKey(latest.url),
     };
-  });
+  }, withPrLookupGitReads);
 
   const checkedOutPullRequestKey = (branch: string) => `branch.${branch}.t3-pull-request`;
 
@@ -3037,6 +3270,7 @@ export const make = Effect.gen(function* () {
     const pullRequest = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh,
       freshGitState,
+      includeHeadRepository: options?.includeHeadRepository,
     });
     if (
       pullRequest === null ||
@@ -3064,6 +3298,7 @@ export const make = Effect.gen(function* () {
     const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
+      includeHeadRepository: options?.includeHeadRepository,
     });
     settledPrLookupByBranchKey.delete(settledKey);
     if (confirmed !== null && confirmed.state !== "open") {
@@ -3614,26 +3849,12 @@ export const make = Effect.gen(function* () {
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
-        const upToDateBranch =
-          input.action === "create_pr" &&
-          initialStatus.hasUpstream &&
-          initialStatus.aheadCount === 0
-            ? initialStatus.branch
-            : null;
-        // A current upstream says nothing about a separate push remote, which may lack HEAD.
-        const pushTarget = upToDateBranch
-          ? yield* gitCore
-              .resolvePushTarget(input.cwd, { branch: upToDateBranch, hasUpstream: true })
-              .pipe(Effect.orElseSucceed(() => null))
-          : null;
         const wantsPush =
           input.action === "push" ||
           input.action === "commit_push" ||
           input.action === "commit_push_pr" ||
           (input.action === "create_pr" &&
-            (!initialStatus.hasUpstream ||
-              initialStatus.aheadCount > 0 ||
-              pushTarget?.viaPushRemote === true));
+            (!initialStatus.hasUpstream || (yield* createPrNeedsPush(input.cwd, initialStatus))));
         const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
 
         if (input.featureBranch && !wantsCommit) {

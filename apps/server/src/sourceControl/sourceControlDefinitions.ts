@@ -1,11 +1,18 @@
 import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/driver";
 import * as BitbucketDriver from "@t3tools/source-control-bitbucket/server/driver";
 import * as CursorOriginDriver from "@t3tools/source-control-cursor-origin/server/driver";
-import { builtInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
+import { makeBuiltInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
 import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
 import * as GitCafeDriver from "@t3tools/source-control-gitcafe/server/driver";
 import * as GitHubDriver from "@t3tools/source-control-github/server/driver";
 import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
+import * as TanStackSourceDriver from "@t3tools/source-control-tanstack-source/server/driver";
+
+/**
+ * TanStack Source is in private beta, so its forge exists only on a server started with
+ * `T3CODE_TANSTACK_SOURCE=1`. Read once at load: the registry below is a module constant.
+ */
+const tanStackSourceEnabled = process.env.T3CODE_TANSTACK_SOURCE?.trim() === "1";
 
 /** In the shared registry's order, which is the order hosts are listed and probed in. */
 export const BUILT_IN_SOURCE_CONTROL_DRIVER_LIST = [
@@ -13,12 +20,15 @@ export const BUILT_IN_SOURCE_CONTROL_DRIVER_LIST = [
   CursorOriginDriver.driver,
   GitLabDriver.driver,
   GitCafeDriver.driver,
+  ...(tanStackSourceEnabled ? [TanStackSourceDriver.driver] : []),
   ForgejoDriver.driver,
   BitbucketDriver.driver,
   AzureDevOpsDriver.driver,
-] as const;
+];
 
-export const sourceControlDefinitions = builtInSourceControlDefinitions;
+export const sourceControlDefinitions = makeBuiltInSourceControlDefinitions({
+  tanStackSource: tanStackSourceEnabled,
+});
 
 /** A host CLI command that merges or closes a change request, such as `gh pr merge`. */
 export const isChangeRequestCloseCommand = (command: string) =>

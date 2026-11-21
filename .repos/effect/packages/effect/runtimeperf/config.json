@@ -12,6 +12,130 @@
   },
   "suites": [
     {
+      "name": "protobuf",
+      "fixtures": [
+        {
+          "file": "suites/protobuf/fixtures/cases.ts",
+          "defaults": {
+            "tier": 1,
+            "implementation": "effect",
+            "astTags": [],
+            "path": "valid"
+          },
+          "cases": [
+            {
+              "name": "encode-small",
+              "export": "encodeSmall",
+              "scenario": "protobuf-encode-small",
+              "operation": "encode",
+              "size": 2,
+              "family": "scalars"
+            },
+            {
+              "name": "decode-small",
+              "export": "decodeSmall",
+              "scenario": "protobuf-decode-small",
+              "operation": "decode",
+              "size": 2,
+              "family": "scalars"
+            },
+            {
+              "name": "encode-nested",
+              "export": "encodeNested",
+              "scenario": "protobuf-encode-nested",
+              "operation": "encode",
+              "size": 16,
+              "family": "messages"
+            },
+            {
+              "name": "decode-nested",
+              "export": "decodeNested",
+              "scenario": "protobuf-decode-nested",
+              "operation": "decode",
+              "size": 16,
+              "family": "messages"
+            },
+            {
+              "name": "encode-packed",
+              "export": "encodePacked",
+              "scenario": "protobuf-encode-packed",
+              "operation": "encode",
+              "size": 2048,
+              "family": "packed"
+            },
+            {
+              "name": "decode-packed",
+              "export": "decodePacked",
+              "scenario": "protobuf-decode-packed",
+              "operation": "decode",
+              "size": 2048,
+              "family": "packed"
+            },
+            {
+              "name": "encode-bytes",
+              "export": "encodeBytes",
+              "scenario": "protobuf-encode-bytes",
+              "operation": "encode",
+              "size": 65536,
+              "family": "bytes"
+            },
+            {
+              "name": "decode-bytes",
+              "export": "decodeBytes",
+              "scenario": "protobuf-decode-bytes",
+              "operation": "decode",
+              "size": 65536,
+              "family": "bytes"
+            },
+            {
+              "name": "decode-merged-unknown",
+              "export": "decodeMergedUnknown",
+              "scenario": "protobuf-decode-merged-unknown",
+              "operation": "decode",
+              "size": 500,
+              "family": "unknown",
+              "path": "valid"
+            },
+            {
+              "name": "decode-message-set",
+              "export": "decodeMessageSet",
+              "scenario": "protobuf-decode-message-set",
+              "operation": "decode",
+              "size": 128,
+              "family": "extensions"
+            },
+            {
+              "name": "decode-fresh-descriptor",
+              "export": "decodeFreshDescriptor",
+              "scenario": "protobuf-decode-fresh-descriptor",
+              "operation": "construct-decode",
+              "size": 1,
+              "family": "initialization",
+              "path": "valid"
+            },
+            {
+              "name": "decode-malformed",
+              "export": "decodeMalformed",
+              "scenario": "protobuf-decode-malformed",
+              "operation": "decode",
+              "size": 2,
+              "family": "errors",
+              "path": "invalid"
+            },
+            {
+              "name": "encode-otlp-logs",
+              "export": "encodeOtlpLogs",
+              "scenario": "protobuf-encode-otlp-logs",
+              "operation": "encode",
+              "size": 16,
+              "family": "otlp",
+              "path": "valid"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "schema-checked-sources",
       "fixtures": [
         {

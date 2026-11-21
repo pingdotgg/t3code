@@ -93,7 +93,9 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
+  SUBAGENT_RESULT_TURN_ITEM_TYPES,
   subagentResultForRun,
+  subagentStopNotice,
   delegatedTaskProgress,
   delegatedTaskReportRuns,
 } from "@t3tools/provider-core/server/subagentProjection";
@@ -264,6 +266,8 @@ export function threadManagementFailure(error: unknown): OrchestratorMcpFailure 
         "thread_not_sendable",
         `${error.message} Send with mode: "auto" or "queue" to start a new turn there.`,
       );
+    case "ThreadManagementRunOutputRejectedError":
+      return failure("invalid_request", error.message);
     case "ThreadManagementThreadNotInterruptibleError":
       return failure("thread_not_interruptible", error.message);
     case "ThreadManagementProjectionLoadError":
@@ -733,15 +737,26 @@ function pageIncludesTerminalTaskResult(input: {
   const result = subagentResultForRun(input.target, run);
   if (result.messageId === null && result.turnItemId === null) return false;
 
-  return input.items.some((item) => {
-    if (item.sourceThreadId !== input.target.thread.id) return false;
-    const matchesResult =
-      (result.turnItemId !== null && item.itemId === result.turnItemId) ||
-      (result.messageId !== null &&
-        item.type === "assistant_message" &&
-        item.messageId === result.messageId);
-    return matchesResult && item.text !== null && !item.textTruncated;
-  });
+  const onPage = (matches: (item: OrchestratorMcpThreadTimelineItem) => boolean) =>
+    input.items.some(
+      (item) =>
+        item.sourceThreadId === input.target.thread.id &&
+        matches(item) &&
+        item.text !== null &&
+        !item.textTruncated,
+    );
+  // The result ends with the stop reason, so the page shows it only when it has both.
+  const notice = subagentStopNotice(input.target, run);
+  return (
+    onPage(
+      (item) =>
+        (result.turnItemId !== null && item.itemId === result.turnItemId) ||
+        (result.messageId !== null &&
+          item.type === "assistant_message" &&
+          item.messageId === result.messageId),
+    ) &&
+    (notice === undefined || onPage((item) => item.itemId === notice.id))
+  );
 }
 
 function latestTerminalResultRun(
@@ -1897,7 +1912,7 @@ const make = Effect.gen(function* () {
         messageRoles: ["assistant"],
         messageRunIds: resultRunIds,
         turnItemRunIds: resultRunIds,
-        turnItemTypes: ["assistant_message", "error", "system_notice"],
+        turnItemTypes: SUBAGENT_RESULT_TURN_ITEM_TYPES,
       })
       .pipe(Effect.mapError(threadManagementFailure));
     const childProjection = {
@@ -3639,10 +3654,11 @@ const make = Effect.gen(function* () {
       const view = input.view ?? "messages";
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
-      // Client callers (the CLI, older linked environments) page forward from a cursorless read.
+      // Client callers (the CLI) page forward from a cursorless read.
       const newestFirst =
         input.beforePosition !== undefined ||
-        (input.afterPosition === undefined && scope.thread !== undefined);
+        (input.afterPosition === undefined &&
+          (scope.thread !== undefined || scope.client?.linked === true));
       const timeline = yield* threadManagement
         .getTimelinePage(input.threadId, {
           ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),
@@ -3679,8 +3695,8 @@ const make = Effect.gen(function* () {
         shell,
         yield* Clock.currentTimeMillis,
         input.afterPosition === undefined &&
-          input.beforePosition === undefined &&
-          input.itemId === undefined,
+          input.itemId === undefined &&
+          (input.beforePosition === undefined || input.beforePosition >= timeline.totalItems),
       );
       const recentRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
@@ -3726,7 +3742,7 @@ const make = Effect.gen(function* () {
               messageRoles: ["assistant"],
               messageRunIds: resultRunIds,
               turnItemRunIds: resultRunIds,
-              turnItemTypes: ["assistant_message", "error"],
+              turnItemTypes: SUBAGENT_RESULT_TURN_ITEM_TYPES,
             })
             .pipe(Effect.mapError(threadManagementFailure));
           if (
@@ -3787,6 +3803,7 @@ const make = Effect.gen(function* () {
           attachments: [],
           mode,
           ...(input.freshContext ? { freshContext: true } : {}),
+          ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
           createdBy: "agent",
           creationSource: "mcp",
         })
@@ -3822,6 +3839,7 @@ const make = Effect.gen(function* () {
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
           ),
           ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
+          ...(input.untilOutput === true ? { untilOutput: true } : {}),
         })
         .pipe(Effect.mapError(threadManagementFailure));
       const status = result.run === null ? "idle" : runOutcome(result.run);
@@ -3858,6 +3876,7 @@ const make = Effect.gen(function* () {
           : {
               resultRun: { runId: result.resultRun.id, status: runOutcome(result.resultRun) },
             }),
+        ...(result.run?.output === undefined ? {} : { output: result.run.output.value }),
       } satisfies OrchestratorMcpThreadWaitResult;
     }),
     interruptThread: Effect.fn("OrchestratorMcpService.interruptThread")(function* (scope, input) {

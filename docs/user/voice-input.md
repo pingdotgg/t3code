@@ -24,6 +24,13 @@ Set it back to **Off** at any time; a recording in progress is discarded.
 If the chosen environment goes offline, voice input waits for it. T3 Code never
 substitutes another environment.
 
+In the desktop app on macOS 26 or later, you can instead choose **Apple Speech**
+under **On this Mac**. Audio stays on the Mac and macOS transcribes it. The first
+recording in a language can take longer while macOS downloads its speech model.
+**Language** set to automatic uses your Mac's language. Silence filtering and
+filler-word removal are not available; the dictionary applies only when transcript
+cleanup is on.
+
 For cloud dictation, choose **OpenAI** or **Grok Voice Transcribe** via the environment
 you want to use. If it needs a key, enter one and choose **Save and enable**.
 You can also choose a [secret provider](secrets.md) instead of **Value** and enter a
@@ -90,6 +97,8 @@ five minutes. Text is inserted at the cursor or replaces the selection you had
 when recording started, and the editor is read-only while dictation runs.
 Changes that reach the draft meanwhile, such as a cited message, are kept;
 the text then goes after your selection instead of replacing it.
+A file or thread you paste or drop in meanwhile can be removed by focusing its
+chip and pressing Backspace or Delete.
 
 Pressing Send while dictating finishes the recording and sends the draft once
 the transcript has been inserted. Cancelling also cancels that queued send. In
