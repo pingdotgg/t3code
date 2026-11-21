@@ -110,7 +110,8 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
   }
   const run = yield* claim(name);
   const agents = yield* WorkflowAgents;
-  const outputSchema = options.returns === undefined ? undefined : jsonSchemaOf(options.returns);
+  const outputSchema =
+    options.returns === undefined ? undefined : jsonSchemaOf(options.returns, true);
   // Only a turn asked for a result can owe one from a later turn.
   const quiet =
     options.quiet === undefined || outputSchema === undefined
@@ -277,18 +278,20 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
         yield* done(round, result.reply);
         return { outcome: "done", value: result.reply as A, thread: threadOf(turn) };
       }
-      const decoded =
-        result.output === undefined
-          ? Result.fail("it ended its turn without submitting a result")
-          : yield* decodeOutput(result.output).pipe(
-              Effect.mapError((error) => `its result no longer fits: ${text(error)}`),
-              Effect.result,
-            );
-      if (Result.isSuccess(decoded)) {
-        yield* done(round, result.output ?? null, result.reply);
-        return { outcome: "done", value: decoded.success, thread: threadOf(turn) };
+      // What the submitted result got wrong; undefined when nothing was submitted.
+      let misfit: string | undefined;
+      if (result.output !== undefined) {
+        const decoded = yield* Effect.result(decodeOutput(result.output));
+        if (Result.isSuccess(decoded)) {
+          yield* done(round, result.output, result.reply);
+          return { outcome: "done", value: decoded.success, thread: threadOf(turn) };
+        }
+        misfit = text(decoded.failure);
       }
-      problem = `the agent did not return a result: ${decoded.failure}`;
+      problem =
+        misfit === undefined
+          ? "the agent did not return a result: it ended its turn without submitting a result"
+          : `the agent's result did not fit: ${misfit}`;
       if (correction >= CORRECTIONS) break;
       // Back to the same thread: it has the context and only owes the result.
       const corrected = yield* journaled(
@@ -298,7 +301,9 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
         AgentTurn,
         start(
           `${round}/correct/${correction}`,
-          "Your turn ended without a submitted result. Do not redo the work: call `t3_submit_output` now with the result of what you did.",
+          misfit === undefined
+            ? "Your turn ended without a submitted result. Do not redo the work: call `t3_submit_output` now with the result of what you did."
+            : `The result you submitted does not fit: ${misfit}\nDo not redo the work: call \`t3_submit_output\` again with a corrected result.`,
           threadOf(turn),
         ),
       );
