@@ -14,6 +14,8 @@ const MuseUsage = Schema.Struct({
 
 export const MuseItem = Schema.Struct({
   entryId: Schema.optional(Schema.String),
+  /** `toolCall`: `true` once Muse durably backgrounded the task; the work outlives the call. */
+  background: Schema.optional(Schema.Boolean),
   children: Schema.optional(
     Schema.Array(
       Schema.Struct({
@@ -160,6 +162,17 @@ export const MuseTurnCompleted = Schema.Struct({
     }),
   ),
   usage: Schema.optional(MuseUsage),
+});
+/** `task/list`: one row per live background workload, monitors and backgrounded tool calls alike. */
+export const MuseTaskList = Schema.Struct({
+  tasks: Schema.Array(
+    Schema.Struct({
+      taskId: NonEmptyString,
+      kind: Schema.String,
+      status: Schema.String,
+      tool: Schema.optional(Schema.String),
+    }),
+  ),
 });
 /** The latest instant a JavaScript Date holds; formatting a later one throws. */
 export const LATEST_DATE_MS = 8.64e15;
