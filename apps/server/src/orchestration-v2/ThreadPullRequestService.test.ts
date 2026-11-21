@@ -638,6 +638,97 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     }),
   );
 
+  it.effect("backfills only threads settled within the last seven days", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(NOW));
+      const boundary = DateTime.subtract(NOW, { days: 7 });
+      const old = DateTime.subtract(boundary, { milliseconds: 1 });
+      const threads = [
+        { id: "recent", settledAt: NOW },
+        { id: "boundary", settledAt: boundary },
+        { id: "old", settledAt: old, updatedAt: old },
+        // Auto-settle records old activity in settledAt but updates updatedAt now.
+        { id: "auto-settled", settledAt: old, updatedAt: NOW },
+        { id: "old-unsettled", updatedAt: old },
+        { id: "recent-override", settledOverride: "settled" as const, updatedAt: NOW },
+        { id: "old-override", settledOverride: "settled" as const, updatedAt: old },
+      ].map(({ id, ...overrides }) => ({
+        ...threadShell(id),
+        ...overrides,
+        branch: id,
+      })) satisfies ReadonlyArray<OrchestrationV2ThreadShell>;
+      const project: OrchestrationProjectShell = {
+        id: ProjectId.make("project-1"),
+        title: "Project",
+        workspaceRoot: "/workspace/project",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      };
+      const activation = yield* Deferred.make<void>();
+      const sweepStarted = yield* Deferred.make<void>();
+      const branches: Array<string> = [];
+      const dependencies = Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          streamDomainEvents: Stream.never,
+          getPullRequestSnapshot: () =>
+            Deferred.succeed(sweepStarted, undefined).pipe(
+              Effect.as({ snapshotSequence: 1, threads }),
+            ),
+        }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({
+          listShells: () => Effect.succeed([project]),
+          getShell: () => Effect.succeedSome(project),
+        }),
+        Layer.mock(GitManager.GitManager)({
+          branchPullRequest: ({ branch }) =>
+            Effect.sync(() => {
+              branches.push(branch);
+              return null;
+            }),
+        }),
+        Layer.mock(PullRequestService.PullRequestService)({}),
+        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+          resolve: () =>
+            Effect.succeed({
+              canonicalKey: "github.com/acme/project",
+              locator: {
+                source: "git-remote" as const,
+                remoteName: "origin",
+                remoteUrl: "git@github.com:acme/project.git",
+              },
+              provider: SourceControlProviderKind.make("github"),
+              owner: "acme",
+              name: "project",
+            }),
+        }),
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+        Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+        Layer.succeed(
+          SecureRandom.SecureRandom,
+          SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+        ),
+        FileSystem.layerNoop({}),
+        Path.layer,
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadPullRequestService.make;
+        yield* service.start();
+        yield* Deferred.succeed(activation, undefined);
+        yield* Deferred.await(sweepStarted);
+        yield* service.drain;
+      }).pipe(Effect.provide(dependencies));
+
+      expect(branches.toSorted()).toEqual([
+        "boundary",
+        "old-unsettled",
+        "recent",
+        "recent-override",
+      ]);
+    }),
+  );
+
   it.effect.each([
     { state: "open", checkedOut: false },
     { state: "merged", checkedOut: false },

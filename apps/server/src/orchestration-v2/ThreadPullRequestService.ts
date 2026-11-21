@@ -12,6 +12,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -106,6 +107,7 @@ export function projectWorkspaceMatchesSnapshot(
 }
 
 const BACKFILL_ATTEMPTS = 5;
+const BACKFILL_WINDOW = Duration.days(7);
 
 interface RefreshRequest {
   readonly threadId: ThreadId | null;
@@ -160,10 +162,13 @@ export const make = Effect.gen(function* () {
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     if (request.backfill) {
+      const cutoff = nowMs - Duration.toMillis(BACKFILL_WINDOW);
       for (const thread of snapshotThreads) {
+        // Auto-settle updates updatedAt, so prefer the last activity in settledAt.
         if (
           (thread.settledOverride === "settled" || thread.settledAt !== null) &&
-          thread.branchPullRequest == null
+          thread.branchPullRequest == null &&
+          DateTime.toEpochMillis(thread.settledAt ?? thread.updatedAt) >= cutoff
         ) {
           pendingBackfill.set(thread.id, BACKFILL_ATTEMPTS);
         }
