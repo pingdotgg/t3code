@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -50,9 +52,12 @@ import {
   LinuxBrowserSecretHostError,
   LinuxPackagedAppMissingError,
   MacPackagedAppMissingError,
+  MacUpdateZipTimestampError,
   stageBrowserSecret,
   validateLinuxPackagedPayload,
   validateMacPackagedPayload,
+  validateMacUpdateZips,
+  validateMacUpdateZipTimestamps,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
   WindowsPrimaryNativeProbeError,
@@ -1973,4 +1978,191 @@ it.effect.skipIf(!symlinksSupported)("preserves relative links when replacing di
     assert.equal(yield* fs.readLink(path.join(output, app, "Current")), "New.plist");
     assert.equal(yield* fs.readFileString(path.join(output, app, "Current")), "rebuilt-app");
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+function buildSyntheticZip(
+  entries: ReadonlyArray<{
+    readonly name: string;
+    readonly localExtra: Buffer;
+    readonly cdExtra?: Buffer;
+    readonly versionMadeBy?: number;
+    readonly externalAttr?: number;
+  }>,
+): Buffer {
+  const locals: Buffer[] = [];
+  const cds: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const nameBuf = Buffer.from(entry.name, "utf8");
+    const cdExtra = entry.cdExtra ?? entry.localExtra;
+    const localHeader = Buffer.alloc(30 + nameBuf.length + entry.localExtra.length);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(nameBuf.length, 26);
+    localHeader.writeUInt16LE(entry.localExtra.length, 28);
+    nameBuf.copy(localHeader, 30);
+    entry.localExtra.copy(localHeader, 30 + nameBuf.length);
+    locals.push(localHeader);
+
+    const cdHeader = Buffer.alloc(46 + nameBuf.length + cdExtra.length);
+    cdHeader.writeUInt32LE(0x02014b50, 0);
+    cdHeader.writeUInt16LE(entry.versionMadeBy ?? 20, 4);
+    cdHeader.writeUInt16LE(20, 6);
+    cdHeader.writeUInt16LE(nameBuf.length, 28);
+    cdHeader.writeUInt16LE(cdExtra.length, 30);
+    cdHeader.writeUInt32LE(entry.externalAttr ?? 0, 38);
+    cdHeader.writeUInt32LE(offset, 42);
+    nameBuf.copy(cdHeader, 46);
+    cdExtra.copy(cdHeader, 46 + nameBuf.length);
+    cds.push(cdHeader);
+
+    offset += localHeader.length;
+  }
+
+  const cdBytes = Buffer.concat(cds);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(cdBytes.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+
+  return Buffer.concat([...locals, cdBytes, eocd]);
+}
+
+function makeZipExtraField(headerId: number, payloadLength: number): Buffer {
+  const buf = Buffer.alloc(4 + payloadLength);
+  buf.writeUInt16LE(headerId, 0);
+  buf.writeUInt16LE(payloadLength, 2);
+  return buf;
+}
+
+it.effect("validateMacUpdateZipTimestamps requires Info-ZIP UX extra field 0x5855", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-zip-ts-" });
+
+    const validZip = path.join(root, "valid.zip");
+    yield* fs.writeFile(
+      validZip,
+      buildSyntheticZip([
+        { name: "T3 Code.app/Contents/MacOS/T3 Code", localExtra: makeZipExtraField(0x5855, 8) },
+        {
+          name: "T3 Code.app/Contents/Frameworks/Foo.framework/Versions/Current",
+          localExtra: Buffer.alloc(0),
+          versionMadeBy: 0x031e,
+          externalAttr: (0o120755 << 16) >>> 0,
+        },
+      ]),
+    );
+    yield* validateMacUpdateZipTimestamps(validZip);
+
+    for (const [label, localExtra, cdExtra] of [
+      ["ntfs-only", makeZipExtraField(0x000a, 32), makeZipExtraField(0x000a, 32)],
+      ["ut-only", makeZipExtraField(0x5455, 5), makeZipExtraField(0x5455, 5)],
+      ["truncated-ux", makeZipExtraField(0x5855, 4), makeZipExtraField(0x5855, 4)],
+      ["cd-only-ux", Buffer.alloc(0), makeZipExtraField(0x5855, 8)],
+    ] as const) {
+      const badZip = path.join(root, `${label}.zip`);
+      yield* fs.writeFile(
+        badZip,
+        buildSyntheticZip([{ name: "T3 Code.app/Contents/MacOS/T3 Code", localExtra, cdExtra }]),
+      );
+      const err = yield* validateMacUpdateZipTimestamps(badZip).pipe(Effect.flip);
+      assert.instanceOf(err, MacUpdateZipTimestampError);
+      assert.include(err.message, "0x5855");
+    }
+
+    const emptyDir = path.join(root, "empty-dist");
+    yield* fs.makeDirectory(emptyDir, { recursive: true });
+    yield* validateMacUpdateZips({ stageDistDir: emptyDir, expectZip: false });
+    const missingZipErr = yield* validateMacUpdateZips({
+      stageDistDir: emptyDir,
+      expectZip: true,
+    }).pipe(Effect.flip);
+    assert.instanceOf(missingZipErr, MacUpdateZipTimestampError);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+async function runAppBuilderMacZipInUtc(appDir: string, outZip: string): Promise<void> {
+  const desktopReq = NodeModule.createRequire(
+    NodePath.resolve(import.meta.dirname, "../apps/desktop/package.json"),
+  );
+  const ebReq = NodeModule.createRequire(desktopReq.resolve("electron-builder/package.json"));
+  const { archive } = ebReq("app-builder-lib/out/targets/archive.js") as {
+    archive: (
+      format: string,
+      outFile: string,
+      dirToArchive: string,
+      options?: { preserveSymlinks?: boolean },
+    ) => Promise<string>;
+  };
+  const previousTz = process.env.TZ;
+  process.env.TZ = "UTC";
+  try {
+    await archive("zip", outZip, appDir, { preserveSymlinks: true });
+  } finally {
+    if (previousTz === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = previousTz;
+    }
+  }
+}
+
+it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
+  "app-builder-lib macOS zip preserves UTC mtime, symlinks, and executable mode through ditto",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-zip-roundtrip-" });
+
+      const appDir = path.join(root, "Demo.app");
+      const macOsDir = path.join(appDir, "Contents/MacOS");
+      const frameworkVersionsDir = path.join(appDir, "Contents/Frameworks/Foo.framework/Versions");
+      const versionADir = path.join(frameworkVersionsDir, "A");
+      yield* fs.makeDirectory(macOsDir, { recursive: true });
+      yield* fs.makeDirectory(versionADir, { recursive: true });
+
+      const binPath = path.join(macOsDir, "Demo");
+      yield* fs.writeFileString(binPath, "#!/bin/sh\necho ok\n");
+      yield* fs.chmod(binPath, 0o755);
+      yield* fs.symlink("A", path.join(frameworkVersionsDir, "Current"));
+
+      // 2026-11-21T01:45:08Z — 8h ahead of PST if interpreted as local time.
+      const expectedUtcSeconds = 1_795_225_508;
+      yield* Effect.promise(() => NodeFSP.utimes(binPath, expectedUtcSeconds, expectedUtcSeconds));
+
+      const outZip = path.join(root, "Demo.zip");
+      yield* Effect.promise(() => runAppBuilderMacZipInUtc(appDir, outZip));
+
+      yield* validateMacUpdateZipTimestamps(outZip);
+
+      const extractedDir = path.join(root, "extracted");
+      yield* fs.makeDirectory(extractedDir, { recursive: true });
+      const ditto = yield* spawner.spawn(
+        ChildProcess.make("ditto", ["-x", "-k", outZip, extractedDir], {
+          env: { TZ: "America/Los_Angeles" },
+          extendEnv: true,
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "pipe",
+        }),
+      );
+      assert.equal(Number(yield* ditto.exitCode), 0);
+
+      const extractedBin = path.join(extractedDir, "Demo.app/Contents/MacOS/Demo");
+      const extractedStat = yield* Effect.promise(() => NodeFSP.lstat(extractedBin));
+      assert.equal(Math.trunc(extractedStat.mtimeMs / 1000), expectedUtcSeconds);
+      assert.equal(extractedStat.mode & 0o777, 0o755);
+      assert.equal(
+        yield* fs.readLink(
+          path.join(extractedDir, "Demo.app/Contents/Frameworks/Foo.framework/Versions/Current"),
+        ),
+        "A",
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

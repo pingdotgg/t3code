@@ -267,6 +267,8 @@ patchedDependencies:
   expo-modules-core@58.0.30: patches/expo-modules-core@58.0.30.patch
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
+  # NSIS: read uninstaller stub on Linux without wine; macOS zip: pack with `ditto` so
+  # Squirrel.Mac gets 0x5855 UTC timestamps instead of UTC DOS times interpreted as local time.
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
   # The spawner takes an injected spawn function (and uses it for taskkill) so Windows launches
   # can run on worker threads: apps/server/src/process/SpawnWorker.ts.

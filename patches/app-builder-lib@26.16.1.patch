@@ -1,3 +1,28 @@
+diff --git a/out/targets/archive.js b/out/targets/archive.js
+--- a/out/targets/archive.js
++++ b/out/targets/archive.js
+@@ -156,6 +156,21 @@
+         builder_util_1.log.info({ reason: "Archive file is up to date", outFile }, `skipped archiving`);
+         return outFile;
+     }
++    if (process.platform === "darwin" && format === "zip" && (options.excluded == null || options.excluded.length === 0) && options.compression !== "store" && options.preserveSymlinks === true) {
++        // Squirrel.Mac extracts macOS update zips with `ditto -x -k`, which ignores both
++        // 7za's NTFS (0x000a) and Info-ZIP's UT (0x5455) extra fields, falling back to
++        // the UTC MS-DOS header as local time (+8h in PST). `ditto -c -k --norsrc`
++        // writes 0x5855 (UX) UTC timestamps (with default deflate compression) and
++        // preserves symlinks and modes natively.
++        await (0, builder_util_1.unlinkIfExists)(outFile);
++        const dittoArgs = ["-c", "-k", "--norsrc"];
++        if (!options.withoutDir) {
++            dittoArgs.push("--keepParent");
++        }
++        dittoArgs.push(dirToArchive, outFile);
++        await (0, builder_util_1.exec)("ditto", dittoArgs, undefined, builder_util_1.debug7z.enabled);
++        return outFile;
++    }
+     // Use 7za for all formats (matches pre-26.15 behavior). Native macOS `zip` is only a
+     // fallback for NFD-normalized filenames, which 7za mangles.
+     let use7z = true;
 diff --git a/out/targets/nsis/NsisTarget.js b/out/targets/nsis/NsisTarget.js
 index 8a3462b185b078a260483635e6d774e2ece6e269..105778c145ab63a26444179215c643a7f22148a0 100644
 --- a/out/targets/nsis/NsisTarget.js
