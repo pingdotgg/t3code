@@ -187,11 +187,13 @@ export const forStep = (
       Signals.of({
         send: Effect.fn("Signals.send")(function* (address, value, options) {
           const { signal: send } = yield* engineOf(link);
-          const to = JSON.stringify(
+          const to = (
             "runId" in address
-              ? [address.runId, address.wait]
-              : [address.workflow, address.channel],
-          );
+              ? ["run", address.runId, address.wait]
+              : ["key", address.workflow, address.channel]
+          )
+            .map(encodeURIComponent)
+            .join("/");
           const before = sent.get(to) ?? 0;
           sent.set(to, before + 1);
           return yield* send(address, value, {
