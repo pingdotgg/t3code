@@ -332,6 +332,7 @@ export function AttachmentFilePreview(props: {
       name={props.name}
       kind={kind}
       onRetry={() => setRevision((value) => value + 1)}
+      refreshSrc={refresh}
     />
   ) : kind === "font" ? (
     <Suspense fallback={<FileSurfaceLoading />}>

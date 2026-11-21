@@ -164,13 +164,9 @@ describe("bounded binary previews", () => {
         worker.addEventListener("error", reject, { once: true });
         worker.postMessage(input, []);
       });
+    const src = URL.createObjectURL(new Blob([bytes]));
     try {
-      const result = await request({
-        type: "open",
-        kind: "archive",
-        name: "pax.tar",
-        bytes: bytes.buffer,
-      });
+      const result = await request({ type: "open", kind: "archive", name: "pax.tar", src });
       expect(result.type).toBe("archive");
       if (result.type !== "archive") throw new Error("Expected archive");
       expect(result.entries.map((entry) => [entry.path, entry.size, entry.modified])).toEqual([
@@ -216,12 +212,14 @@ describe("bounded binary previews", () => {
           new Uint8Array(1024),
         ]).arrayBuffer(),
       );
+      const skippedSrc = URL.createObjectURL(new Blob([unresolved]));
       const skipped = await request({
         type: "open",
         kind: "archive",
         name: "links.tar",
-        bytes: unresolved.buffer,
+        src: skippedSrc,
       });
+      URL.revokeObjectURL(skippedSrc);
       if (skipped.type !== "archive") throw new Error("Expected archive");
       expect(skipped.entries.map((entry) => entry.path)).toEqual([
         "later.txt",
@@ -235,6 +233,7 @@ describe("bounded binary previews", () => {
       });
     } finally {
       worker.terminate();
+      URL.revokeObjectURL(src);
     }
   });
 

@@ -53,6 +53,7 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
       "self",
       Object.assign(worker, { postMessage: (result: BinaryWorkerResult) => receive(result) }),
     );
+    vi.stubGlobal("fetch", async () => new Response(bytes));
     try {
       vi.resetModules();
       await import("./binaryPreview.worker");
@@ -63,9 +64,10 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
         });
       using copies = vi.spyOn(Uint8Array.prototype, "slice");
       expect(
-        await request({ type: "open", kind: "archive", name: "mixed.tar", bytes: bytes.buffer }),
+        await request({ type: "open", kind: "archive", name: "mixed.tar", src: "mixed.tar" }),
       ).toEqual({
         type: "archive",
+        sizeBytes: bytes.length,
         entries: entries.map((entry) => ({
           path: entry.path,
           size: contents(entry).length,

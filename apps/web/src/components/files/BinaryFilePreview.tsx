@@ -9,6 +9,7 @@ export function BinaryFilePreview(props: {
   readonly name: string;
   readonly kind: "archive" | "sqlite";
   readonly onRetry?: () => void;
+  readonly refreshSrc?: () => Promise<string | null>;
 }) {
   return (
     <Suspense fallback={<FileSurfaceLoading />}>
