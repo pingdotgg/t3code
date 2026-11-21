@@ -1073,7 +1073,14 @@ fn render_review_verdict_event(
         .map_or("ghost", |a| a.login.as_str())
         .to_owned();
 
-    let marker_child = render_actor_avatar(tokens, event.actor.as_ref(), 24.0);
+    let base_outcome = review_outcome_color(tokens, outcome);
+    let ring_color = if stale {
+        to_hsla(color_mix_srgb(base_outcome, 0.35, tokens.shell_card))
+    } else {
+        to_hsla(base_outcome)
+    };
+    let marker_child =
+        chrome::actor_avatar(tokens, event.actor.as_ref(), 24.0, Some(ring_color), false);
     let mut header = h_flex()
         .w_full()
         .min_w_0()
@@ -1177,7 +1184,7 @@ fn render_conversation_group(
     };
 
     let marker_child: AnyElement = if let Some(actor) = first.and_then(|e| e.actor.as_ref()) {
-        let avatar = render_actor_avatar(tokens, Some(actor), 24.0);
+        let avatar = chrome::actor_avatar(tokens, Some(actor), 24.0, None, !is_open);
         if is_open {
             avatar
         } else {
@@ -1290,7 +1297,7 @@ fn render_review_thread_event(
         .to_owned();
 
     let marker_child: AnyElement = {
-        let avatar = render_actor_avatar(tokens, event.actor.as_ref(), 24.0);
+        let avatar = chrome::actor_avatar(tokens, event.actor.as_ref(), 24.0, None, !is_expanded);
         if is_expanded {
             avatar
         } else {

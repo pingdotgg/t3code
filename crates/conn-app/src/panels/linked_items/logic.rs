@@ -1014,17 +1014,6 @@ fn build_change_request_url(
     }
 }
 
-/// First uppercase initial of an actor's login (`PullRequestActorAvatar`).
-#[must_use]
-pub(super) fn actor_initial(actor: Option<&PullRequestActor>) -> String {
-    let login = actor.map_or("ghost", |a| a.login.as_str());
-    login
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_else(|| "?".to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use conn_contract::{ThreadPullRequestStack, ThreadPullRequestStackLayer, lit};

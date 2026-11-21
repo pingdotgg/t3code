@@ -20,12 +20,136 @@ mod superhero;
 mod theme;
 mod vibrancy;
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use app::ConnApp;
 use conn_theme::Tokens;
+use futures::AsyncReadExt as _;
+use futures::future::BoxFuture;
+use gpui_kit::http_client::{
+    AsyncBody, HttpClient, Inner as AsyncBodyInner, RedirectPolicy, RequestTimeout, Url, anyhow,
+    http,
+};
 use gpui_kit::{
     AppContext as _, Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
     WindowOptions, point, px, size,
 };
+
+/// Default request timeout for GPUI asset fetches (avatars, remote images).
+const HTTP_CLIENT_TIMEOUT: Duration = Duration::from_secs(15);
+const HTTP_CLIENT_USER_AGENT: &str = "conn-gpui/0.1";
+
+/// Minimal GPUI [`HttpClient`] backed by the workspace `reqwest` client on [`live::RT`].
+///
+/// GPUI's background executor is not a Tokio runtime, so every `reqwest` call executes inside
+/// `live::RT` and resolves back into GPUI's future cleanly.
+#[derive(Debug)]
+struct ReqwestHttpClient {
+    follow_client: reqwest::Client,
+    no_redirect_client: reqwest::Client,
+    user_agent: http::HeaderValue,
+}
+
+impl ReqwestHttpClient {
+    fn new() -> Result<Self, reqwest::Error> {
+        let follow_client = reqwest::Client::builder()
+            .user_agent(HTTP_CLIENT_USER_AGENT)
+            .timeout(HTTP_CLIENT_TIMEOUT)
+            .build()?;
+        let no_redirect_client = reqwest::Client::builder()
+            .user_agent(HTTP_CLIENT_USER_AGENT)
+            .timeout(HTTP_CLIENT_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        Ok(Self {
+            follow_client,
+            no_redirect_client,
+            user_agent: http::HeaderValue::from_static(HTTP_CLIENT_USER_AGENT),
+        })
+    }
+}
+
+impl HttpClient for ReqwestHttpClient {
+    fn user_agent(&self) -> Option<&http::HeaderValue> {
+        Some(&self.user_agent)
+    }
+
+    fn proxy(&self) -> Option<&Url> {
+        None
+    }
+
+    fn send(
+        &self,
+        req: http::Request<AsyncBody>,
+    ) -> BoxFuture<'static, gpui_kit::http_client::Result<http::Response<AsyncBody>>> {
+        let (parts, mut body) = req.into_parts();
+        let redirect_policy = parts
+            .extensions
+            .get::<RedirectPolicy>()
+            .cloned()
+            .unwrap_or_default();
+        let request_timeout = parts.extensions.get::<RequestTimeout>().copied();
+        let client = match redirect_policy {
+            RedirectPolicy::NoFollow => self.no_redirect_client.clone(),
+            RedirectPolicy::FollowLimit(_) | RedirectPolicy::FollowAll => {
+                self.follow_client.clone()
+            }
+        };
+
+        Box::pin(async move {
+            let body_bytes = if matches!(body.0, AsyncBodyInner::Empty) {
+                Vec::new()
+            } else {
+                let mut buf = Vec::new();
+                body.read_to_end(&mut buf).await?;
+                buf
+            };
+
+            let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes())
+                .map_err(|err| anyhow!("invalid HTTP method: {err}"))?;
+            let uri = parts.uri.to_string();
+            let headers = parts.headers;
+
+            let task = live::RT.spawn(async move {
+                let mut builder = client.request(method, uri);
+                for (name, value) in &headers {
+                    builder = builder.header(name.as_str(), value.as_bytes());
+                }
+                if let Some(RequestTimeout(timeout)) = request_timeout {
+                    builder = builder.timeout(timeout);
+                }
+                if !body_bytes.is_empty() {
+                    builder = builder.body(body_bytes);
+                }
+
+                let response = builder.send().await?;
+                let status = response.status().as_u16();
+                let resp_headers = response.headers().clone();
+                let resp_bytes = response.bytes().await?;
+                Ok::<_, reqwest::Error>((status, resp_headers, resp_bytes))
+            });
+
+            let (status, resp_headers, resp_bytes) = task
+                .await
+                .map_err(|err| anyhow!("HTTP task join error: {err}"))?
+                .map_err(|err| anyhow!("HTTP request failed: {err}"))?;
+
+            let mut response_builder = http::Response::builder().status(status);
+            for (name, value) in &resp_headers {
+                if let (Ok(h_name), Ok(h_val)) = (
+                    http::header::HeaderName::from_bytes(name.as_str().as_bytes()),
+                    http::header::HeaderValue::from_bytes(value.as_bytes()),
+                ) {
+                    response_builder = response_builder.header(h_name, h_val);
+                }
+            }
+            response_builder
+                .body(AsyncBody::from(resp_bytes.to_vec()))
+                .map_err(|err| anyhow!("failed to build HTTP response: {err}"))
+        })
+    }
+}
 
 /// Default window size matching a comfortable Conn desktop workspace.
 const DEFAULT_WINDOW_WIDTH_PX: f32 = 1440.0;
@@ -55,7 +179,15 @@ fn main() {
     }
 
     stderr_log::install();
-    let application = gpui_kit::application().with_assets(superhero::AppAssets);
+    let mut application = gpui_kit::application().with_assets(superhero::AppAssets);
+    match ReqwestHttpClient::new() {
+        Ok(http_client) => {
+            application = application.with_http_client(Arc::new(http_client));
+        }
+        Err(error) => {
+            eprintln!("conn-app: could not initialize HTTP client for remote assets: {error}");
+        }
+    }
     application.run(|cx| {
         gpui_kit::init(cx);
         fonts::register(cx);
@@ -117,4 +249,64 @@ fn main() {
         #[cfg(not(feature = "automation"))]
         let _ = (window, app);
     });
+}
+
+#[cfg(test)]
+mod http_client_tests {
+    use futures::AsyncReadExt as _;
+    use gpui_kit::http_client::{AsyncBody, HttpClient as _};
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::net::TcpListener;
+
+    use super::ReqwestHttpClient;
+
+    #[test]
+    fn reqwest_http_client_fetches_and_follows_redirects() {
+        let client = ReqwestHttpClient::new().ok();
+        assert!(client.is_some(), "ReqwestHttpClient should construct");
+        let Some(client) = client else {
+            return;
+        };
+        assert_eq!(
+            client.user_agent().and_then(|v| v.to_str().ok()),
+            Some("conn-gpui/0.1"),
+            "user agent header should identify conn-gpui"
+        );
+
+        let result: gpui_kit::http_client::Result<_> = crate::live::RT.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let addr = listener.local_addr()?;
+
+            let server = tokio::spawn(async move {
+                for _ in 0..2 {
+                    let Ok((mut stream, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let mut req_buf = [0_u8; 1024];
+                    let n = stream.read(&mut req_buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&req_buf[..n]);
+                    let response = if req.starts_with("GET /redirect ") {
+                        "HTTP/1.1 302 Found\r\nLocation: /avatar.png\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    } else {
+                        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 4\r\nConnection: close\r\n\r\nPNG!"
+                    };
+                    let _ = stream.write_all(response.as_bytes()).await;
+                }
+            });
+
+            let url = format!("http://{addr}/redirect");
+            let mut resp = client.get(&url, AsyncBody::empty(), true).await?;
+            let status = resp.status();
+            let mut bytes = Vec::new();
+            resp.body_mut().read_to_end(&mut bytes).await?;
+            let _ = server.await;
+            gpui_kit::http_client::Result::Ok((status, bytes))
+        });
+
+        let Ok((status, bytes)) = result else {
+            panic!("loopback HTTP GET should succeed: {result:?}");
+        };
+        assert_eq!(status, 200, "redirect should resolve to 200 OK");
+        assert_eq!(bytes, b"PNG!", "response body bytes should round-trip");
+    }
 }

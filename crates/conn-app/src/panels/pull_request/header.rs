@@ -8,7 +8,7 @@ use conn_contract::{
     PullRequestAction, PullRequestActionInputUpdateMethod, PullRequestActor, PullRequestComment,
     PullRequestCommit, PullRequestDetail, PullRequestDetailAutoMergeMethod, PullRequestState,
 };
-use conn_theme::{Appearance, Tokens};
+use conn_theme::{Appearance, Tokens, color_mix_srgb};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -1179,6 +1179,14 @@ pub(super) fn render_header_body(
                 }
                 None => format!("{actor_label}: Review requested"),
             };
+            let ring_color = entry.outcome.map(|outcome| {
+                let base = review_outcome_color(tokens, outcome);
+                if entry.stale {
+                    to_hsla(color_mix_srgb(base, 0.35, tokens.shell_card))
+                } else {
+                    to_hsla(base)
+                }
+            });
             let mut chip = h_flex()
                 .id(SharedString::from(format!("pr-reviewer-{idx}")))
                 .items_center()
@@ -1191,7 +1199,13 @@ pub(super) fn render_header_body(
                 .line_height(px(XS_LINE_HEIGHT_PX))
                 .text_color(fg)
                 .conn_fast_tooltip(reviewer_tip, tokens)
-                .child(render_actor_avatar(tokens, entry.actor.as_ref(), 16.0))
+                .child(chrome::actor_avatar(
+                    tokens,
+                    entry.actor.as_ref(),
+                    16.0,
+                    ring_color,
+                    false,
+                ))
                 .child(login);
             if let Some(outcome) = entry.outcome {
                 let outcome_color = to_hsla(if entry.stale {
@@ -1326,28 +1340,13 @@ fn meta_row(
         .into_any_element()
 }
 
-/// Circular 16px/24px monogram avatar (`PullRequestActorAvatar`).
+/// Circular 16px/24px remote avatar with monogram fallback (`PullRequestActorAvatar`).
 pub(super) fn render_actor_avatar(
     tokens: &Tokens,
     actor: Option<&PullRequestActor>,
     size_px: f32,
 ) -> AnyElement {
-    let initial = actor
-        .and_then(|a| a.login.chars().next())
-        .map_or_else(|| "G".to_owned(), |c| c.to_uppercase().to_string());
-    div()
-        .flex()
-        .flex_shrink_0()
-        .size(px(size_px))
-        .items_center()
-        .justify_center()
-        .rounded(px(PILL_RADIUS_PX))
-        .bg(to_hsla(tokens.muted))
-        .text_size(px((size_px * 0.58).max(9.0)))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(to_hsla(tokens.muted_foreground))
-        .child(initial)
-        .into_any_element()
+    chrome::actor_avatar(tokens, actor, size_px, None, false)
 }
 
 /// Avatar + login label (`PullRequestActorLabel`).

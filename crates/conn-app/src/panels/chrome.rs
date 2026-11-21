@@ -14,8 +14,8 @@ use gpui_kit::component::h_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, AnyView, App, BoxShadow, ClickEvent, Context, Div, ElementId, FontWeight, Hsla,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, deferred, div, point, px,
+    InteractiveElement, IntoElement, MouseButton, ObjectFit, ParentElement, Render, SharedString,
+    SharedUri, Stateful, StatefulInteractiveElement, Styled, Window, deferred, div, img, point, px,
 };
 
 use super::color::to_hsla;
@@ -149,6 +149,88 @@ pub(crate) fn actor_tooltip_label(actor: Option<&PullRequestActor>) -> SharedStr
         },
         None => "ghost".into(),
     }
+}
+
+/// First uppercase letter of an actor's login, falling back to `"G"` (`"ghost"`), matching
+/// Conn's `PullRequestActorAvatar`.
+pub(crate) fn actor_initial(actor: Option<&PullRequestActor>) -> String {
+    actor
+        .and_then(|a| a.login.trim().chars().next())
+        .map_or_else(|| "G".to_owned(), |c| c.to_uppercase().to_string())
+}
+
+/// Returns a trimmed HTTP(S) URI for an actor's remote avatar, if valid.
+fn remote_avatar_uri(actor: Option<&PullRequestActor>) -> Option<SharedUri> {
+    let raw = actor?.avatar_url.as_deref()?.trim();
+    if raw.starts_with("https://") || raw.starts_with("http://") {
+        Some(SharedUri::from(raw.to_owned()))
+    } else {
+        None
+    }
+}
+
+/// Renders Conn's `PullRequestActorAvatar` (`pullRequestPresentation.tsx`): circular avatar
+/// loaded remotely via GPUI's `img()` (`ObjectFit::Cover`, `bg-muted`) with fallback to the
+/// uppercase login initial while loading, on error, or when no `avatar_url` is present.
+///
+/// `ring_color` draws a 2px circular review-outcome ring around the avatar (`ring-2`).
+/// `grayscale` desaturates muted/collapsed timeline avatars (`grayscale`).
+pub(crate) fn actor_avatar(
+    tokens: &Tokens,
+    actor: Option<&PullRequestActor>,
+    size_px: f32,
+    ring_color: Option<Hsla>,
+    grayscale: bool,
+) -> AnyElement {
+    let muted_bg = to_hsla(tokens.muted);
+    let muted_fg = to_hsla(tokens.muted_foreground);
+    let initial: SharedString = actor_initial(actor).into();
+    let font_px = (size_px * 0.58).max(9.0);
+
+    let make_fallback = move || -> AnyElement {
+        div()
+            .flex()
+            .flex_shrink_0()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .bg(muted_bg)
+            .text_size(px(font_px))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(muted_fg)
+            .child(initial.clone())
+            .into_any_element()
+    };
+
+    let content: AnyElement = if let Some(uri) = remote_avatar_uri(actor) {
+        let fallback_loading = make_fallback.clone();
+        let fallback_error = make_fallback;
+        img(uri)
+            .size_full()
+            .rounded_full()
+            .object_fit(ObjectFit::Cover)
+            .grayscale(grayscale)
+            .with_loading(fallback_loading)
+            .with_fallback(fallback_error)
+            .into_any_element()
+    } else {
+        make_fallback()
+    };
+
+    let mut wrapper = div()
+        .flex()
+        .flex_shrink_0()
+        .size(px(size_px))
+        .items_center()
+        .justify_center()
+        .rounded_full()
+        .overflow_hidden()
+        .bg(muted_bg);
+    if let Some(ring) = ring_color {
+        wrapper = wrapper.border_2().border_color(ring);
+    }
+    wrapper.child(content).into_any_element()
 }
 
 /// `text-ui`: 13px / 20px.
@@ -538,4 +620,62 @@ pub(crate) fn empty_state(tokens: &Tokens, text: impl Into<SharedString>) -> Div
 /// `Hsla` of a token with an alpha, for hover fills such as `hover:bg-foreground/4`.
 pub(crate) fn alpha(color: conn_theme::Rgba, a: f32) -> Hsla {
     to_hsla(color.with_alpha(a))
+}
+
+#[cfg(test)]
+mod tests {
+    use conn_contract::PullRequestActor;
+
+    use super::{actor_initial, actor_tooltip_label, remote_avatar_uri};
+
+    fn sample_actor(login: &str, name: Option<&str>, avatar_url: Option<&str>) -> PullRequestActor {
+        PullRequestActor {
+            is_bot: None,
+            login: login.to_owned(),
+            name: name.map(ToOwned::to_owned),
+            avatar_url: avatar_url.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn actor_helpers_handle_initials_labels_and_remote_uris() {
+        assert_eq!(
+            actor_initial(None),
+            "G",
+            "missing actor falls back to ghost"
+        );
+        let empty_login = sample_actor("   ", None, None);
+        assert_eq!(
+            actor_initial(Some(&empty_login)),
+            "G",
+            "blank login falls back to G"
+        );
+
+        let named = sample_actor(
+            "nckrtl",
+            Some("Nick"),
+            Some("https://avatars.githubusercontent.com/u/1?v=4"),
+        );
+        assert_eq!(actor_initial(Some(&named)), "N", "uppercase initial");
+        assert_eq!(
+            actor_tooltip_label(Some(&named)).as_ref(),
+            "Nick (@nckrtl)",
+            "tooltip includes full name and login"
+        );
+        assert!(
+            remote_avatar_uri(Some(&named)).is_some(),
+            "https avatar URI should be accepted"
+        );
+
+        let same_name = sample_actor("octocat", Some("octocat"), Some("javascript:alert(1)"));
+        assert_eq!(
+            actor_tooltip_label(Some(&same_name)).as_ref(),
+            "octocat",
+            "duplicate display name is not repeated"
+        );
+        assert!(
+            remote_avatar_uri(Some(&same_name)).is_none(),
+            "non-http(s) avatar URLs must be rejected"
+        );
+    }
 }

@@ -19,7 +19,7 @@ use gpui_kit::{
 
 use super::logic::{
     ChainKind, IssueDetailSummary, LinkInputResolution, PullRequestListLine, ServerCapabilities,
-    ThreadIssueLink, actor_initial, format_diff_count, format_footer_summary, format_relative_time,
+    ThreadIssueLink, format_diff_count, format_footer_summary, format_relative_time,
     issue_state_glyph, latest_synced_at, middle_truncate, open_pull_request_count, pr_checks_glyph,
     pr_has_conflict, pr_review_glyph, pr_state_glyph, pull_request_key, resolve_tone_hsla,
     thread_issue_key,
@@ -38,8 +38,6 @@ const SM_LINE_HEIGHT_PX: f32 = 20.0;
 /// `text-2xs`: 11px / 16px (`PullRequestRowLines` meta/signals/status, footer).
 const TWO_XS_TEXT_PX: f32 = 11.0;
 const TWO_XS_LINE_HEIGHT_PX: f32 = 16.0;
-/// `text-3xs`: 10px (`PullRequestActorAvatar` monogram).
-const THREE_XS_TEXT_PX: f32 = 10.0;
 /// `EmptyTitle`: `text-xl` (20px / 28px).
 const EMPTY_TITLE_PX: f32 = 20.0;
 const EMPTY_TITLE_LINE_HEIGHT_PX: f32 = 28.0;
@@ -1191,25 +1189,13 @@ pub(super) fn render_link_dialog(
     .into_any_element()
 }
 
-/// Circular initial avatar (`PullRequestActorAvatar`: `bg-muted text-3xs font-medium text-muted-foreground`).
+/// Circular remote avatar with initial fallback (`PullRequestActorAvatar`).
 fn render_actor_avatar(
     tokens: &Tokens,
     actor: Option<&conn_contract::PullRequestActor>,
     size_px: f32,
 ) -> AnyElement {
-    div()
-        .size(px(size_px))
-        .flex_shrink_0()
-        .rounded(px(9999.0))
-        .bg(to_hsla(tokens.muted))
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_size(px(THREE_XS_TEXT_PX))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(to_hsla(tokens.muted_foreground))
-        .child(actor_initial(actor))
-        .into_any_element()
+    chrome::actor_avatar(tokens, actor, size_px, None, false)
 }
 
 /// Conn's `Button size="sm" variant="outline"` (`button.tsx`: `sm:h-7 gap-1.5 px-2.5 text-sm`).
