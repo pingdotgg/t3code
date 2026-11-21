@@ -7,6 +7,7 @@ import { ko } from "./ko";
 import type { Locale } from "./locales";
 import { ptBR } from "./pt-BR";
 import { ru } from "./ru";
+import { tr } from "./tr";
 import { zh } from "./zh";
 
 const MESSAGES: Record<Locale, Messages> = {
@@ -19,6 +20,7 @@ const MESSAGES: Record<Locale, Messages> = {
   ja,
   ko,
   ru,
+  tr,
 };
 
 export const messagesFor = (locale: Locale): Messages => MESSAGES[locale];
