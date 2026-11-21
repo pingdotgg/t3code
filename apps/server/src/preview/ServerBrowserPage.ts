@@ -253,6 +253,23 @@ const withoutTreeDataPayloads = (tree: string) =>
 // The broker waits 15s for the host; a snapshot, retry included, answers well before.
 const SNAPSHOT_TIMEOUT_MS = 10_000;
 const FRAME_ANSWER_MS = 1_000;
+// Playwright builds the tree for every element and holds the page's main thread meanwhile,
+// which a screenshot with a 3 s limit must not wait behind. A heuristic, chosen conservatively.
+const LARGE_PAGE_ELEMENTS = 10_000;
+
+// Counts open shadow roots, which the tree includes, and stops at the limit. Child frames are
+// not counted.
+export const LARGE_PAGE_SCRIPT = `(() => {
+  let left = ${LARGE_PAGE_ELEMENTS};
+  const exceeds = (root) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    for (let element = walker.nextNode(); element; element = walker.nextNode()) {
+      if (--left < 0 || (element.shadowRoot && exceeds(element.shadowRoot))) return true;
+    }
+    return false;
+  };
+  return exceeds(document);
+})()`;
 
 // Include password and CSS-masked text in open shadow roots, normalized like accessible text.
 const DOTTED_SCRIPT = `(() => {
@@ -395,10 +412,11 @@ const openReaders = async (page: Page, cdp: CDPSession) => {
         throw cause;
       }
     };
-    return { frames: owned, read };
+    return { frames: owned, read, worlds: () => (contexts ??= open()) };
   };
+  const main = sessionReader(page.mainFrame(), cdp);
   const readers = [
-    sessionReader(page.mainFrame(), cdp),
+    main,
     ...frames.flatMap((frame) => {
       const owner = owners.get(frame);
       if (owner) return owner === cdp ? [] : [sessionReader(frame, owner)];
@@ -408,6 +426,7 @@ const openReaders = async (page: Page, cdp: CDPSession) => {
   ];
   return {
     readers,
+    mainWorld: async () => (await main.worlds())[0]!,
     read: async (before?: ReadonlyArray<unknown>) => {
       const now = page.frames();
       if (now.length !== frames.length || now.some((frame, i) => frame !== frames[i])) {
@@ -691,8 +710,18 @@ const capture = async (
   const state = refsFor(input.page);
   invalidateRefs(input.page);
   const generation = state.generation;
-  const { readers, read } = await track("frames", () => openReaders(input.page, input.cdp));
+  const { readers, read, mainWorld } = await track("frames", () =>
+    openReaders(input.page, input.cdp),
+  );
   const before = await track("frames", () => read());
+  // Tracked as page state: it reads the page's document. Its isolated world is the value reads'.
+  const large = track("page state", async () =>
+    input.cdp.send("Runtime.evaluate", {
+      contextId: await mainWorld(),
+      expression: LARGE_PAGE_SCRIPT,
+      returnByValue: true,
+    }),
+  ).catch(constVoid);
   // Bracket the tree with value reads to detect changes; await tree completion before retrying failed captures.
   const pageAndScreenshot = Promise.all([
     track(
@@ -723,12 +752,22 @@ const capture = async (
     ),
   ]);
   void pageAndScreenshot.catch(constVoid);
+  // A screenshot still pending when a large page's tree takes the main thread gets no frame
+  // before its own timeout, so on a large page, or one whose size went unread, it finishes
+  // first. The page state, asked for before the tree, is ahead of it on that thread either way.
+  const screenshotFirst = (await large)?.result?.value !== false;
+  if (screenshotFirst) await pageAndScreenshot;
+  // A late reply must not begin a tree after the snapshot has timed out or its refs were revoked.
+  if (Date.now() >= deadline) throw snapshotTimedOut(stages);
+  if (state.generation !== generation) throw pageChanged();
   // Leaves time for the second read; a frame that never loads holds the tree until then.
+  // The screenshot's time is already spent when it went first, so less is kept back.
+  const reserveMs = screenshotFirst ? FRAME_ANSWER_MS : 2_000;
   const tree = await track("accessibility tree", () =>
     input.page.ariaSnapshot({
       mode: "ai",
       boxes: true,
-      timeout: Math.max(1, deadline - Date.now() - 2_000),
+      timeout: Math.max(1, deadline - Date.now() - reserveMs),
     }),
   );
   const after = await track("frames", () => read(before));
