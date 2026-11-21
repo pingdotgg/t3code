@@ -10,6 +10,17 @@ test(
     await t3.open();
 
     await browser.evaluate(async () => {
+      const loadSettings = new Function(
+        "return import('/src/hooks/useSettings.ts')",
+      ) as () => Promise<{
+        updateClientSettings: (patch: { language: string }) => Promise<void>;
+      }>;
+      const loadI18n = new Function("return import('/src/i18n/runtime.ts')") as () => Promise<{
+        whenLocaleReady: () => Promise<void>;
+      }>;
+      await (await loadSettings()).updateClientSettings({ language: "en" });
+      await (await loadI18n()).whenLocaleReady();
+
       const loadDialog = new Function("return import('/src/cloud/relayClientInstallDialog.ts')");
       const dialog = await loadDialog();
       const confirmation = dialog.requestRelayClientInstallConfirmation("2026.11.0");
