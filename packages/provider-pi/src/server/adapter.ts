@@ -206,6 +206,8 @@ export interface PiAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
+  /** Forked after each turn's terminal event, such as to reread usage limits. */
+  readonly onTurnEnded?: Effect.Effect<void>;
 }
 
 function contentText(content: unknown): string {
@@ -2165,6 +2167,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             failure: null,
             threadDisposition: "reusable",
           });
+        }
+        if (options.onTurnEnded) {
+          yield* options.onTurnEnded.pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
         }
       });
 
@@ -4509,32 +4514,37 @@ export type PiAdapterV2DriverEnv =
   | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
 
+export const createPiAdapterV2 = Effect.fn("PiAdapterV2Driver.create")(
+  function* (
+    input: ProviderAdapterDriverCreateInput<PiSettings> & Pick<PiAdapterV2Options, "onTurnEnded">,
+  ) {
+    const hostEnvironment = yield* HostProcess.Environment;
+    const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    return yield* makePiAdapterV2({
+      instanceId: input.instanceId,
+      settings: { ...input.config, enabled: input.enabled },
+      environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+      continuationRequests,
+      ...(input.onTurnEnded ? { onTurnEnded: input.onTurnEnded } : {}),
+    });
+  },
+  (effect, input) =>
+    effect.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterDriverCreateError({
+            driver: PI_DRIVER_KIND,
+            instanceId: input.instanceId,
+            detail: "Failed to create Pi adapter.",
+            cause,
+          }),
+      ),
+    ),
+);
+
 export const PiAdapterV2Driver: ProviderAdapterDriver<PiSettings, PiAdapterV2DriverEnv> = {
   driverKind: PI_DRIVER_KIND,
   configSchema: PiSettings,
   defaultConfig: (): PiSettings => DEFAULT_PI_SETTINGS,
-  create: Effect.fn("PiAdapterV2Driver.create")(
-    function* (input: ProviderAdapterDriverCreateInput<PiSettings>) {
-      const hostEnvironment = yield* HostProcess.Environment;
-      const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-      return yield* makePiAdapterV2({
-        instanceId: input.instanceId,
-        settings: { ...input.config, enabled: input.enabled },
-        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        continuationRequests,
-      });
-    },
-    (effect, input) =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterDriverCreateError({
-              driver: PI_DRIVER_KIND,
-              instanceId: input.instanceId,
-              detail: "Failed to create Pi adapter.",
-              cause,
-            }),
-        ),
-      ),
-  ),
+  create: createPiAdapterV2,
 };
