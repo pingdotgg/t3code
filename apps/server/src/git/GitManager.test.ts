@@ -1247,7 +1247,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("an unpublished branch PR lookup reads each remote setting once", () =>
+  it.effect("an unpublished branch PR lookup reads remotes once and its identity twice", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -1265,12 +1265,75 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/local-only" }),
       ).toBeNull();
       const count = (args: string) => gitCommands.filter((command) => command === args).length;
+      // The identity check after the provider request rereads the branch remote and its URL.
       expect({
         remoteLists: count("remote"),
         branchRemoteReads: count("config --get branch.feature/local-only.remote"),
         originUrlReads: count("config --get-all remote.origin.url"),
-      }).toEqual({ remoteLists: 1, branchRemoteReads: 1, originUrlReads: 1 });
-      expect(gitCommands.length).toBeLessThanOrEqual(9);
+      }).toEqual({ remoteLists: 1, branchRemoteReads: 2, originUrlReads: 2 });
+      expect(gitCommands.length).toBeLessThanOrEqual(11);
+    }),
+  );
+
+  it.effect("branch PR lookup reloads when origin changes during the provider request", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      const repositoryUrl = (name: string) => `https://github.com/pingdotgg/${name}.git`;
+      for (const name of ["repo-a", "repo-b"]) {
+        yield* runGit(repoDir, [
+          "config",
+          "--add",
+          `url.${remoteDir}.insteadOf`,
+          repositoryUrl(name),
+        ]);
+      }
+      yield* runGit(repoDir, ["remote", "add", "origin", repositoryUrl("repo-a")]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/moved-origin"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/moved-origin"]);
+      const pullRequest = (repository: string, number: number): FakeChangeRequest => ({
+        number,
+        title: repository,
+        url: `https://github.com/pingdotgg/${repository}/pull/${number}`,
+        baseRefName: "main",
+        headRefName: "feature/moved-origin",
+        state: "open",
+      });
+      const { service: github } = createFakeSourceControlProvider({
+        prListSequence: [[pullRequest("repo-a", 1)]],
+        prListOtherwise: [pullRequest("repo-b", 2)],
+      });
+      const reached = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let held = false;
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...github,
+          listChangeRequests: (input) =>
+            github.listChangeRequests(input).pipe(
+              Effect.tap(() => {
+                if (held) return Effect.void;
+                held = true;
+                return Deferred.succeed(reached, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                );
+              }),
+            ),
+        },
+      });
+
+      const inFlight = yield* Effect.forkChild(
+        manager.branchPullRequest(
+          { cwd: repoDir, branch: "feature/moved-origin" },
+          { freshGitState: true },
+        ),
+      );
+      yield* Deferred.await(reached);
+      yield* runGit(repoDir, ["remote", "set-url", "origin", repositoryUrl("repo-b")]);
+      yield* Deferred.succeed(release, undefined);
+
+      expect((yield* Fiber.join(inFlight))?.number).toBe(2);
     }),
   );
 

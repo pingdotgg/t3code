@@ -229,8 +229,6 @@ interface PrLookupGitReads {
   readonly remotes: Effect.Effect<string, GitCommandError>;
   readonly config: (key: string) => Effect.Effect<string | null, GitCommandError>;
   readonly remoteUrl: (remoteName: string) => Effect.Effect<string | null, GitCommandError>;
-  readonly readConfigs: ReadonlyMap<string, Effect.Effect<string | null, GitCommandError>>;
-  readonly readRemoteUrls: ReadonlyMap<string, Effect.Effect<string | null, GitCommandError>>;
 }
 // Cache lookups run with the caller's context, so a lookup's loader can share its reads.
 class CurrentPrLookupGitReads extends Context.Reference<PrLookupGitReads | undefined>(
@@ -1659,8 +1657,6 @@ export const make = Effect.gen(function* () {
       config: (key) => readOnce(readConfigs, key, () => gitCore.readConfigValue(cwd, key)),
       remoteUrl: (remoteName) =>
         readOnce(readRemoteUrls, remoteName, () => readRemoteUrl(cwd, remoteName)),
-      readConfigs,
-      readRemoteUrls,
     };
   };
   const currentPrLookupGitReads = (cwd: string) =>
@@ -2912,33 +2908,28 @@ export const make = Effect.gen(function* () {
       branch: string,
       remoteNameOverride: string | undefined,
       fresh: boolean,
-      // What a pull-request load just read in this lookup is as fresh as a new read.
-      loaded?: PrLookupGitReads,
     ) {
-      const readConfig = (key: string) => {
-        const read = loaded?.readConfigs.get(key);
-        return rememberPrLookupGitState(
+      const readConfig = (key: string) =>
+        rememberPrLookupGitState(
           cwd,
           `config\u0000${key}`,
-          fresh || read !== undefined,
-          read ?? gitCore.readConfigValue(cwd, key),
+          fresh,
+          gitCore.readConfigValue(cwd, key),
         ).pipe(Effect.orElseSucceed(() => null));
-      };
-      const readRemoteUrlKey = (remoteName: string | null) => {
-        if (remoteName === null) return Effect.succeed(null);
-        const read = loaded?.readRemoteUrls.get(remoteName);
-        return rememberPrLookupGitState(
-          cwd,
-          `remoteUrl\u0000${remoteName}`,
-          fresh || read !== undefined,
-          read ?? readRemoteUrl(cwd, remoteName),
-        ).pipe(
-          Effect.orElseSucceed(() => null),
-          Effect.map((remoteUrl) =>
-            remoteUrl ? sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl) : null,
-          ),
-        );
-      };
+      const readRemoteUrlKey = (remoteName: string | null) =>
+        remoteName === null
+          ? Effect.succeed(null)
+          : rememberPrLookupGitState(
+              cwd,
+              `remoteUrl\u0000${remoteName}`,
+              fresh,
+              readRemoteUrl(cwd, remoteName),
+            ).pipe(
+              Effect.orElseSucceed(() => null),
+              Effect.map((remoteUrl) =>
+                remoteUrl ? sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl) : null,
+              ),
+            );
       const remoteName = publishedRemoteName(
         remoteNameOverride ?? (yield* readConfig(`branch.${branch}.remote`)),
       );
@@ -3096,11 +3087,10 @@ export const make = Effect.gen(function* () {
       );
       if (Option.isSome(cached)) yield* Cache.invalidate(prLookupCache, cacheKey);
     }
-    // A load this lookup starts reuses the remotes it just read, and only a remembered read is
-    // left to the load itself. A load already in flight for another caller fills none of these.
-    const loadReads = makePrLookupGitReads(cacheCwd, liveRemotes);
+    // A load this lookup starts reuses the remotes it just read. The identity check below reads
+    // again on purpose: it has to see a remote that changed during the provider request.
     let cached = yield* getPrLookup(cacheKey).pipe(
-      Effect.provideService(CurrentPrLookupGitReads, loadReads),
+      Effect.provideService(CurrentPrLookupGitReads, makePrLookupGitReads(cacheCwd, liveRemotes)),
     );
     // Lookup may use a fork instead of the saved upstream; verify the remote actually queried.
     const identityRemoteName = (headContext: BranchHeadContext) =>
@@ -3110,7 +3100,6 @@ export const make = Effect.gen(function* () {
       branch,
       identityRemoteName(cached.headContext),
       options.freshGitState,
-      loadReads,
     );
     const canVerifyIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       !(
