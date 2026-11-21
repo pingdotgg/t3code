@@ -1425,6 +1425,7 @@ export function createProviderVersionAdvisory(input: {
   readonly latestVersion?: string | null;
   readonly checkedAt?: string | null;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
+  readonly latestVersionCheckFailed?: boolean;
 }): ServerProviderVersionAdvisory {
   const capabilities =
     input.maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(input.driver);
@@ -1447,6 +1448,7 @@ export function createProviderVersionAdvisory(input: {
     canInstallVersion: makeTargetedProviderUpdateAction(capabilities, "0.0.0") !== null,
     checkedAt: input.checkedAt ?? null,
     message: advisory.message,
+    ...(input.latestVersionCheckFailed ? { latestVersionCheckFailed: true } : {}),
   };
 }
 
@@ -1521,6 +1523,14 @@ export const invalidateLatestProviderVersion = Effect.fn("invalidateLatestProvid
   },
 );
 
+/**
+ * Whether resolving this install's latest version runs a lookup at all. An explicit null
+ * `latestVersion` with no lookup means the installer has no version to report, not a failure.
+ */
+const hasLatestVersionLookup = (capabilities: ProviderMaintenanceCapabilities): boolean =>
+  capabilities.lookupLatestVersion !== undefined ||
+  (capabilities.latestVersion === undefined && capabilities.packageName !== null);
+
 export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
   "enrichProviderSnapshotWithVersionAdvisory",
 )(function* (
@@ -1560,6 +1570,7 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
       latestVersion,
       checkedAt: DateTime.formatIso(yield* DateTime.now),
       maintenanceCapabilities: capabilities,
+      latestVersionCheckFailed: latestVersion === null && hasLatestVersionLookup(capabilities),
     }),
   };
 });

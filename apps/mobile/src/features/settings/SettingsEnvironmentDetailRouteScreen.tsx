@@ -388,6 +388,12 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                                 ? (provider.version ?? gt("Version unknown"))
                                 : gt("Not installed")}
                           </Text>
+                          {provider.versionAdvisory?.status === "unknown" &&
+                          provider.versionAdvisory.latestVersionCheckFailed === true ? (
+                            <Text className="text-sm text-foreground-muted">
+                              {gt("Could not check for updates")}
+                            </Text>
+                          ) : null}
                           {provider.updateState && provider.updateState.status !== "idle" ? (
                             <Text
                               selectable

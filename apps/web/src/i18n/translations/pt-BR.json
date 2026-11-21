@@ -9452,6 +9452,7 @@
   "bf587581b2a3d24d": "Usando CURSOR_API_KEY. Remova-a do ambiente deste provedor para entrar pelo navegador.",
   "b0481e41f335f1d2": "Redefinir as configurações do provedor {provider} para o padrão",
   "1a0c999db1e9896a": "Adicionar provedor",
+  "6f12b76458e2ac1a": "Atualizar status do provedor",
   "5f4280344b1853ea": "Atualizar status do provedor",
   "b298eb788d3443ee": "Configuração do Antigravity",
   "21668b75015a6d1d": "Dispositivo que executa este provedor.",

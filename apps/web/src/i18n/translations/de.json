@@ -9452,6 +9452,7 @@
   "bf587581b2a3d24d": "CURSOR_API_KEY wird verwendet. Entferne ihn aus der Umgebung dieses Anbieters, um die Browser-Anmeldung zu nutzen.",
   "b0481e41f335f1d2": "Anbietereinstellungen für {provider} auf Standard zurücksetzen",
   "1a0c999db1e9896a": "Anbieter hinzufügen",
+  "6f12b76458e2ac1a": "Anbieterstatus aktualisieren",
   "5f4280344b1853ea": "Anbieterstatus aktualisieren",
   "b298eb788d3443ee": "Antigravity-Einrichtung",
   "21668b75015a6d1d": "Gerät, das diesen Anbieter ausführt.",

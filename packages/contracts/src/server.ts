@@ -205,6 +205,11 @@ export const ServerProviderVersionAdvisory = Schema.Struct({
   canInstallVersion: Schema.optionalKey(Schema.Boolean),
   checkedAt: Schema.NullOr(IsoDateTime),
   message: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * A latest-version lookup ran and returned nothing. `unknown` alone also covers checks
+   * that never ran, such as a manual install or disabled update checks.
+   */
+  latestVersionCheckFailed: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerProviderVersionAdvisory = typeof ServerProviderVersionAdvisory.Type;
 

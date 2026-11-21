@@ -314,6 +314,48 @@ it.layer(
     ),
   );
 
+  it.effect("reports a latest-version lookup that found nothing", () =>
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, installedVersion: "1.1.0" },
+      manualPackageTool,
+    ).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 503 }))),
+        ),
+      ),
+      Effect.map((provider) => {
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "unknown",
+          latestVersion: null,
+          latestVersionCheckFailed: true,
+        });
+      }),
+    ),
+  );
+
+  it.effect("leaves unknown unflagged when the install has no latest-version lookup", () =>
+    enrichProviderSnapshotWithVersionAdvisory(
+      { ...installedPackageToolProvider, installedVersion: "1.1.0" },
+      { provider: manualPackageTool.provider, packageName: null, update: null },
+    ).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("a manual install must not make an HTTP request")),
+      ),
+      Effect.map((provider) => {
+        expect(provider.versionAdvisory).toMatchObject({
+          status: "unknown",
+          latestVersion: null,
+        });
+        expect(provider.versionAdvisory?.latestVersionCheckFailed).toBeUndefined();
+      }),
+    ),
+  );
+
   it.effect("gives up on a registry body that stalls after the headers", () =>
     Effect.gen(function* () {
       const lookup = yield* resolveLatestProviderVersion(manualPackageTool).pipe(
@@ -352,6 +394,7 @@ it.layer(
           latestVersion: null,
           checkedAt: "2026-04-10T00:00:00.000Z",
         });
+        expect(provider.versionAdvisory?.latestVersionCheckFailed).toBeUndefined();
       }),
     ),
   );

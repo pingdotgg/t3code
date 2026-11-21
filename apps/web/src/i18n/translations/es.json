@@ -9450,6 +9450,7 @@
   "bf587581b2a3d24d": "Usando CURSOR_API_KEY. Quítala del entorno de este proveedor para iniciar sesión en el navegador.",
   "b0481e41f335f1d2": "Restablecer los ajustes del proveedor {provider} al valor predeterminado",
   "1a0c999db1e9896a": "Añadir proveedor",
+  "6f12b76458e2ac1a": "Actualizar estado del proveedor",
   "5f4280344b1853ea": "Actualizar estado del proveedor",
   "b298eb788d3443ee": "Configuración de Antigravity",
   "21668b75015a6d1d": "Dispositivo que ejecuta este proveedor.",

@@ -848,12 +848,16 @@ export function ProviderInstanceCard({
     compatibility !== undefined &&
     compatibility.status !== "supported" &&
     compatibility.status !== "unknown";
-  const VersionAdvisoryIcon = hasCompatibilityWarning ? AlertTriangleIcon : ArrowUpCircleIcon;
-  const onRunVersionAction = readOnly
-    ? undefined
-    : versionAdvisory?.targetVersion
-      ? onInstallRecommended
-      : onRunUpdate;
+  const VersionAdvisoryIcon =
+    hasCompatibilityWarning || versionAdvisory?.warning === true
+      ? AlertTriangleIcon
+      : ArrowUpCircleIcon;
+  const onRunVersionAction =
+    readOnly || versionAdvisory?.warning === true
+      ? undefined
+      : versionAdvisory?.targetVersion
+        ? onInstallRecommended
+        : onRunUpdate;
   const urlAuthAction = liveProvider?.auth.action;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);

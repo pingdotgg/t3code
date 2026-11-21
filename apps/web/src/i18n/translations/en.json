@@ -9460,6 +9460,7 @@
   "bf587581b2a3d24d": "Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.",
   "b0481e41f335f1d2": "Reset {provider} provider settings to default",
   "1a0c999db1e9896a": "Add provider",
+  "6f12b76458e2ac1a": "Refresh provider status",
   "5f4280344b1853ea": "Refresh provider status",
   "b298eb788d3443ee": "Antigravity setup",
   "21668b75015a6d1d": "Device that runs this provider.",

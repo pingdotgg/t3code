@@ -9452,6 +9452,7 @@
   "bf587581b2a3d24d": "Utilise CURSOR_API_KEY. Retirez-la de l’environnement de ce fournisseur pour vous connecter via le navigateur.",
   "b0481e41f335f1d2": "Réinitialiser les paramètres du fournisseur {provider} à la valeur par défaut",
   "1a0c999db1e9896a": "Ajouter un fournisseur",
+  "6f12b76458e2ac1a": "Actualiser le statut du fournisseur",
   "5f4280344b1853ea": "Actualiser le statut du fournisseur",
   "b298eb788d3443ee": "Configuration d’Antigravity",
   "21668b75015a6d1d": "Appareil qui exécute ce fournisseur.",
