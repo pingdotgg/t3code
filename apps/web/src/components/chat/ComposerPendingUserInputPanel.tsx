@@ -10,7 +10,7 @@ import { derivePendingUserInputProgress } from "../../pendingUserInput";
 import { CheckboxMark } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Kbd } from "../ui/kbd";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
@@ -153,21 +153,30 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   useEffect(() => {
     if (!activeQuestion || responseDisabled || isCollapsed || backgroundThread) return;
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.defaultPrevented) return;
       const target = event.target;
       if (isInSideChatPane(target)) return;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        return;
+      // Focus starts in the answer box, where a bare digit types, so a modifier selects there.
+      const inAnswerBox =
+        target instanceof Element && target.closest('[data-testid="composer-editor"]') !== null;
+      let digit: number;
+      if (inAnswerBox) {
+        digit = answerBoxShortcutDigit(event);
+      } else {
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+          return;
+        }
+        if (
+          target instanceof HTMLElement &&
+          target.closest(
+            'select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
+          )
+        ) {
+          return;
+        }
+        digit = Number.parseInt(event.key, 10);
       }
-      if (
-        target instanceof HTMLElement &&
-        target.closest(
-          'select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
-        )
-      ) {
-        return;
-      }
-      const digit = Number.parseInt(event.key, 10);
       if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
       const optionIndex = digit - 1;
       if (optionIndex >= activeQuestion.options.length) return;
@@ -367,4 +376,15 @@ function OptionRadio({ checked }: { checked: boolean }) {
       ) : null}
     </span>
   );
+}
+
+// Option+digit everywhere, plus Control+digit on macOS. Mod+digit (Cmd on macOS, Ctrl elsewhere)
+// jumps between threads. Option rewrites event.key on macOS, so the digit comes from event.code.
+function answerBoxShortcutDigit(event: globalThis.KeyboardEvent): number {
+  if (event.metaKey || event.shiftKey) return Number.NaN;
+  const optionDigit = event.altKey && !event.ctrlKey;
+  const controlDigit = event.ctrlKey && !event.altKey && isMacPlatform(navigator.platform);
+  if (!optionDigit && !controlDigit) return Number.NaN;
+  const match = /^(?:Digit|Numpad)([1-9])$/.exec(event.code);
+  return match ? Number(match[1]) : Number.NaN;
 }
