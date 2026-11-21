@@ -21,8 +21,9 @@ pub use conn_contract::{
 };
 
 pub use crate::layout::{
-    LayoutState, RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MAX_WIDTH, RIGHT_PANEL_MIN_WIDTH,
-    RightPanelTab, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH,
+    LayoutState, PanelSurface, RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MAX_WIDTH,
+    RIGHT_PANEL_MIN_WIDTH, RightPanelTab, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH,
+    SIDEBAR_MIN_WIDTH,
 };
 pub use crate::shell::{ShellChange, ShellState, ThreadActivity};
 pub use crate::thread::{ItemStatus, ThreadState, TimelineEntry};

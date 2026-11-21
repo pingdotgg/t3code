@@ -1,6 +1,7 @@
-//! Files right-panel surface: Conn soft search field, `ToolbarGroup` actions,
-//! Pierre-themed lazy directory tree (`projects.listEntries`), and syntect-highlighted
-//! read-only source preview (`projects.readFile`) meeting in a clean T-junction.
+//! Files right-panel surfaces, as Conn's `FileBrowserPanel` and `FilePreviewPanel`: the Files
+//! tab is one full-width Pierre-themed lazy tree (`projects.listEntries`) under a soft search
+//! field and `ToolbarGroup`; a file opens as its own tab showing a syntect-highlighted
+//! read-only preview (`projects.readFile`) under a breadcrumb subheader.
 
 use std::fmt;
 
@@ -21,8 +22,6 @@ use super::header::superhero_icon;
 use super::highlight::{HighlightSpan, highlight_lines};
 use super::tree::FileTreeState;
 
-/// Default explorer column width (`FileExplorerPane.tsx`: `defaultWidth = 256`).
-const TREE_COLUMN_WIDTH_PX: f32 = 256.0;
 /// Pierre tree compact row height (`FileBrowserPanel.tsx`: `itemHeight: 28`).
 const TREE_ROW_HEIGHT_PX: f32 = 28.0;
 /// Pierre tree row radius (`pierre-tree-theme.ts`: `border-radius: 5px`).
@@ -56,8 +55,19 @@ enum PreviewState {
     },
 }
 
+/// What the Files surfaces ask of the right panel.
+#[derive(Clone, Debug)]
+pub(crate) enum FilesEvent {
+    /// A file row was clicked: open the file as its own tab.
+    OpenFile(String),
+}
+
+impl gpui_kit::EventEmitter<FilesEvent> for FilesPanel {}
+
 /// Files explorer and read-only source preview panel.
 pub(crate) struct FilesPanel {
+    /// True while this entity draws a file tab (the preview), false for the Files tree.
+    showing_preview: bool,
     tokens: Tokens,
     connection: Option<Connection>,
     workspace_root: Option<String>,
@@ -96,6 +106,7 @@ impl FilesPanel {
             }
         });
         Self {
+            showing_preview: false,
             tokens,
             connection,
             workspace_root: None,
@@ -219,6 +230,28 @@ impl FilesPanel {
         .detach();
     }
 
+    /// Draws the Files tree.
+    pub(crate) fn show_tree(&mut self, cx: &mut Context<'_, Self>) {
+        self.showing_preview = false;
+        cx.notify();
+    }
+
+    /// Draws the file tab for `path`, loading it unless it is already shown.
+    pub(crate) fn show_preview(&mut self, path: String, cx: &mut Context<'_, Self>) {
+        self.showing_preview = true;
+        let current = match &self.preview {
+            PreviewState::Loaded { path, .. }
+            | PreviewState::Loading(path)
+            | PreviewState::Error { path, .. } => Some(path.as_str()),
+            PreviewState::Empty => None,
+        };
+        if current != Some(path.as_str()) {
+            self.open_file(path, cx);
+        } else {
+            cx.notify();
+        }
+    }
+
     fn open_file(&mut self, path: String, cx: &mut Context<'_, Self>) {
         self.tree.select(Some(path.clone()));
         let (Some(conn), Some(cwd)) = (self.connection.clone(), self.workspace_root.clone()) else {
@@ -271,8 +304,7 @@ impl FilesPanel {
         .detach();
     }
 
-    fn render_toolbar(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let fg = to_hsla(self.tokens.foreground);
+    fn render_tree_toolbar(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let field_bg = to_hsla(self.tokens.shell_field);
         let control_bg = to_hsla(self.tokens.shell_control);
         let control_border = to_hsla(self.tokens.shell_divider_header);
@@ -335,12 +367,16 @@ impl FilesPanel {
             );
         }
 
-        let explorer_toolbar = h_flex()
-            .w(px(TREE_COLUMN_WIDTH_PX))
+        // `FileBrowserPanel` subheader: `py-toolbar ps-2 pe-toolbar-end gap-2`; inline its
+        // bottom border is transparent (it keeps its 1px).
+        h_flex()
+            .w_full()
             .flex_shrink_0()
             .py(px(TOOLBAR_PAD_Y_PX))
             .pl(px(TOOLBAR_PAD_START_PX))
-            .pr(px(TOOLBAR_PAD_START_PX))
+            .pr(px(TOOLBAR_PAD_END_PX))
+            .border_b_1()
+            .border_color(gpui_kit::transparent_black())
             .items_center()
             .gap(px(8.0))
             .child(
@@ -366,8 +402,15 @@ impl FilesPanel {
                         ),
                     ),
             )
-            .child(explorer_actions);
+            .child(explorer_actions)
+    }
 
+    fn render_preview_subheader(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let fg = to_hsla(self.tokens.foreground);
+        let muted = to_hsla(self.tokens.muted_foreground);
+        let control_bg = to_hsla(self.tokens.shell_control);
+        let control_border = to_hsla(self.tokens.shell_divider_header);
+        let hover_bg = to_hsla(self.tokens.shell_highlight);
         // Preview subheader: breadcrumb path (`text-sm`) + Copy/Wrap `ToolbarGroup` when a file is open.
         let active_path = match &self.preview {
             PreviewState::Loaded { path, .. }
@@ -378,12 +421,17 @@ impl FilesPanel {
         let has_contents = matches!(&self.preview, PreviewState::Loaded { .. });
         let wrap_icon_color = if self.word_wrap { fg } else { muted };
 
+        // `FILE_SURFACE_SUBHEADER_CLASS` inline: `py-toolbar pr-toolbar pl-3.5`, transparent
+        // bottom border.
         let mut preview_toolbar = h_flex()
-            .flex_1()
-            .min_w_0()
+            .w_full()
+            .flex_shrink_0()
+            .min_h(px(TOOLBAR_HEIGHT_PX + 2.0 * TOOLBAR_PAD_Y_PX + 1.0))
             .py(px(TOOLBAR_PAD_Y_PX))
             .pl(px(14.0))
-            .pr(px(TOOLBAR_PAD_END_PX))
+            .pr(px(TOOLBAR_PAD_Y_PX))
+            .border_b_1()
+            .border_color(gpui_kit::transparent_black())
             .items_center()
             .justify_between()
             .gap(px(8.0));
@@ -454,11 +502,7 @@ impl FilesPanel {
             }
         }
 
-        h_flex()
-            .w_full()
-            .items_center()
-            .child(explorer_toolbar)
-            .child(preview_toolbar)
+        preview_toolbar
     }
 
     fn render_tree_column(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
@@ -472,9 +516,9 @@ impl FilesPanel {
 
         let mut col = v_flex()
             .id("files-tree-scroll")
-            .w(px(TREE_COLUMN_WIDTH_PX))
-            .h_full()
-            .flex_shrink_0()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .overflow_y_scroll()
             .py(px(4.0))
             .px(px(6.0));
@@ -514,15 +558,7 @@ impl FilesPanel {
             } else {
                 fg
             };
-            let icon_path = if is_dir {
-                if row.expanded {
-                    "superhero/folder-open.svg"
-                } else {
-                    "superhero/folder.svg"
-                }
-            } else {
-                file_icon_path(&row.name)
-            };
+            let icon_path = file_icon_path(&row.name);
 
             let item = h_flex()
                 .id(SharedString::from(format!("tree-row-{}", row.path)))
@@ -546,7 +582,9 @@ impl FilesPanel {
                                 cx.notify();
                             }
                         } else {
-                            this.open_file(row_path.clone(), cx);
+                            this.tree.select(Some(row_path.clone()));
+                            cx.emit(FilesEvent::OpenFile(row_path.clone()));
+                            cx.notify();
                         }
                     }),
                 )
@@ -566,7 +604,9 @@ impl FilesPanel {
                 } else {
                     div().w(px(12.0)).flex_shrink_0()
                 })
-                .child(superhero_icon(icon_path, 15.0, muted))
+                .when(!is_dir, |el| {
+                    el.child(superhero_icon(icon_path, 15.0, muted))
+                })
                 .child(
                     div()
                         .flex_1()
@@ -591,8 +631,8 @@ impl FilesPanel {
         let container = v_flex()
             .id("files-preview-scroll")
             .flex_1()
-            .min_w_0()
-            .h_full()
+            .min_h_0()
+            .w_full()
             .overflow_y_scroll();
 
         match &self.preview {
@@ -690,23 +730,21 @@ impl FilesPanel {
 
 impl Render for FilesPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let divider = to_hsla(self.tokens.shell_divider);
-
+        let background = to_hsla(self.tokens.background);
+        if self.showing_preview {
+            return v_flex()
+                .size_full()
+                .bg(background)
+                .child(self.render_preview_subheader(cx))
+                .child(self.render_preview_column(cx))
+                .into_any_element();
+        }
         v_flex()
             .size_full()
-            .child(self.render_toolbar(cx))
-            // One continuous horizontal divider under the toolbar across both columns.
-            .child(div().w_full().h(px(1.0)).bg(divider))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .child(self.render_tree_column(cx))
-                    // One vertical divider meeting the horizontal divider in a clean T.
-                    .child(div().w(px(1.0)).h_full().bg(divider))
-                    .child(self.render_preview_column(cx)),
-            )
+            .bg(background)
+            .child(self.render_tree_toolbar(cx))
+            .child(self.render_tree_column(cx))
+            .into_any_element()
     }
 }
 

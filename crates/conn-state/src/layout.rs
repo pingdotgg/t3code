@@ -26,6 +26,42 @@ pub enum RightPanelTab {
     PullRequest,
     LinkedItems,
     Device,
+    /// A file opened from the Files tree (Conn's `file` surface); its path lives in
+    /// [`PanelSurface::File`]. Not offered in the add menu.
+    File,
+}
+
+/// One open right-panel tab: a surface kind, or a file with its project-relative path.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PanelSurface {
+    Kind(RightPanelTab),
+    File(String),
+}
+
+impl PanelSurface {
+    /// The surface kind ([`RightPanelTab::File`] for a file).
+    #[must_use]
+    pub fn kind(&self) -> RightPanelTab {
+        match self {
+            Self::Kind(tab) => *tab,
+            Self::File(_) => RightPanelTab::File,
+        }
+    }
+
+    /// The file path of a file surface.
+    #[must_use]
+    pub fn file_path(&self) -> Option<&str> {
+        match self {
+            Self::Kind(_) => None,
+            Self::File(path) => Some(path),
+        }
+    }
+
+    /// The tab title for a file: its base name (Conn's `surfaceTitle`).
+    #[must_use]
+    pub fn file_title(path: &str) -> &str {
+        path.rsplit(['/', '\\']).next().unwrap_or(path)
+    }
 }
 
 impl RightPanelTab {
@@ -59,6 +95,7 @@ impl RightPanelTab {
             Self::PullRequest => "P",
             Self::LinkedItems => "L",
             Self::Device => "M",
+            Self::File => "",
         }
     }
 
@@ -160,5 +197,29 @@ fn clamp_or_default(value: f32, min: f32, max: f32, default: f32) -> f32 {
         value.clamp(min, max)
     } else {
         default
+    }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    #[test]
+    fn file_surfaces_title_by_base_name() {
+        assert_eq!(
+            PanelSurface::file_title("crates/conn-app/src/main.rs"),
+            "main.rs"
+        );
+        assert_eq!(PanelSurface::file_title("Cargo.toml"), "Cargo.toml");
+        let surface = PanelSurface::File("docs/status.md".into());
+        assert_eq!(surface.kind(), RightPanelTab::File);
+        assert_eq!(surface.file_path(), Some("docs/status.md"));
+        assert_eq!(PanelSurface::Kind(RightPanelTab::Api).file_path(), None);
+    }
+
+    #[test]
+    fn file_is_not_in_the_add_menu() {
+        assert!(!RightPanelTab::MENU_ORDER.contains(&RightPanelTab::File));
+        assert_eq!(RightPanelTab::from_menu_shortcut(""), None);
     }
 }

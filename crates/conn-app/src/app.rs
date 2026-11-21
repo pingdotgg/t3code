@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use conn_client::{ClientEvent, Connection, ConnectionStatus, ServerConfig};
-use conn_state::{LayoutState, RightPanelTab, ShellState, ThreadState};
+use conn_state::{LayoutState, PanelSurface, RightPanelTab, ShellState, ThreadState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
@@ -61,7 +61,9 @@ pub(crate) struct ConnApp {
     /// Runtime mode for the draft, when set (else the project's latest thread's mode).
     draft_runtime_mode: Option<String>,
     /// Right panel tabs the user has open, in order (Conn's `RightPanelTabs`).
-    right_panel_open_tabs: Vec<RightPanelTab>,
+    right_panel_open_tabs: Vec<PanelSurface>,
+    /// The open file while `layout.right_panel_tab` is [`RightPanelTab::File`].
+    right_panel_file: Option<String>,
     right_panel_add_menu_open: bool,
     right_panel_maximized: bool,
     seam_drag: Option<SeamDrag>,
@@ -140,6 +142,15 @@ impl ConnApp {
             panel.set_embedded(true, cx);
             panel
         });
+        cx.subscribe(
+            &right_panel,
+            |app, _, event: &crate::panels::RightPanelEvent, cx| match event {
+                crate::panels::RightPanelEvent::OpenFile(path) => {
+                    app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
+                }
+            },
+        )
+        .detach();
 
         Self {
             tokens,
@@ -158,7 +169,8 @@ impl ConnApp {
             ended_threads: HashSet::new(),
             draft_project: None,
             draft_runtime_mode: None,
-            right_panel_open_tabs: vec![RightPanelTab::Files],
+            right_panel_open_tabs: vec![PanelSurface::Kind(RightPanelTab::Files)],
+            right_panel_file: None,
             right_panel_add_menu_open: false,
             right_panel_maximized: false,
             seam_drag: None,
@@ -361,11 +373,11 @@ impl ConnApp {
         let thread = timeline.or(fallback.as_ref());
         let project_id = shell_thread.map(|t| t.project_id.clone());
         let thread_id = selected.map(str::to_owned);
-        let tab = self.layout.right_panel_tab;
+        let surface = self.right_panel_surface();
         let panel_root = root.clone();
         self.right_panel.update(cx, |panel, cx| {
             panel.set_context(project_id, panel_root, thread_id, cx);
-            panel.set_tab(tab, cx);
+            panel.set_surface(&surface, cx);
         });
         self.chat.update(cx, |chat, cx| {
             chat.set_workspace_root(root, cx);
@@ -754,25 +766,45 @@ impl ConnApp {
         cx.notify();
     }
 
+    /// The active right-panel surface.
+    fn right_panel_surface(&self) -> PanelSurface {
+        match (&self.layout.right_panel_tab, &self.right_panel_file) {
+            (RightPanelTab::File, Some(path)) => PanelSurface::File(path.clone()),
+            (tab, _) => PanelSurface::Kind(*tab),
+        }
+    }
+
     /// Selects a right-panel tab and opens the right panel if it was closed.
     pub(crate) fn select_right_panel_tab(
         &mut self,
         tab: RightPanelTab,
         cx: &mut Context<'_, Self>,
     ) {
-        if !self.right_panel_open_tabs.contains(&tab) {
-            self.right_panel_open_tabs.push(tab);
+        self.select_right_panel_surface(PanelSurface::Kind(tab), cx);
+    }
+
+    /// Shows `surface` (opening its tab) and opens the right panel if it was closed.
+    pub(crate) fn select_right_panel_surface(
+        &mut self,
+        surface: PanelSurface,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.right_panel_open_tabs.contains(&surface) {
+            self.right_panel_open_tabs.push(surface.clone());
         }
         self.right_panel_add_menu_open = false;
-        self.layout.right_panel_tab = tab;
+        self.layout.right_panel_tab = surface.kind();
+        if let PanelSurface::File(path) = surface {
+            self.right_panel_file = Some(path);
+        }
         self.layout.right_panel_open = true;
         self.sync_chat(cx);
         self.sync_browser_visibility(cx);
         cx.notify();
     }
 
-    /// Closes a right panel tab; the last open tab stays.
-    fn close_right_panel_tab(&mut self, tab: RightPanelTab, cx: &mut Context<'_, Self>) {
+    /// Closes a right panel tab; closing the last one closes the panel.
+    fn close_right_panel_tab(&mut self, surface: &PanelSurface, cx: &mut Context<'_, Self>) {
         // Closing the last surface closes the panel, as in Conn.
         if self.right_panel_open_tabs.len() <= 1 {
             self.right_panel_add_menu_open = false;
@@ -781,13 +813,13 @@ impl ConnApp {
             }
             return;
         }
-        let Some(pos) = self.right_panel_open_tabs.iter().position(|&t| t == tab) else {
+        let Some(pos) = self.right_panel_open_tabs.iter().position(|t| t == surface) else {
             return;
         };
         self.right_panel_open_tabs.remove(pos);
-        if self.layout.right_panel_tab == tab {
-            let next = self.right_panel_open_tabs[pos.saturating_sub(1)];
-            self.select_right_panel_tab(next, cx);
+        if &self.right_panel_surface() == surface {
+            let next = self.right_panel_open_tabs[pos.saturating_sub(1)].clone();
+            self.select_right_panel_surface(next, cx);
         } else {
             cx.notify();
         }
@@ -944,10 +976,11 @@ impl ConnApp {
         use std::rc::Rc;
         let app = cx.entity();
         let available_tabs = self.available_right_panel_tabs();
+        let active_surface = self.right_panel_surface();
         let header = render_panel_header(
             PanelHeaderProps {
                 open_tabs: &self.right_panel_open_tabs,
-                active_tab: self.layout.right_panel_tab,
+                active_tab: &active_surface,
                 maximized: self.right_panel_maximized,
                 bottom_dock_open: false,
                 panel_open: self.layout.right_panel_open,
@@ -959,13 +992,13 @@ impl ConnApp {
                 on_select_tab: {
                     let app = app.clone();
                     Rc::new(move |tab, _, cx| {
-                        app.update(cx, |this, cx| this.select_right_panel_tab(tab, cx));
+                        app.update(cx, |this, cx| this.select_right_panel_surface(tab, cx));
                     })
                 },
                 on_close_tab: Some({
                     let app = app.clone();
                     Rc::new(move |tab, _, cx| {
-                        app.update(cx, |this, cx| this.close_right_panel_tab(tab, cx));
+                        app.update(cx, |this, cx| this.close_right_panel_tab(&tab, cx));
                     })
                 }),
                 on_toggle_add_menu: {

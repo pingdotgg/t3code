@@ -4,7 +4,7 @@
 
 use std::rc::Rc;
 
-use conn_state::RightPanelTab;
+use conn_state::{PanelSurface, RightPanelTab};
 use conn_theme::Tokens;
 use gpui_kit::component::h_flex;
 use gpui_kit::prelude::*;
@@ -82,6 +82,25 @@ pub(crate) fn panel_tab_label(tab: RightPanelTab) -> &'static str {
         RightPanelTab::PullRequest => "Pull request",
         RightPanelTab::LinkedItems => "Linked items",
         RightPanelTab::Device => "Device",
+        RightPanelTab::File => "File",
+    }
+}
+
+/// The tab title of an open surface: a file's base name, else the surface label.
+#[must_use]
+pub(crate) fn surface_label(surface: &PanelSurface) -> String {
+    match surface {
+        PanelSurface::Kind(tab) => panel_tab_label(*tab).to_owned(),
+        PanelSurface::File(path) => PanelSurface::file_title(path).to_owned(),
+    }
+}
+
+/// The tab icon of an open surface: a file's type icon, else the surface icon.
+#[must_use]
+pub(crate) fn surface_icon_path(surface: &PanelSurface) -> &'static str {
+    match surface {
+        PanelSurface::Kind(tab) => panel_tab_icon_path(*tab),
+        PanelSurface::File(_) => "superhero/file.svg",
     }
 }
 
@@ -102,14 +121,15 @@ pub(crate) fn panel_tab_icon_path(tab: RightPanelTab) -> &'static str {
         RightPanelTab::PullRequest => "superhero/pull-request.svg",
         RightPanelTab::LinkedItems => "superhero/link.svg",
         RightPanelTab::Device => "superhero/phone.svg",
+        RightPanelTab::File => "superhero/file.svg",
     }
 }
 
 /// State passed to [`render_panel_header`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PanelHeaderProps<'a> {
-    pub(crate) open_tabs: &'a [RightPanelTab],
-    pub(crate) active_tab: RightPanelTab,
+    pub(crate) open_tabs: &'a [PanelSurface],
+    pub(crate) active_tab: &'a PanelSurface,
     pub(crate) maximized: bool,
     pub(crate) bottom_dock_open: bool,
     pub(crate) panel_open: bool,
@@ -122,8 +142,8 @@ pub(crate) struct PanelHeaderProps<'a> {
 /// Callbacks emitted by [`render_panel_header`].
 #[derive(Clone)]
 pub(crate) struct PanelHeaderCallbacks {
-    pub(crate) on_select_tab: Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>,
-    pub(crate) on_close_tab: Option<Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>>,
+    pub(crate) on_select_tab: Rc<dyn Fn(PanelSurface, &mut Window, &mut App)>,
+    pub(crate) on_close_tab: Option<Rc<dyn Fn(PanelSurface, &mut Window, &mut App)>>,
     pub(crate) on_toggle_add_menu: Rc<dyn Fn(&mut Window, &mut App)>,
     pub(crate) on_add_tab: Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>,
     pub(crate) on_toggle_maximize: Rc<dyn Fn(&mut Window, &mut App)>,
@@ -148,11 +168,11 @@ pub(crate) fn render_panel_header(
         .items_center()
         .gap(px(4.0));
 
-    for (idx, &tab) in props.open_tabs.iter().enumerate() {
+    for (idx, tab) in props.open_tabs.iter().enumerate() {
         let active = tab == props.active_tab;
         let text_color = if active { fg } else { muted };
-        let label = panel_tab_label(tab);
-        let icon_path = panel_tab_icon_path(tab);
+        let label = surface_label(tab);
+        let icon_path = surface_icon_path(tab);
         let group = SharedString::from(format!("right-panel-tab-group-{idx}"));
         let on_select = callbacks.on_select_tab.clone();
         let on_close_middle = callbacks.on_close_tab.clone();
@@ -171,10 +191,13 @@ pub(crate) fn render_panel_header(
             .rounded(px(TAB_CLOSE_SLOT_RADIUS_PX))
             .cursor_pointer()
             .hover(move |s| s.bg(close_hover))
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                cx.stop_propagation();
-                if let Some(close) = &on_close {
-                    close(tab, window, cx);
+            .on_mouse_down(MouseButton::Left, {
+                let tab = tab.clone();
+                move |_, window, cx| {
+                    cx.stop_propagation();
+                    if let Some(close) = &on_close {
+                        close(tab.clone(), window, cx);
+                    }
                 }
             })
             // Both glyphs are laid out, stacked; hover only flips visibility. (A hover style
@@ -220,12 +243,16 @@ pub(crate) fn render_panel_header(
             .when(!active, |el| {
                 el.hover(move |s| s.bg(highlight).text_color(fg))
             })
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                on_select(tab, window, cx);
+            .on_mouse_down(MouseButton::Left, {
+                let tab = tab.clone();
+                move |_, window, cx| on_select(tab.clone(), window, cx)
             })
-            .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
-                if let Some(close) = &on_close_middle {
-                    close(tab, window, cx);
+            .on_mouse_down(MouseButton::Middle, {
+                let tab = tab.clone();
+                move |_, window, cx| {
+                    if let Some(close) = &on_close_middle {
+                        close(tab.clone(), window, cx);
+                    }
                 }
             })
             .child(close_slot)

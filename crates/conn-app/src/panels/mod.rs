@@ -21,7 +21,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use conn_client::Connection;
-use conn_state::RightPanelTab;
+use conn_state::{PanelSurface, RightPanelTab};
 use conn_theme::Tokens;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
@@ -46,6 +46,15 @@ use self::terminal::TerminalPanel;
 const UI_TEXT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
 
+/// What the right panel asks of the shell.
+#[derive(Clone, Debug)]
+pub(crate) enum RightPanelEvent {
+    /// The Files tree asked to open a file as its own tab.
+    OpenFile(String),
+}
+
+impl gpui_kit::EventEmitter<RightPanelEvent> for RightPanel {}
+
 /// Right-panel GPUI entity mounted inside Conn's right-panel card.
 #[expect(
     unreachable_pub,
@@ -54,7 +63,9 @@ const UI_LINE_HEIGHT_PX: f32 = 20.0;
 pub struct RightPanel {
     tokens: Tokens,
     tab: RightPanelTab,
-    open_tabs: Vec<RightPanelTab>,
+    open_tabs: Vec<PanelSurface>,
+    /// The open file when `tab` is [`RightPanelTab::File`].
+    file: Option<String>,
     add_menu_open: bool,
     maximized: bool,
     bottom_dock_open: bool,
@@ -102,6 +113,10 @@ impl RightPanel {
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let files = cx.new(|cx| FilesPanel::new(tokens.clone(), connection.clone(), window, cx));
+        cx.subscribe(&files, |_, _, event: &files::FilesEvent, cx| match event {
+            files::FilesEvent::OpenFile(path) => cx.emit(RightPanelEvent::OpenFile(path.clone())),
+        })
+        .detach();
         let diff = cx.new(|_| DiffPanel::new(tokens.clone(), connection));
         let terminal = cx.new(|cx| TerminalPanel::new(tokens.clone(), cx));
         let browser = cx.new(|cx| BrowserPanel::new(tokens.clone(), window, cx));
@@ -113,7 +128,8 @@ impl RightPanel {
         Self {
             tokens,
             tab: RightPanelTab::Files,
-            open_tabs: vec![RightPanelTab::Files],
+            open_tabs: vec![PanelSurface::Kind(RightPanelTab::Files)],
+            file: None,
             add_menu_open: false,
             maximized: false,
             bottom_dock_open: false,
@@ -233,10 +249,20 @@ impl RightPanel {
     /// Switches the active right-panel tab (opening it if not yet in `open_tabs`),
     /// lazily spawning the terminal PTY on first visit.
     pub fn set_tab(&mut self, tab: RightPanelTab, cx: &mut Context<'_, Self>) {
-        if !self.open_tabs.contains(&tab) {
-            self.open_tabs.push(tab);
+        if tab == RightPanelTab::File {
+            if let Some(path) = self.file.clone() {
+                self.set_file(path, cx);
+            }
+            return;
+        }
+        let surface = PanelSurface::Kind(tab);
+        if !self.open_tabs.contains(&surface) {
+            self.open_tabs.push(surface);
         }
         self.add_menu_open = false;
+        if tab == RightPanelTab::Files {
+            self.files.update(cx, |p, cx| p.show_tree(cx));
+        }
         if self.tab == tab {
             cx.notify();
             return;
@@ -249,21 +275,51 @@ impl RightPanel {
         cx.notify();
     }
 
+    /// Shows the file at `path` (project-relative) as its own surface, as Conn's `file` tab.
+    pub fn set_file(&mut self, path: String, cx: &mut Context<'_, Self>) {
+        let surface = PanelSurface::File(path.clone());
+        if !self.open_tabs.contains(&surface) {
+            self.open_tabs.push(surface);
+        }
+        self.add_menu_open = false;
+        self.tab = RightPanelTab::File;
+        self.file = Some(path.clone());
+        self.files.update(cx, |p, cx| p.show_preview(path, cx));
+        self.sync_browser_visibility(cx);
+        cx.notify();
+    }
+
+    /// Shows `surface`.
+    pub fn set_surface(&mut self, surface: &PanelSurface, cx: &mut Context<'_, Self>) {
+        match surface {
+            PanelSurface::Kind(tab) => self.set_tab(*tab, cx),
+            PanelSurface::File(path) => self.set_file(path.clone(), cx),
+        }
+    }
+
+    /// The active surface.
+    #[must_use]
+    pub fn surface(&self) -> PanelSurface {
+        match (&self.tab, &self.file) {
+            (RightPanelTab::File, Some(path)) => PanelSurface::File(path.clone()),
+            (tab, _) => PanelSurface::Kind(*tab),
+        }
+    }
+
     /// Closes an open tab if more than one tab is open, activating an adjacent tab if needed.
-    pub fn close_tab(&mut self, tab: RightPanelTab, cx: &mut Context<'_, Self>) {
+    pub fn close_tab(&mut self, surface: &PanelSurface, cx: &mut Context<'_, Self>) {
         if self.open_tabs.len() <= 1 {
             return;
         }
-        if let Some(pos) = self.open_tabs.iter().position(|&t| t == tab) {
+        if let Some(pos) = self.open_tabs.iter().position(|t| t == surface) {
             self.open_tabs.remove(pos);
-            if self.tab == tab {
+            if &self.surface() == surface {
                 let next = self
                     .open_tabs
                     .get(pos.saturating_sub(1))
-                    .copied()
-                    .unwrap_or(RightPanelTab::Files);
-                self.tab = next;
-                self.sync_browser_visibility(cx);
+                    .cloned()
+                    .unwrap_or(PanelSurface::Kind(RightPanelTab::Files));
+                self.set_surface(&next, cx);
             }
             cx.notify();
         }
@@ -277,7 +333,7 @@ impl RightPanel {
 
     /// Returns the list of currently open right-panel tabs.
     #[must_use]
-    pub fn open_tabs(&self) -> &[RightPanelTab] {
+    pub fn open_tabs(&self) -> &[PanelSurface] {
         &self.open_tabs
     }
 
@@ -288,14 +344,14 @@ impl RightPanel {
         let callbacks = PanelHeaderCallbacks {
             on_select_tab: {
                 let entity = entity.clone();
-                Rc::new(move |tab, _, cx| {
-                    entity.update(cx, |this, cx| this.set_tab(tab, cx));
+                Rc::new(move |surface: PanelSurface, _, cx| {
+                    entity.update(cx, |this, cx| this.set_surface(&surface, cx));
                 })
             },
             on_close_tab: Some({
                 let entity = entity.clone();
-                Rc::new(move |tab, _, cx| {
-                    entity.update(cx, |this, cx| this.close_tab(tab, cx));
+                Rc::new(move |surface: PanelSurface, _, cx| {
+                    entity.update(cx, |this, cx| this.close_tab(&surface, cx));
                 })
             }),
             on_toggle_add_menu: {
@@ -339,10 +395,11 @@ impl RightPanel {
             }),
         };
 
+        let active = self.surface();
         render_panel_header(
             PanelHeaderProps {
                 open_tabs: &self.open_tabs,
-                active_tab: self.tab,
+                active_tab: &active,
                 maximized: self.maximized,
                 bottom_dock_open: self.bottom_dock_open,
                 panel_open: true,
@@ -367,7 +424,7 @@ impl Render for RightPanel {
         let muted = to_hsla(self.tokens.muted_foreground);
 
         let body: AnyElement = match self.tab {
-            RightPanelTab::Files => self.files.clone().into_any_element(),
+            RightPanelTab::Files | RightPanelTab::File => self.files.clone().into_any_element(),
             RightPanelTab::Diff => self.diff.clone().into_any_element(),
             RightPanelTab::Terminal => self.terminal.clone().into_any_element(),
             RightPanelTab::Browser => self.browser.clone().into_any_element(),
