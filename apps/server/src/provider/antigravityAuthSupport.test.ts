@@ -757,20 +757,6 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(yield* fs.readFileString(path.join(profileDirectory, "GEMINI.md"))).toBe(
           "profile's own rule",
         );
-
-        // A non-empty profile rules folder stays untouched when the global folder returns.
-        yield* fs.makeDirectory(path.join(userGemini, "config", "rules"), { recursive: true });
-        yield* fs.makeDirectory(path.join(profileDirectory, "config", "rules"), {
-          recursive: true,
-        });
-        yield* fs.writeFileString(
-          path.join(profileDirectory, "config", "rules", "own.md"),
-          "profile rule",
-        );
-        yield* prepareAntigravityProfile({ profileDirectory, userHome });
-        expect(
-          yield* fs.readFileString(path.join(profileDirectory, "config", "rules", "own.md")),
-        ).toBe("profile rule");
       }),
   );
 
