@@ -1289,7 +1289,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       const { command, usage, offers, send, startTurn, until, throughPromptSettled } =
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
       yield* startTurn(1, false);
-      yield* throughPromptSettled;
+      const settled = yield* throughPromptSettled;
       yield* TestClock.adjust("10 minutes");
       yield* send({
         sessionUpdate: "tool_call_update",
@@ -1309,6 +1309,19 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
       assert.include(JSON.stringify(run), "Here is the chart.", "the reply is part of the run");
       assert.lengthOf(offers, 0, "the open run needs no continuation");
+      // The reply before the wake is an answer; the wake's reply must not fold it into "Worked for".
+      const earlierReply = [...settled, ...run].findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "assistant_message" &&
+          event.turnItem.text === "I'll render once the fetch finishes.",
+      );
+      assert.equal(
+        earlierReply?.type === "turn_item.updated" &&
+          earlierReply.turnItem.type === "assistant_message" &&
+          earlierReply.turnItem.phase,
+        "final_answer",
+      );
     }).pipe(Effect.provide(layerSession)),
   );
 
