@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 
 import { assert, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -120,6 +121,51 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         }),
     );
   });
+
+  it.effect.each([
+    { name: "default", value: undefined, ttl: undefined },
+    { name: "configured", value: "90", ttl: Duration.days(90) },
+  ])("resolves the $name MCP client session lifetime", ({ value, ttl }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-mcp-lifetime-" });
+      const resolved = yield* resolveServerConfig(minimalDesktopFlags(baseDir), Option.none()).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NetService.layer,
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: value === undefined ? {} : { T3CODE_MCP_CLIENT_SESSION_TTL_DAYS: value },
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(resolved.mcpClientSessionTtl).toEqual(ttl);
+    }),
+  );
+
+  it.effect.each(["0", "-1", "1.5", "NaN", "Infinity", "9007199254740991", "9007199254740992"])(
+    "rejects an invalid MCP client session lifetime: %s",
+    (value) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-mcp-lifetime-" });
+        const error = yield* resolveServerConfig(minimalDesktopFlags(baseDir), Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NetService.layer,
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_MCP_CLIENT_SESSION_TTL_DAYS: value } }),
+              ),
+            ),
+          ),
+          Effect.flip,
+        );
+        expect(error._tag).toBe("ConfigError");
+        expect(String(error)).toContain("T3CODE_MCP_CLIENT_SESSION_TTL_DAYS");
+      }),
+  );
 
   it.effect("keeps stale records and supervised startup out of the manual launch preflight", () =>
     Effect.gen(function* () {

@@ -13,6 +13,7 @@ import { expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Etag from "effect/http/Etag";
@@ -22,6 +23,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerConfig from "../config.ts";
@@ -40,13 +42,19 @@ class AuthTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.auth)
   .add(EnvironmentHttpApi.groups.mcpOAuth) {}
 
-const layerConfig = ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-oauth-test-" });
+const layerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Service"]>) =>
+  Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      return { ...config, ...overrides };
+    }),
+  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-oauth-test-" })));
 const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provide(ManagedPolicy.layerTest()),
   Layer.provide(Sqlite.layerMemory),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(ServerEnvironment.layerIdentity),
-  Layer.provide(layerConfig),
 );
 const notLinked: EnvironmentCloudLinkStateResult = {
   linked: false,
@@ -58,6 +66,7 @@ const notLinked: EnvironmentCloudLinkStateResult = {
 const makeLayerRoutes = (
   capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void,
   linkState: EnvironmentCloudLinkStateResult,
+  configOverrides?: Partial<ServerConfig.ServerConfig["Service"]>,
 ) =>
   Layer.mergeAll(
     Layer.effectDiscard(
@@ -78,7 +87,7 @@ const makeLayerRoutes = (
     ),
   ).pipe(
     Layer.provideMerge(layerEnvironmentAuth),
-    Layer.provide(layerConfig),
+    Layer.provide(layerConfig(configOverrides)),
     Layer.provideMerge(
       HttpPlatform.layer.pipe(
         Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -110,14 +119,22 @@ type Handler = (request: Request) => Effect.Effect<Response>;
 const withRoutes = <A, E>(
   use: (handler: Handler, auth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
   linkState = notLinked,
+  configOverrides?: Partial<ServerConfig.ServerConfig["Service"]>,
 ) =>
   Effect.gen(function* () {
     const random = yield* SecureRandom.SecureRandom;
-    const context = Context.make(SecureRandom.SecureRandom, random);
+    const clock = yield* Clock.Clock;
+    const context = Context.make(SecureRandom.SecureRandom, random).pipe(
+      Context.add(Clock.Clock, clock),
+    );
     let routerAuth: EnvironmentAuth.EnvironmentAuth["Service"] | undefined;
-    const layerRoutes = makeLayerRoutes((auth) => {
-      routerAuth = auth;
-    }, linkState);
+    const layerRoutes = makeLayerRoutes(
+      (auth) => {
+        routerAuth = auth;
+      },
+      linkState,
+      configOverrides,
+    );
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (web) =>
@@ -325,78 +342,108 @@ it.effect("registers loopback and https clients and never redirects for an unver
   ),
 );
 
-it.live("signs in with a pairing code and issues a token only /mcp accepts", () =>
-  withRoutes((handler, auth) =>
-    Effect.gen(function* () {
-      const clientId = yield* registeredClientId(handler);
-      const pairing = yield* auth.issuePairingCredential();
-      const params = authorizeParams(clientId);
+it.effect.each([
+  { name: "default", days: 30 },
+  { name: "configured", days: 90 },
+])("signs in with a pairing code and enforces the $name MCP token lifetime", ({ days }) =>
+  withRoutes(
+    (handler, auth) =>
+      Effect.gen(function* () {
+        const clientId = yield* registeredClientId(handler);
+        const pairing = yield* auth.issuePairingCredential();
+        const params = authorizeParams(clientId);
 
-      const wrongCode = yield* decide(handler, params, {
-        _tag: "pairing-code",
-        access: "auto",
-        code: "nope",
-      });
-      expect(wrongCode.status).toBe(400);
-      expect(wrongCode.message).toContain("unknown, expired, or already used");
+        const wrongCode = yield* decide(handler, params, {
+          _tag: "pairing-code",
+          access: "auto",
+          code: "nope",
+        });
+        expect(wrongCode.status).toBe(400);
+        expect(wrongCode.message).toContain("unknown, expired, or already used");
 
-      const approved = yield* decide(handler, params, {
-        _tag: "pairing-code",
-        access: "auto",
-        code: pairing.credential,
-      });
-      expect(approved.status).toBe(200);
-      const callback = new URL(approved.redirectTo!);
-      expect(callback.origin).toBe("http://localhost:51234");
-      expect(callback.searchParams.get("state")).toBe("state-1");
-      expect(callback.searchParams.get("iss")).toBe(ORIGIN);
-      const code = callback.searchParams.get("code")!;
+        const approved = yield* decide(handler, params, {
+          _tag: "pairing-code",
+          access: "auto",
+          code: pairing.credential,
+        });
+        expect(approved.status).toBe(200);
+        const callback = new URL(approved.redirectTo!);
+        expect(callback.origin).toBe("http://localhost:51234");
+        expect(callback.searchParams.get("state")).toBe("state-1");
+        expect(callback.searchParams.get("iss")).toBe(ORIGIN);
+        const code = callback.searchParams.get("code")!;
 
-      const exchange = (codeVerifier: string) =>
-        handler(
-          at(
-            "/oauth/mcp/token",
-            form({
-              grant_type: "authorization_code",
-              code,
-              redirect_uri: params.redirect_uri,
-              client_id: clientId,
-              code_verifier: codeVerifier,
-              resource: `${ORIGIN}/mcp`,
-            }),
-          ),
+        const exchange = (codeVerifier: string) =>
+          handler(
+            at(
+              "/oauth/mcp/token",
+              form({
+                grant_type: "authorization_code",
+                code,
+                redirect_uri: params.redirect_uri,
+                client_id: clientId,
+                code_verifier: codeVerifier,
+                resource: `${ORIGIN}/mcp`,
+              }),
+            ),
+          );
+        const issuedAt = yield* Clock.currentTimeMillis;
+        const localSession = yield* auth.issueMcpClientSession({
+          label: "t3 thread",
+          access: "full-access",
+          peerLink: false,
+          client: { deviceType: "bot" },
+        });
+        expect(localSession.expiresAt.epochMilliseconds - issuedAt).toBe(
+          Duration.toMillis(Duration.days(30)),
         );
-      const tokenResponse = yield* exchange(verifier);
-      expect(tokenResponse.status).toBe(200);
-      const token = (yield* json<unknown>(tokenResponse)) as {
-        access_token: string;
-        scope: string;
-      };
-      expect(token.scope).toBe("orchestration:read orchestration:operate");
 
-      expect((yield* exchange(verifier)).status).toBe(400);
+        const tokenResponse = yield* exchange(verifier);
+        expect(tokenResponse.status).toBe(200);
+        const token = (yield* json<unknown>(tokenResponse)) as {
+          access_token: string;
+          expires_in: number;
+          scope: string;
+        };
+        expect(token.scope).toBe("orchestration:read orchestration:operate");
+        expect(token.expires_in).toBe(Duration.toSeconds(Duration.days(days)));
 
-      for (const scheme of ["Bearer", "bearer", "bEaReR"]) {
-        const client = yield* auth.authenticateMcpClient(
-          HttpServerRequest.fromWeb(
-            at("/mcp", { headers: { authorization: `${scheme} ${token.access_token}` } }),
-          ),
+        expect((yield* exchange(verifier)).status).toBe(400);
+
+        for (const scheme of ["Bearer", "bearer", "bEaReR"]) {
+          const client = yield* auth.authenticateMcpClient(
+            HttpServerRequest.fromWeb(
+              at("/mcp", { headers: { authorization: `${scheme} ${token.access_token}` } }),
+            ),
+          );
+          expect(client).toMatchObject({ label: "Claude Code", access: "auto" });
+        }
+
+        const session = yield* handler(
+          at("/api/auth/session", { headers: { authorization: `Bearer ${token.access_token}` } }),
         );
-        expect(client).toMatchObject({ label: "Claude Code", access: "auto" });
-      }
+        expect(yield* json<unknown>(session)).toMatchObject({ authenticated: false });
+        const ticket = yield* handler(
+          at("/api/auth/websocket-ticket", {
+            method: "POST",
+            headers: { authorization: `Bearer ${token.access_token}` },
+          }),
+        );
+        expect(ticket.status).toBe(401);
 
-      const session = yield* handler(
-        at("/api/auth/session", { headers: { authorization: `Bearer ${token.access_token}` } }),
-      );
-      expect(yield* json<unknown>(session)).toMatchObject({ authenticated: false });
-      const ticket = yield* handler(
-        at("/api/auth/websocket-ticket", {
-          method: "POST",
-          headers: { authorization: `Bearer ${token.access_token}` },
-        }),
-      );
-      expect(ticket.status).toBe(401);
-    }),
+        const mcpRequest = HttpServerRequest.fromWeb(
+          at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
+        );
+        yield* TestClock.adjust(Duration.millis(Duration.toMillis(Duration.days(days)) - 1));
+        expect(yield* auth.authenticateMcpClient(mcpRequest)).toMatchObject({ access: "auto" });
+        yield* TestClock.adjust(Duration.millis(1));
+        expect(yield* auth.authenticateMcpClient(mcpRequest).pipe(Effect.flip)).toMatchObject({
+          _tag: "ServerAuthInvalidCredentialError",
+          cause: { _tag: "SessionTokenExpiredError" },
+        });
+      }),
+    notLinked,
+    days === 30 ? undefined : { mcpClientSessionTtl: Duration.days(days) },
   ),
 );
 

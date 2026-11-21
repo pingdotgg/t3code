@@ -33,6 +33,7 @@ import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http";
 
 import { hostedAppUrlConfig } from "../cloud/publicConfig.ts";
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
@@ -261,6 +262,7 @@ export const redirectForError = (error: McpOAuthRedirectError, issuer: string) =
 
 const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const config = yield* ServerConfig.ServerConfig;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const random = yield* SecureRandom.SecureRandom;
   const digester = yield* Digest.Digest;
@@ -566,6 +568,7 @@ const make = Effect.gen(function* () {
           access: pending.access,
           peerLink: pending.peerLink,
           client: deriveAuthClientMetadata({ request }),
+          ...(config.mcpClientSessionTtl === undefined ? {} : { ttl: config.mcpClientSessionTtl }),
         })
         .pipe(
           Effect.catch((cause) =>
