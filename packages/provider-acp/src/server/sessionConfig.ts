@@ -33,6 +33,73 @@ export function flattenSelectChoices(
   return options.flatMap((candidate) => ("value" in candidate ? [candidate] : candidate.options));
 }
 
+const THOUGHT_LEVEL_ORDER = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "extra-high",
+  "extra_high",
+  "max",
+  "none",
+  "off",
+] as const;
+
+const THOUGHT_LEVEL_RANK = new Map<string, number>(
+  THOUGHT_LEVEL_ORDER.map((id, index) => [id, index]),
+);
+
+function thoughtLevelLabel(id: string, fallback: string, separateMax: boolean): string {
+  switch (id) {
+    case "minimal":
+      return "Minimal";
+    case "low":
+      return "Low";
+    case "medium":
+      return "Medium";
+    case "high":
+      return "High";
+    case "xhigh":
+    case "extra-high":
+    case "extra_high":
+      return "Extra High";
+    case "max":
+      // One top bucket is Extra High. Max stays Max only when Extra High is also offered.
+      return separateMax ? "Max" : "Extra High";
+    case "none":
+      return "None";
+    case "off":
+      return "Off";
+    default:
+      return fallback;
+  }
+}
+
+/**
+ * Agents omit a default flag. Qoder's `reasoning_effort` column badges High as Default
+ * while the check mark stays on `currentValue`. Other thought levels must not get that
+ * flag: `isDefault` is also the value used when `currentValue` is absent.
+ */
+function presentThoughtLevelChoices(
+  choices: ReadonlyArray<ProviderOptionChoice>,
+  badgeHighAsDefault: boolean,
+): ReadonlyArray<ProviderOptionChoice> {
+  const ids = new Set(choices.map((choice) => choice.id));
+  const separateMax = ids.has("xhigh") || ids.has("extra-high") || ids.has("extra_high");
+  return [...choices]
+    .sort(
+      (left, right) =>
+        (THOUGHT_LEVEL_RANK.get(left.id) ?? THOUGHT_LEVEL_RANK.size) -
+        (THOUGHT_LEVEL_RANK.get(right.id) ?? THOUGHT_LEVEL_RANK.size),
+    )
+    .map((choice) => ({
+      ...choice,
+      label: thoughtLevelLabel(choice.id, choice.label, separateMax),
+      ...(badgeHighAsDefault && choice.id === "high" ? { isDefault: true } : {}),
+    }));
+}
+
 function selectChoices(
   candidates: ReadonlyArray<{
     readonly value: string;
@@ -100,12 +167,16 @@ export function acpProviderOptionDescriptors(input: {
     if (isThoughtLevel) {
       mirroredModeChoiceSets.push(new Set(choices.map((choice) => choice.id)));
     }
+    const presentedChoices = isThoughtLevel
+      ? presentThoughtLevelChoices(choices, id === "reasoning_effort")
+      : choices;
     const currentValue = choiceId(option.currentValue);
     descriptors.push({
       ...base,
+      ...(isThoughtLevel ? { label: "Reasoning" } : {}),
       type: "select",
-      options: choices,
-      ...(currentValue && choices.some((choice) => choice.id === currentValue)
+      options: presentedChoices,
+      ...(currentValue && presentedChoices.some((choice) => choice.id === currentValue)
         ? { currentValue }
         : {}),
       ...(isThoughtLevel ? { role: "reasoning" as const } : {}),
