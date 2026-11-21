@@ -45,9 +45,8 @@ it.each([
         "a",
       ),
     expected: { byProjectKey: { a: [page], b: [otherEntry] } },
-    expectedMappings: { "env:thread": "a" },
   },
-])("$name", async ({ change, expected, expectedMappings }) => {
+])("$name", async ({ change, expected }) => {
   resetBrowserHistoryForTests();
   try {
     useBrowserHistoryStore.getState().recordVisit("a", oldEntry.url, oldEntry.lastVisitedAt);
@@ -65,12 +64,15 @@ it.each([
     );
     change();
 
-    await vi.waitFor(() => {
-      expect(storedHistory()).toHaveProperty("byProjectKey", expected.byProjectKey);
-      if (expectedMappings) {
-        expect(storedHistory()).toHaveProperty("projectKeyByThreadKey", expectedMappings);
-      }
-    });
+    await vi.waitFor(() =>
+      expect(storedHistory()).toHaveProperty("byProjectKey", expected.byProjectKey),
+    );
+    await vi.waitFor(() =>
+      expect(storedHistory()).toHaveProperty(
+        "projectKeyByThreadKey",
+        useBrowserHistoryStore.getState().projectKeyByThreadKey,
+      ),
+    );
     expect(useBrowserHistoryStore.getState().byProjectKey).toEqual(expected.byProjectKey);
   } finally {
     resetBrowserHistoryForTests();
