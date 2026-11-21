@@ -29,6 +29,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   type ContextMenuItem,
+  type KeybindingCommand,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -58,17 +59,21 @@ import {
   GhosttyTerminalSurface,
   type GhosttyTerminalSurfaceOptions,
 } from "~/terminal/ghostty/surface";
+import { isEditableFocused } from "~/lib/editableFocus";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { isTerminalUrl, resolveTerminalLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
+  isTerminalCopyShortcut,
   isTerminalNewShortcut,
+  isTerminalPasteShortcut,
   isTerminalSplitShortcut,
   isTerminalSplitVerticalShortcut,
   isTerminalToggleShortcut,
   isThreadNavigationShortcut,
+  resolveShortcutCommand,
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
@@ -451,6 +456,21 @@ function writableSessionGeneration(
   return canOperate && session.version > 0 && session.status === "running"
     ? session.output.generation
     : null;
+}
+
+/** Native chords stay with the surface, whose fallbacks survive denied clipboard access. */
+export function terminalClipboardShortcutAction(
+  command: KeybindingCommand | null,
+  event: Parameters<typeof isTerminalCopyShortcut>[0],
+  hasSelection: boolean,
+): "copy" | "paste" | "native" | null {
+  if (command === "terminal.copy") {
+    return !event.altKey && hasSelection && isTerminalCopyShortcut(event) ? "native" : "copy";
+  }
+  if (command === "terminal.paste") {
+    return !event.altKey && isTerminalPasteShortcut(event) ? "native" : "paste";
+  }
+  return null;
 }
 
 export function shouldHandleTerminalExit(
@@ -1022,7 +1042,13 @@ function TerminalSessionViewport({
 
       function handleBeforeKey(event: KeyboardEvent): boolean {
         const currentKeybindings = readKeybindings();
-        const options = { context: { terminalFocus: true, terminalOpen: true } };
+        const options = {
+          context: {
+            terminalFocus: true,
+            terminalOpen: true,
+            editableFocus: isEditableFocused(event.target),
+          },
+        };
         if (preventTerminalCloseShortcut(event, currentKeybindings)) {
           return false;
         }
@@ -1037,6 +1063,26 @@ function TerminalSessionViewport({
             context: { ...readThreadShortcutContext(), terminalFocus: true },
           })
         ) {
+          return false;
+        }
+
+        const clipboardAction = terminalClipboardShortcutAction(
+          resolveShortcutCommand(event, currentKeybindings, options),
+          event,
+          terminalRef.current?.hasSelection() ?? false,
+        );
+        if (clipboardAction === "native") return true;
+        if (clipboardAction !== null) {
+          event.preventDefault();
+          event.stopPropagation();
+          clearSelectionAction();
+          const requestId = selectionActionRequestIdRef.current;
+          if (clipboardAction === "copy") {
+            const selection = terminalRef.current?.getSelection();
+            if (selection) void copySelection(selection, requestId);
+          } else {
+            void pasteFromClipboard(requestId);
+          }
           return false;
         }
 

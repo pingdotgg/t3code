@@ -6,13 +6,13 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 import { synchronizeTerminalSession } from "../../components/ThreadTerminalDrawer";
 
+import { isTerminalCopyShortcut } from "../../keybindings";
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
   advanceTerminalSelectionClickSequence,
   applyTerminalCopyEvent,
   clearPrimedTerminalCopyInput,
   isTerminalCompositionKey,
-  isTerminalCopyShortcut,
   primeTerminalCopyInput,
   resolveTerminalMouseData,
   terminalLinkAtPositionWithRange,
@@ -444,11 +444,13 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.stubGlobal("navigator", { platform: "Linux x86_64" });
     const harness = createHarness();
     let allow = false;
-    const surface = await harness.create({ beforeKey: () => allow });
+    const beforeKey = vi.fn(() => allow);
+    const surface = await harness.create({ beforeKey });
     surface.write("hello\x1b[>31u");
     key(surface, "a", "KeyA", { ctrlKey: true, shiftKey: true });
     key(surface, "a", "KeyA", {}, "keyup");
     expect(surface.hasSelection()).toBe(false);
+    beforeKey.mockClear();
     allow = true;
     surface.input.value = "候補";
     key(surface, "a", "KeyA", { ctrlKey: true, shiftKey: true, isComposing: true });
@@ -462,9 +464,13 @@ describe("GhosttyTerminalSurface visibility", () => {
       getModifierState: (modifier) => modifier === "AltGraph",
     });
     key(surface, "a", "KeyA", {}, "keyup");
+    surface.input.dispatchEvent(new Event("compositionstart"));
+    key(surface, "v", "KeyV", { metaKey: true });
+    key(surface, "v", "KeyV", { metaKey: true }, "keyup");
     expect(surface.input.value).toBe("候補");
     expect(surface.hasSelection()).toBe(false);
     expect(harness.onData).not.toHaveBeenCalled();
+    expect(beforeKey).not.toHaveBeenCalled();
   });
 
   function paste(surface: GhosttyTerminalSurface, text: string) {
