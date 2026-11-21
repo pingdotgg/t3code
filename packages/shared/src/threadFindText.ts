@@ -40,6 +40,8 @@ import {
   chatMarkdownImageSource,
   decodeMarkdownLinkEscapes,
   type ChatMarkdownImageProperties,
+  ASSISTANT_MARKDOWN_REMARK_PLUGINS,
+  ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
@@ -82,18 +84,23 @@ export const THREAD_FIND_BLOCK_TAGS = new Set([
   "ul",
 ]);
 
-function assistantTextProcessor(lineBreaks = false, renderInsights = false) {
+function assistantTextProcessor(lineBreaks = false, assistantReply = false) {
   return unified()
     .use(remarkParse)
-    .use(renderInsights ? [remarkAssistantInsights] : [])
-    .use(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(assistantReply ? [remarkAssistantInsights] : [])
+    .use(
+      assistantReply
+        ? lineBreaks
+          ? ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS
+          : ASSISTANT_MARKDOWN_REMARK_PLUGINS
+        : CHAT_MARKDOWN_REMARK_PLUGINS,
+    )
     .use(remarkRehype, { allowDangerousHtml: true })
     .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
 }
 const assistantProcessor = assistantTextProcessor();
-const assistantBreaksProcessor = assistantTextProcessor(true);
-const insightProcessor = assistantTextProcessor(false, true);
-const insightBreaksProcessor = assistantTextProcessor(true, true);
+const replyProcessor = assistantTextProcessor(false, true);
+const replyBreaksProcessor = assistantTextProcessor(true, true);
 const userProcessor = unified()
   .use(remarkParse)
   .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
@@ -118,7 +125,7 @@ function markdownThreadFindText(
     cwd,
     skills = [],
     lineBreaks = false,
-    renderInsights = false,
+    renderInsights: assistantReply = false,
     theme,
   }: {
     userMessage?: boolean;
@@ -131,15 +138,12 @@ function markdownThreadFindText(
 ): string[] {
   const processor = userMessage
     ? userProcessor
-    : lineBreaks
-      ? assistantBreaksProcessor
-      : assistantProcessor;
-  const renderer = renderInsights
-    ? lineBreaks
-      ? insightBreaksProcessor
-      : insightProcessor
-    : processor;
-  const tree = renderer.runSync(renderer.parse(markdown), markdown);
+    : !assistantReply
+      ? assistantProcessor
+      : lineBreaks
+        ? replyBreaksProcessor
+        : replyProcessor;
+  const tree = processor.runSync(processor.parse(markdown), markdown);
   const paths = [
     ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)).map(
       decodeMarkdownLinkEscapes,

@@ -28,6 +28,8 @@ import {
   chatMarkdownImageSource,
   decodeMarkdownLinkEscapes,
   remarkAssistantInsights,
+  ASSISTANT_MARKDOWN_REMARK_PLUGINS,
+  ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
 } from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -262,6 +264,7 @@ interface ChatMarkdownProps {
   skills?: ReadonlyArray<ServerProviderSkill>;
   className?: string;
   lineBreaks?: boolean;
+  assistantReply?: boolean;
   parseRawHtml?: boolean;
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
@@ -1861,6 +1864,12 @@ const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
   math: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS],
   mathBreaks: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
 } satisfies Record<string, PluggableList>;
+const ASSISTANT_MARKDOWN_REMARK_PLUGIN_SETS = {
+  plain: ASSISTANT_MARKDOWN_REMARK_PLUGINS,
+  breaks: ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  math: [REMARK_MATH, ...ASSISTANT_MARKDOWN_REMARK_PLUGINS],
+  mathBreaks: [REMARK_MATH, ...ASSISTANT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+} satisfies Record<string, PluggableList>;
 
 const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
 
@@ -1934,6 +1943,7 @@ function ChatMarkdown({
   className,
   inline = false,
   lineBreaks = false,
+  assistantReply = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   renderInsights = false,
@@ -1960,16 +1970,17 @@ function ChatMarkdown({
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
-  const sharedRemarkPlugins =
-    CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
-      componentState.mathEnabled
-        ? lineBreaks
-          ? "mathBreaks"
-          : "math"
-        : lineBreaks
-          ? "breaks"
-          : "plain"
-    ];
+  const sharedRemarkPlugins = (
+    assistantReply ? ASSISTANT_MARKDOWN_REMARK_PLUGIN_SETS : CHAT_MARKDOWN_REMARK_PLUGIN_SETS
+  )[
+    componentState.mathEnabled
+      ? lineBreaks
+        ? "mathBreaks"
+        : "math"
+      : lineBreaks
+        ? "breaks"
+        : "plain"
+  ];
   // The incremental parser keeps per-instance state, so its output is not shared.
   const uncachedPlugins = incrementalParsing;
   const remarkPlugins = incrementalParsing
