@@ -72,11 +72,12 @@ export default Effect.gen(function* () {
       PRIMARY KEY (run_id, name)
     )
   `;
-  // Ids of signals that woke a wait, so a sender's retry of one is not a second signal.
+  // Ids of signals that woke a wait, so a sender's retry of one is not a second signal. Kept at
+  // least as long as any kept copy of the signal, which would otherwise wake a second wait.
   yield* sql`
     CREATE TABLE workflow_signals (
       signal_id TEXT PRIMARY KEY,
-      delivered_at TEXT NOT NULL
+      kept_until TEXT NOT NULL
     )
   `;
 });

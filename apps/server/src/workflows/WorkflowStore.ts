@@ -83,6 +83,9 @@ const WAKE_REDONE_AFTER = Duration.seconds(30);
 // Enough to read what a step said; the page that shows it is not a place for a whole report.
 const STEP_RESULT_KEPT = 8_000;
 const SIGNAL_IDS_KEPT = Duration.days(7);
+const idsKeptUntil = Effect.map(DateTime.now, (at) =>
+  DateTime.formatIso(DateTime.addDuration(at, SIGNAL_IDS_KEPT)),
+);
 // A tuple, so no name or key can be read as part of the other.
 const mailAddress = (address: SignalAddress) =>
   JSON.stringify(
@@ -159,6 +162,8 @@ export class WorkflowStore extends Context.Service<
       readonly deadline: string | null;
     }) => Effect.Effect<void>;
     readonly waitClosed: (runId: string, name: string) => Effect.Effect<void>;
+    /** The wait takes signals again, under a fresh wake: what woke it was not for it. */
+    readonly waitReopened: (runId: string, name: string, token: string) => Effect.Effect<void>;
     /** Takes the wait for one signal. False when another signal already has it. */
     /**
      * Claims an open wait for one wake and keeps what it is woken with. False when something else
@@ -262,10 +267,18 @@ export class WorkflowStore extends Context.Service<
       readonly valueJson: string;
       readonly expiresAt: string;
     }) => Effect.Effect<void>;
-    /** The oldest signal kept for any of these addresses. It stays until `mailDelete`. */
+    /** The oldest signal kept for any of these addresses, but `passed`. It stays until `mailDelete`. */
     readonly mailNext: (
       addresses: ReadonlyArray<SignalAddress>,
-    ) => Effect.Effect<{ readonly signalId: string; readonly valueJson: string } | undefined>;
+      passed?: ReadonlySet<string>,
+    ) => Effect.Effect<
+      | {
+          readonly signalId: string;
+          readonly valueJson: string;
+          readonly address: SignalAddress;
+        }
+      | undefined
+    >;
     readonly mailDelete: (signalId: string) => Effect.Effect<void>;
     readonly mailExpire: Effect.Effect<void>;
     readonly run: (runId: string) => Effect.Effect<RunRow | undefined>;
@@ -464,6 +477,15 @@ export const make = Effect.gen(function* () {
         sql`DELETE FROM workflow_waits WHERE run_id = ${runId} AND name = ${name}`,
       );
     }),
+    waitReopened: Effect.fn("WorkflowStore.waitReopened")(function* (runId, name, token) {
+      yield* write(
+        runId,
+        sql`
+          UPDATE workflow_waits SET token = ${token}, signalled_at = NULL, woke_json = NULL
+          WHERE run_id = ${runId} AND name = ${name}
+        `,
+      );
+    }),
     waitSignalled: Effect.fn("WorkflowStore.waitSignalled")(
       function* (runId, name, woke, signalId) {
         const at = yield* now;
@@ -474,7 +496,10 @@ export const make = Effect.gen(function* () {
         `;
         if (taken.length > 0 && signalId !== undefined) {
           const receipt = yield* sql`
-            INSERT INTO workflow_signals (signal_id, delivered_at) VALUES (${signalId}, ${at})
+            INSERT INTO workflow_signals (signal_id, kept_until)
+            VALUES (${signalId}, MAX(${yield* idsKeptUntil}, COALESCE(
+              (SELECT expires_at FROM workflow_mail WHERE signal_id = ${signalId}), ''
+            )))
             ON CONFLICT (signal_id) DO NOTHING
             RETURNING signal_id
           `;
@@ -520,13 +545,16 @@ export const make = Effect.gen(function* () {
               RETURNING name
             `;
             if (claimed.length === 0) return "claimed" as const;
-            const taken = yield* sql`
-              DELETE FROM workflow_mail WHERE signal_id = ${signalId} RETURNING signal_id
+            const taken = yield* sql<{ expires_at: string }>`
+              DELETE FROM workflow_mail WHERE signal_id = ${signalId} RETURNING expires_at
             `;
             // Failing undoes the claim: the wait stays open for a signal that is still there.
-            if (taken.length === 0) return yield* Effect.fail("gone" as const);
+            const copy = taken[0];
+            if (copy === undefined) return yield* Effect.fail("gone" as const);
+            const keep = yield* idsKeptUntil;
             const receipt = yield* sql`
-              INSERT INTO workflow_signals (signal_id, delivered_at) VALUES (${signalId}, ${at})
+              INSERT INTO workflow_signals (signal_id, kept_until)
+              VALUES (${signalId}, ${copy.expires_at > keep ? copy.expires_at : keep})
               ON CONFLICT (signal_id) DO NOTHING
               RETURNING signal_id
             `;
@@ -728,20 +756,33 @@ export const make = Effect.gen(function* () {
       WHERE watch_json IS NOT NULL AND signalled_at IS NULL ORDER BY opened_at
     `.pipe(Effect.orDie),
     mailPut: Effect.fn("WorkflowStore.mailPut")(function* (mail) {
-      yield* sql`
-        INSERT INTO workflow_mail (signal_id, address, value_json, expires_at)
-        VALUES (${mail.signalId}, ${mailAddress(mail.address)}, ${mail.valueJson}, ${mail.expiresAt})
-        ON CONFLICT (signal_id) DO NOTHING
-      `.pipe(Effect.orDie);
+      yield* sql
+        .withTransaction(
+          Effect.andThen(
+            sql`
+              INSERT INTO workflow_mail (signal_id, address, value_json, expires_at)
+              VALUES (${mail.signalId}, ${mailAddress(mail.address)}, ${mail.valueJson}, ${mail.expiresAt})
+              ON CONFLICT (signal_id) DO NOTHING
+            `,
+            // A copy kept by a retry that raced the first delivery outlives no receipt of it.
+            sql`
+              UPDATE workflow_signals SET kept_until = ${mail.expiresAt}
+              WHERE signal_id = ${mail.signalId} AND kept_until < ${mail.expiresAt}
+            `,
+          ),
+        )
+        .pipe(Effect.orDie);
     }),
-    mailNext: Effect.fn("WorkflowStore.mailNext")(function* (addresses) {
+    mailNext: Effect.fn("WorkflowStore.mailNext")(function* (addresses, passed = new Set()) {
       for (const address of addresses) {
         const rows = yield* sql<{ signal_id: string; value_json: string }>`
           SELECT signal_id, value_json FROM workflow_mail
-          WHERE address = ${mailAddress(address)} ORDER BY rowid LIMIT 1
+          WHERE address = ${mailAddress(address)} ORDER BY rowid
         `.pipe(Effect.orDie);
-        const mail = rows[0];
-        if (mail !== undefined) return { signalId: mail.signal_id, valueJson: mail.value_json };
+        const mail = rows.find((row) => !passed.has(row.signal_id));
+        if (mail !== undefined) {
+          return { signalId: mail.signal_id, valueJson: mail.value_json, address };
+        }
       }
       return undefined;
     }),
@@ -751,8 +792,7 @@ export const make = Effect.gen(function* () {
     mailExpire: Effect.gen(function* () {
       const at = yield* DateTime.now;
       yield* sql`DELETE FROM workflow_mail WHERE expires_at <= ${DateTime.formatIso(at)}`;
-      const kept = DateTime.formatIso(DateTime.subtractDuration(at, SIGNAL_IDS_KEPT));
-      yield* sql`DELETE FROM workflow_signals WHERE delivered_at <= ${kept}`;
+      yield* sql`DELETE FROM workflow_signals WHERE kept_until <= ${DateTime.formatIso(at)}`;
     }).pipe(Effect.orDie),
     run: Effect.fn("WorkflowStore.run")(function* (runId) {
       const rows = yield* sql<RunRow>`SELECT * FROM workflow_runs WHERE run_id = ${runId}`.pipe(

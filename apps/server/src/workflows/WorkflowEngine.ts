@@ -719,8 +719,11 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       // A sender's retry of a signal that already woke a wait is not a second signal.
       if (yield* store.signalSeen(options.id)) return "delivered" as const;
       const valueJson = WorkflowStore.jsonText(value);
-      const wait = yield* store.waitAt(address);
-      if (wait !== undefined) {
+      const woke = { expired: false, value };
+      // One signal per wait: a wait another signal took first sends this one to the next.
+      while (true) {
+        const wait = yield* store.waitAt(address);
+        if (wait === undefined) break;
         const schema = WorkflowStore.jsonValue(wait.schema_json) as Record<string, Schema.Json>;
         const checked = yield* checkOutput(schema, valueJson);
         if (Result.isFailure(checked)) {
@@ -728,12 +731,12 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             problem: `The value does not fit what ${wait.name} waits for. ${rejectionText(checked.failure)}`,
           });
         }
-        // One signal per wait: a second one for the same key is for the next run that waits on it.
-        const woke = { expired: false, value };
         if (yield* store.waitSignalled(wait.run_id, wait.name, woke, options.id)) {
           yield* wake(wait, woke);
           return "delivered" as const;
         }
+        // Refused for its id: the same signal, sent again at once, woke a wait.
+        if (yield* store.signalSeen(options.id)) return "delivered" as const;
       }
       const expiresAt = DateTime.formatIso(
         DateTime.addDuration(
@@ -741,22 +744,23 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           Duration.fromInputUnsafe(options.ttl ?? DEFAULT_SIGNAL_TTL),
         ),
       );
+      if (yield* store.signalSeen(options.id)) return "delivered" as const;
       yield* store.mailPut({ signalId: options.id, address, valueJson, expiresAt });
       // The wait may have opened and looked for mail between the look above and this write.
-      const late = yield* store.waitAt(address);
-      if (late !== undefined) {
+      while (true) {
+        const late = yield* store.waitAt(address);
+        if (late === undefined) return "buffered" as const;
         const schema = WorkflowStore.jsonValue(late.schema_json) as Record<string, Schema.Json>;
-        if (Result.isSuccess(yield* checkOutput(schema, valueJson))) {
-          const woke = { expired: false, value };
-          if (
-            (yield* store.mailDeliver(options.id, late.run_id, late.name, woke)) === "delivered"
-          ) {
-            yield* wake(late, woke);
-            return "delivered" as const;
-          }
+        // Kept for a wait it fits; this one, the oldest on the channel, is not it.
+        if (Result.isFailure(yield* checkOutput(schema, valueJson))) return "buffered" as const;
+        const outcome = yield* store.mailDeliver(options.id, late.run_id, late.name, woke);
+        if (outcome === "delivered") {
+          yield* wake(late, woke);
+          return "delivered" as const;
         }
+        // The kept copy went to a wait that opened, or was dropped as already delivered.
+        if (outcome === "gone") return "delivered" as const;
       }
-      return "buffered" as const;
     },
   );
   const signalAll = Effect.fn("WorkflowEngine.signalAll")(function* (
