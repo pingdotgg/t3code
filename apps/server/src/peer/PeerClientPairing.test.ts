@@ -43,7 +43,10 @@ import {
 } from "./PeerLinks.testkit.ts";
 
 const laptop = descriptorOf("environment-laptop", "Laptop");
-const box = descriptorOf("environment-box", "Box", { linkClientPairing: true });
+const box = descriptorOf("environment-box", "Box", {
+  linkClientPairing: true,
+  linkPairingForLink: true,
+});
 const NoTools = Toolkit.make();
 
 const serveBox = (descriptor: ExecutionEnvironmentDescriptor = box) =>
@@ -250,6 +253,60 @@ it.effect("pairs no client while Linked environments is off on either side", () 
         .pipe(Effect.flip);
       expect(off.reason).toBe("disabled");
       expect(yield* b.auth.listPairingLinks()).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a full-access link gets a pairing code that links another environment to the box", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveBox();
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "full-access");
+      const phone = yield* a.client([AuthAccessWriteScope]);
+
+      const result = yield* a.pairing.requestForLink(
+        { environmentId: box.environmentId, access: "approval-required" },
+        phone,
+      );
+      if (result.type !== "credential") return yield* Effect.die(result);
+      expect(result).toMatchObject({ environmentId: box.environmentId, urls: [b.url] });
+
+      // A third environment links with it, at the access the code was minted for.
+      const desk = yield* Layer.build(
+        layerLinkingEnvironment(descriptorOf("environment-desk", "Desk")),
+      );
+      const linked = yield* Context.get(desk, PeerLinks.PeerLinks).link({
+        url: b.url,
+        pairingCode: result.credential,
+        access: "approval-required",
+      });
+      expect(linked).toMatchObject({
+        environmentId: box.environmentId,
+        access: "approval-required",
+      });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a linked environment from before link pairing is never asked for one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveBox(
+        descriptorOf("environment-box", "Box", { linkClientPairing: true }),
+      );
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "full-access");
+      const phone = yield* a.client([AuthAccessWriteScope]);
+
+      // It would read the request as a client's and hand back a client pairing.
+      expect(
+        yield* a.pairing.requestForLink(
+          { environmentId: box.environmentId, access: "auto" },
+          phone,
+        ),
+      ).toMatchObject({ type: "unsupported", reason: "version" });
+      expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
