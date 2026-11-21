@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "请使用 {install} 安装 Origin CLI，然后运行 {login}。",
   "eb0f60ef4f92ab7d": "请从 {fjUrl} 安装 {fj} 0.6 或更高版本并运行 {fjLogin}，或从 {teaUrl} 安装 {tea} 0.16 或更高版本，并为每个 Forgejo 或 Gitea 服务器运行 {teaLogin}。",
   "d026a85e2e50e675": "请使用 {install} 安装 GitCafe CLI，然后运行 {login}、在设置中保存 token，或在服务器上设置 {variable}。",
+  "22d3c0c48a34b5b3": "请使用 {install} 安装 TanStack Source CLI，然后运行 {login}、在设置中保存 token，或在服务器上设置 {variable}。",
   "79d776428f4d0650": "无法加载文件。请重新连接后重试。",
   "3ea34cbb1ca5ba9b": "预览已取消。",
   "7c0af279ecb3da3a": "此运行时不支持流式文件预览。",
@@ -118,6 +119,8 @@
   "f42c2a36b3507308": "{label} 开启",
   "77cc5f738cb7d459": "{label} 关闭",
   "2159a4897d4a4d73": "{runtime, select, codex {请将 Codex CLI 更新到 {version} 或更高版本以使用 {names}。} other {请将 {providerName} 更新到 {version} 或更高版本以使用 {names}。}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {使用 {names} 需要 Codex CLI {version} 或更高版本，但此安装最多只能更新到 {latestVersion}。请通过其他方式安装 Codex CLI，或等待更新的版本发布。} other {使用 {names} 需要 {providerName} {version} 或更高版本，但此安装最多只能更新到 {latestVersion}。请通过其他方式安装 {providerName}，或等待更新的版本发布。}}",
+  "aba3bb73ce212f0c": "使用 {names} 需要 {providerName} {version} 或更高版本，但 Homebrew 的 claude-code cask 只有 {latestVersion}。请切换到 claude-code@latest cask：{command}",
   "d887bea446534de5": "此环境中没有项目能读取 {host}/{repository}。",
   "4e466d60e2f7736b": "请粘贴完整的 pull request URL；此会话没有可用于解析编号的仓库。",
   "302625058bacbe38": "请粘贴完整 URL；此项目的托管平台没有已知的 {changeRequest} URL。",
@@ -8710,7 +8713,7 @@
   "58e0e226493150e7": "无法加载 issue 跟踪器",
   "77cfcbde543df32d": "切换 {tracker} 详情",
   "0083f65885c60156": "断开 {tracker} 连接",
-  "295392927d5c8a84": "为每个项目选择一个或多个 {tracker} {scope}。它们的 issue 会列在仓库自身的 issue 旁，智能体会在第一个中创建新 issue。",
+  "ed83b25c71c98a20": "为每个项目选择一个或多个 {tracker} {scope}。它们的 issue 会列在仓库自身的 issue 旁；除非另有指定，智能体会在第一个中创建新 issue。",
   "19c2d5e81ff8f89a": "{project} 的 {tracker} {scope}",
   "68e061510b765772": "未绑定",
   "a2d95d39d3398bda": "凭据被拒绝",
@@ -12483,5 +12486,7 @@
   "27d76249d09eb69f": "审查导览已就绪",
   "faa3bb26abb39c93": "审查导览生成失败",
   "b7df38b7d8792d78": "打开导览",
-  "9e91e9a77b664e4e": "无法开始生成审查导览"
+  "9e91e9a77b664e4e": "无法开始生成审查导览",
+  "d8aaf932f90429c4": "将此命令移到队列最前面 ({shortcut})",
+  "425ab15036aec8a4": "将此命令移到队列最前面"
 }

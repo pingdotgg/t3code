@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "Instale a CLI do Origin com {install} e execute {login}.",
   "eb0f60ef4f92ab7d": "Instale o {fj} 0.6 ou posterior em {fjUrl} e execute {fjLogin}, ou instale o {tea} 0.16 ou posterior em {teaUrl} e execute {teaLogin} para cada servidor Forgejo ou Gitea.",
   "d026a85e2e50e675": "Instale a CLI do GitCafe com {install} e execute {login}, salve um token nas Configurações ou defina {variable} no servidor.",
+  "22d3c0c48a34b5b3": "Instale a CLI do TanStack Source com {install} e execute {login}, salve um token nas Configurações ou defina {variable} no servidor.",
   "79d776428f4d0650": "Não foi possível carregar o arquivo. Reconecte e tente novamente.",
   "3ea34cbb1ca5ba9b": "Pré-visualização cancelada.",
   "7c0af279ecb3da3a": "As pré-visualizações de arquivos por streaming não estão disponíveis neste runtime.",
@@ -118,6 +119,8 @@
   "f42c2a36b3507308": "{label} ativado",
   "77cc5f738cb7d459": "{label} desativado",
   "2159a4897d4a4d73": "{runtime, select, codex {Atualize a CLI do Codex para {version} ou mais recente para usar {names}.} other {Atualize o {providerName} para {version} ou mais recente para usar {names}.}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {Usar {names} requer a CLI do Codex {version} ou mais recente, mas esta instalação só pode ser atualizada até {latestVersion}. Instale a CLI do Codex de outra forma ou aguarde uma versão mais recente.} other {Usar {names} requer {providerName} {version} ou mais recente, mas esta instalação só pode ser atualizada até {latestVersion}. Instale {providerName} de outra forma ou aguarde uma versão mais recente.}}",
+  "aba3bb73ce212f0c": "Usar {names} requer {providerName} {version} ou mais recente, mas o cask claude-code do Homebrew só tem {latestVersion}. Mude para o cask claude-code@latest: {command}",
   "d887bea446534de5": "Nenhum projeto neste ambiente consegue ler {host}/{repository}.",
   "4e466d60e2f7736b": "Cole a URL completa do pull request; esta thread não tem repositório para resolver o número.",
   "302625058bacbe38": "Cole uma URL completa; o host deste projeto não tem uma URL de {changeRequest} conhecida.",
@@ -8692,7 +8695,7 @@
   "58e0e226493150e7": "Não foi possível carregar os rastreadores de issues",
   "77cfcbde543df32d": "Mostrar ou ocultar detalhes de {tracker}",
   "0083f65885c60156": "Desconectar {tracker}",
-  "295392927d5c8a84": "Escolha um ou mais {scope}s do {tracker} para cada projeto. As issues deles aparecem ao lado das do repositório, e os agentes criam novas issues no primeiro.",
+  "ed83b25c71c98a20": "Escolha um ou mais {scope}s do {tracker} para cada projeto. As issues deles aparecem ao lado das do repositório, e os agentes criam novas issues no primeiro, a menos que outro seja pedido.",
   "19c2d5e81ff8f89a": "{scope} do {tracker} para {project}",
   "68e061510b765772": "Não vinculado",
   "a2d95d39d3398bda": "Credencial recusada",
@@ -12457,5 +12460,7 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "d8aaf932f90429c4": "Mover este comando para o início da fila ({shortcut})",
+  "425ab15036aec8a4": "Mover este comando para o início da fila"
 }

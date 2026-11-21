@@ -598,9 +598,27 @@ const ComposerContextReferenceExtension = Node.create({
   },
 });
 
-function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
+function ComposerContextReferenceNodeView({ node, editor, getPos }: NodeViewProps) {
   return (
-    <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
+    <NodeViewWrapper
+      as="span"
+      className={CHIP_NODE_SELECTION_CLASS_NAME}
+      onKeyDown={(event: ReactKeyboardEvent<HTMLElement>) => {
+        // Paste and drop still add chips while dictation makes the editor read-only; a focused chip removes itself.
+        if (
+          editor.isEditable ||
+          (event.key !== "Backspace" && event.key !== "Delete") ||
+          !(event.target instanceof globalThis.Node) ||
+          !event.currentTarget.contains(event.target)
+        ) {
+          return;
+        }
+        const pos = typeof getPos === "function" ? getPos() : null;
+        if (typeof pos !== "number") return;
+        event.preventDefault();
+        editor.commands.deleteRange({ from: pos, to: pos + node.nodeSize });
+      }}
+    >
       <ComposerContextReferenceChip
         kind={(node.attrs.kind as string) ?? ""}
         contextId={(node.attrs.contextId as string) ?? ""}

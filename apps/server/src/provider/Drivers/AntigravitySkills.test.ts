@@ -405,6 +405,12 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         );
         yield* writeSkill(path.join(projectSkills, "internal"), "---\nname: internal\n---\n");
 
+        // agy does not expand ~, so a ~/ entry loads nothing.
+        yield* writeSkill(
+          path.join(input.userHome, "tilde-skills", "tilde"),
+          "---\nname: tilde\n---\n",
+        );
+
         const globalConfigDir = path.join(input.userHome, ".gemini", "config");
         const inheritedConfigPath = path.join(input.userHome, "shared-skills.json");
         yield* fileSystem.makeDirectory(globalConfigDir, { recursive: true });
@@ -413,21 +419,32 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           inheritedConfigPath,
           JSON.stringify({
             inherits: [{ path: path.join(globalConfigDir, "skills.json") }],
-            entries: [{ path: "~/inherited-skills" }],
+            entries: [{ path: inheritedSkills }],
           }),
         );
         yield* fileSystem.writeFileString(
           path.join(globalConfigDir, "skills.json"),
           JSON.stringify({
             inherits: [{ path: inheritedConfigPath, include_only: ["linter", "(a*)*b"] }],
-            entries: [{ path: sharedSkills, exclude: ["experimental-.*"] }],
+            entries: [
+              { path: sharedSkills, exclude: ["experimental-.*"] },
+              { path: "~/tilde-skills" },
+            ],
           }),
         );
         yield* fileSystem.writeFileString(
           path.join(input.cwd, ".agents", "skills.json"),
           JSON.stringify({
+            entries: null,
+            inherits: [{ path: "workspace-skills.json", include_only: null }],
+          }),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(input.cwd, "workspace-skills.json"),
+          JSON.stringify({
+            inherits: null,
             entries: [
-              { path: "tools/skills/deploy/SKILL.md" },
+              { path: "tools/skills/deploy/SKILL.md", exclude: null },
               { path: "tools/skills/internal/SKILL.md", exclude: ["internal"] },
             ],
           }),

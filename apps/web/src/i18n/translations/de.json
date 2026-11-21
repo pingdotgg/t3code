@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "Installiere die Origin CLI mit {install} und führe dann {login} aus.",
   "eb0f60ef4f92ab7d": "Installiere {fj} 0.6 oder neuer von {fjUrl} und führe {fjLogin} aus, oder installiere {tea} 0.16 oder neuer von {teaUrl} und führe {teaLogin} für jeden Forgejo- oder Gitea-Server aus.",
   "d026a85e2e50e675": "Installiere die GitCafe CLI mit {install} und führe dann {login} aus, speichere ein Token in den Einstellungen oder setze {variable} auf dem Server.",
+  "22d3c0c48a34b5b3": "Installiere die TanStack Source CLI mit {install} und führe dann {login} aus, speichere ein Token in den Einstellungen oder setze {variable} auf dem Server.",
   "79d776428f4d0650": "Die Datei konnte nicht geladen werden. Verbinde dich erneut und versuch es noch einmal.",
   "3ea34cbb1ca5ba9b": "Vorschau abgebrochen.",
   "7c0af279ecb3da3a": "Streamende Dateivorschauen sind in dieser Laufzeitumgebung nicht verfügbar.",
@@ -118,6 +119,8 @@
   "f42c2a36b3507308": "{label} an",
   "77cc5f738cb7d459": "{label} aus",
   "2159a4897d4a4d73": "{runtime, select, codex {Aktualisiere die Codex CLI auf {version} oder neuer, um {names} zu verwenden.} other {Aktualisiere {providerName} auf {version} oder neuer, um {names} zu verwenden.}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {{names} erfordert die Codex CLI {version} oder neuer, aber diese Installation kann höchstens auf {latestVersion} aktualisieren. Installiere die Codex CLI auf anderem Weg oder warte auf ein neueres Release.} other {{names} erfordert {providerName} {version} oder neuer, aber diese Installation kann höchstens auf {latestVersion} aktualisieren. Installiere {providerName} auf anderem Weg oder warte auf ein neueres Release.}}",
+  "aba3bb73ce212f0c": "{names} erfordert {providerName} {version} oder neuer, aber der Homebrew-Cask claude-code hat nur {latestVersion}. Wechsle zum Cask claude-code@latest: {command}",
   "d887bea446534de5": "Kein Projekt in dieser Umgebung kann {host}/{repository} lesen.",
   "4e466d60e2f7736b": "Füge die vollständige Pull-Request-URL ein. Dieser Thread hat kein Repository, in dem die Nummer aufgelöst werden kann.",
   "302625058bacbe38": "Füge eine vollständige URL ein. Für den Host dieses Projekts ist kein {changeRequest}-URL-Format bekannt.",
@@ -8694,7 +8697,7 @@
   "58e0e226493150e7": "Issue-Tracker konnten nicht geladen werden",
   "77cfcbde543df32d": "Details zu {tracker} ein-/ausblenden",
   "0083f65885c60156": "{tracker} trennen",
-  "295392927d5c8a84": "Wähle für jedes Projekt ein oder mehrere {scope}s in {tracker}. Ihre Issues erscheinen neben denen des Repositorys, und Agenten legen neue Issues im ersten an.",
+  "ed83b25c71c98a20": "Wähle für jedes Projekt ein oder mehrere {scope}s in {tracker}. Ihre Issues erscheinen neben denen des Repositorys, und Agenten legen neue Issues im ersten an, sofern kein anderes verlangt wird.",
   "19c2d5e81ff8f89a": "{tracker} {scope} für {project}",
   "68e061510b765772": "Nicht zugeordnet",
   "a2d95d39d3398bda": "Anmeldedaten abgelehnt",
@@ -12457,5 +12460,7 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "d8aaf932f90429c4": "Diesen Befehl an den Anfang der Warteschlange verschieben ({shortcut})",
+  "425ab15036aec8a4": "Diesen Befehl an den Anfang der Warteschlange verschieben"
 }

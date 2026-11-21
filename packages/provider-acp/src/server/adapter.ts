@@ -87,6 +87,7 @@ import {
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
+  sessionUpdateIsReplay,
   toolCallVisibleOutputChanged,
   withTrackedPermissionToolCall,
   type AcpPlanUpdate,
@@ -5650,6 +5651,80 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ),
             );
 
+        const recordLoadedHistory = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+          live: boolean,
+        ) {
+          const update = notification.update;
+          if (
+            notification.sessionId !==
+            ((yield* Ref.get(loadingSessionId)) ?? (yield* Ref.get(activeSessionId)))
+          )
+            return;
+          if (
+            update.sessionUpdate === "user_message_chunk" ||
+            update.sessionUpdate === "agent_message_chunk" ||
+            update.sessionUpdate === "agent_thought_chunk"
+          ) {
+            const text = acpContentBlockDisplayText(update.content);
+            if (text === undefined) return;
+            const lateBackgroundMutations =
+              update.content.type === "text"
+                ? (flavor.extractBackgroundToolMutation?.(text) ?? [])
+                : [];
+            if (live) {
+              for (const lateBackgroundMutation of lateBackgroundMutations) {
+                yield* applyLateBackgroundMutation(notification.sessionId, lateBackgroundMutation);
+              }
+            }
+            if (lateBackgroundMutations.length === 0 && !acpIsMonitorChatter(text)) {
+              yield* appendLoadedHistory(
+                notification,
+                update.sessionUpdate === "user_message_chunk"
+                  ? "user"
+                  : update.sessionUpdate === "agent_thought_chunk"
+                    ? "thought"
+                    : "assistant",
+                text,
+              );
+            }
+          } else if (
+            update.sessionUpdate === "user_message" ||
+            update.sessionUpdate === "agent_message" ||
+            update.sessionUpdate === "agent_thought"
+          ) {
+            if (update.content === undefined) return;
+            const text = (update.content ?? [])
+              .flatMap((content) => {
+                const display = acpContentBlockDisplayText(content);
+                return display === undefined ? [] : [display];
+              })
+              .join("\n");
+            yield* appendLoadedHistory(
+              notification,
+              update.sessionUpdate === "user_message"
+                ? "user"
+                : update.sessionUpdate === "agent_thought"
+                  ? "thought"
+                  : "assistant",
+              text,
+              true,
+            );
+          } else if (
+            update.sessionUpdate === "tool_call" ||
+            update.sessionUpdate === "tool_call_update" ||
+            update.sessionUpdate === "plan" ||
+            update.sessionUpdate === "plan_update" ||
+            update.sessionUpdate === "plan_removed"
+          ) {
+            yield* Ref.update(snapshot, (current) => ({
+              ...current,
+              loadingRole: null,
+              loadingMessageId: null,
+            }));
+          }
+        });
+
         const handleSessionUpdate = Effect.fnUntraced(function* (
           notification: EffectAcpSchema.SessionNotification,
         ) {
@@ -5734,6 +5809,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 type: "provider_thread.updated",
                 driver,
                 providerThread,
+                // Agents like Kimi report usage after the prompt settles, when no run receives it.
+                ...(context === null ? { sessionScoped: true } : {}),
               });
             }
             return;
@@ -5896,71 +5973,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (wakeOutcome.stopProcessing) {
               return;
             }
-            if (
-              notification.sessionId !==
-              ((yield* Ref.get(loadingSessionId)) ?? (yield* Ref.get(activeSessionId)))
-            )
-              return;
-            if (
-              update.sessionUpdate === "user_message_chunk" ||
-              update.sessionUpdate === "agent_message_chunk" ||
-              update.sessionUpdate === "agent_thought_chunk"
-            ) {
-              const text = acpContentBlockDisplayText(update.content);
-              if (text === undefined) return;
-              const lateBackgroundMutations =
-                update.content.type === "text"
-                  ? (flavor.extractBackgroundToolMutation?.(text) ?? [])
-                  : [];
-              for (const lateBackgroundMutation of lateBackgroundMutations) {
-                yield* applyLateBackgroundMutation(notification.sessionId, lateBackgroundMutation);
-              }
-              if (lateBackgroundMutations.length === 0 && !acpIsMonitorChatter(text)) {
-                yield* appendLoadedHistory(
-                  notification,
-                  update.sessionUpdate === "user_message_chunk"
-                    ? "user"
-                    : update.sessionUpdate === "agent_thought_chunk"
-                      ? "thought"
-                      : "assistant",
-                  text,
-                );
-              }
-            } else if (
-              update.sessionUpdate === "user_message" ||
-              update.sessionUpdate === "agent_message" ||
-              update.sessionUpdate === "agent_thought"
-            ) {
-              if (update.content === undefined) return;
-              const text = (update.content ?? [])
-                .flatMap((content) => {
-                  const display = acpContentBlockDisplayText(content);
-                  return display === undefined ? [] : [display];
-                })
-                .join("\n");
-              yield* appendLoadedHistory(
-                notification,
-                update.sessionUpdate === "user_message"
-                  ? "user"
-                  : update.sessionUpdate === "agent_thought"
-                    ? "thought"
-                    : "assistant",
-                text,
-                true,
-              );
-            } else if (
-              update.sessionUpdate === "tool_call" ||
-              update.sessionUpdate === "tool_call_update" ||
-              update.sessionUpdate === "plan" ||
-              update.sessionUpdate === "plan_update" ||
-              update.sessionUpdate === "plan_removed"
-            ) {
-              yield* Ref.update(snapshot, (current) => ({
-                ...current,
-                loadingRole: null,
-                loadingMessageId: null,
-              }));
-            }
+            yield* recordLoadedHistory(notification, true);
             return;
           }
           if (context.finalized) return;
@@ -7014,6 +7027,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Effect.fnUntraced(
             function* (rawNotification: EffectAcpSchema.SessionNotification) {
               if (flavor.ignoreSessionUpdate?.(rawNotification) === true) return;
+              // Replayed history feeds snapshots only; it must not drive live turn or wake state.
+              if (sessionUpdateIsReplay(rawNotification)) {
+                yield* recordLoadedHistory(
+                  flavor.normalizeSessionUpdate?.(rawNotification) ?? rawNotification,
+                  false,
+                );
+                return;
+              }
               yield* notePromptProgress(rawNotification);
               const nativePromptId = flavor.forkFromTurn?.nativeTurnId(rawNotification);
               if (nativePromptId !== undefined) {

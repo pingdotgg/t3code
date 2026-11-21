@@ -144,6 +144,24 @@ sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories
 Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
 
+### TanStack Source
+
+TanStack Source is in private beta, so the server shows it only when started with
+`T3CODE_TANSTACK_SOURCE=1` in its environment. Install its CLI and sign in:
+
+```sh
+curl -fsSL https://source.tanstack.com/install | sh
+src auth login --web
+```
+
+Alternatively, open **Settings → Source control & issues**, expand **TanStack Source**, and enter a token
+from `https://source.tanstack.com/settings/tokens`. A saved token is used before `SRC_TOKEN`, which is
+used before the `src` login. With several `src` logins, pick the account there too.
+
+Pull requests show the runs of TanStack Source CI with their logs, and update live while open. Issues
+can be listed, filed, edited, commented on and closed. Reactions and picking reviewers or assignees
+from a list are not available yet.
+
 ### Cursor Origin
 
 Install the [Origin CLI](https://cursor.com/docs/origin/cli) and sign in. Signing in also sets up Git
@@ -394,7 +412,7 @@ To list Linear issues beside a project's, connect Linear with an API key under
 Settings → Source control & issues, then pick one or more teams for that project there. Pick
 another team at any time to add it; uncheck every team to unbind the project. Each team's
 issues appear in the Linear group of the issue list, sorted with the rest by last update, and
-each can be loaded further on its own. Agents file new issues in the first team picked.
+each can be loaded further on its own. Agents file new issues in the first team picked unless you name another bound team.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can

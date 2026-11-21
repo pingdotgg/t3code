@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "{install} で Origin CLI をインストールしてから、{login} を実行してください。",
   "eb0f60ef4f92ab7d": "Forgejo または Gitea のサーバーごとに、{fjUrl} から {fj} 0.6 以降をインストールして {fjLogin} を実行するか、{teaUrl} から {tea} 0.16 以降をインストールして {teaLogin} を実行してください。",
   "d026a85e2e50e675": "{install} で GitCafe CLI をインストールしてから、{login} を実行するか、設定にトークンを保存するか、サーバーで {variable} を設定してください。",
+  "22d3c0c48a34b5b3": "{install} で TanStack Source CLI をインストールしてから、{login} を実行するか、設定にトークンを保存するか、サーバーで {variable} を設定してください。",
   "79d776428f4d0650": "ファイルを読み込めませんでした。再接続してもう一度お試しください。",
   "3ea34cbb1ca5ba9b": "プレビューをキャンセルしました。",
   "7c0af279ecb3da3a": "このランタイムではファイルのストリーミングプレビューを利用できません。",
@@ -118,6 +119,8 @@
   "f42c2a36b3507308": "{label} オン",
   "77cc5f738cb7d459": "{label} オフ",
   "2159a4897d4a4d73": "{runtime, select, codex {{names} を使用するには、Codex CLI を {version} 以降に更新してください。} other {{names} を使用するには、{providerName} を {version} 以降に更新してください。}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {{names} を使用するには Codex CLI {version} 以降が必要ですが、このインストールで更新できる最新バージョンは {latestVersion} です。別の方法で Codex CLI をインストールするか、新しいリリースをお待ちください。} other {{names} を使用するには {providerName} {version} 以降が必要ですが、このインストールで更新できる最新バージョンは {latestVersion} です。別の方法で {providerName} をインストールするか、新しいリリースをお待ちください。}}",
+  "aba3bb73ce212f0c": "{names} を使うには {providerName} {version} 以降が必要ですが、Homebrew の claude-code cask には {latestVersion} までしかありません。claude-code@latest cask に切り替えてください: {command}",
   "d887bea446534de5": "この環境には {host}/{repository} を読み取れるプロジェクトがありません。",
   "4e466d60e2f7736b": "プルリクエストの完全な URL を貼り付けてください。このスレッドには番号を解決するためのリポジトリがありません。",
   "302625058bacbe38": "完全な URL を貼り付けてください。このプロジェクトのホストには既知の {changeRequest} URL がありません。",
@@ -8650,7 +8653,7 @@
   "58e0e226493150e7": "Issue トラッカーを読み込めませんでした",
   "77cfcbde543df32d": "{tracker} の詳細を切り替え",
   "0083f65885c60156": "{tracker} を切断",
-  "295392927d5c8a84": "各プロジェクトに {tracker} の {scope} を1つ以上選択します。その Issue はリポジトリ自身の Issue と並べて表示され、エージェントは最初の {scope} に新しい Issue を作成します。",
+  "ed83b25c71c98a20": "各プロジェクトに {tracker} の {scope} を1つ以上選択します。その Issue はリポジトリ自身の Issue と並べて表示され、エージェントは別の {scope} を指定されない限り、最初の {scope} に新しい Issue を作成します。",
   "19c2d5e81ff8f89a": "{project} の {tracker} {scope}",
   "68e061510b765772": "未バインド",
   "a2d95d39d3398bda": "資格情報が拒否されました",
@@ -12406,5 +12409,7 @@
   "27d76249d09eb69f": "レビューガイドの準備ができました",
   "faa3bb26abb39c93": "レビューガイドの作成に失敗しました",
   "b7df38b7d8792d78": "ガイドを開く",
-  "9e91e9a77b664e4e": "レビューガイドを開始できませんでした"
+  "9e91e9a77b664e4e": "レビューガイドを開始できませんでした",
+  "d8aaf932f90429c4": "このコマンドをキューの先頭に移動 ({shortcut})",
+  "425ab15036aec8a4": "このコマンドをキューの先頭に移動"
 }

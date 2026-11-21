@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "Installera Origin CLI med {install} och kör sedan {login}.",
   "eb0f60ef4f92ab7d": "Installera {fj} 0.6 eller senare från {fjUrl} och kör {fjLogin}, eller installera {tea} 0.16 eller senare från {teaUrl} och kör {teaLogin} för varje Forgejo- eller Gitea-server.",
   "d026a85e2e50e675": "Installera GitCafe CLI med {install} och kör sedan {login}, spara en token i Inställningar eller ange {variable} på servern.",
+  "22d3c0c48a34b5b3": "Installera TanStack Source CLI med {install} och kör sedan {login}, spara en token i Inställningar eller ange {variable} på servern.",
   "79d776428f4d0650": "Filen kunde inte läsas in. Återanslut och försök igen.",
   "3ea34cbb1ca5ba9b": "Förhandsvisningen avbröts.",
   "7c0af279ecb3da3a": "Strömmande förhandsvisning av filer är inte tillgänglig i den här körmiljön.",
@@ -118,6 +119,8 @@
   "f42c2a36b3507308": "{label} på",
   "77cc5f738cb7d459": "{label} av",
   "2159a4897d4a4d73": "{runtime, select, codex {Uppdatera Codex CLI till {version} eller senare för att använda {names}.} other {Uppdatera {providerName} till {version} eller senare för att använda {names}.}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {{names} kräver Codex CLI {version} eller senare, men den här installationen kan bara uppdateras till {latestVersion}. Installera Codex CLI på ett annat sätt eller vänta på en nyare version.} other {{names} kräver {providerName} {version} eller senare, men den här installationen kan bara uppdateras till {latestVersion}. Installera {providerName} på ett annat sätt eller vänta på en nyare version.}}",
+  "aba3bb73ce212f0c": "{names} kräver {providerName} {version} eller senare, men Homebrew-casken claude-code har bara {latestVersion}. Byt till casken claude-code@latest: {command}",
   "d887bea446534de5": "Inget projekt i den här miljön kan läsa {host}/{repository}.",
   "4e466d60e2f7736b": "Klistra in hela pull request-URL:en; den här tråden har inget repo att slå upp numret i.",
   "302625058bacbe38": "Klistra in en fullständig URL; det här projektets värd har ingen känd URL för {changeRequest}.",
@@ -8700,7 +8703,7 @@
   "58e0e226493150e7": "Kunde inte läsa in ärendehanterare",
   "77cfcbde543df32d": "Visa/dölj detaljer för {tracker}",
   "0083f65885c60156": "Koppla från {tracker}",
-  "295392927d5c8a84": "Välj en eller flera {scope} i {tracker} för varje projekt. Deras ärenden listas bredvid repots egna, och agenter skapar nya ärenden i den första.",
+  "ed83b25c71c98a20": "Välj en eller flera {scope} i {tracker} för varje projekt. Deras ärenden listas bredvid repots egna, och agenter skapar nya ärenden i det första om de inte ombeds välja ett annat.",
   "19c2d5e81ff8f89a": "{scope} i {tracker} för {project}",
   "68e061510b765772": "Inte kopplad",
   "a2d95d39d3398bda": "Autentiseringsuppgiften avvisades",
@@ -12464,5 +12467,7 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "d8aaf932f90429c4": "Flytta det här kommandot först i kön ({shortcut})",
+  "425ab15036aec8a4": "Flytta det här kommandot först i kön"
 }
