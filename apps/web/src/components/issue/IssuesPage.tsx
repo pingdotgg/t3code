@@ -394,7 +394,7 @@ export function IssuesPage() {
         : clearedSelection,
     );
 
-  const selectEntry = (entry: IssueRowTarget) => {
+  const selectEntry = useStableCallback((entry: IssueRowTarget) => {
     if (rightPanelRef === null) return;
     useRightPanelStore.getState().openIssue(rightPanelRef, entry);
     updateSearch({
@@ -405,7 +405,7 @@ export function IssuesPage() {
       scope: entry.scope,
       key: entry.key,
     });
-  };
+  });
 
   // A link into the page names an issue before any row was pressed.
   const openLinkedIssue = useEffectEvent(() => {
