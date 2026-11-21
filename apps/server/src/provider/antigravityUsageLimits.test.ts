@@ -400,6 +400,36 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  // Oracle: a reported Gemini Enterprise summary, one windowless bucket per model and effort.
+  it.effect("does not report one limit per model effort for a Gemini Enterprise summary", () =>
+    Effect.gen(function* () {
+      const variants = [
+        ["claude-opus-5-5", "Claude Opus 5.5"],
+        ["gemini-3.1-pro", "Gemini 3.1 Pro"],
+        ["gemini-4-neon", "Gemini 4 Neon"],
+      ].flatMap(([id, name]) =>
+        ["low", "medium", "high", "xhigh"].map((effort) => ({
+          bucketId: `${id}-${effort}`,
+          displayName: `${name} (${effort})`,
+          remainingFraction: 1,
+        })),
+      );
+      const { probe } = yield* fixture({
+        authMethod: "oauth-business",
+        summary: { groups: [{ displayName: "All Models", buckets: variants }] },
+      });
+      const { windows } = yield* probe;
+      for (const model of ["claude-opus-5-5-", "gemini-3.1-pro-", "gemini-4-neon-"]) {
+        expect(windows.filter((window) => window.id.startsWith(model)).length).toBeLessThanOrEqual(
+          1,
+        );
+      }
+      expect(windows.map((window) => window.label)).not.toContain(
+        "All Models · Claude Opus 5.5 (high)",
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   // Oracle: model quotas have no evidence for the summary-only rule.
   it.effect("keeps full model fallback resets even at a full window from the request", () =>
     Effect.gen(function* () {
