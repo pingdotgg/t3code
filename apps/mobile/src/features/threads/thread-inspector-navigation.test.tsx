@@ -29,7 +29,7 @@ vi.mock("@react-navigation/native", async () => {
   };
 });
 
-import { useOpenThreadInspector } from "./thread-inspector-navigation";
+import { useOpenThreadInspector, useReturnToThread } from "./thread-inspector-navigation";
 import { useOpenLinkedThread, useOpenLinkedThreadRead } from "./useOpenLinkedThread";
 
 const requireNavigation = NodeModule.createRequire(
@@ -45,7 +45,15 @@ function setup(fromAgents: boolean, fullscreen = false, inspectorSupported = tru
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const router = StackRouter({});
   const options = {
-    routeNames: ["Home", "Thread", "ThreadAgents", "ThreadInspectorFullscreen", "LinkedThread"],
+    routeNames: [
+      "Home",
+      "Thread",
+      "ThreadAgents",
+      "ThreadInspectorFullscreen",
+      "LinkedThread",
+      "ThreadReview",
+      "GitConfirm",
+    ],
     routeParamList: {},
     routeGetIdList: {},
   };
@@ -70,14 +78,17 @@ function setup(fromAgents: boolean, fullscreen = false, inspectorSupported = tru
   let openInspector: ReturnType<typeof useOpenThreadInspector>;
   let openLinkedThread: ReturnType<typeof useOpenLinkedThread>;
   let openLinkedThreadRead: ReturnType<typeof useOpenLinkedThreadRead>;
+  let returnToThread: ReturnType<typeof useReturnToThread>;
   function Probe() {
     const open = useOpenThreadInspector();
     const openLinked = useOpenLinkedThread();
     const openLinkedRead = useOpenLinkedThreadRead();
+    const returnTo = useReturnToThread();
     useLayoutEffect(() => {
       openInspector = open;
       openLinkedThread = openLinked;
       openLinkedThreadRead = openLinkedRead;
+      returnToThread = returnTo;
     });
     return null;
   }
@@ -102,6 +113,9 @@ function setup(fromAgents: boolean, fullscreen = false, inspectorSupported = tru
     },
     openLinkedRead(...input: Parameters<typeof openLinkedThreadRead>) {
       act(() => openLinkedThreadRead(...input));
+    },
+    returnTo(thread: Parameters<typeof returnToThread>[0]) {
+      act(() => returnToThread(thread));
     },
     [Symbol.dispose]() {
       act(() => root.unmount());
@@ -187,6 +201,29 @@ it.each([
       ...linked,
       title: "Fix the build",
     });
+  },
+);
+
+it.each([
+  { confirmFrom: "parent", routes: ["Home", "Thread"] },
+  // A side thread's review, opened from the parent's inspector, sits above the parent's route.
+  { confirmFrom: "child", routes: ["Home", "Thread", "ThreadReview", "Thread"] },
+])(
+  "returns from a Git confirmation to the $confirmFrom thread without replacing another",
+  ({ confirmFrom, routes }) => {
+    using screen = setup(false);
+    const inspector = { type: "device", ...screen.source } as const;
+    screen.open(inspector);
+    const thread = { ...screen.source, threadId: confirmFrom };
+    if (confirmFrom !== "parent") screen.dispatch(StackActions.push("ThreadReview", thread));
+    screen.dispatch(StackActions.push("GitConfirm", thread));
+    screen.returnTo(thread);
+    expect(screen.state.routes.map((route) => route.name)).toEqual(routes);
+    expect(screen.state.routes[1]).toMatchObject({
+      key: screen.parentKey,
+      params: { ...screen.source, prompt: "retained prompt", inspector },
+    });
+    expect(screen.state.routes.at(-1)?.params).toMatchObject(thread);
   },
 );
 
