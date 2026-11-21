@@ -49,9 +49,11 @@ import {
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
 import {
   buildMenuItems,
   buildSyncMenuItems,
+  commitPushShortcutPressActs,
   formatGitActionElapsed,
   GIT_ACTION_SUCCESS_VISIBLE_MS,
   hasUsableGitMenuContent,
@@ -934,13 +936,19 @@ function CheckoutGitActionsControl({
   };
 
   const runCommitPushFromShortcut = useEffectEvent(() => runCommitPush(true));
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const handlesCommitPushShortcut =
     (presentation !== undefined || onShortcutHostChange !== undefined) && isRepo;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for the mounted git control's commit and push shortcuts
   useEffect(() => {
     if (!listenForShortcuts || !handlesCommitPushShortcut) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) return;
+      const press = {
+        paneFocused: paneFocusedRef.current,
+        defaultPrevented: event.defaultPrevented,
+        repeat: event.repeat,
+      };
+      if (!commitPushShortcutPressActs(press)) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: { terminalFocus: isTerminalFocused() },
       });
@@ -950,7 +958,7 @@ function CheckoutGitActionsControl({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handlesCommitPushShortcut, keybindings, listenForShortcuts]);
+  }, [handlesCommitPushShortcut, keybindings, listenForShortcuts, paneFocusedRef]);
 
   const openDialogForMenuItem = (item: GitActionMenuItem) => {
     if (!canWriteSourceControl || item.disabled) return;
