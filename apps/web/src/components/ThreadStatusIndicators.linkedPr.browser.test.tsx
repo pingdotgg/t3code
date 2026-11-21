@@ -16,6 +16,9 @@ vi.mock(import("../state/entities"), async (original) => ({
       [environmentId, { environment: { capabilities: { threadPullRequests: true } } }],
     ])) as never,
 }));
+vi.mock(import("../hooks/useSupportsMultiplePullRequests"), () => ({
+  useSupportsMultiplePullRequests: () => true,
+}));
 
 it("updates palette PR status from linked snapshots without a legacy link or branch PR", async () => {
   const link: ThreadPullRequestLink = {
