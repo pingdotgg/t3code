@@ -8741,18 +8741,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               !replyOpen && flavor.hasPendingReply !== undefined
                 ? yield* flavor.hasPendingReply(context.nativeThreadId)
                 : false;
-            yield* runtimeCallbackPermit.withPermit(
-              Effect.gen(function* () {
-                if (!stillCurrent()) return;
-                if (pendingReply) {
-                  context.replyOpen = true;
-                  yield* scheduleDeferredFinalize(context);
-                  return;
-                }
-                const status = context.promptSettledStatus ?? "completed";
-                yield* finalizeTurn(context, status);
-              }),
-            );
+            if (!stillCurrent()) return;
+            if (pendingReply) {
+              context.replyOpen = true;
+              yield* scheduleDeferredFinalize(context);
+              return;
+            }
+            const status = context.promptSettledStatus ?? "completed";
+            yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
