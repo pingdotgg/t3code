@@ -1061,9 +1061,23 @@ const make = Effect.gen(function* () {
       });
     }
     const callerRunId = input.callerRunId;
+    // A continuation finishes the run it continues and gets no new instructions, so its agent can
+    // only name that earlier run.
+    const continues = (candidate: OrchestrationV2Run): boolean => {
+      const previousId =
+        candidate.restartContinuationOfRunId ??
+        candidate.usageLimitContinuationOfRunId ??
+        candidate.manualContinuationOfRunId;
+      if (previousId === undefined) return false;
+      if (previousId === callerRunId) return true;
+      const previous = records.runs.find((other) => other.id === previousId);
+      return previous !== undefined && continues(previous);
+    };
     const matchesRun = (candidate: OrchestrationV2Run) =>
-      candidate.id === callerRunId &&
-      (input.callerAttemptId === undefined || candidate.activeAttemptId === input.callerAttemptId);
+      (candidate.id === callerRunId &&
+        (input.callerAttemptId === undefined ||
+          candidate.activeAttemptId === input.callerAttemptId)) ||
+      (input.callerAttemptId === undefined && continues(candidate));
     // Accept the active run, or the un-stopped completed run whose own owed output is targeted.
     if (!matchesRun(active) && !(run.id !== active.id && matchesRun(run))) {
       return yield* new ThreadManagementRunOutputRejectedError({
@@ -1084,7 +1098,8 @@ const make = Effect.gen(function* () {
       commandId: input.commandId,
       threadId: input.threadId,
       runId: run.id,
-      ...(input.callerRunId === undefined ? {} : { callerRunId: input.callerRunId }),
+      // A caller accepted through a continuation answers for the run that continues it.
+      callerRunId: callerRunId === active.id || callerRunId === run.id ? callerRunId : active.id,
       ...(input.callerAttemptId === undefined ? {} : { callerAttemptId: input.callerAttemptId }),
       value: checked.success,
     }).pipe(

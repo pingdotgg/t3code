@@ -12239,6 +12239,30 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           from: "run-b",
         });
 
+        // A continuation gets no new instructions, so its agent names the run it continues.
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-run-b-continues-a`),
+              type: "run.updated",
+              threadId,
+              runId: runB.id,
+              occurredAt: runB.requestedAt,
+              payload: {
+                ...afterB.runs.find((run) => run.id === runB.id)!,
+                manualContinuationOfRunId: runA.id,
+              },
+            },
+          ],
+        });
+        const acceptedViaContinuation = yield* threadManagement.submitRunOutput({
+          threadId,
+          commandId: CommandId.make("runtime-layer-run-output-via-continuation"),
+          json: '{"from":"continued"}',
+          callerRunId: runA.id,
+        });
+        assert.equal(acceptedViaContinuation.runId, runB.id);
+
         // A plain turn with no schema preserves the plain-turn guidance even for stale/unbound MCP callers.
         yield* eventSink.write({
           events: [
