@@ -347,16 +347,40 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
-  it.effect("does not offer Auto, so Auto threads fall back to Supervised", () =>
+  it.effect("offers Auto only while the signed-in session advertises agy's own Auto", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* harness.initialize;
-      // Antigravity has no automatic review; the shared ACP policy would approve every request.
-      expect((yield* harness.provider.snapshot.getSnapshot).supportedRuntimeModes).toEqual([
+      const supportedModes = harness.provider.snapshot.getSnapshot.pipe(
+        Effect.map((snapshot) => snapshot.supportedRuntimeModes),
+      );
+      const withoutAuto = ["approval-required", "auto-accept-edits", "full-access"];
+      const startedWithAuto = {
+        ...started,
+        sessionSetupResult: {
+          ...sessionSetupResult,
+          modes: {
+            currentModeId: "default",
+            availableModes: [
+              { id: "default", name: "Default" },
+              { id: "auto", name: "Auto" },
+            ],
+          },
+        },
+      };
+      expect(yield* supportedModes).toEqual(withoutAuto);
+      yield* harness.provider.onSessionStarted(startedWithAuto);
+      expect(yield* supportedModes).toEqual([
         "approval-required",
         "auto-accept-edits",
+        "auto",
         "full-access",
       ]);
+      yield* harness.provider.onSessionStarted(started);
+      expect(yield* supportedModes).toEqual(withoutAuto);
+      yield* harness.provider.onSessionStarted(startedWithAuto);
+      yield* harness.provider.onSignedOut;
+      expect(yield* supportedModes).toEqual(withoutAuto);
     }),
   );
 
@@ -570,6 +594,15 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             instanceId,
             operation: "resolve",
             detail: "Antigravity is not installed.",
+          }),
+          installed: false,
+        },
+        {
+          error: new ProviderSetupError({
+            instanceId,
+            operation: "resolve",
+            detail:
+              "The managed Antigravity runtime changed on disk. Reinstall it in Antigravity setup.",
           }),
           installed: false,
         },

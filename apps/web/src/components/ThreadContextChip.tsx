@@ -11,7 +11,9 @@ import { orchestrationEnvironment } from "~/state/orchestration";
 import { useEnvironmentQuery } from "~/state/query";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ThreadChipHoverCard } from "./ThreadChipHoverCard";
+import { ThreadHoverCardPopup } from "./ThreadHoverCard";
+import { Tooltip, TooltipTrigger } from "./ui/tooltip";
 
 export function ThreadContextChip(props: {
   record: Pick<ThreadContextRecord, "environmentId" | "threadId" | "title">;
@@ -74,13 +76,14 @@ export function ThreadContextChip(props: {
           </ContextChip>
         }
       />
-      <TooltipPopup side="top">
-        {props.unreadable
-          ? gt(
-              "On another machine, so this machine's agent can't read it. Remove it or switch back to send.",
-            )
-          : gt("Open thread")}
-      </TooltipPopup>
+      <ThreadHoverCardPopup side="top">
+        <ThreadChipHoverCard
+          title={title}
+          project={project}
+          shell={shell}
+          unreadable={props.unreadable === true}
+        />
+      </ThreadHoverCardPopup>
     </Tooltip>
   );
 }
