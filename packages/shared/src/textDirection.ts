@@ -23,6 +23,10 @@ function majority(
   return rtl > ltr ? "rtl" : "ltr";
 }
 
+export function hasRightToLeftLetter(text: string): boolean {
+  return RTL_LETTER.test(text);
+}
+
 function wordDirection(word: string): TextDirection | undefined {
   const letter = LETTER.exec(word)?.[0];
   if (!letter) return undefined;
