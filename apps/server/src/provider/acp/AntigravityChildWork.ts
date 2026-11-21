@@ -431,12 +431,31 @@ const decodeSwarmRoster = Schema.decodeUnknownOption(
   ),
 );
 
+const BACKGROUND_TASK = /running as a background task with task id: (\S+)/;
+
+/** agy parks a worker whose command went to a background task until the task's finish message. */
+function backgroundTaskRunning(lines: ReadonlyArray<string>): boolean {
+  const running = new Set<string>();
+  for (const line of lines) {
+    const step = Option.getOrUndefined(decodeTranscriptLine(line));
+    const content = step?.content ?? "";
+    const started = step?.type === "GENERIC" ? BACKGROUND_TASK.exec(content)?.[1] : undefined;
+    if (started !== undefined) running.add(started);
+    if (step?.type !== "SYSTEM_MESSAGE") continue;
+    for (const id of running) if (content.includes(`Task id "${id}"`)) running.delete(id);
+  }
+  return running.size > 0;
+}
+
 function swarmWorkerAtWork(transcript: string): boolean {
   const lines = transcript.split("\n");
   const results: Array<string | undefined> = [];
+  if (Option.getOrUndefined(decodeTranscriptLine(lines.at(-1)))?.type === "ERROR_MESSAGE") {
+    return false;
+  }
+  if (backgroundTaskRunning(lines)) return true;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const step = Option.getOrUndefined(decodeTranscriptLine(lines[index]));
-    if (index === lines.length - 1 && step?.type === "ERROR_MESSAGE") return false;
     if (step?.type === "GENERIC") {
       results.push(step.status);
       continue;
