@@ -2,6 +2,7 @@ import {
   isListedThreadLineage,
   type EnvironmentId,
   isProviderNativeSubagentThread,
+  type OrchestrationV2PendingRuntimeRequestSummary,
   type OrchestrationV2ThreadShell,
   type Project,
   type RuntimeRequestId,
@@ -39,6 +40,17 @@ export interface SubagentRequestAwareness {
 export const turnItemCanChangeUserWait = (item: { readonly type: string }) =>
   item.type === "secret_request" || item.type === "link_request" || item.type === "user_message";
 
+/** An approval, or a card only the user can answer; a coordinating agent answers other questions. */
+const requestAwaitsUser = (
+  request:
+    | Pick<OrchestrationV2PendingRuntimeRequestSummary, "kind" | "userOnly">
+    | null
+    | undefined,
+): boolean =>
+  request != null &&
+  request.kind !== "auth_refresh" &&
+  (request.kind !== "user_input" || request.userOnly === true);
+
 /**
  * Provider-native subagents ask on their parent. The coordinator answers child questions,
  * but not a card only the user can answer, such as a secret.
@@ -49,11 +61,8 @@ export function subagentAwaitsUser(
     "activityRunStatus" | "creationSource" | "lineage" | "pendingRuntimeRequest"
   >,
 ): boolean {
-  const kind = thread.pendingRuntimeRequest?.kind;
   return (
-    kind !== undefined &&
-    kind !== "auth_refresh" &&
-    (kind !== "user_input" || thread.pendingRuntimeRequest?.userOnly === true) &&
+    requestAwaitsUser(thread.pendingRuntimeRequest) &&
     thread.lineage.relationshipToParent === "subagent" &&
     !isProviderNativeSubagentThread(thread) &&
     // The activity run stays set when a follow-up is queued behind a blocked run.
@@ -87,6 +96,7 @@ export interface ProjectThreadAwarenessV2Input {
   readonly thread: Pick<
     OrchestrationV2ThreadShell,
     | "activityRunStatus"
+    | "delegatedFrom"
     | "id"
     | "lineage"
     | "latestRunBackgroundWake"
@@ -135,7 +145,10 @@ export function projectThreadAwarenessV2(
     environmentId,
     threadId: thread.id,
     projectTitle: project.title,
-    threadTitle: thread.title,
+    threadTitle:
+      thread.delegatedFrom == null
+        ? thread.title
+        : `${thread.delegatedFrom.title} › ${thread.title}`,
     phase,
     headline: headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
@@ -155,18 +168,22 @@ function resolveThreadAwarenessPhaseV2(
   thread: ProjectThreadAwarenessV2Input["thread"],
   subagentRequest: SubagentRequestAwareness | null,
 ): AgentAwarenessPhase | null {
-  if (thread.pendingRuntimeRequest?.kind === "user_input") return "waiting_for_input";
+  const request = thread.pendingRuntimeRequest;
+  // A delegated task's coordinator answers its other questions.
+  const delegated = thread.delegatedFrom != null;
   if (
-    thread.pendingRuntimeRequest !== null &&
-    thread.pendingRuntimeRequest.kind !== "auth_refresh"
+    delegated ? requestAwaitsUser(request) : request !== null && request.kind !== "auth_refresh"
   ) {
-    return "waiting_for_approval";
+    return request?.kind === "user_input" ? "waiting_for_input" : "waiting_for_approval";
   }
   // The parent can finish its own turn while a delegated child keeps working,
   // so a child's request outranks the parent's run status.
   if (subagentRequest !== null) {
     return subagentRequest.waitsForInput === true ? "waiting_for_input" : "waiting_for_approval";
   }
+  // The parent on the delegating environment reports this task's progress and result;
+  // only a wait it cannot answer surfaces here, until that environment can roll it up.
+  if (delegated) return null;
   switch (thread.activityRunStatus ?? thread.status) {
     case "preparing":
     case "starting":

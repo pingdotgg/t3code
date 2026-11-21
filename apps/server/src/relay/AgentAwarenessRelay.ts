@@ -169,16 +169,16 @@ export const makeAgentAwarenessPublishWorker = Effect.fnUntraced(function* <R>(
 
 function agentAwarenessPublishIdentity(
   state: RelayAgentActivityState | null,
-  subagentRequest: SubagentRequestAwareness | null = null,
+  waitRequestId?: RuntimeRequestId,
 ): string {
   if (state === null) {
     return "null";
   }
   const { updatedAt: _updatedAt, ...meaningfulState } = state;
-  // A child's next request reads the same as its last one, but it is a new
-  // wait and must reach the phone.
+  // A next request can read the same as the last one, but it is a new wait
+  // and must reach the phone.
   return JSON.stringify(
-    subagentRequest === null ? meaningfulState : [meaningfulState, subagentRequest.requestId],
+    waitRequestId === undefined ? meaningfulState : [meaningfulState, waitRequestId],
   );
 }
 
@@ -333,6 +333,8 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly state: RelayAgentActivityState | null;
   /** The child request behind the state's wait, when the parent isn't waiting itself. */
   readonly subagentWait: SubagentRequestAwareness | null;
+  /** The request a published wait is for, when consecutive waits would otherwise read alike. */
+  readonly waitRequestId?: RuntimeRequestId;
   readonly reason: "snapshot" | "thread-not-found" | "project-not-found";
 } {
   if (Option.isNone(input.thread)) {
@@ -363,7 +365,15 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   const childDrivesWait =
     input.pendingSubagentRequest !== null &&
     state?.phase !== projectThreadAwarenessV2(awarenessInput)?.phase;
+  // A delegated task's wait ends through a held tombstone, so its next wait can
+  // arrive before that tombstone clears the published identity.
+  const waitRequestId = childDrivesWait
+    ? input.pendingSubagentRequest?.requestId
+    : state !== null && input.thread.value.delegatedFrom != null
+      ? input.thread.value.pendingRuntimeRequest?.id
+      : undefined;
   return {
+    ...(waitRequestId === undefined ? {} : { waitRequestId }),
     projectId: input.thread.value.projectId,
     state: snoozedCompletion(input.thread.value, state)
       ? null
@@ -408,10 +418,13 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
       if (!project) {
         return false;
       }
+      // A delegated task can own a waiting row; re-read it whenever a top-level thread
+      // would be, so a row whose clearing was forgotten across a restart or relink goes.
+      const { delegatedFrom: _delegatedFrom, ...ownWork } = thread;
       const state = projectThreadAwarenessV2({
         environmentId: input.environmentId,
         project,
-        thread,
+        thread: ownWork,
       });
       return (
         state !== null &&
@@ -603,7 +616,7 @@ export const make = Effect.gen(function* () {
       project,
       pendingSubagentRequest: yield* currentSubagentRequestFor(threadId),
     });
-    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
+    const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.waitRequestId);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&

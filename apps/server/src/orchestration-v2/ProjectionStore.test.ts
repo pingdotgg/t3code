@@ -127,10 +127,20 @@ const assertShellIndexCoversShells = Effect.fnUntraced(function* () {
     shells.filter((thread) => isListedThreadLineage(thread.lineage)).map(awareness),
   );
   assert.deepEqual(
-    activity.threads.map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
+    activity.threads.map((thread) => [
+      thread.id,
+      thread.projectId,
+      thread.latestRunCompletedAt,
+      thread.delegatedFrom ?? null,
+    ]),
     shells
       .filter((thread) => isListedThreadLineage(thread.lineage))
-      .map((thread) => [thread.id, thread.projectId, thread.latestRunCompletedAt]),
+      .map((thread) => [
+        thread.id,
+        thread.projectId,
+        thread.latestRunCompletedAt,
+        thread.delegatedFrom ?? null,
+      ]),
   );
   assert.isFalse(statements.some((statement) => /COUNT\(\*\)|GROUP BY/i.test(statement)));
   assert.isTrue(queryTransactions.every((transaction) => transaction !== null));
@@ -2595,6 +2605,11 @@ const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
     id: threadId,
     projectId: ProjectId.make("project:background-updates"),
     title: "Background updates",
+    delegatedFrom: {
+      environmentId: EnvironmentId.make("environment:delegating"),
+      threadId: ThreadId.make("thread:delegating"),
+      title: "Coordinator",
+    },
     providerInstanceId,
     modelSelection,
     runtimeMode: "full-access" as const,

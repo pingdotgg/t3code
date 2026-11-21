@@ -94,6 +94,23 @@ function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): Orchestrati
   };
 }
 
+function delegated(overrides: Partial<OrchestrationV2ThreadShell> = {}) {
+  return shell({
+    delegatedFrom: {
+      environmentId: EnvironmentId.make("parent-environment"),
+      threadId: ThreadId.make("parent-thread"),
+      title: "Coordinator",
+    },
+    ...overrides,
+  });
+}
+
+const delegatedRequest = (id: string) => ({
+  id: RuntimeRequestId.make(id),
+  kind: "command" as const,
+  createdAt: DateTime.makeUnsafe(NOW),
+});
+
 const CHILD_THREAD_ID = ThreadId.make("relay-child-thread");
 
 function waitingChild(
@@ -161,6 +178,24 @@ describe("startup agent activity", () => {
       ],
     });
     assert.deepStrictEqual(ids, [THREAD_ID, newCompleted, newFailed]);
+  });
+
+  it("re-reads delegated tasks with live or new work so a stale waiting row is cleared", () => {
+    const ids = AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
+      environmentId: EnvironmentId.make("relay-env"),
+      startedAt: DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)),
+      projects: [{ id: PROJECT_ID, title: "Project" }],
+      threads: [
+        delegated(),
+        delegated({ id: ThreadId.make("delegated-idle"), status: "idle" }),
+        delegated({
+          id: ThreadId.make("delegated-old-completed"),
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T11:59:00.000Z"),
+        }),
+      ],
+    });
+    assert.deepStrictEqual(ids, [THREAD_ID]);
   });
 });
 
@@ -730,6 +765,85 @@ describe("AgentAwarenessRelay", () => {
         assert.equal(publications.length, 3);
         assert.equal(publications[2]?.state, null);
       }),
+  );
+
+  it.effect("publishes a delegated task only while it waits on the user", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* Ref.set(currentShell, delegated());
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, delegated({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      // Clearing a row the task may own is the only publication outside a wait.
+      assert.deepEqual(
+        publications.map((publication) => publication.state),
+        [null],
+      );
+
+      yield* Ref.set(
+        currentShell,
+        delegated({ pendingRuntimeRequest: delegatedRequest("delegated-request") }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
+      assert.equal(publications[1]?.state?.threadTitle, "Coordinator › Thread");
+
+      yield* Ref.set(currentShell, delegated({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 3);
+      assert.isNull(publications[2]?.state);
+    }),
+  );
+
+  it.effect("publishes a delegated task's second wait raised while its first is clearing", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* Ref.set(
+        currentShell,
+        delegated({ pendingRuntimeRequest: delegatedRequest("delegated-request-1") }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, delegated());
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(
+        currentShell,
+        delegated({ pendingRuntimeRequest: delegatedRequest("delegated-request-2") }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        ["waiting_for_approval", "waiting_for_approval"],
+      );
+    }),
+  );
+
+  it.effect("clears a delegated task's waiting row after a restart forgot it", () =>
+    Effect.gen(function* () {
+      const before = yield* makeTestRelay();
+      yield* Ref.set(
+        before.currentShell,
+        delegated({ pendingRuntimeRequest: delegatedRequest("delegated-request") }),
+      );
+      yield* before.relay.publishThread(THREAD_ID);
+      assert.equal(before.publications[0]?.state?.phase, "waiting_for_approval");
+
+      const after = yield* makeTestRelay();
+      yield* Ref.set(after.currentShell, delegated());
+      yield* after.relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* after.relay.drain;
+      assert.deepEqual(
+        after.publications.map((publication) => publication.state),
+        [null],
+      );
+    }),
   );
 
   it.effect("holds a completion through a continuation gap, then publishes it once", () =>
