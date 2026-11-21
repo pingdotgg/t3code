@@ -293,6 +293,8 @@ export class WorkflowStore extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<RunRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
+    /** Forgets every trigger but these, so one that comes back starts over. */
+    readonly triggersKeep: (triggerIds: ReadonlyArray<string>) => Effect.Effect<void>;
     /** The hook's token: the one kept for it, or `fresh` from now on. */
     readonly hookToken: (hookId: string, fresh: string) => Effect.Effect<string>;
     readonly steps: (runId: string) => Effect.Effect<ReadonlyArray<StepRow>>;
@@ -857,6 +859,13 @@ export const make = Effect.gen(function* () {
         ON CONFLICT (trigger_id) DO UPDATE SET next_at = excluded.next_at
       `.pipe(Effect.orDie);
     }),
+    triggersKeep: Effect.fn("WorkflowStore.triggersKeep")(function* (triggerIds) {
+      const kept = yield* sql<{ trigger_id: string }>`SELECT trigger_id FROM workflow_triggers`;
+      for (const { trigger_id } of kept) {
+        if (triggerIds.includes(trigger_id)) continue;
+        yield* sql`DELETE FROM workflow_triggers WHERE trigger_id = ${trigger_id}`;
+      }
+    }, Effect.orDie),
     hookToken: Effect.fn("WorkflowStore.hookToken")(function* (hookId, fresh) {
       yield* sql`
         INSERT INTO workflow_hooks (hook_id, token) VALUES (${hookId}, ${fresh})
