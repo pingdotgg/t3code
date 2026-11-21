@@ -30,9 +30,11 @@ import {
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   type AcpToolCallState,
+  extractMcpToolCallIdentity,
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
+import { compactDynamicToolOutput, htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeXAiAskUserQuestionRequest = Schema.decodeUnknownSync(XAiAskUserQuestionRequest);
 
@@ -338,6 +340,80 @@ describe("XAiAcpExtension", () => {
     expect(isXAiMonitorTool(normalized)).toBe(true);
     expect(normalized.status).toBe("inProgress");
     expect(extractXAiMonitorTaskId(normalized)).toBe("019f44a5-87d1-7640-8e35-6a4667ffc873");
+  });
+
+  // regression: #23714 Recorded from Grok 1.0.77 calling stdio MCP tools through `use_tool`.
+  it("rewrites use_tool MCP calls and results into the generic ACP MCP shapes", () => {
+    const meta = { "x.ai/tool": { version: 1, name: "use_tool", kind: "use_tool" } };
+    const grokCall = (
+      toolCallId: string,
+      tool: string,
+      toolInput: Record<string, unknown>,
+      completion: Record<string, unknown>,
+    ) => {
+      const rawInput = { tool_name: tool, tool_input: toolInput };
+      const updates = [
+        { sessionUpdate: "tool_call", toolCallId, title: "use_tool", rawInput, _meta: meta },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          kind: "other",
+          title: tool,
+          rawInput: { variant: "UseTool", ...rawInput },
+          _meta: meta,
+        },
+        { sessionUpdate: "tool_call_update", toolCallId, ...completion },
+      ];
+      let state: AcpToolCallState | undefined;
+      for (const update of updates) {
+        state = normalizeXAiAcpToolCallState(
+          mergeToolCallState(state, parseRecordedToolCallUpdate(update)),
+        );
+      }
+      return state!;
+    };
+    const page = { attachmentId: "abc-html", title: "T", height: 300 };
+
+    const rendered = grokCall(
+      "call-85597c6c-6fb8-4c9c-a6a8-12c4a74ebc96-1",
+      "t3-code__html_render",
+      { path: "a.html" },
+      {
+        status: "completed",
+        rawOutput: {
+          type: "MCP",
+          tool_name: "html_render",
+          server_name: "t3-code",
+          output: { OkayOutput: JSON.stringify({ htmlRender: page, message: "Shown" }) },
+        },
+      },
+    );
+    expect(extractMcpToolCallIdentity(rendered)).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+    expect(rendered.data.rawInput).toMatchObject({ arguments: { path: "a.html" } });
+    expect(
+      htmlRenderFromToolItem({ toolName: "t3-code.html_render", output: rendered.data.rawOutput }),
+    ).toEqual(page);
+
+    const failed = grokCall(
+      "call-2baebdc5-2446-4ac2-9652-85f97a76a05b-2",
+      "pencil__browser",
+      { action: "load-page" },
+      {
+        status: "failed",
+        rawOutput: {
+          type: "MCP",
+          tool_name: "browser",
+          server_name: "pencil",
+          output: { Error: "Page not found" },
+          is_error: true,
+        },
+      },
+    );
+    expect(extractMcpToolCallIdentity(failed)).toEqual({ server: "pencil", tool: "browser" });
+    expect(compactDynamicToolOutput(failed.data.rawOutput)?.isError).toBe(true);
   });
 
   it("keeps Monitor ticks running while Grok reports them in progress", () => {

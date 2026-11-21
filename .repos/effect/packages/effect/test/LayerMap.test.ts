@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Duration, Effect, Exit, Layer, LayerMap, Option, Scope } from "effect"
+import { Context, Duration, Effect, Exit, Layer, LayerMap, Option, Scope } from "effect"
 import { TestClock } from "effect/testing"
+import { withIgnoredProperties } from "./utils/structFields.ts"
 
 const makeLayer = (key: string, acquired: Array<string>, released: Array<string>): Layer.Layer<any> =>
   Layer.effectDiscard(
@@ -124,6 +125,20 @@ describe("LayerMap", () => {
 
       yield* TestClock.adjust(1500)
       assert.deepStrictEqual(released, ["short:a", "long:b"])
+    }))
+
+  it.effect("fromRecord preloads only enumerable own string and symbol entries", () =>
+    Effect.gen(function*() {
+      const key = Symbol("key")
+      const acquired: Array<PropertyKey> = []
+      class Value extends Context.Service<Value, number>()("LayerMap.test/Value") {}
+      const layers = withIgnoredProperties({
+        a: Layer.effect(Value, Effect.sync(() => acquired.push("a"))),
+        [key]: Layer.effect(Value, Effect.sync(() => acquired.push(key)))
+      })
+      yield* LayerMap.fromRecord(layers, { preload: true, idleTimeToLive: Duration.infinity })
+
+      assert.deepStrictEqual(acquired, ["a", key])
     }))
 
   it.effect("fromRecord supports dynamic idleTimeToLive", () =>

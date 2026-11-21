@@ -1,12 +1,20 @@
 import {
   changeRequestReferenceAutolinker,
+  expandGithubEmojiAliases,
   resolveChangeRequestMediaUrl,
 } from "@t3tools/client-runtime/pull-request-markdown";
 import {
   sourceControlClients,
   type ReferenceAutolink,
 } from "@t3tools/client-runtime/source-control-clients";
-import type { PluggableList } from "unified";
+import {
+  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+} from "@t3tools/shared/markdownPipeline";
+import type { Nodes } from "hast";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { unified, type PluggableList } from "unified";
 
 export {
   splitPullRequestBody,
@@ -71,6 +79,16 @@ function remarkChangeRequestMediaUrls(options: { readonly changeRequestUrl: stri
   return (tree: MarkdownNode) => visit(tree);
 }
 
+/** GitHub renders `:alias:` emoji in prose; code keeps them, being `inlineCode`/`code`, not `text`. */
+function remarkGithubEmoji() {
+  const visit = (node: MarkdownNode): void => {
+    if (node.type === "text" && node.value !== undefined)
+      node.value = expandGithubEmojiAliases(node.value);
+    node.children?.forEach(visit);
+  };
+  return (tree: MarkdownNode) => visit(tree);
+}
+
 const NO_PLUGINS: PluggableList = [];
 const markdownPlugins = new Map<string, PluggableList>();
 
@@ -90,8 +108,63 @@ export function pullRequestMarkdownPlugins(
   if (plugins === undefined) {
     const autolinks = changeRequestReferenceAutolinker(changeRequest);
     plugins = [[remarkChangeRequestMediaUrls, { changeRequestUrl: repositoryUrl }]];
+    if (changeRequest.provider === "github") plugins.push(remarkGithubEmoji);
     if (autolinks) plugins.push([remarkPullRequestAutolinks, { autolinks }]);
     markdownPlugins.set(key, plugins);
   }
   return plugins;
+}
+
+const commentPreviewProcessor = (plugins: PluggableList) =>
+  unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(plugins)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS)
+    .freeze();
+const commentPreview = commentPreviewProcessor(NO_PLUGINS);
+const githubCommentPreview = commentPreviewProcessor([remarkGithubEmoji]);
+
+const PREVIEW_BLOCK_TAGS = new Set([
+  "blockquote",
+  "br",
+  "dd",
+  "details",
+  "div",
+  "dl",
+  "dt",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "li",
+  "ol",
+  "p",
+  "pre",
+  "summary",
+  "table",
+  "td",
+  "th",
+  "tr",
+  "ul",
+]);
+
+function commentPreviewText(node: Nodes): string {
+  if (node.type === "text") return node.value;
+  if (node.type === "element" && node.tagName === "img") {
+    return typeof node.properties.alt === "string" ? node.properties.alt : "";
+  }
+  if (!("children" in node)) return "";
+  const text = node.children.map(commentPreviewText).join("");
+  return node.type === "element" && PREVIEW_BLOCK_TAGS.has(node.tagName) ? ` ${text} ` : text;
+}
+
+export function pullRequestCommentPreview(body: string, provider: string): string {
+  const processor = provider === "github" ? githubCommentPreview : commentPreview;
+  const tree = processor.runSync(processor.parse(body), body);
+  return commentPreviewText(tree).replace(/\s+/gu, " ").trim();
 }
