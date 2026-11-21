@@ -56,6 +56,12 @@ security unlock-keychain -p "$(op read "$SIGNING_ITEM/keychain_password")" "$KEY
 
 cd "$work"
 vp install
+# The Apple Speech helper needs the macOS 26 SDK; without it the build ships with Mac dictation unavailable.
+sdk="$(xcrun --show-sdk-version)"
+if (( ${sdk%%.*} < 26 )); then
+  echo "release: macOS SDK $sdk predates 26, skipping the Apple Speech helper" >&2
+  export T3CODE_FORK_SKIP_APPLE_SPEECH=true
+fi
 rm -rf "$out"
 CSC_NAME="$IDENTITY" CSC_KEYCHAIN="$KEYCHAIN" \
   T3CODE_DESKTOP_UPDATE_REPOSITORY="$REPO" \

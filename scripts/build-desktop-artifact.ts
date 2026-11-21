@@ -2481,7 +2481,10 @@ export const stageAppleSpeech = Effect.fn("stageAppleSpeech")(function* (input: 
   readonly arch: typeof BuildArch.Type;
   readonly verbose: boolean;
 }) {
+  // fork: apple-speech-skip. The release host may lack the macOS 26 SDK; the app then reports dictation unavailable.
   if (input.platform !== "mac") return;
+  if (yield* Config.Boolean("T3CODE_FORK_SKIP_APPLE_SPEECH").pipe(Config.withDefault(false)))
+    return;
   const path = yield* Path.Path;
   yield* runCommand(
     ChildProcess.make(
