@@ -1003,12 +1003,18 @@ it.layer(
           { pid: 100, ppid: 9000, name: "zsh" },
           { pid: 9001, ppid: 1, name: "zsh" },
           { pid: 200, ppid: 9001, name: "node" },
+          { pid: 9002, ppid: 1, name: "zsh" },
+          { pid: 300, ppid: 9002, name: "node" },
         ]),
       }).pipe(Effect.provide(layerWithHostPlatform("linux")));
       yield* manager.open(openInput({ terminalId: "idle", threadId: "thread-idle" }));
       yield* manager.open(openInput({ terminalId: "dev-server", threadId: "thread-active" }));
+      yield* manager.open(
+        openInput({ terminalId: "managed-dev", threadId: "thread-managed", stopOnSettle: true }),
+      );
 
       expect(yield* manager.hasActiveSubprocess({ threadId: "thread-none" })).toBe(false);
+      expect(yield* manager.hasActiveSubprocess({ threadId: "thread-managed" })).toBe(false);
       expect(yield* manager.hasActiveSubprocess({ threadId: "thread-idle" })).toBe(false);
       expect(yield* manager.hasActiveSubprocess({ threadId: "thread-active" })).toBe(true);
     }),
