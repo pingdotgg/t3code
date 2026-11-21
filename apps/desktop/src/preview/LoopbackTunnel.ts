@@ -522,7 +522,8 @@ const make = Effect.gen(function* () {
       const scope = yield* Scope.fork(listenerScope);
       const bind = (port: number) =>
         NodeSocketServer.make({ port, host: "127.0.0.1" }).pipe(Scope.provide(scope));
-      const server = yield* bind((yield* servedOverIpv6(remotePort)) ? 0 : remotePort).pipe(
+      const preferredPort = (yield* servedOverIpv6(remotePort)) ? 0 : remotePort;
+      const server = yield* bind(preferredPort).pipe(
         // Taken here, or privileged: any free port still reaches the environment's.
         Effect.catch(() => bind(0)),
         Effect.onError(() => Scope.close(scope, Exit.void)),
