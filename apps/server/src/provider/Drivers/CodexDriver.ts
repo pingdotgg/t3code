@@ -186,11 +186,11 @@ export const CodexDriver: ProviderDriver<
     const installation = yield* CodexInstallation.CodexInstallation;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
-    const processEnv = yield* mergeProviderInstanceEnvironment(
+    const environmentOverrides = yield* mergeProviderInstanceEnvironment(
       environment,
       yield* HostProcess.Environment,
     );
-    const environmentHome = processEnv.CODEX_HOME;
+    const environmentHome = environmentOverrides.CODEX_HOME;
     const homeConfig =
       !config.homePath.trim() && environmentHome?.trim()
         ? { ...config, homePath: environmentHome }
@@ -204,7 +204,7 @@ export const CodexDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    yield* materializeCodexShadowHome(homeLayout).pipe(
+    const processEnv = yield* materializeCodexShadowHome(homeLayout, environmentOverrides).pipe(
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({
