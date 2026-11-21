@@ -26,7 +26,10 @@ const environmentId = EnvironmentId.make("environment-v2");
 const remoteEnvironmentId = EnvironmentId.make("remote-environment-v2");
 const otherProjectId = ProjectId.make("other-project");
 
-function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environmentId]) {
+function makeHarness(
+  environmentIds: ReadonlyArray<EnvironmentId> = [environmentId],
+  hiddenTags: ReadonlyArray<string> | null = null,
+) {
   const snapshotAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<OrchestrationV2ShellSnapshot | null>(v2ShellSnapshot),
   );
@@ -55,7 +58,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
     threads: createEnvironmentThreadShellAtoms({
       catalogValueAtom,
       snapshotAtom,
-      hiddenThreadTagsAtom: () => Atom.make(null),
+      hiddenThreadTagsAtom: () => Atom.make(hiddenTags),
     }),
   };
 }
@@ -543,6 +546,46 @@ describe("v2 thread shell lists", () => {
     });
     expect(groups().map((group) => group.parent)).toEqual([key(otherParent, remoteEnvironmentId)]);
     dispose();
+    registry.dispose();
+  });
+
+  it("leaves tasks the tag filter hides out of groups, as navigation does", () => {
+    const { registry, threads, snapshotAtom, catalogValueAtom } = makeHarness(
+      [environmentId, remoteEnvironmentId],
+      ["secret"],
+    );
+    const task = (id: string, tags: ReadonlyArray<string>) => ({
+      ...v2ThreadShell,
+      id: ThreadId.make(id),
+      tags,
+      creationSource: "mcp" as const,
+      delegatedFrom: {
+        environmentId: remoteEnvironmentId,
+        threadId: ThreadId.make("parent"),
+        title: "Coordinator",
+      },
+    });
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [task("plain", []), task("secret", ["secret"])],
+    });
+    const catalog = registry.get(catalogValueAtom);
+    const entries = new Map(catalog.entries);
+    entries.set(remoteEnvironmentId, { ...entries.get(remoteEnvironmentId)!, enabled: false });
+    registry.set(catalogValueAtom, { ...catalog, entries });
+    registry.set(snapshotAtom(remoteEnvironmentId), null);
+    const disposeGroups = registry.mount(threads.delegatedTaskGroupsAtom);
+    const disposeNavigation = registry.mount(threads.navigationThreadShellsAtom);
+    const navigationKeys = registry
+      .get(threads.navigationThreadShellsAtom)
+      .map((thread) => `${thread.environmentId}:${thread.id}`);
+    const groupedKeys = registry
+      .get(threads.delegatedTaskGroupsAtom)
+      .groups.flatMap((group) => group.taskKeys);
+    expect(groupedKeys).not.toContain(`${environmentId}:secret`);
+    expect(groupedKeys.every((key) => navigationKeys.includes(key))).toBe(true);
+    disposeNavigation();
+    disposeGroups();
     registry.dispose();
   });
 

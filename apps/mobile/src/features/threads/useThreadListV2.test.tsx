@@ -2,13 +2,16 @@ import { act, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { RegistryContext } from "@effect/atom-react";
 import type { OlderSettledShelfEnvironment } from "@t3tools/client-runtime/state/threads";
-import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  presentThreadShell,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import * as DateTime from "effect/DateTime";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
-import { olderSettledThreads } from "../../state/threads";
+import { olderSettledThreads, steadyQuietThreadShellsAtom } from "../../state/threads";
 import { makeRawThreadShell } from "../../test-fixtures";
 import { useThreadListV2 } from "./useThreadListV2";
 
@@ -22,6 +25,7 @@ vi.mock("../../state/threads", async () => {
       byRepresentativeKey: new Map(),
       foldedKeys: new Set(),
     }),
+    steadyQuietThreadShellsAtom: Atom.make<ReadonlyArray<EnvironmentThreadShell>>([]),
   };
 });
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: undefined }));
@@ -46,6 +50,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
       }),
     ),
   );
+  registry.set(steadyQuietThreadShellsAtom as Atom.Writable<typeof threads>, threads);
   const environmentIds = new Set([environmentId, otherEnvironmentId]);
   const input: Parameters<typeof useThreadListV2>[0] = {
     threads,
@@ -249,4 +254,93 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   expect(loaded.layout.items).toHaveLength(160);
   expect(loaded.olderSettledShelf.isListed(threads[150]!)).toBe(true);
   expect(loaded.items).not.toBe(loading.items);
+});
+
+it("counts no older settled task the list shows under its parent, before or after it settles", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
+  const environmentId = EnvironmentId.make("environment-1");
+  const projectId = ProjectId.make("project-test");
+  const before = "2026-01-01T00:00:00.000Z";
+  const shelfFor = (count: number) =>
+    new Map<EnvironmentId, OlderSettledShelfEnvironment>([
+      [
+        environmentId,
+        {
+          older: { before, beforeMs: Date.parse(before), counts: new Map([[projectId, count]]) },
+          pages: { reads: [], frontier: null, status: "ready" },
+        },
+      ],
+    ]);
+  const shelfAtom = Atom.make(shelfFor(0));
+  vi.mocked(olderSettledThreads.shelfAtom).mockReturnValue(shelfAtom);
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  // Its parent is listed, so navigation leaves it out; the server still counts it once settled.
+  const task = (settled: boolean) =>
+    presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        id: ThreadId.make("task"),
+        delegatedFrom: {
+          environmentId: EnvironmentId.make("macbook"),
+          threadId: ThreadId.make("parent"),
+          title: "Plan",
+        },
+        settledOverride: settled ? "settled" : "active",
+        settledAt: settled ? DateTime.makeUnsafe("2025-12-01T00:00:00.000Z") : null,
+      }),
+    );
+  const held = steadyQuietThreadShellsAtom as Atom.Writable<ReadonlyArray<EnvironmentThreadShell>>;
+  registry.set(held, [task(false)]);
+  const environmentIds = new Set([environmentId]);
+  const input: Parameters<typeof useThreadListV2>[0] = {
+    threads: [],
+    pendingTasks: [],
+    environmentId: null,
+    projectRefs: null,
+    searchQuery: "",
+    searchMatches: new Map(),
+    settlementEnvironmentIds: environmentIds,
+    snoozeEnvironmentIds: environmentIds,
+    pinReorderEnvironmentIds: environmentIds,
+    activeReorderEnvironmentIds: environmentIds,
+    queuedThreadKeys: new Set(),
+    settledLimit: 10,
+    now: "2026-01-02T00:00:00.000Z",
+    pendingOrder: null,
+    shelfPreferencesLoaded: true,
+    workingShelfEnabled: false,
+    workingShelfExpanded: false,
+    snoozedShelfExpanded: false,
+    settledShelfExpanded: true,
+    selectedThreadKey: null,
+  };
+  let result: ReturnType<typeof useThreadListV2> | undefined;
+  function ListProbe() {
+    result = useThreadListV2(input);
+    return null;
+  }
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  await act(async () =>
+    root.render(
+      <RegistryContext value={registry}>
+        <ListProbe />
+      </RegistryContext>,
+    ),
+  );
+  expect(result?.layout.settledCount).toBe(0);
+
+  await act(async () => {
+    registry.set(held, [task(true)]);
+    registry.set(shelfAtom, shelfFor(1));
+  });
+  expect(result?.layout.settledCount).toBe(0);
+
+  // A held-row change that leaves the count alone does not rebuild the list.
+  const { layout, items } = result!;
+  await act(async () => registry.set(held, [{ ...task(true), title: "Renamed" }]));
+  expect(result?.layout).toBe(layout);
+  expect(result?.items).toBe(items);
 });

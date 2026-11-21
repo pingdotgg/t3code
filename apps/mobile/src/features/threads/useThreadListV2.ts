@@ -6,7 +6,7 @@ import { useMemo, useState, useSyncExternalStore } from "react";
 import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
-import { steadyDelegatedTaskGroupsAtom } from "../../state/threads";
+import { steadyDelegatedTaskGroupsAtom, steadyQuietThreadShellsAtom } from "../../state/threads";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
@@ -135,6 +135,13 @@ export function useThreadListV2(input: {
   });
   const { isListed, unloadedCount } = olderSettledShelf;
   const delegatedTaskGroups = useAtomValue(steadyDelegatedTaskGroupsAtom);
+  // The server counts tasks shown under a parent too, so every held row counts against it.
+  // Only the number reaches the layout, so other held-row changes do not rebuild the list.
+  const heldThreads = useAtomValue(steadyQuietThreadShellsAtom);
+  const unloadedSettledCount = useMemo(
+    () => unloadedCount(heldThreads.filter((thread) => thread.archivedAt === null)),
+    [unloadedCount, heldThreads],
+  );
   const [expandedDelegatedGroupKeys, setExpandedDelegatedGroupKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -168,17 +175,7 @@ export function useThreadListV2(input: {
         isListedSettled: isListed,
         delegatedTaskGroups,
         expandedDelegatedGroupKeys,
-        unloadedSettledCount: unloadedCount(
-          threads.filter(
-            (thread) =>
-              thread.archivedAt === null &&
-              scopes.some(
-                (scope) =>
-                  scope.environmentId === thread.environmentId &&
-                  (scope.projectIds === null || scope.projectIds.includes(thread.projectId)),
-              ),
-          ),
-        ),
+        unloadedSettledCount,
       }),
     [
       input.pendingOrder,
@@ -200,8 +197,7 @@ export function useThreadListV2(input: {
       input.settledShelfExpanded,
       input.selectedThreadKey,
       isListed,
-      unloadedCount,
-      scopes,
+      unloadedSettledCount,
       delegatedTaskGroups,
       expandedDelegatedGroupKeys,
     ],

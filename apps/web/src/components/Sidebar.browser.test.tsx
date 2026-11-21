@@ -3,6 +3,8 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
+import { unloadedOlderSettledCount } from "@t3tools/client-runtime/state/threads";
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
@@ -22,7 +24,12 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
-import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
+import {
+  useDelegatedUnderParent,
+  useProjects,
+  useServerConfigs,
+  useQuietThreadShells,
+} from "../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -304,6 +311,72 @@ describe("sidebar thread menu", () => {
 });
 
 describe("sidebar settled pagination", () => {
+  it("leaves an older settled task shown under its parent out of the Settled count", async () => {
+    const activeProject = project("active");
+    const environmentId = activeProject.environmentId;
+    const settled = makeThreadFixture({
+      environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("settled"),
+      title: "Settled thread",
+      settledOverride: "settled",
+      settledAt: "2026-06-01T00:00:00.000Z",
+    });
+    // Older than the cut and listed under its parent: the server counts it, no row shows it.
+    const task = makeThreadFixture({
+      environmentId,
+      projectId: activeProject.id,
+      id: ThreadId.make("task"),
+      title: "Delegated task",
+      settledOverride: "settled",
+      settledAt: "2025-12-01T00:00:00.000Z",
+      delegatedFrom: {
+        environmentId: EnvironmentId.make("macbook"),
+        threadId: ThreadId.make("parent"),
+        title: "Plan",
+      },
+    });
+    const before = "2026-01-01T00:00:00.000Z";
+    const originalShelf = vi.mocked(shelfHooks.useOlderSettledShelf).getMockImplementation()!;
+    using _shelf = vi.spyOn(shelfHooks, "useOlderSettledShelf").mockImplementation((input) => ({
+      ...originalShelf(input),
+      unloadedCount: (threads) =>
+        unloadedOlderSettledCount({
+          olderSettled: () => ({
+            before,
+            beforeMs: Date.parse(before),
+            counts: new Map([[activeProject.id, 1]]),
+          }),
+          scopes: [{ environmentId, projectIds: null }],
+          threads,
+        }),
+    }));
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([settled, task]);
+    using _underParent = vi
+      .mocked(useDelegatedUnderParent)
+      .mockReturnValue(new Set([threadKey({ environmentId, threadId: task.id })]));
+    vi.mocked(useServerConfigs).mockReturnValue(
+      new Map([
+        [
+          environmentId,
+          {
+            scratchWorkspaceRoot: null,
+            shellThreadFamilies: false,
+          } as unknown as EnvironmentServerConfig,
+        ],
+      ]),
+    );
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    await expect
+      .element(screen.getByRole("button", { name: "Settled1", exact: true }))
+      .toBeInTheDocument();
+  });
+
   it("keeps the viewport in place when showing more settled threads", async () => {
     using stack = new DisposableStack();
     const style = document.createElement("style");

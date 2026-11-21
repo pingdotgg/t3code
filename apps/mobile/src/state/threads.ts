@@ -65,6 +65,8 @@ const steadyThreadShells = createEnvironmentThreadShellAtoms({
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 });
 export const steadyNavigationThreadShellsAtom = steadyThreadShells.navigationThreadShellsAtom;
+/** Every thread those lists hold, including tasks shown under a parent. */
+export const steadyQuietThreadShellsAtom = steadyThreadShells.quietThreadShellsAtom;
 /** Delegated tasks among those threads, grouped by a parent no list shows. */
 export const steadyDelegatedTaskGroupsAtom = steadyThreadShells.delegatedTaskGroupsAtom;
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
