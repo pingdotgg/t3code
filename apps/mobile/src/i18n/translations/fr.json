@@ -3790,7 +3790,7 @@
   "f0e853acd2006d53": "Environnements associés",
   "0b83813eb16a9bc0": "Permet aux agents d’une machine de travailler sur vos autres machines, et aux leurs de travailler sur celle-ci. Activez l’option sur chaque machine. Tant qu’elle est désactivée, rien de nouveau ne démarre via une association ; les tâches en cours se terminent.",
   "f9904f78d3003f58": "Checkout rapide des worktrees",
-  "67937aa49179285e": "Sur Mac, clone les nouveaux worktrees depuis une copie en cache dans le dossier T3 home au lieu d’écrire chaque fichier. Utilise le checkout Git normal quand ce n’est pas possible. La désactivation supprime le cache.",
+  "53962249c9da1b97": "Démarre les nouveaux worktrees depuis une copie tenue prête dans le dossier T3 home au lieu d’écrire chaque fichier. Utilise le checkout Git normal quand ce n’est pas possible. La désactivation supprime le cache.",
   "d6ada5ec242e37ff": "Limites d’utilisation",
   "62127e7b5c0f57a3": "Reprendre après les limites d’utilisation",
   "4df30d44eb0b0728": "Reprend automatiquement les fils quand leurs limites d’utilisation sont réinitialisées. Vous pouvez annuler la reprise automatique dans chaque fil.",

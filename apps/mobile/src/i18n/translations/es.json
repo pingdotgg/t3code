@@ -3790,7 +3790,7 @@
   "f0e853acd2006d53": "Entornos vinculados",
   "0b83813eb16a9bc0": "Permite que los agentes de una máquina trabajen en tus otras máquinas, y los de ellas en esta. Actívalo en cada máquina. Mientras esté desactivado, no se inicia nada nuevo a través de un vínculo; las tareas en curso terminan.",
   "f9904f78d3003f58": "Checkout rápido de worktrees",
-  "67937aa49179285e": "En un Mac, clona los nuevos worktrees desde un checkout en caché en la carpeta de inicio de T3 en lugar de escribir cada archivo. Usa el checkout normal de Git cuando no puede. Al desactivarlo se elimina la caché.",
+  "53962249c9da1b97": "Inicia los nuevos worktrees desde un checkout que se mantiene listo en la carpeta de inicio de T3 en lugar de escribir cada archivo. Usa el checkout normal de Git cuando no puede. Al desactivarlo se elimina la caché.",
   "d6ada5ec242e37ff": "Límites de uso",
   "62127e7b5c0f57a3": "Reanudar tras los límites de uso",
   "4df30d44eb0b0728": "Reanuda automáticamente los hilos cuando se restablecen sus límites de uso. Puedes cancelar la reanudación automática en cada hilo.",

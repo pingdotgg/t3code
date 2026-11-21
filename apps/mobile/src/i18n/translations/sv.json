@@ -3796,7 +3796,7 @@
   "f0e853acd2006d53": "Länkade miljöer",
   "0b83813eb16a9bc0": "Låt agenter på en dator arbeta på dina andra datorer, och deras på den. Aktivera det på varje dator. När det är av startar inget nytt via en länk; pågående uppgifter slutförs.",
   "f9904f78d3003f58": "Snabb utcheckning av worktree",
-  "67937aa49179285e": "På en Mac klonas nya worktrees från en utcheckning som cachas i T3-hemmappen i stället för att varje fil skrivs. Använder Gits vanliga utcheckning när det inte går. Om du stänger av det tas cachen bort.",
+  "53962249c9da1b97": "Nya worktrees startas från en utcheckning som hålls redo i T3-hemmappen i stället för att varje fil skrivs. Använder Gits vanliga utcheckning när det inte går. Om du stänger av det tas cachen bort.",
   "d6ada5ec242e37ff": "Användningsgränser",
   "62127e7b5c0f57a3": "Återuppta efter användningsgränser",
   "4df30d44eb0b0728": "Återuppta trådar automatiskt när deras användningsgränser återställs. Du kan avbryta automatisk återupptagning i varje tråd.",

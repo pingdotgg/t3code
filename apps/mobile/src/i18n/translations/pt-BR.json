@@ -3790,7 +3790,7 @@
   "f0e853acd2006d53": "Ambientes vinculados",
   "0b83813eb16a9bc0": "Permite que os agentes de uma máquina trabalhem nas suas outras máquinas, e os delas nela. Ative em cada máquina. Enquanto desativado, nada novo começa por um vínculo; as tarefas em execução terminam.",
   "f9904f78d3003f58": "Checkout rápido de worktree",
-  "67937aa49179285e": "No Mac, clona novos worktrees a partir de um checkout em cache na pasta T3 home em vez de gravar cada arquivo. Usa o checkout normal do Git quando não consegue. Desativar exclui o cache.",
+  "53962249c9da1b97": "Inicia novos worktrees a partir de um checkout mantido pronto na pasta T3 home em vez de gravar cada arquivo. Usa o checkout normal do Git quando não consegue. Desativar exclui o cache.",
   "d6ada5ec242e37ff": "Limites de uso",
   "62127e7b5c0f57a3": "Retomar após limites de uso",
   "4df30d44eb0b0728": "Retoma as threads automaticamente quando os limites de uso delas forem redefinidos. Você pode cancelar a retomada automática em cada thread.",

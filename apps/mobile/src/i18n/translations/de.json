@@ -3795,7 +3795,7 @@
   "f0e853acd2006d53": "Verknüpfte Umgebungen",
   "0b83813eb16a9bc0": "Lass Agenten auf einem Rechner auf deinen anderen Rechnern arbeiten und deren Agenten auf ihm. Schalte es für jeden Rechner ein. Solange es aus ist, startet nichts Neues über eine Verknüpfung; laufende Aufgaben werden beendet.",
   "f9904f78d3003f58": "Schneller Worktree-Checkout",
-  "67937aa49179285e": "Auf einem Mac neue Worktrees aus einem im T3-Home-Ordner zwischengespeicherten Checkout klonen, statt jede Datei zu schreiben. Verwendet den normalen Git-Checkout, wenn das nicht geht. Beim Ausschalten wird der Cache gelöscht.",
+  "53962249c9da1b97": "Neue Worktrees aus einem im T3-Home-Ordner bereitgehaltenen Checkout starten, statt jede Datei zu schreiben. Verwendet den normalen Git-Checkout, wenn das nicht geht. Beim Ausschalten wird der Cache gelöscht.",
   "d6ada5ec242e37ff": "Nutzungslimits",
   "62127e7b5c0f57a3": "Nach Nutzungslimits fortsetzen",
   "4df30d44eb0b0728": "Threads automatisch fortsetzen, wenn ihre Nutzungslimits zurückgesetzt werden. Du kannst das automatische Fortsetzen in jedem Thread abbrechen.",

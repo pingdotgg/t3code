@@ -567,7 +567,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     scope: "environment",
     fastWorktreeCheckoutOnly: true,
-    searchTerms: [msg("beta fast worktree checkout clone apfs copy-on-write cache macos speed")],
+    searchTerms: [
+      msg("beta fast worktree checkout clone apfs copy-on-write cache macos windows speed"),
+    ],
   },
   {
     id: "voice-transcription-destination",

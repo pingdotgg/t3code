@@ -8847,7 +8847,7 @@
   "13e86eb5d8287a71": "Visa ett förutsagt nästa meddelande i det tomma inmatningsfältet efter en omgång med Claude eller Codex. Tab använder det. Varje förslag är en extra cachad begäran i ditt abonnemang. Kräver Codex 0.165+. Claude-trådar uppdateras vid omstart.",
   "d4b2a2ec812aafb0": "Föreslå nästa prompt",
   "298c7150a7621c80": "Simlock-enhetsvärdar",
-  "67937aa49179285e": "På en Mac klonas nya worktrees från en utcheckning som cachas i T3-hemmappen i stället för att varje fil skrivs. Använder Gits vanliga utcheckning när det inte går. Om du stänger av det tas cachen bort.",
+  "53962249c9da1b97": "Nya worktrees startas från en utcheckning som hålls redo i T3-hemmappen i stället för att varje fil skrivs. Använder Gits vanliga utcheckning när det inte går. Om du stänger av det tas cachen bort.",
   "f9904f78d3003f58": "Snabb utcheckning av worktree",
   "ec7623deed751c05": [
     "Dela en tråd med en gäst som följer den live i en webbläsare och skickar meddelanden som du godkänner. Kräver T3 Connect: logga in och länka den här datorn under",
@@ -11793,7 +11793,7 @@
   "4a21cf825a2045b0": "beta tabb autokomplettering förutsäg nästa meddelande claude codex spöktext",
   "fea2dc36585c4a20": "Simlock-enhetsvärdar (alfa)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lån gateway",
-  "bcb520297a9ae143": "beta snabb worktree utcheckning klon apfs copy-on-write cache macos hastighet",
+  "3c7f54b1b06d14aa": "beta snabb worktree utcheckning klon apfs copy-on-write cache macos windows hastighet",
   "4c83ac419da342bd": "skicka mikrofonljud diktering mål tal röst stt transkribering miljö dator samtycke integritet moln OpenAI Grok OpenRouter",
   "f9c000e92379d027": "mikrofon indata ljud enhet ordning prioritet föredragen",
   "22811f405e0b4b28": "tal röst tangentbord snabbtangent håll växla auto",
