@@ -143,10 +143,11 @@ builds refuse only T3's relay and hosted app, so the fork's own URLs pass.
   CLI, the server, the web client, and the desktop app. Unset leaves Connect off.
 - **Mobile:** set `T3CODE_CLERK_PUBLISHABLE_KEY`, `T3CODE_CLERK_JWT_TEMPLATE`, and `T3CODE_RELAY_URL`
   in the EAS environment the build uses. A standalone app declares no `webcredentials` domain, so
-  passkeys are unavailable there; other sign-in methods work.
-- **Hosted app:** `t3 connect` opens `/connect` on `T3CODE_HOSTED_APP_URL`. That origin must serve
-  the fork's web build with the same Clerk values, be reachable by everyone who signs in, and, with a
-  production Clerk key, belong to the Clerk instance's domain.
+  it has no passkeys.
+- **Hosted app:** `t3 connect` opens `/connect` on `T3CODE_HOSTED_APP_URL`. Only a static hosted
+  web build (one built with `VITE_HOSTED_APP_CHANNEL`) serves that page; a standalone server's own
+  web UI does not. Without one, link a server from the Connections settings of a signed-in client.
+  With a production Clerk key, web sign-in works only on the Clerk instance's domain.
 - **Clerk redirects:** use the fork's scheme and bundle ID in place of T3's in the sections above:
   `<scheme>://app/` for desktop SSO and `<scheme>://app` in `allowed_origins`,
   `clerk://<bundle id>.callback` (with `.dev` or `.preview` before `.callback` for those variants)
