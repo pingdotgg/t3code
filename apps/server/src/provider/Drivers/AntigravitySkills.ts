@@ -280,17 +280,11 @@ function compileSkillPattern(pattern: string): SkillPatternMatcher {
   };
 }
 
-function matchesSkillFilter(
-  entry: string,
-  filter: SkillEntryFilter,
-  relativeEntry?: string,
-): boolean {
-  const matchesEntry = (matches: SkillPatternMatcher) =>
-    matches(entry) || (relativeEntry !== undefined && matches(relativeEntry));
+function matchesSkillFilter(entry: string, filter: SkillEntryFilter): boolean {
   for (const group of filter.includeGroups) {
-    if (!group.some(matchesEntry)) return false;
+    if (!group.some((matches) => matches(entry))) return false;
   }
-  return !filter.excludePatterns.some(matchesEntry);
+  return !filter.excludePatterns.some((matches) => matches(entry));
 }
 
 function narrowSkillFilter(
@@ -377,10 +371,10 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     scope: string,
     scanChildren: boolean,
     filter: SkillEntryFilter = EMPTY_SKILL_FILTER,
-    manifestBase?: string,
+    acceptSkillFile = false,
   ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
     const info = yield* readIfPresent(fileSystem.stat(directory), directory);
-    if (info?.type === "File" && manifestBase !== undefined) {
+    if (info?.type === "File" && acceptSkillFile) {
       if (budget.remainingEntries === 0) {
         return yield* new AntigravitySkillsProbeError({
           reason: "scan-budget-exhausted",
@@ -388,9 +382,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
         });
       }
       budget.remainingEntries -= 1;
-      const parent = path.dirname(directory);
-      const relativeEntry = path.relative(manifestBase, parent).split(path.sep).join("/");
-      if (matchesSkillFilter(path.basename(parent), filter, relativeEntry)) {
+      if (matchesSkillFilter(path.basename(path.dirname(directory)), filter)) {
         yield* addSkillFile(directory, scope);
       }
       return;
@@ -472,7 +464,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     }
     for (const entry of parsed.value.entries ?? []) {
       const entryDirectory = resolveSkillsConfigPath(path, entry.path, baseDir, input.userHome);
-      yield* scanDirectory(entryDirectory, scope, true, narrowSkillFilter(filter, entry), baseDir);
+      yield* scanDirectory(entryDirectory, scope, true, narrowSkillFilter(filter, entry), true);
     }
   });
 

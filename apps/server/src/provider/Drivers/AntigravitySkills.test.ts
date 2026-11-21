@@ -427,14 +427,8 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           path.join(input.cwd, ".agents", "skills.json"),
           JSON.stringify({
             entries: [
-              {
-                path: "tools/skills/deploy/SKILL.md",
-                include_only: ["tools/skills/deploy"],
-              },
-              {
-                path: "tools/skills/internal/SKILL.md",
-                exclude: ["tools/skills/internal"],
-              },
+              { path: "tools/skills/deploy/SKILL.md" },
+              { path: "tools/skills/internal/SKILL.md", exclude: ["internal"] },
             ],
           }),
         );
