@@ -38,7 +38,7 @@ const GiB = 1024 ** 3;
 /**
  * Agents leave about 6 GB free before throttling and 4 GB before an OOM kill (at
  * least half and three quarters of RAM go to agents) so the server and sshd keep
- * working. Without swap, MemoryHigh stalls every agent and never reaches the kill.
+ * working. Without available swap, MemoryHigh can stall agents below the hard limit.
  */
 function agentSliceMemoryLimits(totalBytes: number, hasSwap: boolean) {
   return {
@@ -205,7 +205,7 @@ export const make = Effect.gen(function* () {
       // the limits came from. A failed update is retried by the next launch.
       // An unreadable meminfo keeps the throttle, as before swap was checked.
       const readHasSwap = fileSystem.readFileString("/proc/meminfo").pipe(
-        Effect.map((text) => /^SwapTotal:\s*0 kB$/m.exec(text) === null),
+        Effect.map((text) => /^Swap(?:Total|Free):\s*0 kB$/m.exec(text) === null),
         Effect.orElseSucceed(() => true),
       );
       let appliedTotal: number | undefined;
