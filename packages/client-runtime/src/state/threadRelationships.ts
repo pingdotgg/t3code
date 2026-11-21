@@ -52,7 +52,7 @@ export function deriveThreadRelationshipGraph(input: {
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly projection: ThreadStructure | null;
   /** Where `threads` live, so a thread launched from one of them links to its launcher. */
-  readonly environmentId?: EnvironmentId;
+  readonly environmentId: EnvironmentId;
 }): ThreadRelationshipGraph {
   const threadsById = new Map<ThreadId, OrchestrationV2ThreadShell>();
   for (const thread of input.threads) {
