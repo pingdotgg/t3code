@@ -28,7 +28,11 @@ const notFound = (method: string, path: string) =>
   });
 
 /** An Ubuntu host with the userns restriction on, the browser installed, and a system font. */
-const runSetupAsRoot = (input: { readonly profile: string | undefined }) => {
+const runSetupAsRoot = (input: {
+  readonly profile: string | undefined;
+  /** An LXC guest whose host still denies userns: the profile loads, Chrome's sandbox does not start. */
+  readonly sandboxStillBlocked?: boolean;
+}) => {
   const files = new Map([
     [USERNS_RESTRICTION, "1\n"],
     [BROWSER, ""],
@@ -64,11 +68,20 @@ const runSetupAsRoot = (input: { readonly profile: string | undefined }) => {
         readonly args: ReadonlyArray<string>;
       };
       commands.push([name, ...args].join(" "));
-      const output =
-        name === "fc-match" ? "/usr/share/fonts/sans.ttf" : name === BROWSER ? "Chrome 154\n" : "";
+      const blocked =
+        input.sandboxStillBlocked === true &&
+        !["fc-match", "apparmor_parser", "apt-get", "apt-cache", "ldd"].includes(name) &&
+        !(name === BROWSER && args.includes("--version"));
+      const output = blocked
+        ? "FATAL:zygote_host_impl_linux.cc(130)] No usable sandbox!\n"
+        : name === "fc-match"
+          ? "/usr/share/fonts/sans.ttf"
+          : name === BROWSER
+            ? "Chrome 154\n"
+            : "";
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(blocked ? 1 : 0)),
         isRunning: Effect.succeed(false),
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
@@ -135,5 +148,16 @@ it.effect.each([
     expect(result.profile).toBe(input.written);
     expect(result.output).toContain(input.said);
     expect(result.output).toContain("This host is ready for T3's browser.");
+  }),
+);
+
+it.effect("t3 browser setup as root does not report ready while Chrome's sandbox still fails", () =>
+  Effect.gen(function* () {
+    const result = yield* runSetupAsRoot({
+      profile: PreviewBrowserHost.APPARMOR_PROFILE,
+      sandboxStillBlocked: true,
+    });
+    expect(result.loads).toEqual([LOAD]);
+    expect(result.output).not.toContain("This host is ready for T3's browser.");
   }),
 );
