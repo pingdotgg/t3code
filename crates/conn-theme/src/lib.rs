@@ -21,7 +21,7 @@ mod tokens;
 use std::collections::BTreeMap;
 
 pub use color::{ParseColorError, color_mix_oklab, color_mix_srgb, parse_color};
-pub use palettes::{builtin_themes, parse_theme_json};
+pub use palettes::{builtin_themes, parse_theme_json, theme_from_role_colors};
 
 /// Light or dark theme appearance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -603,5 +603,19 @@ mod tests {
             r#"{"version":1,"name":"Bad","appearance":"dark","colors":{"canvas":"not-a-color"}}"#;
         let err = parse_theme_json("bad", bad);
         assert!(err.is_err(), "invalid color must return ThemeError::Color");
+    }
+
+    #[test]
+    fn theme_from_role_colors_skips_invalid_values_leniently() {
+        let mut colors = BTreeMap::new();
+        colors.insert("canvas".to_owned(), "#123456".to_owned());
+        colors.insert("accent".to_owned(), "not-a-valid-color".to_owned());
+        let theme =
+            theme_from_role_colors("orbit-custom", "Orbit Custom", Appearance::Dark, &colors);
+        assert_eq!(theme.id, "orbit-custom");
+        assert_eq!(theme.name, "Orbit Custom");
+        let tokens = Tokens::derive(&theme);
+        assert_rgba_near(tokens.background, "#123456", 1.0, "orbit-custom.background");
+        assert!(theme.roles.contains_key("accent"));
     }
 }

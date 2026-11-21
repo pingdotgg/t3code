@@ -84,6 +84,8 @@ pub(crate) struct ConnApp {
     /// When true, replaces translucent shell fills with opaque `sidebar`/`shell_card`.
     reduce_transparency: bool,
     server_url: Option<String>,
+    /// Orbit Gateway profile, workspace, theme, and desktop settings sync state.
+    orbit: crate::orbit_sync::OrbitSyncState,
 }
 
 impl std::fmt::Debug for ConnApp {
@@ -217,7 +219,8 @@ impl ConnApp {
             },
         );
 
-        Self {
+        let orbit = crate::orbit_sync::OrbitSyncState::default();
+        let mut app = Self {
             tokens,
             geometry: ShellGeometry::default(),
             shell,
@@ -251,7 +254,12 @@ impl ConnApp {
             sidebar_filter_menu_open: false,
             reduce_transparency: false,
             server_url,
+            orbit,
+        };
+        if crate::orbit_sync::orbit_sync_enabled_by_env() {
+            app.sync_orbit_profile(crate::orbit_sync::allow_startup_theme_adopt(), cx);
         }
+        app
     }
 
     /// Opens (or closes) the `Cmd+K` command palette.
@@ -268,6 +276,7 @@ impl ConnApp {
             &self.shell,
             self.layout.selected_thread_id.as_deref(),
             &self.theme_id,
+            &self.orbit.custom_themes,
         );
         let tokens = self.tokens.clone();
         let palette = cx.new(|cx| CommandPalette::new(items, tokens, window, cx));
@@ -336,6 +345,8 @@ impl ConnApp {
             server_url: self.server_url.clone(),
             status: self.status.clone(),
         };
+        let orbit_info = self.orbit.settings_info();
+        let custom_themes = self.orbit.custom_themes.clone();
         let theme_id = self.theme_id.clone();
         let tokens = self.tokens.clone();
         let reduce_transparency = self.reduce_transparency;
@@ -345,6 +356,8 @@ impl ConnApp {
                 tokens,
                 reduce_transparency,
                 connection,
+                orbit_info,
+                &custom_themes,
                 window,
                 cx,
             )
@@ -359,6 +372,33 @@ impl ConnApp {
                 }
                 SettingsEvent::ReduceTransparency(enabled) => {
                     app.set_reduce_transparency(*enabled, cx);
+                }
+                SettingsEvent::OrbitSyncNow => {
+                    app.sync_orbit_profile(true, cx);
+                }
+                SettingsEvent::OrbitBindProfile(profile_id) => {
+                    app.bind_orbit_profile(*profile_id, cx);
+                }
+                SettingsEvent::OrbitToggleSyncWorkspaces(enabled) => {
+                    app.orbit.snapshot.prefs.sync_workspaces = *enabled;
+                    app.orbit.persist_snapshot();
+                    if *enabled {
+                        app.sync_orbit_profile(false, cx);
+                    }
+                }
+                SettingsEvent::OrbitToggleSyncAppearance(enabled) => {
+                    app.orbit.snapshot.prefs.sync_appearance = *enabled;
+                    app.orbit.persist_snapshot();
+                    if *enabled {
+                        app.sync_orbit_profile(true, cx);
+                    }
+                }
+                SettingsEvent::OrbitToggleSyncDesktopSettings(enabled) => {
+                    app.orbit.snapshot.prefs.sync_desktop_settings = *enabled;
+                    app.orbit.persist_snapshot();
+                    if *enabled {
+                        app.sync_orbit_profile(false, cx);
+                    }
                 }
                 SettingsEvent::Close => {
                     app.settings_modal = None;
@@ -1380,14 +1420,210 @@ impl ConnApp {
         .detach();
     }
 
-    /// Switches to a built-in theme by id. Returns false for an unknown id.
+    /// Resolves a theme definition from built-in themes or Orbit-synced custom themes.
+    fn resolve_theme(&self, theme_id: &str) -> Option<(conn_theme::ThemeDefinition, Tokens)> {
+        if let Some(found) = crate::live::tokens_for(theme_id) {
+            return Some(found);
+        }
+        let custom = self
+            .orbit
+            .custom_themes
+            .iter()
+            .find(|t| t.id == theme_id)?
+            .clone();
+        let tokens = Tokens::derive(&custom);
+        Some((custom, tokens))
+    }
+
+    /// Switches to a built-in or Orbit-synced custom theme by id and syncs the choice to Orbit.
     pub(crate) fn set_theme(&mut self, theme_id: &str, cx: &mut Context<'_, Self>) -> bool {
-        let Some((theme, tokens)) = crate::live::tokens_for(theme_id) else {
+        self.apply_theme_choice(theme_id, true, cx)
+    }
+
+    fn apply_theme_choice(
+        &mut self,
+        theme_id: &str,
+        push_to_orbit: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let Some((theme, tokens)) = self.resolve_theme(theme_id) else {
             return false;
         };
-        self.theme_id = theme.id;
+        self.theme_id = theme.id.clone();
         self.set_tokens(tokens, cx);
+        if push_to_orbit {
+            self.push_orbit_appearance(&theme, cx);
+        }
         true
+    }
+
+    /// Syncs workspaces, appearance, and desktop settings from Orbit Gateway on `live::RT`.
+    pub(crate) fn sync_orbit_profile(
+        &mut self,
+        allow_theme_adopt: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.orbit.status = crate::orbit_sync::OrbitSyncStatus::Syncing;
+        self.refresh_settings_orbit_info(cx);
+        cx.spawn(async move |this, cx| {
+            let task = crate::live::RT.spawn(crate::orbit_sync::fetch_orbit_profile());
+            let outcome = match task.await {
+                Ok(res) => res,
+                Err(err) => Err(conn_desktop::orbit::ProfileError::Unreachable(
+                    err.to_string(),
+                )),
+            };
+            let _ = this.update(cx, |app, cx| {
+                app.finish_orbit_fetch(outcome, allow_theme_adopt, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Binds this device's Orbit Node to `profile_id` and adopts its synced workspaces & themes.
+    fn bind_orbit_profile(&mut self, profile_id: i64, cx: &mut Context<'_, Self>) {
+        self.orbit.status = crate::orbit_sync::OrbitSyncStatus::Syncing;
+        self.refresh_settings_orbit_info(cx);
+        cx.spawn(async move |this, cx| {
+            let task =
+                crate::live::RT.spawn(crate::orbit_sync::bind_and_fetch_orbit_profile(profile_id));
+            let outcome = match task.await {
+                Ok(res) => res,
+                Err(err) => Err(conn_desktop::orbit::ProfileError::Unreachable(
+                    err.to_string(),
+                )),
+            };
+            let _ = this.update(cx, |app, cx| {
+                app.finish_orbit_fetch(outcome, true, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn finish_orbit_fetch(
+        &mut self,
+        outcome: Result<crate::orbit_sync::OrbitFetchResult, conn_desktop::orbit::ProfileError>,
+        allow_theme_adopt: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match outcome {
+            Ok(result) => {
+                let effects =
+                    self.orbit
+                        .apply_fetch(result, self.tokens.appearance, allow_theme_adopt);
+                if let Some(reduce) = effects.reduce_transparency {
+                    self.apply_reduce_transparency_choice(reduce, false, cx);
+                }
+                if let Some(theme_id) = effects.theme_id
+                    && theme_id != self.theme_id
+                {
+                    let _ = self.apply_theme_choice(&theme_id, false, cx);
+                }
+            }
+            Err(err) => {
+                self.orbit.status = crate::orbit_sync::OrbitSyncStatus::Offline(err.to_string());
+            }
+        }
+        self.refresh_settings_orbit_info(cx);
+        cx.notify();
+    }
+
+    fn push_orbit_appearance(
+        &mut self,
+        theme: &conn_theme::ThemeDefinition,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !crate::orbit_sync::orbit_sync_enabled_by_env()
+            || !self.orbit.snapshot.prefs.sync_appearance
+        {
+            return;
+        }
+        let Some(profile_id) = self.orbit.active_profile_id() else {
+            return;
+        };
+        let local = self.orbit.build_appearance_document(theme);
+        let base = self.orbit.snapshot.appearance_base.clone();
+        let version = self.orbit.snapshot.appearance_version;
+        cx.spawn(async move |this, cx| {
+            let task = crate::live::RT.spawn(crate::orbit_sync::push_appearance_section(
+                profile_id, base, local, version,
+            ));
+            if let Ok(Ok(saved)) = task.await {
+                let _ = this.update(cx, |app, cx| {
+                    app.orbit.snapshot.profile_version = saved.version;
+                    if let Some(meta) = saved
+                        .sections
+                        .as_ref()
+                        .and_then(|s| s.get(conn_desktop::orbit::APPEARANCE_SECTION))
+                    {
+                        app.orbit.snapshot.appearance_version = meta.version;
+                    }
+                    if let Some(raw) = conn_desktop::orbit::extract_section(
+                        &saved,
+                        conn_desktop::orbit::APPEARANCE_SECTION,
+                    ) {
+                        app.orbit.snapshot.appearance_base = Some(raw);
+                    }
+                    app.orbit.persist_snapshot();
+                    app.refresh_settings_orbit_info(cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn push_orbit_desktop_settings(
+        &mut self,
+        reduce_transparency: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !crate::orbit_sync::orbit_sync_enabled_by_env()
+            || !self.orbit.snapshot.prefs.sync_desktop_settings
+        {
+            return;
+        }
+        let Some(profile_id) = self.orbit.active_profile_id() else {
+            return;
+        };
+        let local = self
+            .orbit
+            .build_desktop_settings_document(reduce_transparency);
+        let base = self.orbit.snapshot.desktop_base.clone();
+        let version = self.orbit.snapshot.desktop_version;
+        cx.spawn(async move |this, cx| {
+            let task = crate::live::RT.spawn(crate::orbit_sync::push_desktop_section(
+                profile_id, base, local, version,
+            ));
+            if let Ok(Ok(saved)) = task.await {
+                let _ = this.update(cx, |app, cx| {
+                    app.orbit.snapshot.profile_version = saved.version;
+                    if let Some(meta) = saved
+                        .sections
+                        .as_ref()
+                        .and_then(|s| s.get(conn_desktop::orbit::DESKTOP_DEVICE_SECTION))
+                    {
+                        app.orbit.snapshot.desktop_version = meta.version;
+                    }
+                    if let Some(raw) = conn_desktop::orbit::extract_section(
+                        &saved,
+                        conn_desktop::orbit::DESKTOP_DEVICE_SECTION,
+                    ) {
+                        app.orbit.snapshot.desktop_base = Some(raw);
+                    }
+                    app.orbit.persist_snapshot();
+                    app.refresh_settings_orbit_info(cx);
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn refresh_settings_orbit_info(&self, cx: &mut Context<'_, Self>) {
+        if let Some(modal) = &self.settings_modal {
+            let info = self.orbit.settings_info();
+            let custom = self.orbit.custom_themes.clone();
+            modal.update(cx, |m, cx| m.set_orbit_state(info, &custom, cx));
+        }
     }
     /// Switches the selected thread's runtime permission mode (`thread.runtime-mode.set`).
     fn set_runtime_mode(&mut self, mode: &str, cx: &mut Context<'_, Self>) {
@@ -1478,15 +1714,27 @@ impl ConnApp {
     /// `@media (prefers-reduced-transparency: reduce)` (`--shell-fill: var(--sidebar);
     /// --shell-inner-fill: var(--shell-card);`).
     fn set_reduce_transparency(&mut self, enabled: bool, cx: &mut Context<'_, Self>) {
+        self.apply_reduce_transparency_choice(enabled, true, cx);
+    }
+
+    fn apply_reduce_transparency_choice(
+        &mut self,
+        enabled: bool,
+        push_to_orbit: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
         if self.reduce_transparency == enabled {
             return;
         }
         self.reduce_transparency = enabled;
         let theme_id = self.theme_id.clone();
-        if let Some((_, tokens)) = crate::live::tokens_for(&theme_id) {
+        if let Some((_, tokens)) = self.resolve_theme(&theme_id) {
             self.set_tokens(tokens, cx);
         } else {
             cx.notify();
+        }
+        if push_to_orbit {
+            self.push_orbit_desktop_settings(enabled, cx);
         }
     }
 
@@ -1619,6 +1867,7 @@ impl Render for ConnApp {
             root = root
                 .child(render_workspace_rail(
                     &self.shell,
+                    &self.orbit.workspaces,
                     self.active_workspace.as_deref(),
                     &self.tokens,
                     &self.geometry,
@@ -1627,6 +1876,7 @@ impl Render for ConnApp {
                 .child(render_thread_sidebar(
                     &self.shell,
                     &self.layout,
+                    &self.orbit.workspaces,
                     self.active_workspace.as_deref(),
                     &self.collapsed_projects,
                     &self.sidebar_search_input,

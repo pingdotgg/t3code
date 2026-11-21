@@ -20,6 +20,7 @@
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use conn_desktop::orbit::{OrbitWorkspace, workspace_matches_project};
 use conn_state::{LayoutState, ProjectShell, ShellState, ThreadActivity, ThreadShell};
 use conn_theme::{Appearance, ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
@@ -99,6 +100,7 @@ impl StatusDotState {
 pub(crate) fn render_thread_sidebar(
     shell: &ShellState,
     layout: &LayoutState,
+    workspaces: &[OrbitWorkspace],
     active_workspace: Option<&str>,
     collapsed_projects: &HashSet<String>,
     search_input: &Entity<InputState>,
@@ -264,12 +266,34 @@ pub(crate) fn render_thread_sidebar(
         .child(search_box)
         .child(header_actions);
 
-    // Flat list of threads, scoped to `active_workspace` and live sidebar search when set.
+    // Flat list of threads, scoped to `active_workspace` (either an Orbit workspace or a
+    // direct project filter) and live sidebar search when set.
+    let active_orbit_ws = active_workspace.and_then(|id| workspaces.iter().find(|ws| ws.id == id));
+    let thread_in_scope = |thread: &ThreadShell| -> bool {
+        let Some(ws_id) = active_workspace else {
+            return true;
+        };
+        if let Some(orbit_ws) = active_orbit_ws {
+            if let Some(project) = shell.project(&thread.project_id) {
+                workspace_matches_project(
+                    orbit_ws,
+                    &project.id,
+                    &project.title,
+                    &project.workspace_root,
+                )
+            } else {
+                workspace_matches_project(orbit_ws, &thread.project_id, "", "")
+            }
+        } else {
+            ws_id == thread.project_id
+        }
+    };
+
     let now_secs = current_unix_secs();
     let visible_threads: Vec<&ThreadShell> = shell
         .threads
         .iter()
-        .filter(|thread| active_workspace.is_none_or(|ws| ws == thread.project_id))
+        .filter(|thread| thread_in_scope(thread))
         .filter(|thread| {
             thread_matches_search(thread, shell.project(&thread.project_id), &search_query)
         })
@@ -301,7 +325,7 @@ pub(crate) fn render_thread_sidebar(
     let settled_threads: Vec<&ThreadShell> = shell
         .archived_threads
         .iter()
-        .filter(|thread| active_workspace.is_none_or(|ws| ws == thread.project_id))
+        .filter(|thread| thread_in_scope(thread))
         .filter(|thread| {
             thread_matches_search(thread, shell.project(&thread.project_id), &search_query)
         })

@@ -12,6 +12,7 @@ mod header;
 mod icons;
 mod live;
 mod menus;
+mod orbit_sync;
 mod palette;
 mod settings;
 mod shell;

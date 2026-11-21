@@ -48,12 +48,13 @@ pub(crate) enum PaletteEvent {
 }
 
 impl PaletteItems {
-    /// Builds palette items from the live [`ShellState`] and built-in themes.
+    /// Builds palette items from the live [`ShellState`], built-in themes, and Orbit custom themes.
     #[must_use]
     pub(crate) fn from_shell(
         shell: &ShellState,
         active_thread_id: Option<&str>,
         active_theme_id: &str,
+        custom_themes: &[conn_theme::ThemeDefinition],
     ) -> Self {
         let threads = shell
             .threads
@@ -84,6 +85,7 @@ impl PaletteItems {
 
         let themes = conn_theme::builtin_themes()
             .into_iter()
+            .chain(custom_themes.iter().cloned())
             .map(|theme| {
                 let derived = Tokens::derive(&theme);
                 PaletteTheme {

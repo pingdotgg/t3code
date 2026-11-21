@@ -63,6 +63,49 @@ pub fn parse_theme_json(id: &str, json: &str) -> Result<ThemeDefinition, ThemeEr
     })
 }
 
+/// Builds a [`ThemeDefinition`] from a raw CSS color role map (such as a custom or published
+/// theme synced from an Orbit profile's `appearance` section).
+///
+/// Missing roles fall back to the default palette for `appearance`, and unparseable values are
+/// skipped leniently (matching Conn's `lenientThemeColorOverrides`) so one malformed color from
+/// another client never drops the whole theme.
+#[must_use]
+pub fn theme_from_role_colors(
+    id: impl Into<String>,
+    name: impl Into<String>,
+    appearance: Appearance,
+    colors: &BTreeMap<String, String>,
+) -> ThemeDefinition {
+    let mut roles = default_roles_for_appearance(appearance);
+    let has_terminal_selection = colors.contains_key("terminalSelection");
+    for (role, value) in colors {
+        let Ok(parsed) = parse_color(value) else {
+            continue;
+        };
+        if role == "terminalSelectionBackground" {
+            if !has_terminal_selection {
+                roles.insert("terminalSelection".to_owned(), parsed);
+            }
+            continue;
+        }
+        roles.insert(role.clone(), parsed);
+    }
+    let name = name.into();
+    let trimmed = name.trim();
+    let id = id.into();
+    let display_name = if trimmed.is_empty() {
+        id.clone()
+    } else {
+        trimmed.to_owned()
+    };
+    ThemeDefinition {
+        id,
+        name: display_name,
+        appearance,
+        roles,
+    }
+}
+
 /// Default fallback role map for `appearance`, matching `getDefaultThemeColors` in
 /// `../conn/apps/web/src/themePalette.ts`.
 pub(crate) fn default_roles_for_appearance(appearance: Appearance) -> BTreeMap<String, Rgba> {

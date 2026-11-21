@@ -15,16 +15,18 @@
 //! - Bottom utility column (`gap-2 pb-2`): Usage (`chart`), Pull Requests
 //!   (`pull-request`), and Settings (`settings`).
 
+use conn_desktop::orbit::OrbitWorkspace;
 use conn_state::{RightPanelTab, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    Context, InteractiveElement as _, MouseButton, MouseDownEvent, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, WindowControlArea, div, px,
+    Context, FontWeight, InteractiveElement as _, MouseButton, MouseDownEvent, ParentElement as _,
+    SharedString, StatefulInteractiveElement as _, Styled as _, WindowControlArea, div, px,
 };
 
 use crate::app::ConnApp;
 use crate::icons;
+use crate::orbit_sync::{workspace_monogram, workspace_tile_color};
 use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::WORKSPACE_RAIL_WIDTH_PX;
 use crate::theme::{hsla, hsla_alpha};
@@ -45,6 +47,7 @@ const RAIL_TOP_ALIGN_OFFSET_PX: f32 = 5.0;
 #[must_use]
 pub(crate) fn render_workspace_rail(
     _shell: &ShellState,
+    workspaces: &[OrbitWorkspace],
     active_workspace: Option<&str>,
     tokens: &Tokens,
     geometry: &ShellGeometry,
@@ -79,6 +82,44 @@ pub(crate) fn render_workspace_rail(
         }),
     )
     .conn_tooltip("All projects", tokens);
+
+    let workspace_btns: Vec<_> = workspaces
+        .iter()
+        .enumerate()
+        .map(|(idx, ws)| {
+            let ws_id = ws.id.clone();
+            let is_active = active_workspace == Some(ws.id.as_str());
+            let tile_rgba = workspace_tile_color(&ws.color, tokens.primary);
+            let luma = 0.2126 * tile_rgba.r + 0.7152 * tile_rgba.g + 0.0722 * tile_rgba.b;
+            let text_color = if luma > 0.58 {
+                hsla(conn_theme::Rgba::hex(0x111111))
+            } else {
+                hsla(conn_theme::Rgba::hex(0xffffff))
+            };
+            let tile = div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(RAIL_TILE_SIZE_PX))
+                .rounded(px(RAIL_TILE_RADIUS_PX))
+                .bg(hsla(tile_rgba))
+                .text_size(px(11.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(text_color)
+                .child(workspace_monogram(&ws.name));
+
+            rail_button(
+                SharedString::from(format!("rail-ws-{idx}-{}", ws.id)),
+                is_active,
+                tokens,
+                tile,
+                cx.listener(move |app, _event, _window, cx| {
+                    app.select_workspace(Some(ws_id.clone()), cx);
+                }),
+            )
+            .conn_tooltip(ws.name.clone(), tokens)
+        })
+        .collect();
 
     let add_workspace_btn = rail_button(
         "rail-new-workspace",
@@ -169,6 +210,7 @@ pub(crate) fn render_workspace_rail(
                         .mt(px(8.0))
                         .pb(px(8.0))
                         .overflow_y_scroll()
+                        .children(workspace_btns)
                         .child(add_workspace_btn),
                 ),
         )

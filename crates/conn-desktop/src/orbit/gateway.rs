@@ -70,8 +70,27 @@ pub struct GatewayRequest {
 impl GatewayRequest {
     /// A `GET` below `/api/v1/conn`.
     pub fn get(path: impl Into<String>) -> Self {
+        Self::with_method(GatewayMethod::Get, path)
+    }
+
+    /// A `POST` below `/api/v1/conn`.
+    pub fn post(path: impl Into<String>) -> Self {
+        Self::with_method(GatewayMethod::Post, path)
+    }
+
+    /// A `PUT` below `/api/v1/conn`.
+    pub fn put(path: impl Into<String>) -> Self {
+        Self::with_method(GatewayMethod::Put, path)
+    }
+
+    /// A `PATCH` below `/api/v1/conn`.
+    pub fn patch(path: impl Into<String>) -> Self {
+        Self::with_method(GatewayMethod::Patch, path)
+    }
+
+    fn with_method(method: GatewayMethod, path: impl Into<String>) -> Self {
         Self {
-            method: GatewayMethod::Get,
+            method,
             path: path.into(),
             body: None,
             query: BTreeMap::new(),
@@ -79,6 +98,13 @@ impl GatewayRequest {
             idempotency_key: None,
             root: false,
         }
+    }
+
+    /// Attaches a serialized JSON request body.
+    #[must_use]
+    pub fn with_body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
     }
 
     /// The same request with one query parameter added.

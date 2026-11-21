@@ -26,6 +26,7 @@ use gpui_kit::{
 };
 
 use crate::icons;
+use crate::orbit_sync::{OrbitSettingsInfo, OrbitSyncStatus};
 use crate::shell::{DIVIDER_WIDTH_PX, INNER_BORDER_PX};
 use crate::theme::{hsla, hsla_alpha};
 
@@ -91,6 +92,11 @@ pub(crate) struct SettingsConnectionInfo {
 pub(crate) enum SettingsEvent {
     ApplyTheme(String),
     ReduceTransparency(bool),
+    OrbitSyncNow,
+    OrbitBindProfile(i64),
+    OrbitToggleSyncWorkspaces(bool),
+    OrbitToggleSyncAppearance(bool),
+    OrbitToggleSyncDesktopSettings(bool),
     Close,
 }
 
@@ -99,10 +105,44 @@ struct ThemeOption {
     id: String,
     name: String,
     appearance: Appearance,
+    from_orbit: bool,
     bg: Rgba,
     sidebar: Rgba,
     primary: Rgba,
     accent: Rgba,
+}
+
+fn build_theme_options(custom_themes: &[conn_theme::ThemeDefinition]) -> Vec<ThemeOption> {
+    let mut out: Vec<ThemeOption> = conn_theme::builtin_themes()
+        .into_iter()
+        .map(|theme| {
+            let derived = Tokens::derive(&theme);
+            ThemeOption {
+                id: theme.id,
+                name: theme.name,
+                appearance: theme.appearance,
+                from_orbit: false,
+                bg: derived.background,
+                sidebar: derived.sidebar,
+                primary: derived.primary,
+                accent: derived.accent,
+            }
+        })
+        .collect();
+    for theme in custom_themes {
+        let derived = Tokens::derive(theme);
+        out.push(ThemeOption {
+            id: theme.id.clone(),
+            name: theme.name.clone(),
+            appearance: theme.appearance,
+            from_orbit: true,
+            bg: derived.background,
+            sidebar: derived.sidebar,
+            primary: derived.primary,
+            accent: derived.accent,
+        });
+    }
+    out
 }
 
 /// Settings route modal entity.
@@ -113,6 +153,7 @@ pub(crate) struct SettingsModal {
     active_theme_id: String,
     reduce_transparency: bool,
     connection: SettingsConnectionInfo,
+    orbit: OrbitSettingsInfo,
     themes: Vec<ThemeOption>,
     search_input: Entity<InputState>,
     _search_sub: Subscription,
@@ -140,33 +181,25 @@ impl Focusable for SettingsModal {
 
 impl SettingsModal {
     /// Creates the Settings route modal and focuses it so Escape closes cleanly.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "initializes modal with theme, transparency, connection, Orbit sync, and custom themes"
+    )]
     #[must_use]
     pub(crate) fn new(
         active_theme_id: impl Into<String>,
         tokens: Tokens,
         reduce_transparency: bool,
         connection: SettingsConnectionInfo,
+        orbit: OrbitSettingsInfo,
+        custom_themes: &[conn_theme::ThemeDefinition],
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
 
-        let themes = conn_theme::builtin_themes()
-            .into_iter()
-            .map(|theme| {
-                let derived = Tokens::derive(&theme);
-                ThemeOption {
-                    id: theme.id,
-                    name: theme.name,
-                    appearance: theme.appearance,
-                    bg: derived.background,
-                    sidebar: derived.sidebar,
-                    primary: derived.primary,
-                    accent: derived.accent,
-                }
-            })
-            .collect();
+        let themes = build_theme_options(custom_themes);
 
         let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let search_sub = cx.subscribe(&search_input, |_this, _, event: &InputEvent, cx| {
@@ -182,12 +215,25 @@ impl SettingsModal {
             active_theme_id: active_theme_id.into(),
             reduce_transparency,
             connection,
+            orbit,
             themes,
             search_input,
             _search_sub: search_sub,
             focus_handle,
             scroll: ScrollHandle::new(),
         }
+    }
+
+    /// Updates Orbit sync status, profiles, prefs, and Orbit-synced custom themes live.
+    pub(crate) fn set_orbit_state(
+        &mut self,
+        orbit: OrbitSettingsInfo,
+        custom_themes: &[conn_theme::ThemeDefinition],
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.orbit = orbit;
+        self.themes = build_theme_options(custom_themes);
+        cx.notify();
     }
 
     /// Updates the modal's active theme id and derived tokens after a live theme switch.
@@ -406,7 +452,7 @@ impl SettingsModal {
             match self.active_page {
                 SettingsPage::General => self.render_general_page(),
                 SettingsPage::Appearance => self.render_appearance_page(cx),
-                SettingsPage::Connections => self.render_connections_page(),
+                SettingsPage::Connections => self.render_connections_page(cx),
                 SettingsPage::Keyboard => self.render_keyboard_page(),
             }
         };
@@ -476,6 +522,12 @@ impl SettingsModal {
     }
 
     fn render_appearance_page(&self, cx: &mut Context<'_, Self>) -> AnyElement {
+        let orbit_rows: Vec<AnyElement> = self
+            .themes
+            .iter()
+            .filter(|t| t.from_orbit)
+            .map(|theme| self.render_single_theme_row(theme, cx))
+            .collect();
         let dark_rows = self.render_theme_rows(Appearance::Dark, cx);
         let light_rows = self.render_theme_rows(Appearance::Light, cx);
 
@@ -497,30 +549,34 @@ impl SettingsModal {
             &self.geometry,
         )];
 
-        div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .gap(px(20.0))
-            .child(settings_section(
-                "Dark themes",
-                dark_rows,
+        let mut col = div().flex().flex_col().w_full().gap(px(20.0));
+        if !orbit_rows.is_empty() {
+            col = col.child(settings_section(
+                "From Orbit profile",
+                orbit_rows,
                 &self.tokens,
                 &self.geometry,
-            ))
-            .child(settings_section(
-                "Light themes",
-                light_rows,
-                &self.tokens,
-                &self.geometry,
-            ))
-            .child(settings_section(
-                "Window",
-                window_rows,
-                &self.tokens,
-                &self.geometry,
-            ))
-            .into_any_element()
+            ));
+        }
+        col.child(settings_section(
+            "Dark themes",
+            dark_rows,
+            &self.tokens,
+            &self.geometry,
+        ))
+        .child(settings_section(
+            "Light themes",
+            light_rows,
+            &self.tokens,
+            &self.geometry,
+        ))
+        .child(settings_section(
+            "Window",
+            window_rows,
+            &self.tokens,
+            &self.geometry,
+        ))
+        .into_any_element()
     }
 
     fn render_search_results(&self, needle: &str, cx: &mut Context<'_, Self>) -> AnyElement {
@@ -603,8 +659,10 @@ impl SettingsModal {
             );
         }
 
-        if "connection server url websocket status transport".contains(needle) {
-            sections.push(self.render_connections_page());
+        if "connection server url websocket status transport orbit profile sync workspaces"
+            .contains(needle)
+        {
+            sections.push(self.render_connections_page(cx));
         }
 
         if sections.is_empty() {
@@ -633,7 +691,7 @@ impl SettingsModal {
     ) -> Vec<AnyElement> {
         self.themes
             .iter()
-            .filter(|t| t.appearance == appearance)
+            .filter(|t| !t.from_orbit && t.appearance == appearance)
             .map(|theme| self.render_single_theme_row(theme, cx))
             .collect()
     }
@@ -743,9 +801,13 @@ impl SettingsModal {
         row.into_any_element()
     }
 
-    fn render_connections_page(&self) -> AnyElement {
+    fn render_connections_page(&self, cx: &mut Context<'_, Self>) -> AnyElement {
         let fg = hsla(self.tokens.foreground);
         let muted = hsla(self.tokens.muted_foreground_raised);
+        let control_bg = hsla(self.tokens.shell_control_raised);
+        let control_border = hsla(self.tokens.shell_control_raised_border);
+        let hover_bg = hsla(self.tokens.sidebar_row_hover);
+        let selected_bg = hsla(self.tokens.shell_highlight);
 
         let url_label = self
             .connection
@@ -815,7 +877,229 @@ impl SettingsModal {
             ),
         ];
 
-        settings_section("Connections", rows, &self.tokens, &self.geometry).into_any_element()
+        // Orbit Profile Sync section (`Settings › Connections › Orbit profile sync`).
+        let (orbit_status_text, orbit_status_color, orbit_desc) = match &self.orbit.status {
+            OrbitSyncStatus::Idle => (
+                "Ready".to_owned(),
+                muted,
+                "Syncs workspaces, themes, and desktop preferences through Orbit Gateway."
+                    .to_owned(),
+            ),
+            OrbitSyncStatus::Syncing => (
+                "Syncing…".to_owned(),
+                hsla(self.tokens.warning),
+                "Contacting https://gateway.orbit/api/v1/conn…".to_owned(),
+            ),
+            OrbitSyncStatus::Synced {
+                node_name,
+                profile_name,
+                workspace_count,
+                custom_theme_count,
+            } => (
+                format!("{profile_name} ({node_name})"),
+                hsla(self.tokens.success),
+                format!(
+                    "{workspace_count} workspace(s) · {custom_theme_count} custom theme(s) synced"
+                ),
+            ),
+            OrbitSyncStatus::Unbound { node_name } => (
+                format!("No profile bound ({node_name})"),
+                hsla(self.tokens.warning),
+                "Pick an Orbit profile below to bind this device.".to_owned(),
+            ),
+            OrbitSyncStatus::Offline(reason) => {
+                ("Gateway unreachable".to_owned(), muted, reason.clone())
+            }
+        };
+
+        let sync_btn = div()
+            .id("conn-settings-orbit-sync-now")
+            .px(px(10.0))
+            .py(px(5.0))
+            .rounded(px(7.0))
+            .bg(control_bg)
+            .border_1()
+            .border_color(control_border)
+            .text_size(px(12.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(fg)
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
+                cx.emit(SettingsEvent::OrbitSyncNow);
+            }))
+            .child("Sync now");
+
+        let orbit_status_control = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(10.0))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .text_size(px(self.geometry.ui_font_size_px))
+                    .line_height(px(self.geometry.ui_line_height_px))
+                    .text_color(fg)
+                    .child(
+                        div()
+                            .size(px(8.0))
+                            .rounded(px(9999.0))
+                            .bg(orbit_status_color),
+                    )
+                    .child(orbit_status_text),
+            )
+            .child(sync_btn);
+
+        let mut orbit_rows = vec![settings_row(
+            "Orbit Gateway",
+            Some(&orbit_desc),
+            orbit_status_control.into_any_element(),
+            &self.tokens,
+            &self.geometry,
+        )];
+
+        if !self.orbit.profiles.is_empty() {
+            let mut pills = div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(px(6.0));
+            for (idx, profile) in self.orbit.profiles.iter().enumerate() {
+                let profile_id = profile.id;
+                let active = self.orbit.active_profile_id == Some(profile_id);
+                let mut pill = div()
+                    .id(SharedString::from(format!(
+                        "conn-orbit-profile-{idx}-{profile_id}"
+                    )))
+                    .px(px(10.0))
+                    .py(px(4.0))
+                    .rounded(px(7.0))
+                    .border_1()
+                    .border_color(control_border)
+                    .text_size(px(12.0))
+                    .font_weight(if active {
+                        FontWeight::MEDIUM
+                    } else {
+                        FontWeight::NORMAL
+                    })
+                    .text_color(if active { fg } else { muted })
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |_this, _: &ClickEvent, _window, cx| {
+                        cx.emit(SettingsEvent::OrbitBindProfile(profile_id));
+                    }))
+                    .child(profile.name.clone());
+                pill = if active {
+                    pill.bg(selected_bg)
+                } else {
+                    pill.bg(control_bg).hover(move |s| s.bg(hover_bg))
+                };
+                pills = pills.child(pill);
+            }
+            orbit_rows.push(settings_row(
+                "Orbit profile",
+                Some("Profile bound to this Orbit Node."),
+                pills.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+
+        let ws_enabled = self.orbit.prefs.sync_workspaces;
+        let ws_entity = cx.entity();
+        orbit_rows.push(settings_row(
+            "Sync workspaces",
+            Some("Keep workspace rail tiles and project groupings synced via Orbit."),
+            pill_switch(
+                "conn-settings-orbit-sync-workspaces",
+                ws_enabled,
+                &self.tokens,
+                move |_window, cx| {
+                    ws_entity.update(cx, |this, cx| {
+                        this.orbit.prefs.sync_workspaces = !this.orbit.prefs.sync_workspaces;
+                        cx.emit(SettingsEvent::OrbitToggleSyncWorkspaces(
+                            this.orbit.prefs.sync_workspaces,
+                        ));
+                        cx.notify();
+                    });
+                },
+            )
+            .into_any_element(),
+            &self.tokens,
+            &self.geometry,
+        ));
+
+        let app_enabled = self.orbit.prefs.sync_appearance;
+        let app_entity = cx.entity();
+        orbit_rows.push(settings_row(
+            "Sync appearance & themes",
+            Some("Share light/dark theme slots and custom theme palettes across devices."),
+            pill_switch(
+                "conn-settings-orbit-sync-appearance",
+                app_enabled,
+                &self.tokens,
+                move |_window, cx| {
+                    app_entity.update(cx, |this, cx| {
+                        this.orbit.prefs.sync_appearance = !this.orbit.prefs.sync_appearance;
+                        cx.emit(SettingsEvent::OrbitToggleSyncAppearance(
+                            this.orbit.prefs.sync_appearance,
+                        ));
+                        cx.notify();
+                    });
+                },
+            )
+            .into_any_element(),
+            &self.tokens,
+            &self.geometry,
+        ));
+
+        let desktop_enabled = self.orbit.prefs.sync_desktop_settings;
+        let desktop_entity = cx.entity();
+        orbit_rows.push(settings_row(
+            "Sync desktop settings",
+            Some("Sync desktop appearance preferences such as glass opacity."),
+            pill_switch(
+                "conn-settings-orbit-sync-desktop",
+                desktop_enabled,
+                &self.tokens,
+                move |_window, cx| {
+                    desktop_entity.update(cx, |this, cx| {
+                        this.orbit.prefs.sync_desktop_settings =
+                            !this.orbit.prefs.sync_desktop_settings;
+                        cx.emit(SettingsEvent::OrbitToggleSyncDesktopSettings(
+                            this.orbit.prefs.sync_desktop_settings,
+                        ));
+                        cx.notify();
+                    });
+                },
+            )
+            .into_any_element(),
+            &self.tokens,
+            &self.geometry,
+        ));
+
+        div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .gap(px(20.0))
+            .child(settings_section(
+                "Connections",
+                rows,
+                &self.tokens,
+                &self.geometry,
+            ))
+            .child(settings_section(
+                "Orbit profile sync",
+                orbit_rows,
+                &self.tokens,
+                &self.geometry,
+            ))
+            .into_any_element()
     }
 
     fn render_keyboard_page(&self) -> AnyElement {

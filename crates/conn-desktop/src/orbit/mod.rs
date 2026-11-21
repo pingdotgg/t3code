@@ -29,11 +29,21 @@ pub mod gateway;
 pub mod insights;
 pub mod navigation;
 pub mod panel;
+pub mod profile;
 pub mod realtime;
 pub mod tasks;
 
 pub use client::{OrbitTasksClient, TasksError, TasksErrorReason, TasksInvalidation, TasksResult};
 pub use gateway::{GatewayError, GatewayRequest, GatewayResponse, GatewayTransport, OrbitGateway};
+pub use profile::{
+    APPEARANCE_SECTION, DESKTOP_DEVICE_SECTION, OrbitNode, OrbitProfile, OrbitProfileClient,
+    OrbitProfileSettings, OrbitSyncPrefs, OrbitSyncSnapshot, OrbitWorkspace,
+    PROFILE_SCHEMA_VERSION, ProfileAppearance, ProfileAppearanceMode, ProfileCustomTheme,
+    ProfileDeviceSection, ProfileError, ProfileResult, ProfileThemeAppearance, ProfileThemeSlot,
+    ProfileThemeSlots, SectionMeta, SectionPatch, ThemeSlotSource, extract_section,
+    merge_appearance, merge_device_section, merge_workspaces, parse_profile_appearance,
+    parse_profile_device_section, same_workspaces, to_gateway_form, workspace_matches_project,
+};
 pub use realtime::{TasksFollower, TasksLiveStatus, follow_orbit_tasks};
 pub use tasks::{
     InsightsPeriod, OrbitEnvironment, TaskDetail, TaskInsights, TaskInsightsQuery, TaskLane,
@@ -52,6 +62,46 @@ mod live {
         match OrbitTasksClient::live() {
             Ok(client) => client,
             Err(error) => panic!("client: {error}"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the live Orbit Gateway"]
+    async fn reads_orbit_profile_and_settings() {
+        let client = match OrbitProfileClient::live() {
+            Ok(client) => client,
+            Err(error) => panic!("profile client: {error}"),
+        };
+        let node = match client.me().await {
+            Ok(node) => node,
+            Err(error) => panic!("me: {error}"),
+        };
+        let profiles = client.profiles().await.unwrap_or_default();
+        println!(
+            "orbit node: {} ({}), profiles: {}, bound: {:?}",
+            node.name,
+            node.wireguard_ip,
+            profiles.len(),
+            node.profile.as_ref().map(|p| (&p.name, p.id))
+        );
+        if let Some(profile) = node.profile {
+            let settings = match client.settings(profile.id).await {
+                Ok(settings) => settings,
+                Err(error) => panic!("settings: {error}"),
+            };
+            let custom_count = extract_section(&settings, APPEARANCE_SECTION)
+                .and_then(|m| parse_profile_appearance(&serde_json::Value::Object(m)))
+                .map_or(0, |a| a.custom_themes.len());
+            println!(
+                "profile settings v{}: {} workspaces, {} custom themes, sections: {:?}",
+                settings.version,
+                settings.workspaces.len(),
+                custom_count,
+                settings
+                    .sections
+                    .as_ref()
+                    .map(|s| s.keys().collect::<Vec<_>>())
+            );
         }
     }
 
