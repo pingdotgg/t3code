@@ -118,6 +118,8 @@
   "f42c2a36b3507308": "{label} 켜짐",
   "77cc5f738cb7d459": "{label} 꺼짐",
   "2159a4897d4a4d73": "{runtime, select, codex {{names}을(를) 사용하려면 Codex CLI를 {version} 이상으로 업데이트하세요.} other {{names}을(를) 사용하려면 {providerName}을(를) {version} 이상으로 업데이트하세요.}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {{names}을(를) 사용하려면 Codex CLI {version} 이상이 필요하지만, 이 설치에서 업데이트할 수 있는 최신 버전은 {latestVersion}입니다. 다른 방법으로 Codex CLI를 설치하거나 새 릴리스를 기다리세요.} other {{names}을(를) 사용하려면 {providerName} {version} 이상이 필요하지만, 이 설치에서 업데이트할 수 있는 최신 버전은 {latestVersion}입니다. 다른 방법으로 {providerName}을(를) 설치하거나 새 릴리스를 기다리세요.}}",
+  "aba3bb73ce212f0c": "{names}을(를) 사용하려면 {providerName} {version} 이상이 필요하지만 Homebrew claude-code cask에는 {latestVersion}까지만 있습니다. claude-code@latest cask로 전환하세요: {command}",
   "d887bea446534de5": "이 환경에는 {host}/{repository}을(를) 읽을 수 있는 프로젝트가 없습니다.",
   "4e466d60e2f7736b": "전체 풀 리퀘스트 URL을 붙여 넣으세요. 이 스레드에는 번호를 확인할 저장소가 없습니다.",
   "302625058bacbe38": "전체 URL을 붙여 넣으세요. 이 프로젝트의 호스트에는 알려진 {changeRequest} URL이 없습니다.",

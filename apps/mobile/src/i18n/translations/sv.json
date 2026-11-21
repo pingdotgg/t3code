@@ -118,6 +118,8 @@
   "f42c2a36b3507308": "{label} på",
   "77cc5f738cb7d459": "{label} av",
   "2159a4897d4a4d73": "{runtime, select, codex {Uppdatera Codex CLI till {version} eller senare för att använda {names}.} other {Uppdatera {providerName} till {version} eller senare för att använda {names}.}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {{names} kräver Codex CLI {version} eller senare, men den här installationen kan bara uppdateras till {latestVersion}. Installera Codex CLI på ett annat sätt eller vänta på en nyare version.} other {{names} kräver {providerName} {version} eller senare, men den här installationen kan bara uppdateras till {latestVersion}. Installera {providerName} på ett annat sätt eller vänta på en nyare version.}}",
+  "aba3bb73ce212f0c": "{names} kräver {providerName} {version} eller senare, men Homebrew-casken claude-code har bara {latestVersion}. Byt till casken claude-code@latest: {command}",
   "d887bea446534de5": "Inget projekt i den här miljön kan läsa {host}/{repository}.",
   "4e466d60e2f7736b": "Klistra in hela pull request-URL:en; den här tråden har inget repo att slå upp numret i.",
   "302625058bacbe38": "Klistra in en fullständig URL; det här projektets värd har ingen känd URL för {changeRequest}.",

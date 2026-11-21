@@ -118,6 +118,8 @@
   "f42c2a36b3507308": "{label} On",
   "77cc5f738cb7d459": "{label} Off",
   "2159a4897d4a4d73": "{runtime, select, codex {Update the Codex CLI to {version} or newer to use {names}.} other {Update {providerName} to {version} or newer to use {names}.}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {Using {names} requires the Codex CLI {version} or newer, but the newest this install can update to is {latestVersion}. Install the Codex CLI another way or wait for a newer release.} other {Using {names} requires {providerName} {version} or newer, but the newest this install can update to is {latestVersion}. Install {providerName} another way or wait for a newer release.}}",
+  "aba3bb73ce212f0c": "Using {names} requires {providerName} {version} or newer, but the claude-code Homebrew cask only has {latestVersion}. Switch to the claude-code@latest cask: {command}",
   "d887bea446534de5": "No project in this environment can read {host}/{repository}.",
   "4e466d60e2f7736b": "Paste the full pull request URL; this thread has no repository to resolve the number against.",
   "302625058bacbe38": "Paste a full URL; this project's host has no known {changeRequest} URL.",

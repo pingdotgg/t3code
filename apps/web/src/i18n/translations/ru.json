@@ -118,6 +118,8 @@
   "f42c2a36b3507308": "{label}: вкл.",
   "77cc5f738cb7d459": "{label}: выкл.",
   "2159a4897d4a4d73": "{runtime, select, codex {Обновите Codex CLI до {version} или новее, чтобы использовать {names}.} other {Обновите {providerName} до {version} или новее, чтобы использовать {names}.}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {Для {names} нужна Codex CLI {version} или новее, но эта установка может обновиться максимум до {latestVersion}. Установите Codex CLI другим способом или дождитесь нового релиза.} other {Для {names} нужен {providerName} {version} или новее, но эта установка может обновиться максимум до {latestVersion}. Установите {providerName} другим способом или дождитесь нового релиза.}}",
+  "aba3bb73ce212f0c": "Для {names} нужен {providerName} {version} или новее, но в Homebrew cask claude-code есть только {latestVersion}. Перейдите на cask claude-code@latest: {command}",
   "d887bea446534de5": "Ни один проект в этом окружении не может прочитать {host}/{repository}.",
   "4e466d60e2f7736b": "Вставьте полный URL пул-реквеста: у этого треда нет репозитория, по которому можно найти номер.",
   "302625058bacbe38": "Вставьте полный URL: для хоста этого проекта неизвестен формат URL {changeRequest}.",

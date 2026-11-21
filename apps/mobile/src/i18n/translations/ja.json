@@ -118,6 +118,8 @@
   "f42c2a36b3507308": "{label} オン",
   "77cc5f738cb7d459": "{label} オフ",
   "2159a4897d4a4d73": "{runtime, select, codex {{names} を使用するには、Codex CLI を {version} 以降に更新してください。} other {{names} を使用するには、{providerName} を {version} 以降に更新してください。}}",
+  "a0854b0f9604fc7b": "{runtime, select, codex {{names} を使用するには Codex CLI {version} 以降が必要ですが、このインストールで更新できる最新バージョンは {latestVersion} です。別の方法で Codex CLI をインストールするか、新しいリリースをお待ちください。} other {{names} を使用するには {providerName} {version} 以降が必要ですが、このインストールで更新できる最新バージョンは {latestVersion} です。別の方法で {providerName} をインストールするか、新しいリリースをお待ちください。}}",
+  "aba3bb73ce212f0c": "{names} を使うには {providerName} {version} 以降が必要ですが、Homebrew の claude-code cask には {latestVersion} までしかありません。claude-code@latest cask に切り替えてください: {command}",
   "d887bea446534de5": "この環境には {host}/{repository} を読み取れるプロジェクトがありません。",
   "4e466d60e2f7736b": "プルリクエストの完全な URL を貼り付けてください。このスレッドには番号を解決するためのリポジトリがありません。",
   "302625058bacbe38": "完全な URL を貼り付けてください。このプロジェクトのホストには既知の {changeRequest} URL がありません。",
