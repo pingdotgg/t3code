@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, X1, Y1, and O1.
 
 ## How to read this
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. O1 after B12.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. X1 after L1. Y1 after L1. O1 after B12, X1, and Y1.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 also owns the separate `13kparkin/pstack-t3` repo.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, and L1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -1657,9 +1657,139 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B12 to the base-branch stack and the operator lands it bottom-up.
 
+## Send tickets to a Warp factory and work with them from the board (X1)
+
+**Depends on.** L1.
+
+**Files.**
+
+- [ ] Create `apps/board/electron/warp.ts` and `apps/board/electron/warp.test.ts`.
+- [ ] Create `apps/board/src/warp/WarpCard.tsx`, `apps/board/src/warp/SendToWarp.tsx`, `apps/board/src/warp/WarpBadge.tsx`, and `apps/board/src/warp/WarpTaskTab.tsx`.
+- [ ] Create `apps/board/src/warp/warpTasks.ts` and `apps/board/src/warp/warpTasks.test.ts`.
+- [ ] Edit L1's `apps/board/src/settings/IntegrationsPage.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/files/MainTabs.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and the IPC, preload, and bridge files that carry Warp calls.
+
+**Build.**
+
+- [ ] Call the Warp Platform API at `https://app.warp.dev/api/v1` from the main process in `electron/warp.ts`, with `fetch` and no SDK. Warp is the one outside service the board calls itself, because T3 has no Warp support. Take paths and fields from Warp's OpenAPI spec at `https://docs.warp.dev/openapi.json`, and record the spec's date in the client. The API key lives in the board's `safeStorage` token store. It never reaches the renderer, the engine, an agent, chat, or a log, and no agent gets Factory MCP, because a Warp key has no read-only or per-factory scope.
+- [ ] Add a **Warp** card to L1's Integrations page in Orca's card style, copied from `src/renderer/src/components/integrations/task-trackers/linear-integration-card.tsx` and `linear-api-key-dialog.tsx` in Orca's source. Connect takes the key, lists the account's factories from `GET /factory`, and Disconnect deletes the key.
+- [ ] Add **Send to Warp** to the ticket frame's menu and the orchestrator card. It opens a dialog with a factory picker searched through `GET /factory?search=`, and a title and prompt filled from the ticket's goal, with L1's linked issue as `ticket_ref` (for example `linear:XEO-123`) and `ticket_url`. Send calls `POST /factory/{uid}/runs` and stores the factory, task, and run IDs in an optional `warp` field on the ticket.
+- [ ] Let the orchestrator propose a send. `brief.md` tells it to ask with a For-you item of a new `warp_send` kind that names the factory and the exact prompt. **Approve** dispatches it, **Hold** sends nothing. Nothing is ever dispatched without the operator.
+- [ ] In `WarpBadge.tsx`, show a sent ticket's task state from `GET /factory/{uid}/tasks/{task_uid}` on its frame. Poll every 10 s while the board is visible, and stop while it is hidden. A pull request the task opens shows as B10's PR chip, so checks and merge readiness work as they do for a local ticket.
+- [ ] In `WarpTaskTab.tsx`, open a main-view tab per Warp task. It shows the conversation from `GET /agent/runs/{runId}/conversation` through C2's markdown, a reply box that calls `POST /agent/runs/{runId}/followups`, **Interrupt** through `POST /agent/runs/{runId}/interrupt`, **Stop** through `POST /factory/{uid}/tasks/{task_uid}/cancel`, and **Open in Warp**, which opens the run's session link in B11's panel.
+- [ ] Turn the factory inbox from `GET /factory-inbox` into For-you cards for this board's tasks, such as a foreman's plan-review question. Answering sends a follow-up and marks the notification read through `POST /factory-inbox/notifications/read`.
+- [ ] In `warpTasks.ts`, keep the pure pieces: map task and run states to the frame's badge, build the dispatch body from a ticket, and turn inbox notifications into For-you items.
+
+**You see.**
+
+- [ ] Settings connects Warp, any ticket can go to a Warp factory after the operator approves, and the board shows the task's state, conversation, questions, and pull request, with reply, interrupt, and stop.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `warpTasks.test.ts` maps fixed task and run states to literal badges, builds a literal `POST /factory/{uid}/runs` body from a fixed ticket with a Linear issue, and turns fixed inbox notifications into literal For-you items. `electron/warp.test.ts` runs the client against a local HTTP server and checks the bearer header, the error text for a rejected key and for missing credits, and that no error message contains the key. Run `vp test run src/warp/warpTasks.test.ts electron/warp.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. The operator creates one test factory in Warp's web app connected only to `13kparkin/agent-board-lanes`, and enters the key into the board's Warp card when the lane asks. Lanes share one small dispatched task to keep credit use low.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Warp card, so record that fact. Connect Warp at head. Save `x1-connect.png`. Pass when the card lists the factories `GET /factory` returns and the key appears in no board file, log, or renderer storage.
+- [ ] Lane 2. Have a real Claude orchestrator propose a `warp_send`. Hold it, then approve it. Save `x1-send.png`. Pass when Hold leaves `GET /factory/{uid}/tasks` unchanged and Approve creates exactly one task carrying the ticket's `ticket_ref`.
+- [ ] Lane 3. Watch the sent ticket. Save `x1-status.png`. Pass when its badge follows the task through at least two states that match the API, with no reload.
+- [ ] Lane 4. Reply in the Warp tab. Save `x1-reply.png`. Pass when the follow-up appears in the run's conversation from the API and the foreman responds to it.
+- [ ] Lane 5. Answer a foreman question from its For-you card. Save `x1-needs-you.png`. Pass when the card matches the inbox item, the answer reaches the conversation, and the notification reads as read.
+- [ ] Lane 6. Let the task open its pull request on the lane repo. Save `x1-pr.png`. Pass when the PR chip and its checks match `gh pr view`.
+- [ ] Lane 7. Stop the task. Save `x1-stop.txt`. Pass when the API reports it stopped and the badge shows it.
+- [ ] Lane 8. Enter a revoked key. Save `x1-bad-key.png`. Pass when the card says the key was rejected and nothing is dispatched.
+- [ ] Lane 9. Run the Windows app with a Warp tab open beside the board. Save `x1-windows.png` from a full-window capture. Pass when the tab fits beside the board and the Warp card matches Orca's integration cards.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `x1-checks.txt`. Pass when all three exit 0.
+- [ ] Cleanup. Stop the test task, close its pull request and delete its branches on the lane repo, disconnect Warp in the board, and tell the operator to revoke the key.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from opening a Warp tab to its conversation's first paint, minus the network time the main process logs.
+- [ ] Probe. Log `board:warp-open`, `board:warp-response`, and `board:warp-painted` ten times on a conversation of 200 messages.
+- [ ] Baseline. Trunk has no Warp tab. Record the head times.
+- [ ] Rule. The median, minus network time, stays under 200 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 2, 4, and 5 screenshots into `apps/board/docs/media/x1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/x1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends X1 to the base-branch stack and the operator lands it bottom-up.
+
+## Run Orca-style bots on T3's scheduled tasks (Y1)
+
+**Depends on.** L1.
+
+**Files.**
+
+- [ ] Create `apps/board/src/bots/BotsScreen.tsx`, `apps/board/src/bots/NewBotDialog.tsx`, `apps/board/src/bots/BotHomeChat.tsx`, `apps/board/src/bots/BotSettings.tsx`, `apps/board/src/bots/BotTriggers.tsx`, and `apps/board/src/bots/BotAvatar.tsx`.
+- [ ] Create `apps/board/src/bots/botModel.ts` and `apps/board/src/bots/botModel.test.ts`.
+- [ ] Create `apps/board/electron/botHome.ts` and `apps/board/electron/botHome.test.ts`.
+- [ ] Edit `apps/board/src/sidebar/Sidebar.tsx`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/orchestratorInstance.ts`, and the IPC, preload, and bridge files that carry bot home calls.
+
+**Build.**
+
+- [ ] Port the bot screens from Orca's source at `/home/kyle/personalDev/main/artifacts/orca-src`, read only: `src/renderer/src/components/bots/BotFirstScreen.tsx`, `BotCreateButton.tsx`, `NewBotDialog.tsx`, `BotHomeChat.tsx`, `BotChatsPanel.tsx`, `BotChatTreeWorkerRow.tsx`, `BotNeedsYouSection.tsx`, `BotActivityPanel.tsx`, and `BotAvatar.tsx`, the mascots in `src/renderer/src/assets/bot-mascot-cutouts/`, and `src/renderer/src/components/settings/bots/BotsSettingsPane.tsx`, `BotSoulEditor.tsx`, and `BotMemoryList.tsx`. Keep Orca's MIT notice with the copied mascots. Rewire every call to T3's contracts.
+- [ ] Add **Bots** to the left sidebar. The Bots screen lists each bot with its avatar, its home chat, the chats its triggers started, its workers, and what it needs from the operator, as Orca's does.
+- [ ] A bot is a T3 thread on the board's agents instance, with a home folder at `~/.agent-board/bots/<slug>/` in WSL holding `SOUL.md` and `MEMORY.md`. `electron/botHome.ts` creates and reads that folder through the WSL shell, as `electron/pstack.ts` does. The bot's appended prompt tells it to read `SOUL.md` first and keep `MEMORY.md` current. Port that prompt from Orca's bot preamble in `src/main/bots/`, with every Orca CLI command replaced by its T3 equivalent, `delegate_task`, T3's issue tools, or `gh`.
+- [ ] The new-bot dialog takes a name, an avatar, a model through C1's picker, the project it works in, and a template from Orca's `src/shared/bots/bot-template-catalog/`. Offer only the templates whose tools exist on T3, and drop the Slack, Google, and Composio ones.
+- [ ] Run triggers through T3's scheduled tasks with `scheduledTasks.subscribe`, `upsert`, `setEnabled`, `delete`, `runNow`, `rotateWebhookToken`, and `listWebhookDeliveries`. Offer every N minutes, a time of day on chosen weekdays, once, and webhook. Home-chat runs use `threadMode: continue`, and per-event runs use `new_thread`.
+- [ ] Offer two webhook presets. GitHub signs with `x-hub-signature-256`, hex, prefix `sha256=`, with filters for events such as an opened pull request or a failed check. Linear signs with `linear-signature`, hex, no prefix, with filters on type and action. Show the webhook URL once with a copy button, because T3 returns it only on creation, and show the delivery log. Show T3 Connect's reachability beside every webhook trigger, and when it is unreachable, say that outside services can't reach the hook.
+- [ ] A bot hands code work to children through `delegate_task`. They show under the bot as Orca's worker rows and as cards on their board.
+- [ ] A bot's approvals and questions arrive in B8's For-you lane with the bot's avatar. Tracker writes follow L1's `tracker_write` rule and K2's approval rule, so a bot never writes to a tracker without the operator.
+- [ ] Out of scope, with the reason shown in the Bots screen's help: Slack triggers, because Orca's event service for Slack, Linear, and GitHub is hosted by Orca and is not in its source; Google and Composio connectors; the mobile app; bot groups.
+- [ ] In `botModel.ts`, keep the pure pieces: turn a bot's triggers into `scheduledTasks.upsert` inputs, hold the two webhook presets, and join scheduled tasks and threads into bot rows.
+
+**You see.**
+
+- [ ] A Bots screen like Orca's, where a bot with its own soul and memory chats with the operator, runs on a schedule or a GitHub or Linear webhook, hands code work to workers, and asks the operator before any tracker write.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `botModel.test.ts` turns a fixed bot with an interval trigger, a weekday trigger, and a GitHub webhook trigger into literal `scheduledTasks.upsert` inputs, checks both webhook presets literally, and joins fixed scheduled tasks and threads into literal bot rows. `electron/botHome.test.ts` checks the slug for two bots with the same name and the files a new bot's folder gets. Run `vp test run src/bots/botModel.test.ts electron/botHome.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Webhook lanes use the lane repo only, and never create a webhook in the operator's Linear workspace.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk has no Bots screen, so record that fact. Create a bot from a template at head. Save `y1-create.png`. Pass when its thread exists on the agents instance, its folder holds `SOUL.md` and `MEMORY.md`, and the screen matches Orca's ported layout.
+- [ ] Lane 2. Tell the bot a fact in its home chat, start a fresh session, and ask for it. Save `y1-memory.txt`. Pass when `MEMORY.md` holds the fact and the bot answers from it.
+- [ ] Lane 3. Add a once trigger two minutes ahead. Save `y1-once.png`. Pass when the run lands in the home chat on time and reads succeeded.
+- [ ] Lane 4. Add a two-minute interval trigger, let it run twice, then turn it off. Save `y1-interval.txt`. Pass when it ran twice and not again after it was turned off.
+- [ ] Lane 5. Add a GitHub webhook trigger, add that hook to the lane repo with its secret, and open a lane pull request. Save `y1-github-hook.png`. Pass when the delivery is verified and matched, the bot runs in a new chat and comments on the pull request, and a delivery with a wrong signature is rejected. When T3 Connect is unreachable, send the same signed delivery to the engine's local hook URL and record the public path NOT RUN with the blocker.
+- [ ] Lane 6. Send a delivery in Linear's format, signed with the trigger's secret, to the engine's hook URL. Save `y1-linear-hook.txt`. Pass when it is verified and matched, and a wrong signature is rejected.
+- [ ] Lane 7. Ask the bot to fix a small thing in the lane repo. Save `y1-worker.png`. Pass when it starts a child through `delegate_task`, the worker row and card appear, and the child's pull request opens on the lane repo.
+- [ ] Lane 8. Have the bot ask to comment on a lane issue. Save `y1-needs-you.png`. Pass when the For-you card carries the bot's avatar and the exact change, **Hold** leaves the issue unchanged, and **Approve** posts the comment.
+- [ ] Lane 9. Run the Windows app on the Bots screen. Save `y1-windows.png` from a full-window capture. Pass when the layout matches the Orca source it was ported from.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `y1-checks.txt`. Pass when all three exit 0.
+- [ ] Cleanup. Delete the test bots, their scheduled tasks and folders, the lane repo webhook, and the lane pull requests, issues, and branches.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from opening the Bots screen with 20 bots and 200 chats to its first paint.
+- [ ] Probe. Log `board:bots-open` and `board:bots-painted` ten times.
+- [ ] Baseline. Trunk has no Bots screen. Record the head times.
+- [ ] Rule. The median stays under 200 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 5, and 8 screenshots into `apps/board/docs/media/y1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/y1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends Y1 to the base-branch stack and the operator lands it bottom-up.
+
 ## Meet every recorded speed budget (O1)
 
-**Depends on.** B12.
+**Depends on.** B12, X1, and Y1.
 
 **Files.**
 
@@ -1691,7 +1821,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Lane 7. Run B9's artifact list probe on 300 files. Save `o1-artifacts.txt`. Pass when the median meets B9's rule and only visible thumbnails load.
 - [ ] Lane 8. Run B10's PR chip probe. Save `o1-pr-chip.txt`. Pass when the p95 meets B10's rule.
 - [ ] Lane 9. Run B11's browser panel probe. Save `o1-browser.txt`. Pass when the median meets B11's rule.
-- [ ] Lane 10. Run the board app end to end on Windows against the WSL service, using a board, an orchestrator, and two tickets. Save `o1-end-to-end.png`. Pass when every flow from B2 to B12 still works.
+- [ ] Lane 10. Run the board app end to end on Windows against the WSL service, using a board, an orchestrator, and two tickets. Save `o1-end-to-end.png`. Pass when every flow from B2 to Y1 still works.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -1780,7 +1910,7 @@ These stay unproven until B3 runs.
 - The board builds against upstream `main`, which can move ahead of the newest T3 release. Today both are `0.1.10`, and nightly is `0.1.11`. If a merge from upstream raises the protocol the client needs past the latest release, even an updated service is too old. Merge upstream at release tags when that happens.
 - The orchestrator can write a malformed store file. B5, B7, B8, and B9 parse every file at the boundary, keep the last valid state, and show a banner.
 - T3 cannot limit a child's tools. Read-only roles such as `scout`, `reviewer`, and `security-reviewer` stay read-only only because their role file says so. B12 lane 7 reads the reviewer child's thread and fails when it shows an edit.
-- Lanes in B3, B6, B8, and B12 use the operator's Claude Code and Codex subscriptions, which costs usage. Run them once per head.
+- Lanes in B3, B6, B8, B12, X1, and Y1 use the operator's Claude Code and Codex subscriptions, which costs usage. X1's lanes also spend Warp credits. Run them once per head.
 - Lanes never touch `~/.t3`. Each lane uses its own `--base-dir`.
 - GitHub Actions are off by default on a fork. The operator enables them for `13kparkin/t3code` before B0's lane 10.
 - Auto-compaction in `~/.claude/settings.json` was switched from `false` to `true` with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` set to `60`. Every Claude Code session on this machine now compacts at 60% of its auto-compact window.
