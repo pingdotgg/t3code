@@ -72,7 +72,8 @@ export function exhaustedUsageWindow(
         (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
       );
     case "fx":
-      // fx keeps running on AI Gateway credits once the team's Token Pass is used up.
+      // Only a Token Pass API key stops when the pass is used up; other sign-ins go on with AI
+      // Gateway credits, and fx's other backends never use it. The reading cannot tell them apart.
       return exhausted.find((window) => window.id !== "token_pass");
     default:
       return exhausted[0];

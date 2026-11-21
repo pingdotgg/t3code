@@ -52,9 +52,9 @@ export function fxCreditsToLimits(input: {
     return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
   }
   const remaining = credits.token_pass.remaining?.trim();
-  if (!remaining || !/^\d+(\.\d+)?$/.test(remaining)) return probeFailed;
+  // The amounts fx passes on: an overdrawn pass is negative, and a bare point is allowed.
+  if (!remaining || !/^-?(\d+\.?\d*|\.\d+)$/.test(remaining)) return probeFailed;
   const reset = DateTime.make(credits.token_pass.resets_at ?? "");
-  const team = input.team?.trim();
   return {
     ...makeUsageLimits({
       checkedAt,
@@ -68,6 +68,6 @@ export function fxCreditsToLimits(input: {
         },
       ],
     }),
-    ...(team ? { credentialFingerprint: `vercel-team:${team}` } : {}),
+    ...(input.team ? { credentialFingerprint: `vercel-team:${input.team}` } : {}),
   };
 }

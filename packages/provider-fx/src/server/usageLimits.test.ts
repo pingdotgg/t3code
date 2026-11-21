@@ -40,6 +40,7 @@ describe("fx Token Pass limits", () => {
 
   it.each([
     ["a used-up pass", { remaining: "0", resets_at: "2026-12-05T08:00:00.000Z" }, 100],
+    ["an overdrawn pass", { remaining: "-0.42", resets_at: "2026-12-05T08:00:00.000Z" }, 100],
     ["an untouched pass", { remaining: "150", resets_at: "2026-12-05T08:00:00.000Z" }, 0],
     ["more credit than a pass refills to", { remaining: "180.5" }, 0],
   ])("reports %s", (_label, tokenPass, usedPercent) => {

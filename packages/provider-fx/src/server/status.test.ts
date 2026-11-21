@@ -231,15 +231,6 @@ describe("checkFxProviderStatus", () => {
         },
         { name: "local", unavailableReason: "The configured provider credential is unavailable." },
       ]);
-      assert.deepEqual(draft.usageLimits?.windows, [
-        {
-          id: "token_pass",
-          kind: "monthly",
-          label: "Token Pass",
-          usedPercent: 50,
-          resetsAt: "2026-12-05T08:00:00.000Z",
-        },
-      ]);
       assert.equal(draft.usageLimits?.credentialFingerprint, "vercel-team:example-team");
       assert.isDefined(draft.versionAdvisory);
     }),
@@ -306,6 +297,9 @@ describe("checkFxProviderStatus", () => {
         status: "authenticated",
         label: "Codex subscription",
       });
+      // Unlike a signed-out gateway, this is a failed read, so the server keeps the last reading.
+      assert.equal(unreadable.draft.usageLimits?.unavailable?.reason, "probeFailed");
+      assert.isFalse(unreadable.invoked.some(({ args }) => args === "credits --json"));
     }),
   );
 

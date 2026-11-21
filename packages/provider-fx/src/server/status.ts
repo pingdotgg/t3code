@@ -67,7 +67,7 @@ interface FxBackendProbe {
   readonly signedIn: boolean | undefined;
   readonly signInHint: string;
   readonly models: ReadonlyArray<string> | undefined;
-  /** Token Pass is AI Gateway's, so only the signed-in gateway backend reports it. */
+  /** Token Pass is AI Gateway's, so only the gateway backend reports it, unless it is signed out. */
   readonly usageLimits: ServerProviderUsageLimits | undefined;
   /** The Vercel team those limits belong to. */
   readonly team: string | undefined;
@@ -261,7 +261,6 @@ const probeFxBackend = Effect.fn("probeFxBackend")(function* (
   settings: FxSettings,
   environment: NodeJS.ProcessEnv,
   backend: { readonly id: string; readonly name: string; readonly login?: string },
-  checkedAt: string,
 ) {
   const env = { ...environment, FX_PROVIDER: backend.id, FX_MODEL: FX_DEFAULT_MODEL_SLUG };
   const status = Option.getOrUndefined(
@@ -269,8 +268,7 @@ const probeFxBackend = Effect.fn("probeFxBackend")(function* (
   );
   const auth = fxAuth(status?.auth).status;
   const signedIn = auth === "unknown" ? undefined : auth === "authenticated";
-  const readsTokenPass = backend.id === "gateway" && signedIn === true;
-  const team = readsTokenPass ? nonEmptyTrimmed(status?.team) : undefined;
+  const team = backend.id === "gateway" ? nonEmptyTrimmed(status?.team) : undefined;
   const [models, usageLimits] = yield* Effect.all(
     [
       signedIn === false
@@ -282,11 +280,17 @@ const probeFxBackend = Effect.fn("probeFxBackend")(function* (
               ),
             ),
           ),
-      readsTokenPass
-        ? readFxCli(settings, ["credits", "--json"], env).pipe(
-            Effect.map((credits) => fxCreditsToLimits({ credits, checkedAt, team })),
-          )
-        : Effect.undefined,
+      backend.id !== "gateway" || signedIn === false
+        ? Effect.undefined
+        : Effect.gen(function* () {
+            const checkedAt = DateTime.formatIso(yield* DateTime.now);
+            // An unreadable sign-in is a failed read, which keeps the last reading; signed out clears it.
+            const credits =
+              signedIn === true
+                ? yield* readFxCli(settings, ["credits", "--json"], env)
+                : Option.none<string>();
+            return fxCreditsToLimits({ credits, checkedAt, team });
+          }),
     ],
     { concurrency: "unbounded" },
   );
@@ -368,7 +372,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
       ...FX_BUILT_IN_BACKENDS,
       ...(yield* readFxConfiguredBackends(environment)).map((id) => ({ id, name: id })),
     ],
-    (backend) => probeFxBackend(settings, probeEnvironment, backend, checkedAt),
+    (backend) => probeFxBackend(settings, probeEnvironment, backend),
     { concurrency: "unbounded" },
   );
   const defaultModel = nonEmptyTrimmed(status?.model);
