@@ -548,6 +548,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
       ? [gt("Snooze until limits reset")]
       : []),
+    ...(settings.compactBeforeUsageLimit !== DEFAULT_UNIFIED_SETTINGS.compactBeforeUsageLimit
+      ? ["Compact before usage limits"]
+      : []),
     ...(!Equal.equals(settings.snoozePresets, DEFAULT_UNIFIED_SETTINGS.snoozePresets)
       ? [gt("Snooze options")]
       : []),
@@ -728,6 +731,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
+      compactBeforeUsageLimit: DEFAULT_UNIFIED_SETTINGS.compactBeforeUsageLimit,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
@@ -2081,6 +2085,24 @@ export function ThreadsSettingsPanel() {
                 updateSettings({ snoozeLimitedThreads: Boolean(checked) })
               }
               aria-label={gt("Snooze until limits reset")}
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          {...setting("compact-before-usage-limit")}
+          description={gt(
+            "Compact Claude threads near their session usage limit when it resets after the prompt cache expires, so resuming does not re-read the full context.",
+          )}
+          settingKeys={["compactBeforeUsageLimit"]}
+          control={
+            <ScopedSwitch
+              settingKeys={["compactBeforeUsageLimit"]}
+              checked={settings.compactBeforeUsageLimit}
+              onCheckedChange={(checked) =>
+                updateSettings({ compactBeforeUsageLimit: Boolean(checked) })
+              }
+              aria-label={gt("Compact before usage limits")}
             />
           }
         />

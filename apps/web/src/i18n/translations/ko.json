@@ -12339,5 +12339,8 @@
   "27d76249d09eb69f": "검토 가이드 준비됨",
   "faa3bb26abb39c93": "검토 가이드 실패",
   "b7df38b7d8792d78": "가이드 열기",
-  "9e91e9a77b664e4e": "검토 가이드를 시작할 수 없습니다"
+  "9e91e9a77b664e4e": "검토 가이드를 시작할 수 없습니다",
+  "a4748476e3daa2d7": "Compact Claude threads near their session usage limit when it resets after the prompt cache expires, so resuming does not re-read the full context.",
+  "83c544176fa694bb": "Compact before usage limits",
+  "97b0a878d58c56d7": "usage quota rate limit compaction compact context prompt cache expire cost"
 }

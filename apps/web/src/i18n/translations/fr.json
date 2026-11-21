@@ -12395,5 +12395,8 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "a4748476e3daa2d7": "Compacte les threads Claude proches de leur limite d'utilisation de session lorsqu'elle se réinitialise après l'expiration du cache de prompt, pour que la reprise ne relise pas tout le contexte.",
+  "83c544176fa694bb": "Compacter avant les limites d'utilisation",
+  "97b0a878d58c56d7": "utilisation quota limite débit compaction compacter contexte cache prompt expiration coût"
 }

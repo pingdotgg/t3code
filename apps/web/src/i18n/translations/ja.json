@@ -12343,5 +12343,8 @@
   "27d76249d09eb69f": "レビューガイドの準備ができました",
   "faa3bb26abb39c93": "レビューガイドの作成に失敗しました",
   "b7df38b7d8792d78": "ガイドを開く",
-  "9e91e9a77b664e4e": "レビューガイドを開始できませんでした"
+  "9e91e9a77b664e4e": "レビューガイドを開始できませんでした",
+  "a4748476e3daa2d7": "Compact Claude threads near their session usage limit when it resets after the prompt cache expires, so resuming does not re-read the full context.",
+  "83c544176fa694bb": "Compact before usage limits",
+  "97b0a878d58c56d7": "usage quota rate limit compaction compact context prompt cache expire cost"
 }

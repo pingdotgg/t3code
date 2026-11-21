@@ -12394,5 +12394,8 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "a4748476e3daa2d7": "Compact Claude threads near their session usage limit when it resets after the prompt cache expires, so resuming does not re-read the full context.",
+  "83c544176fa694bb": "Compact before usage limits",
+  "97b0a878d58c56d7": "usage quota rate limit compaction compact context prompt cache expire cost"
 }
