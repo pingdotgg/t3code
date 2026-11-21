@@ -152,7 +152,7 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
         {/* Virtualized rows must settle before disclosure scroll anchoring resumes. */}
         <CollapsiblePanel animate={false}>
           {expanded ? (
-            <div className="mt-1 mb-1 flex flex-col gap-1.5">
+            <div className="mt-1 mb-1 flex flex-col gap-3">
               {members.map((item) => (
                 <V2LifecycleRow
                   environmentId={ctx.activeThreadEnvironmentId}

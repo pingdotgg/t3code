@@ -19,6 +19,10 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
+  formatModelSelectionEffort,
+  REASONING_EFFORT_OPTION_IDS,
+} from "@t3tools/client-runtime/state/thread-execution";
+import {
   resolveSettledThreadTimestamp,
   resolveThreadActivityTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
@@ -42,6 +46,7 @@ import {
   AlarmClockIcon,
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
+  BotIcon,
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
@@ -216,40 +221,38 @@ function SidebarProviderStack(props: {
     currentEntry,
     props.providerEntryByInstanceId.values(),
   );
-  const current = (
-    <ProviderInstanceIcon
-      driverKind={currentEntry.driverKind}
-      displayName={currentEntry.displayName}
-      accentColor={currentEntry.accentColor}
-      acpRegistryAgentId={currentEntry.acpRegistryAgentId}
-      acpRegistryIconUrl={currentEntry.acpRegistryIconUrl}
-      showBadge={showInstanceBadge}
-      size="compact"
-      iconClassName="opacity-60"
-    />
-  );
-  if (stack.length === 1) {
-    return <span className="inline-flex shrink-0 items-center">{current}</span>;
-  }
   return (
-    <span className="inline-flex shrink-0 items-center gap-2">
-      {stack.slice(0, -1).map((instanceId) => {
-        const entry = props.providerEntryByInstanceId.get(instanceId);
-        if (entry === undefined) return null;
-        return (
-          <ProviderInstanceIcon
-            key={instanceId}
-            driverKind={entry.driverKind}
-            displayName={entry.displayName}
-            acpRegistryAgentId={entry.acpRegistryAgentId}
-            acpRegistryIconUrl={entry.acpRegistryIconUrl}
-            iconClassName="size-3 opacity-35 grayscale"
-          />
-        );
-      })}
-      <span className="relative z-10 inline-flex items-center">{current}</span>
+    <span className="inline-flex shrink-0 items-center">
+      <ProviderInstanceIcon
+        driverKind={currentEntry.driverKind}
+        displayName={currentEntry.displayName}
+        accentColor={currentEntry.accentColor}
+        acpRegistryAgentId={currentEntry.acpRegistryAgentId}
+        acpRegistryIconUrl={currentEntry.acpRegistryIconUrl}
+        showBadge={showInstanceBadge}
+        size="compact"
+        iconClassName="size-3 opacity-60"
+      />
     </span>
   );
+}
+
+/** The thread's reasoning effort, or the model's default effort when the thread never set one. */
+function threadEffortLabel(
+  selection: SidebarThreadSummary["modelSelection"],
+  models: SidebarProviderEntry["models"] | undefined,
+): string | null {
+  const stated = formatModelSelectionEffort(selection, models);
+  if (stated) return stated;
+  const descriptors =
+    models?.find((model) => model.slug === selection.model)?.capabilities?.optionDescriptors ?? [];
+  for (const descriptor of descriptors) {
+    if (descriptor.type !== "select" || !REASONING_EFFORT_OPTION_IDS.includes(descriptor.id))
+      continue;
+    const fallback = descriptor.options.find((option) => option.isDefault);
+    if (fallback) return fallback.label;
+  }
+  return null;
 }
 
 function SidebarThreadTooltip({
@@ -297,8 +300,8 @@ function SidebarThreadTooltip({
         title={thread.title}
         footer={
           supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
-            <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
-              <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
+            <div className="border-t border-(--glass-divider) pt-2 pl-0.5 text-ui text-muted-foreground">
+              <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} className="gap-1.5" />
             </div>
           ) : null
         }
@@ -351,6 +354,16 @@ function SidebarThreadTooltip({
               {showInstanceBadge && providerEntry
                 ? `${modelLabel} · ${providerEntry.displayName}`
                 : modelLabel}
+            </div>
+          </div>
+        ) : null}
+        {(thread.subagentCount ?? 0) > 0 ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <BotIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 truncate text-foreground/75">
+              {gt("{count, plural, one {{count} subagent} other {{count} subagents}}", {
+                count: thread.subagentCount ?? 0,
+              })}
             </div>
           </div>
         ) : null}
@@ -871,9 +884,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
-  const modelLabel = selectedModel
+  const modelName = selectedModel
     ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
     : thread.modelSelection.model;
+  const effortLabel = threadEffortLabel(thread.modelSelection, providerEntry?.models);
+  const modelLabel = effortLabel ? `${modelName} · ${effortLabel}` : modelName;
 
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
   const showsScratchMachine = !checkoutThread.branch && props.scratchMachineLabel !== null;
@@ -1357,7 +1372,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const cardMetaLine = (
     <div
       className={cn(
-        "mt-1 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs",
+        "mt-1 flex min-w-0 items-center gap-1.5 text-secondary-label text-ui",
         props.project && "ps-5.5",
       )}
     >
@@ -1862,9 +1877,11 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
-  const modelLabel = selectedModel
+  const modelName = selectedModel
     ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
     : thread.modelSelection.model;
+  const effortLabel = threadEffortLabel(thread.modelSelection, providerEntry?.models);
+  const modelLabel = effortLabel ? `${modelName} · ${effortLabel}` : modelName;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
     threadId: thread.id,

@@ -468,6 +468,7 @@ const CONN = ProjectId.make("project-conn");
 const CLAUDE: ModelSelection = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-opus-4-6",
+  options: [{ id: "effort", value: "medium" }],
 };
 const CODEX_ID = ProviderInstanceId.make("codex");
 
@@ -524,6 +525,7 @@ function lane(
     readonly pullRequests?: ThreadPullRequestLink[];
     readonly model?: ModelSelection;
     readonly history?: ReadonlyArray<ProviderInstanceId>;
+    readonly subagents?: number;
     readonly order: string;
   },
 ): FakeThread {
@@ -538,9 +540,16 @@ function lane(
       ...(options.waiting ? { status: "idle" as const } : {}),
       ...(options.pullRequests ? { pullRequests: options.pullRequests } : {}),
       ...(options.history ? { providerInstanceHistory: options.history } : {}),
+      ...(options.subagents ? { subagentCount: options.subagents } : {}),
       activeOrderKey: options.order,
     },
   };
+}
+
+/** The shell's subagent count for a thread whose fixture carries subagent records, as the server reports it. */
+function withSubagentCount(thread: FakeThread): FakeThread {
+  const count = thread.subagents?.length ?? 0;
+  return count === 0 ? thread : { ...thread, shell: { ...thread.shell, subagentCount: count } };
 }
 
 /** Existing lab threads keep their content; they sit in realistic projects with recent times. */
@@ -556,6 +565,70 @@ function inProject(
   };
 }
 
+/** One finished turn with both cards: a delegated agent, then an Orbit task, so they can be compared. */
+function threadWithAgentAndTask(name: string): FakeThread {
+  const agent = threadWithOneSubagent(name);
+  const orbit = threadWithOrbitTask(name);
+  const runId = agent.runs[0]!.id;
+  const at = (minutes: number) => minutesAgo(minutes);
+  const stamp = (item: OrchestrationV2TurnItem, ordinal: number, minutes: number) =>
+    ({
+      ...item,
+      threadId: agent.id,
+      runId,
+      ordinal,
+      startedAt: at(minutes),
+      completedAt: at(minutes),
+      updatedAt: at(minutes),
+    }) as OrchestrationV2TurnItem;
+  const [user, , subagent] = agent.items;
+  const task = orbit.items.find((item) => item.id === `${name}-task-create-482`)!;
+  return {
+    ...agent,
+    runs: agent.runs.map((run) => ({
+      ...run,
+      status: "completed",
+      requestedAt: at(12),
+      startedAt: at(12),
+      completedAt: at(2),
+    })),
+    items: [
+      stamp(
+        {
+          ...user!,
+          text: "Switch the icon set, and hand image attachments to Orbit.",
+        } as OrchestrationV2TurnItem,
+        0,
+        12,
+      ),
+      stamp(
+        {
+          ...task,
+          id: TurnItemId.make(`${name}-read`),
+          toolName: "Read",
+          input: { file_path: "apps/web/src/components/Icons.tsx" },
+          output: "ok",
+        } as OrchestrationV2TurnItem,
+        1,
+        11,
+      ),
+      stamp(subagent!, 2, 10),
+      stamp(task, 3, 9),
+      stamp(
+        assistantItem(
+          agent.id,
+          runId,
+          `${name}-outro`,
+          4,
+          "The agent is switching the icons, and the attachments task is in Orbit.",
+        ),
+        4,
+        2,
+      ),
+    ],
+  };
+}
+
 export const LAB_THREADS: ReadonlyArray<FakeThread> = [
   inProject(
     titled(threadWithOrbitTask("orbit-task-receipt"), "Hand two features to Orbit"),
@@ -563,29 +636,44 @@ export const LAB_THREADS: ReadonlyArray<FakeThread> = [
     200,
     "b1",
   ),
-  inProject(
-    titled(threadWithSubagents("subagent-review"), "Review the board with subagents"),
-    CONN,
-    230,
-    "b2",
+  withSubagentCount(
+    inProject(
+      titled(threadWithAgentAndTask("agent-and-task"), "Agent card and task card"),
+      CONN,
+      190,
+      "b0",
+    ),
   ),
-  inProject(
-    titled(threadWithOneSubagent("subagent-single"), "Hand the icon switch to a subagent"),
-    CONN,
-    235,
-    "b3",
+  withSubagentCount(
+    inProject(
+      titled(threadWithSubagents("subagent-review"), "Review the board with subagents"),
+      CONN,
+      230,
+      "b2",
+    ),
   ),
-  inProject(
-    titled(threadWithSubagentStates("subagent-states"), "Every subagent card state"),
-    CONN,
-    240,
-    "b4",
+  withSubagentCount(
+    inProject(
+      titled(threadWithOneSubagent("subagent-single"), "Hand the icon switch to a subagent"),
+      CONN,
+      235,
+      "b3",
+    ),
+  ),
+  withSubagentCount(
+    inProject(
+      titled(threadWithSubagentStates("subagent-states"), "Every subagent card state"),
+      CONN,
+      240,
+      "b4",
+    ),
   ),
   // Nick's sidebar, top to bottom.
   lane("heroicons-lucide", "Expand Heroicons with Lucide Designs", APPS, {
     minutes: 4,
     waiting: true,
     branch: "heroicons-lucide",
+    subagents: 3,
     order: "a1",
   }),
   lane("ingress-node", "Plan a dedicated ingress Node in front of the fleet", APPS_MONOGRAM, {
@@ -602,6 +690,7 @@ export const LAB_THREADS: ReadonlyArray<FakeThread> = [
   lane("orbit-workers", "Move Orbit Workers to Target Nodes", APPS, {
     minutes: 125,
     pullRequests: linkedPullRequests("nckrtl/apps", 6, "merged"),
+    subagents: 12,
     order: "a4",
   }),
   lane("stalled-threads", "Map Stalled Orbit Threads and PRs", APPS_MONOGRAM, {
@@ -658,7 +747,28 @@ export const LAB_THREADS: ReadonlyArray<FakeThread> = [
 ];
 
 /** Both providers, so rows can show the Claude and OpenAI logos. */
-export const LAB_PROVIDERS = [CODEX_PROVIDER, CLAUDE_PROVIDER];
+/** Claude with a reasoning-effort option, so the thread hover card shows "Opus 4.6 · Medium". */
+const LAB_CLAUDE_PROVIDER = {
+  ...CLAUDE_PROVIDER,
+  models: CLAUDE_PROVIDER.models.map((model) => ({
+    ...model,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "effort",
+          label: "Reasoning",
+          type: "select",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High", isDefault: true },
+          ],
+        },
+      ],
+    },
+  })),
+};
+export const LAB_PROVIDERS = [CODEX_PROVIDER, LAB_CLAUDE_PROVIDER];
 
 const repository = (owner: string, name: string) => ({
   canonicalKey: `github.com/${owner}/${name}`,

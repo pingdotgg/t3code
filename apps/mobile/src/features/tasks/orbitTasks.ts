@@ -31,6 +31,9 @@ const transport: OrbitGatewayTransport = USE_FIXTURES
 /** One client for the app, so a realtime notice reaches every open Tasks screen. */
 export const orbitTasksClient: OrbitTasksClient = createOrbitTasksClient(transport);
 
+/** What the thread's task cards need to follow the same source as the Tasks tab. */
+export const orbitTasksSource = { transport, fixtures: USE_FIXTURES } as const;
+
 /** While a Tasks screen is focused: Orbit's realtime notices, plus a periodic authoritative read. */
 function useFollowOrbitTasks() {
   const [live, setLive] = useState<OrbitTasksLiveStatus>("connecting");

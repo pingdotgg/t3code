@@ -220,6 +220,9 @@ fn compact_metadata(data: &Value) -> Map<String, Value> {
     {
         output.insert("sentMessage".into(), json!(s));
     }
+    if let Some(task) = data.get("data").and_then(read_orbit_task_row) {
+        output.insert("orbitTask".into(), task);
+    }
     if let Some(reference) = data.get("htmlRender").and_then(read_html_render_reference) {
         output.insert("htmlRender".into(), reference);
     }
@@ -276,7 +279,7 @@ pub fn compact_dynamic_tool_output(value: &Value) -> Option<Map<String, Value>> 
         serde_json::to_vec(output).map_or(true, |bytes| bytes.len() > MAX_METADATA_BYTES)
     };
     if oversized(&output) {
-        for key in ["threads", "threadId", "status"] {
+        for key in ["threads", "threadId", "status", "orbitTask"] {
             output.remove(key);
         }
     }
@@ -291,6 +294,48 @@ pub fn compact_dynamic_tool_output(value: &Value) -> Option<Map<String, Value>> 
         output.remove(MCP_APP_OUTPUT_KEY);
     }
     (!output.is_empty()).then_some(output)
+}
+
+/// The task row fields an Orbit task card reads (T3's `ORBIT_TASK_CARD_FIELDS`).
+const ORBIT_TASK_CARD_FIELDS: [&str; 11] = [
+    "id",
+    "title",
+    "status",
+    "attention",
+    "project",
+    "workspace",
+    "pull_request",
+    "subtask_counts",
+    "created_at",
+    "updated_at",
+    "last_activity_at",
+];
+
+/// `readOrbitTaskRow`: an Orbit task-create result's task row, cut to the card's fields.
+fn read_orbit_task_row(row: &Value) -> Option<Value> {
+    let object = row.as_object()?;
+    let safe_id = object
+        .get("id")
+        .and_then(Value::as_f64)
+        .is_some_and(|n| n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0);
+    let project = object
+        .get("project")
+        .filter(|p| p.is_object() || p.is_array());
+    let counts = object
+        .get("subtask_counts")
+        .filter(|c| c.is_object() || c.is_array());
+    if !safe_id
+        || !object.get("title").is_some_and(Value::is_string)
+        || !project.is_some_and(|p| p.get("slug").is_some_and(Value::is_string))
+        || counts.is_none()
+    {
+        return None;
+    }
+    let card: Map<String, Value> = ORBIT_TASK_CARD_FIELDS
+        .iter()
+        .filter_map(|key| object.get(*key).map(|v| ((*key).to_owned(), v.clone())))
+        .collect();
+    Some(Value::Object(card))
 }
 
 fn read_html_render_reference(value: &Value) -> Option<Value> {

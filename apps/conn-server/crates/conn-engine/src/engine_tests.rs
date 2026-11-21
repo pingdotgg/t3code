@@ -2277,6 +2277,22 @@ async fn a_delegated_task_runs_as_a_child_thread_and_wakes_its_parent() {
     assert_eq!(row["status"], "completed");
     assert_eq!(row["result"], "echo: look around");
     assert_eq!(row["completionDelivery"]["state"], "pending");
+    // The shell counts the parent's subagents, as T3's `subagentCount`; a child has none.
+    let shells = engine
+        .inner()
+        .db(move |store| {
+            let tx = store.tx()?;
+            let rows = (
+                crate::shell::thread_shell(&tx, "t1")?,
+                crate::shell::thread_shell(&tx, child)?,
+            );
+            tx.rollback();
+            Ok::<_, String>(rows)
+        })
+        .await
+        .unwrap();
+    assert_eq!(shells.0["subagentCount"], 1);
+    assert!(shells.1.get("subagentCount").is_none());
     let item = parent["turnItems"]
         .as_array()
         .unwrap()

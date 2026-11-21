@@ -1,15 +1,9 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
-import {
-  orbitTaskLane,
-  type OrbitTaskLane,
-  type OrbitTaskSummary,
-} from "@t3tools/client-runtime/orbit-gateway";
-import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
+import { type OrbitTaskLane, type OrbitTaskSummary } from "@t3tools/client-runtime/orbit-gateway";
 import { useGT, useMessages } from "gt-react-native";
 import { useState, type ReactNode } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, ScrollView, View } from "react-native";
 
-import { WithStatusBadgeDot } from "../../components/StatusBadgeDot";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -17,25 +11,20 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { Menu } from "../../components/ui/Menu";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { cn } from "../../lib/cn";
-import { relativeTime } from "../../lib/time";
 import type { HomeListFilterMenu } from "../home/home-list-filter-menu";
 import { WorkspacePhoneBar } from "../layout/workspace/WorkspacePhoneBar";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { useWorkspacePhoneBar } from "../layout/workspace/useWorkspacePhoneBar";
-import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useNow, useOrbitTaskList } from "./orbitTasks";
 import { TaskInsightsStrip } from "./TaskInsightsStrip";
 import {
   MOBILE_TASK_LANES,
   TASK_LANE_LABELS,
-  taskDotState,
   taskMatchesQuery,
-  taskStatusRow,
   tasksErrorText,
   tasksInLane,
 } from "./taskPresentation";
-import { ProjectTile } from "./TaskRows";
+import { TaskRow } from "./TaskRows";
 
 /** The lane survives leaving the tab, like the other lists' filters. */
 let rememberedLane: OrbitTaskLane = "in-progress";
@@ -44,115 +33,6 @@ function rememberLane(lane: OrbitTaskLane) {
 }
 
 const BAR_HEIGHT = 56;
-
-function TaskRow(props: {
-  readonly task: OrbitTaskSummary;
-  readonly durationMs: number | null;
-  readonly now: number;
-  readonly onPress: () => void;
-}) {
-  const gt = useGT();
-  const m = useMessages();
-  const { task } = props;
-  const { total, completed } = task.subtaskCounts;
-  const dotState = taskDotState(task);
-  const inProgress = orbitTaskLane(task.status) === "in-progress";
-  const pr = task.pullRequest;
-  const prTone =
-    pr?.state === "merged"
-      ? "text-adaptive-violet-600-400"
-      : pr?.state === "closed"
-        ? "text-danger-foreground"
-        : "text-adaptive-emerald-700-300";
-  const prTint =
-    pr?.state === "merged"
-      ? "accent-adaptive-violet-600-400"
-      : pr?.state === "closed"
-        ? "accent-danger-foreground"
-        : "accent-adaptive-emerald-700-300";
-  const time =
-    inProgress && props.durationMs !== null
-      ? formatWorkingDurationLabel(props.durationMs, m)
-      : relativeTime(task.lastActivityAt ?? task.updatedAt, props.now, m);
-  const detail = [
-    task.project.name.toLowerCase(),
-    `#${task.id}`,
-    total > 0 ? `${completed}/${total}` : null,
-    time,
-    task.workspace?.node?.name ?? null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  const recede = dotState === "working";
-  // Same row system as the thread list: the badge (status dot on its corner) and the title on
-  // line 1; project, #id, subtasks, time, node and the PR under the title.
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={[
-        task.title,
-        m(taskStatusRow(task).label),
-        `#${task.id}`,
-        detail,
-        pr ? gt("Pull request {number}", { number: pr.number }) : null,
-      ]
-        .filter(Boolean)
-        .join(", ")}
-      onPress={props.onPress}
-      style={{ marginHorizontal: 8, marginBottom: 4 }}
-    >
-      {({ pressed }) => (
-        <View
-          className={cn(pressed && "bg-row-hover")}
-          style={{
-            rowGap: 6,
-            borderRadius: 12,
-            paddingTop: 12,
-            paddingRight: 8,
-            paddingBottom: 12,
-            paddingLeft: 4,
-          }}
-        >
-          <View className="flex-row items-start" style={{ columnGap: 12, minHeight: 23 }}>
-            <View className="shrink-0" style={{ marginTop: 2.5 }}>
-              <WithStatusBadgeDot state={dotState} ringClassName="bg-screen">
-                <ProjectTile name={task.project.name} />
-              </WithStatusBadgeDot>
-            </View>
-            <Text
-              className={cn(
-                "min-w-0 flex-1 text-base text-foreground",
-                !recede && "font-t3-medium",
-              )}
-              numberOfLines={1}
-            >
-              {task.title}
-            </Text>
-          </View>
-          <View className="flex-row items-center" style={{ paddingLeft: 30 }}>
-            <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
-              {detail}
-              {pr ? " · " : null}
-            </Text>
-            {pr ? (
-              <View className="shrink-0 flex-row items-center gap-[3px]">
-                <SymbolView
-                  name={
-                    pr.state === "merged" ? PullRequestGlyph.merged : PullRequestGlyph.pullRequest
-                  }
-                  size={12}
-                  type="monochrome"
-                  tintColorClassName={prTint}
-                />
-                <Text className={cn("text-xs tabular-nums", prTone)}>#{pr.number}</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-      )}
-    </Pressable>
-  );
-}
 
 /** Tasks Orbit tracks, one lane at a time; the lanes sit behind the filter button. */
 export function TasksScreen() {

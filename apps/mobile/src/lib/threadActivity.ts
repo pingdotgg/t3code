@@ -3,6 +3,10 @@ import type {
   ThreadPendingUserInput,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { linkRequestTargetName } from "@t3tools/client-runtime/link-request";
+import {
+  orbitTaskCreateReceiptFromTool,
+  type OrbitTaskSummary,
+} from "@t3tools/client-runtime/orbit-gateway";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
@@ -450,6 +454,21 @@ export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): bool
   );
 }
 
+/** The task an Orbit task-create tool call made, or null for any other item or an unreadable result. */
+export function orbitTaskReceiptOfItem(item: OrchestrationV2TurnItem): OrbitTaskSummary | null {
+  return item.type === "dynamic_tool"
+    ? orbitTaskCreateReceiptFromTool(item.toolName, item.output)
+    : null;
+}
+
+/** A group that is one Orbit task receipt: the chat shows the task as a live card, not a tool row. */
+export function taskReceiptOfActivityGroup(
+  entry: ThreadFeedActivityGroup,
+): OrbitTaskSummary | null {
+  const only = entry.activities.length === 1 ? entry.activities[0] : undefined;
+  return only ? orbitTaskReceiptOfItem(only.projectedItem.item) : null;
+}
+
 function isUserInputActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return entry.activities.some((activity) => activity.workEntry.questionAnswer !== undefined);
 }
@@ -493,7 +512,9 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
     item.type === "proposed_plan" ||
     // An answerable card: it must stand alone and never fold away with the run.
     item.type === "secret_request" ||
-    item.type === "link_request"
+    item.type === "link_request" ||
+    // A created task is a card of its own, like desktop's task row: it stays in view.
+    orbitTaskReceiptOfItem(item) !== null
   );
 }
 

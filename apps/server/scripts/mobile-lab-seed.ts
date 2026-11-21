@@ -455,6 +455,46 @@ function eventsFor(
         );
         break;
       }
+      case "taskReceipt": {
+        const row = {
+          id: entry.id,
+          title: entry.title,
+          status: entry.status,
+          attention: null,
+          project: { ...entry.project, code: null },
+          workspace: null,
+          pull_request: entry.pullRequest
+            ? {
+                number: entry.pullRequest.number,
+                url: `https://github.com/lab/${entry.project.slug}/pull/${entry.pullRequest.number}`,
+                state: entry.pullRequest.state,
+              }
+            : null,
+          subtask_counts: {
+            total: entry.subtasks.total,
+            todo: entry.subtasks.total - entry.subtasks.completed,
+            running: 0,
+            completed: entry.subtasks.completed,
+            failed: 0,
+            cancelled: 0,
+          },
+          created_at: iso(entry.minutesAgo),
+          updated_at: iso(entry.minutesAgo),
+          last_activity_at: null,
+        };
+        pushItem(
+          {
+            ...base(`task-receipt-${key}`, entry.minutesAgo),
+            type: "dynamic_tool",
+            toolName: "mcp__orbit__task-create",
+            input: { title: entry.title, project: entry.project.slug },
+            // MCP content blocks, as a provider relays the Gateway's answer.
+            output: [{ type: "text", text: JSON.stringify({ data: row }) }],
+          },
+          entry.minutesAgo,
+        );
+        break;
+      }
       case "userInput": {
         // Startup recovery expires pending requests, so a question only exists in live mode.
         if (!liveMode || runId === null || rootNodeId === null) break;

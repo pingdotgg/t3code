@@ -210,7 +210,7 @@ export function ThreadSubagentGroup(props: {
         </Pressable>
       ) : null}
       {!grouped || expanded ? (
-        <View className="mb-1 gap-2">
+        <View className="mb-2 gap-3">
           {agents.map((agent) => {
             // A task in a linked environment opens there, if this app is connected to it.
             const target = subagentThreadTarget(agent, props.environmentId, (id) =>

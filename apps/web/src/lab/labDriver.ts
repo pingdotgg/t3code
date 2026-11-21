@@ -2,13 +2,14 @@
 // in-process environment of the render tests (test/fakeEnvironment.ts). Each environment gets its
 // own view of that one shared session: the primary keeps the threads no remote hosts
 // (src/lab/environments.ts); a remote sees only its own threads and names its own machine.
-import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS } from "@t3tools/contracts";
+import { ORCHESTRATION_V2_WS_METHODS, ProjectReadFileError, WS_METHODS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { ConnectionDriver } from "../../../../packages/client-runtime/src/connection/driver.ts";
 import { ENVIRONMENT_ID, fakeDriver } from "../../test/fakeEnvironment";
 import { labRemoteEnvironment, labThreadHost, type LabRemoteEnvironment } from "./environments";
+import { labListEntries, labReadFile, labSearchEntries } from "./workspace";
 
 export * from "../../../../packages/client-runtime/src/connection/driver.ts";
 
@@ -52,6 +53,52 @@ function sessionFor(session: Session, remote: LabRemoteEnvironment | null): Sess
       Stream.map((session.client as any)[ORCHESTRATION_V2_WS_METHODS.subscribeShell](input), shell),
     [WS_METHODS.subscribeServerConfig]: (input) =>
       Stream.map((session.client as any)[WS_METHODS.subscribeServerConfig](input), config),
+    // The Files and Database panels read the conn project's workspace (src/lab/workspace.ts).
+    [WS_METHODS.projectsListEntries]: (input: { directoryPath?: string }) =>
+      Effect.succeed({ entries: labListEntries(input.directoryPath), truncated: false }),
+    [WS_METHODS.projectsSearchEntries]: (input: {
+      query: string;
+      limit: number;
+      kind?: "file" | "directory";
+    }) => Effect.succeed(labSearchEntries(input.query, input.limit, input.kind)),
+    [WS_METHODS.projectsListIgnoredFiles]: () => Effect.succeed({ files: [], truncated: false }),
+    [WS_METHODS.projectsReadFile]: (input: {
+      cwd: string;
+      relativePath: string;
+      allowMissing?: boolean;
+    }) =>
+      Effect.tryPromise({
+        try: () => labReadFile(input.relativePath),
+        catch: () =>
+          new ProjectReadFileError({ message: "The lab workspace could not read the file." }),
+      }).pipe(
+        Effect.flatMap((contents) =>
+          contents !== null
+            ? Effect.succeed({
+                relativePath: input.relativePath,
+                contents,
+                byteLength: new TextEncoder().encode(contents).byteLength,
+                truncated: false,
+                exists: true,
+              })
+            : input.allowMissing
+              ? Effect.succeed({
+                  relativePath: input.relativePath,
+                  contents: "",
+                  byteLength: 0,
+                  truncated: false,
+                  exists: false,
+                })
+              : Effect.fail(
+                  new ProjectReadFileError({
+                    cwd: input.cwd,
+                    relativePath: input.relativePath,
+                    failure: "path_not_file",
+                    message: `${input.relativePath} is not in the lab workspace.`,
+                  }),
+                ),
+        ),
+      ),
   };
   return {
     ...session,

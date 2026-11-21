@@ -2513,6 +2513,12 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     ["delivered"],
   );
   assert.strictEqual(yield* store.getSubagentCount(threadId), subagents.length);
+  // The shell counts every subagent, settled ones included.
+  assert.strictEqual((yield* store.getThreadShell(threadId))?.subagentCount, subagents.length);
+  assert.strictEqual(
+    (yield* store.getShellSnapshot()).threads.find((entry) => entry.id === threadId)?.subagentCount,
+    subagents.length,
+  );
   assert.deepEqual(
     [...(yield* store.listAppOwnedChildThreadIds(threadId))],
     [childThreadIds.delivered, childThreadIds["no-delivery"]],

@@ -515,8 +515,10 @@ function PullRequestBadge({
 export function ThreadPullRequestsMiniList({
   pullRequests,
   onOpenPullRequest,
+  className,
 }: {
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
+  className?: string;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
 }) {
   const lines = pipe(
@@ -526,7 +528,7 @@ export function ThreadPullRequestsMiniList({
   );
   if (lines.length === 0) return null;
   return (
-    <ul className="flex flex-col gap-1">
+    <ul className={cn("flex flex-col gap-1", className)}>
       {lines.map((line) => {
         const snapshot = line.link.snapshot;
         const presentation =

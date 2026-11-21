@@ -2953,6 +2953,8 @@ pub struct OrchestrationV2ThreadShell {
     pub pending_runtime_request: Option<OrchestrationV2PendingRuntimeRequestSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_guest_message_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_count: Option<i64>,
     pub latest_visible_message: Option<OrchestrationV2LatestVisibleMessageSummary>,
     pub latest_user_message_at: Option<String>,
     #[serde(

@@ -4,6 +4,7 @@ import {
   type OrbitTaskSummary,
 } from "@t3tools/client-runtime/orbit-gateway";
 import { useGT } from "gt-react";
+import { ListTodoIcon } from "lucide-react";
 import type { MouseEvent } from "react";
 
 import { ProjectMonogram } from "~/components/ProjectMonogram";
@@ -178,18 +179,20 @@ export function TaskCardPullRequestBadge(props: {
 }
 
 /**
- * A task as a list row, like a thread row: project badge with the status dot and the title on one
- * line, then "project · #id · 1/4 · 52m · node · PR" under the title. No card face, so it suits
- * lists and the chat receipt; the board's narrow lanes keep TaskCardButton. The whole row opens the
- * task through a button laid under the text; the PR is its own button on top of that.
+ * A task as a two-line row: project badge with the status dot and the title on one line, then
+ * "project · #id · 1/4 · 52m · node · PR" under the title. Plain by default for compact lists;
+ * pass `card` for the inline chat receipt so it shares the subagent card's boxed face. The whole
+ * row opens the task through a button laid under the text; the PR is its own button on top of that.
  */
 export function TaskRow(props: {
   task: OrbitTaskSummary;
   onOpen: () => void;
   onOpenPullRequest: (url: string) => void;
+  /** Render with the boxed card face used by inline chat cards. */
+  card?: boolean;
   className?: string;
 }) {
-  const { task } = props;
+  const { task, card = false } = props;
   const gt = useGT();
   const working = orbitTaskLane(task.status) === "in-progress" && task.attention === null;
   const { total, completed } = task.subtaskCounts;
@@ -198,7 +201,10 @@ export function TaskRow(props: {
   return (
     <div
       className={cn(
-        "group/task-row relative rounded-lg px-1 py-1.5 hover:bg-foreground/4 has-[button:focus-visible]:ring-2 has-[button:focus-visible]:ring-ring has-[button:focus-visible]:ring-inset",
+        "group/task-row relative min-w-0",
+        card
+          ? cn(TASK_CARD_FACE_CLASS, TASK_CARD_FACE_INTERACTIVE_CLASS, "gap-1 px-2.25 pt-2.5 pb-3")
+          : "rounded-lg px-1 py-1.5 hover:bg-foreground/4 has-[button:focus-visible]:ring-2 has-[button:focus-visible]:ring-ring has-[button:focus-visible]:ring-inset",
         props.className,
       )}
     >
@@ -206,23 +212,42 @@ export function TaskRow(props: {
         type="button"
         aria-label={gt("Task #{id}: {title}. Open in Tasks", { id: task.id, title: task.title })}
         onClick={props.onOpen}
-        className="absolute inset-0 cursor-pointer rounded-lg outline-none"
+        className={cn(
+          "absolute inset-0 cursor-pointer rounded-lg outline-none",
+          card && "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+        )}
       />
-      <div className="pointer-events-none relative flex min-w-0 flex-col gap-0.5">
-        <span className="flex items-center gap-1.5 text-ui leading-5">
-          <StatusDotBadge state={taskStatusDot(task)}>
-            <TaskProjectIcon project={task.project} />
+      <div
+        className={cn(
+          "pointer-events-none relative flex min-w-0 flex-col",
+          card ? "gap-1" : "gap-0.5",
+        )}
+      >
+        <span className="flex w-full min-w-0 items-center gap-1.5 text-ui leading-5">
+          <StatusDotBadge state={taskStatusDot(task)} ring={card ? TASK_CARD_FILL : undefined}>
+            {card ? (
+              <ListTodoIcon aria-hidden className="size-4 text-muted-foreground" />
+            ) : (
+              <TaskProjectIcon project={task.project} />
+            )}
           </StatusDotBadge>
           <span
             className={cn(
-              "min-w-0 flex-1 truncate text-foreground",
+              "min-w-0 flex-1 text-foreground",
+              card ? "[overflow-wrap:anywhere]" : "truncate",
               working ? "font-normal" : "font-medium",
             )}
           >
             {task.title}
           </span>
         </span>
-        <span className="flex min-w-0 items-center ps-5.5 text-xs leading-4 text-muted-foreground tabular-nums">
+        <span
+          className={cn(
+            "flex min-w-0 items-center ps-5.5 text-muted-foreground tabular-nums",
+            card ? "text-ui" : "text-xs",
+            "leading-4",
+          )}
+        >
           <span className="min-w-0 truncate">
             {task.project.slug} · #{task.id}
             {total >= 2 ? ` · ${completed}/${total}` : ""} · <TaskCardStatus task={task} />

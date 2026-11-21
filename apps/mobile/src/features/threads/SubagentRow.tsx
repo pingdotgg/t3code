@@ -21,15 +21,26 @@ import { WithStatusBadgeDot, type StatusBadgeState } from "../../components/Stat
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
-import { ThreadCardContent } from "./ThreadCardFace";
-import { resolveSubagentRowPresentation, type SubagentRowTone } from "./threadAgentsPresentation";
+import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
 
-const TONE_BADGE_STATE: Readonly<Record<SubagentRowTone, StatusBadgeState>> = {
-  working: "working",
-  completed: "done",
-  failed: "failed",
-  stopped: "waiting",
-};
+/** The dot on the card's leading icon. Stopped and idle subagents have none. */
+function subagentCardBadgeState(
+  status: OrchestrationV2Subagent["status"],
+): StatusBadgeState | null {
+  switch (status) {
+    case "pending":
+    case "running":
+      return "working";
+    case "waiting":
+      return "waiting";
+    case "completed":
+      return "done";
+    case "failed":
+      return "failed";
+    default:
+      return null;
+  }
+}
 
 type SubagentRowSubagent = Pick<
   OrchestrationV2Subagent,
@@ -237,7 +248,7 @@ function SubagentMetadata(props: {
   );
 }
 
-/** The task as an inline card: provider and model with the status up top, then the title full width. */
+/** The subagent as an inline card: robot icon with status dot and title on line 1, provider/model/time aligned underneath. */
 export function SubagentCardContent(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: SubagentRowSubagent;
@@ -255,56 +266,84 @@ export function SubagentCardContent(props: {
     props.environmentId,
     props.subagent,
   );
+  const badgeState = subagentCardBadgeState(props.subagent.status);
+  const leadingIcon = (
+    <View className="items-center justify-center" style={{ width: 18, height: 18 }}>
+      <SymbolView name="robot" size={16} tintColorClassName="accent-icon-muted" />
+    </View>
+  );
   return (
-    <ThreadCardContent
-      header={
-        <>
-          {/* The status is a dot on the icon's corner, ringed with the card fill. */}
-          <WithStatusBadgeDot
-            state={TONE_BADGE_STATE[presentation.tone]}
-            ringClassName="bg-card-face"
-            accessibilityLabel={presentation.statusLabel}
-          >
-            {icon(14)}
-          </WithStatusBadgeDot>
-          {presentation.runsOn !== null ? (
-            <Text numberOfLines={1} className="min-w-0 shrink text-xs text-foreground-muted">
-              <T>
-                on <Var>{presentation.runsOn}</Var>
-              </T>
-            </Text>
-          ) : null}
-          <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
-            {text}
-          </Text>
-          <SubagentWorkspace workspace={workspace} branchLabel={branchLabel} />
-        </>
-      }
-      status={props.elapsed}
-      title={
+    <View
+      style={{
+        rowGap: 6,
+        paddingTop: 12,
+        paddingRight: 12,
+        paddingBottom: 12,
+        paddingLeft: 12,
+      }}
+    >
+      <View className="flex-row items-start" style={{ columnGap: 12, minHeight: 23 }}>
+        <View className="shrink-0" style={{ marginTop: 2.5 }}>
+          {badgeState !== null ? (
+            <WithStatusBadgeDot
+              state={badgeState}
+              ringClassName="bg-card-face"
+              accessibilityLabel={presentation.statusLabel}
+            >
+              {leadingIcon}
+            </WithStatusBadgeDot>
+          ) : (
+            leadingIcon
+          )}
+        </View>
         <Text
           numberOfLines={2}
           className={cn(
-            "text-sm text-foreground",
+            "min-w-0 flex-1 text-base text-foreground",
             presentation.tone !== "working" && "font-t3-medium",
           )}
         >
           {presentation.title}
         </Text>
-      }
-      meta={
-        detail ? (
-          <Text
-            numberOfLines={3}
-            className={cn(
-              "text-xs text-foreground-muted",
-              presentation.tone === "failed" && SUBAGENT_TONE_TEXT_CLASS.failed,
-            )}
-          >
-            {detail}
+      </View>
+      <View className="min-w-0 flex-row items-center gap-1.5" style={{ paddingLeft: 30 }}>
+        {icon(12)}
+        {presentation.runsOn !== null ? (
+          <Text numberOfLines={1} className="shrink-0 text-xs text-foreground-muted">
+            <T>
+              on <Var>{presentation.runsOn}</Var>
+            </T>
           </Text>
-        ) : null
-      }
-    />
+        ) : null}
+        <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
+          {text}
+        </Text>
+        <SubagentWorkspace workspace={workspace} branchLabel={branchLabel} />
+        {props.elapsed ? (
+          <>
+            <Text
+              accessibilityElementsHidden
+              importantForAccessibility="no"
+              className="shrink-0 text-xs text-foreground-muted"
+            >
+              ·
+            </Text>
+            {props.elapsed}
+          </>
+        ) : null}
+      </View>
+      {detail ? (
+        <Text
+          numberOfLines={3}
+          style={{ paddingLeft: 30 }}
+          className={cn(
+            "text-xs text-foreground-muted",
+            presentation.tone === "failed" && SUBAGENT_TONE_TEXT_CLASS.failed,
+          )}
+        >
+          {detail}
+        </Text>
+      ) : null}
+    </View>
   );
 }

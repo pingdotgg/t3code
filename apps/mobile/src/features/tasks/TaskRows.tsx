@@ -1,16 +1,22 @@
+import { orbitTaskLane, type OrbitTaskSummary } from "@t3tools/client-runtime/orbit-gateway";
 import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
-import { useMessages } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { WithStatusBadgeDot } from "../../components/StatusBadgeDot";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
+import { relativeTime } from "../../lib/time";
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import {
   ROW_TONE_TEXT,
   ROW_TONE_TINT,
   orbitAgentProvider,
+  taskDotState,
+  taskStatusRow,
   type DotTone,
   type RowStatus,
 } from "./taskPresentation";
@@ -157,6 +163,129 @@ export function ProjectTile(props: { readonly name: string }) {
         {(props.name[0] ?? "?").toUpperCase()}
       </Text>
     </View>
+  );
+}
+
+/**
+ * A task as a list row: the project badge (status dot on its corner) and the title on line 1;
+ * project, #id, subtasks, time, node and the PR under the title. On the Tasks tab it sits on the
+ * screen; as a card in a thread (`card`) the frame comes from the caller and the dot's ring
+ * takes the card's fill.
+ */
+export function TaskRow(props: {
+  readonly task: OrbitTaskSummary;
+  readonly durationMs: number | null;
+  readonly now: number;
+  readonly onPress: () => void;
+  readonly card?: boolean;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const { task } = props;
+  const { total, completed } = task.subtaskCounts;
+  const dotState = taskDotState(task);
+  const inProgress = orbitTaskLane(task.status) === "in-progress";
+  const pr = task.pullRequest;
+  const prTone =
+    pr?.state === "merged"
+      ? "text-adaptive-violet-600-400"
+      : pr?.state === "closed"
+        ? "text-danger-foreground"
+        : "text-adaptive-emerald-700-300";
+  const prTint =
+    pr?.state === "merged"
+      ? "accent-adaptive-violet-600-400"
+      : pr?.state === "closed"
+        ? "accent-danger-foreground"
+        : "accent-adaptive-emerald-700-300";
+  const time =
+    inProgress && props.durationMs !== null
+      ? formatWorkingDurationLabel(props.durationMs, m)
+      : relativeTime(task.lastActivityAt ?? task.updatedAt, props.now, m);
+  const detail = [
+    task.project.name.toLowerCase(),
+    `#${task.id}`,
+    total > 0 ? `${completed}/${total}` : null,
+    time,
+    task.workspace?.node?.name ?? null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const recede = dotState === "working";
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={[
+        task.title,
+        m(taskStatusRow(task).label),
+        `#${task.id}`,
+        detail,
+        pr ? gt("Pull request {number}", { number: pr.number }) : null,
+      ]
+        .filter(Boolean)
+        .join(", ")}
+      onPress={props.onPress}
+      style={props.card ? undefined : { marginHorizontal: 8, marginBottom: 4 }}
+    >
+      {({ pressed }) => (
+        <View
+          className={cn(pressed && (props.card ? "bg-foreground/5" : "bg-row-hover"))}
+          style={{
+            rowGap: 6,
+            borderRadius: props.card ? 0 : 12,
+            paddingTop: 12,
+            paddingRight: props.card ? 12 : 8,
+            paddingBottom: 12,
+            paddingLeft: props.card ? 12 : 4,
+          }}
+        >
+          <View className="flex-row items-start" style={{ columnGap: 12, minHeight: 23 }}>
+            <View className="shrink-0" style={{ marginTop: 2.5 }}>
+              <WithStatusBadgeDot
+                state={dotState}
+                ringClassName={props.card ? "bg-card-face" : "bg-screen"}
+              >
+                {props.card ? (
+                  <View className="items-center justify-center" style={{ width: 18, height: 18 }}>
+                    <SymbolView name="checklist" size={16} tintColorClassName="accent-icon-muted" />
+                  </View>
+                ) : (
+                  <ProjectTile name={task.project.name} />
+                )}
+              </WithStatusBadgeDot>
+            </View>
+            <Text
+              className={cn(
+                "min-w-0 flex-1 text-base text-foreground",
+                !recede && "font-t3-medium",
+              )}
+              numberOfLines={props.card ? 2 : 1}
+            >
+              {task.title}
+            </Text>
+          </View>
+          <View className="flex-row items-center" style={{ paddingLeft: 30 }}>
+            <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
+              {detail}
+              {pr ? " · " : null}
+            </Text>
+            {pr ? (
+              <View className="shrink-0 flex-row items-center gap-[3px]">
+                <SymbolView
+                  name={
+                    pr.state === "merged" ? PullRequestGlyph.merged : PullRequestGlyph.pullRequest
+                  }
+                  size={12}
+                  type="monochrome"
+                  tintColorClassName={prTint}
+                />
+                <Text className={cn("text-xs tabular-nums", prTone)}>#{pr.number}</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      )}
+    </Pressable>
   );
 }
 

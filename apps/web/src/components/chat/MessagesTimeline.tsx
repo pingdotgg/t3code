@@ -1636,7 +1636,9 @@ function getItemType(item: MessagesTimelineRow) {
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
-  const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
+  const isSubagentEvent = row.kind === "event" && row.projectedItem.item.type === "subagent";
+  const isSubagentGroup = isSubagentEvent && (row.subagents?.length ?? 1) > 1;
+  const isLoneSubagentCard = isSubagentEvent && !isSubagentGroup;
   const isWorkLogRow =
     row.kind === "work" ||
     row.kind === "work-live" ||
@@ -1651,23 +1653,25 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       className={cn(
         isWorkLogRow || isSubagentGroup
           ? undefined
-          : row.kind === "turn-fold" || row.kind === "working"
-            ? "pb-1.5"
-            : row.kind === "message" && row.groupedWithNext
-              ? "pb-1"
-              : (row.kind === "message" &&
-                    row.message.role === "assistant" &&
-                    !row.showAssistantMeta) ||
-                  row.kind === "worktree-setup" ||
-                  row.kind === "orbit-ready" ||
-                  row.kind === "event" ||
-                  row.kind === "attempt-fold" ||
-                  row.kind === "html-render" ||
-                  row.kind === "sent-message" ||
-                  row.kind === "mcp-app" ||
-                  row.kind === "viewed-images"
-                ? "pb-2"
-                : "pb-4",
+          : row.kind === "turn-fold" || isLoneSubagentCard
+            ? "pb-3"
+            : row.kind === "working"
+              ? "pb-1.5"
+              : row.kind === "message" && row.groupedWithNext
+                ? "pb-1"
+                : (row.kind === "message" &&
+                      row.message.role === "assistant" &&
+                      !row.showAssistantMeta) ||
+                    row.kind === "worktree-setup" ||
+                    row.kind === "orbit-ready" ||
+                    row.kind === "event" ||
+                    row.kind === "attempt-fold" ||
+                    row.kind === "html-render" ||
+                    row.kind === "sent-message" ||
+                    row.kind === "mcp-app" ||
+                    row.kind === "viewed-images"
+                  ? "pb-2"
+                  : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"

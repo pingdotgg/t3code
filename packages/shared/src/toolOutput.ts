@@ -57,6 +57,43 @@ interface CompactToolOutput {
   linkedCount?: number;
   unlinkedCount?: number;
   sentMessage?: string;
+  /** An Orbit task-create result's task row, so clients can show the created task as a card. */
+  orbitTask?: Record<string, unknown>;
+}
+
+/**
+ * The task row fields the card reads (client-runtime's `ListRow`). The rest, such as a long
+ * `brief`, would push the compact output over its size cap and drop the card.
+ */
+const ORBIT_TASK_CARD_FIELDS = [
+  "id",
+  "title",
+  "status",
+  "attention",
+  "project",
+  "workspace",
+  "pull_request",
+  "subtask_counts",
+  "created_at",
+  "updated_at",
+  "last_activity_at",
+] as const;
+
+/** The task row of an Orbit task-create result, `{ data: <task> }`; null for any other result. */
+function readOrbitTaskRow(data: Record<PropertyKey, unknown>): Record<string, unknown> | null {
+  const row = data.data;
+  if (!Predicate.isObject(row)) return null;
+  const { id, title, project, subtask_counts: counts } = row;
+  return typeof id === "number" &&
+    Number.isSafeInteger(id) &&
+    typeof title === "string" &&
+    Predicate.isObject(project) &&
+    typeof project.slug === "string" &&
+    Predicate.isObject(counts)
+    ? Object.fromEntries(
+        ORBIT_TASK_CARD_FIELDS.filter((key) => key in row).map((key) => [key, row[key]]),
+      )
+    : null;
 }
 
 function readResult(value: unknown, budget: ResultReadBudget, depth = 0): ResultEnvelope {
@@ -153,6 +190,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     ) {
       output.sentMessage = data.sentMessage;
     }
+    const orbitTask = readOrbitTaskRow(data);
+    if (orbitTask !== null) output.orbitTask = orbitTask;
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
@@ -196,6 +235,7 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     delete output.threads;
     delete output.threadId;
     delete output.status;
+    delete output.orbitTask;
   }
   const app = output[MCP_APP_OUTPUT_KEY];
   if (app?.csp !== undefined && oversized()) {

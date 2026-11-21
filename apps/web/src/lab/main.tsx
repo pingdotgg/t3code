@@ -14,6 +14,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ENVIRONMENT_ID, installFakeEnvironment } from "../../test/fakeEnvironment";
 import { LAB_PROJECTS, LAB_PROVIDERS, LAB_THREADS } from "./fixtures";
+import { installLabDesktopBridge } from "./desktopBridge";
 import { registerLabEnvironments } from "./registerEnvironments";
 import { mountIconSwitcher } from "./icons/IconSwitcher";
 import { installPullRequestListFixture } from "./pr/pullRequestList";
@@ -25,6 +26,8 @@ installFakeEnvironment(LAB_THREADS, {
   providers: LAB_PROVIDERS,
   pullRequests: true,
 });
+// The Database panel reads through the desktop bridge's databaseRun (src/lab/desktopBridge.ts).
+installLabDesktopBridge();
 // The Pull requests page lists LAB_PULL_REQUESTS (src/lab/pr/pullRequestList.ts).
 installPullRequestListFixture();
 // A returning user: the first-run gate would otherwise wait on onboarding evidence.
@@ -51,9 +54,12 @@ const router = getRouter(createHashHistory());
 await router.load();
 // The MacBook and Linux VM environments host some threads (src/lab/environments.ts).
 await registerLabEnvironments();
-// The right panel opens on Tasks unless `?panel=none`.
-if (params.get("panel") !== "none") {
-  useRightPanelStore.getState().open(scopeThreadRef(ENVIRONMENT_ID, threadId as never), "tasks");
+// The right panel opens on Tasks unless `?panel=none`; `?panel=files` and `?panel=database` open
+// the lab's dummy Files and Database tabs.
+const panel = params.get("panel");
+if (panel !== "none") {
+  const kind = panel === "files" || panel === "database" ? panel : "tasks";
+  useRightPanelStore.getState().open(scopeThreadRef(ENVIRONMENT_ID, threadId as never), kind);
 }
 await whenLocaleReady();
 ReactDOM.createRoot(document.getElementById("root")!).render(<AppRoot router={router} />);

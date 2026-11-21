@@ -113,11 +113,11 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   return (
     <section
       aria-label={gt("Activity")}
-      // Task cards sit 8px apart, and 8px from the fold's separator (it leaves 6px) and from the
-      // next row (the block around this row leaves 8px).
+      // Task cards sit 12px apart, matching the 12px below the turn fold separator; pb-1 plus the
+      // surrounding WorkLogBlock's pb-2 leaves the same 12px before the next row.
       className={
         nonEmptyEntries.every((entry) => orbitTaskCreateReceipt(entry) !== null)
-          ? "flex flex-col gap-2 pt-0.5"
+          ? "flex flex-col gap-3 pb-1"
           : undefined
       }
     >

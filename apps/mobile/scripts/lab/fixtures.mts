@@ -36,6 +36,22 @@ export type LabEntry =
       readonly model: string;
     }
   /**
+   * An `mcp__orbit__task-create` tool call and its result: the thread shows the created task as a
+   * live card. The card reads the task from the Tasks fixtures by `id` (see orbitTasksFixtures.ts)
+   * and falls back to this snapshot when the id is not there.
+   */
+  | {
+      readonly kind: "taskReceipt";
+      readonly minutesAgo: number;
+      readonly id: number;
+      readonly title: string;
+      readonly status: "todo" | "running" | "reviewing" | "completed";
+      readonly project: { readonly id: number; readonly slug: string; readonly name: string };
+      readonly node?: string;
+      readonly subtasks: { readonly total: number; readonly completed: number };
+      readonly pullRequest?: { readonly number: number; readonly state: "open" | "merged" };
+    }
+  /**
    * A pending question from the agent: the "Needs your answer" card. A real runtime request the app
    * can answer. The lab server has no agent behind it, so Send or Skip only resolves it; `reseed` brings it back.
    */
@@ -333,6 +349,43 @@ export const LAB_THREADS: ReadonlyArray<LabThread> = [
             ],
           },
         ],
+      },
+    ],
+  },
+  // Task receipt lab: the agent created Orbit tasks. 482 is live in the Tasks fixtures (it moves on
+  // from this snapshot); 990 is not there, so its card keeps the snapshot.
+  {
+    key: "task-receipts",
+    title: "Card lab: task receipts",
+    project: "apps",
+    branch: "main",
+    instanceId: "claudeAgent",
+    model: "claude-opus-5-5",
+    minutesAgo: 1,
+    entries: [
+      { kind: "user", minutesAgo: 6, text: "Turn the plan into Orbit tasks." },
+      {
+        kind: "taskReceipt",
+        minutesAgo: 5,
+        id: 482,
+        title: "Image attachments in the composer",
+        status: "todo",
+        project: { id: 12, slug: "conn", name: "Conn" },
+        subtasks: { total: 4, completed: 0 },
+      },
+      {
+        kind: "taskReceipt",
+        minutesAgo: 4,
+        id: 990,
+        title: "Retry the deploy step when the node is waking up",
+        status: "todo",
+        project: { id: 78, slug: "orbit", name: "Orbit" },
+        subtasks: { total: 3, completed: 0 },
+      },
+      {
+        kind: "assistant",
+        minutesAgo: 3,
+        text: "I created two tasks. The first is already running; the second waits for a node.",
       },
     ],
   },

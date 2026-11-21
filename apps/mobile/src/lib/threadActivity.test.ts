@@ -33,6 +33,7 @@ import {
   type ThreadFeedCache,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
+  taskReceiptOfActivityGroup,
 } from "./threadActivity";
 
 const threadId = ThreadId.make("thread-1");
@@ -101,6 +102,54 @@ it("keeps an MCP app call's tool activity beside its app card", () => {
   );
   expect(activities).toHaveLength(1);
   expect(activities[0]?.getFullDetail()).toContain("@type:view");
+});
+
+it("stands each Orbit task-create result alone as a task receipt", () => {
+  const created = (id: string, taskId: number, toolName = "mcp__orbit__task-create") =>
+    ({
+      ...base(id, "2026-08-29T00:00:00.000Z", taskId),
+      type: "dynamic_tool",
+      toolName,
+      input: {},
+      output: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            data: {
+              id: taskId,
+              title: `Task ${taskId}`,
+              status: "todo",
+              attention: null,
+              project: { id: 1, slug: "orbit", name: "Orbit", code: null },
+              workspace: null,
+              pull_request: null,
+              subtask_counts: {
+                total: 2,
+                todo: 2,
+                running: 0,
+                completed: 0,
+                failed: 0,
+                cancelled: 0,
+              },
+              created_at: "2026-08-29T00:00:00.000Z",
+              updated_at: "2026-08-29T00:00:00.000Z",
+              last_activity_at: null,
+            },
+          }),
+        },
+      ],
+    }) as OrchestrationV2TurnItem;
+  const groups = buildThreadFeed([
+    projected(created("a", 11), 0),
+    projected(created("b", 12), 1),
+    projected(created("c", 13, "mcp__orbit__task-list"), 2),
+  ]).flatMap((entry) => (entry.type === "activity-group" ? [entry] : []));
+  expect(groups.map((group) => taskReceiptOfActivityGroup(group)?.id ?? null)).toEqual([
+    11,
+    12,
+    null,
+  ]);
+  expect(groups.slice(0, 2).every((group) => group.activities[0]?.prominent)).toBe(true);
 });
 
 it("keeps historical plan detail accessible from its paged turn item", () => {

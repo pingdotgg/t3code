@@ -1242,6 +1242,7 @@ type ShellThreadRow = {
   readonly latest_user_message_at: string | null;
   readonly latest_user_authored_message_at: string | null;
   readonly has_actionable_proposed_plan: number;
+  readonly subagent_count: number;
 };
 
 type ShellRunRow = {
@@ -2074,6 +2075,7 @@ type ShellThreadState = {
   readonly latestUserMessageAt: DateTime.Utc | null;
   readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
   readonly hasActionableProposedPlan: boolean;
+  readonly subagentCount: number;
   readonly pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"];
   readonly providerInstanceHistory: OrchestrationV2ThreadShell["providerInstanceHistory"];
   readonly goal: OrchestrationV2ThreadShell["goal"];
@@ -2244,6 +2246,7 @@ function shellFromState(input: {
     usageLimitResetAt: input.state.usageLimitResetAt,
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
     pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
+    ...(input.state.subagentCount > 0 ? { subagentCount: input.state.subagentCount } : {}),
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,
@@ -8156,8 +8159,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         threadIds,
         listedOnly = false,
         includeDeleted = false,
+        omitSubagentCount = false,
       }: ShellSnapshotOptions & {
         readonly listedOnly?: boolean;
+        readonly omitSubagentCount?: boolean;
         // A retained fork still shows the history of a deleted source run.
         readonly includeDeleted?: boolean;
       } = {},
@@ -8311,7 +8316,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE plan.thread_id = t.thread_id
                   AND plan.kind = 'proposed_plan'
                   AND plan.status = 'active'
-              ) AS has_actionable_proposed_plan
+              ) AS has_actionable_proposed_plan,
+              -- Native and delegated alike: each has one row keyed by its parent, whether or not
+              -- a shell lists its child thread. Awareness reads skip it.
+              ${
+                omitSubagentCount
+                  ? sql`0`
+                  : sql`(
+                SELECT COUNT(*)
+                FROM orchestration_v2_projection_subagents subagent
+                WHERE subagent.thread_id = t.thread_id
+              )`
+              } AS subagent_count
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs active ON active.run_id = (
               SELECT r.run_id
@@ -8962,6 +8978,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               : DateTime.makeUnsafe(row.latest_user_message_at),
           latestUserAuthoredMessageAt,
           hasActionableProposedPlan: row.has_actionable_proposed_plan === 1,
+          subagentCount: row.subagent_count,
           pendingBackgroundTasks,
           providerInstanceHistory: providerInstanceHistoryForShell({
             threadId: thread.id,
@@ -9150,7 +9167,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             Effect.gen(function* () {
               const threadRows = yield* selectShellThreadRows(
                 threadId,
-                threadId === undefined ? { location: "active", listedOnly: true } : {},
+                threadId === undefined
+                  ? { location: "active", listedOnly: true, omitSubagentCount: true }
+                  : { omitSubagentCount: true },
               );
               const ids = threadRows.map((row) => ThreadId.make(row.thread_id));
               const providerThreadRows =

@@ -10,6 +10,7 @@ import * as ChildProcess from "node:child_process";
 import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
+import * as VM from "node:vm";
 
 export const LAB_THEMES = ["dark-mono", "dark-ocean", "ocean", "stock", "light"] as const;
 export type LabTheme = (typeof LAB_THEMES)[number];
@@ -21,11 +22,20 @@ const DARK_OCEAN_ID = "dark-ocean";
 /** The palette desktop's lab seeds into `t3code:themes:v1` (the one source for Dark Mono). */
 function darkMonoFromDesktopLab(repoRoot: string) {
   const html = FS.readFileSync(Path.join(repoRoot, "apps/web/lab.html"), "utf8");
-  const seeded = /setItem\("t3code:themes:v1", JSON\.stringify\((\[.*?\])\)\);/s.exec(html)?.[1];
+  // The call is formatted across lines, with or without trailing commas.
+  const seeded =
+    /setItem\(\s*"t3code:themes:v1",\s*JSON\.stringify\(\s*(\[.*?\])\s*,?\s*\)\s*,?\s*\)/s.exec(
+      html,
+    )?.[1];
   if (seeded === undefined) throw new Error("apps/web/lab.html no longer seeds t3code:themes:v1.");
-  const theme = (
-    JSON.parse(seeded) as Array<{ id: string; label: string; appearance: string; colors: object }>
-  ).find((entry) => entry.id === DARK_MONO_ID);
+  // A JS array literal in the page (unquoted keys), not JSON; it holds only data.
+  const themes = VM.runInNewContext(`(${seeded})`) as Array<{
+    id: string;
+    label: string;
+    appearance: string;
+    colors: object;
+  }>;
+  const theme = themes.find((entry) => entry.id === DARK_MONO_ID);
   if (theme === undefined) throw new Error("apps/web/lab.html seeds no Dark Mono theme.");
   return { version: 1, name: theme.label, appearance: theme.appearance, colors: theme.colors };
 }

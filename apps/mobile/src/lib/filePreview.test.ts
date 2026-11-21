@@ -137,6 +137,8 @@ vi.mock("expo-video", () => ({
   VideoView: () => null,
 }));
 vi.mock("../components/VideoThumbnailImage", () => ({ VideoThumbnailImage: () => null }));
+// The task receipt card reads Orbit task state through native modules; this suite never shows one.
+vi.mock("../features/threads/ThreadTaskReceiptCard", () => ({ ThreadTaskReceiptCard: () => null }));
 vi.mock("../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
 vi.mock("../components/MediaActionsMenu", () => ({
   MediaActionsMenu: ({ children }: { children?: ReactNode }) => children,
