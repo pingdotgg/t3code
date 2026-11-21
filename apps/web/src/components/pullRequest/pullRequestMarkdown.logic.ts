@@ -2,12 +2,21 @@ import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-r
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { Nodes } from "hast";
 
-import { wordsHast, type MarkdownExtensions } from "~/markdown/wordsHast";
-
-export {
-  splitPullRequestBody,
+import {
+  splitPullRequestBody as splitBody,
   type PullRequestBodySegment,
 } from "@t3tools/client-runtime/pull-request-markdown";
+import {
+  markdownReferenceDefinitions,
+  wordsHast,
+  type MarkdownExtensions,
+} from "~/markdown/wordsHast";
+
+export type { PullRequestBodySegment };
+
+export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
+  return splitBody(body, markdownReferenceDefinitions);
+}
 
 const NO_EXTENSIONS: MarkdownExtensions = {};
 const markdownExtensions = new Map<string, MarkdownExtensions>();
