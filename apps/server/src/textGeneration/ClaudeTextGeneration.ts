@@ -115,6 +115,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
+  // Models that failed with images and then succeeded without them; later runs skip the image attempt.
+  const textOnlyModels = new Set<string>();
 
   const readStreamAsString = <E>(
     operation: string,
@@ -261,7 +263,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
 
     // `claude -p` accepts images only as content blocks of a stream-json user message.
-    const imageBlocks = yield* readImageBlocks(attachments);
+    const apiModelId = resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection);
+    const imageBlocks = textOnlyModels.has(apiModelId) ? [] : yield* readImageBlocks(attachments);
     const imageStdin =
       imageBlocks.length > 0
         ? `${yield* encodeJsonForOperation(
@@ -291,7 +294,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--json-schema",
           jsonSchemaStr,
           "--model",
-          resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
+          apiModelId,
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
           settingsJson,
@@ -367,7 +370,17 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       // Text-only models (custom models behind Anthropic-compatible endpoints) reject image blocks.
       Effect.filterOrElse(
         (result) => result.exitCode === 0 || imageStdin === undefined,
-        () => runClaudeAttempt(false),
+        (imageResult) =>
+          runClaudeAttempt(false).pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                const imageFailure = `${imageResult.stdout}\n${imageResult.stderr}`.toLowerCase();
+                if (result.exitCode === 0 && imageFailure.includes("image")) {
+                  textOnlyModels.add(apiModelId);
+                }
+              }),
+            ),
+          ),
       ),
       Effect.flatMap(({ stdout, stderr, exitCode }) => {
         if (exitCode === 0) return Effect.succeed(stdout);
