@@ -58,7 +58,8 @@ export interface SourceControlDriverInstance {
   readonly issues?: IssueTrackerApi;
   /**
    * Fetches media the definition's `mediaUrl` claimed, with the credential the host serves it
-   * to. Null when the fetch went nowhere a response could come from, such as a redirect loop.
+   * to. Null when the server cannot fetch it, such as without a credential for its host or on a
+   * redirect loop; the client is then sent to the URL itself.
    */
   readonly fetchMedia?: (
     request: SourceControlMediaRequest,

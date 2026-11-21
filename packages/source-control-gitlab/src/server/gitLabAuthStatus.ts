@@ -1,9 +1,12 @@
 const HOST_LINE_PATTERN = /^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|\[[a-f0-9:.]+\])(?::\d+)?$/iu;
 const LOGGED_IN_PATTERN = /Logged in to .+? as\s+([^\s(]+)/iu;
+const REST_ENDPOINT_PATTERN = /REST API Endpoint:\s*https?:\/\/([^/\s]+)\//iu;
 
 export interface GitLabAuthStatusHost {
   readonly host: string;
   readonly account: string | null;
+  /** The host its API calls go to, which glab's `api_host` can set apart from `host`. */
+  readonly apiHost: string | null;
 }
 
 export function parseGitLabAuthStatusHosts(text: string): ReadonlyArray<GitLabAuthStatusHost> {
@@ -14,8 +17,10 @@ export function parseGitLabAuthStatusHosts(text: string): ReadonlyArray<GitLabAu
   const flush = () => {
     if (currentHost === null) return;
 
-    const account = LOGGED_IN_PATTERN.exec(currentLines.join("\n"))?.[1]?.trim() || null;
-    hosts.push({ host: currentHost, account });
+    const lines = currentLines.join("\n");
+    const account = LOGGED_IN_PATTERN.exec(lines)?.[1]?.trim() || null;
+    const apiHost = REST_ENDPOINT_PATTERN.exec(lines)?.[1]?.toLowerCase() ?? null;
+    hosts.push({ host: currentHost, account, apiHost });
     currentHost = null;
     currentLines = [];
   };
