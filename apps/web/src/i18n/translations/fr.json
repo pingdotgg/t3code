@@ -3379,14 +3379,7 @@
   "c1c9ebabaa960f8c": "Revenir en arrière en gardant les modifications",
   "359e36da660f2c59": "Approbation de {title}",
   "8d9617edf6eee5b9": "Échec de l’envoi de la décision d’approbation.",
-  "160ead9e70889628": [
-    "Approbation requise par ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
+  "ec9420ed25e7ec28": "Votre approbation est nécessaire",
   "1b1131295f62c44c": "Le processus du fournisseur n’existe plus. Interrompez ou redémarrez le fil enfant pour répondre.",
   "da66023072c473d1": [
     "Impossible de charger la sortie : ",

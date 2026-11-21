@@ -6,8 +6,9 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
+import { ShieldQuestionIcon } from "lucide-react";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -26,11 +27,15 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
       aria-label={gt("Approval from {title}", { title: entry.title })}
       className="rounded-lg border border-border bg-background p-3 text-xs"
     >
-      <p className="mb-2 font-medium">
-        <T>
-          Approval needed from <Var>{entry.title}</Var>
-        </T>
-      </p>
+      <div className="mb-2 flex items-start gap-2">
+        <ShieldQuestionIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-warning" />
+        <div className="min-w-0">
+          <p className="font-medium">
+            <T>Your approval is needed</T>
+          </p>
+          <p className="text-muted-foreground wrap-anywhere">{entry.title}</p>
+        </div>
+      </div>
       <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
         {approval.detail || approval.requestKind}
       </pre>
@@ -46,9 +51,9 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           {fullAccessOverrideExplanation(approval.fullAccessOverride, messages)}
         </p>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <ComposerPendingApprovalActions
-          presentation="inline"
+          presentation="card"
           requestId={approval.requestId}
           isResponding={responding}
           canRespond={approval.responseCapability === "live"}

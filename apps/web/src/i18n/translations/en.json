@@ -3379,14 +3379,7 @@
   "c1c9ebabaa960f8c": "Revert and keep changes",
   "359e36da660f2c59": "Approval from {title}",
   "8d9617edf6eee5b9": "Failed to submit approval decision.",
-  "160ead9e70889628": [
-    "Approval needed from ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
+  "ec9420ed25e7ec28": "Your approval is needed",
   "1b1131295f62c44c": "Provider process is gone. Interrupt or restart the child thread to respond.",
   "da66023072c473d1": [
     "Couldn't load output: ",

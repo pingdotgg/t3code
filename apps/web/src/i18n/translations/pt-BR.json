@@ -3379,14 +3379,7 @@
   "c1c9ebabaa960f8c": "Reverter e manter as alterações",
   "359e36da660f2c59": "Aprovação de {title}",
   "8d9617edf6eee5b9": "Falha ao enviar a decisão de aprovação.",
-  "160ead9e70889628": [
-    "Aprovação necessária de ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
+  "ec9420ed25e7ec28": "Sua aprovação é necessária",
   "1b1131295f62c44c": "O processo do provedor não existe mais. Interrompa ou reinicie a thread filha para responder.",
   "da66023072c473d1": [
     "Não foi possível carregar a saída: ",
