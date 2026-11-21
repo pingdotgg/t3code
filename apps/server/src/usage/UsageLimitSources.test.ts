@@ -412,6 +412,19 @@ it.each([
     expected: at(24),
   },
   {
+    name: "an own-driver account whose model list was unread still counts",
+    accounts: [
+      { windows: [spent("five_hour", 1)] },
+      {
+        driver: "antigravity",
+        models: ["claude-sonnet-4-6"],
+        windows: [spent("3p-5h", 8)],
+      },
+    ],
+    model: "claude-sonnet-4-6",
+    expected: at(1),
+  },
+  {
     name: "an Argon model waits only for the Argon quota",
     accounts: [
       {

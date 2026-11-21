@@ -888,7 +888,8 @@ export function hubRoutes(
   if (serving.size === 0)
     return (account) => account.driver === driver && account.models?.length !== 0;
   // An account whose model list was unreadable may serve the model too.
-  return (account) => (account.models ? listed(account) : serving.has(account.driver));
+  return (account) =>
+    account.models ? listed(account) : serving.has(account.driver) || account.driver === driver;
 }
 
 export function collectProviderUsageLimits(
