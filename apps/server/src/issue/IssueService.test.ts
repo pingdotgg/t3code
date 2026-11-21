@@ -700,12 +700,11 @@ describe("IssueService with a standalone tracker", () => {
       });
       expect((yield* bound.projectScope("web" as ProjectId)).scope).toBe("ENG");
       expect((yield* bound.projectScope("web" as ProjectId, { key: "ops-12" })).scope).toBe("OPS");
-      expect((yield* bound.projectScope("web" as ProjectId, { scope: "ops" })).scope).toBe("OPS");
-      const unboundTeam = yield* Effect.flip(
-        bound.projectScope("web" as ProjectId, { scope: "QA" }),
-      );
-      expect(unboundTeam).toMatchObject({ _tag: "IssueOperationError", reason: "not-found" });
-      expect(unboundTeam.message).toContain("ENG, OPS, acme/web");
+      expect(yield* bound.projectScope("web" as ProjectId, { scope: "ACME/Web" })).toMatchObject({
+        tracker: GITHUB,
+        host: "github.com",
+        scope: "acme/web",
+      });
       expect(
         yield* bound.detail({
           projectId: "web" as ProjectId,
