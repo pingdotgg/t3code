@@ -956,7 +956,13 @@ describe("MessagesTimeline messages", () => {
         `tall-${index}`,
       ),
     );
-    const projectedItem = makeStreamingTimelineFixture().visibleTurnItems[1]!;
+    const fixtureItem = makeStreamingTimelineFixture().visibleTurnItems[1]!;
+    if (fixtureItem.item.type !== "command_execution") throw new Error("expected a command");
+    // Lathe opens failed commands on their own, and this test opens the row by hand.
+    const projectedItem = {
+      ...fixtureItem,
+      item: { ...fixtureItem.item, status: "completed" as const, exitCode: 0 },
+    };
     const source = {
       detail: () => Atom.make(AsyncResult.initial()),
       commandOutput: () => Atom.make(AsyncResult.initial()),
