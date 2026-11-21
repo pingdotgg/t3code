@@ -191,4 +191,57 @@ describe("ExpandedImageDialog", () => {
     expect(pointerFraction().x).toBeCloseTo(anchor.x, 2);
     expect(pointerFraction().y).toBeCloseTo(anchor.y, 2);
   });
+
+  it("swipes and trackpad swipes page the gallery unless the image is zoomed", async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 1200;
+    const src = canvas.toDataURL();
+    await using screen = await render(
+      <ExpandedImageDialog
+        preview={{
+          images: ["one.png", "two.png", "three.png"].map((name) => ({ src, name })),
+          index: 0,
+        }}
+        onClose={() => {}}
+      />,
+      // The dialog renders no links and reads no route.
+      { router: false },
+    );
+    const popup = document.querySelector<HTMLElement>("[data-slot=dialog-popup]")!;
+    const touch = (type: "touchstart" | "touchend", clientX: number) => {
+      const point = new Touch({ identifier: 1, target: popup, clientX, clientY: 300 });
+      popup.dispatchEvent(
+        new TouchEvent(type, {
+          bubbles: true,
+          touches: type === "touchstart" ? [point] : [],
+          changedTouches: [point],
+        }),
+      );
+    };
+    // One synchronous burst is one gesture, so it pages once however far it travels.
+    const trackpadSwipe = (target: Element) =>
+      [40, 40, 40].map((deltaX) => {
+        const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX });
+        target.dispatchEvent(wheel);
+        return wheel.defaultPrevented;
+      });
+
+    touch("touchstart", 600);
+    touch("touchend", 400);
+    await expect.element(screen.getByText("two.png (2/3)")).toBeVisible();
+
+    expect(trackpadSwipe(popup)).toEqual([true, true, true]);
+    await expect.element(screen.getByText("three.png (3/3)")).toBeVisible();
+
+    const viewport = screen.getByRole("region", { name: "three.png, zoomable image" });
+    await vi.waitFor(() =>
+      expect(screen.getByRole("img", { name: "three.png" }).element().style.width).not.toBe(""),
+    );
+    await userEvent.click(viewport);
+    expect(trackpadSwipe(viewport.element())).toEqual([false, false, false]);
+    touch("touchstart", 600);
+    touch("touchend", 400);
+    await expect.element(screen.getByText("three.png (3/3)")).toBeVisible();
+  });
 });

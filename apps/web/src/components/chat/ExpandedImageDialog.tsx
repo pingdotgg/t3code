@@ -39,6 +39,14 @@ interface ExpandedImageDialogProps {
   onClose: () => void;
 }
 
+const SWIPE_DISTANCE_PX = 60;
+// A trackpad swipe is one burst of wheel events; a pause this long starts the next one.
+const WHEEL_GESTURE_GAP_MS = 200;
+
+function swipeExempt(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("video, input, [role=slider]") !== null;
+}
+
 const EXPANDED_MEDIA_STATE_CLASS_NAME =
   "flex aspect-auto h-48 min-h-0 w-[min(var(--media-width),32rem)] flex-col items-center justify-center gap-3 rounded-lg border border-border/70 bg-black p-6 text-center text-sm text-white shadow-2xl";
 
@@ -131,6 +139,31 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     setImageOffset((current) => current + direction);
   };
 
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const wheelGestureRef = useRef({ distance: 0, lastTime: -Infinity, paged: false });
+  const canSwipe = () => imageCount > 1 && !zoomableImageRef.current?.pansHorizontally();
+  // React's onWheel is passive, so it cannot stop the browser's swipe-to-go-back.
+  const attachTrackpadSwipe = (popup: HTMLDivElement) => {
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+      if (!canSwipe() || swipeExempt(event.target)) return;
+      event.preventDefault();
+      const gesture = wheelGestureRef.current;
+      if (event.timeStamp - gesture.lastTime > WHEEL_GESTURE_GAP_MS) {
+        gesture.distance = 0;
+        gesture.paged = false;
+      }
+      gesture.lastTime = event.timeStamp;
+      if (gesture.paged) return;
+      gesture.distance += event.deltaX;
+      if (Math.abs(gesture.distance) < SWIPE_DISTANCE_PX) return;
+      gesture.paged = true;
+      navigateImage(gesture.distance > 0 ? 1 : -1);
+    };
+    popup.addEventListener("wheel", wheel, { passive: false });
+    return () => popup.removeEventListener("wheel", wheel);
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || isContextMenuOpen() || event.target instanceof HTMLVideoElement)
       return;
@@ -187,7 +220,25 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         showCloseButton={false}
         bottomStickOnMobile={false}
         className="row-start-1 h-full max-h-[92vh] w-[92vw] max-w-[92vw] items-center justify-center overflow-visible [--media-width:92vw] [--media-height:min(calc((100vh-var(--native-titlebar-height,0px))*0.86),calc(100vh-var(--native-titlebar-height,0px)-160px))] sm:[--media-width:calc(92vw-96px)]"
+        ref={attachTrackpadSwipe}
         onKeyDown={onKeyDown}
+        onTouchStart={(event) => {
+          const touch = event.touches[0];
+          touchStartRef.current =
+            event.touches.length === 1 && touch && !swipeExempt(event.target)
+              ? { x: touch.clientX, y: touch.clientY }
+              : null;
+        }}
+        onTouchEnd={(event) => {
+          const start = touchStartRef.current;
+          const touch = event.changedTouches[0];
+          touchStartRef.current = null;
+          if (!start || !touch || !canSwipe()) return;
+          const dx = touch.clientX - start.x;
+          const dy = touch.clientY - start.y;
+          if (Math.abs(dx) < SWIPE_DISTANCE_PX || Math.abs(dx) < 2 * Math.abs(dy)) return;
+          navigateImage(dx < 0 ? 1 : -1);
+        }}
         initialFocus={closeButtonRef}
         finalFocus={() => returnFocus.target}
         onClick={(event) => {
