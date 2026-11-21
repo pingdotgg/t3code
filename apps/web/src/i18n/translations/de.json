@@ -12377,6 +12377,7 @@
   "6ef4db489e40e39e": "Speichern fehlgeschlagen",
   "3dcedb736d20aae5": "Die Workflow-Dateien konnten nicht gelesen werden",
   "b09f4df8d76ae8ea": "{file} löschen? Die darin definierten Workflows können dann nicht mehr gestartet werden.",
+  "b4535f5a03689d27": "{name} ist nicht verbunden. Was du hier schreibst, bleibt erhalten und lässt sich speichern, sobald die Verbindung wieder da ist.",
   "b54c78d85fd942ea": "Gelöscht, aber was läuft, ist noch nicht nachgezogen.",
   "407c228d7da0b7df": "Nicht gelöscht. Auf dem Server hat sich nichts geändert.",
   "1a6aa10f3cc14fff": "Diese Dateien passen nicht zusammen. Was bisher lief, läuft weiter.",

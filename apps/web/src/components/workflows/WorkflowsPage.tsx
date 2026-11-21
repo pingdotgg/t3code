@@ -79,13 +79,15 @@ export function WorkflowsPage() {
       : null;
   const run = search.run === undefined ? {} : { run: search.run };
   const editing = search.definitions === true || search.file !== undefined;
+  // An open file stays open while its environment is away, so a draft in it is not lost.
+  const fileEnvironmentId = environmentId ?? (search.file === undefined ? null : asked);
   const [fileActions, setFileActions] = useState<HTMLElement | null>(null);
   const definitions = useEnvironmentQuery(
-    environmentId === null || search.file === undefined
+    fileEnvironmentId === null || search.file === undefined
       ? null
-      : serverEnvironment.workflowDefinition({ environmentId, input: {} }),
+      : serverEnvironment.workflowDefinition({ environmentId: fileEnvironmentId, input: {} }),
   );
-  const fileMenu = useFileContextMenu(environmentId);
+  const fileMenu = useFileContextMenu(fileEnvironmentId);
   /** What a right click on the open file's name offers: its path, and the editors on that machine. */
   const showFileMenu = (event: MouseEvent) => {
     const api = readLocalApi();
@@ -93,7 +95,7 @@ export function WorkflowsPage() {
     if (api === undefined || directory === undefined || search.file === undefined) return;
     event.preventDefault();
     const path = `${directory}/${search.file}`;
-    const target = { environmentId, filePath: path, workspaceRoot: undefined };
+    const target = { environmentId: fileEnvironmentId, filePath: path, workspaceRoot: undefined };
     void api.contextMenu
       .show([{ id: COPY_PATH, label: gt("Copy path") }, ...fileMenu.buildItems(target)], {
         x: event.clientX,
@@ -225,7 +227,24 @@ export function WorkflowsPage() {
               </Button>
             )}
           </WorkspacePageHeader>
-          {away !== null ? (
+          {editing && fileEnvironmentId !== null ? (
+            <Suspense
+              fallback={
+                <p className="p-6 text-sm text-muted-foreground" role="status">
+                  <T>Loading the editor…</T>
+                </p>
+              }
+            >
+              <WorkflowDefinitionEditor
+                key={fileEnvironmentId}
+                environmentId={fileEnvironmentId}
+                file={search.file ?? null}
+                away={away}
+                onOpen={openDefinitions}
+                actions={fileActions}
+              />
+            </Suspense>
+          ) : away !== null ? (
             <WorkflowsEmpty
               title={gt("{name} is not connected", { name: away })}
               description={gt(
@@ -237,22 +256,6 @@ export function WorkflowsPage() {
               title={gt("No environment connected")}
               description={gt("Connect an environment to see its workflow runs.")}
             />
-          ) : editing ? (
-            <Suspense
-              fallback={
-                <p className="p-6 text-sm text-muted-foreground" role="status">
-                  <T>Loading the editor…</T>
-                </p>
-              }
-            >
-              <WorkflowDefinitionEditor
-                key={environmentId}
-                environmentId={environmentId}
-                file={search.file ?? null}
-                onOpen={openDefinitions}
-                actions={fileActions}
-              />
-            </Suspense>
           ) : (
             <WorkflowRunsView
               key={environmentId}

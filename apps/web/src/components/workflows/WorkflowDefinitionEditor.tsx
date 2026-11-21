@@ -90,6 +90,7 @@ function Surface({
   revision,
   onDisk,
   draft,
+  offline,
   onDelete,
   actions,
 }: {
@@ -102,6 +103,8 @@ function Surface({
   readonly onDisk: ReadonlyArray<WorkflowDefinitionProblem>;
   /** What a file that is not on disk yet starts as. */
   readonly draft?: string;
+  /** The environment is away: the draft stays, and nothing is sent until it is back. */
+  readonly offline: boolean;
   /** Take the file away. Absent where that cannot be done. */
   readonly onDelete?: (() => void) | undefined;
   /** Where in the page's header the file's status and its actions go. */
@@ -152,7 +155,7 @@ function Surface({
   const { ready: editable, onPostRender } = useEditableAfterHighlight(shown);
 
   const saveNow = async () => {
-    if (!dirty || saving || !canSave || edited === null) return;
+    if (!dirty || saving || offline || !canSave || edited === null) return;
     // Saving over a change on disk that was already shown is a choice. One that lands while this
     // save is out is not, and stays shown.
     const overwrote = staleAt;
@@ -204,13 +207,15 @@ function Surface({
       editorRef.current = null;
     },
   };
-  const status = saving
-    ? gt("Checking…")
-    : dirty
-      ? gt("Unsaved changes")
-      : savedOnce && problems.length === 0
-        ? gt("Saved and running")
-        : null;
+  const status = offline
+    ? gt("Not connected")
+    : saving
+      ? gt("Checking…")
+      : dirty
+        ? gt("Unsaved changes")
+        : savedOnce && problems.length === 0
+          ? gt("Saved and running")
+          : null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
@@ -219,15 +224,19 @@ function Surface({
         : createPortal(
             <>
               <span className="shrink-0 text-xs text-muted-foreground" role="status">
-                {canSave ? status : gt("Read-only")}
+                {canSave || offline ? status : gt("Read-only")}
               </span>
               {canSave && onDelete !== undefined ? (
-                <Button size="sm" variant="ghost" disabled={saving} onClick={onDelete}>
+                <Button size="sm" variant="ghost" disabled={saving || offline} onClick={onDelete}>
                   <T context="verb, delete the workflow file">Delete</T>
                 </Button>
               ) : null}
               {canSave ? (
-                <Button size="sm" disabled={!dirty || saving} onClick={() => void saveNow()}>
+                <Button
+                  size="sm"
+                  disabled={!dirty || saving || offline}
+                  onClick={() => void saveNow()}
+                >
                   <T context="verb, save the workflow file">Save</T>
                 </Button>
               ) : null}
@@ -270,7 +279,8 @@ function Surface({
         >
           <File
             file={shown}
-            edit={editable && canSave}
+            // A draft stays editable while the permission is briefly unknown, so it is not lost.
+            edit={editable && (canSave || dirty)}
             editorOptions={editorOptions}
             onEditChange={({ file }) => setEdited(file.contents)}
             options={{
@@ -307,11 +317,14 @@ workflow(
 export default function WorkflowDefinitionEditor({
   environmentId,
   file,
+  away,
   onOpen,
   actions,
 }: {
   readonly environmentId: EnvironmentId;
   readonly file: string | null;
+  /** The environment's name while it is not connected. */
+  readonly away: string | null;
   readonly onOpen: (file: string | null) => void;
   readonly actions: HTMLElement | null;
 }) {
@@ -329,12 +342,23 @@ export default function WorkflowDefinitionEditor({
   const [refusal, setRefusal] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
   // The last delete took the file away, though what runs may not have followed yet.
   const [deleted, setDeleted] = useState(false);
-  if (query.error) {
-    return (
-      <WorkflowsEmpty title={gt("Could not read the workflow files")} description={query.error} />
-    );
-  }
+  // Data already read stays on screen through a failed refresh or a dropped connection.
   if (!query.data) {
+    if (away !== null) {
+      return (
+        <WorkflowsEmpty
+          title={gt("{name} is not connected", { name: away })}
+          description={gt(
+            "Its workflows show again when it reconnects. Pick another environment to see its runs.",
+          )}
+        />
+      );
+    }
+    if (query.error) {
+      return (
+        <WorkflowsEmpty title={gt("Could not read the workflow files")} description={query.error} />
+      );
+    }
     return (
       <p className="p-6 text-sm text-muted-foreground" role="status">
         <T>Loading the workflow files…</T>
@@ -366,19 +390,35 @@ export default function WorkflowDefinitionEditor({
     setDeleted(result.value.changed);
     if (result.value.changed) onOpen(null);
   };
-  const between =
-    problems.length + refusal.length === 0 ? null : (
-      <ProblemList
-        title={
-          refusal.length > 0
-            ? deleted
-              ? gt("Deleted, but what runs has not caught up yet.")
-              : gt("Not deleted. Nothing changed on the server.")
-            : gt("These files do not fit together. What ran before keeps running.")
-        }
-        problems={refusal.length > 0 ? refusal : problems}
-      />
-    );
+  const between = (
+    <>
+      {away === null ? null : (
+        <div role="status" className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground">
+          {gt("{name} is not connected. What you write here stays, and saves once it is back.", {
+            name: away,
+          })}
+        </div>
+      )}
+      {query.error === null || away !== null ? null : (
+        <ProblemList
+          title={gt("Could not read the workflow files")}
+          problems={[{ message: query.error }]}
+        />
+      )}
+      {problems.length + refusal.length === 0 ? null : (
+        <ProblemList
+          title={
+            refusal.length > 0
+              ? deleted
+                ? gt("Deleted, but what runs has not caught up yet.")
+                : gt("Not deleted. Nothing changed on the server.")
+              : gt("These files do not fit together. What ran before keeps running.")
+          }
+          problems={refusal.length > 0 ? refusal : problems}
+        />
+      )}
+    </>
+  );
 
   if (file !== null) {
     const shown = files.find((candidate) => candidate.name === file) ?? null;
@@ -395,6 +435,7 @@ export default function WorkflowDefinitionEditor({
             revision={revision}
             onDisk={shown?.problems ?? []}
             {...(shown === null ? { draft: NEW_FILE } : {})}
+            offline={away !== null}
             onDelete={single || shown === null ? undefined : () => void removeFile(file)}
             actions={actions}
           />

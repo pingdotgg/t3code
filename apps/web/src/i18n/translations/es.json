@@ -12370,6 +12370,7 @@
   "6ef4db489e40e39e": "No se pudo guardar",
   "3dcedb736d20aae5": "No se pudieron leer los archivos de flujos de trabajo",
   "b09f4df8d76ae8ea": "¿Eliminar {file}? Los flujos de trabajo que define ya no se podrán iniciar.",
+  "b4535f5a03689d27": "{name} no está conectado. Lo que escribas aquí se conserva y se puede guardar en cuanto vuelva.",
   "b54c78d85fd942ea": "Eliminado, pero lo que se ejecuta aún no se ha actualizado.",
   "407c228d7da0b7df": "No se eliminó. No cambió nada en el servidor.",
   "1a6aa10f3cc14fff": "Estos archivos no encajan entre sí. Lo que se ejecutaba antes sigue en ejecución.",

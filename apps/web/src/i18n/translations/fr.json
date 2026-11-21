@@ -12375,6 +12375,7 @@
   "6ef4db489e40e39e": "Impossible d’enregistrer",
   "3dcedb736d20aae5": "Impossible de lire les fichiers de workflow",
   "b09f4df8d76ae8ea": "Supprimer {file} ? Les workflows qu’il définit ne pourront plus être démarrés.",
+  "b4535f5a03689d27": "{name} n’est pas connecté. Ce que vous écrivez ici est conservé et pourra être enregistré dès son retour.",
   "b54c78d85fd942ea": "Supprimé, mais ce qui s’exécute n’a pas encore suivi.",
   "407c228d7da0b7df": "Non supprimé. Rien n’a changé sur le serveur.",
   "1a6aa10f3cc14fff": "Ces fichiers ne sont pas cohérents entre eux. Ce qui s’exécutait avant continue de s’exécuter.",

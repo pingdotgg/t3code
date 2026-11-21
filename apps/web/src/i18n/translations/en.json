@@ -12385,6 +12385,7 @@
   "6ef4db489e40e39e": "Could not save",
   "3dcedb736d20aae5": "Could not read the workflow files",
   "b09f4df8d76ae8ea": "Delete {file}? The workflows it defines can no longer be started.",
+  "b4535f5a03689d27": "{name} is not connected. What you write here stays, and saves once it is back.",
   "b54c78d85fd942ea": "Deleted, but what runs has not caught up yet.",
   "407c228d7da0b7df": "Not deleted. Nothing changed on the server.",
   "1a6aa10f3cc14fff": "These files do not fit together. What ran before keeps running.",
