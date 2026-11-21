@@ -2,6 +2,7 @@ import {
   type WorkflowCounts,
   type WorkflowHook,
   WorkflowQuestion,
+  type WorkflowRunReference,
   type WorkflowRunsSnapshot,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -100,6 +101,7 @@ export class Workflows extends Context.Service<
       {
         readonly run: WorkflowStore.WorkflowRun;
         readonly steps: ReadonlyArray<WorkflowStore.WorkflowStep>;
+        readonly references: ReadonlyArray<WorkflowRunReference>;
       },
       WorkflowRunNotFoundError | WorkflowInputError
     >;

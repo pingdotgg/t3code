@@ -8,6 +8,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { checkOptions } from "./options.ts";
+import { stepReferences } from "./runReferences.ts";
 import {
   claim,
   type InRun,
@@ -134,6 +135,8 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
           runtimeMode: options.runtimeMode,
           interactionMode: options.interactionMode,
         };
+  // What the agent's thread touches, its issue and the pull requests it links, is this step's.
+  const touches = stepReferences(run.store, run.runId, name);
   const start = (key: string, prompt: string, thread: AgentThread | undefined) =>
     agents
       .start({
@@ -151,6 +154,7 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
         issue: options.issue,
       })
       .pipe(
+        Effect.provideContext(touches),
         Effect.tap((turn) =>
           run.store.stepThread(
             run.runId,
@@ -174,6 +178,7 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
     agents
       .result(turn, wait)
       .pipe(
+        Effect.provideContext(touches),
         onFailure === "pause"
           ? identity
           : Effect.catch((error) =>
