@@ -9,7 +9,7 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
+import { isTailscaleIpv4Address, readTailscaleStatusForDiscovery } from "@t3tools/tailscale";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -475,7 +475,7 @@ export const make = Effect.gen(function* () {
     capacity: 1,
     timeToLive: TAILSCALE_STATUS_CACHE_TTL,
     lookup: (_addresses: string) =>
-      readTailscaleStatus.pipe(
+      readTailscaleStatusForDiscovery.pipe(
         Effect.orElseSucceed(() => null),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       ),
