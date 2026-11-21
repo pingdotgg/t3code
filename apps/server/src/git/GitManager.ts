@@ -2063,6 +2063,26 @@ export const make = Effect.gen(function* () {
         parsedByNumber.set(pr.number, pr);
       }
     }
+    // A host that targets another repository (gh's upstream) misses a pull request opened
+    // inside the branch's own repository, such as one merged into a fork's default branch.
+    if (
+      parsedByNumber.size === 0 &&
+      headContext.isCrossRepository &&
+      headContext.headRepositoryNameWithOwner !== null &&
+      provider.createsChangeRequestsIn !== undefined
+    ) {
+      const sameRepository = { ...headContext, isCrossRepository: false };
+      const pullRequests = yield* provider.listChangeRequests({
+        cwd,
+        headSelector: headContext.headBranch,
+        state: "all",
+        limit: probe.limit,
+        repository: headContext.headRepositoryNameWithOwner,
+      });
+      for (const pr of pullRequests.map(toPullRequestInfo)) {
+        if (matchesBranchHeadContext(pr, sameRepository)) parsedByNumber.set(pr.number, pr);
+      }
+    }
 
     const parsed = Arr.sort(parsedByNumber.values(), pullRequestUpdatedAtDescOrder);
 
