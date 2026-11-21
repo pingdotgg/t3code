@@ -1,4 +1,5 @@
 import {
+  isDelegatedAppThread,
   IsoDateTime,
   MessageId,
   OrchestrationThreadSearchSource,
@@ -611,7 +612,12 @@ export const make = Effect.gen(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     // Agents call this rarely, and a project has hundreds of threads, not
     // millions, so ranking every active thread in memory stays cheap.
-    const candidates = yield* read(titleCandidates({ projectId: input.projectId ?? null }));
+    const threads = yield* read(titleCandidates({ projectId: input.projectId ?? null }));
+    // Like t3_thread_list, an agent's search leaves out tasks delegated from another environment.
+    const delegated = new Set(
+      threads.filter((row) => isDelegatedAppThread(row.thread)).map((row) => row.thread.id),
+    );
+    const candidates = threads.filter((row) => !delegated.has(row.thread.id));
     const subjectById = new Map(
       candidates.map((row): [ThreadId, ThreadSearchSubject] => [
         row.thread.id,
@@ -648,7 +654,7 @@ export const make = Effect.gen(function* () {
       query: input.query,
       limit: 50,
       projectId: input.projectId ?? null,
-      excludedThreadIds: shown,
+      excludedThreadIds: new Set([...shown, ...delegated]),
       picks: false,
     });
     const messageHits = matches

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   EventId,
   MessageId,
   type OrchestrationV2ThreadProjection,
@@ -190,6 +191,16 @@ describe("idleCompactionWindow", () => {
       lineage: { ...sideChat.thread.lineage, relationshipToParent: "fork", sideChat: true },
     };
     expect(idleCompactionWindow(sideChat, NOW_MS)).toBeNull();
+    const delegated = records(cache);
+    delegated.thread = {
+      ...delegated.thread,
+      delegatedFrom: {
+        environmentId: EnvironmentId.make("environment:lead"),
+        threadId: ThreadId.make("lead-thread"),
+        title: "Lead",
+      },
+    };
+    expect(idleCompactionWindow(delegated, NOW_MS)).toBeNull();
   });
 
   it("still compacts while a delegated child thread runs on its own", () => {

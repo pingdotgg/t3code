@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2DelegatedFrom,
   type OrchestrationV2DomainEvent,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -73,6 +74,7 @@ const thread = (
     readonly deletedAt?: DateTime.Utc;
     readonly subagentOf?: ThreadId;
     readonly sideChatOf?: ThreadId;
+    readonly delegatedFrom?: OrchestrationV2DelegatedFrom;
     readonly title?: string;
     readonly settledAt?: DateTime.Utc;
     readonly linkedPullRequest?: ThreadLinkedPullRequest;
@@ -113,6 +115,7 @@ const thread = (
             sideChat: true,
           }
         : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    ...(overrides.delegatedFrom === undefined ? {} : { delegatedFrom: overrides.delegatedFrom }),
     forkedFrom: null,
     createdAt: at(0),
     updatedAt: at(0),
@@ -1420,6 +1423,50 @@ it.layer(layerTest)("ThreadSearch.searchThreads", (it) => {
           (match) => match.title,
         ),
         ["Clean up auth tokens"],
+      );
+    }),
+  );
+
+  it.effect("leaves tasks delegated from another environment out of an agent's search", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:delegated");
+      const local = ThreadId.make("thread:osprey-local");
+      const delegated = ThreadId.make("thread:osprey-delegated");
+      const delegatedFrom = {
+        environmentId: EnvironmentId.make("environment:lead"),
+        threadId: ThreadId.make("thread:lead"),
+        title: "Lead",
+      };
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(local, project, { title: "Osprey nest" }),
+          thread(delegated, project, { title: "Osprey count", delegatedFrom }),
+          message(delegated, "osprey-delegated", "user", "osprey tally"),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      for (const query of ["osprey", "tally"]) {
+        assert.notInclude(
+          (yield* search.searchThreads({ query, projectId: project })).matches.map(
+            (match) => match.threadId,
+          ),
+          delegated,
+        );
+      }
+      assert.deepEqual(
+        (yield* search.searchThreads({ query: "osprey", projectId: project })).matches.map(
+          (match) => match.threadId,
+        ),
+        [local],
+      );
+      // The palette's message search still finds it.
+      assert.include(
+        (yield* search.search({ query: "tally" })).matches.map((match) => match.threadId),
+        delegated,
       );
     }),
   );

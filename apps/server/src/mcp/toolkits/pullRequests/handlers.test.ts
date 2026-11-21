@@ -295,22 +295,30 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
-  it.effect("asks a subagent thread to end with its PR report after it links", () =>
+  it.effect("asks a subagent or delegated thread to end with its PR report after it links", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        thread: {
-          ...makeThread([]),
+      for (const child of [
+        {
           lineage: {
             rootThreadId: ThreadId.make("parent"),
             parentThreadId: ThreadId.make("parent"),
-            relationshipToParent: "subagent",
+            relationshipToParent: "subagent" as const,
           },
         },
-      });
-      const result = yield* harness.call("link_pull_request", {
-        url: "https://github.com/t3tools/t3code/pull/124",
-      });
-      expect(result).toMatchObject({ number: 124, next: CHILD_PULL_REQUEST_REPORT_NEXT });
+        {
+          delegatedFrom: {
+            environmentId: EnvironmentId.make("environment:lead"),
+            threadId: ThreadId.make("parent"),
+            title: "Lead",
+          },
+        },
+      ]) {
+        const harness = yield* makeHarness({ thread: { ...makeThread([]), ...child } });
+        const result = yield* harness.call("link_pull_request", {
+          url: "https://github.com/t3tools/t3code/pull/124",
+        });
+        expect(result).toMatchObject({ number: 124, next: CHILD_PULL_REQUEST_REPORT_NEXT });
+      }
     }),
   );
 
