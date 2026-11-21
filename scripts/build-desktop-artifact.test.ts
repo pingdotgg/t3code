@@ -52,6 +52,8 @@ import {
   MacPackagedAppMissingError,
   stageBrowserSecret,
   validateLinuxPackagedPayload,
+  validateLinuxPackagedFiles,
+  LinuxPackagedPayloadValidationError,
   validateMacPackagedPayload,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
@@ -74,6 +76,8 @@ import {
 } from "./update-release-package-versions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+
+import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
 
 const encodeModuleUrl = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 const decodePackageVersion = Schema.decodeUnknownEffect(
@@ -240,6 +244,90 @@ const makePackagedAppFixture = Effect.fn("test.makePackagedAppFixture")(function
     createPackageWithOptions(sourceDir, path.join(resourcesDir, "app.asar"), {}),
   );
   return { stageDistDir } as const;
+});
+
+const linuxExecutables = [
+  "t3code",
+  "resources/resource-monitor/t3-resource-monitor",
+  "resources/kde-capture/t3-kde-snap-shot",
+  "resources/hyprland-capture/t3-hyprland-snap-shot",
+  "resources/browser-secret/t3-browser-secret",
+];
+const linuxAsarEntries = [
+  "package.json",
+  "apps/desktop/dist-electron/boot.cjs",
+  "apps/desktop/dist-electron/main.cjs",
+  "apps/desktop/dist-electron/preload.cjs",
+  "apps/server/dist/bin.mjs",
+  "apps/server/dist/client/index.html",
+];
+const linuxNativeEntries = (arch: "arm64" | "x64") => [
+  "node_modules/node-pty/build/Release/pty.node",
+  `node_modules/@napi-rs/keyring/keyring.linux-${arch}-gnu.node`,
+  `node_modules/@ff-labs/fff-bin-linux-${arch}-gnu/libfff_c.so`,
+];
+const linuxElfHeader = (arch: "arm64" | "x64") => {
+  const header = new Uint8Array(64);
+  header.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  header[18] = arch === "arm64" ? 183 : 62;
+  return header;
+};
+const makeLinuxPayloadFixture = Effect.fn("test.makeLinuxPayloadFixture")(function* (input: {
+  readonly arch: "arm64" | "x64";
+  readonly omitEntry?: string;
+  readonly serverEntrySource?: string;
+  readonly emptyEntry?: string;
+  readonly unpackNatives?: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-linux-payload-test-" });
+  const packagedAppDir = path.join(
+    root,
+    input.arch === "x64" ? "linux-unpacked" : "linux-arm64-unpacked",
+  );
+  const source = path.join(root, "source");
+  for (const entry of [
+    ...linuxAsarEntries,
+    ...linuxNativeEntries(input.arch),
+    "node_modules/extra/addon.node",
+  ]) {
+    if (entry === input.omitEntry) continue;
+    const filePath = path.join(source, entry);
+    yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+    yield* fs.writeFile(
+      filePath,
+      entry === input.emptyEntry
+        ? new Uint8Array()
+        : entry.startsWith("node_modules/")
+          ? linuxElfHeader(input.arch)
+          : new TextEncoder().encode(
+              entry === "apps/server/dist/bin.mjs"
+                ? (input.serverEntrySource ?? "console.log('1.2.3');")
+                : "{}",
+            ),
+    );
+  }
+  yield* fs.makeDirectory(path.join(packagedAppDir, "resources"), { recursive: true });
+  yield* Effect.promise(() =>
+    createPackageWithOptions(
+      source,
+      path.join(packagedAppDir, "resources/app.asar"),
+      input.unpackNatives === false ? {} : { unpack: "{**/*.node,**/*.so}" },
+    ),
+  );
+  for (const entry of linuxExecutables) {
+    const filePath = path.join(packagedAppDir, entry);
+    yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+    yield* fs.writeFile(filePath, linuxElfHeader(input.arch));
+    yield* fs.chmod(filePath, 0o755);
+  }
+  for (const entry of gnomeCaptureBundle.files) {
+    const filePath = path.join(packagedAppDir, "resources/gnome-extension", entry);
+    yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+    yield* fs.writeFileString(filePath, "{}");
+  }
+  return { stageDistDir: root, packagedAppDir };
 });
 
 it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
@@ -1509,14 +1597,131 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("validates static Linux payloads cross-host for both release architectures", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        for (const arch of ["arm64", "x64"] as const) {
+          const fixture = yield* makeLinuxPayloadFixture({
+            arch,
+            serverEntrySource: 'import "t3code-deliberately-missing-package";',
+          });
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fs.copy(
+            fixture.packagedAppDir,
+            path.join(fixture.stageDistDir, "linux-extra-unpacked"),
+          );
+          yield* validateLinuxPackagedFiles({
+            stageDistDir: fixture.stageDistDir,
+            targetArch: arch,
+          });
+        }
+      }),
+    ).pipe(Effect.provideService(HostProcess.Platform, "darwin")),
+  );
+
+  it.effect("rejects incomplete Linux payloads and invalid ELF files", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const fixture = yield* makeLinuxPayloadFixture({ arch: "arm64" });
+        const expectRejected = Effect.fn("test.expectLinuxPayloadRejected")(function* (
+          file: string,
+        ) {
+          const error = yield* validateLinuxPackagedFiles({
+            stageDistDir: fixture.stageDistDir,
+            targetArch: "arm64",
+          }).pipe(Effect.flip);
+          assert.instanceOf(error, LinuxPackagedPayloadValidationError);
+          assert.include(error.filePath, file);
+        });
+
+        for (const file of [
+          "resources/app.asar",
+          "resources/app.asar.unpacked/node_modules/extra/addon.node",
+          "resources/browser-secret/t3-browser-secret",
+          "resources/gnome-extension/extension.js",
+        ]) {
+          const filePath = path.join(fixture.packagedAppDir, file);
+          yield* fs.rename(filePath, `${filePath}.saved`);
+          yield* expectRejected(file);
+          yield* fs.rename(`${filePath}.saved`, filePath);
+        }
+
+        const nativePath = path.join(
+          fixture.packagedAppDir,
+          "resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node",
+        );
+        for (const bytes of [
+          new Uint8Array(),
+          new Uint8Array(64),
+          linuxElfHeader("arm64").with(4, 1),
+          linuxElfHeader("arm64").with(5, 2),
+          linuxElfHeader("x64"),
+        ]) {
+          yield* fs.writeFile(nativePath, bytes);
+          yield* expectRejected(nativePath);
+        }
+        yield* fs.writeFile(nativePath, linuxElfHeader("arm64"));
+
+        const helperPath = path.join(fixture.packagedAppDir, "t3code");
+        yield* fs.chmod(helperPath, 0o644);
+        yield* expectRejected(helperPath);
+        yield* fs.chmod(helperPath, 0o755);
+        yield* fs.writeFile(helperPath, linuxElfHeader("x64"));
+        yield* expectRejected(helperPath);
+        yield* fs.writeFile(helperPath, linuxElfHeader("arm64"));
+
+        const extraAppDir = path.join(fixture.stageDistDir, "linux-extra-unpacked");
+        yield* fs.copy(fixture.packagedAppDir, extraAppDir);
+        const extraHelper = path.join(extraAppDir, "resources/browser-secret/t3-browser-secret");
+        yield* fs.remove(extraHelper);
+        yield* expectRejected(extraHelper);
+
+        for (const fixtureInput of [
+          { omitEntry: "apps/server/dist/bin.mjs" },
+          { emptyEntry: "apps/desktop/dist-electron/main.cjs" },
+          { unpackNatives: false },
+        ]) {
+          const invalid = yield* makeLinuxPayloadFixture({ arch: "arm64", ...fixtureInput });
+          const error = yield* validateLinuxPackagedFiles({
+            stageDistDir: invalid.stageDistDir,
+            targetArch: "arm64",
+          }).pipe(Effect.flip);
+          assert.instanceOf(error, LinuxPackagedPayloadValidationError);
+          assert.include(
+            error.filePath,
+            fixtureInput.omitEntry ?? fixtureInput.emptyEntry ?? "pty.node",
+          );
+        }
+        const emptyStage = yield* fs.makeTempDirectoryScoped({ prefix: "t3-linux-empty-" });
+        const missing = yield* validateLinuxPackagedFiles({
+          stageDistDir: emptyStage,
+          targetArch: "arm64",
+        }).pipe(Effect.flip);
+        assert.instanceOf(missing, LinuxPackagedAppMissingError);
+      }),
+    ),
+  );
+
   it.effect("rejects a Linux app whose packaged server bundle cannot resolve", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const fixture = yield* makePackagedAppFixture({
           resourcesPath: "linux-arm64-unpacked/resources",
+        });
+        yield* validateLinuxPackagedPayload({ stageDistDir: fixture.stageDistDir });
+        const broken = yield* makePackagedAppFixture({
+          resourcesPath: "linux-unpacked/resources",
           serverEntrySource: 'import "t3code-deliberately-missing-package";\n',
         });
+        yield* fs.copy(
+          path.join(broken.stageDistDir, "linux-unpacked"),
+          path.join(fixture.stageDistDir, "linux-unpacked"),
+        );
         const error = yield* validateLinuxPackagedPayload({
           stageDistDir: fixture.stageDistDir,
         }).pipe(Effect.flip);
@@ -1528,6 +1733,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           Effect.flip,
         );
         assert.instanceOf(missing, LinuxPackagedAppMissingError);
+        yield* fs.makeDirectory(path.join(emptyStage, "linux-unpacked"));
+        const missingArchive = yield* validateLinuxPackagedPayload({
+          stageDistDir: emptyStage,
+        }).pipe(Effect.flip);
+        assert.instanceOf(missingArchive, BundleNotSelfContainedError);
       }),
     ),
   );
