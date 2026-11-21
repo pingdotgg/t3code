@@ -22,6 +22,7 @@ import {
   type MarkdownImageBlock,
   type MarkdownLinkOccurrence,
   type MarkdownStyle,
+  type TextSelectionMenuConfig,
 } from "react-native-enriched-markdown";
 import { codeFenceRenderer } from "./codeBlockMarkdown";
 import { HighlightedCodeBlock } from "./HighlightedCodeBlock";
@@ -190,6 +191,7 @@ function codeBlockElement(
   mathRenderingEnabled: boolean,
   scheme: HighlightScheme,
   accessibilityLabels: AccessibilityLabels,
+  selectionMenuConfig: TextSelectionMenuConfig,
 ): ReactElement | undefined {
   const renderer = codeFenceRenderer(block.language, mathRenderingEnabled);
   if (renderer.kind === "mermaid") {
@@ -210,6 +212,7 @@ function codeBlockElement(
         selectionColor={textStyle.selectionColor}
         selectionHandleColor={textStyle.selectionHandleColor}
         accessibilityLabels={accessibilityLabels}
+        selectionMenuConfig={selectionMenuConfig}
       />
     ) : undefined;
   }
@@ -250,6 +253,18 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         headings: gt("Headings", { $context: "screen reader rotor category" }),
         links: gt("Links", { $context: "screen reader rotor category" }),
         images: gt("Images", { $context: "screen reader rotor category" }),
+      },
+    }),
+    [gt],
+  );
+  // The library's built-in selection menu items default to English labels.
+  const selectionMenuConfig = useMemo<TextSelectionMenuConfig>(
+    () => ({
+      copy: { label: gt("Copy", { $context: "verb" }) },
+      copyAsMarkdown: { label: gt("Copy as Markdown") },
+      copyImageUrl: {
+        label: gt("Copy Image URL"),
+        pluralLabels: { other: gt("Copy {count} Image URLs", { count: "{count}" }) },
       },
     }),
     [gt],
@@ -415,6 +430,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         mathRenderingEnabled,
         themeAppearance,
         accessibilityLabels,
+        selectionMenuConfig,
       ),
   };
   const resolveNativeImageSource = useRetryingImageSource(resolveImageSource);
@@ -472,6 +488,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
               : undefined
           }
           selectionClipboard={selectionClipboard}
+          selectionMenuConfig={selectionMenuConfig}
           selectionColor={props.textStyle.selectionColor}
           selectionHandleColor={props.textStyle.selectionHandleColor}
           md4cFlags={{

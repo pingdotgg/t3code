@@ -283,6 +283,24 @@ describe("IssueService", () => {
         yield* enterprise.resolveUrl("https://code.acme.test/acme/web/issues/7"),
       ).toMatchObject({ projectId: "ghes", host: "code.acme.test", key: "7", writable: true });
 
+      // The same holds for a self-hosted Forgejo.
+      const forgejo = yield* makeService({
+        projects: [
+          project({
+            id: "forge",
+            repository: "acme/web",
+            provider: "forgejo",
+            host: "code.acme.test",
+          }),
+        ],
+        trackers: [fakeTracker({ kind: IssueTrackerKind.make("forgejo") })],
+      });
+      expect(yield* forgejo.resolveUrl("https://code.acme.test/acme/web/issues/7")).toMatchObject({
+        projectId: "forge",
+        host: "code.acme.test",
+        key: "7",
+      });
+
       // A fork lists its upstream's issues and its own, counted once, and may write to both.
       const fork = project({ id: "fork", repository: "acme/web" });
       const forked = yield* makeService({
@@ -681,7 +699,12 @@ describe("IssueService with a standalone tracker", () => {
         writable: false,
       });
       expect((yield* bound.projectScope("web" as ProjectId)).scope).toBe("ENG");
-      expect((yield* bound.projectScope("web" as ProjectId, "ops-12")).scope).toBe("OPS");
+      expect((yield* bound.projectScope("web" as ProjectId, { key: "ops-12" })).scope).toBe("OPS");
+      expect(yield* bound.projectScope("web" as ProjectId, { scope: "ACME/Web" })).toMatchObject({
+        tracker: GITHUB,
+        host: "github.com",
+        scope: "acme/web",
+      });
       expect(
         yield* bound.detail({
           projectId: "web" as ProjectId,
