@@ -770,6 +770,8 @@ it("revokes across windows even before the storage event and survives stale pref
   await using _screen = await render(<Probe />);
   await act(() => mocks.voice.start());
   expect(mocks.voice.state.phase).toBe("recording");
+  const settingsKey = "t3code:client-settings:v1";
+  const previousSettings = localStorage.getItem(settingsKey);
   const other = document.createElement("iframe");
   document.body.append(other);
   try {
@@ -797,6 +799,8 @@ it("revokes across windows even before the storage event and survives stale pref
     expect(canSend()).toBe(false);
   } finally {
     other.remove();
+    if (previousSettings === null) localStorage.removeItem(settingsKey);
+    else localStorage.setItem(settingsKey, previousSettings);
   }
 });
 
