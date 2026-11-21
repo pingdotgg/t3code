@@ -3700,7 +3700,7 @@
   "b725843fd45b74aa": "Autentiseringsuppgifter",
   "b239ba3ce2899a3e": "Eller använd dina egna autentiseringsuppgifter",
   "f0e6397ab4de588e": "Token",
-  "15ad0159a826b290": "Välj den {scope} i {tracker} vars ärenden varje projekt listar bredvid repots egna.",
+  "295392927d5c8a84": "Välj en eller flera {scope} i {tracker} för varje projekt. Deras ärenden listas bredvid repots egna, och agenter skapar nya ärenden i den första.",
   "ce2136b36f87b655": "Anslut den här miljön för att ändra dess inställningar.",
   "a90a441fd0e08de7": "Den här miljön",
   "32fb83554cfd85b4": "Transkriberingsmodeller",

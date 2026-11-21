@@ -1,4 +1,8 @@
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  boundIssueTrackerScopes,
+  issueTrackerBindingFor,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -219,22 +223,27 @@ export function IssueTrackerProjectRows(props: {
   });
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const [binding, setBinding] = useState<ProjectId | null>(null);
-  const change = async (projectId: ProjectId, scope: string) => {
+  const change = async (projectId: ProjectId, scopes: ReadonlyArray<string>) => {
     if (props.disabled || binding !== null) return;
     setBinding(projectId);
     await bind({
       environmentId,
       input: {
         projectId,
-        binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
+        binding: issueTrackerBindingFor(tracker.tracker, props.bindings[projectId], scopes),
       },
     });
     setBinding(null);
   };
   return projects.map((project) => {
-    const bound = props.bindings[project.id];
     // A project bound to another tracker keeps that binding; this row shows it unbound.
-    const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
+    const value = boundIssueTrackerScopes(tracker.tracker, props.bindings[project.id]);
+    const toggle = (key: string) =>
+      key === UNBOUND
+        ? []
+        : value.includes(key)
+          ? value.filter((scope) => scope !== key)
+          : [...value, key];
     const locked = props.disabled || binding !== null;
     return (
       <Menu
@@ -248,26 +257,28 @@ export function IssueTrackerProjectRows(props: {
           {
             id: UNBOUND,
             title: gt("Not bound"),
-            state: value === UNBOUND ? "on" : "off",
+            state: value.length === 0 ? "on" : "off",
             attributes: { disabled: locked },
           },
           ...tracker.scopes.map((scope) => ({
             id: scope.key,
             title: `${scope.name} (${scope.key})`,
-            state: scope.key === value ? ("on" as const) : ("off" as const),
+            state: value.includes(scope.key) ? ("on" as const) : ("off" as const),
             attributes: { disabled: locked },
           })),
         ]}
-        onPressAction={({ nativeEvent }) => void change(project.id, nativeEvent.event)}
+        onPressAction={({ nativeEvent }) => void change(project.id, toggle(nativeEvent.event))}
       >
         <SettingsRow
           icon="folder"
           label={project.title}
           valuePosition="trailing"
           value={
-            value === UNBOUND
+            value.length === 0
               ? gt("Not bound")
-              : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)
+              : value
+                  .map((key) => tracker.scopes.find((scope) => scope.key === key)?.name ?? key)
+                  .join(", ")
           }
           disabled={locked}
         />

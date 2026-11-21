@@ -196,7 +196,7 @@ export function SettingsIssueTrackerRouteScreen({
             <SettingsSection
               title={gt("Projects")}
               footer={gt(
-                "Pick the {tracker} {scope} whose issues each project lists beside its repository's own.",
+                "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one.",
                 { tracker: tracker.displayName, scope: tracker.scopeNoun },
               )}
             >

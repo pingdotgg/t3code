@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  boundIssueTrackerScopes,
+  issueTrackerBindingFor,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
@@ -34,11 +38,9 @@ const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
   linear: LinearIcon,
 };
 
-const UNBOUND = "";
-
 /**
  * Standalone issue trackers for one environment: connect each with a credential, and bind the
- * environment's projects to one of the tracker's scopes so their issues list beside the git
+ * environment's projects to the tracker's scopes so their issues list beside the git
  * host's. Generic over the trackers the server reports; nothing here names Linear but its icon.
  */
 export function IssueTrackerSettings({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -254,13 +256,13 @@ function ProjectBindings({
   const [pending, setPending] = useState<ProjectId | null>(null);
   if (projects.length === 0 || tracker.scopes.length === 0) return null;
 
-  const change = async (projectId: ProjectId, scope: string) => {
+  const change = async (projectId: ProjectId, scopes: ReadonlyArray<string>) => {
     setPending(projectId);
     await bind({
       environmentId,
       input: {
         projectId,
-        binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
+        binding: issueTrackerBindingFor(tracker.tracker, bindings[projectId], scopes),
       },
     });
     setPending(null);
@@ -271,25 +273,23 @@ function ProjectBindings({
       <SettingsRow
         title={gt("Projects")}
         description={gt(
-          "Pick the {tracker} {scope} whose issues each project lists beside its repository's own.",
+          "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one.",
           { tracker: tracker.displayName, scope: tracker.scopeNoun },
         )}
       />
       {projects.map((project) => {
-        const bound = bindings[project.id];
         // A project bound to another tracker keeps that binding; this picker shows it unbound.
-        const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
+        const value = boundIssueTrackerScopes(tracker.tracker, bindings[project.id]);
         return (
           <SettingsRow
             key={project.id}
             title={project.title}
             control={
               <Select
-                value={value}
+                multiple
+                value={[...value]}
                 disabled={pending === project.id}
-                onValueChange={(next) => {
-                  if (next !== null) void change(project.id, next);
-                }}
+                onValueChange={(next) => void change(project.id, next)}
               >
                 <SelectTrigger
                   aria-label={gt("{tracker} {scope} for {project}", {
@@ -301,15 +301,16 @@ function ProjectBindings({
                   size="sm"
                 >
                   <SelectValue>
-                    {value === UNBOUND
+                    {value.length === 0
                       ? gt("Not bound")
-                      : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)}
+                      : value
+                          .map(
+                            (key) => tracker.scopes.find((scope) => scope.key === key)?.name ?? key,
+                          )
+                          .join(", ")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  <SelectItem value={UNBOUND}>
-                    <T>Not bound</T>
-                  </SelectItem>
                   {tracker.scopes.map((scope) => (
                     <SelectItem key={scope.key} value={scope.key}>
                       {scope.name} ({scope.key})
