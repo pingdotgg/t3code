@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "{install}로 Origin CLI를 설치한 후 {login}을(를) 실행하세요.",
   "eb0f60ef4f92ab7d": "{fjUrl}에서 {fj} 0.6 이상을 설치하고 {fjLogin}을(를) 실행하거나, {teaUrl}에서 {tea} 0.16 이상을 설치하고 Forgejo 또는 Gitea 서버마다 {teaLogin}을(를) 실행하세요.",
   "d026a85e2e50e675": "{install}로 GitCafe CLI를 설치한 후 {login}을(를) 실행하거나, 설정에 토큰을 저장하거나, 서버에서 {variable}을(를) 설정하세요.",
+  "22d3c0c48a34b5b3": "{install}로 TanStack Source CLI를 설치한 후 {login}을(를) 실행하거나, 설정에 토큰을 저장하거나, 서버에서 {variable}을(를) 설정하세요.",
   "79d776428f4d0650": "파일을 불러올 수 없습니다. 다시 연결한 뒤 시도하세요.",
   "3ea34cbb1ca5ba9b": "미리 보기가 취소되었습니다.",
   "7c0af279ecb3da3a": "이 런타임에서는 스트리밍 파일 미리 보기를 사용할 수 없습니다.",

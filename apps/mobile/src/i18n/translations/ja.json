@@ -51,6 +51,7 @@
   "d810ecd91e8cf9d0": "{install} で Origin CLI をインストールしてから、{login} を実行してください。",
   "eb0f60ef4f92ab7d": "Forgejo または Gitea のサーバーごとに、{fjUrl} から {fj} 0.6 以降をインストールして {fjLogin} を実行するか、{teaUrl} から {tea} 0.16 以降をインストールして {teaLogin} を実行してください。",
   "d026a85e2e50e675": "{install} で GitCafe CLI をインストールしてから、{login} を実行するか、設定にトークンを保存するか、サーバーで {variable} を設定してください。",
+  "22d3c0c48a34b5b3": "{install} で TanStack Source CLI をインストールしてから、{login} を実行するか、設定にトークンを保存するか、サーバーで {variable} を設定してください。",
   "79d776428f4d0650": "ファイルを読み込めませんでした。再接続してもう一度お試しください。",
   "3ea34cbb1ca5ba9b": "プレビューをキャンセルしました。",
   "7c0af279ecb3da3a": "このランタイムではファイルのストリーミングプレビューを利用できません。",
