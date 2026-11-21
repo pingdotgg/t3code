@@ -1871,13 +1871,14 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 **Files.**
 
 - [ ] Edit `.github/workflows/agent-board.yml`, `apps/board/package.json`, `pnpm-lock.yaml`, and `apps/board/README.md`.
-- [ ] Create `apps/board/electron-builder.yml`.
+- [ ] Create `apps/board/electron-builder.yml`, `apps/board/scripts/release-notes.mjs`, and `apps/board/scripts/release-notes.test.mjs`.
 
 **Build.**
 
 - [ ] First find out why GitHub creates no Actions runs on `13kparkin/t3code` since 2026-11-20 22:24 UTC. The repo is public, Actions is enabled with all actions allowed, and `agent-board` is active, yet no pull request since has a run. Add `workflow_dispatch` to `agent-board.yml`, and dispatch it once on a branch. Record what GitHub does in the PR body. If GitHub still creates no run, stop and tell the operator what was checked, because the release job cannot work without runs.
 - [ ] Package the board with `electron-builder` at the version T3's `apps/desktop` already uses, 26.16.1, so the lockfile gains no new copy. `electron-builder.yml` builds two Windows x64 artifacts from `dist/` and `dist-electron/`: an NSIS installer `Agent-Board-Setup-<version>.exe` that adds a Start menu and desktop shortcut, and a portable `Agent-Board-<version>-win-x64.zip`. There is no code signing, so Windows SmartScreen warns on first run. There is no auto-update.
-- [ ] Add a `release` job to `agent-board.yml` that runs only on `workflow_dispatch`, with a `version` input such as `0.1.0`. It runs on `windows-latest`, runs the same gates as the `agent-board` job, builds, packages, and creates the GitHub release `board-v<version>` on the dispatched commit with `gh release create --generate-notes`. It attaches the installer, the zip, and `SHA256SUMS`. Only this job gets `contents: write`. A version whose tag exists fails before building.
+- [ ] Add a `release` job to `agent-board.yml` that runs only on `workflow_dispatch`, with a `version` input such as `0.1.0` and a `prerelease` checkbox. It runs on `windows-latest`, runs the same gates as the `agent-board` job, builds, packages, and creates the GitHub release `board-v<version>` on the dispatched commit. It attaches the installer, the zip, and `SHA256SUMS`. Only this job gets `contents: write`. A version whose tag exists fails before building.
+- [ ] Write release notes the way T3's `release.yml` does in its "Write release notes" step with `scripts/generate-release-notes.ts`: a short model summary on top of GitHub's full generated list. `release-notes.mjs` finds the previous `board-v*` tag, asks GitHub for its generated notes from that tag to this one through `gh api repos/{repo}/releases/generate-notes`, and reads each listed PR's title and body. It asks Claude Sonnet 5.5 at `medium` effort for a short summary of what changed for the operator, then writes `release-notes.md` as the summary followed by GitHub's list. The step uses the `ANTHROPIC_API_KEY` repo secret, and runs with `continue-on-error`, like T3's. With no secret, no previous tag, or a failed call, the release uses GitHub's generated notes alone. The first release has no previous tag, so its notes list everything up to it.
 - [ ] Turn off the upstream workflows that cannot run in this fork, such as T3's nightly `Release`, with `gh workflow disable`, because they need upstream's secrets and would fail on a schedule. This changes repo settings, not files. List each one in the PR body.
 - [ ] `README.md` says how to download and install a release, and how to cut one with `gh workflow run agent-board.yml -f version=<version>`.
 
@@ -1892,7 +1893,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Live lanes run the real workflow on the fork and install on this Windows machine. Each release made by a lane is a pre-release named `board-v0.0.<n>-test`, deleted at cleanup.
 
 - [ ] Lane 1. Dispatch `agent-board.yml` on the PR branch. Save `g1-dispatch.txt` with `gh run list` output. Pass when GitHub creates a run and the gates pass.
-- [ ] Lane 2. Dispatch the release job with a test version. Save `g1-release.txt` with `gh release view --json assets`. Pass when the release has the installer, the zip, and `SHA256SUMS`.
+- [ ] Lane 2. Dispatch the release job with a test version. Save `g1-release.txt` with `gh release view --json assets,body`. Pass when the release has the installer, the zip, and `SHA256SUMS`, and its body has the summary over GitHub's list when the secret is set, or GitHub's list alone when it is not.
 - [ ] Lane 3. Download both artifacts and check them against `SHA256SUMS`. Save `g1-sums.txt`. Pass when both match.
 - [ ] Lane 4. Run the installer on Windows. Save `g1-install.png`. Pass when the Start menu and desktop shortcuts exist.
 - [ ] Lane 5. Open the installed app from its desktop shortcut. Save `g1-launch.png`. Pass when the sidebar footer shows the engine connected, with no WSL command typed.
