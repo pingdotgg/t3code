@@ -3125,7 +3125,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           kind: "user" | "assistant" | "reasoning",
           completed: boolean,
           flushOf?: ActiveTextSegment,
-          phase?: "final_answer",
         ) {
           const stream = textStreamFor(context, kind);
           const segment = stream.current;
@@ -3241,7 +3240,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       messageId,
                       text,
                       streaming: !completed,
-                      ...(phase === undefined ? {} : { phase }),
+                      // A reply that ends after the prompt settled answers a background wake;
+                      // without the phase, the run's next reply folds it into "Worked for".
+                      ...(completed && context.promptSettled
+                        ? { phase: "final_answer" as const }
+                        : {}),
                     },
                   },
             );
@@ -3297,12 +3300,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const closeTextStream = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           kind: "user" | "assistant" | "reasoning",
-          phase?: "final_answer",
         ) {
           const stream = textStreamFor(context, kind);
           const segment = stream.current;
           if (segment === null) return;
-          yield* emitTextSegment(context, kind, true, undefined, phase);
+          yield* emitTextSegment(context, kind, true);
           if (segment.sourceMessageId !== null) {
             stream.closedNamedSegments.set(segment.sourceMessageId, segment);
           }
@@ -9161,10 +9163,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     !context.interrupted &&
                     hasDeferredBackgroundWork(context)
                   ) {
-                    yield* closeTextStream(context, "user");
-                    yield* closeTextStream(context, "reasoning");
-                    // The run stays open for the wake; its reply must not fold this answer away.
-                    yield* closeTextStream(context, "assistant", "final_answer");
+                    yield* closeTextStreams(context);
                     yield* (
                       options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
                     );
