@@ -561,14 +561,7 @@ export function BranchPickerScreen(props: {
           </Text>
           {!props.loading && props.error ? (
             <View className="self-center">
-              <Button
-                label={gt("Try again")}
-                tone="secondary"
-                onPress={() => {
-                  props.onRefresh();
-                  refreshPickerStatus();
-                }}
-              />
+              <Button label={gt("Try again")} tone="secondary" onPress={props.onRefresh} />
             </View>
           ) : null}
         </View>
