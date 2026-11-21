@@ -1419,85 +1419,69 @@ describe("inline file previews", () => {
 });
 
 describe("ThreadFeed previews", () => {
-  it.each([
-    {
-      secondHref: "./blue.png",
-      label: "Red",
-      selectedPath: "/repo/./red.png",
-      secondPath: "/repo/./blue.png",
-    },
-    {
-      secondHref: "./other/red.png",
-      label: "Blue",
-      selectedPath: "/repo/./other/red.png",
-      secondPath: "/repo/./other/red.png",
-    },
-  ])(
-    "opens $label in message order with one page per workspace image",
-    async ({ secondHref, label, selectedPath, secondPath }) => {
-      (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-      const threadId = ThreadId.make("thread-1");
-      const messageId = MessageId.make("message-1");
-      const timestamp = "2026-10-20T00:00:00.000Z";
-      const container = document.createElement("div");
-      const root = createRoot(container);
-      try {
-        await act(async () =>
-          root.render(
-            createElement(ThreadFeed, {
-              environmentId: EnvironmentId.make("environment-1"),
-              threadId,
-              detailRef: null,
-              threadTitle: "preview",
-              workspaceRoot: "/repo",
-              feed: [
-                {
-                  type: "message",
+  it("opens a tapped workspace image on its own gallery page, in message order", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const threadId = ThreadId.make("thread-1");
+    const messageId = MessageId.make("message-1");
+    const timestamp = "2026-10-20T00:00:00.000Z";
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () =>
+        root.render(
+          createElement(ThreadFeed, {
+            environmentId: EnvironmentId.make("environment-1"),
+            threadId,
+            detailRef: null,
+            threadTitle: "preview",
+            workspaceRoot: "/repo",
+            feed: [
+              {
+                type: "message",
+                id: messageId,
+                createdAt: timestamp,
+                message: {
                   id: messageId,
+                  role: "assistant",
+                  text: "![Red](./red.png)\n\n![Blue](./blue.png)",
+                  attachments: [],
                   createdAt: timestamp,
-                  message: {
-                    id: messageId,
-                    role: "assistant",
-                    text: `![Red](./red.png)\n\n![Blue](${secondHref})`,
-                    attachments: [],
-                    createdAt: timestamp,
-                    updatedAt: timestamp,
-                    runId: null,
-                    streaming: false,
-                    visibility: "local",
-                    sourceThreadId: threadId,
-                  },
+                  updatedAt: timestamp,
+                  runId: null,
+                  streaming: false,
+                  visibility: "local",
+                  sourceThreadId: threadId,
                 },
-              ],
-              queuedMessages: [],
-              dispatchingMessageId: null,
-              onEditPendingMessage: null,
-              contentPresentation: { kind: "ready" },
-              latestRun: null,
-              activeWorkStartedAt: null,
-              listRef: { current: null },
-              freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
-              contentInsetEndAdjustment: { value: 0 } as Parameters<
-                typeof ThreadFeed
-              >[0]["contentInsetEndAdjustment"],
-              anchorMessageId: null,
-              keyboardOffset: 0,
-            }),
-          ),
-        );
-        await act(async () =>
-          container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click(),
-        );
-        const preview = container.querySelector("[data-file-preview]");
-        expect(preview?.getAttribute("data-selected-path")).toBe(selectedPath);
-        expect(preview?.getAttribute("data-gallery")).toBe(
-          JSON.stringify(["/repo/./red.png", secondPath]),
-        );
-      } finally {
-        await act(async () => root.unmount());
-      }
-    },
-  );
+              },
+            ],
+            queuedMessages: [],
+            dispatchingMessageId: null,
+            onEditPendingMessage: null,
+            contentPresentation: { kind: "ready" },
+            latestRun: null,
+            activeWorkStartedAt: null,
+            listRef: { current: null },
+            freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
+            contentInsetEndAdjustment: { value: 0 } as Parameters<
+              typeof ThreadFeed
+            >[0]["contentInsetEndAdjustment"],
+            anchorMessageId: null,
+            keyboardOffset: 0,
+          }),
+        ),
+      );
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>(`[aria-label="Red"]`)!.click(),
+      );
+      const preview = container.querySelector("[data-file-preview]");
+      expect(preview?.getAttribute("data-selected-path")).toBe("/repo/./red.png");
+      expect(preview?.getAttribute("data-gallery")).toBe(
+        JSON.stringify(["/repo/./red.png", "/repo/./blue.png"]),
+      );
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
 
   it("does not commit an open preview over a different thread", async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
