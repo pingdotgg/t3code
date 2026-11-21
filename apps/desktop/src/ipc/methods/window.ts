@@ -555,6 +555,45 @@ export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const windowDragAnchors = new WeakMap<Electron.BrowserWindow, { x: number; y: number }>();
+
+// A drag region takes the whole press, so a surface that also needs the click moves the window
+// from the page instead: `start` records where the cursor holds the window, `move` follows it.
+export const dragWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.DRAG_WINDOW_CHANNEL,
+  payload: Schema.Literals(["start", "move"]),
+  result: Schema.Boolean,
+  // Untraced: `move` arrives once per pointer event, inside the invoke span.
+  handler: Effect.fnUntraced(function* (phase, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const main = yield* electronWindow.main;
+    if (
+      event === undefined ||
+      Option.isNone(main) ||
+      main.value.isDestroyed() ||
+      main.value.webContents.id !== event.sender.id
+    ) {
+      return false;
+    }
+    const window = main.value;
+    const cursor = Electron.screen.getCursorScreenPoint();
+    if (phase === "start") {
+      // A fullscreen or maximized window stays put; restoring it by a drag is the OS's own gesture.
+      if (window.isFullScreen() || window.isMaximized()) {
+        windowDragAnchors.delete(window);
+        return false;
+      }
+      const [x = 0, y = 0] = window.getPosition();
+      windowDragAnchors.set(window, { x: cursor.x - x, y: cursor.y - y });
+      return true;
+    }
+    const anchor = windowDragAnchors.get(window);
+    if (anchor === undefined) return false;
+    window.setPosition(cursor.x - anchor.x, cursor.y - anchor.y);
+    return true;
+  }),
+});
+
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
 
 export const pickThemeFiles = DesktopIpc.makeIpcMethod({
