@@ -19,7 +19,9 @@ import {
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
+import { Kbd } from "../ui/kbd";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { isCiteSelectionShortcut } from "./composerFocusRedirect";
 
 export function AssistantSelectionToolbar({
   viewport,
@@ -147,31 +149,34 @@ export function AssistantSelectionToolbar({
       onDismiss: clear,
     });
     actionsRef.current = actions;
-    const focusActions = (event: KeyboardEvent) => {
+    const handleShortcut = (event: KeyboardEvent) => {
       const toolbar = toolbarRef.current;
       if (
-        event.key !== "Tab" ||
-        event.shiftKey ||
+        !toolbar ||
+        toolbar.disabled ||
         event.altKey ||
         event.ctrlKey ||
         event.metaKey ||
         event.isComposing ||
-        event.defaultPrevented ||
-        !toolbar ||
-        toolbar.contains(event.target as Node)
+        event.defaultPrevented
       ) {
         return;
       }
-      if (toolbar.disabled) return;
-      event.preventDefault();
-      event.stopPropagation();
-      toolbar.focus({ preventScroll: true });
+      if (event.key === "Tab" && !event.shiftKey && !toolbar.contains(event.target as Node)) {
+        event.preventDefault();
+        event.stopPropagation();
+        toolbar.focus({ preventScroll: true });
+      } else if (isCiteSelectionShortcut(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        toolbar.click();
+      }
     };
-    // Tab belongs to the foreground chat; a background timeline only follows its selection.
-    if (!backgroundThread) document.addEventListener("keydown", focusActions, true);
+    // Tab and R belong to the foreground chat; a background timeline only follows its selection.
+    if (!backgroundThread) document.addEventListener("keydown", handleShortcut, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
     return () => {
-      document.removeEventListener("keydown", focusActions, true);
+      document.removeEventListener("keydown", handleShortcut, true);
       document.removeEventListener("selectionchange", actions.selectionChanged);
       actions.dispose();
       actionsRef.current = null;
@@ -180,6 +185,7 @@ export function AssistantSelectionToolbar({
 
   if (!selection) return null;
   const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
+  const shortcut = !tooLong && !backgroundThread;
   const dismiss = () => {
     actionsRef.current?.cancel();
     setSelection(null);
@@ -198,6 +204,8 @@ export function AssistantSelectionToolbar({
       variant="glass"
       disabled={tooLong}
       aria-label={tooLong ? gt("Selection is too long to cite") : gt("Cite selection in composer")}
+      aria-keyshortcuts={shortcut ? "R" : undefined}
+      data-cite-selection-action={shortcut ? "" : undefined}
       className="fixed z-50 max-w-[calc(100vw-1rem)]"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
@@ -214,6 +222,7 @@ export function AssistantSelectionToolbar({
       {tooLong
         ? gt("Shorten selection")
         : gt("Cite", { $context: "verb, button that quotes the selected text" })}
+      {shortcut ? <Kbd>R</Kbd> : null}
     </Button>,
     document.body,
   );
