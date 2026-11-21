@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type { HttpClient } from "effect/http";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import {
   applyCommandOutputFrame,
@@ -36,6 +36,8 @@ import * as ManagedRelayDpopSigner from "../relay/managedRelay.ts";
 import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
+
+const ARCHIVE_REFRESH_QUIET_MS = 500;
 
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
@@ -242,11 +244,16 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       label: "environment-data:orchestration:archived-shell-snapshot",
       tag: ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
       // The shell reports archiving a thread, and deleting or changing an archived one, as a removal,
-      // and replaces `removedAt` on each one.
+      // and replaces `removedAt` on each one. Waits for removals to go quiet: one server change can
+      // touch hundreds of archived threads, and each reload reads the whole archive.
       refreshTrigger: ({ environmentId }) => {
         if (shellState === undefined) return undefined;
         const state = shellState(environmentId);
-        return Atom.make((get) => get(state).removedAt);
+        const removedAt = Atom.make((get) => get(state).removedAt);
+        const settled = runtime.atom((get) =>
+          Effect.as(Effect.sleep(ARCHIVE_REFRESH_QUIET_MS), get(removedAt)),
+        );
+        return Atom.make((get) => AsyncResult.getOrElse(get(settled), () => get.once(removedAt)));
       },
     }),
     threadFamily: createEnvironmentRpcQueryAtomFamily(runtime, {
