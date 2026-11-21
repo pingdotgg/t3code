@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import { isSlashCommand } from "@t3tools/shared/composerTrigger";
 import {
   isAttachmentOnlyBootstrapPrompt,
   replaceComposerContextReferences,
@@ -323,14 +324,20 @@ export function QueuedRunsControl({
                               ? gt("Skip compaction and send this message ({shortcut})", {
                                   shortcut: props.steerShortcutLabel,
                                 })
-                              : gt("Send into the current turn ({shortcut})", {
-                                  shortcut: props.steerShortcutLabel,
-                                })
+                              : isSlashCommand(item)
+                                ? gt("Move this command to the front of the queue ({shortcut})", {
+                                    shortcut: props.steerShortcutLabel,
+                                  })
+                                : gt("Send into the current turn ({shortcut})", {
+                                    shortcut: props.steerShortcutLabel,
+                                  })
                           : workflow?.canSendNow
                             ? gt("Start a turn with this message")
                             : workflow?.promoteSkipsCompaction
                               ? gt("Skip compaction and send this message")
-                              : gt("Send into the current turn")}
+                              : isSlashCommand(item)
+                                ? gt("Move this command to the front of the queue")
+                                : gt("Send into the current turn")}
                       </TooltipPopup>
                     </Tooltip>
                   </>

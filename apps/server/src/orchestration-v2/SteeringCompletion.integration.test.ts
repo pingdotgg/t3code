@@ -946,6 +946,7 @@ it.effect.each(
         const edited = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
           (candidate) => candidate.userMessageId === MessageId.make("message:edited-steer"),
         )!;
+        assert.equal(edited.steerWhenReadyRunId, run.id);
         yield* orchestrator.dispatch({
           type: "queued-run.edit",
           commandId: CommandId.make("edit-steer-to-compact"),
@@ -953,6 +954,11 @@ it.effect.each(
           runId: edited.id,
           text: "/compact",
         });
+        const compact = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.id === edited.id,
+        )!;
+        assert.isUndefined(compact.steerWhenReadyRunId);
+        assert.equal(compact.queuePosition, edited.queuePosition);
       }
       if (direct) {
         yield* orchestrator.dispatch({
