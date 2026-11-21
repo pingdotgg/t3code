@@ -11,9 +11,9 @@ export const Route = createFileRoute("/_chat/settings/secrets")({
 function SecretsSettingsRoute() {
   const enabled = useHasSecretProvidersEnvironment();
   // Only redirect once every environment reported flags; one may enable them after another loads.
-  const allReported = useEnvironments().environments.every(
-    (environment) => environment.serverConfig !== null,
-  );
+  const { isReady, environments } = useEnvironments();
+  const allReported =
+    isReady && environments.every((environment) => environment.serverConfig !== null);
   if (!enabled && allReported) return <Navigate to="/settings/general" replace />;
   return <SecretsSettingsPanel />;
 }
