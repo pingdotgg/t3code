@@ -120,12 +120,12 @@ function DiffWorkerReady({ failed, children }: { failed: boolean; children?: Rea
 /** A null pool is one whose worker died: its views render plain text instead of waiting. */
 export function useDiffWorkerPoolReady(
   workerPool: WorkerPoolManager | null | undefined,
-  failed = workerPool === null,
+  failed?: boolean,
 ) {
   const [readyPool, setReadyPool] = useState<WorkerPoolManager>();
   const ready = workerPool
     ? readyPool === workerPool || workerPool.isInitialized() || !workerPool.isWorkingPool()
-    : failed || typeof window === "undefined";
+    : (failed ?? workerPool === null) || typeof window === "undefined";
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- initializes the diff worker pool and marks it ready when its async startup settles
   useEffect(() => {
