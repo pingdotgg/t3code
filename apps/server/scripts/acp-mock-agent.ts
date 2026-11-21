@@ -107,6 +107,7 @@ const supportsAcpMcp = process.env.T3_ACP_MCP_ACP === "1";
 const supportsHttpMcp = process.env.T3_ACP_MCP_HTTP === "1";
 const supportsV2Management = process.env.T3_ACP_V2_MANAGEMENT === "1";
 const failDeleteSession = process.env.T3_ACP_FAIL_DELETE_SESSION === "1";
+const legacyTerminalAuth = process.env.T3_ACP_LEGACY_TERMINAL_AUTH === "1";
 const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
 const initializeAuthMethodId =
   advertisedAuthMethodId ?? (supportsSessionLifecycle ? "test" : undefined);
@@ -551,6 +552,17 @@ const program = Effect.gen(function* () {
         );
       }
       parameterizedModelPicker = request.capabilities?._meta?.parameterizedModelPicker === true;
+      const legacyTerminalMethods: AcpSchema.AuthMethod[] =
+        legacyTerminalAuth && request.capabilities?._meta?.["terminal-auth"] === true
+          ? [
+              {
+                type: "agent",
+                methodId: "legacy-login",
+                name: "Terminal login",
+                _meta: { "terminal-auth": { command: "mock-agent-login", args: ["login"] } },
+              },
+            ]
+          : [];
       return {
         protocolVersion: 2,
         info: { name: "t3-acp-mock-agent", version: agentVersion },
@@ -570,14 +582,19 @@ const program = Effect.gen(function* () {
           },
           ...(supportsV2Management ? { providers: {} } : {}),
         },
-        ...(initializeAuthMethodId
+        ...(initializeAuthMethodId || legacyTerminalAuth
           ? {
               authMethods: [
-                {
-                  type: "agent" as const,
-                  methodId: initializeAuthMethodId,
-                  name: "Mock agent authentication",
-                },
+                ...(initializeAuthMethodId
+                  ? [
+                      {
+                        type: "agent" as const,
+                        methodId: initializeAuthMethodId,
+                        name: "Mock agent authentication",
+                      },
+                    ]
+                  : []),
+                ...legacyTerminalMethods,
               ],
             }
           : {}),
