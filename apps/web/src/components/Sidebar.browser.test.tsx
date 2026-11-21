@@ -362,7 +362,9 @@ describe("sidebar thread rename", () => {
       await expect.element(input).toHaveFocus();
     } else {
       // A collapsed sidebar is inert, which hides its content from role queries.
-      expect(document.querySelector('input[aria-label="Thread title"]')).toBeNull();
+      await vi.waitFor(() =>
+        expect(document.querySelector('input[aria-label="Thread title"]')).toBeNull(),
+      );
     }
     if (opens) {
       await vi.waitFor(() => expect(screen.router?.history.location.pathname).toBe(opens));
