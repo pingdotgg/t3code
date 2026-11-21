@@ -478,7 +478,7 @@ export function useComposerStash(input: {
   const restoreStashEntryStable = useStableCallback(restoreStashEntry);
 
   const deleteStashEntry = (entry: PromptStashEntry) => {
-    const { entry: removed, durable } = takeStashEntry(entry.id);
+    const { entry: removed, durable } = takeStashEntry(entry.id, "delete");
     if (!stashQueue.some((candidate) => candidate.id !== entry.id)) {
       setIsStashMenuOpen(false);
     }
