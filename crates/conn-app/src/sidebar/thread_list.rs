@@ -130,6 +130,13 @@ pub(crate) fn render_thread_sidebar(
         .flex_shrink_0()
         .pl(px(SIDEBAR_TOGGLE_LEFT_OFFSET_PX))
         .window_control_area(WindowControlArea::Drag)
+        .on_mouse_down(MouseButton::Left, |event, window, _| {
+            if event.click_count == 2 {
+                window.zoom_window();
+            } else {
+                window.start_window_move();
+            }
+        })
         .child(
             div()
                 .id("sidebar-collapse-btn")
@@ -140,6 +147,7 @@ pub(crate) fn render_thread_sidebar(
                 .rounded(px(ROW_RADIUS_PX))
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover_bg))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|app, _event, _window, cx| {
                     app.toggle_sidebar(cx);
                 }))

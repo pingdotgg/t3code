@@ -19,8 +19,8 @@ use conn_state::{RightPanelTab, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    Context, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
-    Styled as _, WindowControlArea, div, px,
+    Context, InteractiveElement as _, MouseButton, MouseDownEvent, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, WindowControlArea, div, px,
 };
 
 use crate::app::ConnApp;
@@ -136,7 +136,14 @@ pub(crate) fn render_workspace_rail(
                 .w_full()
                 .h(px(geometry.header_height_px))
                 .flex_shrink_0()
-                .window_control_area(WindowControlArea::Drag),
+                .window_control_area(WindowControlArea::Drag)
+                .on_mouse_down(MouseButton::Left, |event: &MouseDownEvent, window, _| {
+                    if event.click_count == 2 {
+                        window.zoom_window();
+                    } else {
+                        window.start_window_move();
+                    }
+                }),
         )
         // Main workspace tiles column: "All projects" + saved workspaces (none yet) + "+".
         .child(

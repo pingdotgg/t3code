@@ -260,7 +260,10 @@ pub(crate) fn render_panel_header(
             })
             .on_mouse_down(MouseButton::Left, {
                 let tab = tab.clone();
-                move |_, window, cx| on_select(tab.clone(), window, cx)
+                move |_, window, cx| {
+                    cx.stop_propagation();
+                    on_select(tab.clone(), window, cx);
+                }
             })
             .on_mouse_down(MouseButton::Middle, {
                 let tab = tab.clone();
@@ -370,6 +373,13 @@ pub(crate) fn render_panel_header(
         .items_center()
         .gap(px(4.0))
         .window_control_area(WindowControlArea::Drag)
+        .on_mouse_down(MouseButton::Left, |event, window, _| {
+            if event.click_count == 2 {
+                window.zoom_window();
+            } else {
+                window.start_window_move();
+            }
+        })
         .child(left_strip)
         .child(right_controls)
 }
@@ -396,6 +406,7 @@ fn header_icon_toggle(
         .when(pressed, |el| el.bg(highlight))
         .hover(move |s| s.bg(highlight))
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            cx.stop_propagation();
             on_press(window, cx);
         })
         .child(superhero_icon(icon_path, HEADER_ICON_PX, icon_color))

@@ -22,8 +22,8 @@ use conn_state::{LayoutState, RightPanelTab, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    Context, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
-    Styled as _, WindowControlArea, div, px,
+    Context, InteractiveElement as _, MouseButton, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, WindowControlArea, div, px,
 };
 
 use crate::app::ConnApp;
@@ -97,6 +97,7 @@ pub(crate) fn render_chat_header(
                 .rounded(px(SIDEBAR_TOGGLE_RADIUS_PX))
                 .cursor_pointer()
                 .hover(move |s| s.bg(sidebar_hover_bg))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|app, _event, _window, cx| {
                     app.toggle_sidebar(cx);
                 }))
@@ -217,6 +218,13 @@ pub(crate) fn render_chat_header(
         .pl(left_pad)
         .pr(px(geometry.workspace_controls_right_px))
         .window_control_area(WindowControlArea::Drag)
+        .on_mouse_down(MouseButton::Left, |event, window, _| {
+            if event.click_count == 2 {
+                window.zoom_window();
+            } else {
+                window.start_window_move();
+            }
+        })
         .child(left_group)
         .child(right_group)
 }
@@ -248,6 +256,7 @@ fn header_ghost_toggle(
         .rounded(px(9999.0))
         .cursor_pointer()
         .hover(move |s| s.bg(hover_bg))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(on_click)
         .child(icons::concept(icon_path, icons::CHROME_ICON_PX, icon_color));
 
