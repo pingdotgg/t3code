@@ -26,8 +26,6 @@ const renderHandoffGoals = (goals: ReadonlyArray<HandoffGoal>): string =>
           goal.tokensUsed === undefined ? null : `Tokens used: ${goal.tokensUsed}.`,
           goal.tokenBudget == null ? null : `Token budget: ${goal.tokenBudget}.`,
           goal.timeUsedSeconds === undefined ? null : `Time used: ${goal.timeUsedSeconds}s.`,
-          goal.checks === undefined ? null : `Checks: ${goal.checks}.`,
-          goal.lastCheck === undefined ? null : `Last check: ${goal.lastCheck}`,
         ]
           .filter((part) => part !== null)
           .join(" "),
