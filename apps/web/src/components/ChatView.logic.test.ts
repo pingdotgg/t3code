@@ -22,6 +22,7 @@ import {
   isThreadEnvironmentLocked,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
+  threadErrorIsServerRuntime,
 } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
@@ -1321,6 +1322,7 @@ describe("planComposerTurn", () => {
     sendEnvMode: "worktree" as const,
     worktreePath: null,
     activeThreadBranch: "main",
+    isScratchProject: false,
     resumeCompactionTokens: null,
     keepFullHistory: false,
     phase: "ready" as const,
@@ -1339,6 +1341,12 @@ describe("planComposerTurn", () => {
   it("refuses a new worktree without a base branch", () => {
     expect(planComposerTurn({ ...base, activeThreadBranch: null })).toMatchObject({
       missingWorktreeBaseBranch: true,
+      baseBranchForWorktree: null,
+    });
+    expect(
+      planComposerTurn({ ...base, activeThreadBranch: null, isScratchProject: true }),
+    ).toMatchObject({
+      missingWorktreeBaseBranch: false,
       baseBranchForWorktree: null,
     });
   });
@@ -1631,5 +1639,41 @@ describe("prepareRevertedMessageAttachments", () => {
     ]);
     expect(store.addImages(target, repeat)).toEqual([]);
     expect(store.getComposerDraft(target)?.images.map(({ id }) => id)).toEqual(["restored"]);
+  });
+});
+
+describe("threadErrorIsServerRuntime", () => {
+  it("is true for a server thread's runtime error, and for a local copy of that same error", () => {
+    expect(
+      threadErrorIsServerRuntime({
+        isServerThread: true,
+        localServerError: null,
+        runtimeError: "E",
+      }),
+    ).toBe(true);
+    expect(
+      threadErrorIsServerRuntime({
+        isServerThread: true,
+        localServerError: "E",
+        runtimeError: "E",
+      }),
+    ).toBe(true);
+  });
+
+  it("is false for a local error that differs from the runtime error, and for draft threads", () => {
+    expect(
+      threadErrorIsServerRuntime({
+        isServerThread: true,
+        localServerError: "E2",
+        runtimeError: "E",
+      }),
+    ).toBe(false);
+    expect(
+      threadErrorIsServerRuntime({
+        isServerThread: false,
+        localServerError: null,
+        runtimeError: "E",
+      }),
+    ).toBe(false);
   });
 });
