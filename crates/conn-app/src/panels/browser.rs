@@ -1,28 +1,36 @@
 //! Browser right-panel surface with Conn's ToolbarGroup navigation controls,
-//! soft pill URL bar, and optional CEF-on-demand embedded Chromium view.
+//! soft pill URL bar, and optional CEF-on-demand offscreen-rendered Chromium view.
 
 #[cfg(feature = "cef")]
 use std::cell::{Cell, RefCell};
-#[cfg(feature = "cef")]
-use std::ffi::c_void;
 use std::fmt;
 #[cfg(feature = "cef")]
 use std::rc::Rc;
+#[cfg(feature = "cef")]
+use std::sync::Arc;
 #[cfg(feature = "cef")]
 use std::time::Duration;
 
 use conn_theme::Tokens;
 #[cfg(feature = "cef")]
-use conn_web::{BrowserView, Rect as WebRect, WebError, WebRuntime, WebRuntimeState};
+use conn_web::{
+    BrowserView, CursorKind, EditCommand, KeyEvent as WebKeyEvent, KeyEventKind,
+    Modifiers as WebModifiers, MouseButton as WebMouseButton, Rect as WebRect, WebError,
+    WebRuntime, WebRuntimeState,
+};
 #[cfg(feature = "cef")]
 use futures::StreamExt as _;
-#[cfg(feature = "cef")]
-use gpui_kit::canvas;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window, div, px,
+};
+#[cfg(feature = "cef")]
+use gpui_kit::{
+    Corners, CursorStyle, FocusHandle, KeyDownEvent, KeyUpEvent, Modifiers as GpuiModifiers,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, RenderImage,
+    ScrollDelta, ScrollEvent, Task, canvas,
 };
 
 use super::color::to_hsla;
@@ -39,6 +47,8 @@ const TOOLBAR_BUTTON_SIZE_PX: f32 = 24.0;
 const NAV_ICON_SIZE_PX: f32 = 14.0;
 const DEFAULT_URL_ENV: &str = "CONN_GPUI_BROWSER_URL";
 const DEFAULT_FALLBACK_URL: &str = "about:blank";
+#[cfg(feature = "cef")]
+const SCROLL_LINE_PX: f32 = 40.0;
 
 #[cfg(feature = "cef")]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -57,7 +67,7 @@ enum InstallUpdate {
 }
 
 /// Browser right-panel surface with navigation toolbar, soft URL field, and
-/// optional on-demand CEF child `NSView` (when compiled with feature `cef`).
+/// optional on-demand CEF offscreen-rendered view (when compiled with feature `cef`).
 pub(crate) struct BrowserPanel {
     tokens: Tokens,
     url_input: Entity<InputState>,
@@ -68,21 +78,27 @@ pub(crate) struct BrowserPanel {
     #[cfg(feature = "cef")]
     phase: RuntimePhase,
     #[cfg(feature = "cef")]
+    focus_handle: FocusHandle,
+    #[cfg(feature = "cef")]
     view: Rc<RefCell<Option<BrowserView>>>,
+    #[cfg(feature = "cef")]
+    rendered_frame: Option<(u64, Arc<RenderImage>)>,
+    #[cfg(feature = "cef")]
+    wake_task: Option<Task<()>>,
     #[cfg(feature = "cef")]
     last_bounds: Rc<Cell<Option<WebRect>>>,
     #[cfg(feature = "cef")]
-    parent_view: Rc<Cell<Option<usize>>>,
+    last_scale: Rc<Cell<f32>>,
     #[cfg(feature = "cef")]
     creating_view: Rc<Cell<bool>>,
-    /// Whether the shell shows this panel (right panel open, Browser tab active, no GPUI
-    /// overlay on top). The native view is hidden whenever this is false.
+    /// Whether the shell shows this panel (right panel open, Browser tab active).
+    /// When false, CEF is marked hidden so it stops painting.
     #[cfg(feature = "cef")]
     visible: Rc<Cell<bool>>,
-    /// Bounds last sent to the native view, so AppKit only hears about real changes.
+    /// Size and scale last sent to CEF (`(width_px, height_px, scale_bits)`).
     #[cfg(feature = "cef")]
-    applied_bounds: Rc<Cell<Option<WebRect>>>,
-    /// Hidden state last sent to the native view.
+    applied_size: Rc<Cell<Option<(i32, i32, u32)>>>,
+    /// Hidden state last sent to CEF.
     #[cfg(feature = "cef")]
     applied_hidden: Rc<Cell<Option<bool>>>,
 }
@@ -122,13 +138,20 @@ impl BrowserPanel {
         ));
 
         #[cfg(feature = "cef")]
-        let view: Rc<RefCell<Option<BrowserView>>> = Rc::new(RefCell::new(None));
+        let focus_handle = cx.focus_handle();
         #[cfg(feature = "cef")]
-        let last_bounds = Rc::new(Cell::new(None));
-        #[cfg(feature = "cef")]
-        let parent_view = Rc::new(Cell::new(native_ns_view(window).map(|p| p as usize)));
-        #[cfg(feature = "cef")]
-        let creating_view = Rc::new(Cell::new(false));
+        {
+            subscriptions.push(cx.on_focus(&focus_handle, window, |this, _window, _cx| {
+                if let Some(view) = this.view.borrow().as_ref() {
+                    view.set_focus(true);
+                }
+            }));
+            subscriptions.push(cx.on_blur(&focus_handle, window, |this, _window, _cx| {
+                if let Some(view) = this.view.borrow().as_ref() {
+                    view.set_focus(false);
+                }
+            }));
+        }
 
         Self {
             tokens,
@@ -139,35 +162,36 @@ impl BrowserPanel {
             #[cfg(feature = "cef")]
             phase: initial_phase(),
             #[cfg(feature = "cef")]
-            view,
+            focus_handle,
+            #[cfg(feature = "cef")]
+            view: Rc::new(RefCell::new(None)),
+            #[cfg(feature = "cef")]
+            rendered_frame: None,
+            #[cfg(feature = "cef")]
+            wake_task: None,
+            #[cfg(feature = "cef")]
+            last_bounds: Rc::new(Cell::new(None)),
+            #[cfg(feature = "cef")]
+            last_scale: Rc::new(Cell::new(window.scale_factor().max(1.0))),
+            #[cfg(feature = "cef")]
+            creating_view: Rc::new(Cell::new(false)),
             #[cfg(feature = "cef")]
             visible: Rc::new(Cell::new(false)),
             #[cfg(feature = "cef")]
-            applied_bounds: Rc::new(Cell::new(None)),
+            applied_size: Rc::new(Cell::new(None)),
             #[cfg(feature = "cef")]
             applied_hidden: Rc::new(Cell::new(None)),
-            #[cfg(feature = "cef")]
-            last_bounds,
-            #[cfg(feature = "cef")]
-            parent_view,
-            #[cfg(feature = "cef")]
-            creating_view,
         }
     }
 
-    /// Shows or hides the native browser view. The shell calls this whenever the right
-    /// panel opens or closes, the tab changes, or a GPUI overlay covers the panel.
+    /// Shows or hides the browser panel. When hidden, CEF stops painting; when
+    /// shown again, painting resumes without reloading.
     pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<'_, Self>) {
         #[cfg(feature = "cef")]
         {
             if self.visible.get() != visible {
                 self.visible.set(visible);
-                // Hide at once (the panel is going away), but show only from the panel's
-                // own paint, so the native page appears in the same frame as its toolbar
-                // instead of a frame early over another panel.
-                if !visible {
-                    apply_hidden(&self.view, &self.applied_hidden, true);
-                }
+                apply_hidden(&self.view, &self.applied_hidden, !visible);
                 cx.notify();
             }
         }
@@ -209,9 +233,8 @@ impl BrowserPanel {
                 "target": self.url,
                 "url": view.as_ref().map(BrowserView::url),
                 "title": view.as_ref().map(BrowserView::title),
-                "parent": self.parent_view.get().is_some(),
                 "visible": self.visible.get(),
-                "nativeHidden": self.applied_hidden.get(),
+                "frameGeneration": view.as_ref().map(BrowserView::frame_generation),
                 "bounds": self.last_bounds.get().map(|b| [b.x, b.y, b.width, b.height]),
             })
         }
@@ -308,7 +331,9 @@ impl BrowserPanel {
     fn ensure_runtime_and_load(&mut self, cx: &mut Context<'_, Self>) {
         if let Some(view) = self.view.borrow().as_ref() {
             view.load_url(&self.url);
-            view.set_hidden(false);
+            if self.visible.get() {
+                apply_hidden(&self.view, &self.applied_hidden, false);
+            }
             cx.notify();
             return;
         }
@@ -444,9 +469,6 @@ impl BrowserPanel {
         if self.view.borrow().is_some() || self.creating_view.get() {
             return;
         }
-        let Some(parent_ptr) = self.parent_view.get() else {
-            return;
-        };
         let Some(bounds) = self.last_bounds.get() else {
             return;
         };
@@ -459,35 +481,45 @@ impl BrowserPanel {
         let view_slot = self.view.clone();
         let creating_flag = self.creating_view.clone();
         let last_bounds = self.last_bounds.clone();
+        let last_scale = self.last_scale.clone();
+        let visible = self.visible.clone();
+        let applied_hidden = self.applied_hidden.clone();
         let entity = cx.entity().downgrade();
 
-        // Defer BrowserView creation until after GPUI finishes the current frame,
-        // matching Threadbear's `web_panels.rs` pattern.
+        // Defer BrowserView creation until after GPUI finishes the current frame.
         cx.defer(move |cx| {
             creating_flag.set(false);
             if view_slot.borrow().is_some() {
                 return;
             }
             let rect = last_bounds.get().unwrap_or(bounds);
-            let result = BrowserView::create(parent_ptr as *mut c_void, rect, &url);
+            let scale = last_scale.get().max(1.0);
+            let result = BrowserView::create(rect, scale, &url);
             match result {
                 Ok(browser_view) => {
-                    let (load_tx, mut load_rx) = futures::channel::mpsc::unbounded::<()>();
-                    browser_view.on_load_end(move |_loaded_url, _status| {
-                        let _ = load_tx.unbounded_send(());
-                    });
+                    // Bounded channel (capacity 1) coalesces frame bursts into a
+                    // single GPUI repaint with no busy loop when the page is idle.
+                    let (wake_tx, mut wake_rx) = tokio::sync::mpsc::channel::<()>(1);
+                    let wake_cb = move || {
+                        let _ = wake_tx.try_send(());
+                    };
+                    browser_view.on_frame(wake_cb);
+
+                    let hidden = !visible.get();
+                    browser_view.set_hidden(hidden);
+                    applied_hidden.set(Some(hidden));
+
                     *view_slot.borrow_mut() = Some(browser_view);
                     if let Some(panel) = entity.upgrade() {
                         panel.update(cx, |panel, cx| {
                             panel.phase = RuntimePhase::Running;
-                            cx.spawn(async move |this, cx| {
-                                while load_rx.next().await.is_some() {
+                            panel.wake_task = Some(cx.spawn(async move |this, cx| {
+                                while wake_rx.recv().await.is_some() {
                                     if this.update(cx, |_panel, cx| cx.notify()).is_err() {
                                         break;
                                     }
                                 }
-                            })
-                            .detach();
+                            }));
                             cx.notify();
                         });
                     }
@@ -502,6 +534,256 @@ impl BrowserPanel {
                 }
             }
         });
+    }
+
+    /// Pulls a new BGRA frame from CEF only when `frame_generation` advances,
+    /// keeping the previous frame on screen across navigations so there is no
+    /// blank flash or fade.
+    #[cfg(feature = "cef")]
+    fn refresh_frame(&mut self, cx: &mut Context<'_, Self>) {
+        let last_gen = self
+            .rendered_frame
+            .as_ref()
+            .map_or(0, |(generation, _)| *generation);
+        let snapshot = {
+            let guard = self.view.borrow();
+            let Some(view) = guard.as_ref() else {
+                return;
+            };
+            view.frame_if_newer(last_gen)
+        };
+        let Some(snapshot) = snapshot else {
+            return;
+        };
+        // GPUI's `RenderImage` stores premultiplied 32-bit BGRA pixels directly
+        // inside `image::RgbaImage`, matching CEF's `on_paint` buffer format.
+        let Some(buffer) =
+            image::RgbaImage::from_raw(snapshot.width, snapshot.height, snapshot.bgra)
+        else {
+            return;
+        };
+        let new_image = Arc::new(RenderImage::new(vec![image::Frame::new(buffer)]));
+        let previous = self
+            .rendered_frame
+            .replace((snapshot.generation, new_image));
+        if let Some((_, old_image)) = previous {
+            cx.defer(move |cx| cx.drop_image(old_image, None));
+        }
+    }
+
+    #[cfg(feature = "cef")]
+    fn local_coords(&self, position: Point<Pixels>) -> Option<(i32, i32)> {
+        let bounds = self.last_bounds.get()?;
+        let x = (f32::from(position.x) - bounds.x).round() as i32;
+        let y = (f32::from(position.y) - bounds.y).round() as i32;
+        Some((x.max(0), y.max(0)))
+    }
+
+    #[cfg(feature = "cef")]
+    fn handle_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        window.focus(&self.focus_handle, cx);
+        let Some((x, y)) = self.local_coords(event.position) else {
+            return;
+        };
+        let Some(button) = map_mouse_button(event.button) else {
+            return;
+        };
+        if let Some(view) = self.view.borrow().as_ref() {
+            view.set_focus(true);
+            let click_count = i32::try_from(event.click_count).unwrap_or(1).max(1);
+            view.send_mouse_down(
+                x,
+                y,
+                button,
+                click_count,
+                map_modifiers(event.modifiers, Some(event.button), false),
+            );
+        }
+    }
+
+    #[cfg(feature = "cef")]
+    fn handle_mouse_up(&mut self, event: &MouseUpEvent) {
+        let Some((x, y)) = self.local_coords(event.position) else {
+            return;
+        };
+        let Some(button) = map_mouse_button(event.button) else {
+            return;
+        };
+        if let Some(view) = self.view.borrow().as_ref() {
+            let click_count = i32::try_from(event.click_count).unwrap_or(1).max(1);
+            view.send_mouse_up(
+                x,
+                y,
+                button,
+                click_count,
+                map_modifiers(event.modifiers, None, false),
+            );
+        }
+    }
+
+    #[cfg(feature = "cef")]
+    fn handle_mouse_move(&mut self, event: &MouseMoveEvent) {
+        let Some((x, y)) = self.local_coords(event.position) else {
+            return;
+        };
+        if let Some(view) = self.view.borrow().as_ref() {
+            view.send_mouse_move(
+                x,
+                y,
+                map_modifiers(event.modifiers, event.pressed_button, false),
+                false,
+            );
+        }
+    }
+
+    #[cfg(feature = "cef")]
+    fn handle_scroll(&mut self, event: &ScrollEvent) {
+        let Some((x, y)) = self.local_coords(event.position) else {
+            return;
+        };
+        let (dx, dy) = match event.delta {
+            ScrollDelta::Pixels(p) => {
+                (f32::from(p.x).round() as i32, f32::from(p.y).round() as i32)
+            }
+            ScrollDelta::Lines(l) => (
+                (l.x * SCROLL_LINE_PX).round() as i32,
+                (l.y * SCROLL_LINE_PX).round() as i32,
+            ),
+        };
+        if dx == 0 && dy == 0 {
+            return;
+        }
+        if let Some(view) = self.view.borrow().as_ref() {
+            view.send_mouse_wheel(x, y, dx, dy, map_modifiers(event.modifiers, None, false));
+        }
+    }
+
+    #[cfg(feature = "cef")]
+    fn handle_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
+        let guard = self.view.borrow();
+        let Some(view) = guard.as_ref() else {
+            return;
+        };
+
+        let ks = &event.keystroke;
+        let mods = map_modifiers(ks.modifiers, None, event.is_held);
+
+        // Dispatch standard macOS Cmd+edit shortcuts directly to the focused frame.
+        if ks.modifiers.platform && !ks.modifiers.control && !ks.modifiers.alt {
+            let cmd = match ks.key.as_str() {
+                "c" => Some(EditCommand::Copy),
+                "x" => Some(EditCommand::Cut),
+                "v" => Some(EditCommand::Paste),
+                "a" => Some(EditCommand::SelectAll),
+                "z" if ks.modifiers.shift => Some(EditCommand::Redo),
+                "z" => Some(EditCommand::Undo),
+                _ => None,
+            };
+            if let Some(edit_cmd) = cmd {
+                view.execute_edit_command(edit_cmd);
+                cx.stop_propagation();
+                return;
+            }
+        }
+
+        let windows_key_code = gpui_key_to_windows_vk(&ks.key);
+        let first_char = ks
+            .key_char
+            .as_deref()
+            .and_then(|s| s.encode_utf16().next())
+            .unwrap_or(0);
+        let unmodified_char = ks.key.encode_utf16().next().unwrap_or(0);
+
+        view.send_key_event(WebKeyEvent {
+            kind: KeyEventKind::RawKeyDown,
+            windows_key_code,
+            native_key_code: 0,
+            character: first_char,
+            unmodified_character: unmodified_char,
+            modifiers: mods,
+            is_system_key: ks.modifiers.alt,
+        });
+
+        if !ks.modifiers.platform && !ks.modifiers.control {
+            if ks.key == "enter" {
+                view.send_key_event(WebKeyEvent {
+                    kind: KeyEventKind::Char,
+                    windows_key_code: 0x0D,
+                    native_key_code: 0,
+                    character: u16::from(b'\r'),
+                    unmodified_character: u16::from(b'\r'),
+                    modifiers: mods,
+                    is_system_key: false,
+                });
+            } else if let Some(text) = ks.key_char.as_deref() {
+                for unit in text.encode_utf16() {
+                    if unit >= 0x20 {
+                        view.send_key_event(WebKeyEvent {
+                            kind: KeyEventKind::Char,
+                            windows_key_code: i32::from(unit),
+                            native_key_code: 0,
+                            character: unit,
+                            unmodified_character: unit,
+                            modifiers: mods,
+                            is_system_key: false,
+                        });
+                    }
+                }
+            }
+        }
+
+        cx.stop_propagation();
+    }
+
+    #[cfg(feature = "cef")]
+    fn handle_key_up(
+        &mut self,
+        event: &KeyUpEvent,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if !self.focus_handle.is_focused(window) {
+            return;
+        }
+        let guard = self.view.borrow();
+        let Some(view) = guard.as_ref() else {
+            return;
+        };
+
+        let ks = &event.keystroke;
+        let mods = map_modifiers(ks.modifiers, None, false);
+        let windows_key_code = gpui_key_to_windows_vk(&ks.key);
+        let first_char = ks
+            .key_char
+            .as_deref()
+            .and_then(|s| s.encode_utf16().next())
+            .unwrap_or(0);
+        let unmodified_char = ks.key.encode_utf16().next().unwrap_or(0);
+
+        view.send_key_event(WebKeyEvent {
+            kind: KeyEventKind::KeyUp,
+            windows_key_code,
+            native_key_code: 0,
+            character: first_char,
+            unmodified_character: unmodified_char,
+            modifiers: mods,
+            is_system_key: ks.modifiers.alt,
+        });
+
+        cx.stop_propagation();
     }
 
     fn render_nav_toolbar_group(&self, cx: &mut Context<'_, Self>) -> gpui_kit::Div {
@@ -596,6 +878,7 @@ impl Render for BrowserPanel {
             self.url_input
                 .update(cx, |input, cx| input.set_value(current_url, window, cx));
         }
+
         let field_bg = to_hsla(self.tokens.shell_field);
         let field_border = to_hsla(self.tokens.shell_divider_header);
         let divider = to_hsla(self.tokens.shell_divider);
@@ -606,10 +889,19 @@ impl Render for BrowserPanel {
 
         #[cfg(feature = "cef")]
         let body = {
-            if let Some(ns_view) = native_ns_view(window) {
-                self.parent_view.set(Some(ns_view as usize));
+            self.last_scale.set(window.scale_factor().max(1.0));
+            if self.visible.get() {
+                self.refresh_frame(cx);
             }
+
             let has_view = self.view.borrow().is_some();
+            let cursor_style = self
+                .view
+                .borrow()
+                .as_ref()
+                .map_or(CursorStyle::Arrow, |v| map_cursor_style(v.cursor()));
+            let current_image = self.rendered_frame.as_ref().map(|(_, img)| img.clone());
+
             let status_message = match &self.phase {
                 RuntimePhase::Downloading(pct) => Some(format!("Downloading Chromium… {pct}%")),
                 RuntimePhase::Starting => Some("Starting Chromium…".to_owned()),
@@ -622,19 +914,17 @@ impl Render for BrowserPanel {
 
             let view_for_prepaint = self.view.clone();
             let last_bounds = self.last_bounds.clone();
-            let parent_view = self.parent_view.clone();
+            let last_scale = self.last_scale.clone();
             let should_create = matches!(self.phase, RuntimePhase::Running) && !has_view;
             let entity = cx.entity().downgrade();
-
             let visible = self.visible.clone();
-            let applied_bounds = self.applied_bounds.clone();
+            let applied_size = self.applied_size.clone();
             let applied_hidden = self.applied_hidden.clone();
 
-            let host_canvas = canvas(
+            let page_canvas = canvas(
                 move |bounds, window, cx| {
-                    if let Some(ns_view) = native_ns_view(window) {
-                        parent_view.set(Some(ns_view as usize));
-                    }
+                    let scale = window.scale_factor().max(1.0);
+                    last_scale.set(scale);
                     let rect = WebRect {
                         x: f32::from(bounds.origin.x),
                         y: f32::from(bounds.origin.y),
@@ -643,14 +933,19 @@ impl Render for BrowserPanel {
                     };
                     last_bounds.set(Some(rect));
 
-                    // `BrowserView::set_bounds` converts top-left logical points to AppKit's
-                    // flipped coordinate space inside `conn_view_set_frame`.
                     if view_for_prepaint.borrow().is_some() {
                         let usable = rect.width >= 1.0 && rect.height >= 1.0;
-                        if usable && applied_bounds.get() != Some(rect) {
-                            applied_bounds.set(Some(rect));
-                            if let Some(view) = view_for_prepaint.borrow().as_ref() {
-                                view.set_bounds(rect);
+                        if usable {
+                            let size_key = (
+                                rect.width.round() as i32,
+                                rect.height.round() as i32,
+                                scale.to_bits(),
+                            );
+                            if applied_size.get() != Some(size_key) {
+                                applied_size.set(Some(size_key));
+                                if let Some(view) = view_for_prepaint.borrow().as_ref() {
+                                    view.set_size(rect.width, rect.height, scale);
+                                }
                             }
                         }
                         apply_hidden(
@@ -661,17 +956,82 @@ impl Render for BrowserPanel {
                     } else if should_create && let Some(panel) = entity.upgrade() {
                         panel.update(cx, |panel, cx| panel.maybe_create_view_deferred(cx));
                     }
+                    bounds
                 },
-                |_, _, _, _| {},
+                move |bounds, _, window, _cx| {
+                    if let Some(image) = current_image.as_ref() {
+                        let _ = window.paint_image(
+                            bounds,
+                            bounds,
+                            Corners::default(),
+                            image.clone(),
+                            0,
+                            false,
+                        );
+                    }
+                },
             )
             .size_full();
 
             let mut container = div()
+                .id("browser-page-viewport")
                 .relative()
                 .flex_1()
                 .min_h_0()
                 .w_full()
-                .child(host_canvas);
+                .overflow_hidden()
+                .track_focus(&self.focus_handle)
+                .cursor(cursor_style)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        this.handle_mouse_down(event, window, cx);
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        this.handle_mouse_down(event, window, cx);
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Middle,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        this.handle_mouse_down(event, window, cx);
+                    }),
+                )
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseUpEvent, _window, _cx| {
+                        this.handle_mouse_up(event);
+                    }),
+                )
+                .on_mouse_up(
+                    MouseButton::Right,
+                    cx.listener(|this, event: &MouseUpEvent, _window, _cx| {
+                        this.handle_mouse_up(event);
+                    }),
+                )
+                .on_mouse_up(
+                    MouseButton::Middle,
+                    cx.listener(|this, event: &MouseUpEvent, _window, _cx| {
+                        this.handle_mouse_up(event);
+                    }),
+                )
+                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, _cx| {
+                    this.handle_mouse_move(event);
+                }))
+                .on_scroll(cx.listener(|this, event: &ScrollEvent, _window, _cx| {
+                    this.handle_scroll(event);
+                }))
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    this.handle_key_down(event, window, cx);
+                }))
+                .on_key_up(cx.listener(|this, event: &KeyUpEvent, window, cx| {
+                    this.handle_key_up(event, window, cx);
+                }))
+                .child(page_canvas);
+
             if let Some(message) = status_message {
                 container = container.child(
                     v_flex()
@@ -807,25 +1167,7 @@ fn initial_phase() -> RuntimePhase {
     }
 }
 
-#[cfg(feature = "cef")]
-fn native_ns_view(window: &Window) -> Option<*mut c_void> {
-    #[cfg(target_os = "macos")]
-    {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let handle = HasWindowHandle::window_handle(window).ok()?;
-        match handle.as_raw() {
-            RawWindowHandle::AppKit(h) => Some(h.ns_view.as_ptr()),
-            _ => None,
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = window;
-        None
-    }
-}
-
-/// Sends the hidden state to the native view only when it changes.
+/// Sends the hidden state to CEF only when it changes.
 #[cfg(feature = "cef")]
 fn apply_hidden(
     view: &Rc<RefCell<Option<BrowserView>>>,
@@ -838,5 +1180,110 @@ fn apply_hidden(
     if let Some(view) = view.borrow().as_ref() {
         view.set_hidden(hidden);
         applied.set(Some(hidden));
+    }
+}
+
+#[cfg(feature = "cef")]
+fn map_mouse_button(button: MouseButton) -> Option<WebMouseButton> {
+    match button {
+        MouseButton::Left => Some(WebMouseButton::Left),
+        MouseButton::Middle => Some(WebMouseButton::Middle),
+        MouseButton::Right => Some(WebMouseButton::Right),
+        MouseButton::Navigate(_) => None,
+    }
+}
+
+#[cfg(feature = "cef")]
+fn map_modifiers(
+    modifiers: GpuiModifiers,
+    pressed_button: Option<MouseButton>,
+    is_repeat: bool,
+) -> WebModifiers {
+    WebModifiers {
+        shift: modifiers.shift,
+        control: modifiers.control,
+        alt: modifiers.alt,
+        command: modifiers.platform,
+        left_button: pressed_button == Some(MouseButton::Left),
+        middle_button: pressed_button == Some(MouseButton::Middle),
+        right_button: pressed_button == Some(MouseButton::Right),
+        is_repeat,
+    }
+}
+
+#[cfg(feature = "cef")]
+fn map_cursor_style(kind: CursorKind) -> CursorStyle {
+    match kind {
+        CursorKind::Default | CursorKind::Wait => CursorStyle::Arrow,
+        CursorKind::Pointer => CursorStyle::PointingHand,
+        CursorKind::Text => CursorStyle::IBeam,
+        CursorKind::Crosshair => CursorStyle::Crosshair,
+        CursorKind::Move | CursorKind::Grab => CursorStyle::OpenHand,
+        CursorKind::Grabbing => CursorStyle::ClosedHand,
+        CursorKind::NotAllowed => CursorStyle::OperationNotAllowed,
+        CursorKind::ResizeEW => CursorStyle::ResizeLeftRight,
+        CursorKind::ResizeNS => CursorStyle::ResizeUpDown,
+        CursorKind::ResizeNESW => CursorStyle::ResizeUpLeftDownRight,
+        CursorKind::ResizeNWSE => CursorStyle::ResizeUpRightDownLeft,
+        CursorKind::ResizeCol => CursorStyle::ResizeColumn,
+        CursorKind::ResizeRow => CursorStyle::ResizeRow,
+        CursorKind::VerticalText => CursorStyle::IBeamCursorForVerticalLayout,
+        CursorKind::ContextMenu => CursorStyle::ContextualMenu,
+        CursorKind::Alias => CursorStyle::DragLink,
+        CursorKind::Copy => CursorStyle::DragCopy,
+    }
+}
+
+#[cfg(feature = "cef")]
+fn gpui_key_to_windows_vk(key: &str) -> i32 {
+    match key {
+        "backspace" => 0x08,
+        "tab" => 0x09,
+        "enter" => 0x0D,
+        "escape" => 0x1B,
+        "space" | " " => 0x20,
+        "pageup" => 0x21,
+        "pagedown" => 0x22,
+        "end" => 0x23,
+        "home" => 0x24,
+        "left" => 0x25,
+        "up" => 0x26,
+        "right" => 0x27,
+        "down" => 0x28,
+        "insert" => 0x2D,
+        "delete" => 0x2E,
+        "f1" => 0x70,
+        "f2" => 0x71,
+        "f3" => 0x72,
+        "f4" => 0x73,
+        "f5" => 0x74,
+        "f6" => 0x75,
+        "f7" => 0x76,
+        "f8" => 0x77,
+        "f9" => 0x78,
+        "f10" => 0x79,
+        "f11" => 0x7A,
+        "f12" => 0x7B,
+        ";" => 0xBA,
+        "=" => 0xBB,
+        "," => 0xBC,
+        "-" => 0xBD,
+        "." => 0xBE,
+        "/" => 0xBF,
+        "`" => 0xC0,
+        "[" => 0xDB,
+        "\\" => 0xDC,
+        "]" => 0xDD,
+        "'" => 0xDE,
+        other => {
+            let mut chars = other.chars();
+            match (chars.next(), chars.next()) {
+                (Some(ch), None) if ch.is_ascii_alphabetic() => {
+                    i32::from(ch.to_ascii_uppercase() as u8)
+                }
+                (Some(ch), None) if ch.is_ascii_digit() => i32::from(ch as u8),
+                _ => 0,
+            }
+        }
     }
 }

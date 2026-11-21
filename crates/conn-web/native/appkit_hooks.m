@@ -3,7 +3,6 @@
 // Ghostex's `GpuiCefAppKitHooks.m`, MIT licensed).
 #import <AppKit/AppKit.h>
 #import <CoreFoundation/CoreFoundation.h>
-#import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #include <stdbool.h>
 
@@ -103,97 +102,19 @@ void conn_cef_start_message_loop(void) {
   CFRunLoopWakeUp(CFRunLoopGetMain());
 }
 
-// Pins Chromium's flipped autoresizing CALayers to their parent's exact bounds
-// to prevent sub-pixel drift across resizes.
-static void conn_pin_flipped_layers(CALayer *layer, int depth) {
-  for (CALayer *sub in layer.sublayers) {
-    CAAutoresizingMask sizable = kCALayerWidthSizable | kCALayerHeightSizable;
-    if (sub.geometryFlipped && (sub.autoresizingMask & sizable) == sizable &&
-        !CGRectEqualToRect(sub.frame, layer.bounds)) {
-      sub.frame = layer.bounds;
-    }
-    if (depth < 6) {
-      conn_pin_flipped_layers(sub, depth + 1);
-    }
-  }
-}
-
-static void conn_pin_page_layers(NSView *view) {
-  if (!view.layer) {
-    return;
-  }
-  [CATransaction begin];
-  [CATransaction setDisableActions:YES];
-  conn_pin_flipped_layers(view.layer, 0);
-  [CATransaction commit];
-}
-
-void conn_view_set_frame(void *nativeView, double x, double y, double width, double height) {
-  NSView *view = (__bridge NSView *)nativeView;
-  if (!view) {
-    return;
-  }
-  view.autoresizingMask = NSViewNotSizable;
-  NSView *parent = view.superview;
-  CGFloat nativeY = y;
-  if (parent && !parent.isFlipped) {
-    nativeY = NSHeight(parent.bounds) - y - height;
-  }
-  view.frame = NSMakeRect(x, nativeY, MAX(0.0, width), MAX(0.0, height));
-  [view layoutSubtreeIfNeeded];
-  [view.layer layoutIfNeeded];
-  conn_pin_page_layers(view);
-  __weak NSView *weakView = view;
-  dispatch_async(dispatch_get_main_queue(), ^{
-    NSView *later = weakView;
-    if (later) {
-      conn_pin_page_layers(later);
-    }
-  });
-}
-
-void conn_view_set_hidden(void *nativeView, bool hidden) {
-  NSView *view = (__bridge NSView *)nativeView;
-  if (view) {
-    view.hidden = hidden;
-  }
-}
-
-void conn_view_remove(void *nativeView) {
-  NSView *view = (__bridge NSView *)nativeView;
-  if (view) {
-    [view removeFromSuperview];
-  }
-}
-
 const char *conn_main_bundle_identifier(void) {
   NSString *identifier = [[NSBundle mainBundle] bundleIdentifier];
   return identifier ? identifier.UTF8String : NULL;
 }
 
 // ---------------------------------------------------------------------------
-// Minimal AppKit window helpers for standalone examples (e.g. `cef_smoke`).
+// Minimal AppKit run-loop helpers for standalone examples (e.g. `cef_smoke`).
 // ---------------------------------------------------------------------------
 
-static NSWindow *g_smokeWindow = nil;
-
-void *conn_smoke_init_window(double width, double height, const char *title) {
+void conn_smoke_init_app(void) {
   @autoreleasepool {
     [NSApplication sharedApplication];
-    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-    NSRect rect = NSMakeRect(100.0, 100.0, MAX(1.0, width), MAX(1.0, height));
-    NSWindowStyleMask style =
-        NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:rect
-                                                   styleMask:style
-                                                     backing:NSBackingStoreBuffered
-                                                       defer:NO];
-    if (title) {
-      window.title = [NSString stringWithUTF8String:title];
-    }
-    [window orderFrontRegardless];
-    g_smokeWindow = window;
-    return (__bridge void *)window.contentView;
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
   }
 }
 
@@ -214,28 +135,5 @@ void conn_smoke_schedule_timer(double intervalSeconds, void (*callback)(void *),
 void conn_smoke_run_app(void) {
   @autoreleasepool {
     [NSApp run];
-  }
-}
-
-void conn_smoke_stop_app(void) {
-  @autoreleasepool {
-    if (g_smokeWindow) {
-      [g_smokeWindow orderOut:nil];
-      g_smokeWindow = nil;
-    }
-    [NSApp stop:nil];
-    // Post a dummy event so -[NSApplication run] wakes up and exits immediately.
-    NSEvent *event = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
-                                        location:NSZeroPoint
-                                   modifierFlags:0
-                                       timestamp:0
-                                    windowNumber:0
-                                         context:nil
-                                         subtype:0
-                                           data1:0
-                                           data2:0];
-    if (event) {
-      [NSApp postEvent:event atStart:YES];
-    }
   }
 }

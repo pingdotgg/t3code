@@ -5,16 +5,13 @@ use crate::archive::{self, Layout};
 use crate::{StartOptions, WebError, WebRuntimeState};
 use cef::{args::Args, *};
 use std::cell::RefCell;
-use std::ffi::{CStr, CString, c_char, c_void};
+use std::ffi::{CStr, CString, c_char};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 unsafe extern "C" {
     fn conn_cef_install_app_hooks();
     fn conn_cef_start_message_loop();
-    pub(crate) fn conn_view_set_frame(view: *mut c_void, x: f64, y: f64, width: f64, height: f64);
-    pub(crate) fn conn_view_set_hidden(view: *mut c_void, hidden: bool);
-    pub(crate) fn conn_view_remove(view: *mut c_void);
     fn conn_main_bundle_identifier() -> *const c_char;
 }
 

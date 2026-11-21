@@ -1,7 +1,7 @@
 //! Embedded Chromium (CEF-on-demand) browser runtime for `conn-gpui`.
 //!
 //! Reference implementation: `.refs/threadbear/desktop/web/` (`cef-rs` + `dlopen` loader +
-//! macOS AppKit host view).
+//! CEF offscreen rendering).
 //!
 //! All CEF code is gated behind the optional `cef` Cargo feature (default OFF) so the
 //! workspace builds and tests cleanly without downloading CEF. When `cef` is disabled (or on
@@ -15,7 +15,6 @@ mod download;
 #[cfg(all(feature = "cef", target_os = "macos"))]
 mod mac;
 
-use std::ffi::c_void;
 use std::path::PathBuf;
 use thiserror::Error;
 
@@ -60,6 +59,99 @@ pub struct Rect {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+}
+
+/// Snapshot of the latest BGRA frame rendered by CEF offscreen rendering.
+#[derive(Clone, Debug)]
+pub struct FrameSnapshot {
+    /// Monotonically increasing frame counter (0 before the first paint).
+    pub generation: u64,
+    /// Pixel width of `bgra` (scaled by the display's device scale factor).
+    pub width: u32,
+    /// Pixel height of `bgra` (scaled by the display's device scale factor).
+    pub height: u32,
+    /// Premultiplied 32-bit BGRA pixels in row-major top-to-bottom order (`width * height * 4` bytes).
+    pub bgra: Vec<u8>,
+}
+
+/// Keyboard and mouse modifier flags forwarded to CEF.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub control: bool,
+    pub alt: bool,
+    pub command: bool,
+    pub left_button: bool,
+    pub middle_button: bool,
+    pub right_button: bool,
+    pub is_repeat: bool,
+}
+
+/// Mouse button forwarded to CEF.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    #[default]
+    Left,
+    Middle,
+    Right,
+}
+
+/// Kind of keyboard event forwarded to CEF.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum KeyEventKind {
+    #[default]
+    RawKeyDown,
+    KeyDown,
+    KeyUp,
+    Char,
+}
+
+/// Keyboard event forwarded to CEF.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyEvent {
+    pub kind: KeyEventKind,
+    pub windows_key_code: i32,
+    pub native_key_code: i32,
+    pub character: u16,
+    pub unmodified_character: u16,
+    pub modifiers: Modifiers,
+    pub is_system_key: bool,
+}
+
+/// Standard edit command dispatched directly to the focused frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EditCommand {
+    Copy,
+    Cut,
+    Paste,
+    SelectAll,
+    Undo,
+    Redo,
+}
+
+/// Cursor kind requested by the rendered web page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum CursorKind {
+    #[default]
+    Default,
+    Pointer,
+    Text,
+    Crosshair,
+    Move,
+    Wait,
+    NotAllowed,
+    Grab,
+    Grabbing,
+    ResizeEW,
+    ResizeNS,
+    ResizeNESW,
+    ResizeNWSE,
+    ResizeCol,
+    ResizeRow,
+    VerticalText,
+    ContextMenu,
+    Alias,
+    Copy,
 }
 
 /// Optional configuration passed to [`WebRuntime::start_with_options`].
@@ -258,7 +350,7 @@ impl WebRuntime {
     }
 }
 
-/// Handle to a native embedded Chromium view hosted inside a parent window view.
+/// Handle to an offscreen-rendered embedded Chromium view.
 #[derive(Debug)]
 pub struct BrowserView {
     #[cfg(all(feature = "cef", target_os = "macos"))]
@@ -268,7 +360,7 @@ pub struct BrowserView {
 }
 
 impl BrowserView {
-    /// Creates a new embedded Chromium view as a child of `parent_ns_view`.
+    /// Creates a new offscreen-rendered Chromium view sized to `bounds` at `scale`.
     ///
     /// Must be called on the main thread after [`WebRuntime::state`] reaches
     /// [`WebRuntimeState::Running`].
@@ -276,30 +368,29 @@ impl BrowserView {
     /// # Errors
     ///
     /// Returns [`WebError::Unsupported`] without the `cef` feature on macOS,
-    /// [`WebError::NotRunning`] if the runtime is not running,
-    /// [`WebError::InvalidArgument`] if `parent_ns_view` is null, or
+    /// [`WebError::NotRunning`] if the runtime is not running, or
     /// [`WebError::Runtime`] if CEF fails to create the browser.
-    pub fn create(parent_ns_view: *mut c_void, bounds: Rect, url: &str) -> Result<Self, WebError> {
+    pub fn create(bounds: Rect, scale: f32, url: &str) -> Result<Self, WebError> {
         #[cfg(all(feature = "cef", target_os = "macos"))]
         {
-            let inner = mac::view::MacBrowserView::create(parent_ns_view, bounds, url)?;
+            let inner = mac::view::MacBrowserView::create(bounds, scale, url)?;
             Ok(Self { inner })
         }
         #[cfg(not(all(feature = "cef", target_os = "macos")))]
         {
-            let _ = (parent_ns_view, bounds, url);
+            let _ = (bounds, scale, url);
             Err(WebError::Unsupported(
                 "enable the `cef` feature on macOS to create a BrowserView",
             ))
         }
     }
 
-    /// Updates the child view's position and size in top-left window points.
-    pub fn set_bounds(&self, bounds: Rect) {
+    /// Updates the offscreen viewport size in logical points and device scale factor.
+    pub fn set_size(&self, width: f32, height: f32, scale: f32) {
         #[cfg(all(feature = "cef", target_os = "macos"))]
-        self.inner.set_bounds(bounds);
+        self.inner.set_size(width, height, scale);
         #[cfg(not(all(feature = "cef", target_os = "macos")))]
-        let _ = bounds;
+        let _ = (width, height, scale);
     }
 
     /// Navigates the main frame to `url`.
@@ -406,6 +497,54 @@ impl BrowserView {
         }
     }
 
+    /// Returns the monotonically increasing frame generation (0 before the first paint).
+    #[must_use]
+    pub fn frame_generation(&self) -> u64 {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        {
+            self.inner.frame_generation()
+        }
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        {
+            0
+        }
+    }
+
+    /// Returns a copy of the latest BGRA frame if its generation is strictly greater than `last_generation`.
+    #[must_use]
+    pub fn frame_if_newer(&self, last_generation: u64) -> Option<FrameSnapshot> {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        {
+            self.inner.frame_if_newer(last_generation)
+        }
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        {
+            let _ = last_generation;
+            None
+        }
+    }
+
+    /// Returns the cursor style currently requested by the page.
+    #[must_use]
+    pub fn cursor(&self) -> CursorKind {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        {
+            self.inner.cursor()
+        }
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        {
+            CursorKind::Default
+        }
+    }
+
+    /// Registers a callback invoked when a new frame paints or browser UI state changes.
+    pub fn on_frame(&self, callback: impl Fn() + Send + Sync + 'static) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner.on_frame(callback);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = callback;
+    }
+
     /// Registers a callback invoked whenever the main frame finishes loading,
     /// receiving `(url, http_status_code)`.
     pub fn on_load_end(&self, callback: impl Fn(&str, i32) + Send + Sync + 'static) {
@@ -415,7 +554,7 @@ impl BrowserView {
         let _ = callback;
     }
 
-    /// Hides or shows the native child view (used when GPUI popovers overlap).
+    /// Tells CEF whether the view is hidden so it pauses offscreen painting and mutes audio.
     pub fn set_hidden(&self, hidden: bool) {
         #[cfg(all(feature = "cef", target_os = "macos"))]
         self.inner.set_hidden(hidden);
@@ -436,7 +575,87 @@ impl BrowserView {
         }
     }
 
-    /// Closes the browser view and removes its native `NSView` from its parent.
+    /// Updates CEF's logical focus state.
+    pub fn set_focus(&self, focused: bool) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner.set_focus(focused);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = focused;
+    }
+
+    /// Forwards a pointer move (or leave) event in logical viewport points.
+    pub fn send_mouse_move(&self, x: i32, y: i32, modifiers: Modifiers, mouse_leave: bool) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner.send_mouse_move(x, y, modifiers, mouse_leave);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = (x, y, modifiers, mouse_leave);
+    }
+
+    /// Forwards a mouse button press in logical viewport points.
+    pub fn send_mouse_down(
+        &self,
+        x: i32,
+        y: i32,
+        button: MouseButton,
+        click_count: i32,
+        modifiers: Modifiers,
+    ) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner
+            .send_mouse_down(x, y, button, click_count, modifiers);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = (x, y, button, click_count, modifiers);
+    }
+
+    /// Forwards a mouse button release in logical viewport points.
+    pub fn send_mouse_up(
+        &self,
+        x: i32,
+        y: i32,
+        button: MouseButton,
+        click_count: i32,
+        modifiers: Modifiers,
+    ) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner
+            .send_mouse_up(x, y, button, click_count, modifiers);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = (x, y, button, click_count, modifiers);
+    }
+
+    /// Forwards a mouse wheel / trackpad scroll event in logical viewport points.
+    pub fn send_mouse_wheel(
+        &self,
+        x: i32,
+        y: i32,
+        delta_x: i32,
+        delta_y: i32,
+        modifiers: Modifiers,
+    ) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner
+            .send_mouse_wheel(x, y, delta_x, delta_y, modifiers);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = (x, y, delta_x, delta_y, modifiers);
+    }
+
+    /// Forwards a keyboard event to CEF.
+    pub fn send_key_event(&self, event: KeyEvent) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner.send_key_event(event);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = event;
+    }
+
+    /// Executes a standard edit command on the focused frame.
+    pub fn execute_edit_command(&self, command: EditCommand) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner.execute_edit_command(command);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = command;
+    }
+
+    /// Closes the offscreen browser.
     pub fn close(self) {
         #[cfg(all(feature = "cef", target_os = "macos"))]
         self.inner.close_inner();
@@ -483,7 +702,7 @@ mod tests {
         );
         assert!(
             matches!(
-                BrowserView::create(std::ptr::null_mut(), Rect::default(), "http://127.0.0.1"),
+                BrowserView::create(Rect::default(), 2.0, "http://127.0.0.1"),
                 Err(WebError::Unsupported(_))
             ),
             "BrowserView::create should return Unsupported without cef feature"

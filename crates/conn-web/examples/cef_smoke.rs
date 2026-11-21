@@ -1,32 +1,33 @@
-//! Smoke test for `conn-web`'s on-demand CEF runtime on macOS.
+//! Smoke test for `conn-web`'s on-demand offscreen CEF runtime on macOS.
 //!
 //! Usage:
 //!   cargo run -p conn-web --features cef --example cef_smoke -- http://127.0.0.1:8080/
 //!
-//! Downloads CEF if needed, opens a plain AppKit window, loads the requested URL,
-//! prints the page title once loaded, and exits 0.
+//! Downloads CEF if needed, creates an offscreen browser view, loads the
+//! requested URL, waits for a painted frame and page title, prints the title,
+//! and exits 0.
 
 #[cfg(target_os = "macos")]
 mod mac_smoke {
     use conn_web::{BrowserView, Rect, StartOptions, WebRuntime, WebRuntimeState};
     use std::cell::RefCell;
-    use std::ffi::{CString, c_char, c_void};
+    use std::ffi::c_void;
+    use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
     unsafe extern "C" {
-        fn conn_smoke_init_window(width: f64, height: f64, title: *const c_char) -> *mut c_void;
+        fn conn_smoke_init_app();
         fn conn_smoke_schedule_timer(
             interval_seconds: f64,
             callback: extern "C" fn(*mut c_void),
             ctx: *mut c_void,
         );
         fn conn_smoke_run_app();
-        fn conn_smoke_stop_app();
     }
 
     struct SmokeState {
         url: String,
-        content_view: *mut c_void,
+        profile_dir: PathBuf,
         browser: Option<BrowserView>,
         started_at: Instant,
         loaded_at: Option<Instant>,
@@ -76,12 +77,12 @@ mod mac_smoke {
                     width: 800.0,
                     height: 600.0,
                 };
-                match BrowserView::create(state.content_view, bounds, &state.url) {
+                match BrowserView::create(bounds, 2.0, &state.url) {
                     Ok(view) => {
                         state.browser = Some(view);
                     }
                     Err(err) => {
-                        eprintln!("cef_smoke: failed to create BrowserView: {err}");
+                        eprintln!("cef_smoke: failed to create offscreen BrowserView: {err}");
                         state.done = true;
                         state.exit_code = 1;
                         should_stop = true;
@@ -96,9 +97,20 @@ mod mac_smoke {
 
             if view.load_count() > 0 && !view.is_loading() {
                 let title = view.title();
+                let has_frame = view.frame_generation() > 0;
                 let loaded_at = *state.loaded_at.get_or_insert_with(Instant::now);
-                // Wait briefly for `on_title_change` if it arrives right after `on_load_end`.
-                if !title.is_empty() || loaded_at.elapsed() > Duration::from_millis(500) {
+                // Wait briefly for `on_title_change` and first OSR `on_paint` after `on_load_end`.
+                if (!title.is_empty() && has_frame) || loaded_at.elapsed() > Duration::from_secs(2)
+                {
+                    if let Some(frame) = view.frame_if_newer(0) {
+                        eprintln!(
+                            "cef_smoke: painted frame #{} ({}x{}, {} bytes)",
+                            frame.generation,
+                            frame.width,
+                            frame.height,
+                            frame.bgra.len()
+                        );
+                    }
                     println!("{title}");
                     if let Some(view) = state.browser.take() {
                         view.close();
@@ -111,9 +123,20 @@ mod mac_smoke {
         });
 
         if should_stop {
-            WebRuntime::global().quit();
-            // SAFETY: Stops the smoke NSApplication run loop on the main thread.
-            unsafe { conn_smoke_stop_app() };
+            let (exit_code, profile_dir) = SMOKE.with(|cell| {
+                cell.borrow_mut().take().map_or((1, None), |state| {
+                    (state.exit_code, Some(state.profile_dir))
+                })
+            });
+            if let Some(dir) = profile_dir {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            let _ = std::io::Write::flush(&mut std::io::stderr());
+            // SAFETY: Flush completed and temp profile was removed; `_exit` avoids
+            // Chromium's C++ `CefContext` atexit/runloop traps when exiting a
+            // short-lived smoke test.
+            unsafe { libc::_exit(exit_code) };
         }
     }
 
@@ -136,13 +159,8 @@ mod mac_smoke {
             return 1;
         }
 
-        let title = CString::new("conn-web cef_smoke").unwrap_or_default();
-        // SAFETY: Called on the main thread; `title` is a valid NUL-terminated CString.
-        let content_view = unsafe { conn_smoke_init_window(800.0, 600.0, title.as_ptr()) };
-        if content_view.is_null() {
-            eprintln!("cef_smoke: failed to create AppKit window");
-            return 1;
-        }
+        // SAFETY: Called on the main thread to initialize NSApplication for the run loop.
+        unsafe { conn_smoke_init_app() };
 
         let profile_dir =
             std::env::temp_dir().join(format!("conn-web-smoke-profile-{}", std::process::id()));
@@ -159,7 +177,7 @@ mod mac_smoke {
         SMOKE.with(|cell| {
             *cell.borrow_mut() = Some(SmokeState {
                 url,
-                content_view,
+                profile_dir: profile_dir.clone(),
                 browser: None,
                 started_at: Instant::now(),
                 loaded_at: None,
@@ -170,17 +188,10 @@ mod mac_smoke {
 
         // SAFETY: Registers a repeating main-thread CFRunLoopTimer with a valid function pointer.
         unsafe { conn_smoke_schedule_timer(0.05, on_tick, std::ptr::null_mut()) };
-        // SAFETY: Runs NSApplication on the main thread until `conn_smoke_stop_app` is called.
+        // SAFETY: Runs NSApplication on the main thread until `on_tick` exits.
         unsafe { conn_smoke_run_app() };
 
-        let exit_code =
-            SMOKE.with(|cell| cell.borrow_mut().take().map_or(1, |state| state.exit_code));
-        let _ = std::fs::remove_dir_all(&profile_dir);
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-        let _ = std::io::Write::flush(&mut std::io::stderr());
-        // SAFETY: Flush completed and temp profile was removed; `_exit` avoids
-        // Chromium's C++ `CefContext` atexit trap when exiting a short-lived smoke test.
-        unsafe { libc::_exit(exit_code) };
+        1
     }
 }
 
