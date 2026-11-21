@@ -502,6 +502,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("beta boring sidebar folder rows multiline branch pull request details")],
   },
   {
+    id: "thread-tabs",
+    title: "Thread tabs",
+    to: "/settings/labs",
+    searchTerms: ["beta tabs tab strip chrome browser open threads pin"],
+  },
+  {
+    id: "thread-tabs-auto-add",
+    title: "Tabs for working threads",
+    to: "/settings/labs",
+    targetId: "thread-tabs",
+    searchTerms: ["beta tabs working running completed auto add threads"],
+  },
+  {
     id: "tool-call-visibility",
     title: msg("Tool calls in chat"),
     to: "/settings/chat",
