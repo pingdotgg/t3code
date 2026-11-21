@@ -66,6 +66,7 @@ export interface ProviderEventRoutingState {
   // After root settlement, new children belong to the live run unless their coordinator still holds this run open.
   readonly rootTurnEnded: boolean;
   readonly workflowMemberParents: ReadonlyMap<ThreadId, ThreadId>;
+  readonly subagentThreadNodes: ReadonlyMap<ThreadId, NodeId>;
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurns: ReadonlyMap<ProviderTurnId, ProviderThreadId>;
   readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
@@ -392,6 +393,7 @@ export function makeProviderEventRoutingState(input: {
     ownedThreadIds: new Set([input.identity.threadId, ...(input.relatedThreadIds ?? [])]),
     rootTurnEnded: false,
     workflowMemberParents: new Map(),
+    subagentThreadNodes: new Map(),
     ownedProviderThreadIds: new Set([
       input.identity.providerThreadId,
       ...(input.relatedProviderThreadIds ?? []),
@@ -441,13 +443,16 @@ export function routeProviderEvent(
       if (event.appThread.id === input.threadId) {
         return [true, state];
       }
+      const forkedFrom = event.appThread.forkedFrom;
       const isOwnedSubagent =
         event.appThread.lineage.relationshipToParent === "subagent" &&
         event.appThread.lineage.parentThreadId !== null &&
         ownsThread(event.appThread.lineage.parentThreadId) &&
         (!state.rootTurnEnded ||
           state.workflowMemberParents.get(event.appThread.id) ===
-            event.appThread.lineage.parentThreadId);
+            event.appThread.lineage.parentThreadId ||
+          (forkedFrom?.type === "node" &&
+            state.subagentThreadNodes.get(event.appThread.id) === forkedFrom.nodeId));
       if (!isOwnedSubagent) {
         return [false, state];
       }
@@ -526,12 +531,31 @@ export function routeProviderEvent(
               ownedThreadIds: new Set([...state.ownedThreadIds, coordinator.childThreadId]),
             }
           : state;
+      // A completed root can still gain children from its running subagents.
+      const childThreadId = coordinator.childThreadId;
+      let enrolled = adopted;
+      if (childThreadId !== null) {
+        const enrolls =
+          coordinator.origin === "provider_native" &&
+          ownsRun(coordinator.runId) &&
+          isOrchestrationV2WorkActive(coordinator.status);
+        const isEnrolled = adopted.subagentThreadNodes.get(childThreadId) === coordinator.id;
+        if (enrolls !== isEnrolled) {
+          const subagentThreadNodes = new Map(adopted.subagentThreadNodes);
+          if (enrolls) {
+            subagentThreadNodes.set(childThreadId, coordinator.id);
+          } else {
+            subagentThreadNodes.delete(childThreadId);
+          }
+          enrolled = { ...adopted, subagentThreadNodes };
+        }
+      }
       if (
         !ownsRun(coordinator.runId) ||
         coordinator.workflow === undefined ||
         coordinator.childThreadId === null
       ) {
-        return [belongs, adopted];
+        return [belongs, enrolled];
       }
       const workflowMemberParents = new Map(state.workflowMemberParents);
       for (const member of coordinator.workflow.agents) {
@@ -539,7 +563,7 @@ export function routeProviderEvent(
           workflowMemberParents.set(member.childThreadId, coordinator.childThreadId);
         }
       }
-      return [true, { ...adopted, workflowMemberParents }];
+      return [true, { ...enrolled, workflowMemberParents }];
     }
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];

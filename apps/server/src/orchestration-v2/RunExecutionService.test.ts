@@ -353,6 +353,98 @@ it("routes only enrolled workflow members after the root turn ends", () => {
   );
 });
 
+it("routes a live subagent's new thread after the root turn ends, but not others", () => {
+  const threadId = ThreadId.make("thread:late-nested");
+  const rootProviderTurnId = ProviderTurnId.make("provider-turn:late-nested");
+  const identity: RunExecutionService.ProviderEventRouteIdentity = {
+    threadId,
+    runId: RunId.make("run:late-nested"),
+    attemptId: RunAttemptId.make("attempt:late-nested"),
+    providerThreadId: ProviderThreadId.make("provider-thread:late-nested"),
+  };
+  const nestedThread = ThreadId.make("thread:late-nested:nested");
+  const nestedNode = NodeId.make("node:late-nested:nested");
+  const childCreated = (
+    childThreadId: ThreadId,
+    forkNodeId: NodeId,
+  ): ProviderAdapter.ProviderAdapterV2Event =>
+    ({
+      type: "app_thread.created",
+      driver,
+      appThread: {
+        id: childThreadId,
+        lineage: {
+          parentThreadId: threadId,
+          relationshipToParent: "subagent",
+          rootThreadId: threadId,
+        },
+        forkedFrom: { type: "node", nodeId: forkNodeId },
+      },
+    }) as ProviderAdapter.ProviderAdapterV2Event;
+  const subagent = (
+    overrides: Partial<OrchestrationV2Subagent> = {},
+  ): ProviderAdapter.ProviderAdapterV2Event => ({
+    type: "subagent.updated",
+    driver,
+    subagent: {
+      id: nestedNode,
+      threadId,
+      runId: identity.runId,
+      parentNodeId: NodeId.make("node:late-nested:owner"),
+      origin: "provider_native",
+      createdBy: "agent",
+      driver,
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      providerThreadId: null,
+      childThreadId: nestedThread,
+      nativeTaskRef: null,
+      prompt: "Check the nested part",
+      title: "Nested",
+      model: null,
+      status: "running",
+      result: null,
+      startedAt: null,
+      completedAt: null,
+      updatedAt: DateTime.makeUnsafe(0),
+      ...overrides,
+    },
+  });
+  const route = (
+    event: ProviderAdapter.ProviderAdapterV2Event,
+    state: RunExecutionService.ProviderEventRoutingState,
+  ) => RunExecutionService.routeProviderEvent(event, identity, state);
+
+  const [, ended] = route(
+    {
+      type: "turn.terminal",
+      driver,
+      providerThreadId: identity.providerThreadId,
+      providerTurnId: rootProviderTurnId,
+      runOrdinal: 1,
+      status: "completed",
+      failure: null,
+      threadDisposition: "reusable",
+    },
+    RunExecutionService.makeProviderEventRoutingState({
+      identity,
+      providerTurnId: rootProviderTurnId,
+    }),
+  );
+
+  assert.isFalse(route(childCreated(nestedThread, nestedNode), ended)[0]);
+  const [rowAccepted, enrolled] = route(subagent(), ended);
+  assert.isTrue(rowAccepted);
+  assert.isTrue(route(childCreated(nestedThread, nestedNode), enrolled)[0]);
+  assert.isFalse(
+    route(childCreated(nestedThread, NodeId.make("node:late-nested:other")), enrolled)[0],
+  );
+
+  const [, afterEnd] = route(subagent({ status: "completed" }), enrolled);
+  assert.isFalse(route(childCreated(nestedThread, nestedNode), afterEnd)[0]);
+  const [, foreign] = route(subagent({ runId: RunId.make("run:late-nested:later") }), enrolled);
+  assert.isFalse(route(childCreated(nestedThread, nestedNode), foreign)[0]);
+});
+
 it("moves a child thread to the run that shows its subagent now", () => {
   const threadId = ThreadId.make("thread:handoff");
   const rootProviderTurnId = ProviderTurnId.make("provider-turn:handoff");
