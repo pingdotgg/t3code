@@ -1,5 +1,4 @@
 import * as Cache from "effect/Cache";
-import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Deferred from "effect/Deferred";
@@ -52,6 +51,7 @@ import {
   gitConfigEnv,
   unsetInheritedRepositoryEnv,
 } from "./VcsProcess.ts";
+import { withHookOutput } from "./gitHookOutput.ts";
 import { makeWorktreeCheckoutCache } from "./worktreeCheckoutCache.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
@@ -228,6 +228,7 @@ interface ExecuteGitOptions {
   timeoutMs?: number | null | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
+  hookOutputInDetail?: boolean | undefined;
   env?: NodeJS.ProcessEnv | undefined;
   maxOutputBytes?: number | undefined;
   appendTruncationMarker?: boolean | undefined;
@@ -1291,11 +1292,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           return Effect.succeed(result);
         }
         const reason = classifyGitFailure(result.stderr);
+        const detail = options.fallbackErrorDetail ?? gitFailureDetail(reason);
         return Effect.fail(
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail: options.fallbackErrorDetail ?? gitFailureDetail(reason),
+            detail: options.hookOutputInDetail ? withHookOutput(detail, result.stderr) : detail,
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,
@@ -5839,6 +5841,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ],
       {
         fallbackErrorDetail: "git worktree add failed",
+        hookOutputInDetail: true,
         // Large checkouts and post-checkout hooks can legitimately run for many
         // minutes; a fixed deadline kills them and leaves an orphaned worktree.
         timeoutMs: null,
@@ -5914,13 +5917,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             )
           : Effect.void,
       ),
-      Effect.onError((cause) =>
+      Effect.onError(() =>
         newRefName && !claimed
-          ? // A failed hook keeps its worktree, as Git does; only a cancel abandons it.
-            (Cause.hasInterrupts(cause)
-              ? lockReason
-                ? releaseWorktreeRegistration(input.cwd, lockReason, true)
-                : Effect.void
+          ? (lockReason
+              ? releaseWorktreeRegistration(input.cwd, lockReason, true)
               : Effect.void
             ).pipe(
               Effect.andThen(
