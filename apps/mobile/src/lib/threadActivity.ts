@@ -1055,7 +1055,17 @@ function groupAdjacentActivities(
       flushGroup();
     }
     firstActivityEntry ??= entry;
-    openGroupActivities.push(entry.activity);
+    // A follow-up call to the same child (OpenCode's task_id) is the same agent, so it takes that slot.
+    const item = entry.activity.projectedItem.item;
+    const slot =
+      item.type === "subagent" && item.childThreadId !== null
+        ? openGroupActivities.findIndex(
+            ({ projectedItem: { item: member } }) =>
+              member.type === "subagent" && member.childThreadId === item.childThreadId,
+          )
+        : -1;
+    if (slot === -1) openGroupActivities.push(entry.activity);
+    else openGroupActivities[slot] = entry.activity;
     if (isStandaloneActivity || entry.activity.prominent) {
       flushGroup();
     }

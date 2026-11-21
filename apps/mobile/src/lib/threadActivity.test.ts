@@ -1243,7 +1243,7 @@ describe("buildThreadFeed", () => {
       origin: "app_owned",
       driver: ProviderDriverKind.make("codex"),
       providerInstanceId: ProviderInstanceId.make("codex"),
-      childThreadId: sourceThreadId,
+      childThreadId: ThreadId.make(`child-${id}`),
       prompt: `Inspect ${id}`,
       result: null,
     });
@@ -1717,8 +1717,8 @@ describe("retained v2 feed presentation", () => {
     },
   );
 
-  it("groups only adjacent subagents in the same run, keeping their child links", () => {
-    const agent = (id: string, index: number, agentRunId = runId) =>
+  it("groups only adjacent subagents in the same run, one per child, keeping their child links", () => {
+    const agent = (id: string, index: number, agentRunId = runId, child = id) =>
       projected(
         {
           ...base(id, `2026-06-20T00:00:0${index}.000Z`, index),
@@ -1728,7 +1728,7 @@ describe("retained v2 feed presentation", () => {
           origin: "app_owned",
           driver: ProviderDriverKind.make("codex"),
           providerInstanceId: ProviderInstanceId.make("codex"),
-          childThreadId: ThreadId.make(`child-${id}`),
+          childThreadId: ThreadId.make(`child-${child}`),
           prompt: "Solve the puzzle",
           result: "Done",
         },
@@ -1737,9 +1737,10 @@ describe("retained v2 feed presentation", () => {
     const feed = buildThreadFeed([
       agent("a", 1),
       agent("b", 2),
-      projected(command("2026-06-20T00:00:03.000Z"), 3),
-      agent("c", 4),
-      agent("d", 5, RunId.make("other-run")),
+      agent("a-redirect", 3, runId, "a"),
+      projected(command("2026-06-20T00:00:04.000Z"), 4),
+      agent("c", 5),
+      agent("d", 6, RunId.make("other-run")),
     ]);
     expect(
       feed.flatMap((entry) =>
@@ -1747,7 +1748,7 @@ describe("retained v2 feed presentation", () => {
           ? [entry.activities.map((activity) => activity.projectedItem.item.id)]
           : [],
       ),
-    ).toEqual([["a", "b"], ["item-command"], ["c"], ["d"]]);
+    ).toEqual([["a-redirect", "b"], ["item-command"], ["c"], ["d"]]);
     const presented = deriveThreadFeedPresentation(
       feed,
       null,
