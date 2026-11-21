@@ -590,19 +590,42 @@ const refreshOnSignalWhileRead =
     );
   };
 
+/**
+ * Polls only while read: keep this outside every idle TTL so the timer ends with the last
+ * reader. A returning reader gets a poll it missed right away.
+ */
 const refreshEveryUntilFinal =
-  <V>(intervalMs: number, isFinal: (value: V) => boolean) =>
+  <V extends AsyncResult.AsyncResult<unknown, unknown>>(
+    intervalMs: number,
+    isFinal: (value: V) => boolean,
+  ) =>
   <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> =>
     Atom.transform(
       self,
       (get) => {
-        const value = get(self);
-        if (!isFinal(value)) {
+        const result = get(self);
+        if (isFinal(result)) return result;
+        const age =
+          Option.isNone(get.self()) && AsyncResult.isSuccess(result) && !result.waiting
+            ? // @effect-diagnostics-next-line globalDate:off - AsyncResult timestamps use wall time outside an Effect runtime.
+              Date.now() - result.timestamp
+            : 0;
+        if (age >= intervalMs) {
+          // Queued behind any revalidation this mount started; a refresh it makes rebuilds this
+          // node and cancels the catch-up.
+          let active = true;
+          get.addFinalizer(() => {
+            active = false;
+          });
+          get.registry.schedulerAsync.makeDispatcher().scheduleTask(() => {
+            if (active) get.refresh(self);
+          }, 0);
+        } else {
           // @effect-diagnostics-next-line globalTimers:off - Mirrors `Atom.withRefresh`, outside an Effect runtime.
-          const handle = setTimeout(() => get.refresh(self), intervalMs);
+          const handle = setTimeout(() => get.refresh(self), intervalMs - age);
           get.addFinalizer(() => clearTimeout(handle));
         }
-        return value;
+        return result;
       },
       { initialValueTarget: self },
     );
@@ -622,15 +645,24 @@ const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs:
  * It reads `self` as a dependency, not a subscription, so `self` goes idle with its last reader.
  */
 export const revalidateOnMount =
-  (staleTimeMs: number) =>
-  <A, E>(
-    self: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
-  ): Atom.Atom<AsyncResult.AsyncResult<A, E>> =>
+  <V extends AsyncResult.AsyncResult<unknown, unknown>>(
+    staleTimeMs: number,
+    isFinal: (value: V) => boolean = () => false,
+    builds?: WeakMap<AtomRegistry.AtomRegistry, number>,
+  ) =>
+  <A extends V>(self: Atom.Atom<A>): Atom.Atom<A> =>
     Atom.transform(
       self,
       (get) => {
+        const before = builds?.get(get.registry) ?? 0;
         const current = get(self);
-        if (Option.isNone(get.self()) && isStale(current, staleTimeMs)) {
+        const after = builds?.get(get.registry) ?? 0;
+        if (
+          Option.isNone(get.self()) &&
+          before === after &&
+          !isFinal(current) &&
+          isStale(current, staleTimeMs)
+        ) {
           let active = true;
           get.addFinalizer(() => {
             active = false;
@@ -638,7 +670,13 @@ export const revalidateOnMount =
           // Deferred out of the build, which runs while React renders. A plain read drops this
           // node before the task runs, so only a mount refetches.
           get.registry.schedulerAsync.makeDispatcher().scheduleTask(() => {
-            if (active && isStale(get.once(self), staleTimeMs)) get.refresh(self);
+            if (
+              active &&
+              (builds?.get(get.registry) ?? 0) === after &&
+              !isFinal(get.once(self)) &&
+              isStale(get.once(self), staleTimeMs)
+            )
+              get.refresh(self);
           }, 0);
         }
         return current;
@@ -766,9 +804,16 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   const connectionAtom = environmentConnectionAtoms(runtime);
   // `Atom.family` holds members weakly and the mounted layer has no TTL, so each member lives
   // as long as its cache: keyed weakly, this lets both go once the cache's TTL ends.
+  const buildsByCache = new WeakMap<
+    Atom.Atom<unknown>,
+    WeakMap<AtomRegistry.AtomRegistry, number>
+  >();
+  const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
+    options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
   const cacheFamily = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
+    const builds = new WeakMap<AtomRegistry.AtomRegistry, number>();
     const queryAtom = runtime
       .atom<
         A,
@@ -777,6 +822,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         | EnvironmentRegistry.EnvironmentNotRegisteredError
         | EnvironmentRpcUnavailableError
       >((get) => {
+        builds.set(get.registry, (builds.get(get.registry) ?? 0) + 1);
         const connection = AsyncResult.getOrElse(
           get(connectionAtom(target.environmentId)),
           () => null,
@@ -903,18 +949,14 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         });
       })
       .pipe(Atom.setIdleTTL(idleTtlMs));
-    const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
-      options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
-    const intervalQuery =
-      options.refreshIntervalMs === undefined
-        ? queryAtom
-        : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
-    const refreshTrigger = options.refreshTrigger?.(target, intervalQuery);
-    return (
+    const refreshTrigger = options.refreshTrigger?.(target, queryAtom);
+    const cache = (
       refreshTrigger === undefined
-        ? intervalQuery
-        : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
+        ? queryAtom
+        : queryAtom.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
     ).pipe(Atom.setIdleTTL(idleTtlMs));
+    buildsByCache.set(cache, builds);
+    return cache;
   });
   type QueryAtom = ReturnType<typeof cacheFamily>;
   const membersByCache = new WeakMap<QueryAtom, Map<string | undefined, QueryAtom>>();
@@ -928,8 +970,14 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     }
     const existing = members.get(mountScope);
     if (existing !== undefined) return existing;
-    const member = cache.pipe(
-      revalidateOnMount(options.staleTimeMs ?? 30_000),
+    const revalidated = cache.pipe(
+      revalidateOnMount(options.staleTimeMs ?? 30_000, isFinal, buildsByCache.get(cache)),
+    );
+    const member = (
+      options.refreshIntervalMs === undefined
+        ? revalidated
+        : revalidated.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal))
+    ).pipe(
       Atom.withLabel(`${options.label}:${key}${mountScope === undefined ? "" : `:${mountScope}`}`),
     );
     members.set(mountScope, member);
