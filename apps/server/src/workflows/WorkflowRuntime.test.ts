@@ -25,6 +25,7 @@ import Migration0109 from "../persistence/Migrations/115_WorkflowRunKey.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
+import { engineTag, type WorkflowDefinition } from "./workflow.ts";
 import * as Workflows from "./Workflows.ts";
 
 /** Waits to be let go. */
@@ -38,9 +39,13 @@ workflow("greet", { version: 1, payload: Schema.Struct({}), returns: Schema.Stri
 );
 `;
 
-/** A folder holding `hold.ts`, and the workflow runtime over it on a fresh database. */
+/**
+ * A folder holding `hold.ts`, and the workflow runtime over it on a fresh database. `engine`
+ * stands in for the real one, which needs the clock to run for as long as it is up.
+ */
 const setup = Effect.fn("setup")(function* (
   wrap: (fileSystem: FileSystem.FileSystem) => FileSystem.FileSystem = (fileSystem) => fileSystem,
+  engine?: (definitions: ReadonlyArray<WorkflowDefinition>) => Layer.Layer<Workflows.Workflows>,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -70,12 +75,14 @@ const setup = Effect.fn("setup")(function* (
   );
   const runtime = Layer.effectContext(
     WorkflowRuntime.make(
-      Effect.succeed((definitions) =>
-        WorkflowEngine.layer(definitions).pipe(
-          Layer.provide(Layer.mock(WorkflowAgents)({})),
-          Layer.provide(database),
-          Layer.provide(NodeCrypto.layer),
-        ),
+      Effect.succeed(
+        (definitions: ReadonlyArray<WorkflowDefinition>) =>
+          engine?.(definitions) ??
+          WorkflowEngine.layer(definitions).pipe(
+            Layer.provide(Layer.mock(WorkflowAgents)({})),
+            Layer.provide(database),
+            Layer.provide(NodeCrypto.layer),
+          ),
       ),
       directory,
       Effect.succeed(true),
@@ -223,22 +230,33 @@ it.effect(
   () =>
     Effect.gen(function* () {
       let refuse = false;
+      // What each engine was built to run. One that registers `broken` does not come up.
+      const builds: Array<ReadonlyArray<string>> = [];
       // No file events: only the runtime's own retry can pick up what changed.
-      const { at, fileSystem, runtime } = yield* setup((real) => ({
-        ...real,
-        exists: (target) =>
-          refuse
-            ? Effect.fail(
-                PlatformError.systemError({
-                  _tag: "PermissionDenied",
-                  module: "FileSystem",
-                  method: "exists",
-                  pathOrDescriptor: target,
-                }),
-              )
-            : real.exists(target),
-        watch: () => Stream.never,
-      }));
+      const { at, fileSystem, runtime } = yield* setup(
+        (real) => ({
+          ...real,
+          exists: (target) =>
+            refuse
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "exists",
+                    pathOrDescriptor: target,
+                  }),
+                )
+              : real.exists(target),
+          watch: () => Stream.never,
+        }),
+        (definitions) =>
+          definitions.some((definition) => definition.name === "broken")
+            ? Layer.effect(Workflows.Workflows, Effect.die(new Error("broken took it down")))
+            : Layer.sync(Workflows.Workflows, () => {
+                builds.push(definitions.map(engineTag));
+                return Workflows.disabled;
+              }),
+      );
 
       yield* Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -252,41 +270,35 @@ it.effect(
         const unlisted = yield* definitions.save("greet.ts", greet("hi"));
         assert.isTrue(unlisted.changed);
         assert.include(unlisted.problems[0]?.message ?? "", "could not be read");
-        // The folder could not be listed: what was loaded stays, and greet is not taken in yet.
-        const held = yield* workflows.start("hold", {}, { idempotencyKey: "h" });
-        yield* workflows.waitFor(held.runId, (run) => run.status === "waiting");
+        // What was loaded stays, and greet is not taken in yet.
+        assert.deepStrictEqual(builds, [["hold@1"]]);
         const before = yield* revision;
         refuse = false;
+        yield* TestClock.adjust("30 seconds");
         yield* workflows.watch.pipe(
           Stream.filter((snapshot) => (snapshot.definition?.revision ?? 0) > before),
           Stream.runHead,
         );
-        const greeted = yield* workflows.start("greet", {}, { idempotencyKey: "g" });
-        assert.equal(
-          (yield* workflows.waitFor(greeted.runId, (run) => run.status === "completed")).result,
-          "hi",
-        );
+        assert.deepStrictEqual(builds.at(-1), ["greet@1", "hold@1"]);
 
         // A definition that passes the checks but takes the engine down at start changes nothing.
         yield* fileSystem.writeFileString(
           at("broken.ts"),
-          'const made = T3.workflow("broken", { version: 1, payload: Schema.Struct({}) }, () => Effect.void);\nmade.triggers.push(null);\n',
+          'T3.workflow("broken", { version: 1, payload: Schema.Struct({}) }, () => Effect.void);\n',
         );
         const fellBack = yield* definitions.save("greet.ts", greet("hello"));
         assert.isTrue(fellBack.changed);
         assert.include(fellBack.problems[0]?.message ?? "", "did not start");
-        const still = yield* workflows.start("hold", {}, { idempotencyKey: "h2" });
-        yield* workflows.waitFor(still.runId, (run) => run.status === "waiting");
+        assert.deepStrictEqual(builds.slice(1), [
+          ["greet@1", "hold@1"],
+          ["greet@1", "hold@1"],
+        ]);
         assert.include(
           (yield* Stream.runHead(workflows.watch)).pipe(Option.getOrThrow).definition?.problem ??
             "",
           "did not start",
         );
-      }).pipe(
-        Effect.provide(runtime),
-        Effect.scoped,
-        Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
-      );
+      }).pipe(Effect.provide(runtime), Effect.scoped);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
