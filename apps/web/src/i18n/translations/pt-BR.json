@@ -3738,6 +3738,14 @@
       "v": "v"
     }
   ],
+  "0fd6b38d7839f885": "Você entrou em {server}",
+  "54789628a737f557": "Entrar em {server}",
+  "8aecbd38f1facf71": "Aprove o acesso no navegador. Depois ele abre uma página que pode não carregar: copie o endereço dessa página e cole aqui.",
+  "2281dc87b05d4a4c": "Iniciando o login…",
+  "f91296e641fed934": "Abrir a página de login",
+  "2d951e0612bc14d6": "Copiar link",
+  "880d3e6e7ff86899": "Endereço da página que o navegador abriu",
+  "e52585cdfcf317cf": "Concluir login",
   "9cc6288e83305ca3": "Não foi possível renderizar o diagrama.",
   "74d986aed0381cb0": "Falha ao carregar o renderizador de diagramas.",
   "d694484d6fea351e": "Expandir diagrama",
@@ -6489,7 +6497,6 @@
   "8b4eec0d51aba17c": "Permitir edições dos mantenedores",
   "536e6b51857fe979": "Os mantenedores podem fazer push neste branch. Se o seu fork tiver workflows, isso também pode dar acesso aos segredos dele.",
   "23ffc2d4097c7026": "Desativar merge automático",
-  "2d951e0612bc14d6": "Copiar link",
   "25f5b6b352b36e7c": [
     "Copiar o número",
     " ",
@@ -7966,7 +7973,6 @@
   "71adc93e24141120": "Verificando...",
   "adb02e7b08c65a4a": "Continuar com o ChatGPT",
   "ad6392ce4488c5dc": "Usar o CLI existente",
-  "f91296e641fed934": "Abrir a página de login",
   "631ca7968ee42f73": "Se o login não voltar ao T3 Code, cole a URL da página final do localhost.",
   "90f46dbf8782cfde": "Conectar",
   "2c2103f711ffceb5": "Tente entrar pelo navegador",

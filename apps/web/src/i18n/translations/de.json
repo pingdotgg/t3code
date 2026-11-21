@@ -3740,6 +3740,14 @@
     },
     " kann nicht geladen werden"
   ],
+  "0fd6b38d7839f885": "Bei {server} angemeldet",
+  "54789628a737f557": "Bei {server} anmelden",
+  "8aecbd38f1facf71": "Erlaube den Zugriff in deinem Browser. Danach öffnet er eine Seite, die vielleicht nicht lädt: Kopiere die Adresse dieser Seite und füge sie hier ein.",
+  "2281dc87b05d4a4c": "Anmeldung wird gestartet…",
+  "f91296e641fed934": "Anmeldeseite öffnen",
+  "2d951e0612bc14d6": "Link kopieren",
+  "880d3e6e7ff86899": "Adresse der Seite, die dein Browser geöffnet hat",
+  "e52585cdfcf317cf": "Anmeldung abschließen",
   "9cc6288e83305ca3": "Das Diagramm konnte nicht gerendert werden.",
   "74d986aed0381cb0": "Der Diagramm-Renderer konnte nicht geladen werden.",
   "d694484d6fea351e": "Diagramm vergrößern",
@@ -6488,7 +6496,6 @@
   "8b4eec0d51aba17c": "Änderungen durch Maintainer erlauben",
   "536e6b51857fe979": "Maintainer können auf diesen Branch pushen. Wenn dein Fork Workflows hat, kann das auch Zugriff auf seine Geheimnisse geben.",
   "23ffc2d4097c7026": "Auto-Merge deaktivieren",
-  "2d951e0612bc14d6": "Link kopieren",
   "25f5b6b352b36e7c": [
     {
       "t": "Branch",
@@ -7967,7 +7974,6 @@
   "71adc93e24141120": "Wird geprüft...",
   "adb02e7b08c65a4a": "Mit ChatGPT fortfahren",
   "ad6392ce4488c5dc": "Vorhandene CLI verwenden",
-  "f91296e641fed934": "Anmeldeseite öffnen",
   "631ca7968ee42f73": "Wenn die Anmeldung nicht zu T3 Code zurückkehrt, füge die URL der letzten localhost-Seite ein.",
   "90f46dbf8782cfde": "Verbinden",
   "2c2103f711ffceb5": "Anmeldung im Browser versuchen",

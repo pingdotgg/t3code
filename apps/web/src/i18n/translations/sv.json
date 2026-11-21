@@ -3738,6 +3738,14 @@
       "v": "v"
     }
   ],
+  "0fd6b38d7839f885": "Inloggad på {server}",
+  "54789628a737f557": "Logga in på {server}",
+  "8aecbd38f1facf71": "Godkänn åtkomsten i webbläsaren. Den öppnar sedan en sida som kanske inte laddas: kopiera sidans adress och klistra in den här.",
+  "2281dc87b05d4a4c": "Startar inloggningen…",
+  "f91296e641fed934": "Öppna inloggningssidan",
+  "2d951e0612bc14d6": "Kopiera länk",
+  "880d3e6e7ff86899": "Adressen till sidan som webbläsaren öppnade",
+  "e52585cdfcf317cf": "Slutför inloggningen",
   "9cc6288e83305ca3": "Diagrammet kunde inte renderas.",
   "74d986aed0381cb0": "Diagramrenderaren kunde inte läsas in.",
   "d694484d6fea351e": "Expandera diagram",
@@ -6491,7 +6499,6 @@
   "8b4eec0d51aba17c": "Tillåt ändringar från underhållare",
   "536e6b51857fe979": "Underhållare kan pusha till den här grenen. Om din fork har arbetsflöden kan det också ge åtkomst till dess hemligheter.",
   "23ffc2d4097c7026": "Inaktivera automatisk merge",
-  "2d951e0612bc14d6": "Kopiera länk",
   "25f5b6b352b36e7c": [
     "Kopiera",
     " ",
@@ -7972,7 +7979,6 @@
   "71adc93e24141120": "Kontrollerar...",
   "adb02e7b08c65a4a": "Fortsätt med ChatGPT",
   "ad6392ce4488c5dc": "Använd befintligt CLI",
-  "f91296e641fed934": "Öppna inloggningssidan",
   "631ca7968ee42f73": "Om inloggningen inte återvänder till T3 Code, klistra in URL:en från den sista localhost-sidan.",
   "90f46dbf8782cfde": "Anslut",
   "2c2103f711ffceb5": "Prova att logga in i webbläsaren",
