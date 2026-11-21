@@ -1245,15 +1245,15 @@ const make = Effect.gen(function* () {
         const context = yield* Effect.context<R>();
         const original = next.pipe(Effect.provideContext(context));
         return yield* Effect.acquireUseRelease(
-          lock.withPermits(1)(
-            Effect.sync(() => {
-              const selected = wrapperIndex.get(key) ?? [];
-              for (const { generation } of selected) {
-                generation.inFlight += 1;
-              }
-              return selected;
-            }),
-          ),
+          // No reload lock: one synchronous step leases the committed index, and reloads swap
+          // the index before retiring the generations it dropped.
+          Effect.sync(() => {
+            const selected = wrapperIndex.get(key) ?? [];
+            for (const { generation } of selected) {
+              generation.inFlight += 1;
+            }
+            return selected;
+          }),
           (selected) =>
             runBuiltinPluginWrappers(
               selected.map(({ wrap }) => wrap),
@@ -1293,21 +1293,22 @@ const make = Effect.gen(function* () {
     ) {
       // The transport closes the request scope after writing or cancelling the body.
       const { handler } = yield* Effect.acquireRelease(
-        lock.withPermits(1)(
-          Effect.gen(function* () {
-            const generation = (yield* Ref.get(generations)).get(id);
-            if (!generation?.status.enabled)
-              return yield* new PluginError({ id, message: "Plugin is not active." });
-            const handler = generation.httpHandlers.get(method + " " + path);
-            if (!handler)
-              return yield* new PluginError({
+        // Lease the committed generation in one synchronous step instead of waiting for a reload.
+        Effect.suspend(() => {
+          const generation = Ref.getUnsafe(generations).get(id);
+          if (!generation?.status.enabled)
+            return Effect.fail(new PluginError({ id, message: "Plugin is not active." }));
+          const handler = generation.httpHandlers.get(method + " " + path);
+          if (!handler)
+            return Effect.fail(
+              new PluginError({
                 id,
                 message: "Plugin HTTP handler was not found.",
-              });
-            generation.inFlight += 1;
-            return { generation, handler };
-          }),
-        ),
+              }),
+            );
+          generation.inFlight += 1;
+          return Effect.succeed({ generation, handler });
+        }),
         ({ generation }) => release(generation),
       );
       const response = yield* execute(() => handler(request));
@@ -1375,17 +1376,16 @@ const make = Effect.gen(function* () {
       input: PluginInvokeInput,
       authorize: Effect.Effect<void, E> = Effect.void,
     ) {
+      yield* authorize;
       return yield* Effect.acquireUseRelease(
-        lock.withPermits(1)(
-          Effect.gen(function* () {
-            yield* authorize;
-            const generation = (yield* Ref.get(generations)).get(input.id);
-            if (!generation?.status.enabled)
-              return yield* new PluginError({ id: input.id, message: "Plugin is not active." });
-            generation.inFlight += 1;
-            return generation;
-          }),
-        ),
+        // Lease the committed generation in one synchronous step instead of waiting for a reload.
+        Effect.suspend(() => {
+          const generation = Ref.getUnsafe(generations).get(input.id);
+          if (!generation?.status.enabled)
+            return Effect.fail(new PluginError({ id: input.id, message: "Plugin is not active." }));
+          generation.inFlight += 1;
+          return Effect.succeed(generation);
+        }),
         (generation) =>
           Effect.gen(function* () {
             const command = generation.commands.get(input.method);
