@@ -141,7 +141,7 @@ export const AgentRpcs = RpcGroup.make(
   SetSessionConfigOptionRpc,
 );
 
-const CompatInitializeResponseV1 = Schema.Struct({
+export const CompatInitializeResponseV1 = Schema.Struct({
   ...AcpSchemaV1.InitializeResponse.fields,
   authMethods: Schema.optionalKey(
     Schema.Array(

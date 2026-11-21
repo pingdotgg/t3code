@@ -617,6 +617,23 @@ function normalizeEnvVarAuthMethod(
   };
 }
 
+function normalizeV1InitializeResponse(
+  response: typeof AcpRpcs.CompatInitializeResponseV1.Type,
+): AcpSchema.InitializeResponse {
+  const { authMethods, ...initialize } = response;
+  if (authMethods === undefined) return initialize;
+  return {
+    ...initialize,
+    authMethods: authMethods
+      .map((method) => {
+        if (!("type" in method) || method.type !== "env_var") return method;
+        const { type: _type, vars, link, ...base } = method;
+        return normalizeEnvVarAuthMethod(base, vars, link);
+      })
+      .filter(Predicate.isNotUndefined),
+  };
+}
+
 function normalizeInitializeResponse(
   response: AcpSchemaV2.InitializeResponse,
 ): AcpSchema.InitializeResponse {
@@ -1121,26 +1138,9 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
               // with the v1 agentInfo/agentCapabilities response shape.
               const isV2 = isV2InitializeResponse(response);
               negotiatedProtocolGeneration = isV2 ? 2 : 1;
-              let normalized: AcpSchema.InitializeResponse;
-              if (isV2) {
-                normalized = normalizeInitializeResponse(response);
-              } else {
-                const { authMethods, ...initialize } = response;
-                normalized = {
-                  ...initialize,
-                  ...(authMethods === undefined
-                    ? {}
-                    : {
-                        authMethods: authMethods
-                          .map((method) => {
-                            if (!("type" in method) || method.type !== "env_var") return method;
-                            const { type: _type, vars, link, ...base } = method;
-                            return normalizeEnvVarAuthMethod(base, vars, link);
-                          })
-                          .filter(Predicate.isNotUndefined),
-                      }),
-                };
-              }
+              const normalized = isV2
+                ? normalizeInitializeResponse(response)
+                : normalizeV1InitializeResponse(response);
               sessionDeleteSupported =
                 normalized.agentCapabilities?.sessionCapabilities?.delete != null;
               return normalized;
