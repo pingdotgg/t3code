@@ -130,7 +130,12 @@ vi.mock(import("../native/ProjectChipIconImages"), async () => {
   };
 });
 
-import { resolveThreadLink, useMessageThreadLinks, useThreadChipIcons } from "./entities";
+import {
+  resolveThreadLink,
+  resolveThreadLinkTarget,
+  useMessageThreadLinks,
+  useThreadChipIcons,
+} from "./entities";
 
 function setup() {
   const registry = AtomRegistry.make();
@@ -401,11 +406,21 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
   const projectLocal = ProjectId.make("proj-local");
   const projectRemote = ProjectId.make("proj-remote");
   const olderId = ThreadId.make("older-thread");
+  const streamedNewId = ThreadId.make("streamed-new");
   const archId = ThreadId.make("arch-1");
   const deletedId = ThreadId.make("deleted-1");
 
+  registry.set(state.threadRefsAtom!, [
+    { environmentId: remoteEnv, threadId: olderId },
+    { environmentId: remoteEnv, threadId: streamedNewId },
+  ]);
   setShell(localEnv, olderId, { title: "Local Live", projectId: projectLocal, updatedAt: 1 });
   setShell(remoteEnv, olderId, { title: "Remote Same ID", projectId: projectRemote, updatedAt: 1 });
+  setShell(remoteEnv, streamedNewId, {
+    title: "Remote Streamed",
+    projectId: projectRemote,
+    updatedAt: 1,
+  });
   setMetadata(
     localEnv,
     [archId, deletedId],
@@ -483,6 +498,27 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
       "https://favicon.test/local-repo",
     );
 
+    // If streaming adds another link before the post-archive lookup settles, the new key carries
+    // olderId's confirmed local target forward while keeping the newly added ref unconfirmed.
+    const streamedMarkdown = `${markdown} [new](t3-thread://v1/${streamedNewId})`;
+    const streamedPending = useMessageThreadLinks(streamedMarkdown, localEnv);
+    expect(streamedPending.markdown).toContain(`[Local Renamed](t3-thread://v1/${olderId})`);
+    expect(streamedPending.markdown).toContain(`[Thread](t3-thread://v1/${streamedNewId})`);
+    expect(
+      resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, streamedPending),
+    ).toEqual({ ref: { environmentId: localEnv, threadId: olderId }, title: "Local Renamed" });
+    expect(
+      resolveThreadLinkTarget(
+        registry.get.bind(registry),
+        { environmentId: null, threadId: streamedNewId },
+        localEnv,
+        streamedPending,
+      ),
+    ).toEqual({
+      ref: { environmentId: remoteEnv, threadId: streamedNewId },
+      title: "Remote Streamed",
+    });
+
     // A settled Failure refresh—even with previousSuccess—must clear stale chip icons.
     const priorSuccess = AsyncResult.success({
       [archId]: { title: "Archived One", projectId: projectLocal },
@@ -507,15 +543,28 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
     expect(failedLinks.markdown).toBe(
       `[Thread](t3-thread://v1/${olderId}) [Thread](t3-thread://v2/${localEnv}/${archId}) [Thread](t3-thread://v2/${localEnv}/${deletedId})`,
     );
-    expect(resolveThreadLink(registry.get.bind(registry), v1Link, localEnv, failedLinks)).toEqual({
-      environmentId: remoteEnv,
-      threadId: olderId,
+    expect(
+      resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, failedLinks),
+    ).toEqual({
+      ref: { environmentId: remoteEnv, threadId: olderId },
+      title: "Remote Same ID",
     });
     expect(failedLinks.resolve(v1Link, registry.get.bind(registry))).toEqual({
       environmentId: remoteEnv,
       threadId: olderId,
     });
     expect(failedLinks.titleFor({ environmentId: localEnv, threadId: olderId })).toBeNull();
+    // After a settled failure clears confirmation, a new streaming key no longer keeps local olderId.
+    const afterFailureStreamed = useMessageThreadLinks(
+      `${markdown} [later](t3-thread://v2/${localEnv}/later-1)`,
+      localEnv,
+    );
+    expect(
+      resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, afterFailureStreamed),
+    ).toEqual({
+      ref: { environmentId: remoteEnv, threadId: olderId },
+      title: "Remote Same ID",
+    });
     const failedIcons = useThreadChipIcons(localEnv, failedLinks.markdown, {
       sourceRefKeys: failedLinks.refKeys,
     });

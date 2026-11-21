@@ -46,17 +46,19 @@ import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 const THREAD_LINK_METADATA_CHUNK_SIZE = 500;
 const THREAD_LINK_METADATA_MAX_BATCH_ENTRIES = 500;
 const THREAD_LINK_METADATA_STALE_TIME_MS = 60_000;
-const THREAD_LINK_METADATA_IDLE_TTL_MS = 5 * 60_000;
 const THREAD_LINK_METADATA_CACHE_LIMIT = 2048;
 
 type ThreadLinkMetadataMap = Readonly<Record<ThreadId, OrchestrationV2ThreadLinkMetadata>>;
-type ThreadLinkMetadataError = Effect.Error<ReturnType<typeof fetchThreadLinkMetadataChunked>>;
+type ThreadLinkMetadataError =
+  | Effect.Error<ReturnType<typeof fetchThreadLinkMetadataChunk>>
+  | EnvironmentRpcUnavailableError;
 
 interface CachedThreadLinkMetadata {
   readonly value: OrchestrationV2ThreadLinkMetadata | null;
   readonly expiresAt: number;
   readonly shellGeneration: number;
   readonly removedAtSeq: number;
+  readonly observedSeq: number;
 }
 
 class ThreadLinkMetadataRequest extends Request.Class<
@@ -74,7 +76,7 @@ const metadataMapToRecord = (
   entries: ReadonlyMap<ThreadId, OrchestrationV2ThreadLinkMetadata>,
 ): ThreadLinkMetadataMap => Object.fromEntries(entries) as ThreadLinkMetadataMap;
 
-// Runs inside orchestration.fetchThreadLinkMetadataChunked, which owns the span.
+// Runs inside orchestration.threadLinkMetadata, which owns the span.
 const assertSessionActive = Effect.fnUntraced(function* (
   supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
   session: RpcSession.RpcSession,
@@ -88,41 +90,33 @@ const assertSessionActive = Effect.fnUntraced(function* (
   }
 });
 
-const fetchThreadLinkMetadataChunked = Effect.fn("orchestration.fetchThreadLinkMetadataChunked")(
+const fetchThreadLinkMetadataChunk = Effect.fn("orchestration.fetchThreadLinkMetadataChunk")(
   function* (
     supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
     session: RpcSession.RpcSession,
-    threadIds: ReadonlyArray<ThreadId>,
+    chunk: ReadonlyArray<ThreadId>,
   ) {
     const merged = new Map<ThreadId, OrchestrationV2ThreadLinkMetadata>();
-    if (threadIds.length === 0) return merged;
-    yield* assertSessionActive(supervisor, session);
     const config = yield* session.initialConfig;
-    for (let offset = 0; offset < threadIds.length; offset += THREAD_LINK_METADATA_CHUNK_SIZE) {
-      yield* assertSessionActive(supervisor, session);
-      const chunk = threadIds.slice(offset, offset + THREAD_LINK_METADATA_CHUNK_SIZE);
-      if (config.threadLinkMetadata === true) {
-        const response = yield* requestInSession(
-          session,
-          ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata,
-          { threadIds: chunk },
-        ).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-        for (const threadId of chunk) {
-          if (!Object.hasOwn(response, threadId)) continue;
-          const entry = response[threadId];
-          if (entry !== undefined) merged.set(threadId, entry);
-        }
-      } else {
-        const titles = yield* requestInSession(
-          session,
-          ORCHESTRATION_V2_WS_METHODS.getThreadTitles,
-          { threadIds: chunk },
-        ).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-        for (const threadId of chunk) {
-          if (!Object.hasOwn(titles, threadId)) continue;
-          const title = titles[threadId];
-          if (title !== undefined) merged.set(threadId, { title, projectId: null });
-        }
+    if (config.threadLinkMetadata === true) {
+      const response = yield* requestInSession(
+        session,
+        ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata,
+        { threadIds: chunk },
+      ).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      for (const threadId of chunk) {
+        if (!Object.hasOwn(response, threadId)) continue;
+        const entry = response[threadId];
+        if (entry !== undefined) merged.set(threadId, entry);
+      }
+    } else {
+      const titles = yield* requestInSession(session, ORCHESTRATION_V2_WS_METHODS.getThreadTitles, {
+        threadIds: chunk,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      for (const threadId of chunk) {
+        if (!Object.hasOwn(titles, threadId)) continue;
+        const title = titles[threadId];
+        if (title !== undefined) merged.set(threadId, { title, projectId: null });
       }
     }
     return merged;
@@ -185,6 +179,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     RpcSession.RpcSession,
     Map<ThreadId, CachedThreadLinkMetadata>
   >();
+  let nextObservationSeq = 0;
   const readShellVersion = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
     if (shellState === undefined) return { generation: 0, removedAt: undefined };
     const { generation, removedAt } = registry.get(shellState(environmentId));
@@ -200,7 +195,6 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     const entries = threadLinkMetadataCache.get(session);
     const cached = entries?.get(threadId);
     if (entries === undefined || cached === undefined) return undefined;
-    entries.delete(threadId);
     if (
       cached.expiresAt <= now ||
       cached.shellGeneration !== generation ||
@@ -208,6 +202,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     ) {
       return undefined;
     }
+    entries.delete(threadId);
     entries.set(threadId, cached);
     return cached;
   };
@@ -221,6 +216,8 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       entries = new Map();
       threadLinkMetadataCache.set(session, entries);
     }
+    const existing = entries.get(threadId);
+    if (existing !== undefined && existing.observedSeq > cached.observedSeq) return;
     entries.delete(threadId);
     entries.set(threadId, cached);
     while (entries.size > THREAD_LINK_METADATA_CACHE_LIMIT) {
@@ -240,30 +237,86 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       const { session, supervisor, registry } = first.request;
       const environmentId = supervisor.target.environmentId;
       const uniqueIds = [...new Set(entries.flatMap((entry) => entry.request.threadIds))];
-      const before = readShellVersion(registry, environmentId);
-      const fetched = yield* fetchThreadLinkMetadataChunked(supervisor, session, uniqueIds);
-      const now = yield* Clock.currentTimeMillis;
-      const after = readShellVersion(registry, environmentId);
-      // A removal or snapshot that landed while the request was in flight makes its answer stale.
-      if (before.generation === after.generation) {
-        for (const threadId of uniqueIds) {
-          const removedAtSeq = before.removedAt?.get(threadId) ?? -1;
-          if ((after.removedAt?.get(threadId) ?? -1) !== removedAtSeq) continue;
-          rememberThreadLinkMetadata(session, threadId, {
-            value: fetched.get(threadId) ?? null,
-            expiresAt: now + THREAD_LINK_METADATA_STALE_TIME_MS,
-            shellGeneration: before.generation,
-            removedAtSeq,
-          });
+      const batchGeneration = readShellVersion(registry, environmentId).generation;
+      const pending = new Set(entries);
+      const checkedIds = new Set<ThreadId>();
+      const fetched = new Map<ThreadId, OrchestrationV2ThreadLinkMetadata>();
+      const failPending = (exit: Exit.Exit<never, ThreadLinkMetadataError>) => {
+        for (const entry of pending) {
+          entry.completeUnsafe(exit);
         }
-      }
-      for (const entry of entries) {
-        const subset = new Map<ThreadId, OrchestrationV2ThreadLinkMetadata>();
-        for (const threadId of entry.request.threadIds) {
-          const value = fetched.get(threadId);
-          if (value !== undefined) subset.set(threadId, value);
+        pending.clear();
+      };
+
+      for (
+        let offset = 0;
+        offset < uniqueIds.length && pending.size > 0;
+        offset += THREAD_LINK_METADATA_CHUNK_SIZE
+      ) {
+        const sessionExit = yield* Effect.exit(assertSessionActive(supervisor, session));
+        if (Exit.isFailure(sessionExit)) {
+          failPending(Exit.failCause(sessionExit.cause));
+          return;
         }
-        entry.completeUnsafe(Exit.succeed(subset));
+        const before = readShellVersion(registry, environmentId);
+        // Stop before dispatching another chunk once a shell snapshot supersedes this batch.
+        if (before.generation !== batchGeneration) {
+          failPending(
+            Exit.fail(
+              new EnvironmentRpcUnavailableError({
+                environmentId,
+                ...translatableMessage(msg("The environment has no session.")),
+              }),
+            ),
+          );
+          return;
+        }
+        const chunk = uniqueIds.slice(offset, offset + THREAD_LINK_METADATA_CHUNK_SIZE);
+        const observedSeq = ++nextObservationSeq;
+        const chunkExit = yield* Effect.exit(
+          fetchThreadLinkMetadataChunk(supervisor, session, chunk),
+        );
+        if (Exit.isFailure(chunkExit)) {
+          const failedChunkIds = new Set(chunk);
+          for (const entry of pending) {
+            if (entry.request.threadIds.some((id) => failedChunkIds.has(id))) {
+              entry.completeUnsafe(chunkExit);
+              pending.delete(entry);
+            }
+          }
+          continue;
+        }
+        const now = yield* Clock.currentTimeMillis;
+        const after = readShellVersion(registry, environmentId);
+        // A removal or snapshot that landed while the chunk was in flight makes its answer stale.
+        if (before.generation === after.generation) {
+          for (const threadId of chunk) {
+            const removedAtSeq = before.removedAt?.get(threadId) ?? -1;
+            if ((after.removedAt?.get(threadId) ?? -1) !== removedAtSeq) continue;
+            rememberThreadLinkMetadata(session, threadId, {
+              value: chunkExit.value.get(threadId) ?? null,
+              expiresAt: now + THREAD_LINK_METADATA_STALE_TIME_MS,
+              shellGeneration: before.generation,
+              removedAtSeq,
+              observedSeq,
+            });
+          }
+        }
+        for (const threadId of chunk) {
+          checkedIds.add(threadId);
+          const value = chunkExit.value.get(threadId);
+          if (value !== undefined) fetched.set(threadId, value);
+        }
+        for (const entry of pending) {
+          if (!entry.request.threadIds.every((id) => checkedIds.has(id))) continue;
+          const subset = new Map<ThreadId, OrchestrationV2ThreadLinkMetadata>();
+          for (const threadId of entry.request.threadIds) {
+            const value = fetched.get(threadId);
+            if (value !== undefined) subset.set(threadId, value);
+          }
+          entry.completeUnsafe(Exit.succeed(subset));
+          pending.delete(entry);
+        }
       }
     }),
   });
@@ -279,9 +332,9 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     }),
     threadLinkMetadata: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:thread-link-metadata",
-      // Let the per-thread 60 s cache govern freshness so subset keys never stack a second window.
+      // Let the per-thread 60 s LRU govern freshness and drop idle prefix keys immediately.
       staleTimeMs: 0,
-      idleTtlMs: THREAD_LINK_METADATA_IDLE_TTL_MS,
+      idleTtlMs: 0,
       refreshTrigger: refreshThreadLookup,
       execute: Effect.fn("orchestration.threadLinkMetadata")(function* (
         input: { readonly threadIds: ReadonlyArray<ThreadId> },

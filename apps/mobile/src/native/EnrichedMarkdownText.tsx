@@ -525,7 +525,10 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         })) ?? []
       }
       onPressAction={({ nativeEvent }) => {
-        if (activeMenu) performMenuAction(activeMenu.url, nativeEvent.event);
+        if (!activeMenu) return;
+        const action = activeMenu.menu.actions.find((item) => item.id === nativeEvent.event);
+        if (action?.onPress) action.onPress();
+        else performMenuAction(activeMenu.url, nativeEvent.event);
       }}
       style={{ flexShrink: 1, minWidth: 0 }}
     >

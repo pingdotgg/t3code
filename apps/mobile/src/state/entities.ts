@@ -28,7 +28,7 @@ import {
 import { relabelThreadLinks } from "@t3tools/shared/threadLinksCopy";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import { msg, useGT, useMessages } from "gt-react-native";
 
 import { threadChipTargets } from "../lib/enrichedLinkPresentation";
@@ -95,11 +95,38 @@ function isIndexedLink(
   );
 }
 
+const CONFIRMED_THREAD_TITLES_LIMIT = 2048;
+// Carries confirmed local titles across streaming key transitions while metadata loads.
+const confirmedThreadTitlesByRegistry = new WeakMap<
+  AtomRegistry.AtomRegistry,
+  Map<string, string>
+>();
+
+function confirmedTitlesFor(registry: AtomRegistry.AtomRegistry): Map<string, string> {
+  let titles = confirmedThreadTitlesByRegistry.get(registry);
+  if (titles === undefined) {
+    titles = new Map();
+    confirmedThreadTitlesByRegistry.set(registry, titles);
+  }
+  return titles;
+}
+
+function rememberConfirmedTitle(titles: Map<string, string>, refKey: string, title: string) {
+  titles.delete(refKey);
+  titles.set(refKey, title);
+  while (titles.size > CONFIRMED_THREAD_TITLES_LIMIT) {
+    const oldest = titles.keys().next().value;
+    if (oldest === undefined) break;
+    titles.delete(oldest);
+  }
+}
+
 function resolveTitleForEntry(
   metadata: ThreadLinkMetadataResult | undefined,
   entry: { readonly title: string } | undefined,
   previous: ReadonlyMap<string, ThreadLinkTitle> | undefined,
   previousTitle: ThreadLinkTitle | undefined,
+  confirmedTitle: string | undefined,
 ): ThreadLinkTitle | null {
   if (metadata !== undefined && AsyncResult.isSuccess(metadata)) {
     if (entry !== undefined) return entry.title;
@@ -110,7 +137,8 @@ function resolveTitleForEntry(
   if (metadata !== undefined && AsyncResult.isFailure(metadata) && !metadata.waiting) {
     return FALLBACK_THREAD_TITLE;
   }
-  return previous !== undefined ? (previousTitle ?? null) : FALLBACK_THREAD_TITLE;
+  if (previous !== undefined) return previousTitle ?? null;
+  return confirmedTitle ?? FALLBACK_THREAD_TITLE;
 }
 
 function resolveThreadLinkWith(
@@ -185,17 +213,34 @@ const threadLinkTitlesAtom = Atom.family((key: string) => {
   const refs = refEntries.map((entry) => entry.ref);
   return Atom.make((get) => {
     const previous = Option.getOrUndefined(get.self<ReadonlyMap<string, ThreadLinkTitle>>());
+    const confirmedTitles = confirmedTitlesFor(get.registry);
     const { shells, metadataByEnv } = readBatchedThreadLinkMetadata(get, refs);
     const titles = new Map<string, ThreadLinkTitle>();
     for (const { refKey, ref } of refEntries) {
       const shell = shells.get(refKey);
       if (shell !== null && shell !== undefined) {
         titles.set(refKey, shell.title);
+        rememberConfirmedTitle(confirmedTitles, refKey, shell.title);
         continue;
       }
       const metadata = metadataByEnv.get(ref.environmentId);
       const entry = readMetadataEntry(metadata, ref.threadId);
-      const title = resolveTitleForEntry(metadata, entry, previous, previous?.get(refKey));
+      const title = resolveTitleForEntry(
+        metadata,
+        entry,
+        previous,
+        previous?.get(refKey),
+        confirmedTitles.get(refKey),
+      );
+      if (typeof title === "string") {
+        rememberConfirmedTitle(confirmedTitles, refKey, title);
+      } else if (
+        metadata !== undefined &&
+        !metadata.waiting &&
+        (AsyncResult.isSuccess(metadata) || AsyncResult.isFailure(metadata))
+      ) {
+        confirmedTitles.delete(refKey);
+      }
       if (title !== null) titles.set(refKey, title);
     }
     return mapsEqual(previous, titles) ? previous : titles;
@@ -455,25 +500,39 @@ export function useLiveThreadLinkLabels(
   return useMessageThreadLinks(markdown, environmentId, linked).markdown;
 }
 
+export interface ResolvedThreadLinkTarget {
+  readonly ref: ScopedThreadRef;
+  readonly title: string | null;
+}
+
 /** Keyed reads; every thread is read only to place a v1 link its message's environment lacks. */
-export function resolveThreadLink(
+export function resolveThreadLinkTarget(
   read: <A>(atom: Atom.Atom<A>) => A,
   link: ThreadLink,
   messageEnvironmentId: EnvironmentId,
   messageIndex?: Pick<MessageThreadLinkLookup, "refKeysKey" | "refKeySet"> | null,
-): ScopedThreadRef | null {
+): ResolvedThreadLinkTarget | null {
   if (
     messageIndex?.refKeysKey &&
     isIndexedLink(messageIndex.refKeySet, link, messageEnvironmentId)
   ) {
     const titles = read(threadLinkTitlesAtom(messageIndex.refKeysKey));
-    return resolveThreadLinkFromTitles(titles, link, messageEnvironmentId, () =>
+    const ref = resolveThreadLinkFromTitles(titles, link, messageEnvironmentId, () =>
       read(environmentThreadShells.threadRefsAtom),
     );
+    if (ref === null) return null;
+    const cachedTitle = titles.get(threadKey(ref));
+    return {
+      ref,
+      title:
+        typeof cachedTitle === "string"
+          ? cachedTitle
+          : (read(environmentThreadShells.quietThreadShellAtom(ref))?.title ?? null),
+    };
   }
   const candidates = threadLinkCandidates(link, messageEnvironmentId);
   const { shells, metadataByEnv } = readBatchedThreadLinkMetadata(read, candidates);
-  return resolveThreadLinkWith(
+  const ref = resolveThreadLinkWith(
     link,
     messageEnvironmentId,
     (candidate) => {
@@ -486,6 +545,25 @@ export function resolveThreadLink(
     },
     () => read(environmentThreadShells.threadRefsAtom),
   );
+  if (ref === null) return null;
+  const refKey = threadKey(ref);
+  const knownShell = shells.get(refKey);
+  const title =
+    knownShell !== undefined
+      ? (knownShell?.title ??
+        readMetadataEntry(metadataByEnv.get(ref.environmentId), ref.threadId)?.title ??
+        null)
+      : (read(environmentThreadShells.quietThreadShellAtom(ref))?.title ?? null);
+  return { ref, title };
+}
+
+export function resolveThreadLink(
+  read: <A>(atom: Atom.Atom<A>) => A,
+  link: ThreadLink,
+  messageEnvironmentId: EnvironmentId,
+  messageIndex?: Pick<MessageThreadLinkLookup, "refKeysKey" | "refKeySet"> | null,
+): ScopedThreadRef | null {
+  return resolveThreadLinkTarget(read, link, messageEnvironmentId, messageIndex)?.ref ?? null;
 }
 
 export function useThreadChipIcons(

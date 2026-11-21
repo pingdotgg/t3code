@@ -289,12 +289,13 @@ import {
   workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
-  resolveThreadLink,
+  resolveThreadLinkTarget,
   useEnvironmentPreviewTunnelOff,
   useMessageThreadLinks,
   useQuietThreadShell,
   useThreadChipIcons,
   type MessageThreadLinkLookup,
+  type ResolvedThreadLinkTarget,
 } from "../../state/entities";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThreadSelection } from "../../state/use-thread-selection";
@@ -3346,26 +3347,44 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       path: fileRoutePathSegments(path),
     });
   };
-  const resolveLinkedThread = (
+  const resolveLinkedThreadTarget = (
     href: string,
     threadLinks?: MessageThreadLinkLookup,
     live = true,
-  ) => {
+  ): ResolvedThreadLinkTarget | null => {
     const link = parseThreadLinkHref(href);
     if (!link) return null;
-    const resolved =
-      !live && threadLinks !== undefined
-        ? threadLinks.resolve(link, (atom) => appAtomRegistry.get(atom))
-        : resolveThreadLink(
-            (atom) => appAtomRegistry.get(atom),
-            link,
-            props.environmentId,
-            threadLinks,
-          );
+    if (!live && threadLinks !== undefined) {
+      const resolved = threadLinks.resolve(link, (atom) => appAtomRegistry.get(atom));
+      const ref =
+        resolved ??
+        (link.environmentId === null ? scopeThreadRef(props.environmentId, link.threadId) : null);
+      if (!ref) return null;
+      return {
+        ref,
+        title:
+          threadLinks.titleFor(ref) ??
+          appAtomRegistry.get(environmentThreadShells.quietThreadShellAtom(ref))?.title ??
+          null,
+      };
+    }
+    const resolved = resolveThreadLinkTarget(
+      (atom) => appAtomRegistry.get(atom),
+      link,
+      props.environmentId,
+      threadLinks,
+    );
     if (resolved !== null || link.environmentId !== null) return resolved;
     // A v1 link names no environment, so it falls back to this message's.
-    return scopeThreadRef(props.environmentId, link.threadId);
+    const fallback = scopeThreadRef(props.environmentId, link.threadId);
+    return {
+      ref: fallback,
+      title:
+        appAtomRegistry.get(environmentThreadShells.quietThreadShellAtom(fallback))?.title ?? null,
+    };
   };
+  const resolveLinkedThread = (href: string, threadLinks?: MessageThreadLinkLookup) =>
+    resolveLinkedThreadTarget(href, threadLinks)?.ref ?? null;
   // The file a chat link names: in this workspace, else in the one other project that has it.
   const findFileLinkTarget = async (
     linkPath: string,
@@ -3613,16 +3632,30 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ],
         };
       }
-      const thread = resolveLinkedThread(href, threadLinks, false);
-      if (thread) {
+      const isAndroid = Platform.OS === "android";
+      const linkedThread = resolveLinkedThreadTarget(href, threadLinks, isAndroid);
+      if (linkedThread) {
+        const { ref: thread, title } = linkedThread;
         return {
-          title:
-            threadLinks?.titleFor(thread) ??
-            appAtomRegistry.get(environmentThreadShells.quietThreadShellAtom(thread))?.title ??
-            gt("Thread"),
+          title: title ?? gt("Thread"),
           actions: [
-            { id: "open-thread", title: gt("Open thread") },
-            { id: "copy-thread-link", title: gt("Copy link") },
+            {
+              id: "open-thread",
+              title: gt("Open thread"),
+              ...(isAndroid
+                ? {
+                    onPress: () => {
+                      markdownLinkRequest.current?.abort();
+                      openThreadLink(thread);
+                    },
+                  }
+                : {}),
+            },
+            {
+              id: "copy-thread-link",
+              title: gt("Copy link"),
+              ...(isAndroid ? { onPress: () => copyTextWithHaptic(hostedThreadLink(thread)) } : {}),
+            },
           ],
         };
       }
@@ -3650,7 +3683,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const thread = resolveLinkedThread(href, threadLinks);
       if (thread) {
         if (actionId === "open-thread") {
-          onMarkdownLinkPress(href, false, reply, undefined, threadLinks);
+          markdownLinkRequest.current?.abort();
+          openThreadLink(thread);
         } else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
         return;
       }
