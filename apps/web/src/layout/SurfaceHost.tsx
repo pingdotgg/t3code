@@ -51,6 +51,7 @@ import {
   type WorkspaceStack,
 } from "../motion/workspaceSwitch";
 import { LayoutResizeHandles } from "./ColumnResizeHandle";
+import { markPaneCutsLit } from "./PaneTabs";
 import { LayoutStripHint } from "./LayoutHint";
 import { LayoutOnboarding } from "./LayoutOnboarding";
 import { LayoutKeyboard } from "./LayoutShortcutsOverlay";
@@ -2272,6 +2273,11 @@ function moveDomFocusInto(pane: HTMLElement, target: HTMLElement | null, handedB
   if (!pane.contains(document.activeElement) && active instanceof HTMLElement) active.blur();
 }
 
+/** Cuts mounted into a lit pane take its lit span (PaneTabs.tsx markPaneLit). */
+function litPaneCuts(cut: HTMLSpanElement | null): void {
+  if (cut?.parentElement) markPaneCutsLit(cut.parentElement);
+}
+
 /**
  * The pane's corners where the strip's edge cuts it (index.css,
  * [data-pane-cut]). Render them last inside a positioned, clipped pane.
@@ -2279,7 +2285,7 @@ function moveDomFocusInto(pane: HTMLElement, target: HTMLElement | null, handedB
 function PaneCuts() {
   return (
     <>
-      <span aria-hidden data-pane-cut="start-top" />
+      <span aria-hidden data-pane-cut="start-top" ref={litPaneCuts} />
       <span aria-hidden data-pane-cut="start-notch" />
       <span aria-hidden data-pane-cut="start-after-notch">
         <span>

@@ -6975,11 +6975,8 @@ body {
     & [data-layout-pane-id][data-pane-notched] > [data-pane-cut$="notch"] {
       top: calc(anchor(--pane-notch top) + var(--pane-notch-height) - var(--pane-join-shift));
     }
+    /* PaneTabs.tsx markPaneLit writes --pane-lit-* onto these cuts. */
     & [data-layout-pane-id] > [data-pane-cut$="notch"] {
-      --pane-lit-start: inherit;
-      --pane-lit-end: inherit;
-      --pane-lit-panel-start: inherit;
-      --pane-lit-panel-end: inherit;
       --pane-lit-from: min(var(--pane-lit-start, 100000px), var(--pane-lit-panel-start, 100000px));
       --pane-lit-to: max(var(--pane-lit-end, -100000px), var(--pane-lit-panel-end, -100000px));
     }
