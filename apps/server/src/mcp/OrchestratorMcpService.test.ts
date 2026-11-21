@@ -1569,6 +1569,65 @@ describe("OrchestratorMcpService provider resolution", () => {
     skills: [],
   });
 
+  it.effect.each([
+    {
+      case: "Pi before discovery",
+      driver: "pi",
+      auth: "unknown",
+      discovered: false,
+      accepted: true,
+    },
+    {
+      case: "Pi after discovery",
+      driver: "pi",
+      auth: "unknown",
+      discovered: true,
+      accepted: false,
+    },
+    {
+      case: "unauthenticated Pi",
+      driver: "pi",
+      auth: "unauthenticated",
+      discovered: false,
+      accepted: false,
+    },
+    {
+      case: "another provider",
+      driver: "muse",
+      auth: "unknown",
+      discovered: false,
+      accepted: false,
+    },
+  ] as const)("validates an explicit model for $case", (row) =>
+    Effect.gen(function* () {
+      const provider = providerSnapshot({
+        instanceId: ProviderInstanceId.make("test"),
+        driver: ProviderDriverKind.make(row.driver),
+        model: "default",
+      });
+      const result = yield* OrchestratorMcpService.requireAdvertisedModel(
+        {
+          ...provider,
+          auth: { status: row.auth },
+          models: [
+            ...provider.models,
+            row.discovered
+              ? {
+                  slug: "anthropic/claude-sonnet",
+                  name: "Claude Sonnet",
+                  subProvider: "anthropic",
+                  isCustom: false,
+                  capabilities: null,
+                }
+              : { slug: "custom/model", name: "custom/model", isCustom: true, capabilities: null },
+          ],
+        },
+        "anthropic/claude-opus",
+      ).pipe(Effect.result);
+      assert.equal(Result.isSuccess(result), row.accepted);
+    }),
+  );
+
   const providerRegistryLayer = (providers: ReadonlyArray<ServerProvider>) =>
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(providers),
