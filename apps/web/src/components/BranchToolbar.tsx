@@ -79,6 +79,7 @@ import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
 
 import { observeResize } from "~/lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
 
 const isClipboardApiUnavailableError = Schema.is(ClipboardApiUnavailableError);
 const isClipboardWriteError = Schema.is(ClipboardWriteError);
@@ -177,7 +178,7 @@ interface RunContextSelectorProps {
   onAddToMachine: (environmentId: EnvironmentId) => void;
 }
 
-const RunContextSelector = memo(function RunContextSelector({
+const PluginOriginalRunContextSelector = memo(function RunContextSelector({
   displayMode = "toolbar",
   workspaceRoot,
   forceNewWorktree,
@@ -463,6 +464,10 @@ const RunContextSelector = memo(function RunContextSelector({
     </Menu>
   );
 });
+const RunContextSelector = definePluginComponent(
+  "component:components/BranchToolbar/RunContextSelector",
+  PluginOriginalRunContextSelector,
+);
 
 const COMPOSER_CONTEXT_MOTION_DURATION_MS = 180;
 const COMPOSER_CONTEXT_MOTION_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
@@ -625,7 +630,7 @@ function useLabelsOverflow(): readonly [
   return [attach, overflows] as const;
 }
 
-export const BranchToolbar = memo(function BranchToolbar({
+const PluginOriginalBranchToolbar = memo(function BranchToolbar({
   layout = "composer",
   panelSection = "all",
   forceNewWorktree = false,
@@ -897,3 +902,7 @@ export const BranchToolbar = memo(function BranchToolbar({
     </ComposerSurface.ContextStrip>
   );
 });
+export const BranchToolbar = definePluginComponent(
+  "component:components/BranchToolbar/BranchToolbar",
+  PluginOriginalBranchToolbar,
+);

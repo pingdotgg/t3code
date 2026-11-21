@@ -29,6 +29,24 @@ import {
   resolveMarkdownImageDisplaySize,
   resolveSvgImageSize,
 } from "./markdownImageSize";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const ThreadMarkdownImageRequest = defineNativePluginFeature(
+  "native.features.threads.thread-markdown-image.thread-markdown-image-request",
+  BuiltinThreadMarkdownImageRequest,
+);
+export const ThreadMarkdownImageView = defineNativePluginFeature(
+  "native.features.threads.thread-markdown-image.thread-markdown-image-view",
+  BuiltinThreadMarkdownImageView,
+);
+export const ThreadMarkdownImage = defineNativePluginFeature(
+  "native.features.threads.thread-markdown-image",
+  BuiltinThreadMarkdownImage,
+);
+export const ThreadMarkdownImageUnavailable = defineNativePluginFeature(
+  "native.features.threads.thread-markdown-image.thread-markdown-image-unavailable",
+  BuiltinThreadMarkdownImageUnavailable,
+);
 
 /** Use known feed width immediately; later image measurement would move already-positioned rows. */
 export const MarkdownImageAvailableWidthContext = createContext(0);
@@ -89,7 +107,7 @@ const svgDocumentAtom = Atom.family((uri: string) =>
 
 const noSvgDocumentAtom = Atom.make(AsyncResult.initial<SvgDocument, SvgLoadError>());
 
-export function ThreadMarkdownImageView(props: {
+function BuiltinThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
   readonly sourceIdentifier?: string;
@@ -225,7 +243,7 @@ export function ThreadMarkdownImageView(props: {
   );
 }
 
-function ThreadMarkdownImageRequest(props: {
+function BuiltinThreadMarkdownImageRequest(props: {
   readonly uri: string;
   readonly cacheKey: string | undefined;
   readonly onLoad: (sourceSize: ImageSize) => void;
@@ -273,7 +291,7 @@ function ThreadMarkdownSvg(props: { readonly ast: JsxAST | null }) {
   );
 }
 
-export function ThreadMarkdownImage(props: {
+function BuiltinThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
@@ -349,7 +367,7 @@ export function ThreadMarkdownImage(props: {
   );
 }
 
-export function ThreadMarkdownImageUnavailable(props: { readonly alt: string | null }) {
+function BuiltinThreadMarkdownImageUnavailable(props: { readonly alt: string | null }) {
   return (
     <ThreadMarkdownImageView
       uri={null}

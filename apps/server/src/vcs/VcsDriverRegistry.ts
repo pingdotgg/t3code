@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -208,6 +209,6 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(VcsDriverRegistry, make).pipe(
+export const layer = builtinServiceLayer("t3.git")(VcsDriverRegistry, make).pipe(
   Layer.provide(VcsProjectConfig.layer),
 );

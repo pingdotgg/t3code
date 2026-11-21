@@ -1,8 +1,7 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
+import { useState } from "react";
 import {
   importOpenVsxThemeExtension,
   searchOpenVsxThemes,
@@ -15,7 +14,11 @@ import {
   replaceCustomThemeCollection,
   type ThemeDefinition,
 } from "../../themePalette";
-import { sourceControlIcon } from "../../sourceControlPresentation";
+import {
+  ExtensionCard,
+  ExtensionIcon,
+  SourceLinkIcon as MarketplaceSourceLinkIcon,
+} from "./ExtensionMarketplace";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -32,6 +35,20 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Spinner } from "../ui/spinner";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m } from "../../i18n/messages";
+import { definePluginComponent } from "~/plugins/features";
+
+const SourceLinkIcon = definePluginComponent(
+  "component:components/settings/ThemeSearchSection/SourceLinkIcon",
+  PluginOriginalSourceLinkIcon,
+);
+const ThemeExtensionIcon = definePluginComponent(
+  "component:components/settings/ThemeSearchSection/ThemeExtensionIcon",
+  PluginOriginalThemeExtensionIcon,
+);
+export const ThemeSearchSection = definePluginComponent(
+  "component:components/settings/ThemeSearchSection/ThemeSearchSection",
+  PluginOriginalThemeSearchSection,
+);
 
 const DOWNLOAD_FORMAT = new Intl.NumberFormat(undefined, {
   notation: "compact",
@@ -46,39 +63,16 @@ const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = 
 ];
 const SEARCH_DEBOUNCE_MS = 350;
 
-function sourceHost(url: string): string | null {
-  try {
-    return new URL(url).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
+function PluginOriginalSourceLinkIcon({ url }: { url: string }) {
+  return <MarketplaceSourceLinkIcon url={url} />;
 }
 
-function sourceLinkIcon(url: string): ReactNode {
-  const host = sourceHost(url);
-  const definition = host === null ? undefined : sourceControlClients.findByPublicDomain(host);
-  const Icon = definition ? sourceControlIcon(definition) : ExternalLinkIcon;
-  return <Icon className="size-3.5" />;
-}
-
-function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension }) {
-  const [failed, setFailed] = useState(false);
-
+function PluginOriginalThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension }) {
   return (
-    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
-      {extension.iconUrl && !failed ? (
-        <img
-          alt=""
-          className="size-full object-cover"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          src={extension.iconUrl}
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <PaletteIcon className="size-4" />
-      )}
-    </div>
+    <ExtensionIcon
+      iconUrl={extension.iconUrl ?? undefined}
+      fallback={<PaletteIcon className="size-4" />}
+    />
   );
 }
 
@@ -234,7 +228,7 @@ export function createThemeSearch(
   };
 }
 
-export function ThemeSearchSection({
+function PluginOriginalThemeSearchSection({
   signal,
   onInstalled,
 }: {
@@ -431,23 +425,20 @@ export function ThemeSearchSection({
               );
               const action = isInstalled ? gt("Update") : gt("Install");
               return (
-                <article
-                  className="group flex min-w-0 flex-col gap-3 rounded-xl border border-border/70 bg-card/60 p-3 transition-colors hover:bg-accent/20"
+                <ExtensionCard
                   key={extension.id}
+                  name={extension.name}
+                  byline={
+                    <>
+                      {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
+                      downloads
+                    </>
+                  }
+                  description={
+                    extension.description || gt("A community color theme for your editor.")
+                  }
+                  icon={<ThemeExtensionIcon key={extension.iconUrl} extension={extension} />}
                 >
-                  <div className="flex min-w-0 gap-3">
-                    <ThemeExtensionIcon key={extension.iconUrl} extension={extension} />
-                    <div className="min-w-0 flex-1">
-                      <h4 className="truncate text-sm font-medium">{extension.name}</h4>
-                      <p className="truncate text-muted-foreground text-xs">
-                        {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
-                        downloads
-                      </p>
-                    </div>
-                  </div>
-                  <p className="line-clamp-2 min-h-8 text-muted-foreground text-xs leading-4">
-                    {extension.description || gt("A community color theme for your editor.")}
-                  </p>
                   <div className="mt-auto flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                       {extension.sourceUrl ? (
@@ -457,7 +448,7 @@ export function ThemeSearchSection({
                           size="icon-micro"
                           variant="ghost-muted"
                         >
-                          {sourceLinkIcon(extension.sourceUrl)}
+                          <SourceLinkIcon url={extension.sourceUrl} />
                         </Button>
                       ) : null}
                     </div>
@@ -490,7 +481,7 @@ export function ThemeSearchSection({
                         : action}
                     </Button>
                   </div>
-                </article>
+                </ExtensionCard>
               );
             })}
           </div>

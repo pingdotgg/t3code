@@ -35,6 +35,11 @@ import { OtlpExporter, OtlpLogger, OtlpTracer } from "effect/observability";
 import desktopPackageJson from "../../package.json" with { type: "json" };
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import {
+  builtinServiceLayer,
+  builtinSucceedLayer,
+  builtinLifecycleLayer,
+} from "@t3tools/shared/pluginKernel";
 
 const DESKTOP_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const DESKTOP_LOG_FILE_MAX_FILES = 10;
@@ -548,7 +553,8 @@ const makeBackendOutputLogShape = (
     }),
   });
 
-const layerBackendOutputLogFactory = Layer.effect(
+const layerBackendOutputLogFactory = builtinServiceLayer(
+  "t3.desktop.desktop-observability",
   DesktopBackendOutputLogFactory,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -680,11 +686,13 @@ const layerTelemetry = Layer.unwrap(
           ...(delegate ? { delegate } : {}),
         });
 
-        return Layer.succeed(Tracer.Tracer, tracer);
+        return builtinSucceedLayer("t3.desktop.desktop-observability", Tracer.Tracer, tracer);
       }),
     ).pipe(Layer.provide(OtlpExporter.layerFlusher));
 
-    const layerOtelWarnings = Layer.effectDiscard(
+    const layerOtelWarnings = builtinLifecycleLayer(
+      "t3.desktop.desktop-observability",
+      "t3.desktop.desktop-observability.lifecycle.1",
       Effect.forEach(endpoints.warnings, (warning) => Effect.logWarning(warning)),
     );
 
@@ -698,7 +706,7 @@ const layerTelemetry = Layer.unwrap(
 export const layer = Layer.mergeAll(
   layerBackendOutputLogFactory,
   layerTelemetry,
-  Layer.succeed(References.MinimumLogLevel, "Info"),
-  Layer.succeed(Tracer.MinimumTraceLevel, "Info"),
-  Layer.succeed(References.TracerTimingEnabled, true),
+  builtinSucceedLayer("t3.desktop.desktop-observability", References.MinimumLogLevel, "Info"),
+  builtinSucceedLayer("t3.desktop.desktop-observability", Tracer.MinimumTraceLevel, "Info"),
+  builtinSucceedLayer("t3.desktop.desktop-observability", References.TracerTimingEnabled, true),
 );

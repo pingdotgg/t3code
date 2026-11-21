@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { pipe } from "effect/Function";
 import {
   secretRequestAnswerInput,
@@ -45,7 +46,12 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group"
 import { SecretSourceSelect } from "../settings/SecretSourceInput";
 import { WorkLogRow } from "./WorkLog";
 
-export function SecretRequestCard(props: {
+export const SecretRequestCard = definePluginComponent(
+  "component:components/chat/SecretRequestCard/SecretRequestCard",
+  PluginOriginalSecretRequestCard,
+);
+
+function PluginOriginalSecretRequestCard(props: {
   readonly environmentId: EnvironmentId;
   readonly item: SecretRequestItem;
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
@@ -85,7 +91,12 @@ function useSecretRequestSources(environmentId: EnvironmentId) {
     : NO_SOURCES;
 }
 
-function PendingSecretRequestForm(props: {
+const PendingSecretRequestForm = definePluginComponent(
+  "component:components/chat/SecretRequestCard/PendingSecretRequestForm",
+  PluginOriginalPendingSecretRequestForm,
+);
+
+function PluginOriginalPendingSecretRequestForm(props: {
   readonly environmentId: EnvironmentId;
   readonly item: SecretRequestItem;
 }) {

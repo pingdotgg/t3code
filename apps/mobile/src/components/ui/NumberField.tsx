@@ -20,8 +20,14 @@ import { useState } from "react";
 import { NativeThemeHost } from "./NativeThemeHost";
 import { useControlTheme } from "./useControlTheme";
 import type { NumberFieldProps } from "./NumberField.types";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function NumberField(props: NumberFieldProps) {
+export const NumberField = defineNativePluginFeature(
+  "native.components.ui.number-field",
+  BuiltinNumberField,
+);
+
+function BuiltinNumberField(props: NumberFieldProps) {
   const gt = useGT();
   const { colors, fontSize } = useControlTheme();
   const [open, setOpen] = useState(false);

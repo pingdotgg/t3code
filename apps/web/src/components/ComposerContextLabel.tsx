@@ -1,9 +1,10 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { ReactNode } from "react";
 
 import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./chat/threadDetailsPanelStyles";
 
-export function ComposerContextLabel({
+function PluginOriginalComposerContextLabel({
   children,
   displayMode = "toolbar",
 }: {
@@ -34,3 +35,8 @@ export function ComposerContextLabel({
     </span>
   );
 }
+
+export const ComposerContextLabel = definePluginComponent(
+  "component:components/ComposerContextLabel/ComposerContextLabel",
+  PluginOriginalComposerContextLabel,
+);

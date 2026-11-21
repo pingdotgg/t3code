@@ -1,4 +1,10 @@
-export function ComposerPromptLengthValidation({ message }: { message: string | null }) {
+import { definePluginComponent } from "~/plugins/features";
+
+export const ComposerPromptLengthValidation = definePluginComponent(
+  "component:components/chat/ComposerPromptLengthValidation/ComposerPromptLengthValidation",
+  PluginOriginalComposerPromptLengthValidation,
+);
+function PluginOriginalComposerPromptLengthValidation({ message }: { message: string | null }) {
   if (!message) return null;
 
   return (

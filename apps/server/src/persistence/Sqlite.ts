@@ -1,3 +1,4 @@
+import { builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
@@ -65,7 +66,9 @@ const runMigrationsAsOwner = Effect.fn("SqlitePersistence.runMigrationsAsOwner")
 }, Effect.scoped);
 
 const makeLayerSetup = <E, R>(migrate: Effect.Effect<unknown, E, R>) =>
-  Layer.effectDiscard(
+  builtinLifecycleLayer(
+    "t3.persistence",
+    "t3/runtime/persistence/Layers/Sqlite#lifecycle1",
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // CLI and server write from separate processes; wait rather than fail with SQLITE_BUSY.

@@ -24,6 +24,16 @@ import {
   tokenTypeSegments,
 } from "./usageBreakdown";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { definePluginComponent } from "~/plugins/features";
+
+export const UsageModelDialog = definePluginComponent(
+  "component:components/usage/UsageModelDialog/UsageModelDialog",
+  PluginOriginalUsageModelDialog,
+);
+export const SpeedPremium = definePluginComponent(
+  "component:components/usage/UsageModelDialog/SpeedPremium",
+  PluginOriginalSpeedPremium,
+);
 
 export interface UsageChartWindow {
   readonly days: readonly string[];
@@ -34,7 +44,7 @@ export interface UsageChartWindow {
   readonly hour12: boolean;
 }
 
-export function UsageModelDialog({
+function PluginOriginalUsageModelDialog({
   model,
   environments,
   metric,
@@ -159,7 +169,7 @@ export function UsageModelDialog({
   );
 }
 
-export function SpeedPremium({ premiumUsd }: { readonly premiumUsd: number }) {
+function PluginOriginalSpeedPremium({ premiumUsd }: { readonly premiumUsd: number }) {
   const locale = useLocale();
   return (
     <span className="text-xs text-muted-foreground">

@@ -56,6 +56,12 @@ import {
   type SimlockTokenEntry,
 } from "./simlockDeviceHostsSettings.logic";
 import { useHostConnectionChecks } from "./useHostConnectionChecks";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DeviceSourcesSettings = definePluginComponent(
+  "component:components/settings/DeviceSourcesSettings/DeviceSourcesSettings",
+  PluginOriginalDeviceSourcesSettings,
+);
 
 const deviceHostStatesAtom = environmentAtomList("web-device-host-states", (environmentId) =>
   deviceEnvironment.state({ environmentId, input: {} }),
@@ -158,7 +164,7 @@ const hostPlatforms = (state: DeviceServiceState | undefined, hostId: string) =>
  * Every device source the selected environments can open, one row each. A source configured on
  * several environments is one row; how it stands on each lives in the row's breakdown.
  */
-export function DeviceSourcesSettings(props: {
+function PluginOriginalDeviceSourcesSettings(props: {
   readonly supportsEas: boolean;
   readonly supportsSimlock: boolean;
 }) {

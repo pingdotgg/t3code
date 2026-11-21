@@ -1,5 +1,10 @@
 import { msg } from "gt-react";
 import {
+  builtinContextLayer,
+  builtinServiceLayer,
+  builtinSucceedLayer,
+} from "@t3tools/shared/pluginKernel";
+import {
   ClientCapabilities,
   PlatformConnectionSource,
   Persistence,
@@ -363,7 +368,8 @@ const analyticsDevice = {
   ),
 };
 
-const layerCapabilities = Layer.effectContext(
+const layerCapabilities = builtinContextLayer(
+  "t3.client",
   Effect.sync(() => {
     const presentation = ClientCapabilities.ClientPresentation.of({
       metadata: currentClientMetadata(),
@@ -668,7 +674,7 @@ export function secondaryRegistrationsToRetainAfterTopologyRead(
   );
 }
 
-const layerPlatformConnectionSource = Layer.effect(
+const layerPlatformConnectionSource = builtinServiceLayer("t3.client")(
   PlatformConnectionSource.PlatformConnectionSource,
   Effect.gen(function* () {
     if (isHostedStaticApp() || isLocalEnvironmentDisabled()) {
@@ -835,7 +841,7 @@ const layerPlatformConnectionSource = Layer.effect(
   }),
 );
 
-const layerEnvironmentOwnedDataCleanup = Layer.succeed(
+const layerEnvironmentOwnedDataCleanup = builtinSucceedLayer("t3.client")(
   Persistence.EnvironmentOwnedDataCleanup,
   Persistence.EnvironmentOwnedDataCleanup.of({
     clear: Effect.fn("Persistence.EnvironmentOwnedDataCleanup.clear")(function (environmentId) {
@@ -846,7 +852,7 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
   }),
 );
 
-const layerRpcRequestObserver = Layer.succeed(
+const layerRpcRequestObserver = builtinSucceedLayer("t3.client")(
   EnvironmentRpcRequestObserver,
   EnvironmentRpcRequestObserver.of({
     // Every RPC passes through this observer; the request owns its span.

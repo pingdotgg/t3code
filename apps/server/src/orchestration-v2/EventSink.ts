@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CommandId,
   type OrchestrationV2Run,
@@ -256,6 +257,8 @@ export interface EventSinkV2Shape {
     readonly eventType?: OrchestrationV2DomainEvent["type"];
     /** Bound RPC subscribers; internal workers must not drop their subscription under load. */
     readonly bounded?: boolean;
+    /** Bounded subscribers receive wire payloads by default; trusted server consumers can retain raw events. */
+    readonly projection?: "wire" | "raw";
   }) => Stream.Stream<OrchestrationV2StoredEvent, EventSinkV2Error>;
   readonly latestSequence: (input?: {
     readonly threadId?: ThreadId;
@@ -280,7 +283,7 @@ const layerBase: Layer.Layer<
   | SqlClient.SqlClient
   | TurnItemPositionStore.TurnItemPositionStoreV2
   | ThreadViewers.ThreadViewers
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   EventSinkV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -1050,7 +1053,8 @@ const layerBase: Layer.Layer<
               afterSequence,
               filter: matches,
               replay,
-              project: projectStoredEventForWire,
+              project: (stored) =>
+                input.projection === "raw" ? stored : projectStoredEventForWire(stored),
             });
           }
           const subscription = yield* PubSub.subscribe(pubsub);

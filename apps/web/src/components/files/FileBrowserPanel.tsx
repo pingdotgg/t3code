@@ -44,6 +44,21 @@ import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
 import { isMacPlatform } from "~/lib/utils";
 import { type PreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
+import { definePluginComponent } from "~/plugins/features";
+
+const RefreshFilesButton = definePluginComponent(
+  "component:components/files/FileBrowserPanel/RefreshFilesButton",
+  PluginOriginalRefreshFilesButton,
+);
+const FileSearchField = definePluginComponent(
+  "component:components/files/FileBrowserPanel/FileSearchField",
+  PluginOriginalFileSearchField,
+);
+const FileBrowserPanel = definePluginComponent(
+  "component:components/files/FileBrowserPanel/FileBrowserPanel",
+  PluginOriginalFileBrowserPanel,
+);
+export default FileBrowserPanel;
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -64,7 +79,7 @@ function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
 }
 
-function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
+function PluginOriginalRefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
   const gt = useGT();
   return (
     <Tooltip>
@@ -86,7 +101,7 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
   );
 }
 
-function FileSearchField({
+function PluginOriginalFileSearchField({
   ref,
   ...props
 }: {
@@ -151,7 +166,7 @@ function buildTreeEntries(
   return { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths };
 }
 
-export default function FileBrowserPanel({
+function PluginOriginalFileBrowserPanel({
   environmentId,
   cwd,
   projectName,

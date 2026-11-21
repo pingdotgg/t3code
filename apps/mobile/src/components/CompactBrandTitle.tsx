@@ -9,6 +9,12 @@ import { T3Wordmark } from "./T3Wordmark";
 import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const CompactBrandTitle = defineNativePluginFeature(
+  "native.components.compact-brand-title",
+  BuiltinCompactBrandTitle,
+);
 
 const BRAND_MAX_FONT_SCALE = 1.4;
 const WORDMARK_SUFFIX = "Code";
@@ -18,7 +24,7 @@ export function brandTitleOffset(): number {
   return Platform.isPad && !NATIVE_WORKSPACE_COLUMNS_SUPPORTED ? IPAD_HOME_TITLE_OFFSET : 0;
 }
 
-export function CompactBrandTitle(
+function BuiltinCompactBrandTitle(
   props: {
     readonly allowFontScaling?: boolean;
     readonly accessibilityLabel?: string;

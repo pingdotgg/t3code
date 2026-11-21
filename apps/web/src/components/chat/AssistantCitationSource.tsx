@@ -9,6 +9,12 @@ import {
 import { m } from "~/i18n/messages";
 import { toastManager } from "../ui/toast";
 import { observeResize } from "~/lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AssistantCitationSource = definePluginComponent(
+  "component:components/chat/AssistantCitationSource/AssistantCitationSource",
+  PluginOriginalAssistantCitationSource,
+);
 
 const CITATION_PULSE_DURATION_MS = 650;
 const CITATION_HIGHLIGHT_HOLD_MS = 1575;
@@ -342,7 +348,7 @@ function observeAssistantCitationSource({
   return dispose;
 }
 
-export function AssistantCitationSource({
+function PluginOriginalAssistantCitationSource({
   messageId,
   threadRef,
   itemKey,

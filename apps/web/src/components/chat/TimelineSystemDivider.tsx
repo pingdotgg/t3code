@@ -3,8 +3,14 @@ import type { LucideIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function TimelineSystemDivider(props: {
+export const TimelineSystemDivider = definePluginComponent(
+  "component:components/chat/TimelineSystemDivider/TimelineSystemDivider",
+  PluginOriginalTimelineSystemDivider,
+);
+
+function PluginOriginalTimelineSystemDivider(props: {
   readonly label: string;
   readonly detail?: ReactNode | null;
   readonly tone?: "neutral" | "danger";

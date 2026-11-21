@@ -6,6 +6,20 @@ import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
+import { definePluginComponent } from "~/plugins/features";
+
+export const CommandPaletteMetaDot = definePluginComponent(
+  "component:components/ThreadCommandSubtitle/CommandPaletteMetaDot",
+  PluginOriginalCommandPaletteMetaDot,
+);
+const WorkspaceIcon = definePluginComponent(
+  "component:components/ThreadCommandSubtitle/WorkspaceIcon",
+  PluginOriginalWorkspaceIcon,
+);
+export const ThreadCommandSubtitle = definePluginComponent(
+  "component:components/ThreadCommandSubtitle/ThreadCommandSubtitle",
+  PluginOriginalThreadCommandSubtitle,
+);
 
 export type ThreadCommandSubtitleVariant =
   | "favicon-workspace-harness"
@@ -16,11 +30,14 @@ const THREAD_COMMAND_SUBTITLE_VARIANT: ThreadCommandSubtitleVariant = "favicon-w
 
 export const COMMAND_PALETTE_META_ICON_CLASS = "size-3 shrink-0 text-muted-foreground/70";
 
-export function CommandPaletteMetaDot() {
+function PluginOriginalCommandPaletteMetaDot() {
   return <span className="shrink-0 text-muted-foreground/50">·</span>;
 }
 
-function WorkspaceIcon(props: { variant: ThreadCommandSubtitleVariant; isWorktree: boolean }) {
+function PluginOriginalWorkspaceIcon(props: {
+  variant: ThreadCommandSubtitleVariant;
+  isWorktree: boolean;
+}) {
   if (props.isWorktree) {
     return <FolderGit2Icon className={COMMAND_PALETTE_META_ICON_CLASS} aria-hidden />;
   }
@@ -30,7 +47,7 @@ function WorkspaceIcon(props: { variant: ThreadCommandSubtitleVariant; isWorktre
   return <FolderIcon className={COMMAND_PALETTE_META_ICON_CLASS} aria-hidden />;
 }
 
-export function ThreadCommandSubtitle(props: {
+function PluginOriginalThreadCommandSubtitle(props: {
   project: ProjectFaviconProject | null;
   projectTitle: string | null;
   environmentLabel?: string | null;

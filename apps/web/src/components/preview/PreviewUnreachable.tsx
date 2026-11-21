@@ -4,6 +4,16 @@ import { useState } from "react";
 import { Button } from "~/components/ui/button";
 
 import { describePreviewError } from "./errorCodeMessages";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PreviewUnreachable = definePluginComponent(
+  "component:components/preview/PreviewUnreachable/PreviewUnreachable",
+  PluginOriginalPreviewUnreachable,
+);
+const ErrorIcon = definePluginComponent(
+  "component:components/preview/PreviewUnreachable/ErrorIcon",
+  PluginOriginalErrorIcon,
+);
 
 interface Props {
   url: string;
@@ -56,7 +66,7 @@ export function PreviewFileNotShown({
   );
 }
 
-export function PreviewUnreachable({ url, code, description, onReload, move }: Props) {
+function PluginOriginalPreviewUnreachable({ url, code, description, onReload, move }: Props) {
   const gt = useGT();
   const m = useMessages();
   const [showDetails, setShowDetails] = useState(false);
@@ -132,7 +142,7 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
   );
 }
 
-function ErrorIcon({ className }: { className?: string }) {
+function PluginOriginalErrorIcon({ className }: { className?: string }) {
   return (
     <svg
       viewBox="0 0 64 64"

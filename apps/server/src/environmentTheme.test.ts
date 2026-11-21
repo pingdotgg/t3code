@@ -10,6 +10,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -20,6 +21,7 @@ import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
 
 const encodeThemeFile = Schema.encodeSync(Schema.fromJsonString(EnvironmentThemeFile));
 /** Writes non-ASCII characters as `\uXXXX` escapes, as encoders such as Python's json.dumps do. */
@@ -56,6 +58,7 @@ const withEnvironmentThemes = <A, E>(
     | FileSystem.FileSystem
     | Path.Path
     | Scope.Scope
+    | PluginKernel
   >,
   /** Receives each theme and appearance the service makes the environment default. */
   selected: Array<{ readonly theme?: string; readonly appearance?: string }> = [],
@@ -95,6 +98,7 @@ const withEnvironmentThemes = <A, E>(
                     }),
             }),
           ),
+          Layer.provideMerge(layerWithEnabled({ "t3.ui": false })),
         ),
       ),
     );
@@ -106,6 +110,29 @@ const currentThemes = Effect.gen(function* () {
 });
 
 describe("environment theme", () => {
+  it.effect("keeps published themes subscribable while the interface is disabled", () =>
+    withEnvironmentThemes(
+      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const kernel = yield* PluginKernel;
+        const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+        const expected = [{ id: "nightfall", ...NIGHTFALL_THEME }];
+        assert.deepEqual(yield* environmentTheme.current, expected);
+        assert.deepEqual(
+          Option.getOrNull(yield* environmentTheme.streamChanges.pipe(Stream.runHead)),
+          expected,
+        );
+        yield* kernel.setEnabled("t3.ui", true);
+        yield* kernel.setEnabled("t3.ui", false);
+        assert.deepEqual(yield* environmentTheme.current, expected);
+        assert.deepEqual(
+          Option.getOrNull(yield* environmentTheme.streamChanges.pipe(Stream.runHead)),
+          expected,
+        );
+      }),
+    ),
+  );
+
   it.effect("follows the directory rather than the set read at start", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },

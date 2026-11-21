@@ -1,6 +1,6 @@
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SecureStore from "expo-secure-store";
 
@@ -49,4 +49,8 @@ const make = MobileSecureStorage.of({
   ),
 });
 
-export const layer = Layer.succeed(MobileSecureStorage, make);
+export const layer = builtinSucceedLayer(
+  "t3.mobile.mobile-secure-storage",
+  MobileSecureStorage,
+  make,
+);

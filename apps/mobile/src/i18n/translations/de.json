@@ -5461,5 +5461,31 @@
   "ad208e3e32c85029": "Alle ausblenden",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
-  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt."
+  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "e4fdf2c125bb1a1c": "{count, plural, one {Canvas {count}-mal verwendet} other {Canvas {count}-mal verwendet}}",
+  "2a632164170177a2": "{count, plural, one {Versucht, den Canvas {count}-mal zu verwenden} other {Versucht, den Canvas {count}-mal zu verwenden}}",
+  "c1b7649ac731ed07": "Plugins",
+  "902eee528c565dd9": "Plugin-Befehl fehlgeschlagen",
+  "c5d071b279c2e90f": "Plugin-Wiederherstellung schließen",
+  "ea4b0ed7aa9bd760": "Plugin-Wiederherstellung",
+  "656854e648c97dca": "Integriertes Plugin wieder aktivieren",
+  "ebffe4dabf52835f": "{name} aktivieren",
+  "ba32f1a6898cf271": "Lokale Plugins neu laden",
+  "37036031afcfce34": "Mitgelieferte Funktion",
+  "9608b33769752cbf": "Plugins in {label} durchsuchen",
+  "654234ef26ef1497": "Verfügbare Plugins durchsuchen",
+  "59375313b87b2aee": "{name} ist installiert",
+  "501b9d7d4a10350f": "{name} installieren",
+  "119fdf3a37955ebd": "Verbinde eine Umgebung, um ihre Plugins zu verwalten.",
+  "4d4a9cccdbcb80b1": "Aktualisiere diese Umgebung, um Plugins zu verwalten.",
+  "2a0fa39b8a84f848": "Diese Umgebung konnte ihren Plugin-Katalog nicht laden.",
+  "0fceafde5534f56f": "Plugins werden geladen...",
+  "7c9ee44d092d4f51": [
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    " · Geprüft von",
+    " ",
+    { "i": 2, "k": "_gt_value_2", "v": "v" }
+  ],
+  "2bf815f51a9354c3": "Keine verfügbaren Plugins passen zu dieser Suche.",
+  "16ed41dd430363b8": "Der Katalog verfügbarer Plugins konnte nicht geladen werden."
 }

@@ -32,6 +32,12 @@ import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCom
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { textDirection } from "~/textDirection";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AssistantCitationChip = definePluginComponent(
+  "component:components/chat/AssistantCitationChip/AssistantCitationChip",
+  PluginOriginalAssistantCitationChip,
+);
 
 function useCitationSourceLinkProps(citation: AssistantCitation) {
   const navigate = useNavigate();
@@ -179,7 +185,7 @@ export function ResponseReplyCard({
 }
 
 /** The citation chip in the composer, with its comment editor. */
-export function AssistantCitationChip({
+function PluginOriginalAssistantCitationChip({
   citation,
   commentEditor,
 }: {

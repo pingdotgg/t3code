@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/pull-request-query";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { useNavigation } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
 import { use, useMemo, useRef, useState, type ReactNode } from "react";
@@ -85,7 +86,12 @@ function PullRequestListError(props: { readonly message: string }) {
   );
 }
 
-export function PullRequestsScreen(
+export const PullRequestsScreen = defineNativePluginFeature(
+  "native.features.pull-requests.pull-requests-screen",
+  BuiltinPullRequestsScreen,
+);
+
+function BuiltinPullRequestsScreen(
   props: {
     readonly sidebar?: boolean;
     readonly selectedPullRequestKey?: string | null;

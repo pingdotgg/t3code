@@ -32,6 +32,12 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { downloadMedia, readMediaPng } from "./mediaContent";
+import { definePluginComponent } from "~/plugins/features";
+
+export const MediaActions = definePluginComponent(
+  "component:components/media/MediaActions/MediaActions",
+  PluginOriginalMediaActions,
+);
 
 export interface MediaActionSource {
   readonly kind: "image" | "video";
@@ -115,7 +121,7 @@ export function useMediaActions(source: MediaActionSource) {
   return { save, copyImage, canReadMedia, assertCanReadMedia };
 }
 
-export function MediaActions({
+function PluginOriginalMediaActions({
   source,
   children,
   showTooltip = true,

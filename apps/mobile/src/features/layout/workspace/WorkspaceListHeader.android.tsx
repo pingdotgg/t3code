@@ -12,8 +12,9 @@ import {
   workspaceListFilterIcon,
   type WorkspaceListHeaderProps,
 } from "./WorkspaceListHeader.types";
+import { defineNativePluginFeature } from "../../../plugins/features";
 
-export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
+function BuiltinWorkspaceListHeader(props: WorkspaceListHeaderProps) {
   const gt = useGT();
   const navigation = useNavigation();
   const workspace = useWorkspaceTabs();
@@ -90,3 +91,8 @@ export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
     />
   );
 }
+
+export const WorkspaceListHeader = defineNativePluginFeature(
+  "native.features.layout.workspace.workspace-list-header",
+  BuiltinWorkspaceListHeader,
+);

@@ -1,11 +1,11 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export interface DesktopIconPaths {
   readonly ico: Option.Option<string>;
@@ -140,4 +140,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopAssets, make);
+export const layer = builtinServiceLayer("t3.desktop.desktop-assets", DesktopAssets, make);

@@ -20,6 +20,12 @@ import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PreviewChromeRow = definePluginComponent(
+  "component:components/preview/PreviewChromeRow/PreviewChromeRow",
+  PluginOriginalPreviewChromeRow,
+);
 
 interface Props {
   url: string;
@@ -52,7 +58,7 @@ interface Props {
 
 const NOOP = () => {};
 
-export function PreviewChromeRow({
+function PluginOriginalPreviewChromeRow({
   url,
   loading,
   canGoBack,

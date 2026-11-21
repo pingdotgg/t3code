@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import {
   type ChatAttachment,
   CommandId,
@@ -440,12 +441,15 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
   }).pipe(Effect.as("portable_context"));
 };
 
-export const layer: Layer.Layer<CommandPolicyV2> = Layer.succeed(CommandPolicyV2, {
-  ensureQueuedMessages,
-  decideSteeringExecution,
-  ensureInterrupt,
-  ensureNativeFork,
-  decideForkExecution,
-  ensureRollback,
-  ensureContextHandoff,
-});
+export const layer: Layer.Layer<CommandPolicyV2> = builtinSucceedLayer("t3.thread")(
+  CommandPolicyV2,
+  {
+    ensureQueuedMessages,
+    decideSteeringExecution,
+    ensureInterrupt,
+    ensureNativeFork,
+    decideForkExecution,
+    ensureRollback,
+    ensureContextHandoff,
+  },
+);

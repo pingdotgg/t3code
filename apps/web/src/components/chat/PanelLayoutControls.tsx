@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import {
   PanelBottomIcon,
   PanelRightIcon,
@@ -39,7 +40,7 @@ export interface PanelLayoutControlsProps {
   onToggleRightPanel: () => void;
 }
 
-export const PanelLayoutControls = memo(function PanelLayoutControls({
+const PluginOriginalPanelLayoutControls = memo(function PanelLayoutControls({
   showThreadPanelControl = true,
   showTerminalControl = true,
   showRightPanelControl = true,
@@ -146,8 +147,12 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
     </div>
   );
 });
+export const PanelLayoutControls = definePluginComponent(
+  "component:components/chat/PanelLayoutControls/PanelLayoutControls",
+  PluginOriginalPanelLayoutControls,
+);
 
-export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl({
+const PluginOriginalRightPanelMaximizeControl = memo(function RightPanelMaximizeControl({
   maximized,
   onToggle,
 }: {
@@ -180,6 +185,10 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
     </Tooltip>
   );
 });
+export const RightPanelMaximizeControl = definePluginComponent(
+  "component:components/chat/PanelLayoutControls/RightPanelMaximizeControl",
+  PluginOriginalRightPanelMaximizeControl,
+);
 
 /** The thread panel toggle on a header whose right side the inline right panel covers. */
 export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {

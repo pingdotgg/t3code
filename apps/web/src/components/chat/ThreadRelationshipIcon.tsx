@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { BotIcon, type LucideIcon } from "lucide-react";
@@ -52,7 +53,12 @@ export function threadRelationshipStatusLabel(
   }
 }
 
-export function ThreadRelationshipIcon({
+export const ThreadRelationshipIcon = definePluginComponent(
+  "component:components/chat/ThreadRelationshipIcon/ThreadRelationshipIcon",
+  PluginOriginalThreadRelationshipIcon,
+);
+
+function PluginOriginalThreadRelationshipIcon({
   driver,
   provider,
   providerEntries = [],

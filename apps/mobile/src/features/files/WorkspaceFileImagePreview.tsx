@@ -9,8 +9,18 @@ import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
+import { defineNativePluginFeature } from "../../plugins/features";
+const ResolvedWorkspaceFileImagePreview = defineNativePluginFeature(
+  "native.features.files.workspace-file-image-preview.resolved-workspace-file-image-preview",
+  BuiltinResolvedWorkspaceFileImagePreview,
+);
 
-function ResolvedWorkspaceFileImagePreview(props: {
+export const WorkspaceFileImagePreview = defineNativePluginFeature(
+  "native.features.files.workspace-file-image-preview",
+  BuiltinWorkspaceFileImagePreview,
+);
+
+function BuiltinResolvedWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string;
   readonly actionsSource?: MediaActionsSource;
@@ -72,7 +82,7 @@ function ResolvedWorkspaceFileImagePreview(props: {
   );
 }
 
-export function WorkspaceFileImagePreview(props: {
+function BuiltinWorkspaceFileImagePreview(props: {
   readonly accessibilityLabel: string;
   readonly uri: string | null;
   readonly actionsSource?: MediaActionsSource;

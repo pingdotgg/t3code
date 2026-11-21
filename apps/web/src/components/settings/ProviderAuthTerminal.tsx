@@ -5,8 +5,15 @@ import { GhosttyTerminalSurface } from "../../terminal/ghostty/surface";
 import { ensureLocalApi } from "../../localApi";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { terminalThemeFromApp } from "../ThreadTerminalDrawer";
+import { definePluginComponent } from "~/plugins/features";
 
-export default function ProviderAuthTerminal({
+const ProviderAuthTerminal = definePluginComponent(
+  "component:components/settings/ProviderAuthTerminal/ProviderAuthTerminal",
+  PluginOriginalProviderAuthTerminal,
+);
+export default ProviderAuthTerminal;
+
+function PluginOriginalProviderAuthTerminal({
   output,
   outputOffset,
   onResponse,

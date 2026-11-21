@@ -35,6 +35,12 @@ import {
   planWebviewCrashRecovery,
   type WebviewCrashRecoveryState,
 } from "./webviewCrashRecovery";
+import { definePluginComponent } from "~/plugins/features";
+
+export const HostedBrowserWebview = definePluginComponent(
+  "component:browser/HostedBrowserWebview/HostedBrowserWebview",
+  PluginOriginalHostedBrowserWebview,
+);
 
 interface ElectronWebview extends HTMLElement {
   src: string;
@@ -51,7 +57,7 @@ declare global {
   }
 }
 
-export function HostedBrowserWebview(props: {
+function PluginOriginalHostedBrowserWebview(props: {
   readonly threadRef: ScopedThreadRef;
   readonly tabId: string;
   readonly runtimeTabId: string;

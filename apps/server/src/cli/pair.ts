@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import {
   type AuthEnvironmentScope,
   AuthStandardClientScopes,
@@ -496,7 +497,9 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
         Layer.provide(ServerConfig.layer(input.config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, input.config.logLevel)),
+        Layer.provide(
+          builtinSucceedLayer("t3.server")(References.MinimumLogLevel, input.config.logLevel),
+        ),
       ),
     ),
   );

@@ -2,7 +2,6 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
@@ -18,6 +17,7 @@ import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
+import { builtinServiceLayer, builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 const LIST_TIMEOUT = Duration.seconds(8);
@@ -1169,7 +1169,8 @@ export interface DesktopWslEnvironmentTestStub {
 export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
   const probeDistros: Effect.Effect<readonly WslDistro[], DesktopWslDistroListError> =
     stub.distroListError ? Effect.fail(stub.distroListError) : Effect.succeed(stub.distros ?? []);
-  return Layer.succeed(
+  return builtinSucceedLayer(
+    "t3.desktop.desktop-wsl-environment",
     DesktopWslEnvironment,
     DesktopWslEnvironment.of({
       isAvailable: Effect.succeed(stub.isAvailable ?? false),
@@ -1228,7 +1229,8 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
   );
 };
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-wsl-environment",
   DesktopWslEnvironment,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;

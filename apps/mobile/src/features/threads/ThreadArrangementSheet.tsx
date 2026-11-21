@@ -43,6 +43,7 @@ import {
 import { useThreadListNow } from "./use-thread-list-now";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 const keyOf = (thread: EnvironmentThreadShell) => scopedThreadKey(thread.environmentId, thread.id);
 type Section = "pinned" | "active" | "snoozed" | "settled";
@@ -72,7 +73,7 @@ const SECTION_LABELS = {
   settled: msg("Settled", { $context: "thread list section" }),
 } as const;
 
-function ArrangementRow(props: {
+function BuiltinArrangementRow(props: {
   height: number;
   offset: number;
   lifted: boolean;
@@ -100,7 +101,7 @@ function ArrangementRow(props: {
   );
 }
 
-function DragHandle(props: {
+function BuiltinDragHandle(props: {
   title: string;
   disabled: boolean;
   onStart: () => void;
@@ -174,7 +175,7 @@ function DragHandle(props: {
   );
 }
 
-function ThreadArrangementSheet(props: { onClose: () => void }) {
+function BuiltinThreadArrangementSheet(props: { onClose: () => void }) {
   const gt = useGT();
   const m = useMessages();
   const { appearance } = useAppearancePreferences();
@@ -620,9 +621,29 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
   );
 }
 
-export function ThreadArrangementHost() {
+function BuiltinThreadArrangementHost() {
   const open = useAtomValue(threadArrangementOpenAtom);
   return open ? (
     <ThreadArrangementSheet onClose={() => appAtomRegistry.set(threadArrangementOpenAtom, false)} />
   ) : null;
 }
+
+const ArrangementRow = defineNativePluginFeature(
+  "native.features.threads.thread-arrangement-sheet.arrangement-row",
+  BuiltinArrangementRow,
+);
+
+const DragHandle = defineNativePluginFeature(
+  "native.features.threads.thread-arrangement-sheet.drag-handle",
+  BuiltinDragHandle,
+);
+
+const ThreadArrangementSheet = defineNativePluginFeature(
+  "native.features.threads.thread-arrangement-sheet",
+  BuiltinThreadArrangementSheet,
+);
+
+export const ThreadArrangementHost = defineNativePluginFeature(
+  "native.features.threads.thread-arrangement-sheet.thread-arrangement-host",
+  BuiltinThreadArrangementHost,
+);

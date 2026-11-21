@@ -872,6 +872,26 @@
       "name": "iobuffer",
       "license": "MIT",
       "sourceUrl": "https://github.com/image-js/iobuffer"
+    },
+    {
+      "name": "@iconify-json/material-symbols",
+      "version": "1.2.94",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://github.com/google/material-design-icons",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0",
+        "preamble": [
+          "Material Symbols by Google, distributed in Iconify JSON format.\nUpstream license: https://github.com/google/material-design-icons/blob/master/LICENSE"
+        ]
+      }
+    },
+    {
+      "name": "https",
+      "version": "1.0.0",
+      "generatedNotice": {
+        "licenseId": "ISC",
+        "copyrights": ["Copyright (c) Hardus van der Berg"]
+      }
     }
   ]
 }

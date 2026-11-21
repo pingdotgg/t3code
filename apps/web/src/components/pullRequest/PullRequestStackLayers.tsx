@@ -2,8 +2,14 @@ import type { PullRequestRef, PullRequestStack } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
 import { MenuItem, MenuGroupLabel } from "../ui/menu";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestStackLayers({
+export const PullRequestStackLayers = definePluginComponent(
+  "component:components/pullRequest/PullRequestStackLayers/PullRequestStackLayers",
+  PluginOriginalPullRequestStackLayers,
+);
+
+function PluginOriginalPullRequestStackLayers({
   stack,
   reference,
   onSelect,

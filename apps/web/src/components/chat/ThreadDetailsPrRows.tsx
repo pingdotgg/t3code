@@ -35,8 +35,18 @@ import {
 } from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
+import { definePluginComponent } from "~/plugins/features";
 
-function ThreadDetailsPrLinkRow({
+const ThreadDetailsPrLinkRow = definePluginComponent(
+  "component:components/chat/ThreadDetailsPrRows/ThreadDetailsPrLinkRow",
+  PluginOriginalThreadDetailsPrLinkRow,
+);
+const ThreadDetailsPrRows = definePluginComponent(
+  "component:components/chat/ThreadDetailsPrRows/ThreadDetailsPrRows",
+  PluginOriginalThreadDetailsPrRows,
+);
+
+function PluginOriginalThreadDetailsPrLinkRow({
   environmentId,
   link,
   onOpen,
@@ -80,7 +90,7 @@ function ThreadDetailsPrLinkRow({
   );
 }
 
-function ThreadDetailsPrRows({
+function PluginOriginalThreadDetailsPrRows({
   threadRef,
   links,
   currentLink,

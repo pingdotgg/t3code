@@ -3,8 +3,14 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
+import { definePluginComponent } from "~/plugins/features";
 
-export function FileMarkdownPreview(props: {
+export const FileMarkdownPreview = definePluginComponent(
+  "component:components/files/FileMarkdownPreview/FileMarkdownPreview",
+  PluginOriginalFileMarkdownPreview,
+);
+
+function PluginOriginalFileMarkdownPreview(props: {
   readonly cwd: string;
   readonly relativePath: string;
   readonly text: string;

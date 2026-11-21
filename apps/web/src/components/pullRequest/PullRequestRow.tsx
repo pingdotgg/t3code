@@ -26,6 +26,16 @@ import {
   PullRequestRowLines,
 } from "./PullRequestListRow";
 import { PullRequestLabelChip, PullRequestReviewDecisionGlyph } from "./pullRequestPresentation";
+import { definePluginComponent } from "~/plugins/features";
+
+const PullRequestRowLabels = definePluginComponent(
+  "component:components/pullRequest/PullRequestRow/PullRequestRowLabels",
+  PluginOriginalPullRequestRowLabels,
+);
+const PullRequestRowImpl = definePluginComponent(
+  "component:components/pullRequest/PullRequestRow/PullRequestRowImpl",
+  PluginOriginalPullRequestRowImpl,
+);
 
 const LABEL_SLOTS = [
   { overflow: "@xl/pr-row-meta:hidden" },
@@ -33,7 +43,11 @@ const LABEL_SLOTS = [
   { overflow: "" },
 ] as const;
 
-function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry["labels"] }) {
+function PluginOriginalPullRequestRowLabels({
+  labels,
+}: {
+  labels: EnvironmentPullRequestEntry["labels"];
+}) {
   if (labels.length === 0) return null;
   return (
     <span className="flex min-w-0 items-center gap-1">
@@ -70,7 +84,7 @@ export type PullRequestRowTarget = Pick<
   "environmentId" | "projectId" | "host" | "repository" | "number"
 >;
 
-function PullRequestRowImpl({
+function PluginOriginalPullRequestRowImpl({
   entry,
   selected,
   showProjectTitle,
@@ -268,4 +282,8 @@ function PullRequestRowImpl({
   );
 }
 
-export const PullRequestRow = memo(PullRequestRowImpl);
+const PluginOriginalPullRequestRow = memo(PullRequestRowImpl);
+export const PullRequestRow = definePluginComponent(
+  "component:components/pullRequest/PullRequestRow/PullRequestRow",
+  PluginOriginalPullRequestRow,
+);

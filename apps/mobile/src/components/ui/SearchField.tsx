@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import type { RefObject } from "react";
 import { Pressable, TextInput, type TextInputInstance, View } from "react-native";
 
@@ -14,7 +15,7 @@ export interface SearchFieldProps {
   readonly onChangeText: (value: string) => void;
 }
 
-export function SearchField({
+function BuiltinSearchField({
   inputRef,
   autoFocus = true,
   accessibilityLabel,
@@ -75,3 +76,8 @@ export function SearchField({
     </View>
   );
 }
+
+export const SearchField = defineNativePluginFeature(
+  "native.components.ui.search-field",
+  BuiltinSearchField,
+);

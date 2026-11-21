@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CheckpointId,
   CheckpointScopeId,
@@ -130,7 +131,7 @@ export const layer: Layer.Layer<
   | ServerSettings.ServerSettingsService
   | TaskFolders.TaskFolders
   | ThreadCommandExecutor.ThreadCommandExecutor
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   CheckpointRollbackServiceV2,
   Effect.gen(function* () {
     const checkpoints = yield* CheckpointServiceV2;

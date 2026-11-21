@@ -37,6 +37,7 @@ import {
   type PendingUserInputDraftAnswer,
 } from "@t3tools/client-runtime/state/pending-user-input";
 import type { PendingUserInput } from "../../lib/threadActivity";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 export interface PendingUserInputCardProps {
   readonly environmentId: EnvironmentId;
@@ -121,7 +122,7 @@ function QuestionText(props: {
   );
 }
 
-export function PendingUserInputCard(props: PendingUserInputCardProps) {
+function BuiltinPendingUserInputCard(props: PendingUserInputCardProps) {
   const gt = useGT();
   const questionCount = props.pendingUserInput.questions.length;
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
@@ -418,3 +419,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     </Animated.View>
   );
 }
+
+export const PendingUserInputCard = defineNativePluginFeature(
+  "native.features.threads.pending-user-input-card",
+  BuiltinPendingUserInputCard,
+);

@@ -1,6 +1,12 @@
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PanelTabCloseButton = definePluginComponent(
+  "component:components/ui/panel-tab-close-button/PanelTabCloseButton",
+  PluginOriginalPanelTabCloseButton,
+);
 
 interface PanelTabCloseButtonProps {
   children: ReactNode;
@@ -9,7 +15,7 @@ interface PanelTabCloseButtonProps {
   tooltip?: string;
 }
 
-export function PanelTabCloseButton({
+function PluginOriginalPanelTabCloseButton({
   children,
   label,
   onClick,

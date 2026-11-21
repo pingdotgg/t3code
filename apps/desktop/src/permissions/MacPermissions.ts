@@ -1,12 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Electron from "electron";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { MacPermissionHelper } from "./MacPermissionHelper.ts";
 import type { MacPermission } from "./MacPermission.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export class MacPermissions extends Context.Service<
   MacPermissions,
@@ -28,7 +28,8 @@ class MacPermissionHelperError extends Schema.TaggedError<MacPermissionHelperErr
   }
 }
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer(
+  "t3.desktop.mac-permissions",
   MacPermissions,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;

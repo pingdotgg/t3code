@@ -48,8 +48,34 @@ import { Dialog } from "../ui/dialog";
 import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { WizardSteps, WizardPopup, WizardHeader, WizardPanel, WizardFooter } from "../ui/wizard";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ConnectOnboardingDialog() {
+export const ConnectOnboardingDialog = definePluginComponent(
+  "component:components/cloud/ConnectOnboardingDialog/ConnectOnboardingDialog",
+  PluginOriginalConnectOnboardingDialog,
+);
+const ConfiguredConnectOnboardingDialog = definePluginComponent(
+  "component:components/cloud/ConnectOnboardingDialog/ConfiguredConnectOnboardingDialog",
+  PluginOriginalConfiguredConnectOnboardingDialog,
+);
+const PublishStep = definePluginComponent(
+  "component:components/cloud/ConnectOnboardingDialog/PublishStep",
+  PluginOriginalPublishStep,
+);
+const OnboardingToggleRow = definePluginComponent(
+  "component:components/cloud/ConnectOnboardingDialog/OnboardingToggleRow",
+  PluginOriginalOnboardingToggleRow,
+);
+const OnboardingTunnelLimitAlert = definePluginComponent(
+  "component:components/cloud/ConnectOnboardingDialog/OnboardingTunnelLimitAlert",
+  PluginOriginalOnboardingTunnelLimitAlert,
+);
+const DevicesStep = definePluginComponent(
+  "component:components/cloud/ConnectOnboardingDialog/DevicesStep",
+  PluginOriginalDevicesStep,
+);
+
+function PluginOriginalConnectOnboardingDialog() {
   if (!hasCloudPublicConfig()) return null;
 
   return <ConfiguredConnectOnboardingDialog />;
@@ -68,7 +94,7 @@ function canPublishOnEnvironment(id: EnvironmentId | null): boolean {
   );
 }
 
-function ConfiguredConnectOnboardingDialog() {
+function PluginOriginalConfiguredConnectOnboardingDialog() {
   // Pending Clerk sessions must not look signed out or activation would look like a new sign-in.
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const gt = useGT();
@@ -338,7 +364,7 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
   devices: msg("Connect devices"),
 };
 
-function PublishStep({
+function PluginOriginalPublishStep({
   exposeEnvironment,
   publishAgentActivity,
   requireDeviceApproval,
@@ -406,7 +432,7 @@ function PublishStep({
   );
 }
 
-function OnboardingTunnelLimitAlert({
+function PluginOriginalOnboardingTunnelLimitAlert({
   onOpenAccountPage,
 }: {
   readonly onOpenAccountPage: ((page: T3ConnectAccountPageUrl) => void) | null;
@@ -421,7 +447,7 @@ function OnboardingTunnelLimitAlert({
   );
 }
 
-function OnboardingToggleRow({
+function PluginOriginalOnboardingToggleRow({
   title,
   description,
   checked,
@@ -450,7 +476,7 @@ function OnboardingToggleRow({
   );
 }
 
-function DevicesStep() {
+function PluginOriginalDevicesStep() {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const savedEnvironments = environments.filter(

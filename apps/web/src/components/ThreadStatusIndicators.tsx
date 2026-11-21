@@ -61,6 +61,48 @@ import {
   type PullRequestGlyphIcon,
 } from "./pullRequest/pullRequestIcons";
 import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ThreadPullRequestBadgeControl = definePluginComponent(
+  "component:components/ThreadStatusIndicators/ThreadPullRequestBadgeControl",
+  PluginOriginalThreadPullRequestBadgeControl,
+);
+const PullRequestBadge = definePluginComponent(
+  "component:components/ThreadStatusIndicators/PullRequestBadge",
+  PluginOriginalPullRequestBadge,
+);
+export const ThreadPullRequestsMiniList = definePluginComponent(
+  "component:components/ThreadStatusIndicators/ThreadPullRequestsMiniList",
+  PluginOriginalThreadPullRequestsMiniList,
+);
+const ThreadPullRequestMiniListItem = definePluginComponent(
+  "component:components/ThreadStatusIndicators/ThreadPullRequestMiniListItem",
+  PluginOriginalThreadPullRequestMiniListItem,
+);
+export const ChangeRequestStatusIcon = definePluginComponent(
+  "component:components/ThreadStatusIndicators/ChangeRequestStatusIcon",
+  PluginOriginalChangeRequestStatusIcon,
+);
+const PrStatusTooltipContent = definePluginComponent(
+  "component:components/ThreadStatusIndicators/PrStatusTooltipContent",
+  PluginOriginalPrStatusTooltipContent,
+);
+export const ThreadWorktreeIndicator = definePluginComponent(
+  "component:components/ThreadStatusIndicators/ThreadWorktreeIndicator",
+  PluginOriginalThreadWorktreeIndicator,
+);
+const ThreadStatusLabel = definePluginComponent(
+  "component:components/ThreadStatusIndicators/ThreadStatusLabel",
+  PluginOriginalThreadStatusLabel,
+);
+export const ThreadRowLeadingStatus = definePluginComponent(
+  "component:components/ThreadStatusIndicators/ThreadRowLeadingStatus",
+  PluginOriginalThreadRowLeadingStatus,
+);
+export const ThreadRowTrailingStatus = definePluginComponent(
+  "component:components/ThreadStatusIndicators/ThreadRowTrailingStatus",
+  PluginOriginalThreadRowTrailingStatus,
+);
 
 export interface PrStatusIndicator {
   label: string;
@@ -394,7 +436,7 @@ function resolveThreadPullRequestBadgePresentation(
   };
 }
 
-export function ThreadPullRequestBadgeControl({
+function PluginOriginalThreadPullRequestBadgeControl({
   render,
   badge,
   pullRequests,
@@ -431,7 +473,7 @@ export function ThreadPullRequestBadgeControl({
   );
 }
 
-function PullRequestBadge({
+function PluginOriginalPullRequestBadge({
   render,
   presentation,
   opensList,
@@ -512,7 +554,7 @@ function PullRequestBadge({
   );
 }
 
-export function ThreadPullRequestsMiniList({
+function PluginOriginalThreadPullRequestsMiniList({
   pullRequests,
   onOpenPullRequest,
 }: {
@@ -560,7 +602,7 @@ export function ThreadPullRequestsMiniList({
   );
 }
 
-function ThreadPullRequestMiniListItem({
+function PluginOriginalThreadPullRequestMiniListItem({
   number,
   url,
   title,
@@ -634,7 +676,7 @@ export function prStatusIndicator(
   };
 }
 
-export function ChangeRequestStatusIcon({
+function PluginOriginalChangeRequestStatusIcon({
   state,
   isDraft = false,
   className,
@@ -646,7 +688,7 @@ export function ChangeRequestStatusIcon({
   return <presentation.Icon className={className} />;
 }
 
-function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
+function PluginOriginalPrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
   return (
     <span className="flex max-w-[min(34rem,calc(100vw-2rem))] items-stretch overflow-hidden whitespace-nowrap">
       <span className="shrink-0 pr-2 font-medium">{status.tooltipLead}</span>
@@ -770,7 +812,7 @@ export function ThreadTerminalStatusButton({
   );
 }
 
-export function ThreadWorktreeIndicator({
+function PluginOriginalThreadWorktreeIndicator({
   thread,
 }: {
   thread: Pick<SidebarThreadSummary, "id" | "branch" | "worktreePath">;
@@ -805,7 +847,7 @@ export function ThreadWorktreeIndicator({
   );
 }
 
-function ThreadStatusLabel({
+function PluginOriginalThreadStatusLabel({
   status,
   compact = false,
 }: {
@@ -860,7 +902,7 @@ function ThreadStatusLabel({
   );
 }
 
-export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
+function PluginOriginalThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const gt = useGT();
   const m = useMessages();
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(false);
@@ -964,7 +1006,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   );
 }
 
-export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
+function PluginOriginalThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const gt = useGT();
   const m = useMessages();
   const runningTerminalIds = useThreadRunningTerminalIds({

@@ -22,6 +22,40 @@ import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "./ui/popove
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { usePullRequestPreviewTarget } from "~/lib/openPullRequestLink";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ContextChipShell = definePluginComponent(
+  "component:components/contextChipParts/ContextChipShell",
+  PluginOriginalContextChipShell,
+);
+export const ContextChipPopover = definePluginComponent(
+  "component:components/contextChipParts/ContextChipPopover",
+  PluginOriginalContextChipPopover,
+);
+export const PullRequestChip = definePluginComponent(
+  "component:components/contextChipParts/PullRequestChip",
+  PluginOriginalPullRequestChip,
+);
+export const ImageChipButton = definePluginComponent(
+  "component:components/contextChipParts/ImageChipButton",
+  PluginOriginalImageChipButton,
+);
+export const FileChip = definePluginComponent(
+  "component:components/contextChipParts/FileChip",
+  PluginOriginalFileChip,
+);
+const SvgFileChip = definePluginComponent(
+  "component:components/contextChipParts/SvgFileChip",
+  PluginOriginalSvgFileChip,
+);
+const FileChipContent = definePluginComponent(
+  "component:components/contextChipParts/FileChipContent",
+  PluginOriginalFileChipContent,
+);
+export const UnresolvedChip = definePluginComponent(
+  "component:components/contextChipParts/UnresolvedChip",
+  PluginOriginalUnresolvedChip,
+);
 
 export const PULL_REQUEST_CHIP_KINDS = {
   open: "pr-open",
@@ -31,7 +65,7 @@ export const PULL_REQUEST_CHIP_KINDS = {
   unknown: "pull-request",
 } as const satisfies Record<PullRequestContextDisplayState | "unknown", ContextChipKind>;
 
-export function ContextChipShell({
+function PluginOriginalContextChipShell({
   icon,
   label,
   tooltip,
@@ -62,7 +96,7 @@ export function ContextChipShell({
   );
 }
 
-export function ContextChipPopover(props: {
+function PluginOriginalContextChipPopover(props: {
   kind: ContextChipKind;
   icon: ReactNode;
   label: string;
@@ -101,7 +135,7 @@ export function ContextChipPopover(props: {
   );
 }
 
-export function PullRequestChip(props: {
+function PluginOriginalPullRequestChip(props: {
   metadata: PullRequestContextMetadata;
   environmentId: EnvironmentId | null;
   label: string;
@@ -153,7 +187,7 @@ export function PullRequestChip(props: {
   );
 }
 
-export function ImageChipButton({
+function PluginOriginalImageChipButton({
   name,
   previewUrl,
   size,
@@ -199,7 +233,7 @@ export function ImageChipButton({
   );
 }
 
-export function FileChip(props: {
+function PluginOriginalFileChip(props: {
   name: string;
   size: string;
   isVideo: boolean;
@@ -260,7 +294,7 @@ export function FileChip(props: {
   );
 }
 
-function SvgFileChip(props: ComponentProps<typeof FileChip>) {
+function PluginOriginalSvgFileChip(props: ComponentProps<typeof PluginOriginalFileChip>) {
   const preview = props.svgPreview;
   const [local, setLocal] = useState<{ file: Blob; url: string }>();
   const [failedPreviewUrl, setFailedPreviewUrl] = useState<string>();
@@ -320,7 +354,7 @@ function SvgFileChip(props: ComponentProps<typeof FileChip>) {
   );
 }
 
-function FileChipContent(props: {
+function PluginOriginalFileChipContent(props: {
   name: string;
   size: string;
   isVideo: boolean;
@@ -348,7 +382,11 @@ function FileChipContent(props: {
   );
 }
 
-export function UnresolvedChip(props: { label: string; tooltip: string; copyMarkdown?: string }) {
+function PluginOriginalUnresolvedChip(props: {
+  label: string;
+  tooltip: string;
+  copyMarkdown?: string;
+}) {
   const gt = useGT();
   return (
     <ContextChipShell

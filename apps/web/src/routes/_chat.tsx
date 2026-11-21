@@ -1,4 +1,6 @@
+import { registerBuiltinRoute, definePluginRouteRenderer } from "~/plugins/routing";
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import type { ReactElement } from "react";
 
 import { ThreadRouteView } from "../components/ThreadRouteView";
 import { GlobalVoiceInputIndicator } from "../components/chat/GlobalVoiceInputIndicator";
@@ -8,8 +10,14 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { retainThreadFindForRoute } from "../components/chat/threadFindStore";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
 import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
+import { definePluginComponent } from "~/plugins/features";
 
-function ChatRouteLayout() {
+const ChatRouteLayout = definePluginComponent(
+  "component:routes/_chat/ChatRouteLayout",
+  PluginOriginalChatRouteLayout,
+);
+
+function PluginOriginalChatRouteLayout(): ReactElement {
   // Render both routes here so draft promotion keeps the same ChatView mounted.
   const { shownTarget, modalOpen } = useShownThreadRouteTarget();
   return (
@@ -40,7 +48,7 @@ export const Route = createFileRoute("/_chat")({
     }
     return { appModalPage: isAppModalPage(location.pathname) };
   },
-  component: ChatRouteLayout,
+  component: definePluginRouteRenderer("/_chat", "component", ChatRouteLayout),
   // Every match carries the whole location's params, so this layout sees the thread route's too.
   onEnter: ({ context, params }) => retainThreadFindForRouteMatch(context.appModalPage, params),
   onStay: ({ context, params }) => retainThreadFindForRouteMatch(context.appModalPage, params),
@@ -57,3 +65,5 @@ function retainThreadFindForRouteMatch(
     threadRef: target?.kind === "server" ? target.threadRef : null,
   });
 }
+
+registerBuiltinRoute("/_chat", Route);

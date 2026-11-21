@@ -21,6 +21,12 @@ import {
   MenuSubPopup,
   MenuSubTrigger,
 } from "../ui/menu";
+import { definePluginComponent } from "~/plugins/features";
+
+export const EnvironmentIconMenu = definePluginComponent(
+  "component:components/settings/EnvironmentIconPicker/EnvironmentIconMenu",
+  PluginOriginalEnvironmentIconMenu,
+);
 
 export function resolveEnvironmentIconPickerLock(
   input: {
@@ -38,7 +44,7 @@ export function resolveEnvironmentIconPickerLock(
   return null;
 }
 
-export function EnvironmentIconMenu({
+function PluginOriginalEnvironmentIconMenu({
   environmentId,
   serverConfig,
 }: {

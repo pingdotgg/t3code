@@ -5,8 +5,22 @@ import type { ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ClerkUserProfilePage({
+export const ClerkUserProfilePage = definePluginComponent(
+  "component:components/clerk/ClerkUserProfilePage/ClerkUserProfilePage",
+  PluginOriginalClerkUserProfilePage,
+);
+export const ClerkUserProfileRefreshButton = definePluginComponent(
+  "component:components/clerk/ClerkUserProfilePage/ClerkUserProfileRefreshButton",
+  PluginOriginalClerkUserProfileRefreshButton,
+);
+export const ClerkUserProfileRow = definePluginComponent(
+  "component:components/clerk/ClerkUserProfilePage/ClerkUserProfileRow",
+  PluginOriginalClerkUserProfileRow,
+);
+
+function PluginOriginalClerkUserProfilePage({
   action,
   children,
   className,
@@ -38,7 +52,7 @@ export function ClerkUserProfilePage({
   );
 }
 
-export function ClerkUserProfileRefreshButton({
+function PluginOriginalClerkUserProfileRefreshButton({
   className,
   disabled = false,
   isPending,
@@ -63,7 +77,7 @@ export function ClerkUserProfileRefreshButton({
   );
 }
 
-export function ClerkUserProfileRow({
+function PluginOriginalClerkUserProfileRow({
   children,
   className,
   icon,

@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
@@ -60,7 +61,7 @@ function confirmDeregister(environment: RelayClientEnvironmentRecord, onConfirm:
   });
 }
 
-export function T3ConnectProfilePage() {
+function BuiltinT3ConnectProfilePage() {
   const gt = useGT();
   const m = useMessages();
   const environmentsState = useManagedRelayEnvironments();
@@ -247,7 +248,7 @@ export function T3ConnectProfilePage() {
   );
 }
 
-function ClerkSectionHeader(props: { readonly children: string }) {
+function BuiltinClerkSectionHeader(props: { readonly children: string }) {
   return (
     <Text className="min-h-4 border-b border-clerk-border px-6 pt-8 pb-4 text-xs font-medium tracking-[0.3px] text-clerk-foreground-muted uppercase">
       {props.children}
@@ -255,7 +256,7 @@ function ClerkSectionHeader(props: { readonly children: string }) {
   );
 }
 
-function ClerkRow(props: {
+function BuiltinClerkRow(props: {
   readonly title: string;
   readonly subtitle: string;
   readonly accessory?: ReactNode;
@@ -278,7 +279,7 @@ function ClerkRow(props: {
   );
 }
 
-function ClerkButtonRow(props: { readonly label: string; readonly onPress: () => void }) {
+function BuiltinClerkButtonRow(props: { readonly label: string; readonly onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -289,3 +290,23 @@ function ClerkButtonRow(props: { readonly label: string; readonly onPress: () =>
     </Pressable>
   );
 }
+
+const ClerkSectionHeader = defineNativePluginFeature(
+  "native.features.cloud.t3-connect-profile-page.clerk-section-header",
+  BuiltinClerkSectionHeader,
+);
+
+const ClerkRow = defineNativePluginFeature(
+  "native.features.cloud.t3-connect-profile-page.clerk-row",
+  BuiltinClerkRow,
+);
+
+const ClerkButtonRow = defineNativePluginFeature(
+  "native.features.cloud.t3-connect-profile-page.clerk-button-row",
+  BuiltinClerkButtonRow,
+);
+
+export const T3ConnectProfilePage = defineNativePluginFeature(
+  "native.features.cloud.t3-connect-profile-page",
+  BuiltinT3ConnectProfilePage,
+);

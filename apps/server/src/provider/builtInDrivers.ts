@@ -67,3 +67,9 @@ export const BUILT_IN_USAGE_DRIVERS: ReadonlyArray<
   AntigravityDriver,
   CursorDriver,
 ];
+
+/** Each bundled provider owns an independent plugin generation and enable state. */
+export const BUILT_IN_PROVIDER_PLUGIN_DEFINITIONS = BUILT_IN_DRIVERS.map((driver) => ({
+  id: `t3.provider.${driver.driverKind.toLowerCase()}`,
+  driver,
+}));

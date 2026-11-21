@@ -19,6 +19,12 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PreviewMoreMenu = definePluginComponent(
+  "component:components/preview/PreviewMoreMenu/PreviewMoreMenu",
+  PluginOriginalPreviewMoreMenu,
+);
 
 const COLOR_SCHEME_OPTIONS: ReadonlyArray<{
   value: DesktopPreviewColorScheme;
@@ -82,7 +88,7 @@ const MenuTriggerButton = () => {
   );
 };
 
-export function PreviewMoreMenu({
+function PluginOriginalPreviewMoreMenu({
   enabled,
   actions,
   zoomFactor,

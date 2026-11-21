@@ -20,7 +20,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -1255,4 +1255,4 @@ export const make = Effect.gen(function* () {
   return { readSummary, refreshRates, awaitPersisted } as const;
 });
 
-export const layer = Layer.effect(UsageService, make);
+export const layer = builtinServiceLayer("t3.usage")(UsageService, make);

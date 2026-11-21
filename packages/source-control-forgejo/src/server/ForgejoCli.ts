@@ -1,8 +1,8 @@
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as Clock from "effect/Clock";
@@ -779,4 +779,4 @@ export const make = Effect.gen(function* () {
   return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });
 });
 
-export const layer = Layer.effect(ForgejoCli, make);
+export const layer = builtinServiceLayer("t3.git")(ForgejoCli, make);

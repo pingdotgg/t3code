@@ -7,8 +7,14 @@ import { textDirection } from "~/textDirection";
 
 import { ComposerContextActionsContext } from "../composerContextActions";
 import { Button } from "../ui/button";
+import { definePluginComponent } from "~/plugins/features";
 
-export function AssistantCitationCommentEditor({
+export const AssistantCitationCommentEditor = definePluginComponent(
+  "component:components/chat/AssistantCitationCommentEditor/AssistantCitationCommentEditor",
+  PluginOriginalAssistantCitationCommentEditor,
+);
+
+function PluginOriginalAssistantCitationCommentEditor({
   citation,
   inputRef,
   onSubmit,

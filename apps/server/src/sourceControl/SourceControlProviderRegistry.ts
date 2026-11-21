@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -6,7 +7,6 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Hash from "effect/Hash";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import {
@@ -397,4 +397,4 @@ const make = Effect.gen(function* () {
   );
 });
 
-export const layer = Layer.effect(SourceControlProviderRegistry, make);
+export const layer = builtinServiceLayer("t3.git")(SourceControlProviderRegistry, make);

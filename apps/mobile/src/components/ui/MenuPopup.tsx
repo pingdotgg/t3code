@@ -1,4 +1,10 @@
 import type { MenuAction } from "@react-native-menu/menu";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const MenuPopup = defineNativePluginFeature(
+  "native.components.ui.menu-popup",
+  BuiltinMenuPopup,
+);
 
 export interface MenuPopupProps {
   readonly menuWidth: number;
@@ -17,6 +23,6 @@ export interface MenuPopupProps {
   readonly inline?: boolean;
 }
 
-export function MenuPopup(_props: MenuPopupProps) {
+function BuiltinMenuPopup(_props: MenuPopupProps) {
   return null;
 }

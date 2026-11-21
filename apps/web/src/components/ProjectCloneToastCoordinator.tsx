@@ -30,8 +30,18 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { type DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { toastManager } from "./ui/toast";
 import { stackedThreadToast } from "./ui/toastHelpers";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ProjectCloneToastCoordinator() {
+export const ProjectCloneToastCoordinator = definePluginComponent(
+  "component:components/ProjectCloneToastCoordinator/ProjectCloneToastCoordinator",
+  PluginOriginalProjectCloneToastCoordinator,
+);
+const EnvironmentCloneToasts = definePluginComponent(
+  "component:components/ProjectCloneToastCoordinator/EnvironmentCloneToasts",
+  PluginOriginalEnvironmentCloneToasts,
+);
+
+function PluginOriginalProjectCloneToastCoordinator() {
   const { environments } = useEnvironments();
   return environments.map((environment) => (
     <EnvironmentCloneToasts
@@ -68,7 +78,7 @@ async function runCloneAction(
   }
 }
 
-function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentId }) {
+function PluginOriginalEnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentId }) {
   const clones = useEnvironmentProjectClones(environmentId);
   const handleNewThread = useNewThreadHandler();
   const { draftId: routeDraftId } = useParams({ strict: false });

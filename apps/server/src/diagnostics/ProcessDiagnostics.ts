@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type {
   ResourceTelemetryProcessCategory,
   ServerProcessDiagnosticsEntry,
@@ -7,7 +8,6 @@ import type {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -164,4 +164,4 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
   return ProcessDiagnostics.of({ read, signal });
 });
 
-export const layer = Layer.effect(ProcessDiagnostics, make());
+export const layer = builtinServiceLayer("t3.server")(ProcessDiagnostics, make());

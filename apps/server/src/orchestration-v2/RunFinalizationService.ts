@@ -1,9 +1,9 @@
+import { builtinServiceLayer, isBuiltinDisabledCause } from "../plugins/PluginKernel.ts";
 import { CheckpointScopeId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
 import * as FiberSet from "effect/FiberSet";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -117,9 +117,9 @@ const make = Effect.gen(function* () {
   return RunFinalizationService.of({ finalize });
 });
 
-export const layer = Layer.effect(RunFinalizationService, make);
+export const layer = builtinServiceLayer("t3.thread")(RunFinalizationService, make);
 
-export const layerObserver = Layer.effect(
+export const layerObserver = builtinServiceLayer("t3.thread")(
   RunFinalizationObserver,
   Effect.gen(function* () {
     const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
@@ -154,7 +154,14 @@ export const layerObserver = Layer.effect(
         ),
     );
     return {
-      refreshAfterTurn: pullRequests.refreshAfterTurn,
+      // Turns still finish while t3.pull-requests is disabled; there is just nothing to refresh.
+      refreshAfterTurn: (projectId) =>
+        Effect.suspend(() => pullRequests.refreshAfterTurn(projectId)).pipe(
+          Effect.catchCauseIf(
+            (cause) => isBuiltinDisabledCause(cause, "t3.pull-requests"),
+            () => Effect.void,
+          ),
+        ),
       // A project can track dozens of repositories, so the next turn must not wait for them all.
       // A newer turn's refresh replaces a running one.
       refreshRepositories: Effect.fn("RunFinalizationService.refreshRepositories")(function* ({

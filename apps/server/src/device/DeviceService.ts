@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   type DeviceActionInput,
   type DeviceCloseInput,
@@ -1691,7 +1692,7 @@ export const make = Effect.gen(function* () {
   };
 });
 
-export const layer = Layer.effect(DeviceService, make).pipe(
+export const layer = builtinServiceLayer("t3.server")(DeviceService, make).pipe(
   Layer.provide(LocalDeviceHost.layer),
   Layer.provide(SecretResolverLayer.layer),
 );

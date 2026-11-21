@@ -19,6 +19,9 @@ const state = vi.hoisted(() => ({
   copy: vi.fn(),
 }));
 
+vi.mock("../plugins/features", () => ({
+  defineNativePluginFeature: <Feature>(_slot: string, builtin: Feature) => builtin,
+}));
 vi.mock("react", () => ({
   useEffect: () => {},
   useRef: <A>(current: A) => ({ current }),

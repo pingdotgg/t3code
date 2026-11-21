@@ -3,8 +3,13 @@ import { Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { ShimmeringWorkContent } from "./thread-work-log";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const ThreadContextDivider = defineNativePluginFeature(
+  "native.features.threads.thread-context-divider",
+  BuiltinThreadContextDivider,
+);
 
-export function ThreadContextDivider(props: {
+function BuiltinThreadContextDivider(props: {
   label: string;
   icon?: AppSymbolName;
   iconColor: ColorValue;

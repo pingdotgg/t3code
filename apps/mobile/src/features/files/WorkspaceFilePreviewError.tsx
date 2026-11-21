@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
 import { View } from "react-native";
@@ -8,7 +9,7 @@ import { useEnvironmentPresentation } from "../../state/presentation";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useRetryEnvironment } from "../connection/useRetryEnvironment";
 
-export function WorkspaceFilePreviewError(props: {
+function BuiltinWorkspaceFilePreviewError(props: {
   readonly environmentId: EnvironmentId | null;
   readonly reason: AssetUrlFailureReason;
   readonly onRetry: () => void;
@@ -55,3 +56,8 @@ export function WorkspaceFilePreviewError(props: {
     </View>
   );
 }
+
+export const WorkspaceFilePreviewError = defineNativePluginFeature(
+  "native.features.files.workspace-file-preview-error",
+  BuiltinWorkspaceFilePreviewError,
+);

@@ -1,11 +1,11 @@
 import { msg } from "gt-i18n";
 import { detailFromError, translatableDetail } from "../errors/translatable.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -413,4 +413,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ConnectionOnboarding, make);
+export const layer = builtinServiceLayer("t3.client")(ConnectionOnboarding, make);

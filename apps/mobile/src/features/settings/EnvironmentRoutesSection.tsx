@@ -1,4 +1,5 @@
 import { T, useGT, useMessages } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -50,7 +51,7 @@ const ROUTE_ICONS: Record<ConnectionRouteKind, AppSymbolName> = {
   ssh: "terminal",
 };
 
-export function EnvironmentRoutesSection({
+function BuiltinEnvironmentRoutesSection({
   environmentId,
   connected,
   onAddRoute,
@@ -237,7 +238,7 @@ export function EnvironmentRoutesSection({
   );
 }
 
-function RouteRow(props: {
+function BuiltinRouteRow(props: {
   readonly route: ConnectionRoute;
   readonly position: number;
   readonly count: number;
@@ -362,3 +363,13 @@ function RouteRow(props: {
     </Reanimated.View>
   );
 }
+
+const RouteRow = defineNativePluginFeature(
+  "native.features.settings.environment-routes-section.route-row",
+  BuiltinRouteRow,
+);
+
+export const EnvironmentRoutesSection = defineNativePluginFeature(
+  "native.features.settings.environment-routes-section",
+  BuiltinEnvironmentRoutesSection,
+);

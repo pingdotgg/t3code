@@ -1,3 +1,4 @@
+import { builtinContextLayer } from "@t3tools/shared/pluginKernel";
 import {
   ConnectionCatalogDocument,
   type ConnectionCatalogDocument as ConnectionCatalogDocumentType,
@@ -35,7 +36,6 @@ import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@t3too
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
@@ -741,7 +741,8 @@ const yieldToBrowserTask = Effect.callback<void>((resume) => {
   return Effect.sync(() => port1.close());
 });
 
-export const layer = Layer.effectContext(
+export const layer = builtinContextLayer(
+  "t3.client",
   Effect.gen(function* () {
     const { handle: database } = yield* Effect.acquireRelease(
       makeDatabaseHandle(),

@@ -4,8 +4,9 @@ import { View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
+import { defineNativePluginFeature } from "../../../plugins/features";
 
-export function SettingsDragHandle(props: {
+function BuiltinSettingsDragHandle(props: {
   readonly title: string;
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
@@ -57,3 +58,8 @@ export function SettingsDragHandle(props: {
     </GestureDetector>
   );
 }
+
+export const SettingsDragHandle = defineNativePluginFeature(
+  "native.features.settings.environment-routes-section.drag-handle",
+  BuiltinSettingsDragHandle,
+);

@@ -15,8 +15,14 @@ import {
 } from "../ui/alert-dialog";
 import { Button, InlineButton } from "../ui/button";
 import { useT3ConnectAccountPage } from "./T3ConnectAccountPages";
+import { definePluginComponent } from "~/plugins/features";
 
-export function RemoveT3ConnectEnvironmentDialog({
+export const RemoveT3ConnectEnvironmentDialog = definePluginComponent(
+  "component:components/clerk/RemoveT3ConnectEnvironmentDialog/RemoveT3ConnectEnvironmentDialog",
+  PluginOriginalRemoveT3ConnectEnvironmentDialog,
+);
+
+function PluginOriginalRemoveT3ConnectEnvironmentDialog({
   environmentLabel,
   environmentId,
   onCancel,

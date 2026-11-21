@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useGT } from "gt-react";
 import { BookmarkIcon } from "lucide-react";
 import { memo } from "react";
@@ -5,7 +6,7 @@ import { memo } from "react";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 
-export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
+const PluginOriginalComposerStashBadge = memo(function ComposerStashBadge(props: {
   count: number;
   menuOpen: boolean;
   /** Bumped per stash; each new key replays the pulse. 0 means never pulsed. */
@@ -64,3 +65,8 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
     </ComposerBanner.Root>
   );
 });
+
+export const ComposerStashBadge = definePluginComponent(
+  "component:components/chat/ComposerStashBadge/ComposerStashBadge",
+  PluginOriginalComposerStashBadge,
+);

@@ -22,6 +22,12 @@ import {
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ProviderUpdatesAction = definePluginComponent(
+  "component:components/ProviderUpdatesAction/ProviderUpdatesAction",
+  PluginOriginalProviderUpdatesAction,
+);
 
 // `refreshModels` always drops the server's hour-long latest-version cache. `modelCatalogOnly`
 // drops it only when the model manifest changed.
@@ -124,7 +130,7 @@ export function useProviderUpdates() {
   return { machines, updateAll };
 }
 
-export function ProviderUpdatesAction() {
+function PluginOriginalProviderUpdatesAction() {
   const { machines, updateAll } = useProviderUpdates();
   const pending = useRef(false);
   const [isPending, setIsPending] = useState(false);

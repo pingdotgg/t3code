@@ -8,6 +8,17 @@ import { ColorHueSlider, ColorSaturationValuePlane } from "../ui/color-picker";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+const ThemeColorPickerPanel = definePluginComponent(
+  "component:components/settings/ThemeColorPicker/ThemeColorPickerPanel",
+  PluginOriginalThemeColorPickerPanel,
+);
+const ThemeColorPicker = definePluginComponent(
+  "component:components/settings/ThemeColorPicker/ThemeColorPicker",
+  PluginOriginalThemeColorPicker,
+);
+
 const THEME_ROLE_LABELS: Partial<Record<ThemeColorRole, string>> = {
   canvas: msg("Background"),
   toolbar: msg("Toolbar background"),
@@ -104,7 +115,7 @@ function createFrameCommitter() {
 
 type FrameCommitter = ReturnType<typeof createFrameCommitter>;
 
-function ThemeColorPickerPanel({
+function PluginOriginalThemeColorPickerPanel({
   label,
   value,
   committer,
@@ -246,7 +257,7 @@ function ThemeColorPickerPanel({
   );
 }
 
-function ThemeColorPicker({
+function PluginOriginalThemeColorPicker({
   label,
   value,
   onChange,
@@ -324,7 +335,7 @@ function ThemeColorPicker({
   );
 }
 
-export const ThemeColorField = memo(function ThemeColorField({
+const PluginOriginalThemeColorField = memo(function ThemeColorField({
   role,
   value,
   onChange,
@@ -426,3 +437,7 @@ export const ThemeColorField = memo(function ThemeColorField({
     </div>
   );
 });
+export const ThemeColorField = definePluginComponent(
+  "component:components/settings/ThemeColorPicker/ThemeColorField",
+  PluginOriginalThemeColorField,
+);

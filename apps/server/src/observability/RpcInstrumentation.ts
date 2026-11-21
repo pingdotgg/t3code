@@ -1,11 +1,11 @@
 import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type WsRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 
+import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import { rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
 
 type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
@@ -105,6 +105,15 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverRefreshUsageRates]: "server",
   [WS_METHODS.serverSignalProcess]: "server",
   [WS_METHODS.serverReportClientActivity]: "server",
+  [WS_METHODS.pluginsAuthoringGuide]: "plugins",
+  [WS_METHODS.pluginsRegistryList]: "plugins",
+  [WS_METHODS.pluginsRegistryInstall]: "plugins",
+  [WS_METHODS.pluginsList]: "plugins",
+  [WS_METHODS.pluginsSearch]: "plugins",
+  [WS_METHODS.pluginsSubscribe]: "plugins",
+  [WS_METHODS.pluginsSetEnabled]: "plugins",
+  [WS_METHODS.pluginsReload]: "plugins",
+  [WS_METHODS.pluginsInvoke]: "plugins",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",
@@ -256,6 +265,14 @@ const RPC_AGGREGATES = {
   [WS_METHODS.deviceDetail]: "device",
   [WS_METHODS.deviceAction]: "device",
   [WS_METHODS.subscribeDeviceState]: "device",
+  [WS_METHODS.canvasList]: "canvas",
+  [WS_METHODS.canvasCreate]: "canvas",
+  [WS_METHODS.canvasDelete]: "canvas",
+  [WS_METHODS.canvasApplyOps]: "canvas",
+  [WS_METHODS.canvasSubscribe]: "canvas",
+  [WS_METHODS.canvasConnectHost]: "canvas",
+  [WS_METHODS.canvasUpdateHost]: "canvas",
+  [WS_METHODS.canvasRespondHost]: "canvas",
   [WS_METHODS.subscribeServerConfig]: "server",
   [WS_METHODS.subscribeServerLifecycle]: "server",
   [WS_METHODS.subscribeAuthAccess]: "auth",
@@ -278,34 +295,36 @@ export class RpcInstrumentation extends RpcMiddleware.Service<RpcInstrumentation
   "t3/server/RpcInstrumentation",
 ) {}
 
-export const rpcInstrumentationLayer = Layer.succeed(RpcInstrumentation)((effect, { rpc }) => {
-  const method = rpc._tag;
-  const measured = effect.pipe(
-    withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
-  );
+export const rpcInstrumentationLayer = builtinSucceedLayer("t3.server")(RpcInstrumentation)(
+  (effect, { rpc }) => {
+    const method = rpc._tag;
+    const measured = effect.pipe(
+      withMetrics({ counter: rpcRequestsTotal, timer: rpcRequestDuration, attributes: { method } }),
+    );
 
-  if (RPC_METHODS_WITH_TRACING_DISABLED.has(method)) {
-    return measured.pipe(Effect.provideService(References.TracerEnabled, false));
-  }
-  // The ambient span is the socket's `GET /ws` request, open for the whole connection. Parenting
-  // every call to it grows one trace past the collector's per-trace limit, which then drops it.
-  return Effect.currentParentSpan.pipe(
-    Effect.option,
-    Effect.flatMap((connection) =>
-      measured.pipe(
-        Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
-          root: true,
-          links: Option.match(connection, {
-            onNone: () => [],
-            onSome: (span) => [{ span, attributes: {} }],
+    if (RPC_METHODS_WITH_TRACING_DISABLED.has(method)) {
+      return measured.pipe(Effect.provideService(References.TracerEnabled, false));
+    }
+    // The ambient span is the socket's `GET /ws` request, open for the whole connection. Parenting
+    // every call to it grows one trace past the collector's per-trace limit, which then drops it.
+    return Effect.currentParentSpan.pipe(
+      Effect.option,
+      Effect.flatMap((connection) =>
+        measured.pipe(
+          Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
+            root: true,
+            links: Option.match(connection, {
+              onNone: () => [],
+              onSome: (span) => [{ span, attributes: {} }],
+            }),
+            attributes: {
+              ...DEFAULT_RPC_SPAN_ATTRIBUTES,
+              "rpc.method": method,
+              "rpc.aggregate": RPC_AGGREGATES[method as WsRpcMethod],
+            },
           }),
-          attributes: {
-            ...DEFAULT_RPC_SPAN_ATTRIBUTES,
-            "rpc.method": method,
-            "rpc.aggregate": RPC_AGGREGATES[method as WsRpcMethod],
-          },
-        }),
+        ),
       ),
-    ),
-  );
-});
+    );
+  },
+);

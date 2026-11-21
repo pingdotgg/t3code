@@ -22,8 +22,14 @@ import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
 import { AppText as Text } from "./ui/AppText";
 import { FilePreviewModal } from "./ui/FilePreviewModal";
 import { PresentationSource } from "./ui/NativePresentation";
+import { defineNativePluginFeature } from "../plugins/features";
 
-export function ComposerContextAttachment(props: {
+export const ComposerContextAttachment = defineNativePluginFeature(
+  "native.components.composer-context-attachment",
+  BuiltinComposerContextAttachment,
+);
+
+function BuiltinComposerContextAttachment(props: {
   record: Extract<ComposerContextRecord, { attachmentId: string }>;
   environmentId?: EnvironmentId;
   attachment?: DraftComposerAttachment;

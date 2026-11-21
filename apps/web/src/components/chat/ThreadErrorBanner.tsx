@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { OrchestrationV2ProviderFailureClass } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
@@ -79,7 +80,7 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
   return bannerKey !== null && sessionDismissedThreadErrorBannerKeys.has(bannerKey);
 }
 
-export const ThreadErrorBanner = memo(function ThreadErrorBanner({
+const PluginOriginalThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,
   errorClass,
@@ -146,3 +147,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
     </div>
   );
 });
+export const ThreadErrorBanner = definePluginComponent(
+  "component:components/chat/ThreadErrorBanner/ThreadErrorBanner",
+  PluginOriginalThreadErrorBanner,
+);

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
 import { useGT } from "gt-react";
@@ -28,7 +29,7 @@ interface PendingUserInputPanelProps {
   onDismiss: (requestId: RuntimeRequestId) => void;
 }
 
-export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
+const PluginOriginalComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
   pendingUserInputs,
   cwd,
   threadRef,
@@ -61,7 +62,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   );
 });
 
-const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
+const PluginOriginalComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
   prompt,
   cwd,
   threadRef,
@@ -368,3 +369,11 @@ function OptionRadio({ checked }: { checked: boolean }) {
     </span>
   );
 }
+export const ComposerPendingUserInputPanel = definePluginComponent(
+  "component:components/chat/ComposerPendingUserInputPanel/ComposerPendingUserInputPanel",
+  PluginOriginalComposerPendingUserInputPanel,
+);
+const ComposerPendingUserInputCard = definePluginComponent(
+  "component:components/chat/ComposerPendingUserInputPanel/ComposerPendingUserInputCard",
+  PluginOriginalComposerPendingUserInputCard,
+);

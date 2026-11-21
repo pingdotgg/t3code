@@ -65,11 +65,25 @@ import {
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
+import { definePluginComponent } from "~/plugins/features";
 
-const ProjectIconPickerDialog = lazy(() =>
+export const ProjectSettingsPanel = definePluginComponent(
+  "component:components/settings/ProjectSettingsPanel/ProjectSettingsPanel",
+  PluginOriginalProjectSettingsPanel,
+);
+const ProjectDetail = definePluginComponent(
+  "component:components/settings/ProjectSettingsPanel/ProjectDetail",
+  PluginOriginalProjectDetail,
+);
+
+const PluginOriginalProjectIconPickerDialog = lazy(() =>
   import("./ProjectIconPickerDialog").then((module) => ({
     default: module.ProjectIconPickerDialog,
   })),
+);
+const ProjectIconPickerDialog = definePluginComponent(
+  "component:components/settings/ProjectSettingsPanel/ProjectIconPickerDialog",
+  PluginOriginalProjectIconPickerDialog,
 );
 
 function isGroupingSelection(value: unknown): value is SidebarProjectGroupingMode | "inherit" {
@@ -170,7 +184,7 @@ function sameProjectSelection(a: ProjectSelection | null, b: ProjectSelection): 
   );
 }
 
-export function ProjectSettingsPanel({
+function PluginOriginalProjectSettingsPanel({
   projectKey,
   environmentId = null,
   checkoutKey = null,
@@ -259,7 +273,7 @@ export function ProjectSettingsPanel({
   );
 }
 
-function ProjectDetail({
+function PluginOriginalProjectDetail({
   group,
   allMembers,
   hasOtherMembers,

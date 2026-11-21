@@ -25,6 +25,16 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ProviderSetupSection = definePluginComponent(
+  "component:components/settings/ProviderSetupSection/ProviderSetupSection",
+  PluginOriginalProviderSetupSection,
+);
+const ProviderSetupActions = definePluginComponent(
+  "component:components/settings/ProviderSetupSection/ProviderSetupActions",
+  PluginOriginalProviderSetupActions,
+);
 
 interface ProviderSetupSectionProps {
   readonly environmentId: EnvironmentId;
@@ -48,7 +58,7 @@ export function readAntigravityAuthMethod(config: unknown): AntigravityAuthMetho
   );
 }
 
-export function ProviderSetupSection(props: ProviderSetupSectionProps) {
+function PluginOriginalProviderSetupSection(props: ProviderSetupSectionProps) {
   const gt = useGT();
   return (
     <section
@@ -98,7 +108,7 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
   );
 }
 
-function ProviderSetupActions({
+function PluginOriginalProviderSetupActions({
   environmentId,
   environmentLabel,
   instanceId,

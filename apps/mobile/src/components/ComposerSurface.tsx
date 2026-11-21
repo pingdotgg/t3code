@@ -25,6 +25,7 @@ import type { ScaledTextRole } from "../features/settings/appearance/useScaledTe
 import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { GlassSurface } from "./ui/GlassSurface";
+import { defineNativePluginFeature } from "../plugins/features";
 
 const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
 // iOS puts line-height slack above glyphs. DM Sans's lowercase midline is
@@ -169,7 +170,7 @@ const INLINE_EDITOR_HEIGHT = 36;
 
 const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
 
-export function ComposerSurface(props: {
+function BuiltinComposerSurface(props: {
   readonly children: ReactNode;
   readonly style: ViewStyle;
   readonly animateLayout?: boolean;
@@ -281,3 +282,8 @@ export function useComposerBottomInset() {
 export function useComposerTextStyle(text: ScaledTextRole) {
   return { ...text, color: useUniwindTheme()["--color-foreground"] };
 }
+
+export const ComposerSurface = defineNativePluginFeature(
+  "native.components.composer-surface",
+  BuiltinComposerSurface,
+);

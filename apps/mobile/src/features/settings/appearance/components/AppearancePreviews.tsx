@@ -1,4 +1,5 @@
 import { T } from "gt-react-native";
+import { defineNativePluginFeature } from "../../../../plugins/features";
 import { Platform, ScrollView, type StyleProp, type TextStyle, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/ui/AppText";
@@ -15,11 +16,11 @@ const CODE_FONT_FAMILY = Platform.select({
   default: "monospace",
 });
 
-export function AppearancePreviewSeparator() {
+function BuiltinAppearancePreviewSeparator() {
   return <View className="h-px bg-separator" />;
 }
 
-export function TextAppearancePreview(props: { readonly fontSize: number }) {
+function BuiltinTextAppearancePreview(props: { readonly fontSize: number }) {
   const sizes = resolveMarkdownFontSizes(props.fontSize);
 
   return (
@@ -40,7 +41,7 @@ export function TextAppearancePreview(props: { readonly fontSize: number }) {
   );
 }
 
-export function TerminalAppearancePreview(props: { readonly fontSize: number }) {
+function BuiltinTerminalAppearancePreview(props: { readonly fontSize: number }) {
   const { themeAppearance: scheme, themeId } = useAppearancePreferences();
   const theme = getMobileTerminalTheme(themeId, scheme);
   const lineHeight = Math.round(props.fontSize * 1.6);
@@ -129,7 +130,7 @@ const CODE_PREVIEW_LINES: ReadonlyArray<CodePreviewLine> = [
   { id: "close", tokens: [{ text: "}" }] },
 ];
 
-export function CodeAppearancePreview(props: {
+function BuiltinCodeAppearancePreview(props: {
   readonly fontSize: number;
   readonly wordBreak: boolean;
 }) {
@@ -203,3 +204,23 @@ export function CodeAppearancePreview(props: {
     </View>
   );
 }
+
+export const AppearancePreviewSeparator = defineNativePluginFeature(
+  "native.features.settings.appearance.components.appearance-previews.appearance-preview-separator",
+  BuiltinAppearancePreviewSeparator,
+);
+
+export const TextAppearancePreview = defineNativePluginFeature(
+  "native.features.settings.appearance.components.appearance-previews.text-appearance-preview",
+  BuiltinTextAppearancePreview,
+);
+
+export const TerminalAppearancePreview = defineNativePluginFeature(
+  "native.features.settings.appearance.components.appearance-previews.terminal-appearance-preview",
+  BuiltinTerminalAppearancePreview,
+);
+
+export const CodeAppearancePreview = defineNativePluginFeature(
+  "native.features.settings.appearance.components.appearance-previews.code-appearance-preview",
+  BuiltinCodeAppearancePreview,
+);

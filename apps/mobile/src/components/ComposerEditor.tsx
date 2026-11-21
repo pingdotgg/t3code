@@ -48,6 +48,11 @@ import {
   type ComposerDocumentAttachment,
 } from "../lib/composerContext";
 import { m } from "../i18n/messages";
+import { defineNativePluginFeature } from "../plugins/features";
+export const ComposerEditor = defineNativePluginFeature(
+  "native.components.composer-editor",
+  BuiltinComposerEditor,
+);
 
 export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
@@ -59,7 +64,7 @@ export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly onInertChipPress?: () => void;
 };
 
-export function ComposerEditor({
+function BuiltinComposerEditor({
   draftKey,
   hidden,
   environmentId,

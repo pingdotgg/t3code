@@ -47,6 +47,24 @@ import {
   buildCancelQueuedRunCommand,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const QueueRowSwipeable = defineNativePluginFeature(
+  "native.features.threads.thread-queue-control.queue-row-swipeable",
+  BuiltinQueueRowSwipeable,
+);
+const QueueAttachmentThumbnails = defineNativePluginFeature(
+  "native.features.threads.thread-queue-control.queue-attachment-thumbnails",
+  BuiltinQueueAttachmentThumbnails,
+);
+const QueueAttachmentThumbnail = defineNativePluginFeature(
+  "native.features.threads.thread-queue-control.queue-attachment-thumbnail",
+  BuiltinQueueAttachmentThumbnail,
+);
+export const ThreadQueueSheet = defineNativePluginFeature(
+  "native.features.threads.thread-queue-control.thread-queue-sheet",
+  BuiltinThreadQueueSheet,
+);
 
 const REMOVE_ACTION_WIDTH = 76;
 const THUMBNAIL_LIMIT = 3;
@@ -127,7 +145,7 @@ function QueuedRunSender(props: {
   );
 }
 
-export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
+function BuiltinThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const theme = useUniwindTheme();
   const target = route.params;
   const navigation = useNavigation();
@@ -421,7 +439,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   );
 }
 
-function QueueRowSwipeable(props: {
+function BuiltinQueueRowSwipeable(props: {
   readonly enabled: boolean;
   readonly background: string;
   readonly onRemove: () => void;
@@ -470,7 +488,7 @@ function QueueRowSwipeable(props: {
   );
 }
 
-function QueueAttachmentThumbnails(props: {
+function BuiltinQueueAttachmentThumbnails(props: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly onPressPreview: (source: FilePreviewSource) => void;
@@ -533,7 +551,7 @@ function queueImagePreview(environmentId: EnvironmentId, attachment: ChatAttachm
   } as const;
 }
 
-function QueueAttachmentThumbnail(props: {
+function BuiltinQueueAttachmentThumbnail(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatAttachment;
   readonly onPress: () => void;

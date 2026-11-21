@@ -12,7 +12,7 @@ import {
 import * as Equal from "effect/Equal";
 import { useGT } from "gt-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
+import { type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
 
 import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
@@ -37,6 +37,40 @@ import {
   type SettingInheritanceState,
   type SettingOverridingProject,
 } from "./SettingInheritance";
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
+
+const SettingsSearchTargetProvider = definePluginComponent(
+  "component:components/settings/settingsLayout/SettingsSearchTargetProvider",
+  PluginOriginalSettingsSearchTargetProvider,
+);
+export const SettingsSearchTarget = definePluginComponent(
+  "component:components/settings/settingsLayout/SettingsSearchTarget",
+  PluginOriginalSettingsSearchTarget,
+);
+export const PolicyTooltip = definePluginComponent(
+  "component:components/settings/settingsLayout/PolicyTooltip",
+  PluginOriginalPolicyTooltip,
+);
+export const SettingsSection = definePluginComponent(
+  "component:components/settings/settingsLayout/SettingsSection",
+  PluginOriginalSettingsSection,
+);
+export const SettingsUnavailableGroup = definePluginComponent(
+  "component:components/settings/settingsLayout/SettingsUnavailableGroup",
+  PluginOriginalSettingsUnavailableGroup,
+);
+export const SettingsRow = definePluginComponent(
+  "component:components/settings/settingsLayout/SettingsRow",
+  PluginOriginalSettingsRow,
+);
+export const SettingResetButton = definePluginComponent(
+  "component:components/settings/settingsLayout/SettingResetButton",
+  PluginOriginalSettingResetButton,
+);
+export const SettingsPageContainer = definePluginComponent(
+  "component:components/settings/settingsLayout/SettingsPageContainer",
+  PluginOriginalSettingsPageContainer,
+);
 
 const EMPTY_SETTING_KEYS: readonly (keyof ServerSettings)[] = [];
 const EMPTY_MANAGED_PATHS: readonly string[] = [];
@@ -54,13 +88,16 @@ interface SettingsSearchTargetContextValue {
 }
 
 const noop = () => undefined;
-const SettingsSearchTargetContext = createContext<SettingsSearchTargetContextValue>({
-  targetId: null,
-  highlightTarget: true,
-  onTargetHandled: noop,
-});
+const SettingsSearchTargetContext = createPluginContext<SettingsSearchTargetContextValue>(
+  "components/settings/settingsLayout/SettingsSearchTargetContext",
+  {
+    targetId: null,
+    highlightTarget: true,
+    onTargetHandled: noop,
+  },
+);
 
-function SettingsSearchTargetProvider({
+function PluginOriginalSettingsSearchTargetProvider({
   targetId,
   highlightTarget = true,
   onTargetHandled = noop,
@@ -171,7 +208,7 @@ export function useSettingsSearchTarget<T extends HTMLElement>(id: string | unde
   return targetRef;
 }
 
-export function SettingsSearchTarget({
+function PluginOriginalSettingsSearchTarget({
   children,
   // `searchableSetting` names the target for search; as an HTML title it shows a native tooltip.
   title: _searchTitle,
@@ -189,7 +226,7 @@ export function SettingsSearchTarget({
 export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
   "min-w-0 max-w-none shrink-0 border-input bg-background font-normal text-foreground shadow-xs/5 hover:bg-accent/50 dark:bg-input/32 [&_svg[data-composer-control-chevron]]:stroke-[1.75] [&_svg[data-composer-control-chevron]]:opacity-70";
 
-export function PolicyTooltip({ children }: { readonly children: string }) {
+function PluginOriginalPolicyTooltip({ children }: { readonly children: string }) {
   const gt = useGT();
   return (
     <Tooltip>
@@ -210,7 +247,7 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
   );
 }
 
-export function SettingsSection({
+function PluginOriginalSettingsSection({
   title,
   hideTitle = false,
   icon,
@@ -264,7 +301,7 @@ export function SettingsSection({
   );
 }
 
-export function SettingsUnavailableGroup({
+function PluginOriginalSettingsUnavailableGroup({
   children,
   message,
 }: {
@@ -310,7 +347,7 @@ function projectOverrides(
   });
 }
 
-export function SettingsRow({
+function PluginOriginalSettingsRow({
   title,
   description,
   status,
@@ -582,7 +619,7 @@ export function SettingsRow({
   );
 }
 
-export function SettingResetButton({
+function PluginOriginalSettingResetButton({
   ariaLabel,
   tooltip,
   disabled = false,
@@ -622,7 +659,7 @@ export function SettingResetButton({
   );
 }
 
-export function SettingsPageContainer({
+function PluginOriginalSettingsPageContainer({
   children,
   className,
   width = "readable",

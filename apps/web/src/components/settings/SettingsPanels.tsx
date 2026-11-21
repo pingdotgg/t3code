@@ -131,6 +131,20 @@ import { downloadLocalUpdate } from "../sidebar/SidebarUpdatePill";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
+import { definePluginComponent } from "~/plugins/features";
+
+const AboutVersionSection = definePluginComponent(
+  "component:components/settings/SettingsPanels/AboutVersionSection",
+  PluginOriginalAboutVersionSection,
+);
+const AutoSettleDaysInput = definePluginComponent(
+  "component:components/settings/SettingsPanels/AutoSettleDaysInput",
+  PluginOriginalAutoSettleDaysInput,
+);
+export const GeneralSettingsPanel = definePluginComponent(
+  "component:components/settings/SettingsPanels/GeneralSettingsPanel",
+  PluginOriginalGeneralSettingsPanel,
+);
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: msg("Wait for the full response"),
@@ -167,7 +181,7 @@ const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
 };
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
-function AboutVersionSection() {
+function PluginOriginalAboutVersionSection() {
   const setting = useSearchableSetting();
   const gt = useGT();
   const messages = useMessages();
@@ -780,7 +794,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
 
-function AutoSettleDaysInput({
+function PluginOriginalAutoSettleDaysInput({
   value,
   onCommit,
 }: {
@@ -827,7 +841,7 @@ function AutoSettleDaysInput({
   );
 }
 
-export function GeneralSettingsPanel() {
+export function PluginOriginalGeneralSettingsPanel() {
   const gt = useGT();
   const m = useMessages();
   const setting = useSearchableSetting();

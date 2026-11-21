@@ -19,6 +19,7 @@ import {
   isAudioSessionOwner,
   releaseAudioSession,
 } from "../../lib/audioSession";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 export type { VideoPreviewSource } from "../../lib/videoPreviewSource";
 
@@ -36,7 +37,12 @@ const NativeControls = requireNativeModule<{
   ): { remove(): void };
 }>("T3NativeControls");
 
-function NativeVideoPreview(props: {
+const NativeVideoPreview = defineNativePluginFeature(
+  "native.components.ui.video-preview-modal.native-video-preview",
+  BuiltinNativeVideoPreview,
+);
+
+function BuiltinNativeVideoPreview(props: {
   readonly source: VideoPreviewSource;
   readonly onRequestClose: () => void;
 }) {
@@ -158,7 +164,7 @@ function NativeVideoPreview(props: {
   return null;
 }
 
-export function VideoPreviewModal(props: {
+function BuiltinVideoPreviewModal(props: {
   readonly source: VideoPreviewSource | null;
   readonly onRequestClose: () => void;
 }) {
@@ -169,3 +175,8 @@ export function VideoPreviewModal(props: {
   if (!props.source) return null;
   return <NativeVideoPreview source={props.source} onRequestClose={props.onRequestClose} />;
 }
+
+export const VideoPreviewModal = defineNativePluginFeature(
+  "native.components.ui.video-preview-modal",
+  BuiltinVideoPreviewModal,
+);

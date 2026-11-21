@@ -100,6 +100,7 @@ import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
 } from "./scheduledTaskPresentation";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 type ScheduledTaskRoutes = {
   SettingsScheduledTaskNew: undefined;
@@ -197,7 +198,7 @@ function repeatLabel(
   );
 }
 
-function FormField(props: {
+function BuiltinFormField(props: {
   readonly label: string;
   readonly value: string;
   readonly onChange: (value: string) => void;
@@ -228,7 +229,7 @@ function FormField(props: {
   );
 }
 
-function SelectRow(props: {
+function BuiltinSelectRow(props: {
   readonly label: string;
   readonly value: string;
   readonly valueIcon?: ReactNode;
@@ -393,7 +394,7 @@ function WebhookFilterRows(props: {
   );
 }
 
-function PickerRow(props: {
+function BuiltinPickerRow(props: {
   readonly label: string;
   readonly value: string;
   readonly onPress: () => void;
@@ -434,7 +435,7 @@ function PickerRow(props: {
   );
 }
 
-export function SettingsScheduledTasksRouteScreen() {
+function BuiltinSettingsScheduledTasksRouteScreen() {
   const gt = useGT();
   const [now, setNow] = useState(Date.now);
   useFocusEffect(() => {
@@ -527,17 +528,17 @@ export function SettingsScheduledTasksRouteScreen() {
 
 // The "New task" action and takeScheduledTaskNewLink clear the editor before
 // this screen opens, so it starts from the default target.
-export function SettingsScheduledTaskNewRouteScreen() {
+function BuiltinSettingsScheduledTaskNewRouteScreen() {
   const gt = useGT();
   return <SettingsScheduledTaskEditorScreen title={gt("New scheduled task")} />;
 }
 
-export function SettingsScheduledTaskEditRouteScreen() {
+function BuiltinSettingsScheduledTaskEditRouteScreen() {
   const gt = useGT();
   return <SettingsScheduledTaskEditorScreen title={gt("Edit scheduled task")} />;
 }
 
-function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
+function BuiltinSettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
   const gt = useGT();
   const {
     editor,
@@ -702,7 +703,7 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
   );
 }
 
-function TaskForm({
+function BuiltinTaskForm({
   environmentId,
   environmentLabel,
   availableTargets,
@@ -1589,7 +1590,7 @@ function WebhookScheduleDetails({
   );
 }
 
-function EnvironmentTasks({
+function BuiltinEnvironmentTasks({
   environment,
   now,
   projectIds,
@@ -1784,3 +1785,48 @@ function EnvironmentTasks({
     </SettingsSection>
   );
 }
+
+const FormField = defineNativePluginFeature(
+  "native.features.settings.settings-scheduled-tasks-route-screen.form-field",
+  BuiltinFormField,
+);
+
+const SelectRow = defineNativePluginFeature(
+  "native.features.settings.settings-scheduled-tasks-route-screen.select-row",
+  BuiltinSelectRow,
+);
+
+const PickerRow = defineNativePluginFeature(
+  "native.features.settings.settings-scheduled-tasks-route-screen.picker-row",
+  BuiltinPickerRow,
+);
+
+const SettingsScheduledTaskEditorScreen = defineNativePluginFeature(
+  "native.features.settings.settings-scheduled-tasks-route-screen.settings-scheduled-task-editor-screen",
+  BuiltinSettingsScheduledTaskEditorScreen,
+);
+
+const TaskForm = defineNativePluginFeature(
+  "native.features.settings.settings-scheduled-tasks-route-screen.task-form",
+  BuiltinTaskForm,
+);
+
+const EnvironmentTasks = defineNativePluginFeature(
+  "native.features.settings.settings-scheduled-tasks-route-screen.environment-tasks",
+  BuiltinEnvironmentTasks,
+);
+
+export const SettingsScheduledTaskNewRouteScreen = defineNativePluginFeature(
+  "native.features.settings.settings-scheduled-tasks-route-screen.settings-scheduled-task-new-route-screen",
+  BuiltinSettingsScheduledTaskNewRouteScreen,
+);
+
+export const SettingsScheduledTaskEditRouteScreen = defineNativePluginFeature(
+  "native.features.settings.settings-scheduled-tasks-route-screen.settings-scheduled-task-edit-route-screen",
+  BuiltinSettingsScheduledTaskEditRouteScreen,
+);
+
+export const SettingsScheduledTasksRouteScreen = defineNativePluginFeature(
+  "settings.scheduled-tasks",
+  BuiltinSettingsScheduledTasksRouteScreen,
+);

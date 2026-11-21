@@ -21,6 +21,12 @@ import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { readableFailure } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PullRequestLabelPicker = definePluginComponent(
+  "component:components/pullRequest/PullRequestLabelPicker/PullRequestLabelPicker",
+  PluginOriginalPullRequestLabelPicker,
+);
 
 function matches(candidate: PullRequestLabelCandidate, query: string): boolean {
   if (query.length === 0) return true;
@@ -31,7 +37,7 @@ function matches(candidate: PullRequestLabelCandidate, query: string): boolean {
   );
 }
 
-export function PullRequestLabelPicker({
+function PluginOriginalPullRequestLabelPicker({
   environmentId,
   reference,
   allowed,

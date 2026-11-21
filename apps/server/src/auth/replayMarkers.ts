@@ -1,8 +1,8 @@
+import { builtinLifecycleLayer } from "../plugins/PluginKernel.ts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
@@ -55,7 +55,9 @@ export const pruneExpiredReplayMarkers = Effect.fn("replayMarkers.pruneExpired")
   }
 });
 
-export const layer = Layer.effectDiscard(
+export const layer = builtinLifecycleLayer(
+  "t3.auth",
+  "t3/runtime/auth/replayMarkers#lifecycle1",
   forkParked(
     pruneExpiredReplayMarkers().pipe(
       Effect.catch((cause) =>

@@ -2,8 +2,17 @@ import { useGT } from "gt-react";
 import type { ComponentProps } from "react";
 import { OpenAI } from "../Icons";
 import { Button } from "../ui/button";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ChatGptConnectionButton({ children, ...props }: ComponentProps<typeof Button>) {
+export const ChatGptConnectionButton = definePluginComponent(
+  "component:components/settings/ChatGptConnectionButton/ChatGptConnectionButton",
+  PluginOriginalChatGptConnectionButton,
+);
+
+function PluginOriginalChatGptConnectionButton({
+  children,
+  ...props
+}: ComponentProps<typeof Button>) {
   const gt = useGT();
   return (
     <Button {...props}>

@@ -8,10 +8,24 @@ import { Input } from "../ui/input";
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import { definePluginComponent } from "~/plugins/features";
+
+const ProviderCustomColorPanel = definePluginComponent(
+  "component:components/settings/ProviderAccentColorPicker/ProviderCustomColorPanel",
+  PluginOriginalProviderCustomColorPanel,
+);
+const ProviderCustomColorPicker = definePluginComponent(
+  "component:components/settings/ProviderAccentColorPicker/ProviderCustomColorPicker",
+  PluginOriginalProviderCustomColorPicker,
+);
+export const ProviderAccentColorPicker = definePluginComponent(
+  "component:components/settings/ProviderAccentColorPicker/ProviderAccentColorPicker",
+  PluginOriginalProviderAccentColorPicker,
+);
 
 const FALLBACK_ACCENT_COLOR = "#2563eb";
 
-function ProviderCustomColorPanel(props: {
+function PluginOriginalProviderCustomColorPanel(props: {
   readonly value: string;
   readonly onPreview: (value: string) => void;
   readonly onCommit: (value: string) => void;
@@ -105,7 +119,7 @@ function ProviderCustomColorPanel(props: {
   );
 }
 
-function ProviderCustomColorPicker(props: {
+function PluginOriginalProviderCustomColorPicker(props: {
   readonly displayName: string;
   readonly value: string | undefined;
   readonly onPreview: (value: string) => void;
@@ -174,7 +188,7 @@ function ProviderCustomColorPicker(props: {
   );
 }
 
-export function ProviderAccentColorPicker(props: {
+function PluginOriginalProviderAccentColorPicker(props: {
   readonly displayName: string;
   readonly value: string | undefined;
   readonly onCommit: (value: string) => void;

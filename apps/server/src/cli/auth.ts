@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import {
   AuthAccessWriteScope,
   AuthRevokePairingLinkInput,
@@ -48,7 +49,9 @@ const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
         Layer.provideMerge(ServerConfig.layer(config)),
-        Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+        Layer.provide(
+          builtinSucceedLayer("t3.server")(References.MinimumLogLevel, minimumLogLevel),
+        ),
       ),
     ),
   );

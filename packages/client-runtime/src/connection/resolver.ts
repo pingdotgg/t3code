@@ -1,5 +1,6 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import type {
   AuthClientPresentationMetadata,
   ExecutionEnvironmentDescriptor,
@@ -7,7 +8,6 @@ import type {
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -344,4 +344,4 @@ export const make = Effect.gen(function* () {
   return ConnectionResolver.of({ prepare, prepareForUpdate: authorize });
 });
 
-export const layer = Layer.effect(ConnectionResolver, make);
+export const layer = builtinServiceLayer("t3.client")(ConnectionResolver, make);

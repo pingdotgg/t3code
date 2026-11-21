@@ -92,6 +92,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { PreviewControlsToolkit } from "../../mcp/toolkits/previewControls/tools.ts";
 import { HtmlToolkit } from "../../mcp/toolkits/html/tools.ts";
 import { MessageToolkit } from "../../mcp/toolkits/message/tools.ts";
+import { CanvasStandardToolkit, CanvasScreenshotToolkit } from "../../mcp/toolkits/canvas/tools.ts";
 import { EnvironmentToolkit } from "../../mcp/toolkits/environment/tools.ts";
 import { ThemeToolkit } from "../../mcp/toolkits/theme/tools.ts";
 import { ProjectToolkit } from "../../mcp/toolkits/project/tools.ts";
@@ -779,7 +780,7 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.equal(keyFor("/repos/api"), keyFor("/repos/api"));
   });
 
-  it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
+  it("matches the read-only allowlist to the exposed toolkit annotations", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),
       ...Object.values(ThreadToolkit.tools),
@@ -790,6 +791,8 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(PreviewControlsToolkit.tools),
       ...Object.values(HtmlToolkit.tools),
       ...Object.values(MessageToolkit.tools),
+      ...Object.values(CanvasStandardToolkit.tools),
+      ...Object.values(CanvasScreenshotToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__t3-code__${tool.name}`)

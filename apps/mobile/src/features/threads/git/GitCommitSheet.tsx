@@ -20,6 +20,12 @@ import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
+import { defineNativePluginFeature } from "../../../plugins/features";
+
+export const GitCommitSheet = defineNativePluginFeature(
+  "native.features.threads.git.git-commit-sheet",
+  BuiltinGitCommitSheet,
+);
 
 type GitCommitSheetProps = StaticScreenProps<
   {
@@ -28,7 +34,7 @@ type GitCommitSheetProps = StaticScreenProps<
   } & GitRepositoryRouteParams
 >;
 
-export function GitCommitSheet(props: GitCommitSheetProps) {
+function BuiltinGitCommitSheet(props: GitCommitSheetProps) {
   const repository = gitRepositoryTargetFromRoute(props.route.params);
   const gt = useGT();
   const navigation = useNavigation();

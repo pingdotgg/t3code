@@ -5,8 +5,22 @@ import { useFaviconForThreadUrl } from "~/browserFaviconStore";
 import { cn } from "~/lib/utils";
 
 import { BrowserMockup } from "./BrowserMockup";
+import { definePluginComponent } from "~/plugins/features";
 
-export function FaviconImage(props: {
+export const FaviconImage = definePluginComponent(
+  "component:components/preview/PreviewFaviconIcon/FaviconImage",
+  PluginOriginalFaviconImage,
+);
+const FaviconImageAttempt = definePluginComponent(
+  "component:components/preview/PreviewFaviconIcon/FaviconImageAttempt",
+  PluginOriginalFaviconImageAttempt,
+);
+export const PreviewFaviconIcon = definePluginComponent(
+  "component:components/preview/PreviewFaviconIcon/PreviewFaviconIcon",
+  PluginOriginalPreviewFaviconIcon,
+);
+
+function PluginOriginalFaviconImage(props: {
   sources: ReadonlyArray<string | null | undefined>;
   fallback: ReactNode;
   className?: string | undefined;
@@ -22,7 +36,7 @@ export function FaviconImage(props: {
   );
 }
 
-function FaviconImageAttempt(props: {
+function PluginOriginalFaviconImageAttempt(props: {
   sources: ReadonlyArray<string>;
   fallback: ReactNode;
   className?: string | undefined;
@@ -42,7 +56,7 @@ function FaviconImageAttempt(props: {
   );
 }
 
-export function PreviewFaviconIcon(props: {
+function PluginOriginalPreviewFaviconIcon(props: {
   threadRef: ScopedThreadRef;
   url: string;
   className?: string | undefined;

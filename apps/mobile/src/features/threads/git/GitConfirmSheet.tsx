@@ -21,6 +21,11 @@ import {
 } from "../../../state/thread-git-target";
 import { vcsEnvironment } from "../../../state/vcs";
 import { SheetActionButton } from "./gitSheetComponents";
+import { defineNativePluginFeature } from "../../../plugins/features";
+export const GitConfirmSheet = defineNativePluginFeature(
+  "native.features.threads.git.git-confirm-sheet",
+  BuiltinGitConfirmSheet,
+);
 
 type GitConfirmSheetProps = StaticScreenProps<
   {
@@ -34,7 +39,7 @@ type GitConfirmSheetProps = StaticScreenProps<
   } & GitRepositoryRouteParams
 >;
 
-export function GitConfirmSheet(props: GitConfirmSheetProps) {
+function BuiltinGitConfirmSheet(props: GitConfirmSheetProps) {
   const gt = useGT();
   const messages = useMessages();
   const navigation = useNavigation();

@@ -24,6 +24,7 @@ import type {
   ProjectId,
   PullRequestState,
   ResolvedKeybindingsConfig,
+  ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
@@ -43,6 +44,7 @@ import {
   Bot,
   CircleDotIcon,
   Smartphone,
+  Blocks,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -50,6 +52,7 @@ import {
   Files,
   Globe2,
   MessagesSquare,
+  PenTool,
   Plus,
   TerminalSquare,
   Volume2Icon,
@@ -60,6 +63,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type ReactNode,
+  type ComponentType,
   useEffect,
   useEffectEvent,
   useRef,
@@ -115,8 +119,44 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import { openPluginPanel, usePluginPanels } from "~/plugins/panels";
+import { definePluginComponent } from "~/plugins/features";
+
+const DisabledReasonTooltip = definePluginComponent(
+  "component:components/RightPanelTabs/DisabledReasonTooltip",
+  PluginOriginalDisabledReasonTooltip,
+);
+const SurfaceMenuItem = definePluginComponent(
+  "component:components/RightPanelTabs/SurfaceMenuItem",
+  PluginOriginalSurfaceMenuItem,
+);
+const RightPanelEmptyState = definePluginComponent(
+  "component:components/RightPanelTabs/RightPanelEmptyState",
+  PluginOriginalRightPanelEmptyState,
+);
+const PreviewFavicon = definePluginComponent(
+  "component:components/RightPanelTabs/PreviewFavicon",
+  PluginOriginalPreviewFavicon,
+);
+const SurfaceIcon = definePluginComponent(
+  "component:components/RightPanelTabs/SurfaceIcon",
+  PluginOriginalSurfaceIcon,
+);
+const PullRequestSurfaceIcon = definePluginComponent(
+  "component:components/RightPanelTabs/PullRequestSurfaceIcon",
+  PluginOriginalPullRequestSurfaceIcon,
+);
+export const RightPanelTabs = definePluginComponent(
+  "component:components/RightPanelTabs/RightPanelTabs",
+  PluginOriginalRightPanelTabs,
+);
+const DeviceTabTooltip = definePluginComponent(
+  "component:components/RightPanelTabs/DeviceTabTooltip",
+  PluginOriginalDeviceTabTooltip,
+);
 
 export interface RightPanelTabsProps {
+  threadRef?: ScopedThreadRef;
   mode: PreviewPanelMode;
   maximized?: boolean;
   open?: boolean;
@@ -159,6 +199,7 @@ export interface RightPanelTabsProps {
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
+  projectId?: ProjectId | null;
   browserAvailable: boolean;
   terminalAvailable: boolean;
   diffAvailable: boolean;
@@ -302,7 +343,7 @@ export function surfaceShortcutTargetsTypingContext(
   );
 }
 
-function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
+function PluginOriginalDisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
   return (
     <Tooltip>
       <TooltipTrigger render={props.trigger} />
@@ -311,7 +352,7 @@ function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement })
   );
 }
 
-function SurfaceMenuItem(props: {
+function PluginOriginalSurfaceMenuItem(props: {
   available: boolean;
   disabledReason?: string;
   shortcut: string;
@@ -326,14 +367,24 @@ function SurfaceMenuItem(props: {
       aria-keyshortcuts={props.shortcut}
     >
       {props.children}
-      <MenuShortcut>{props.shortcut}</MenuShortcut>
+      {props.shortcut ? <MenuShortcut>{props.shortcut}</MenuShortcut> : null}
     </MenuItem>
   );
   if (props.available || !props.disabledReason) return item;
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
-function RightPanelEmptyState(props: {
+function PluginOriginalRightPanelEmptyState(props: {
+  pluginActions: readonly {
+    id: string;
+    label: string;
+    icon: ComponentType<{ readonly className?: string }>;
+    description?: string;
+    shortcut: string;
+    available: boolean;
+    disabledReason: string;
+    onClick: () => void;
+  }[];
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -361,6 +412,7 @@ function RightPanelEmptyState(props: {
 
   const actions = [
     {
+      id: "surface:browser",
       label: msg("Browser"),
       icon: Globe2,
       shortcut: "B",
@@ -369,6 +421,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddBrowser,
     },
     {
+      id: "surface:terminal",
       label: msg("Terminal"),
       icon: TerminalSquare,
       shortcut: "T",
@@ -377,6 +430,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddTerminal,
     },
     {
+      id: "surface:files",
       label: msg("Files"),
       icon: Files,
       shortcut: "F",
@@ -385,6 +439,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddFiles,
     },
     {
+      id: "surface:diff",
       label: msg("Diff"),
       icon: FileDiff,
       shortcut: "D",
@@ -393,6 +448,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddDiff,
     },
     {
+      id: "surface:pull-request",
       label: msg("Pull request"),
       icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
@@ -401,6 +457,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddPullRequest,
     },
     {
+      id: "surface:pull-requests",
       label: msg("Linked items"),
       icon: PullRequestGlyph.link,
       shortcut: "L",
@@ -409,6 +466,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddPullRequests,
     },
     {
+      id: "surface:device",
       label: msg("Device"),
       description: msg("Watch an iOS Simulator or Android Emulator."),
       icon: Smartphone,
@@ -420,6 +478,7 @@ function RightPanelEmptyState(props: {
     ...(props.onAddSideChat
       ? [
           {
+            id: "surface:side-chat",
             label: msg("Side chat"),
             description: msg("Ask a side question while this thread keeps working."),
             icon: MessagesSquare,
@@ -431,6 +490,7 @@ function RightPanelEmptyState(props: {
           },
         ]
       : []),
+    ...props.pluginActions,
   ] as const;
 
   type SurfaceAction = (typeof actions)[number];
@@ -514,7 +574,7 @@ function RightPanelEmptyState(props: {
           {actions.map((action) =>
             action.available ? (
               <div
-                key={action.label}
+                key={action.id}
                 className="group relative"
                 onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
                 onMouseLeave={() =>
@@ -535,14 +595,14 @@ function RightPanelEmptyState(props: {
                   <span
                     className={cn(
                       "min-w-0 flex-1 truncate",
-                      action.label === "Browser" && props.browserProfiles.length > 1 && "pr-7",
+                      action.id === "surface:browser" && props.browserProfiles.length > 1 && "pr-7",
                     )}
                   >
                     {messages(action.label)}
                   </span>
                   <Kbd>{action.shortcut}</Kbd>
                 </button>
-                {action.label === "Browser" && props.browserProfiles.length > 1 ? (
+                {action.id === "surface:browser" && props.browserProfiles.length > 1 ? (
                   <Menu>
                     <MenuTrigger
                       render={
@@ -571,7 +631,7 @@ function RightPanelEmptyState(props: {
               </div>
             ) : (
               <DisabledReasonTooltip
-                key={action.label}
+                key={action.id}
                 reason={action.disabledReason}
                 trigger={
                   <div
@@ -602,6 +662,8 @@ function surfaceTitle(
   switch (surface.kind) {
     case "diff":
       return resolve(msg("Diff"));
+    case "plugin":
+      return surface.title;
     case "files":
       return resolve(msg("Files"));
     case "file":
@@ -630,6 +692,8 @@ function surfaceTitle(
         surface,
         resolve(msg("Thread on {label}", { label: surface.label })),
       );
+    case "canvas":
+      return surface.title ?? resolve(msg("Canvas"));
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return resolve(msg("Browser"));
@@ -643,7 +707,13 @@ function surfaceTitle(
   }
 }
 
-function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url: string | null }) {
+function PluginOriginalPreviewFavicon({
+  capturedUrl,
+  url,
+}: {
+  capturedUrl: string | null;
+  url: string | null;
+}) {
   const publicProviderUrl = faviconUrlForOrigin(url, 32);
   return (
     <FaviconImage
@@ -675,7 +745,7 @@ function previewFaviconOf(
   return { url, capturedUrl };
 }
 
-function SurfaceIcon({
+function PluginOriginalSurfaceIcon({
   surface,
   previewUrl,
   previewCapturedUrl,
@@ -695,6 +765,8 @@ function SurfaceIcon({
       return <PreviewFavicon capturedUrl={previewCapturedUrl} url={previewUrl} />;
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
+    case "plugin":
+      return <Blocks className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
     case "file":
@@ -724,6 +796,8 @@ function SurfaceIcon({
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "linked-thread":
       return <MessagesSquare className="size-3 shrink-0" />;
+    case "canvas":
+      return <PenTool className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -835,7 +909,7 @@ function IssueSurfaceIcon({
   );
 }
 
-function PullRequestSurfaceIcon({
+function PluginOriginalPullRequestSurfaceIcon({
   surface,
   environmentId,
   seed,
@@ -1121,7 +1195,8 @@ function RightPanelTab(
   );
 }
 
-export function RightPanelTabs(props: RightPanelTabsProps) {
+function PluginOriginalRightPanelTabs(props: RightPanelTabsProps) {
+  const panels = usePluginPanels(props.environmentId);
   const gt = useGT();
   const messages = useMessages();
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
@@ -1202,8 +1277,27 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   };
 
+  const pluginSurfaceActions = panels
+    .filter((panel) => panel.surfaceKind !== "canvas" || props.projectId !== undefined)
+    .map((panel) => ({
+      id: panel.slot,
+      label: panel.title,
+      ...(panel.description === undefined ? {} : { description: panel.description }),
+      icon: panel.icon ?? Blocks,
+      shortcut: panel.shortcut ?? "",
+      available:
+        props.threadRef !== undefined &&
+        (panel.available?.({ threadRef: props.threadRef, projectId: props.projectId ?? null }) ??
+          true),
+      disabledReason: panel.unavailableReason ?? gt("Plugin panels are available from a thread."),
+      onClick: () => {
+        if (props.threadRef) openPluginPanel(props.threadRef, panel);
+      },
+    }));
+
   const addSurfaceActions = [
     {
+      id: "surface:browser",
       label: msg("Browser"),
       icon: Globe2,
       shortcut: "B",
@@ -1212,6 +1306,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddBrowser,
     },
     {
+      id: "surface:terminal",
       label: msg("Terminal"),
       icon: TerminalSquare,
       shortcut: "T",
@@ -1220,6 +1315,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddTerminal,
     },
     {
+      id: "surface:files",
       label: msg("Files"),
       icon: Files,
       shortcut: "F",
@@ -1228,6 +1324,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddFiles,
     },
     {
+      id: "surface:diff",
       label: msg("Diff"),
       icon: FileDiff,
       shortcut: "D",
@@ -1236,6 +1333,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddDiff,
     },
     {
+      id: "surface:pull-request",
       label: msg("Pull request"),
       icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
@@ -1244,6 +1342,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddPullRequest,
     },
     {
+      id: "surface:pull-requests",
       label: msg("Linked items"),
       icon: PullRequestGlyph.link,
       shortcut: "L",
@@ -1252,6 +1351,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddPullRequests,
     },
     {
+      id: "surface:device",
       label: msg("Device"),
       icon: Smartphone,
       shortcut: "M",
@@ -1262,6 +1362,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     ...(props.onAddSideChat
       ? [
           {
+            id: "surface:side-chat",
             label: msg("Side chat"),
             icon: MessagesSquare,
             shortcut: "S",
@@ -1272,6 +1373,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           },
         ]
       : []),
+    ...pluginSurfaceActions,
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1515,12 +1617,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     dragDisabled={!props.onMoveSurface || renamingDevice === surface.id}
                     active={surface.id === props.activeSurfaceId}
                     pending={props.pendingSurfaceIds.has(surface.id)}
-                    title={surfaceTitle(
-                      surface,
-                      props.previewSessions,
-                      props.terminalLabelsById,
-                      messages,
-                    )}
+                    title={
+                      surface.kind === "plugin"
+                        ? (panels.find((panel) => panel.slot === surface.slot)?.title ??
+                          surface.title)
+                        : surfaceTitle(
+                            surface,
+                            props.previewSessions,
+                            props.terminalLabelsById,
+                            messages,
+                          )
+                    }
                     audio={tabAudioState(
                       previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null,
                     )}
@@ -1568,9 +1675,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 >
                   {addSurfaceActions.map((action) => {
                     const Icon = action.icon;
-                    if (action.label === "Browser" && action.available) {
+                    if (action.id === "surface:browser" && action.available) {
                       return (
-                        <MenuSub key={action.label}>
+                        <MenuSub key={action.id}>
                           <MenuSubTrigger
                             className="[&>svg:last-child]:ms-0"
                             aria-keyshortcuts={action.shortcut}
@@ -1605,7 +1712,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     }
                     return (
                       <SurfaceMenuItem
-                        key={action.label}
+                        key={action.id}
                         available={action.available}
                         disabledReason={action.disabledReason}
                         shortcut={action.shortcut}
@@ -1683,6 +1790,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
+            pluginActions={pluginSurfaceActions}
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}
@@ -1711,7 +1819,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   );
 }
 
-function DeviceTabTooltip(props: {
+function PluginOriginalDeviceTabTooltip(props: {
   surface: Extract<RightPanelSurface, { kind: "device" }>;
   environmentId: EnvironmentId | null;
   title: string;

@@ -1,15 +1,16 @@
+import { registerBuiltinRoute, definePluginRouteRenderer } from "~/plugins/routing";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactElement } from "react";
 
 import { isElectron } from "../env";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
-import { HostedEmptyState } from "../components/HostedEmptyState";
+import { HostedEmptyState as PluginOriginalHostedEmptyState } from "../components/HostedEmptyState";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
@@ -21,8 +22,27 @@ import {
   useVisibleThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { definePluginComponent } from "~/plugins/features";
 
-function ChatIndexRouteView() {
+const HostedEmptyState = definePluginComponent(
+  "component:components/HostedEmptyState/HostedEmptyState",
+  PluginOriginalHostedEmptyState,
+);
+
+const ChatIndexRouteView = definePluginComponent(
+  "component:routes/_chat.index/ChatIndexRouteView",
+  PluginOriginalChatIndexRouteView,
+);
+const IndexDraftLanding = definePluginComponent(
+  "component:routes/_chat.index/IndexDraftLanding",
+  PluginOriginalIndexDraftLanding,
+);
+const DraftStartError = definePluginComponent(
+  "component:routes/_chat.index/DraftStartError",
+  PluginOriginalDraftStartError,
+);
+
+function PluginOriginalChatIndexRouteView(): ReactElement | null {
   const { authGateState } = Route.useRouteContext();
   const { environments, isReady } = useEnvironments();
 
@@ -34,7 +54,7 @@ function ChatIndexRouteView() {
   return <IndexDraftLanding />;
 }
 
-function IndexDraftLanding() {
+function PluginOriginalIndexDraftLanding() {
   const projects = useProjects();
   const threads = useVisibleThreadShells();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
@@ -91,7 +111,7 @@ function IndexDraftLanding() {
   return bootstrapped ? <NoProjectsHero /> : null;
 }
 
-function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
+function PluginOriginalDraftStartError({ onRetry }: { readonly onRetry: () => void }) {
   const gt = useGT();
   const contentArea = workspaceAreaProps("home", 1, gt("Home", { $context: "the home screen" }));
   return (
@@ -122,5 +142,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
 }
 
 export const Route = createFileRoute("/_chat/")({
-  component: ChatIndexRouteView,
+  component: definePluginRouteRenderer("/_chat/", "component", ChatIndexRouteView),
 });
+
+registerBuiltinRoute("/_chat/", Route);

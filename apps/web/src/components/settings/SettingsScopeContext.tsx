@@ -3,7 +3,7 @@ import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useMessages } from "gt-react";
-import { createContext, type ReactNode, useContext } from "react";
+import { type ReactNode, useContext } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
@@ -16,6 +16,12 @@ import {
 } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
+
+export const SettingsScopeProvider = definePluginComponent(
+  "component:components/settings/SettingsScopeContext/SettingsScopeProvider",
+  PluginOriginalSettingsScopeProvider,
+);
 
 type ProjectFileMember = readonly [
   environmentId: EnvironmentId,
@@ -94,7 +100,7 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
   return { scope, groups, search, ...selected, targets, target };
 }
 
-const SettingsScopeContext = createContext<
+const SettingsScopeContext = createPluginContext<
   | (ReturnType<typeof useResolvedSettingsScope> & {
       singleEnvironment: boolean;
       deviceOnly: boolean;
@@ -102,9 +108,9 @@ const SettingsScopeContext = createContext<
       selectScope: (next: SettingsScopeSearch) => void;
     })
   | null
->(null);
+>("components/settings/SettingsScopeContext/SettingsScopeContext", null);
 
-export function SettingsScopeProvider({
+function PluginOriginalSettingsScopeProvider({
   search,
   onChange,
   children,

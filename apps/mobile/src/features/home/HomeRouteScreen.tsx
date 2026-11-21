@@ -2,6 +2,7 @@ import { uuidv4 } from "../../lib/uuid";
 import { ThreadUndoNotice } from "./ThreadUndoNotice";
 import { use } from "react";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { useNavigation } from "@react-navigation/native";
 import { useMemo, useState } from "react";
 import { Platform } from "react-native";
@@ -42,7 +43,7 @@ import { WorkspaceListEmptyDetail } from "../layout/workspace/WorkspaceListEmpty
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { buildHomeListFilterMenuItems, homeListFilterEnvironments } from "./home-list-filter-menu";
 
-export function HomeRouteScreen() {
+function BuiltinHomeRouteScreen() {
   const gt = useGT();
   const m = useMessages();
   const nativePrimaryColumn = use(NativePrimaryColumnContext);
@@ -239,3 +240,5 @@ export function HomeRouteScreen() {
     </AndroidHomeFabLayout>
   );
 }
+
+export const HomeRouteScreen = defineNativePluginFeature("home", BuiltinHomeRouteScreen);

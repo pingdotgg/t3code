@@ -1,9 +1,10 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { View } from "react-native";
 
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import type { MediaVideoPreviewSource } from "../../lib/videoPreviewSource";
 
-export function WorkspaceFileVideoPreview(props: {
+function BuiltinWorkspaceFileVideoPreview(props: {
   readonly name: string;
   readonly thumbnailKey: string;
   readonly uri: string | null;
@@ -25,3 +26,8 @@ export function WorkspaceFileVideoPreview(props: {
     </View>
   );
 }
+
+export const WorkspaceFileVideoPreview = defineNativePluginFeature(
+  "native.features.files.workspace-file-video-preview",
+  BuiltinWorkspaceFileVideoPreview,
+);

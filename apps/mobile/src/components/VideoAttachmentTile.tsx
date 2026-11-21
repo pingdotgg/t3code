@@ -10,8 +10,13 @@ import { AppText } from "./ui/AppText";
 import { MediaActionsMenu } from "./MediaActionsMenu";
 import { PresentationSource } from "./ui/NativePresentation";
 import { VideoThumbnailImage } from "./VideoThumbnailImage";
+import { defineNativePluginFeature } from "../plugins/features";
+export const VideoAttachmentTile = defineNativePluginFeature(
+  "native.components.video-attachment-tile",
+  BuiltinVideoAttachmentTile,
+);
 
-export function VideoAttachmentTile(props: {
+function BuiltinVideoAttachmentTile(props: {
   readonly name: string;
   readonly sourceIdentifier: string;
   readonly thumbnailSource: string | DraftComposerFileAttachment | null;

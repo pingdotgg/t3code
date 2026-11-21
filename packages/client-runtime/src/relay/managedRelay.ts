@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   RelayAccessTokenType,
   RelayApi,
@@ -39,7 +40,6 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -1116,4 +1116,4 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
 });
 
 export const layer = (options: ManagedRelayClientLayerOptions) =>
-  Layer.effect(ManagedRelayClient, make(options));
+  builtinServiceLayer("t3.client")(ManagedRelayClient, make(options));

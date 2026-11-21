@@ -1,6 +1,7 @@
 import { useSyncLayout } from "@legendapp/list/react";
 import { type OrchestrationV2CheckpointFileTotals, type RunId } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
+import { definePluginComponent } from "~/plugins/features";
 import { type MouseEvent, type ReactNode, memo, useLayoutEffect, useRef, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
@@ -56,7 +57,7 @@ function groupDiffPath(group: ChangedFilesGroup, filePath: string | undefined) {
     : repositoryFilePath(group.relativePath, filePath);
 }
 
-export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
+const PluginOriginalChangedFilesCard = memo(function ChangedFilesCard(props: {
   runId: RunId;
   /** May be a prefix of the changed files; `totals` covers all of them. */
   files: ReadonlyArray<TurnDiffFileChange>;
@@ -274,7 +275,7 @@ function ChangedFilesGroupSection(props: {
   );
 }
 
-const ChangedFilesTree = memo(function ChangedFilesTree(props: {
+const PluginOriginalChangedFilesTree = memo(function ChangedFilesTree(props: {
   runId: RunId;
   files: ReadonlyArray<TurnDiffFileChange>;
   /** Rows start this deep, below the row of the folder the files belong to. */
@@ -546,3 +547,12 @@ function collectDirectoryPaths(nodes: ReadonlyArray<TurnDiffTreeNode>): string[]
   }
   return paths;
 }
+
+export const ChangedFilesCard = definePluginComponent(
+  "component:components/chat/ChangedFilesTree/ChangedFilesCard",
+  PluginOriginalChangedFilesCard,
+);
+const ChangedFilesTree = definePluginComponent(
+  "component:components/chat/ChangedFilesTree/ChangedFilesTree",
+  PluginOriginalChangedFilesTree,
+);

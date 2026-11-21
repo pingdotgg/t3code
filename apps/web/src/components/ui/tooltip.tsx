@@ -1,21 +1,35 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
-import {
-  createContext,
-  use,
-  useEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-  type RefObject,
-} from "react";
+import { use, useEffect, useRef, useState, type ComponentProps, type RefObject } from "react";
 
 import { cn } from "~/lib/utils";
 import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
+
+const TooltipScrollDismissArea = definePluginComponent(
+  "component:components/ui/tooltip/TooltipScrollDismissArea",
+  PluginOriginalTooltipScrollDismissArea,
+);
+const Tooltip = definePluginComponent(
+  "component:components/ui/tooltip/Tooltip",
+  PluginOriginalTooltip,
+);
+const TooltipTrigger = definePluginComponent(
+  "component:components/ui/tooltip/TooltipTrigger",
+  PluginOriginalTooltipTrigger,
+);
+const TooltipPopup = definePluginComponent(
+  "component:components/ui/tooltip/TooltipPopup",
+  PluginOriginalTooltipPopup,
+);
 
 // Base UI's default, restated because a padding object zeroes the sides it omits.
 const COLLISION_PADDING = 5;
 
-const TooltipProvider = TooltipPrimitive.Provider;
+const PluginOriginalTooltipProvider = TooltipPrimitive.Provider;
+const TooltipProvider = definePluginComponent(
+  "component:components/ui/tooltip/TooltipProvider",
+  PluginOriginalTooltipProvider,
+);
 
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
@@ -44,10 +58,19 @@ function createTooltipHoverTracker() {
 }
 
 type TooltipHoverTracker = ReturnType<typeof createTooltipHoverTracker>;
-const TooltipHoverContext = createContext<TooltipActionsRef | null>(null);
-const TooltipScrollContext = createContext<TooltipHoverTracker | null>(null);
+const TooltipHoverContext = createPluginContext<TooltipActionsRef | null>(
+  "components/ui/tooltip/TooltipHoverContext",
+  null,
+);
+const TooltipScrollContext = createPluginContext<TooltipHoverTracker | null>(
+  "components/ui/tooltip/TooltipScrollContext",
+  null,
+);
 
-function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<"div">) {
+function PluginOriginalTooltipScrollDismissArea({
+  onScrollCapture,
+  ...props
+}: ComponentProps<"div">) {
   const [tracker] = useState(createTooltipHoverTracker);
   return (
     <TooltipScrollContext value={tracker}>
@@ -62,7 +85,7 @@ function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<
   );
 }
 
-function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
+function PluginOriginalTooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
   const tracker = use(TooltipScrollContext);
   const localActionsRef = useRef<TooltipPrimitive.Root.Actions | null>(null);
   const actionsRef = props.actionsRef ?? localActionsRef;
@@ -84,7 +107,7 @@ function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
   );
 }
 
-function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
+function PluginOriginalTooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
   const tracker = use(TooltipScrollContext);
   const actionsRef = use(TooltipHoverContext);
   if (!tracker || !actionsRef) {
@@ -119,7 +142,7 @@ function TooltipPositioner(props: TooltipPrimitive.Positioner.Props) {
   );
 }
 
-function TooltipPopup({
+function PluginOriginalTooltipPopup({
   className,
   align = "center",
   sideOffset = 4,

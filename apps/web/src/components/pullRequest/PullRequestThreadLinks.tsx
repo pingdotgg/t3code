@@ -32,8 +32,18 @@ import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { MenuItem } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { definePluginComponent } from "~/plugins/features";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+
+export const PullRequestThreadLinks = definePluginComponent(
+  "component:components/pullRequest/PullRequestThreadLinks/PullRequestThreadLinks",
+  PluginOriginalPullRequestThreadLinks,
+);
+const EnabledPullRequestThreadLinks = definePluginComponent(
+  "component:components/pullRequest/PullRequestThreadLinks/EnabledPullRequestThreadLinks",
+  PluginOriginalEnabledPullRequestThreadLinks,
+);
 
 interface PullRequestThreadLinksProps {
   environmentId: EnvironmentId;
@@ -44,7 +54,7 @@ interface PullRequestThreadLinksProps {
   onPickerOpenChange?: (open: boolean) => void;
 }
 
-export function PullRequestThreadLinks(props: PullRequestThreadLinksProps) {
+function PluginOriginalPullRequestThreadLinks(props: PullRequestThreadLinksProps) {
   const configs = useServerConfigs();
   if (
     threadPullRequestLinkMode(configs.get(props.environmentId)?.environment.capabilities) ===
@@ -55,7 +65,7 @@ export function PullRequestThreadLinks(props: PullRequestThreadLinksProps) {
   return <EnabledPullRequestThreadLinks key={`${props.environmentId}:${props.url}`} {...props} />;
 }
 
-function EnabledPullRequestThreadLinks({
+function PluginOriginalEnabledPullRequestThreadLinks({
   environmentId,
   reference,
   url,

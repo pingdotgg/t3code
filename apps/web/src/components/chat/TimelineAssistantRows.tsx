@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -44,7 +45,11 @@ import { vcsEnvironment } from "../../state/vcs";
 
 const NO_VCS_STATUS = Atom.make(AsyncResult.initial());
 
-export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+function PluginOriginalAssistantTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+}) {
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
   // The timeline holds a streaming message's row while only its text grows.
@@ -78,6 +83,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
                   : []
               }
               threadRef={ctx.threadRef ?? undefined}
+              environmentId={ctx.activeThreadEnvironmentId}
               isStreaming={Boolean(row.message.streaming)}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}
@@ -150,7 +156,7 @@ export function SentMessageTimelineRow({
   );
 }
 
-function AssistantForkButton({
+function PluginOriginalAssistantForkButton({
   projectedItem,
 }: {
   readonly projectedItem: NonNullable<Extract<TimelineRow, { kind: "message" }>["projectedItem"]>;
@@ -200,7 +206,7 @@ function AssistantForkButton({
   );
 }
 
-export function AssistantMetaTimelineRow({
+function PluginOriginalAssistantMetaTimelineRow({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "assistant-meta" }>;
@@ -219,7 +225,7 @@ export function AssistantMetaTimelineRow({
   );
 }
 
-function AssistantMessageMeta({
+function PluginOriginalAssistantMessageMeta({
   className,
   projectedItem,
   message,
@@ -338,7 +344,7 @@ function AssistantStatusBadge({ status }: { status: string }) {
   );
 }
 
-function AssistantCopyButton({
+function PluginOriginalAssistantCopyButton({
   message,
   showCopyButton,
   streaming,
@@ -360,7 +366,7 @@ function AssistantCopyButton({
   return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
 }
 
-export function ProposedPlanTimelineRow({
+function PluginOriginalProposedPlanTimelineRow({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "proposed-plan" }>;
@@ -430,7 +436,7 @@ export function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
 
 /** Subscribes directly to the UI state store for expand/collapse state,
  *  so toggling re-renders only this component — not the entire list. */
-const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection({
+const PluginOriginalAssistantChangedFilesSection = memo(function AssistantChangedFilesSection({
   turnSummary,
   routeThreadKey,
   resolvedTheme,
@@ -457,7 +463,7 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   );
 });
 
-function AssistantChangedFilesSectionInner({
+function PluginOriginalAssistantChangedFilesSectionInner({
   turnSummary,
   checkpointFiles,
   routeThreadKey,
@@ -564,3 +570,43 @@ function AssistantChangedFilesSectionInner({
     />
   );
 }
+
+export const AssistantTimelineRow = definePluginComponent(
+  "component:components/chat/TimelineAssistantRows/AssistantTimelineRow",
+  PluginOriginalAssistantTimelineRow,
+);
+
+const AssistantForkButton = definePluginComponent(
+  "component:components/chat/TimelineAssistantRows/AssistantForkButton",
+  PluginOriginalAssistantForkButton,
+);
+
+export const AssistantMetaTimelineRow = definePluginComponent(
+  "component:components/chat/TimelineAssistantRows/AssistantMetaTimelineRow",
+  PluginOriginalAssistantMetaTimelineRow,
+);
+
+const AssistantMessageMeta = definePluginComponent(
+  "component:components/chat/TimelineAssistantRows/AssistantMessageMeta",
+  PluginOriginalAssistantMessageMeta,
+);
+
+const AssistantCopyButton = definePluginComponent(
+  "component:components/chat/TimelineAssistantRows/AssistantCopyButton",
+  PluginOriginalAssistantCopyButton,
+);
+
+export const ProposedPlanTimelineRow = definePluginComponent(
+  "component:components/chat/TimelineAssistantRows/ProposedPlanTimelineRow",
+  PluginOriginalProposedPlanTimelineRow,
+);
+
+const AssistantChangedFilesSectionInner = definePluginComponent(
+  "component:components/chat/TimelineAssistantRows/AssistantChangedFilesSectionInner",
+  PluginOriginalAssistantChangedFilesSectionInner,
+);
+
+const AssistantChangedFilesSection = definePluginComponent(
+  "component:components/chat/TimelineAssistantRows/AssistantChangedFilesSection",
+  PluginOriginalAssistantChangedFilesSection,
+);

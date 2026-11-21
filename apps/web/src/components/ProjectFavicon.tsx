@@ -12,9 +12,27 @@ import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
 import { ProjectMonogram } from "./ProjectMonogram";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+const DynamicProjectIconFallback = definePluginComponent(
+  "component:components/ProjectFavicon/DynamicProjectIconFallback",
+  PluginOriginalDynamicProjectIconFallback,
+);
+export const ProjectFavicon = definePluginComponent(
+  "component:components/ProjectFavicon/ProjectFavicon",
+  PluginOriginalProjectFavicon,
+);
+const ProjectFaviconFallback = definePluginComponent(
+  "component:components/ProjectFavicon/ProjectFaviconFallback",
+  PluginOriginalProjectFaviconFallback,
+);
+const ProjectFaviconImage = definePluginComponent(
+  "component:components/ProjectFavicon/ProjectFaviconImage",
+  PluginOriginalProjectFaviconImage,
+);
 
 // All lucide icons load as one chunk, only once a project uses a lucide override.
-const LucideProjectIcon = lazy(() =>
+const PluginOriginalLucideProjectIcon = lazy(() =>
   import("../lib/lucideIconByName").then(({ lucideIconByName }) => ({
     default: function LucideProjectIcon(props: { name: string; className: string }) {
       return createElement(lucideIconByName(props.name) ?? FolderCodeIcon, {
@@ -23,8 +41,12 @@ const LucideProjectIcon = lazy(() =>
     },
   })),
 );
+const LucideProjectIcon = definePluginComponent(
+  "component:components/ProjectFavicon/LucideProjectIcon",
+  PluginOriginalLucideProjectIcon,
+);
 
-function DynamicProjectIconFallback() {
+function PluginOriginalDynamicProjectIconFallback() {
   return <FolderCodeIcon className="size-full text-inherit" />;
 }
 
@@ -32,7 +54,7 @@ export type ProjectFaviconProject = Pick<
   EnvironmentProject,
   "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"
 >;
-export function ProjectFavicon(input: {
+function PluginOriginalProjectFavicon(input: {
   project: ProjectFaviconProject;
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
@@ -115,7 +137,7 @@ function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
   );
 }
 
-function ProjectFaviconFallback({
+function PluginOriginalProjectFaviconFallback({
   className,
   icon: Icon,
   emoji,
@@ -150,7 +172,7 @@ function ProjectFaviconFallback({
   return <Icon className={cn("size-3.5 shrink-0 text-icon-muted", className)} />;
 }
 
-function ProjectFaviconImage({
+function PluginOriginalProjectFaviconImage({
   src,
   className,
   fallbackIcon: FallbackIcon,

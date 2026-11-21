@@ -26,6 +26,12 @@ import {
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ProjectIconPickerDialog = definePluginComponent(
+  "component:components/settings/ProjectIconPickerDialog/ProjectIconPickerDialog",
+  PluginOriginalProjectIconPickerDialog,
+);
 
 const DEFAULT_ICON = "folder-code";
 
@@ -41,7 +47,7 @@ function iconLabel(name: string): string {
     .join(" ");
 }
 
-export function ProjectIconPickerDialog({
+function PluginOriginalProjectIconPickerDialog({
   current,
   projectName,
   open,

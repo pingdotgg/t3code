@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "./plugins/PluginKernel.ts";
 import type { ServerLifecycleStreamEvent } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -63,4 +63,4 @@ const make = Effect.gen(function* () {
   } satisfies ServerLifecycleEvents["Service"];
 });
 
-export const layer = Layer.effect(ServerLifecycleEvents, make);
+export const layer = builtinServiceLayer("t3.server")(ServerLifecycleEvents, make);

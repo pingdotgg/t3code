@@ -6,8 +6,14 @@ import { commandForProjectScript } from "../../projectScripts";
 import { ScriptIcon } from "../projectScriptEditor";
 import { Button } from "../ui/button";
 import { SettingsRow } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ProjectActionsList({
+export const ProjectActionsList = definePluginComponent(
+  "component:components/settings/ProjectActionsList/ProjectActionsList",
+  PluginOriginalProjectActionsList,
+);
+
+function PluginOriginalProjectActionsList({
   scripts,
   keybindings,
   disabled,

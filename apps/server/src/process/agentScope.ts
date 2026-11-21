@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- unit names and RAM size come from the host.
 import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
@@ -468,7 +469,7 @@ export const make = Effect.gen(function* () {
   } satisfies AgentScopeShape;
 });
 
-export const layer = Layer.effect(AgentScope, make).pipe(
+export const layer = builtinServiceLayer("t3.server")(AgentScope, make).pipe(
   Layer.provide(ProcessRunner.layer),
   Layer.provideMerge(ProviderProcesses.layer),
 );

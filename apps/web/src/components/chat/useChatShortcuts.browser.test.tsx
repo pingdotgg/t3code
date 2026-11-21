@@ -47,9 +47,14 @@ function Launcher(props: { keys: string; received: string[] }) {
 
 // The chat's shortcut listener registers when the chat mounts, so a launcher that opens
 // later registers after it. Tests mount the chat first and add the launcher by rerendering.
-function Chat(props: { composerKeys: string[]; launcher?: { keys: string; received: string[] } }) {
+function Chat(props: {
+  composerKeys: string[];
+  ownsChatInteraction?: () => boolean;
+  launcher?: { keys: string; received: string[] };
+}) {
   useChatShortcuts({
     enabled: true,
+    ownsChatInteraction: props.ownsChatInteraction,
     keybindings: [],
     scriptKeybindings: [],
     getShortcutContext: () => shortcutContext,
@@ -244,4 +249,20 @@ it("runs right panel commands from inside a side chat pane, but not thread comma
   await userEvent.keyboard("q");
 
   expect(ran).toEqual(["toggle", "close", "toggle"]);
+});
+
+it("routes typing to the conversation that owns input at the time of the key event", async () => {
+  const composerKeys: string[] = [];
+  let ownsInput = false;
+  await using _screen = await render(
+    <Chat composerKeys={composerKeys} ownsChatInteraction={() => ownsInput} />,
+    options,
+  );
+
+  await userEvent.keyboard("a");
+  expect(composerKeys).toEqual([]);
+
+  ownsInput = true;
+  await userEvent.keyboard("b");
+  expect(composerKeys).toEqual(["b"]);
 });

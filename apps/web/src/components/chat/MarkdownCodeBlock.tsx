@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { T, useGT } from "gt-react";
 import { PlayIcon, WrapTextIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { toHtml } from "hast-util-to-html";
@@ -91,7 +92,7 @@ export function MarkdownCodeBlockFrame({
   );
 }
 
-function MarkdownCodeBlockTitleContent({
+function PluginOriginalMarkdownCodeBlockTitleContent({
   fenceTitle,
   language,
   theme,
@@ -131,7 +132,7 @@ function MarkdownCodeBlockTitleContent({
   );
 }
 
-export function MarkdownCodeBlock({
+function PluginOriginalMarkdownCodeBlock({
   code,
   language,
   fenceTitle,
@@ -286,7 +287,7 @@ interface SuspenseShikiCodeBlockProps {
   isStreaming: boolean;
 }
 
-export function SuspenseShikiCodeBlock({
+function PluginOriginalSuspenseShikiCodeBlock({
   className,
   code,
   themeName,
@@ -331,7 +332,7 @@ interface UncachedShikiCodeBlockProps {
   preserveLines: boolean;
 }
 
-function UncachedShikiCodeBlock({
+function PluginOriginalUncachedShikiCodeBlock({
   code,
   language,
   themeName,
@@ -382,3 +383,23 @@ function UncachedShikiCodeBlock({
     </div>
   );
 }
+
+const MarkdownCodeBlockTitleContent = definePluginComponent(
+  "component:components/chat/MarkdownCodeBlock/MarkdownCodeBlockTitleContent",
+  PluginOriginalMarkdownCodeBlockTitleContent,
+);
+
+export const MarkdownCodeBlock = definePluginComponent(
+  "component:components/chat/MarkdownCodeBlock/MarkdownCodeBlock",
+  PluginOriginalMarkdownCodeBlock,
+);
+
+export const SuspenseShikiCodeBlock = definePluginComponent(
+  "component:components/chat/MarkdownCodeBlock/SuspenseShikiCodeBlock",
+  PluginOriginalSuspenseShikiCodeBlock,
+);
+
+const UncachedShikiCodeBlock = definePluginComponent(
+  "component:components/chat/MarkdownCodeBlock/UncachedShikiCodeBlock",
+  PluginOriginalUncachedShikiCodeBlock,
+);

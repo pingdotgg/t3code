@@ -1,6 +1,7 @@
 import { type ReactNode, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { observeResize } from "~/lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
 
 type ComposerCommandMenuPosition = {
   bottom: number;
@@ -18,7 +19,7 @@ function composerCommandMenuPositionsEqual(
   );
 }
 
-export function ComposerCommandMenuLayer(props: {
+function PluginOriginalComposerCommandMenuLayer(props: {
   anchor: HTMLElement | null;
   children: ReactNode;
   /** Keeps the 96px floor past the window top: the stash then loses its header, not its entries. */
@@ -100,3 +101,8 @@ export function ComposerCommandMenuLayer(props: {
     document.body,
   );
 }
+
+export const ComposerCommandMenuLayer = definePluginComponent(
+  "component:components/chat/ComposerCommandMenuLayer/ComposerCommandMenuLayer",
+  PluginOriginalComposerCommandMenuLayer,
+);

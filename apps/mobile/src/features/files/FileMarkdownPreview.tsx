@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { resolveMobileMarkdownMediaSource } from "../../lib/markdownMediaSource";
@@ -77,7 +78,7 @@ export function useMarkdownPreviewStyles(): MarkdownPreviewStyles {
   };
 }
 
-export function FileMarkdownPreview(props: {
+function BuiltinFileMarkdownPreview(props: {
   readonly cwd: string;
   readonly captured?: boolean;
   readonly environmentId: EnvironmentId;
@@ -264,3 +265,8 @@ export function FileMarkdownPreview(props: {
     </ScrollView>
   );
 }
+
+export const FileMarkdownPreview = defineNativePluginFeature(
+  "markdown.file",
+  BuiltinFileMarkdownPreview,
+);

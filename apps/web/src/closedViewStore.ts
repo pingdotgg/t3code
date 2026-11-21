@@ -65,8 +65,21 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
     case "files":
     case "pull-requests":
       return surface.id === surface.kind;
+    case "plugin":
+      return (
+        typeof surface.slot === "string" &&
+        typeof surface.title === "string" &&
+        surface.id === `plugin:${surface.slot}`
+      );
     case "preview":
       return surface.resourceId === null || typeof surface.resourceId === "string";
+    case "canvas":
+      return (
+        (surface.title === undefined || typeof surface.title === "string") &&
+        (surface.documentId === null
+          ? surface.id === "canvas:new"
+          : typeof surface.documentId === "string" && surface.id === `canvas:${surface.documentId}`)
+      );
     case "file":
       return (
         typeof surface.relativePath === "string" &&

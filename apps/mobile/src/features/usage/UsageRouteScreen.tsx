@@ -48,6 +48,44 @@ import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
 import type { UsageChartMetric } from "./usageChartData";
 import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const ChartCard = defineNativePluginFeature(
+  "native.features.usage.usage-route-screen.chart-card",
+  BuiltinChartCard,
+);
+
+const ProviderSection = defineNativePluginFeature(
+  "native.features.usage.usage-route-screen.provider-section",
+  BuiltinProviderSection,
+);
+
+const TotalsSection = defineNativePluginFeature(
+  "native.features.usage.usage-route-screen.totals-section",
+  BuiltinTotalsSection,
+);
+
+const CostSection = defineNativePluginFeature(
+  "native.features.usage.usage-route-screen.cost-section",
+  BuiltinCostSection,
+);
+
+const ShareBar = defineNativePluginFeature(
+  "native.features.usage.usage-route-screen.share-bar",
+  BuiltinShareBar,
+);
+
+const MetricCell = defineNativePluginFeature(
+  "native.features.usage.usage-route-screen.metric-cell",
+  BuiltinMetricCell,
+);
+
+const ModelsSection = defineNativePluginFeature(
+  "native.features.usage.usage-route-screen.models-section",
+  BuiltinModelsSection,
+);
+
+export const UsageRouteScreen = defineNativePluginFeature("usage", BuiltinUsageRouteScreen);
 
 type UsageView = UsageChartMetric | "limits";
 const VIEW_OPTIONS = [
@@ -86,7 +124,7 @@ const WIDE_WIDTH = 600;
 const MAX_CONTENT_WIDTH = 1080;
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_LABEL[provider];
 
-export function UsageRouteScreen(props: { readonly workspace?: boolean }) {
+function BuiltinUsageRouteScreen(props: { readonly workspace?: boolean }) {
   const route = useRoute<RouteProp<{ Usage: { tab?: string } | undefined }, "Usage">>();
   return <UsageScreen workspace={props.workspace} tabParam={route.params?.tab} />;
 }
@@ -449,7 +487,7 @@ function UsageUpdating({
   );
 }
 
-function ChartCard(props: {
+function BuiltinChartCard(props: {
   readonly merged: MergedUsage;
   readonly days: readonly string[];
   readonly daily: readonly DailyTotals[];
@@ -557,7 +595,7 @@ function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: Us
   );
 }
 
-function ProviderSection(props: {
+function BuiltinProviderSection(props: {
   readonly merged: MergedUsage;
   readonly metric: UsageChartMetric;
   /** Drops the share bar so the list fits beside the chart. */
@@ -638,7 +676,7 @@ function ProviderSection(props: {
   );
 }
 
-function TotalsSection(props: {
+function BuiltinTotalsSection(props: {
   readonly merged: MergedUsage;
   readonly isPast24Hours: boolean;
   readonly columns: number;
@@ -711,7 +749,7 @@ function TotalsSection(props: {
   );
 }
 
-function CostSection(props: { readonly merged: MergedUsage; readonly wide: boolean }) {
+function BuiltinCostSection(props: { readonly merged: MergedUsage; readonly wide: boolean }) {
   const { categoryCost, speedCost } = props.merged;
   const colors = useUsageMixColors();
   const gt = useGT();
@@ -781,7 +819,7 @@ function CostSection(props: { readonly merged: MergedUsage; readonly wide: boole
   );
 }
 
-function ShareBar(props: {
+function BuiltinShareBar(props: {
   readonly label: string;
   readonly segments: readonly { label: string; value: number; color: string }[];
   readonly aside?: string;
@@ -819,7 +857,7 @@ function ShareBar(props: {
   );
 }
 
-function MetricCell(props: {
+function BuiltinMetricCell(props: {
   readonly label: string;
   readonly value: string;
   readonly detail: string;
@@ -834,7 +872,7 @@ function MetricCell(props: {
   );
 }
 
-function ModelsSection(props: {
+function BuiltinModelsSection(props: {
   readonly merged: MergedUsage;
   readonly metric: UsageChartMetric;
   readonly columns: 1 | 2;

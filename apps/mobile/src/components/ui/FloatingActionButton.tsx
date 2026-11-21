@@ -3,8 +3,14 @@ import type { FloatingActionButtonProps } from "./FloatingActionButton.types";
 import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 import { cn } from "../../lib/cn";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function FloatingActionButton(props: FloatingActionButtonProps) {
+export const FloatingActionButton = defineNativePluginFeature(
+  "native.components.ui.floating-action-button",
+  BuiltinFloatingActionButton,
+);
+
+function BuiltinFloatingActionButton(props: FloatingActionButtonProps) {
   return (
     <Pressable
       accessibilityRole="button"

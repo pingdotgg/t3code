@@ -12,6 +12,12 @@ import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
 import { retryClerkLoad, useClerkLoadFailed } from "../clerk/clerkLoadFailure";
 import { Button } from "../ui/button";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ConnectCliAuthorizeSurface = definePluginComponent(
+  "component:components/cloud/ConnectCliAuthSurface/ConnectCliAuthorizeSurface",
+  PluginOriginalConnectCliAuthorizeSurface,
+);
 
 const invalidLinkMessage = {
   context: msg("Authorization request"),
@@ -21,7 +27,7 @@ const invalidLinkMessage = {
   ),
 } as const;
 
-export function ConnectCliAuthorizeSurface() {
+function PluginOriginalConnectCliAuthorizeSurface() {
   const [request] = useState(() => readConnectAuthorizeRequest(new URL(window.location.href)));
   const gt = useGT();
   const m = useMessages();

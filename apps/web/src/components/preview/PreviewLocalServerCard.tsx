@@ -6,6 +6,12 @@ import { DiscoveryListRow } from "../ui/discovery-list";
 
 import { PreviewFaviconIcon } from "./PreviewFaviconIcon";
 import type { PreviewableServer } from "./useDiscoveredLocalServers";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PreviewLocalServerCard = definePluginComponent(
+  "component:components/preview/PreviewLocalServerCard/PreviewLocalServerCard",
+  PluginOriginalPreviewLocalServerCard,
+);
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -13,7 +19,7 @@ interface Props {
   onOpen: () => void;
 }
 
-export function PreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
+function PluginOriginalPreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
   const m = useMessages();
   const subtitle = describeServer(server, m);
   return (

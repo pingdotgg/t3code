@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
@@ -185,4 +185,4 @@ export const layer = (input: {
   readonly serverPassword?: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly verify?: (url: string) => Effect.Effect<string, OpenCodeRuntime.OpenCodeRuntimeError>;
-}) => Layer.effect(OpenCodeServerOwner, make(input));
+}) => builtinServiceLayer("t3.providers")(OpenCodeServerOwner, make(input));

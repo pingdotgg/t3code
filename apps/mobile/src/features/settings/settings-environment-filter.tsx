@@ -17,6 +17,7 @@ import { useEnvironments, type EnvironmentPresentation } from "../../state/envir
 import { useProjects } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { toggleSettingsEnvironment } from "./settings-environment-filter.logic";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 export type SettingsTarget = EnvironmentPresentation & {
   readonly serverConfig: NonNullable<EnvironmentPresentation["serverConfig"]>;
@@ -85,7 +86,7 @@ const SettingsEnvironmentSelectionContext = createContext<SettingsEnvironmentSel
  * project data is derived in the hook, by the Settings pages that are mounted. The selection
  * resets when Settings closes.
  */
-export function SettingsEnvironmentFilterProvider(props: {
+function BuiltinSettingsEnvironmentFilterProvider(props: {
   readonly open: boolean;
   readonly children: ReactNode;
 }) {
@@ -177,3 +178,8 @@ export function useSettingsEnvironmentFilter() {
     ],
   );
 }
+
+export const SettingsEnvironmentFilterProvider = defineNativePluginFeature(
+  "native.features.settings.settings-environment-filter.settings-environment-filter-provider",
+  BuiltinSettingsEnvironmentFilterProvider,
+);

@@ -5,7 +5,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
@@ -17,6 +16,7 @@ import { resolveHostCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { forkParked } from "../serverActivation.ts";
 
 // Bound each reclaim pass to one minute of churn.
@@ -244,4 +244,5 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DatabaseStorage, make);
+// Compaction runs through thread-owned projection maintenance, so it follows the thread feature.
+export const layer = builtinServiceLayer("t3.thread")(DatabaseStorage, make);

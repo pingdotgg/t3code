@@ -17,10 +17,32 @@ import {
   ClerkUserProfileRefreshButton,
   ClerkUserProfileRow,
 } from "./ClerkUserProfilePage";
+import { definePluginComponent } from "~/plugins/features";
+
+const MobileClientStatusBadge = definePluginComponent(
+  "component:components/clerk/MobileClientsUserProfilePage/MobileClientStatusBadge",
+  PluginOriginalMobileClientStatusBadge,
+);
+const MobileClientRow = definePluginComponent(
+  "component:components/clerk/MobileClientsUserProfilePage/MobileClientRow",
+  PluginOriginalMobileClientRow,
+);
+const MobileClientsSkeleton = definePluginComponent(
+  "component:components/clerk/MobileClientsUserProfilePage/MobileClientsSkeleton",
+  PluginOriginalMobileClientsSkeleton,
+);
+const EmptyMobileClients = definePluginComponent(
+  "component:components/clerk/MobileClientsUserProfilePage/EmptyMobileClients",
+  PluginOriginalEmptyMobileClients,
+);
+export const MobileClientsUserProfilePage = definePluginComponent(
+  "component:components/clerk/MobileClientsUserProfilePage/MobileClientsUserProfilePage",
+  PluginOriginalMobileClientsUserProfilePage,
+);
 
 const MOBILE_CLIENT_SKELETON_ROWS = ["primary", "secondary"] as const;
 
-function MobileClientStatusBadge({
+function PluginOriginalMobileClientStatusBadge({
   enabled,
   label,
 }: {
@@ -37,7 +59,7 @@ function MobileClientStatusBadge({
   );
 }
 
-function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord }) {
+function PluginOriginalMobileClientRow({ device }: { readonly device: RelayClientDeviceRecord }) {
   const gt = useGT();
   const m = useMessages();
   return (
@@ -72,7 +94,7 @@ function MobileClientRow({ device }: { readonly device: RelayClientDeviceRecord 
   );
 }
 
-function MobileClientsSkeleton() {
+function PluginOriginalMobileClientsSkeleton() {
   const gt = useGT();
   return (
     <div aria-label={gt("Loading mobile clients")} className="divide-y border-t" role="status">
@@ -95,7 +117,7 @@ function MobileClientsSkeleton() {
   );
 }
 
-function EmptyMobileClients() {
+function PluginOriginalEmptyMobileClients() {
   return (
     <Empty size="compact">
       <EmptyMedia variant="icon">
@@ -116,7 +138,7 @@ function EmptyMobileClients() {
   );
 }
 
-export function MobileClientsUserProfilePage() {
+function PluginOriginalMobileClientsUserProfilePage() {
   const devicesState = useManagedRelayDevices();
   const gt = useGT();
   const devices = devicesState.data ?? [];

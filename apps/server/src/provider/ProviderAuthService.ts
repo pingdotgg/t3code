@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   ProviderSetupError,
   type ChatGptReconnectProfile,
@@ -11,7 +12,6 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Function from "effect/Function";
-import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
@@ -332,4 +332,7 @@ export const makeProviderAuthService = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ProviderAuthService, makeProviderAuthService);
+export const layer = builtinServiceLayer("t3.providers")(
+  ProviderAuthService,
+  makeProviderAuthService,
+);

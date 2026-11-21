@@ -18,6 +18,9 @@ import { SearchField } from "./SearchField";
 import { findAppBarMenuItem, menuActionsFromAppBarItems } from "./menuActionItems";
 import type { AppBarMenuItem, AppBarProps, AppBarSearch } from "./AppBar.types";
 import { useHasWorkspaceAppBar, WorkspaceAppBar } from "./WorkspaceAppBar.android";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const AppBar = defineNativePluginFeature("native.components.ui.app-bar", BuiltinAppBar);
 
 function selectMenuItem(items: ReadonlyArray<AppBarMenuItem>, id: string) {
   const action = findAppBarMenuItem(items, id);
@@ -31,7 +34,7 @@ interface SearchState {
   readonly inputRef: RefObject<TextInputInstance | null>;
 }
 
-export function AppBar(barProps: AppBarProps) {
+function BuiltinAppBar(barProps: AppBarProps) {
   const { layout } = useAdaptiveWorkspaceLayout();
   const props = {
     ...barProps,

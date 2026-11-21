@@ -1,4 +1,5 @@
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -30,7 +31,7 @@ const FOLLOW_UP_OPTIONS: ReadonlyArray<{
   },
 ];
 
-export function SettingsFollowUpRouteScreen() {
+function BuiltinSettingsFollowUpRouteScreen() {
   const gt = useGT();
   const m = useMessages();
   const insets = useSafeAreaInsets();
@@ -75,3 +76,8 @@ export function SettingsFollowUpRouteScreen() {
 
   return <SettingsScreen title={gt("Chat")}>{content}</SettingsScreen>;
 }
+
+export const SettingsFollowUpRouteScreen = defineNativePluginFeature(
+  "settings.follow-ups",
+  BuiltinSettingsFollowUpRouteScreen,
+);

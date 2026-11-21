@@ -1,3 +1,4 @@
+import { definePluginFeature } from "~/plugins/features";
 import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
 import { useStore } from "zustand";
 import { ChatCanvasContext } from "./ChatCanvasContext";
@@ -42,7 +43,7 @@ function measureTransitionWidths(element: HTMLElement, transitions: CSSTransitio
   return { transitions, narrowestWidth };
 }
 
-export function ChatCanvas({
+export function BuiltinChatCanvas({
   store,
   threadRef,
   preview,
@@ -184,3 +185,5 @@ export function ChatCanvas({
     </ChatCanvasContext>
   );
 }
+
+export const ChatCanvas = definePluginFeature("chat.canvas", BuiltinChatCanvas);

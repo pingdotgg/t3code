@@ -16,6 +16,32 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { cn } from "~/lib/utils";
 import { m, type MessageResolver } from "~/i18n/messages";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DeviceSetup = definePluginComponent(
+  "component:components/device/DeviceSetup/DeviceSetup",
+  PluginOriginalDeviceSetup,
+);
+export const DeviceHubSetupStatus = definePluginComponent(
+  "component:components/device/DeviceSetup/DeviceHubSetupStatus",
+  PluginOriginalDeviceHubSetupStatus,
+);
+const DevicePlatformSetup = definePluginComponent(
+  "component:components/device/DeviceSetup/DevicePlatformSetup",
+  PluginOriginalDevicePlatformSetup,
+);
+export const AgentDeviceSetupStatus = definePluginComponent(
+  "component:components/device/DeviceSetup/AgentDeviceSetupStatus",
+  PluginOriginalAgentDeviceSetupStatus,
+);
+const PlatformStatus = definePluginComponent(
+  "component:components/device/DeviceSetup/PlatformStatus",
+  PluginOriginalPlatformStatus,
+);
+const DeviceHostDiagnostics = definePluginComponent(
+  "component:components/device/DeviceSetup/DeviceHostDiagnostics",
+  PluginOriginalDeviceHostDiagnostics,
+);
 
 const platformName = (platform: DevicePlatform) => (platform === "ios" ? "iOS" : "Android");
 
@@ -70,7 +96,7 @@ function deviceHostDiagnostics(
   });
 }
 
-function DeviceHostDiagnostics(props: {
+function PluginOriginalDeviceHostDiagnostics(props: {
   readonly hosts: ReadonlyArray<Pick<DeviceServiceState["hosts"][number], "id" | "label">>;
   readonly hostStatuses: DeviceServiceState["hostStatuses"];
   readonly className?: string;
@@ -182,7 +208,7 @@ export function platformSetupStatus(
   };
 }
 
-export function DeviceSetup(props: {
+function PluginOriginalDeviceSetup(props: {
   readonly environmentId: EnvironmentId;
   readonly state: DeviceServiceState;
   readonly onComplete?: () => void;
@@ -336,7 +362,7 @@ export function DeviceSetup(props: {
   );
 }
 
-export function DeviceHubSetupStatus({
+function PluginOriginalDeviceHubSetupStatus({
   state,
   pending,
   compact = false,
@@ -367,7 +393,7 @@ export function DeviceHubSetupStatus({
   );
 }
 
-function DevicePlatformSetup(props: {
+function PluginOriginalDevicePlatformSetup(props: {
   readonly state: DeviceServiceState;
   readonly checking: boolean;
   readonly disabled: boolean;
@@ -391,7 +417,7 @@ function DevicePlatformSetup(props: {
   );
 }
 
-export function AgentDeviceSetupStatus(props: {
+function PluginOriginalAgentDeviceSetupStatus(props: {
   readonly state: DeviceServiceState;
   readonly pending: boolean;
   readonly compact?: boolean;
@@ -432,7 +458,7 @@ export function AgentDeviceSetupStatus(props: {
   return null;
 }
 
-function PlatformStatus(props: {
+function PluginOriginalPlatformStatus(props: {
   readonly platform: string;
   readonly status: { readonly ready: boolean; readonly message: string };
   readonly compact?: boolean;

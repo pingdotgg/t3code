@@ -34,8 +34,22 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { DeviceStreamHandle, DeviceViewControls } from "./DeviceStreamView";
 import type { DeviceControls } from "./useDeviceControls";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DeviceControlsRail(props: {
+export const DeviceControlsRail = definePluginComponent(
+  "component:components/device/DeviceControlsRail/DeviceControlsRail",
+  PluginOriginalDeviceControlsRail,
+);
+const RailDivider = definePluginComponent(
+  "component:components/device/DeviceControlsRail/RailDivider",
+  PluginOriginalRailDivider,
+);
+const RailButton = definePluginComponent(
+  "component:components/device/DeviceControlsRail/RailButton",
+  PluginOriginalRailButton,
+);
+
+function PluginOriginalDeviceControlsRail(props: {
   platform: DevicePlatform;
   hostKind: DeviceHostSummary["kind"] | undefined;
   handle: DeviceStreamHandle | null;
@@ -289,11 +303,11 @@ export function DeviceControlsRail(props: {
   );
 }
 
-function RailDivider() {
+function PluginOriginalRailDivider() {
   return <div aria-hidden className="my-1 h-px w-5 shrink-0 bg-border/70" />;
 }
 
-function RailButton(props: {
+function PluginOriginalRailButton(props: {
   tooltipSide: "left" | "bottom";
   label: string;
   description?: string | undefined;

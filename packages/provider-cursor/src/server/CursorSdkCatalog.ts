@@ -1,3 +1,4 @@
+import { builtinServiceLayer, builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import type { SDKModel, SDKUser } from "@cursor/sdk";
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
@@ -185,7 +186,7 @@ export const makeCursorSdkCatalog = Effect.fn("CursorSdkCatalog.make")(function*
   });
 });
 
-export const layer = Layer.effect(
+export const layer = builtinServiceLayer("t3.providers")(
   CursorSdkCatalog,
   Effect.flatMap(makeLiveProbes, makeCursorSdkCatalog),
 );
@@ -193,5 +194,5 @@ export const layer = Layer.effect(
 export function layerTest(
   read: CursorSdkCatalog["Service"]["read"],
 ): Layer.Layer<CursorSdkCatalog> {
-  return Layer.succeed(CursorSdkCatalog, CursorSdkCatalog.of({ read }));
+  return builtinSucceedLayer("t3.providers")(CursorSdkCatalog, CursorSdkCatalog.of({ read }));
 }

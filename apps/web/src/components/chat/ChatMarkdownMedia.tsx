@@ -1,9 +1,9 @@
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import type { AssetResource, EnvironmentId, SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
 import { msg, useGT, useMessages } from "gt-react";
 import { TriangleAlertIcon } from "lucide-react";
 import {
-  createContext,
   memo,
   use,
   useState,
@@ -88,9 +88,15 @@ const CHAT_MARKDOWN_WORKSPACE_IMAGE_CLASS_NAME = cn(
   CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME,
   CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME,
 );
-export const MarkdownLinkContext = createContext(false);
+export const MarkdownLinkContext = createPluginContext(
+  "components/chat/ChatMarkdownMedia/MarkdownLinkContext",
+  false,
+);
 /** The thread's workspace mutation id, so a host image the agent rewrites gets a fresh URL. */
-export const WorkspaceMutationIdContext = createContext<string | null | undefined>(undefined);
+export const WorkspaceMutationIdContext = createPluginContext<string | null | undefined>(
+  "components/chat/ChatMarkdownMedia/WorkspaceMutationIdContext",
+  undefined,
+);
 
 function expandableMarkdownImageProps(
   onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined,
@@ -119,7 +125,7 @@ function expandableMarkdownImageProps(
   };
 }
 
-function ChatMarkdownMediaUnavailableLabel(props: {
+function PluginOriginalChatMarkdownMediaUnavailableLabel(props: {
   readonly alt: string;
   readonly kind?: "image" | "video" | "audio" | undefined;
   readonly detail?: string | undefined;
@@ -139,7 +145,7 @@ function ChatMarkdownMediaUnavailableLabel(props: {
   );
 }
 
-export function ChatMarkdownImageFallback(props: {
+function PluginOriginalChatMarkdownImageFallback(props: {
   readonly alt: string;
   readonly copyMarkdown?: string | undefined;
   readonly kind?: "image" | "video" | "audio";
@@ -175,7 +181,7 @@ const CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME = cn(
  * the same file keeps the decoded image on screen while the new bytes arrive,
  * and a different file starts from the slot again.
  */
-export function ChatMarkdownImage(props: {
+function PluginOriginalChatMarkdownImage(props: {
   readonly src: string | null;
   readonly sourceFailed?: boolean | undefined;
   readonly unavailableDetail?: string | undefined;
@@ -298,7 +304,7 @@ export function ChatMarkdownImage(props: {
   );
 }
 
-export function ChatMarkdownVideo(props: {
+function PluginOriginalChatMarkdownVideo(props: {
   readonly src: string | null;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
@@ -387,7 +393,7 @@ export function assetMediaActionsSource(input: {
   };
 }
 
-export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
+const PluginOriginalChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: ChatMarkdownAssetResource;
   readonly kind?: "image" | "video";
@@ -495,3 +501,28 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     />
   );
 });
+
+const ChatMarkdownMediaUnavailableLabel = definePluginComponent(
+  "component:components/chat/ChatMarkdownMedia/ChatMarkdownMediaUnavailableLabel",
+  PluginOriginalChatMarkdownMediaUnavailableLabel,
+);
+
+export const ChatMarkdownImageFallback = definePluginComponent(
+  "component:components/chat/ChatMarkdownMedia/ChatMarkdownImageFallback",
+  PluginOriginalChatMarkdownImageFallback,
+);
+
+export const ChatMarkdownImage = definePluginComponent(
+  "component:components/chat/ChatMarkdownMedia/ChatMarkdownImage",
+  PluginOriginalChatMarkdownImage,
+);
+
+export const ChatMarkdownVideo = definePluginComponent(
+  "component:components/chat/ChatMarkdownMedia/ChatMarkdownVideo",
+  PluginOriginalChatMarkdownVideo,
+);
+
+export const ChatMarkdownAssetImage = definePluginComponent(
+  "component:components/chat/ChatMarkdownMedia/ChatMarkdownAssetImage",
+  PluginOriginalChatMarkdownAssetImage,
+);

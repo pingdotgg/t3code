@@ -1,5 +1,15 @@
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
 import { View } from "react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const OverlayPortal = defineNativePluginFeature(
+  "native.components.ui.overlay-portal",
+  BuiltinOverlayPortal,
+);
+export const OverlayPortalHost = defineNativePluginFeature(
+  "native.components.ui.overlay-portal.overlay-portal-host",
+  BuiltinOverlayPortalHost,
+);
 
 // RN Modals move native window focus and close the keyboard. Keep composer menus in-window.
 type Entries = ReadonlyMap<number, ReactNode>;
@@ -31,7 +41,7 @@ function getSnapshot() {
   return snapshot;
 }
 
-export function OverlayPortal(props: { readonly children: ReactNode }) {
+function BuiltinOverlayPortal(props: { readonly children: ReactNode }) {
   const [key] = useState(allocateKey);
 
   // RN has no createPortal, so projecting into the out-of-tree host has to
@@ -58,7 +68,7 @@ export function OverlayPortal(props: { readonly children: ReactNode }) {
   return null;
 }
 
-export function OverlayPortalHost() {
+function BuiltinOverlayPortalHost() {
   const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   if (current.size === 0) {

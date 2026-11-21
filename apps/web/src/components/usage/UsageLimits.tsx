@@ -42,6 +42,32 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { formatResetsIn, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PaceIcon = definePluginComponent(
+  "component:components/usage/UsageLimits/PaceIcon",
+  PluginOriginalPaceIcon,
+);
+const WindowBar = definePluginComponent(
+  "component:components/usage/UsageLimits/WindowBar",
+  PluginOriginalWindowBar,
+);
+export const LimitWindows = definePluginComponent(
+  "component:components/usage/UsageLimits/LimitWindows",
+  PluginOriginalLimitWindows,
+);
+export const ResetCreditDialog = definePluginComponent(
+  "component:components/usage/UsageLimits/ResetCreditDialog",
+  PluginOriginalResetCreditDialog,
+);
+export const ResetCredits = definePluginComponent(
+  "component:components/usage/UsageLimits/ResetCredits",
+  PluginOriginalResetCredits,
+);
+export const UsageLimitsSection = definePluginComponent(
+  "component:components/usage/UsageLimits/UsageLimitsSection",
+  PluginOriginalUsageLimitsSection,
+);
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
   ahead: {
@@ -62,7 +88,7 @@ export function barColor(driver: ServerProvider["driver"]): string {
   return presentation?.color ?? "var(--foreground)";
 }
 
-export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
+function PluginOriginalPaceIcon({ pace }: { readonly pace: LimitPace }) {
   const Icon = PACE[pace].icon;
   const m = useMessages();
   return (
@@ -121,7 +147,7 @@ export function usePaceMark(timeLeft: number | null) {
   return [setBar, roomy ? paceMarkStyles(timeLeft) : null] as const;
 }
 
-function WindowBar({
+function PluginOriginalWindowBar({
   color,
   window,
   now,
@@ -215,7 +241,7 @@ function WindowBar({
   );
 }
 
-export function LimitWindows({
+function PluginOriginalLimitWindows({
   driver,
   accentColor,
   windows,
@@ -308,7 +334,7 @@ export function useResetCredit(environmentId: EnvironmentId) {
 
 /** Require confirmation because redemption spends credits. Mount outside popovers, which stack above
  * dialogs and unmount on close. */
-export function ResetCreditDialog({
+function PluginOriginalResetCreditDialog({
   open,
   onOpenChange,
   choice,
@@ -343,7 +369,7 @@ export function ResetCreditDialog({
   );
 }
 
-export function ResetCredits({
+function PluginOriginalResetCredits({
   environmentId,
   input,
   credits,
@@ -389,7 +415,7 @@ export function ResetCredits({
 }
 
 /** Advance now only on explicit refresh to avoid page repaints from ticking. */
-export function UsageLimitsSection({
+function PluginOriginalUsageLimitsSection({
   selectedEnvironmentIds,
   hiddenProviders,
   now,

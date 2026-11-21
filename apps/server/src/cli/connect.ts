@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -552,7 +553,7 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
   ).pipe(
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(ServerConfig.layer(config)),
-    Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
+    Layer.provide(builtinSucceedLayer("t3.server")(References.MinimumLogLevel, minimumLogLevel)),
   );
   return yield* run.pipe(Effect.provide(layerRuntime));
 });

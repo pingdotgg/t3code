@@ -14,6 +14,7 @@ import * as ServerConfig from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as SharedKeybindings from "@t3tools/shared/keybindings";
 import { KeybindingsConfigError, MAX_KEYBINDINGS_COUNT } from "@t3tools/contracts";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
 
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
 const encodeKeybindingsConfigJson = Schema.encodeEffect(KeybindingsConfigJson);
@@ -53,6 +54,32 @@ const readKeybindingsConfig = (configPath: string) =>
   });
 
 it.layer(NodeServices.layer)("keybindings", (it) => {
+  it.effect("keeps host keybindings readable and persistent while the interface is disabled", () =>
+    Effect.gen(function* () {
+      const keybindings = yield* Keybindings.Keybindings;
+      const kernel = yield* PluginKernel;
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* keybindings.start;
+      yield* keybindings.ready;
+      const rule = { key: "mod+alt+r", command: "script.run-tests.run" } as const;
+      yield* keybindings.upsertKeybindingRule(rule);
+      const before = yield* keybindings.loadConfigState;
+      assert.includeDeepMembers(
+        [...before.keybindings],
+        [SharedKeybindings.compileResolvedKeybindingRule(rule)],
+      );
+
+      yield* kernel.setEnabled("t3.ui", true);
+      yield* kernel.setEnabled("t3.ui", false);
+      assert.deepEqual(yield* keybindings.loadConfigState, before);
+      assert.includeDeepMembers([...(yield* readKeybindingsConfig(keybindingsConfigPath))], [rule]);
+    }).pipe(
+      Effect.provide(
+        layerKeybindings().pipe(Layer.provideMerge(layerWithEnabled({ "t3.ui": false }))),
+      ),
+    ),
+  );
+
   it.effect("parses shortcuts including plus key", () =>
     Effect.sync(() => {
       assert.deepEqual(SharedKeybindings.parseKeybindingShortcut("mod+j"), {

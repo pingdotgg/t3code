@@ -8,13 +8,19 @@ import {
 } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
+import { defineNativePluginFeature } from "../../plugins/features";
 import {
   threadTerminalMenu,
   useThreadGitMenuDefinition,
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
 
-export function ThreadHeader(props: {
+export const ThreadHeader = defineNativePluginFeature(
+  "native.features.threads.thread-route-screen.thread-header",
+  BuiltinThreadHeader,
+);
+
+function BuiltinThreadHeader(props: {
   readonly title: string;
   readonly subtitle: string;
   readonly gitControls: ThreadGitControlsProps;

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto digest is effectful; a sync hash keeps historyPath a plain function.
 import * as NodeCrypto from "node:crypto";
 
@@ -41,6 +42,7 @@ import {
 } from "@t3tools/contracts";
 import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { isBuiltinDisabledCause } from "@t3tools/shared/pluginKernel";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/shell";
@@ -1798,8 +1800,21 @@ export const make = Effect.fn("TerminalManager.make")(function* (
     ),
     managedBinaryCacheDir: providerStatusCacheDir,
     managedBinaryToolsDir: path.join(baseDir, "tools"),
-    registerTerminalProcesses: portDiscovery.registerTerminalProcesses,
-    unregisterTerminal: portDiscovery.unregisterTerminal,
+    // Port discovery belongs to t3.preview; terminals keep working while it is disabled.
+    registerTerminalProcesses: (input) =>
+      Effect.suspend(() => portDiscovery.registerTerminalProcesses(input)).pipe(
+        Effect.catchCauseIf(
+          (cause) => isBuiltinDisabledCause(cause, "t3.preview"),
+          () => Effect.void,
+        ),
+      ),
+    unregisterTerminal: (input) =>
+      Effect.suspend(() => portDiscovery.unregisterTerminal(input)).pipe(
+        Effect.catchCauseIf(
+          (cause) => isBuiltinDisabledCause(cause, "t3.preview"),
+          () => Effect.void,
+        ),
+      ),
     resolveProviderInstanceEnvironment,
   });
 });
@@ -4007,4 +4022,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 });
 
 export const layer = (deriveConfigMap: typeof deriveProviderInstanceConfigMap) =>
-  Layer.effect(TerminalManager, make(deriveConfigMap)).pipe(Layer.provide(ProcessRunner.layer));
+  builtinServiceLayer("t3.terminal")(TerminalManager, make(deriveConfigMap)).pipe(
+    Layer.provide(ProcessRunner.layer),
+  );

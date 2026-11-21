@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import { useAtomValue } from "@effect/atom-react";
 import {
   createManagedRelayQueryManager,
@@ -22,14 +23,13 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
 const managedRelayAtomRuntime = Atom.runtime(
-  Layer.effect(
+  builtinServiceLayer("t3.client")(
     ManagedRelay.ManagedRelayClient,
     runtime.contextEffect.pipe(
       Effect.map((context) => Context.get(context, ManagedRelay.ManagedRelayClient)),

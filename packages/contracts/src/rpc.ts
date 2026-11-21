@@ -1,4 +1,22 @@
 import {
+  PluginError,
+  PluginListInput,
+  PluginAuthoringGuideInput,
+  PluginAuthoringGuide,
+  PluginSnapshot,
+  PluginSetEnabledInput,
+  PluginReloadInput,
+  PluginInvokeInput,
+  PluginInvokeResult,
+} from "./plugins.ts";
+import {
+  PluginRegistryListInput,
+  PluginRegistrySnapshot,
+  PluginRegistryInstallInput,
+  PluginRegistryInstallResult,
+  PluginRegistryError,
+} from "./pluginRegistry.ts";
+import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -365,6 +383,20 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
+import { CanvasDocumentEvent, CanvasDocumentSummary } from "./canvas.ts";
+import {
+  CanvasApplyOpsInput,
+  CanvasApplyOpsResult,
+  CanvasCreateInput,
+  CanvasCreateResult,
+  CanvasDocumentRefInput,
+  CanvasError,
+  CanvasHostRegistration,
+  CanvasHostResponse,
+  CanvasHostStreamEvent,
+  CanvasHostUpdate,
+  CanvasListInput,
+} from "./canvasRpc.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -467,6 +499,15 @@ import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
+  pluginsRegistryList: "plugins.registry.list",
+  pluginsRegistryInstall: "plugins.registry.install",
+  pluginsList: "plugins.list",
+  pluginsAuthoringGuide: "plugins.authoringGuide",
+  pluginsSearch: "plugins.search",
+  pluginsSubscribe: "plugins.subscribe",
+  pluginsSetEnabled: "plugins.setEnabled",
+  pluginsReload: "plugins.reload",
+  pluginsInvoke: "plugins.invoke",
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
   projectsReadFile: "projects.readFile",
@@ -563,6 +604,17 @@ export const WS_METHODS = {
   deviceDetail: "device.detail",
   deviceAction: "device.action",
 
+  // Canvas methods
+  canvasList: "canvas.list",
+  canvasCreate: "canvas.create",
+  canvasDelete: "canvas.delete",
+  canvasApplyOps: "canvas.applyOps",
+  canvasSubscribe: "canvas.subscribe",
+  canvasConnectHost: "canvas.connectHost",
+  canvasUpdateHost: "canvas.updateHost",
+  canvasRespondHost: "canvas.respondHost",
+
+  // Server meta
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverGetNpmRelease: "server.getNpmRelease",
@@ -2068,6 +2120,53 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
+const WsCanvasListRpc = Rpc.make(WS_METHODS.canvasList, {
+  payload: CanvasListInput,
+  success: Schema.Array(CanvasDocumentSummary),
+  error: Schema.Union([CanvasError, EnvironmentAuthorizationError]),
+});
+
+const WsCanvasCreateRpc = Rpc.make(WS_METHODS.canvasCreate, {
+  payload: CanvasCreateInput,
+  success: CanvasCreateResult,
+  error: Schema.Union([CanvasError, EnvironmentAuthorizationError]),
+});
+
+const WsCanvasDeleteRpc = Rpc.make(WS_METHODS.canvasDelete, {
+  payload: CanvasDocumentRefInput,
+  error: Schema.Union([CanvasError, EnvironmentAuthorizationError]),
+});
+
+const WsCanvasApplyOpsRpc = Rpc.make(WS_METHODS.canvasApplyOps, {
+  payload: CanvasApplyOpsInput,
+  success: CanvasApplyOpsResult,
+  error: Schema.Union([CanvasError, EnvironmentAuthorizationError]),
+});
+
+const WsCanvasSubscribeRpc = Rpc.make(WS_METHODS.canvasSubscribe, {
+  payload: CanvasDocumentRefInput,
+  success: CanvasDocumentEvent,
+  error: Schema.Union([CanvasError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsCanvasConnectHostRpc = Rpc.make(WS_METHODS.canvasConnectHost, {
+  payload: CanvasHostRegistration,
+  success: CanvasHostStreamEvent,
+  error: Schema.Union([CanvasError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsCanvasUpdateHostRpc = Rpc.make(WS_METHODS.canvasUpdateHost, {
+  payload: CanvasHostUpdate,
+  error: Schema.Union([CanvasError, EnvironmentAuthorizationError]),
+});
+
+const WsCanvasRespondHostRpc = Rpc.make(WS_METHODS.canvasRespondHost, {
+  payload: CanvasHostResponse,
+  error: Schema.Union([CanvasError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2DispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
   success: OrchestrationV2RpcSchemas.dispatchCommand.output,
@@ -2385,6 +2484,52 @@ export const WsRpcGroup = RpcGroup.make(
   WsIssueTrackersListRpc,
   WsIssueTrackersConnectRpc,
   WsIssueTrackersBindProjectRpc,
+  Rpc.make(WS_METHODS.pluginsAuthoringGuide, {
+    payload: PluginAuthoringGuideInput,
+    success: PluginAuthoringGuide,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(WS_METHODS.pluginsRegistryList, {
+    payload: PluginRegistryListInput,
+    success: PluginRegistrySnapshot,
+    error: Schema.Union([PluginRegistryError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.pluginsRegistryInstall, {
+    payload: PluginRegistryInstallInput,
+    success: PluginRegistryInstallResult,
+    error: Schema.Union([PluginError, PluginRegistryError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.pluginsList, {
+    payload: PluginListInput,
+    success: PluginSnapshot,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(WS_METHODS.pluginsSearch, {
+    payload: PluginListInput,
+    success: PluginSnapshot,
+    error: EnvironmentAuthorizationError,
+  }),
+  Rpc.make(WS_METHODS.pluginsSubscribe, {
+    payload: PluginListInput,
+    success: PluginSnapshot,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  }),
+  Rpc.make(WS_METHODS.pluginsSetEnabled, {
+    payload: PluginSetEnabledInput,
+    success: PluginSnapshot,
+    error: Schema.Union([PluginError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.pluginsReload, {
+    payload: PluginReloadInput,
+    success: PluginSnapshot,
+    error: Schema.Union([PluginError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.pluginsInvoke, {
+    payload: PluginInvokeInput,
+    success: PluginInvokeResult,
+    error: Schema.Union([PluginError, EnvironmentAuthorizationError]),
+  }),
   WsGuestShareCreateRpc,
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -2591,6 +2736,14 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsCanvasListRpc,
+  WsCanvasCreateRpc,
+  WsCanvasDeleteRpc,
+  WsCanvasApplyOpsRpc,
+  WsCanvasSubscribeRpc,
+  WsCanvasConnectHostRpc,
+  WsCanvasUpdateHostRpc,
+  WsCanvasRespondHostRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
@@ -2618,4 +2771,20 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
   WsOrchestrationV2SubscribePromptSuggestionRpc,
+).middleware(RpcScopeAuthorization);
+
+/**
+ * The canvas RPCs of `WsRpcGroup`. The server implements them in their own
+ * handler layer, because one handler layer over every RPC exceeds
+ * TypeScript's instantiation depth.
+ */
+export const WsCanvasRpcGroup = RpcGroup.make(
+  WsCanvasListRpc,
+  WsCanvasCreateRpc,
+  WsCanvasDeleteRpc,
+  WsCanvasApplyOpsRpc,
+  WsCanvasSubscribeRpc,
+  WsCanvasConnectHostRpc,
+  WsCanvasUpdateHostRpc,
+  WsCanvasRespondHostRpc,
 ).middleware(RpcScopeAuthorization);

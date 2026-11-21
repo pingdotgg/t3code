@@ -1,38 +1,9 @@
+import { registerBuiltinRoute, definePluginRouteRenderer } from "~/plugins/routing";
 import { createFileRoute } from "@tanstack/react-router";
+import { definePluginFeature } from "~/plugins/features";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
-import { useGT } from "gt-react";
 
-import { ProviderSettingsPanel } from "../components/settings/ProviderSettingsPanel";
-import { useSettingsScope } from "../components/settings/SettingsScopeContext";
-
-function SettingsProvidersRoute() {
-  const target = Route.useSearch();
-  const { environment, scope } = useSettingsScope();
-  const gt = useGT();
-  if (!environment) {
-    return (
-      <p className="p-8 text-sm text-muted-foreground">
-        {scope.kind === "environment"
-          ? gt("Reconnect {label} to set up its providers.", { label: scope.label })
-          : gt("Connect an environment to set up its providers.")}
-      </p>
-    );
-  }
-  return (
-    <ProviderSettingsPanel
-      environmentId={environment.environmentId}
-      {...(target.instanceId ? { instanceId: target.instanceId } : {})}
-      projectIds={
-        scope.kind === "project" || scope.kind === "checkout"
-          ? scope.members
-              .filter((member) => member.environmentId === environment.environmentId)
-              .map((member) => member.id)
-          : []
-      }
-      scoped
-    />
-  );
-}
+import { SettingsProvidersRoute } from "../components/settings/SettingsProvidersPage";
 
 export const Route = createFileRoute("/_chat/settings/providers")({
   validateSearch: (raw: Record<string, unknown>) => ({
@@ -43,5 +14,11 @@ export const Route = createFileRoute("/_chat/settings/providers")({
       ? { instanceId: ProviderInstanceId.make(raw.instanceId) }
       : {}),
   }),
-  component: SettingsProvidersRoute,
+  component: definePluginRouteRenderer(
+    "/settings/providers",
+    "component",
+    definePluginFeature("settings.providers", SettingsProvidersRoute),
+  ),
 });
+
+registerBuiltinRoute("/settings/providers", Route);

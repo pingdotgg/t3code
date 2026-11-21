@@ -26,12 +26,14 @@ const RIGHT_PANEL_KINDS = [
   "file",
   "preview",
   "device",
+  "canvas",
   "terminal",
   "pull-request",
   "pull-requests",
   "issue",
   "thread",
   "linked-thread",
+  "plugin",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -45,9 +47,13 @@ export interface DeviceTabTarget {
 }
 
 export type RightPanelSurface =
+  | { id: `plugin:${string}`; kind: "plugin"; slot: string; title: string }
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
+  /** A design canvas document of the thread's project; `canvas:new` picks or creates one. */
+  | { id: `canvas:${string}`; kind: "canvas"; documentId: string; title?: string }
+  | { id: "canvas:new"; kind: "canvas"; documentId: null; title?: undefined }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -187,7 +193,7 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     kind: Exclude<
       RightPanelKind,
-      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
+      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread" | "plugin"
     >,
   ) => void;
   /** Opens a side chat or subagent of `ref`'s environment as a tab; `ref` itself has no tab. */
@@ -196,8 +202,13 @@ interface RightPanelStoreState {
   /** Records the title the linked environment gave, so the tab and a reopened one show it. */
   setLinkedThreadTitle: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
+  openPlugin: (ref: ScopedThreadRef, slot: string, title: string) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
+  /** Opens a canvas document tab, replacing the `canvas:new` picker; null opens the picker. */
+  openCanvas: (ref: ScopedThreadRef, documentId: string | null, title?: string) => void;
+  /** Keeps open canvas tabs titled after their document. Not a user choice. */
+  syncCanvasTitle: (ref: ScopedThreadRef, documentId: string, title: string) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   /** Moves in place; "" opens the root explorer. folderTrail keeps the return path; keepSource opens beside the source. */
   navigateFolder: (
@@ -261,7 +272,7 @@ interface RightPanelStoreState {
     ref: ScopedThreadRef,
     kind: Exclude<
       RightPanelKind,
-      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
+      "file" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread" | "plugin"
     >,
   ) => void;
   setThreadPanelOpen: (
@@ -287,7 +298,15 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 const singletonSurface = (
   kind: Exclude<
     RightPanelKind,
-    "file" | "preview" | "terminal" | "pull-request" | "issue" | "thread" | "linked-thread"
+    | "file"
+    | "preview"
+    | "canvas"
+    | "terminal"
+    | "pull-request"
+    | "issue"
+    | "thread"
+    | "linked-thread"
+    | "plugin"
   >,
 ): RightPanelSurface => {
   switch (kind) {
@@ -306,6 +325,16 @@ const browserSurface = (tabId: string | null): RightPanelSurface =>
   tabId
     ? { id: `browser:${tabId}`, kind: "preview", resourceId: tabId }
     : { id: "browser:new", kind: "preview", resourceId: null };
+
+const canvasSurface = (documentId: string | null, title?: string): RightPanelSurface =>
+  documentId
+    ? {
+        id: `canvas:${documentId}`,
+        kind: "canvas",
+        documentId,
+        ...(title === undefined ? {} : { title }),
+      }
+    : { id: "canvas:new", kind: "canvas", documentId: null };
 
 const fileSurface = (
   relativePath: string,
@@ -677,6 +706,16 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                         }),
                       ];
                     }
+                    if (surface.kind === "canvas") {
+                      return typeof surface.documentId === "string"
+                        ? [
+                            canvasSurface(
+                              surface.documentId,
+                              typeof surface.title === "string" ? surface.title : undefined,
+                            ),
+                          ]
+                        : [canvasSurface(null)];
+                    }
                     if (surface.kind !== "terminal") return [surface];
                     if (
                       !("resourceId" in surface) ||
@@ -773,7 +812,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
   return { byThreadKey, threadPanelVisibilityByThreadKey };
 }
 
-export const useRightPanelStore = create<RightPanelStoreState>()(
+const rightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set, get) => ({
       byThreadKey: {},
@@ -846,7 +885,57 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               const existing = current.surfaces.find((surface) => surface.kind === "preview");
               return upsertSurface(current, existing ?? browserSurface(null));
             }
+            if (kind === "canvas") {
+              const existing = current.surfaces.find((surface) => surface.kind === "canvas");
+              return upsertSurface(current, existing ?? canvasSurface(null));
+            }
             return upsertSurface(current, singletonSurface(kind));
+          }),
+        ),
+      openPlugin: (ref, slot, title) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, { id: `plugin:${slot}`, kind: "plugin", slot, title }),
+          ),
+        ),
+      openCanvas: (ref, documentId, title) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface = canvasSurface(documentId, title);
+            const surfaces = (
+              documentId
+                ? current.surfaces.filter((entry) => entry.id !== "canvas:new")
+                : current.surfaces
+            ).map((entry) =>
+              entry.id === surface.id &&
+              entry.kind === "canvas" &&
+              entry.documentId !== null &&
+              title !== undefined
+                ? { ...entry, title }
+                : entry,
+            );
+            return upsertSurface({ ...current, surfaces }, surface);
+          }),
+        ),
+      syncCanvasTitle: (ref, documentId, title) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
+            const id = `canvas:${documentId}`;
+            if (
+              !current.surfaces.some(
+                (entry) => entry.id === id && entry.kind === "canvas" && entry.title !== title,
+              )
+            ) {
+              return current;
+            }
+            return {
+              ...current,
+              surfaces: current.surfaces.map((entry) =>
+                entry.id === id && entry.kind === "canvas" && entry.documentId !== null
+                  ? { ...entry, title }
+                  : entry,
+              ),
+            };
           }),
         ),
       openDevice: (ref, target, automatic = false) =>
@@ -1327,6 +1416,10 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               const existing = current.surfaces.find((surface) => surface.kind === "preview");
               return upsertSurface(current, existing ?? browserSurface(null));
             }
+            if (kind === "canvas") {
+              const existing = current.surfaces.find((surface) => surface.kind === "canvas");
+              return upsertSurface(current, existing ?? canvasSurface(null));
+            }
             return upsertSurface(current, singletonSurface(kind));
           }),
         ),
@@ -1409,7 +1502,17 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
   ),
 );
 
-useRightPanelStore.subscribe((next, previous) => {
+// Plugin action closures and native panels keep the same store during hot reload.
+const hotData = import.meta.hot?.data;
+export const useRightPanelStore =
+  (hotData?.rightPanelStore as typeof rightPanelStore | undefined) ?? rightPanelStore;
+
+if (hotData) {
+  hotData.rightPanelStore = useRightPanelStore;
+  (hotData.unsubscribeClosedViews as (() => void) | undefined)?.();
+}
+
+const unsubscribeClosedViews = useRightPanelStore.subscribe((next, previous) => {
   if (next.closeRevisionByThreadKey === previous.closeRevisionByThreadKey) return;
   for (const [threadKey, revision] of Object.entries(next.closeRevisionByThreadKey)) {
     if (revision === previous.closeRevisionByThreadKey[threadKey]) continue;
@@ -1434,6 +1537,14 @@ useRightPanelStore.subscribe((next, previous) => {
     }
   }
 });
+
+if (import.meta.hot && hotData) {
+  hotData.unsubscribeClosedViews = unsubscribeClosedViews;
+  import.meta.hot.dispose((data) => {
+    data.rightPanelStore = useRightPanelStore;
+    unsubscribeClosedViews();
+  });
+}
 
 export function selectThreadRightPanelState(
   byThreadKey: Record<string, ThreadRightPanelState>,

@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ZoomIndicator = definePluginComponent(
+  "component:components/preview/ZoomIndicator/ZoomIndicator",
+  PluginOriginalZoomIndicator,
+);
 
 const HIDE_AFTER_MS = 1500;
 const ZOOM_EPSILON = 0.001;
@@ -9,7 +15,7 @@ interface Props {
   zoomFactor: number;
 }
 
-export function ZoomIndicator({ zoomFactor }: Props) {
+function PluginOriginalZoomIndicator({ zoomFactor }: Props) {
   const [visible, setVisible] = useState(false);
   const lastFactorRef = useRef(zoomFactor);
   const timerRef = useRef<number | null>(null);
@@ -32,7 +38,9 @@ export function ZoomIndicator({ zoomFactor }: Props) {
     };
   }, [zoomFactor]);
 
-  const percent = `${Math.round(zoomFactor * 100)}%`;
+  // The design canvas zooms far below 1%.
+  const rounded = Math.round(zoomFactor * 100);
+  const percent = rounded < 1 ? "<1%" : `${rounded}%`;
 
   return (
     <div

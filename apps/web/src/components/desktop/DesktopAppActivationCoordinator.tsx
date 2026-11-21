@@ -2,8 +2,14 @@ import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { useOpenLocalWorkspace } from "../../hooks/useOpenLocalWorkspace";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DesktopAppActivationCoordinator() {
+export const DesktopAppActivationCoordinator = definePluginComponent(
+  "component:components/desktop/DesktopAppActivationCoordinator/DesktopAppActivationCoordinator",
+  PluginOriginalDesktopAppActivationCoordinator,
+);
+
+function PluginOriginalDesktopAppActivationCoordinator() {
   const openLocalWorkspace = useOpenLocalWorkspace();
   const queueRef = useRef(Promise.resolve());
   const activation = window.desktopBridge?.appActivation;

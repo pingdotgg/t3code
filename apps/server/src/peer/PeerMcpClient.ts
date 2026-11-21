@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   type EnvironmentId,
   OrchestratorMcpFailure,
@@ -9,7 +10,6 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -326,4 +326,4 @@ const make = Effect.gen(function* () {
   return PeerMcpClient.of({ call });
 });
 
-export const layer = Layer.effect(PeerMcpClient, make);
+export const layer = builtinServiceLayer("t3.connections")(PeerMcpClient, make);

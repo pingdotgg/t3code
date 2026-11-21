@@ -1,4 +1,4 @@
-import * as Layer from "effect/Layer";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import * as Tracer from "effect/Tracer";
 
 import { randomUUID } from "../lib/utils";
@@ -17,7 +17,7 @@ export function hasDelegate(): boolean {
 }
 
 // Install before exporters exist so spans reach whichever exporter is configured later.
-export const layer = Layer.succeed(
+export const layer = builtinSucceedLayer("t3.client")(
   Tracer.Tracer,
   Tracer.make({
     span(options) {

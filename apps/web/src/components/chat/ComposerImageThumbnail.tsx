@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { memo, useLayoutEffect, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -9,7 +10,7 @@ import {
   readComposerImageThumbnail,
 } from "../../lib/imageCompression";
 
-export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
+const PluginOriginalComposerImageThumbnail = memo(function ComposerImageThumbnail({
   file,
   alt,
   className,
@@ -79,3 +80,8 @@ export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
     fallback
   );
 });
+
+export const ComposerImageThumbnail = definePluginComponent(
+  "component:components/chat/ComposerImageThumbnail/ComposerImageThumbnail",
+  PluginOriginalComposerImageThumbnail,
+);

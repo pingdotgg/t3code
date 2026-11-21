@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "./plugins/PluginKernel.ts";
 // @effect-diagnostics nodeBuiltinImport:off - the guarded file read needs open
 // flags (O_NOFOLLOW, O_NONBLOCK) the FileSystem service does not expose.
 import * as NodeFS from "node:fs";
@@ -28,7 +29,6 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -511,4 +511,5 @@ const make = Effect.gen(function* () {
   } satisfies EnvironmentThemeService["Service"];
 });
 
-export const layer = Layer.effect(EnvironmentThemeService, make);
+// Client config subscriptions outlive the interface plugin.
+export const layer = builtinServiceLayer("t3.server")(EnvironmentThemeService, make);

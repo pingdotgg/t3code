@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CheckpointId,
   CheckpointRef,
@@ -369,7 +370,7 @@ export const layer: Layer.Layer<
   | WorkspaceFolders.WorkspaceFolders
   | FileSystem.FileSystem
   | Path.Path
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   CheckpointServiceV2,
   Effect.gen(function* () {
     const checkpointStore = yield* CheckpointStore.CheckpointStore;

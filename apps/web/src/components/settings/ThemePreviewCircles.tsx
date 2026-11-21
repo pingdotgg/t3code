@@ -13,6 +13,16 @@ import {
   type ThemeAppearance,
   type ThemeDefinition,
 } from "../../themePalette";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ThemePreviewCircle = definePluginComponent(
+  "component:components/settings/ThemePreviewCircles/ThemePreviewCircle",
+  PluginOriginalThemePreviewCircle,
+);
+export const ThemePreviewCircles = definePluginComponent(
+  "component:components/settings/ThemePreviewCircles/ThemePreviewCircles",
+  PluginOriginalThemePreviewCircles,
+);
 
 const THEME_PREVIEW_ROLES = [
   "sidebar",
@@ -119,7 +129,7 @@ function themePreviewEdgeShadow(mode: ThemeAppearance): string {
     : "inset 0 0 0 1px rgb(0 0 0 / 0.10), 0 1px 2px rgb(0 0 0 / 0.08)";
 }
 
-export function ThemePreviewCircle({
+function PluginOriginalThemePreviewCircle({
   colors,
   mode,
   className,
@@ -149,7 +159,7 @@ export function ThemePreviewCircle({
   );
 }
 
-export function ThemePreviewCircles({
+function PluginOriginalThemePreviewCircles({
   label,
   activeModes,
   onSelectMode,

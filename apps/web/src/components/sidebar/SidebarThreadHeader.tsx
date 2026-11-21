@@ -12,6 +12,16 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SidebarThreadHeader = definePluginComponent(
+  "component:components/sidebar/SidebarThreadHeader/SidebarThreadHeader",
+  PluginOriginalSidebarThreadHeader,
+);
+export const SidebarHeaderIconButton = definePluginComponent(
+  "component:components/sidebar/SidebarThreadHeader/SidebarHeaderIconButton",
+  PluginOriginalSidebarHeaderIconButton,
+);
 
 export interface SidebarThreadHeaderProps {
   hasProjects: boolean;
@@ -32,7 +42,7 @@ export interface SidebarThreadHeaderProps {
   onClearSearch: () => void;
 }
 
-export function SidebarThreadHeader({
+function PluginOriginalSidebarThreadHeader({
   hasProjects,
   projectScope,
   onNewProject,
@@ -135,7 +145,7 @@ export function SidebarThreadHeader({
   );
 }
 
-export function SidebarHeaderIconButton({
+function PluginOriginalSidebarHeaderIconButton({
   label,
   tooltip = label,
   className,

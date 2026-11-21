@@ -7,6 +7,8 @@ import { assert, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
 
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
@@ -55,6 +57,27 @@ const makeClient = (host: FakeLauncherProcess, currentVersion: string) =>
     Effect.provideService(HostProcess.Environment, host.env),
     Effect.provide(NodeServices.layer),
   );
+
+it.effect("keeps launcher startup bookkeeping available with connections disabled", () =>
+  Effect.gen(function* () {
+    const kernel = yield* PluginKernel;
+    const client = yield* ServiceLauncherClient.ServiceLauncherClient;
+    expect(client.managed).toBe(false);
+    expect(yield* client.prepareTrial({ baseDir: "/unused" })).toBeUndefined();
+    yield* kernel.setEnabled("t3.connections", true);
+    yield* kernel.setEnabled("t3.connections", false);
+    expect(client.managed).toBe(false);
+    expect(yield* client.prepareTrial({ baseDir: "/unused" })).toBeUndefined();
+  }).pipe(
+    Effect.provide(
+      ServiceLauncherClient.layer.pipe(
+        Layer.provideMerge(layerWithEnabled({ "t3.connections": false })),
+      ),
+    ),
+    Effect.provideService(HostProcess.Environment, {}),
+    Effect.provide(NodeServices.layer),
+  ),
+);
 
 // regression: #34502 a remote update never replaces the launcher, so an installed one stays protocol 3
 it.effect.each([3, SERVICE_LAUNCHER_PROTOCOL])(

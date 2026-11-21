@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   CommandId,
   type EnvironmentId,
@@ -25,7 +26,6 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -1088,4 +1088,4 @@ const isTerminal = (status: string) =>
 const terminalStatus = (status: string): "completed" | "failed" | "cancelled" | "interrupted" =>
   status === "completed" || status === "failed" || status === "interrupted" ? status : "cancelled";
 
-export const layer = Layer.effect(RemoteDelegation, make);
+export const layer = builtinServiceLayer("t3.thread")(RemoteDelegation, make);

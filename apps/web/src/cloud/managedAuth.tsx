@@ -17,6 +17,12 @@ import { environmentCatalog } from "../connection/catalog";
 import { runtime } from "../lib/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { resolveRelayClerkTokenOptions } from "./publicConfig";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ManagedRelayAuthProvider = definePluginComponent(
+  "component:cloud/managedAuth/ManagedRelayAuthProvider",
+  PluginOriginalManagedRelayAuthProvider,
+);
 
 export function deactivateManagedRelayAuthentication(): void {
   setManagedRelaySession(appAtomRegistry, null);
@@ -64,7 +70,7 @@ const managedRelayAccountService = createCloudAccountService<ClerkInstance>({
     activateManagedRelayAuthentication(accountId, clerkTokenReader(source)),
 });
 
-export function ManagedRelayAuthProvider({ children }: { readonly children: ReactNode }) {
+function PluginOriginalManagedRelayAuthProvider({ children }: { readonly children: ReactNode }) {
   // ClerkProvider creates the Clerk instance and owns its lifetime, so the
   // account service observes it for as long as this provider is mounted.
   const clerk = useClerk();

@@ -4,6 +4,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { definePluginFeature } from "~/plugins/features";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
@@ -55,6 +56,7 @@ interface ChatHeaderProps {
   parentThreadLink: { threadId: ThreadId; title: string } | null;
   onOpenThread: (threadId: ThreadId) => void;
   rightPanelOpen: boolean;
+  reservePanelControlSpace?: boolean;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
@@ -70,7 +72,7 @@ function resolveRenameCommit(input: {
   return { action: "commit", title: trimmed };
 }
 
-export const ChatHeader = memo(function ChatHeader({
+export const BuiltinChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
@@ -80,6 +82,7 @@ export const ChatHeader = memo(function ChatHeader({
   parentThreadLink,
   onOpenThread,
   rightPanelOpen,
+  reservePanelControlSpace = true,
   onNewThreadInProject,
   onOpenProjectSettings,
   onFindInThread,
@@ -253,7 +256,7 @@ export const ChatHeader = memo(function ChatHeader({
       ref={breadcrumbContainerRef}
       className={cn(
         "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
-        rightPanelOpen ? "pr-10" : "pr-24",
+        reservePanelControlSpace && (rightPanelOpen ? "pr-10" : "pr-24"),
       )}
       onContextMenu={handleHeaderContextMenu}
     >
@@ -415,3 +418,5 @@ export const ChatHeader = memo(function ChatHeader({
     </div>
   );
 });
+
+export const ChatHeader = definePluginFeature("chat.header", BuiltinChatHeader);

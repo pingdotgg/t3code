@@ -10,10 +10,16 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { AndroidFoldError, setAndroidFold, type AndroidFoldPosture } from "./deviceFold";
 import { androidFoldReadAtom, androidFoldViewAtom, foldAngle, NOOP_ATOM } from "./deviceHubAtoms";
 import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
+import { definePluginComponent } from "~/plugins/features";
 
 const isAndroidFoldError = Schema.is(AndroidFoldError);
 
-export function DeviceAndroidFoldControls(props: {
+export const DeviceAndroidFoldControls = definePluginComponent(
+  "component:components/device/DeviceAndroidFoldControls/DeviceAndroidFoldControls",
+  PluginOriginalDeviceAndroidFoldControls,
+);
+
+function PluginOriginalDeviceAndroidFoldControls(props: {
   readonly access: DeviceHubAccess;
   readonly deviceKey: string;
   readonly deviceId: string;

@@ -63,6 +63,12 @@ import {
   captureSetupShouldDisableOnClose,
   type CaptureSetupStep,
 } from "./SnapShotSetupDialog.logic";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SnapShotSettings = definePluginComponent(
+  "component:components/settings/SnapShotSettings/SnapShotSettings",
+  PluginOriginalSnapShotSettings,
+);
 
 const soundOptionRowClassName = "grid grid-cols-[1fr_auto]";
 
@@ -81,7 +87,7 @@ type ShortcutCheck =
       readonly availability: DesktopSnapShotShortcutAvailability;
     };
 
-export function SnapShotSettings() {
+export function PluginOriginalSnapShotSettings() {
   const messages = useMessages();
   const setting = useSearchableSetting();
   const gt = useGT();

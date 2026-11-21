@@ -1,9 +1,10 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { ComponentPropsWithoutRef } from "react";
 
 import { cn } from "../lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
 
-export function WorkspacePageHeader({
+function PluginOriginalWorkspacePageHeader({
   electron = false,
   reserveNativeControls = electron,
   className,
@@ -25,3 +26,8 @@ export function WorkspacePageHeader({
     />
   );
 }
+
+export const WorkspacePageHeader = definePluginComponent(
+  "component:components/WorkspacePageHeader/WorkspacePageHeader",
+  PluginOriginalWorkspacePageHeader,
+);

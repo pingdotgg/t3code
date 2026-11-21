@@ -1,4 +1,5 @@
 import { msg, useGT, useMessages } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomValue } from "@effect/atom-react";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
@@ -39,7 +40,7 @@ const GROUPING_OPTIONS: ReadonlyArray<{
   },
 ];
 
-export function SettingsProjectGroupingRouteScreen() {
+function BuiltinSettingsProjectGroupingRouteScreen() {
   const gt = useGT();
   const m = useMessages();
   const insets = useSafeAreaInsets();
@@ -81,3 +82,8 @@ export function SettingsProjectGroupingRouteScreen() {
     </SettingsScreen>
   );
 }
+
+export const SettingsProjectGroupingRouteScreen = defineNativePluginFeature(
+  "settings.projects",
+  BuiltinSettingsProjectGroupingRouteScreen,
+);

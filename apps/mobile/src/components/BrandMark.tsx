@@ -5,6 +5,11 @@ import { View } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
 import { T3_CODE_BRAND_MARK_SOURCE } from "./brandAssets";
+import { defineNativePluginFeature } from "../plugins/features";
+export const BrandMark = defineNativePluginFeature(
+  "native.components.brand-mark",
+  BuiltinBrandMark,
+);
 
 const appVariant = Constants.expoConfig?.extra?.appVariant;
 const DEFAULT_STAGE_LABEL =
@@ -14,7 +19,7 @@ const DEFAULT_STAGE_LABEL =
       ? msg("Preview", { $context: "app release stage badge" })
       : msg("Beta", { $context: "app release stage badge" });
 
-export function BrandMark(props: { readonly compact?: boolean; readonly stageLabel?: string }) {
+function BuiltinBrandMark(props: { readonly compact?: boolean; readonly stageLabel?: string }) {
   const m = useMessages();
   const compact = props.compact ?? false;
   const iconSize = compact ? 32 : 44;

@@ -25,6 +25,7 @@ import type { MessageResolver } from "../../i18n/messages";
 import { cn } from "../../lib/cn";
 import type { ModelOption } from "../../lib/modelOptions";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+import { defineNativePluginFeature } from "../../plugins/features";
 export type ComposerCommandItem =
   | {
       readonly id: string;
@@ -93,7 +94,10 @@ interface ComposerCommandPopoverProps {
   readonly onSelect: (item: ComposerCommandItem) => void;
 }
 
-function PopoverSurface(props: { readonly children: React.ReactNode; readonly style?: ViewStyle }) {
+function BuiltinPopoverSurface(props: {
+  readonly children: React.ReactNode;
+  readonly style?: ViewStyle;
+}) {
   const baseStyle: ViewStyle = {
     borderRadius: 16,
     overflow: "hidden",
@@ -182,7 +186,7 @@ function emptyText(
   }
 }
 
-const CommandRow = memo(function CommandRow(props: {
+const BuiltinCommandRow = memo(function CommandRow(props: {
   readonly item: ComposerCommandItem;
   readonly onPress: () => void;
   readonly isLast: boolean;
@@ -242,7 +246,12 @@ const CommandRow = memo(function CommandRow(props: {
   );
 });
 
-export const ComposerCommandPopover = memo(function ComposerCommandPopover(
+const CommandRow = defineNativePluginFeature(
+  "native.features.threads.composer-command-popover.command-row",
+  BuiltinCommandRow,
+);
+
+const BuiltinComposerCommandPopover = memo(function ComposerCommandPopover(
   props: ComposerCommandPopoverProps,
 ) {
   const m = useMessages();
@@ -283,3 +292,13 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
     </PopoverSurface>
   );
 });
+
+export const ComposerCommandPopover = defineNativePluginFeature(
+  "native.features.threads.composer-command-popover",
+  BuiltinComposerCommandPopover,
+);
+
+const PopoverSurface = defineNativePluginFeature(
+  "native.features.threads.composer-command-popover.popover-surface",
+  BuiltinPopoverSurface,
+);

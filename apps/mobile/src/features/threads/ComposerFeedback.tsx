@@ -9,8 +9,13 @@ import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const ComposerFeedback = defineNativePluginFeature(
+  "native.features.threads.composer-feedback",
+  BuiltinComposerFeedback,
+);
 
-export function ComposerFeedback({
+function BuiltinComposerFeedback({
   submission,
   onDismiss,
 }: {

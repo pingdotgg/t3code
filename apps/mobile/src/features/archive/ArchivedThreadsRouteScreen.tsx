@@ -15,8 +15,13 @@ import {
   refreshArchivedThreadsForEnvironment,
   useArchivedThreadSnapshots,
 } from "./useArchivedThreadSnapshots";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const ArchivedThreadsRouteScreen = defineNativePluginFeature(
+  "native.features.archive.archived-threads-route-screen",
+  BuiltinArchivedThreadsRouteScreen,
+);
 
-export function ArchivedThreadsRouteScreen() {
+function BuiltinArchivedThreadsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<EnvironmentId | null>(null);

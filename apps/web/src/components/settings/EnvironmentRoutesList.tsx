@@ -37,8 +37,18 @@ import { usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function EnvironmentRoutesList({
+export const EnvironmentRoutesList = definePluginComponent(
+  "component:components/settings/EnvironmentRoutesList/EnvironmentRoutesList",
+  PluginOriginalEnvironmentRoutesList,
+);
+const SortableRouteRow = definePluginComponent(
+  "component:components/settings/EnvironmentRoutesList/SortableRouteRow",
+  PluginOriginalSortableRouteRow,
+);
+
+function PluginOriginalEnvironmentRoutesList({
   environment,
   onAddRoute,
 }: {
@@ -138,7 +148,7 @@ export function EnvironmentRoutesList({
   );
 }
 
-function SortableRouteRow({
+function PluginOriginalSortableRouteRow({
   route,
   position,
   inUse,

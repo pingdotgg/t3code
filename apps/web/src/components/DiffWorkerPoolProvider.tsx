@@ -7,6 +7,16 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react
 import { getRenderedAppearance, subscribeRenderedAppearance } from "../hooks/useTheme";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
+import { definePluginComponent } from "~/plugins/features";
+
+const DiffWorkerReady = definePluginComponent(
+  "component:components/DiffWorkerPoolProvider/DiffWorkerReady",
+  PluginOriginalDiffWorkerReady,
+);
+export const DiffWorkerPoolProvider = definePluginComponent(
+  "component:components/DiffWorkerPoolProvider/DiffWorkerPoolProvider",
+  PluginOriginalDiffWorkerPoolProvider,
+);
 
 export class DiffWorkerError extends Schema.TaggedError<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
@@ -88,7 +98,7 @@ function acquireDiffWorkerPool(poolSize: number) {
 }
 
 // Plain-text views do not queue a highlight task that could retry a blank first render.
-function DiffWorkerReady({ children }: { children?: ReactNode }) {
+function PluginOriginalDiffWorkerReady({ children }: { children?: ReactNode }) {
   const ready = useDiffWorkerPoolReady(useWorkerPool());
   return ready ? (
     children
@@ -151,7 +161,7 @@ export function useDiffWorkerPool() {
   );
 }
 
-export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
+function PluginOriginalDiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
   const workerPool = useDiffWorkerPool();
 
   return (

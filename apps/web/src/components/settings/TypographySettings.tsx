@@ -43,6 +43,48 @@ import {
   revealSettingsSearchTarget,
   useSearchableSetting,
 } from "./settingsSearch";
+import { definePluginComponent } from "~/plugins/features";
+
+const InterfaceFontRow = definePluginComponent(
+  "component:components/settings/TypographySettings/InterfaceFontRow",
+  PluginOriginalInterfaceFontRow,
+);
+const PromptFontRow = definePluginComponent(
+  "component:components/settings/TypographySettings/PromptFontRow",
+  PluginOriginalPromptFontRow,
+);
+const CodeFontRow = definePluginComponent(
+  "component:components/settings/TypographySettings/CodeFontRow",
+  PluginOriginalCodeFontRow,
+);
+const TerminalFontRow = definePluginComponent(
+  "component:components/settings/TypographySettings/TerminalFontRow",
+  PluginOriginalTerminalFontRow,
+);
+const FontSmoothingRow = definePluginComponent(
+  "component:components/settings/TypographySettings/FontSmoothingRow",
+  PluginOriginalFontSmoothingRow,
+);
+const WordWrapRow = definePluginComponent(
+  "component:components/settings/TypographySettings/WordWrapRow",
+  PluginOriginalWordWrapRow,
+);
+const FontSettingsGroup = definePluginComponent(
+  "component:components/settings/TypographySettings/FontSettingsGroup",
+  PluginOriginalFontSettingsGroup,
+);
+const SimpleFontRows = definePluginComponent(
+  "component:components/settings/TypographySettings/SimpleFontRows",
+  PluginOriginalSimpleFontRows,
+);
+export const TypographySection = definePluginComponent(
+  "component:components/settings/TypographySettings/TypographySection",
+  PluginOriginalTypographySection,
+);
+const FontFamilySettingsRow = definePluginComponent(
+  "component:components/settings/TypographySettings/FontFamilySettingsRow",
+  PluginOriginalFontFamilySettingsRow,
+);
 
 let fontDefaultFamilies: { readonly sans: string | null; readonly code: string | null } | undefined;
 
@@ -68,7 +110,7 @@ function useFontDefaultFamilies() {
   };
 }
 
-function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
+function PluginOriginalInterfaceFontRow({ preview }: { preview?: ReactNode }) {
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
@@ -102,7 +144,7 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
   );
 }
 
-function PromptFontRow() {
+function PluginOriginalPromptFontRow() {
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
@@ -136,7 +178,7 @@ function PromptFontRow() {
   );
 }
 
-function CodeFontRow({
+function PluginOriginalCodeFontRow({
   title,
   resetLabel,
   description,
@@ -182,7 +224,7 @@ function CodeFontRow({
   );
 }
 
-function TerminalFontRow() {
+function PluginOriginalTerminalFontRow() {
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
@@ -226,7 +268,7 @@ function TerminalFontRow() {
   );
 }
 
-function FontSmoothingRow() {
+function PluginOriginalFontSmoothingRow() {
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
@@ -257,7 +299,7 @@ function FontSmoothingRow() {
   );
 }
 
-function WordWrapRow() {
+function PluginOriginalWordWrapRow() {
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
@@ -285,7 +327,7 @@ function WordWrapRow() {
   );
 }
 
-function FontSettingsGroup() {
+function PluginOriginalFontSettingsGroup() {
   return (
     <>
       <InterfaceFontRow />
@@ -322,7 +364,7 @@ function SeparateFontsRow({
   );
 }
 
-function SimpleFontRows() {
+function PluginOriginalSimpleFontRows() {
   const gt = useGT();
   const settings = useScopedSettings();
   return (
@@ -354,7 +396,7 @@ function SimpleFontRows() {
   );
 }
 
-export function TypographySection() {
+function PluginOriginalTypographySection() {
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const [advanced, setAdvanced] = useLocalStorage(
@@ -386,7 +428,7 @@ export function TypographySection() {
   );
 }
 
-function FontFamilySettingsRow({
+function PluginOriginalFontFamilySettingsRow({
   id,
   title,
   resetLabel,

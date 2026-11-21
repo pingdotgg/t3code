@@ -5,6 +5,12 @@ import { SegmentedControl as FlatSegmentedControl } from "./SegmentedControl.sha
 import { segmentedControlColors } from "./segmentedControlColors";
 import { useControlTheme } from "./useControlTheme";
 import type { SegmentedControlProps } from "./SegmentedControl.types";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const SegmentedControl = defineNativePluginFeature(
+  "native.components.ui.segmented-control",
+  BuiltinSegmentedControl,
+);
 
 export type { SegmentedControlProps } from "./SegmentedControl.types";
 
@@ -21,7 +27,7 @@ const NativeSegmentedControl = requireNativeView<
   }
 >("T3NativeControls", "SegmentedControl");
 
-export function SegmentedControl<Value extends string | number>(
+function BuiltinSegmentedControl<Value extends string | number>(
   props: SegmentedControlProps<Value>,
 ) {
   const { colors, colorScheme, themeId } = useControlTheme();

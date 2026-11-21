@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CommandId,
   OrchestratorMcpFailure,
@@ -204,4 +205,4 @@ export const layer: Layer.Layer<
   ThreadMetadataMcpService,
   never,
   SecureRandom.SecureRandom | ThreadManagementService.ThreadManagementService
-> = Layer.effect(ThreadMetadataMcpService, make);
+> = builtinServiceLayer("t3.mcp")(ThreadMetadataMcpService, make);

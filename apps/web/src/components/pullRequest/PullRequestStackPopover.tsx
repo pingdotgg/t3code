@@ -7,9 +7,19 @@ import { Menu, MenuTrigger, MenuPopup, MenuGroup, MenuGroupLabel, MenuItem } fro
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { definePluginComponent } from "~/plugins/features";
+
+const StackBody = definePluginComponent(
+  "component:components/pullRequest/PullRequestStackPopover/StackBody",
+  PluginOriginalStackBody,
+);
+export const PullRequestStackPopover = definePluginComponent(
+  "component:components/pullRequest/PullRequestStackPopover/PullRequestStackPopover",
+  PluginOriginalPullRequestStackPopover,
+);
 
 // Mount only on open to avoid per-row stack fetches.
-function StackBody({
+function PluginOriginalStackBody({
   environmentId,
   reference,
   onSelect,
@@ -52,7 +62,7 @@ function StackBody({
   );
 }
 
-export function PullRequestStackPopover({
+function PluginOriginalPullRequestStackPopover({
   environmentId,
   reference,
   membership,

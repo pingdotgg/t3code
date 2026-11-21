@@ -44,6 +44,11 @@ import {
   getMobileUniwindThemeName,
   type MobileThemeRuntimeState,
 } from "../../../lib/mobileThemeRuntime";
+import { defineNativePluginFeature } from "../../../plugins/features";
+export const AppearancePreferencesProvider = defineNativePluginFeature(
+  "native.features.settings.appearance.appearance-preferences-provider",
+  BuiltinAppearancePreferencesProvider,
+);
 
 interface AppearancePreferencesContextValue {
   readonly appearance: ResolvedAppearance;
@@ -186,7 +191,7 @@ export function installAppearanceRuntime(): () => void {
   };
 }
 
-export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
+function BuiltinAppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomCommand(saveMobilePreferences);
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";

@@ -8,8 +8,14 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { SettingsPageContainer } from "./settingsLayout";
 import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAxis";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ProjectsSettings() {
+export const ProjectsSettings = definePluginComponent(
+  "component:components/settings/ProjectsSettings/ProjectsSettings",
+  PluginOriginalProjectsSettings,
+);
+
+export function PluginOriginalProjectsSettings() {
   const gt = useGT();
   const { search: value, scope, selectScope } = useSettingsScope();
   const unavailable =

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
@@ -59,7 +60,14 @@ interface ContextChipProps extends useRender.ComponentProps<"span"> {
   shape?: "inline" | "bubble";
 }
 
-function ContextChip({ className, kind, state, shape, render, ...props }: ContextChipProps) {
+function PluginOriginalContextChip({
+  className,
+  kind,
+  state,
+  shape,
+  render,
+  ...props
+}: ContextChipProps) {
   const defaultProps = {
     className: cn(contextChipVariants({ kind, state, shape }), className),
     "data-slot": "context-chip",
@@ -72,7 +80,7 @@ function ContextChip({ className, kind, state, shape, render, ...props }: Contex
   });
 }
 
-function ContextChipLabel({ className, ...props }: React.ComponentProps<"span">) {
+function PluginOriginalContextChipLabel({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
       className={cn(
@@ -85,7 +93,11 @@ function ContextChipLabel({ className, ...props }: React.ComponentProps<"span">)
   );
 }
 
-function ContextChipAction({ className, render, ...props }: useRender.ComponentProps<"button">) {
+function PluginOriginalContextChipAction({
+  className,
+  render,
+  ...props
+}: useRender.ComponentProps<"button">) {
   const defaultProps = {
     className: cn(
       "ml-[0.17em] inline-flex size-[1em] shrink-0 cursor-pointer items-center justify-center rounded-sm text-current transition-colors hover:bg-(--context-chip-accent,var(--color-foreground))/17 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none [&_svg]:size-[0.85em]",
@@ -102,3 +114,16 @@ function ContextChipAction({ className, render, ...props }: useRender.ComponentP
 }
 
 export { ContextChip, ContextChipAction, ContextChipLabel, type ContextChipKind };
+
+const ContextChip = definePluginComponent(
+  "component:components/ContextChip/ContextChip",
+  PluginOriginalContextChip,
+);
+const ContextChipLabel = definePluginComponent(
+  "component:components/ContextChip/ContextChipLabel",
+  PluginOriginalContextChipLabel,
+);
+const ContextChipAction = definePluginComponent(
+  "component:components/ContextChip/ContextChipAction",
+  PluginOriginalContextChipAction,
+);

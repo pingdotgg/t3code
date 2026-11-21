@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useGT } from "gt-react";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import {
@@ -20,7 +21,12 @@ import {
 import { observeResize } from "../../lib/observeResize";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 
-export function ThreadDetailsCard({
+export const ThreadDetailsCard = definePluginComponent(
+  "component:components/chat/ThreadDetailsCard/ThreadDetailsCard",
+  PluginOriginalThreadDetailsCard,
+);
+
+function PluginOriginalThreadDetailsCard({
   threadRef,
   anchor,
   handle,

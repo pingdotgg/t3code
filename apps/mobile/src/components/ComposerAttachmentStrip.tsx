@@ -30,6 +30,32 @@ import {
   retryComposerAttachmentUpload,
   useComposerAttachmentUploadState,
 } from "../state/composer-attachment-uploads";
+import { defineNativePluginFeature } from "../plugins/features";
+
+const ComposerImageAttachment = defineNativePluginFeature(
+  "native.components.composer-attachment-strip.composer-image-attachment",
+  BuiltinComposerImageAttachment,
+);
+const ComposerAttachmentContent = defineNativePluginFeature(
+  "native.components.composer-attachment-strip.composer-attachment-content",
+  BuiltinComposerAttachmentContent,
+);
+const ComposerFileAttachment = defineNativePluginFeature(
+  "native.components.composer-attachment-strip.composer-file-attachment",
+  BuiltinComposerFileAttachment,
+);
+const ComposerVideoAttachment = defineNativePluginFeature(
+  "native.components.composer-attachment-strip.composer-video-attachment",
+  BuiltinComposerVideoAttachment,
+);
+export const ComposerAttachmentThumbnail = defineNativePluginFeature(
+  "native.components.composer-attachment-strip.composer-attachment-thumbnail",
+  BuiltinComposerAttachmentThumbnail,
+);
+export const ComposerAttachmentStrip = defineNativePluginFeature(
+  "native.components.composer-attachment-strip",
+  BuiltinComposerAttachmentStrip,
+);
 
 export interface ComposerAttachmentStripProps {
   readonly environmentId?: EnvironmentId;
@@ -60,7 +86,7 @@ type ComposerAttachmentThumbnailProps = {
   readonly onPressDocument?: (attachment: DraftComposerFileAttachment) => void;
 };
 
-export function ComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailProps) {
+function BuiltinComposerAttachmentThumbnail(props: ComposerAttachmentThumbnailProps) {
   const gt = useGT();
   const upload = useComposerAttachmentUploadState(props.environmentId, props.attachment.id);
   return (
@@ -140,7 +166,7 @@ function useComposerImagePreviewUri(attachment: DraftComposerImageAttachment): s
   return previewUri;
 }
 
-function ComposerImageAttachment(
+function BuiltinComposerImageAttachment(
   props: ComposerAttachmentThumbnailProps & { readonly attachment: DraftComposerImageAttachment },
 ) {
   const gt = useGT();
@@ -188,7 +214,7 @@ function ComposerImageAttachment(
   );
 }
 
-function ComposerAttachmentContent(props: ComposerAttachmentThumbnailProps) {
+function BuiltinComposerAttachmentContent(props: ComposerAttachmentThumbnailProps) {
   const { attachment } = props;
   // The document picker types every pick as a plain file, so a picture arrives here as one.
   if (attachment.type === "image" || imageMimeType(attachment) !== null) {
@@ -213,7 +239,7 @@ function ComposerAttachmentContent(props: ComposerAttachmentThumbnailProps) {
   return <ComposerFileAttachment {...props} attachment={attachment} />;
 }
 
-function ComposerFileAttachment(
+function BuiltinComposerFileAttachment(
   props: ComposerAttachmentThumbnailProps & { readonly attachment: DraftComposerFileAttachment },
 ) {
   const gt = useGT();
@@ -260,7 +286,7 @@ function ComposerFileAttachment(
   );
 }
 
-function ComposerVideoAttachment(props: {
+function BuiltinComposerVideoAttachment(props: {
   readonly attachment: DraftComposerFileAttachment;
   readonly size: number;
   readonly borderRadius: number;
@@ -293,7 +319,7 @@ function ComposerVideoAttachment(props: {
   );
 }
 
-export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
+function BuiltinComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
   const gt = useGT();
   const gallery = composerImageGallery(props.attachments);
   const size = props.imageSize ?? 72;

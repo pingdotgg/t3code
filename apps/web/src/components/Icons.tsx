@@ -1,15 +1,20 @@
 import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
-export const UltrafastIcon: Icon = (props) => (
+const PluginOriginalUltrafastIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
     <path d="m17 2-10 12h7l-1 8 10-12h-7l1-8Z" opacity="0.4" />
     <path d="m11 2-10 12h7l-1 8 10-12h-7l1-8Z" />
   </svg>
 );
+export const UltrafastIcon = definePluginComponent(
+  "component:components/Icons/UltrafastIcon",
+  PluginOriginalUltrafastIcon,
+);
 
-export const FinderIcon: Icon = (props) => (
+const PluginOriginalFinderIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="none" {...props}>
     <rect x="2" y="2" width="20" height="20" rx="4" fill="#36A9F5" />
     <path
@@ -24,8 +29,12 @@ export const FinderIcon: Icon = (props) => (
     />
   </svg>
 );
+export const FinderIcon = definePluginComponent(
+  "component:components/Icons/FinderIcon",
+  PluginOriginalFinderIcon,
+);
 
-export const FileExplorerIcon: Icon = (props) => (
+const PluginOriginalFileExplorerIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="none" {...props}>
     <path
       d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"
@@ -36,15 +45,23 @@ export const FileExplorerIcon: Icon = (props) => (
     <path d="M10 16h4v2h-4Z" fill="#1879B9" />
   </svg>
 );
+export const FileExplorerIcon = definePluginComponent(
+  "component:components/Icons/FileExplorerIcon",
+  PluginOriginalFileExplorerIcon,
+);
 
 // Apple brand mark from Simple Icons (CC0).
-export const AppleIcon: Icon = (props) => (
+const PluginOriginalAppleIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
     <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701" />
   </svg>
 );
+export const AppleIcon = definePluginComponent(
+  "component:components/Icons/AppleIcon",
+  PluginOriginalAppleIcon,
+);
 
-export const AndroidIcon: Icon = (props) => (
+const PluginOriginalAndroidIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
     <path
       d="m8 3-1-2m9 2 1-2"
@@ -62,14 +79,22 @@ export const AndroidIcon: Icon = (props) => (
     <rect x="20" y="11" width="3" height="8" rx="1.5" />
   </svg>
 );
+export const AndroidIcon = definePluginComponent(
+  "component:components/Icons/AndroidIcon",
+  PluginOriginalAndroidIcon,
+);
 
-export const LinuxIcon: Icon = ({ className, ...props }) => (
+const PluginOriginalLinuxIcon: Icon = ({ className, ...props }) => (
   <svg {...props} className={className} viewBox="-2 -2 28 28" fill="currentColor">
     <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z" />
   </svg>
 );
+export const LinuxIcon = definePluginComponent(
+  "component:components/Icons/LinuxIcon",
+  PluginOriginalLinuxIcon,
+);
 
-export const GitIcon: Icon = (props) => (
+const PluginOriginalGitIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 256 256">
     <path
       d="M251.17 116.6 139.4 4.82a16.49 16.49 0 0 0-23.31 0l-23.21 23.2 29.44 29.45a19.57 19.57 0 0 1 24.8 24.96l28.37 28.38a19.61 19.61 0 1 1-11.75 11.06L137.28 95.4v69.64a19.62 19.62 0 1 1-16.13-.57V94.2a19.61 19.61 0 0 1-10.65-25.73L81.46 39.44 4.83 116.08a16.49 16.49 0 0 0 0 23.32L116.6 251.17a16.49 16.49 0 0 0 23.32 0l111.25-111.25a16.5 16.5 0 0 0 0-23.33"
@@ -77,8 +102,12 @@ export const GitIcon: Icon = (props) => (
     />
   </svg>
 );
+export const GitIcon = definePluginComponent(
+  "component:components/Icons/GitIcon",
+  PluginOriginalGitIcon,
+);
 
-export const JujutsuIcon: Icon = (props) => {
+const PluginOriginalJujutsuIcon: Icon = (props) => {
   const groupId = `${useId().replaceAll(":", "")}-jj-a`;
 
   return (
@@ -121,6 +150,10 @@ export const JujutsuIcon: Icon = (props) => {
     </svg>
   );
 };
+export const JujutsuIcon = definePluginComponent(
+  "component:components/Icons/JujutsuIcon",
+  PluginOriginalJujutsuIcon,
+);
 
 export const LinearIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 100 100" fill="none">
@@ -131,7 +164,7 @@ export const LinearIcon: Icon = (props) => (
   </svg>
 );
 
-export const CursorIcon: Icon = ({ className, ...props }) => (
+const PluginOriginalCursorIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
     viewBox="0 0 466.73 532.09"
@@ -140,8 +173,12 @@ export const CursorIcon: Icon = ({ className, ...props }) => (
     <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z" />
   </svg>
 );
+export const CursorIcon = definePluginComponent(
+  "component:components/Icons/CursorIcon",
+  PluginOriginalCursorIcon,
+);
 
-export const TraeIcon: Icon = (props) => (
+const PluginOriginalTraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {}
     <rect x="1" y="4" width="3" height="14" />
@@ -154,8 +191,12 @@ export const TraeIcon: Icon = (props) => (
     <path d="M16 10L18 12L16 14L14 12Z" />
   </svg>
 );
+export const TraeIcon = definePluginComponent(
+  "component:components/Icons/TraeIcon",
+  PluginOriginalTraeIcon,
+);
 
-export const KiroIcon: Icon = (props) => (
+const PluginOriginalKiroIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 1200 1200" fill="none">
     <rect width="1200" height="1200" rx="260" fill="#9046FF" />
     <path
@@ -172,8 +213,12 @@ export const KiroIcon: Icon = (props) => (
     />
   </svg>
 );
+export const KiroIcon = definePluginComponent(
+  "component:components/Icons/KiroIcon",
+  PluginOriginalKiroIcon,
+);
 
-export const VisualStudioCode: Icon = (props) => {
+const PluginOriginalVisualStudioCode: Icon = (props) => {
   const id = useId();
   const maskId = `${id}-vscode-a`;
   const topShadowFilterId = `${id}-vscode-b`;
@@ -266,8 +311,12 @@ export const VisualStudioCode: Icon = (props) => {
     </svg>
   );
 };
+export const VisualStudioCode = definePluginComponent(
+  "component:components/Icons/VisualStudioCode",
+  PluginOriginalVisualStudioCode,
+);
 
-export const VisualStudioCodeInsiders: Icon = (props) => {
+const PluginOriginalVisualStudioCodeInsiders: Icon = (props) => {
   const id = useId();
   const maskId = `${id}-vscode-insiders-a`;
   const topShadowFilterId = `${id}-vscode-insiders-b`;
@@ -360,8 +409,12 @@ export const VisualStudioCodeInsiders: Icon = (props) => {
     </svg>
   );
 };
+export const VisualStudioCodeInsiders = definePluginComponent(
+  "component:components/Icons/VisualStudioCodeInsiders",
+  PluginOriginalVisualStudioCodeInsiders,
+);
 
-export const VSCodium: Icon = (props) => {
+const PluginOriginalVSCodium: Icon = (props) => {
   const id = useId();
   const gradientId = `${id}-vscodium-gradient`;
 
@@ -387,8 +440,12 @@ export const VSCodium: Icon = (props) => {
     </svg>
   );
 };
+export const VSCodium = definePluginComponent(
+  "component:components/Icons/VSCodium",
+  PluginOriginalVSCodium,
+);
 
-export const Zed: Icon = (props) => {
+const PluginOriginalZed: Icon = (props) => {
   const id = useId();
   const clipPathId = `${id}-zed-logo-a`;
 
@@ -410,8 +467,9 @@ export const Zed: Icon = (props) => {
     </svg>
   );
 };
+export const Zed = definePluginComponent("component:components/Icons/Zed", PluginOriginalZed);
 
-export const OpenAI: Icon = ({ className, ...props }) => (
+const PluginOriginalOpenAI: Icon = ({ className, ...props }) => (
   <svg
     {...props}
     preserveAspectRatio="xMidYMid"
@@ -425,8 +483,12 @@ export const OpenAI: Icon = ({ className, ...props }) => (
     />
   </svg>
 );
+export const OpenAI = definePluginComponent(
+  "component:components/Icons/OpenAI",
+  PluginOriginalOpenAI,
+);
 
-export const ClaudeAI: Icon = ({ className, ...props }) => (
+const PluginOriginalClaudeAI: Icon = ({ className, ...props }) => (
   <svg
     {...props}
     preserveAspectRatio="xMidYMid"
@@ -435,6 +497,10 @@ export const ClaudeAI: Icon = ({ className, ...props }) => (
   >
     <path d="m50.228 170.321 50.357-28.257.843-2.463-.843-1.361h-2.462l-8.426-.518-28.775-.778-24.952-1.037-24.175-1.296-6.092-1.297L0 125.796l.583-3.759 5.12-3.434 7.324.648 16.202 1.101 24.304 1.685 17.629 1.037 26.118 2.722h4.148l.583-1.685-1.426-1.037-1.101-1.037-25.147-17.045-27.22-18.017-14.258-10.37-7.713-5.25-3.888-4.925-1.685-10.758 7-7.713 9.397.649 2.398.648 9.527 7.323 20.35 15.75L94.817 91.9l3.889 3.24 1.555-1.102.195-.777-1.75-2.917-14.453-26.118-15.425-26.572-6.87-11.018-1.814-6.61c-.648-2.723-1.102-4.991-1.102-7.778l7.972-10.823L71.42 0 82.05 1.426l4.472 3.888 6.61 15.101 10.694 23.786 16.591 32.34 4.861 9.592 2.592 8.879.973 2.722h1.685v-1.556l1.36-18.211 2.528-22.36 2.463-28.776.843-8.1 4.018-9.722 7.971-5.25 6.222 2.981 5.12 7.324-.713 4.73-3.046 19.768-5.962 30.98-3.889 20.739h2.268l2.593-2.593 10.499-13.934 17.628-22.036 7.778-8.749 9.073-9.657 5.833-4.601h11.018l8.1 12.055-3.628 12.443-11.342 14.388-9.398 12.184-13.48 18.147-8.426 14.518.778 1.166 2.01-.194 30.46-6.481 16.462-2.982 19.637-3.37 8.88 4.148.971 4.213-3.5 8.62-20.998 5.184-24.628 4.926-36.682 8.685-.454.324.519.648 16.526 1.555 7.065.389h17.304l32.21 2.398 8.426 5.574 5.055 6.805-.843 5.184-12.962 6.611-17.498-4.148-40.83-9.721-14-3.5h-1.944v1.167l11.666 11.406 21.387 19.314 26.767 24.887 1.36 6.157-3.434 4.86-3.63-.518-23.526-17.693-9.073-7.972-20.545-17.304h-1.36v1.814l4.73 6.935 25.017 37.59 1.296 11.536-1.814 3.76-6.481 2.268-7.13-1.297-14.647-20.544-15.1-23.138-12.185-20.739-1.49.843-7.194 77.448-3.37 3.953-7.778 2.981-6.48-4.925-3.436-7.972 3.435-15.749 4.148-20.544 3.37-16.333 3.046-20.285 1.815-6.74-.13-.454-1.49.194-15.295 20.999-23.267 31.433-18.406 19.702-4.407 1.75-7.648-3.954.713-7.064 4.277-6.286 25.47-32.405 15.36-20.092 9.917-11.6-.065-1.686h-.583L44.07 198.125l-12.055 1.555-5.185-4.86.648-7.972 2.463-2.593 20.35-13.999-.064.065Z" />
   </svg>
+);
+export const ClaudeAI = definePluginComponent(
+  "component:components/Icons/ClaudeAI",
+  PluginOriginalClaudeAI,
 );
 
 // Brand marks from Simple Icons (CC0).
@@ -459,13 +525,17 @@ export const AnthropicIcon: Icon = ({ className, ...props }) => (
 const ANTIGRAVITY_ICON_DATA_URL =
   "data:image/png;base64,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";
 
-export const AntigravityIcon: Icon = (props) => (
+const PluginOriginalAntigravityIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 128 128" fill="none">
     <image href={ANTIGRAVITY_ICON_DATA_URL} width="128" height="128" />
   </svg>
 );
+export const AntigravityIcon = definePluginComponent(
+  "component:components/Icons/AntigravityIcon",
+  PluginOriginalAntigravityIcon,
+);
 
-export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
+const PluginOriginalACPRegistryIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}
     viewBox="0 0 576 220"
@@ -475,8 +545,12 @@ export const ACPRegistryIcon: Icon = ({ className, ...props }) => (
     <path d="M568.003 115.821L517.278 27.9661C507.183 10.4816 489.084 0.0227367 468.894 0.0227367C448.727 0.0227367 430.674 10.4361 420.556 27.8752L343.251 161.749H242.755C236.23 161.749 230.386 158.384 227.135 152.745C223.861 147.106 223.861 140.376 227.135 134.715L277.861 46.8603C281.112 41.2216 286.955 37.8338 293.481 37.8338C300.006 37.8338 305.827 41.1988 309.101 46.8603L312.125 52.0897C313.353 54.2042 315.604 55.5002 318.036 55.5002C320.469 55.5002 322.743 54.1815 323.948 52.067L337.385 28.5118C338.795 26.0335 338.522 22.9413 336.703 20.7586C325.699 7.57131 309.874 0 293.322 0C292.662 0 292.003 0 291.321 0.0454733C272.04 0.75031 254.76 11.1864 245.074 27.9434L200.215 105.657L155.81 29.1484C145.465 11.2092 126.594 0.0227367 106.608 0.0227367C105.949 0.0227367 105.289 0.0227367 104.607 0.06821C85.3265 0.773047 68.0467 11.2092 58.3608 27.9661L7.65806 115.821C-6.25678 139.899 -0.868187 168.82 21.05 187.759C29.8945 195.422 41.6039 199.628 54.0181 199.628H148.648C151.081 199.628 153.332 198.332 154.56 196.217L168.52 172.026C169.748 169.911 169.748 167.319 168.52 165.205C167.292 163.09 165.041 161.794 162.608 161.794H56.0417C49.5163 161.794 43.6729 158.429 40.4216 152.79C37.1475 147.152 37.1475 140.422 40.4216 134.76L91.1471 46.9057C94.3985 41.2671 100.242 37.8793 106.767 37.8793C113.293 37.8793 119.113 41.2443 122.387 46.9057L194.826 172.526C195.031 172.89 195.258 173.208 195.531 173.526C198.76 178.665 202.83 183.485 207.786 187.782C216.631 195.444 228.34 199.651 240.754 199.651H321.424L315.581 209.769C314.353 211.883 314.353 214.475 315.581 216.59C316.809 218.704 319.059 220 321.492 220H349.436C351.868 220 354.119 218.704 355.347 216.59L364.396 200.901L367.17 196.468C367.17 196.468 367.261 196.331 367.284 196.263L453.274 46.9285C456.525 41.2898 462.369 37.902 468.894 37.902C475.42 37.902 481.263 41.2671 484.514 46.9285L535.24 134.783C538.491 140.422 538.514 147.174 535.24 152.813C531.988 158.452 526.145 161.84 519.62 161.84H418.669C416.236 161.84 413.985 163.136 412.757 165.25L398.774 189.442C397.546 191.556 397.546 194.148 398.774 196.263C400.002 198.377 402.253 199.673 404.686 199.673H518.21C539.81 199.673 559.295 188.237 569.026 169.843C578.053 152.79 577.666 132.623 567.981 115.843L568.003 115.821Z" />
   </svg>
 );
+export const ACPRegistryIcon = definePluginComponent(
+  "component:components/Icons/ACPRegistryIcon",
+  PluginOriginalACPRegistryIcon,
+);
 
-export const MacScreenRecordingIcon: Icon = (props) => {
+const PluginOriginalMacScreenRecordingIcon: Icon = (props) => {
   const gradientId = useId();
   return (
     <svg viewBox="0 0 32 32" aria-hidden="true" {...props}>
@@ -500,8 +574,12 @@ export const MacScreenRecordingIcon: Icon = (props) => {
     </svg>
   );
 };
+export const MacScreenRecordingIcon = definePluginComponent(
+  "component:components/Icons/MacScreenRecordingIcon",
+  PluginOriginalMacScreenRecordingIcon,
+);
 
-export const MacAccessibilityIcon: Icon = (props) => {
+const PluginOriginalMacAccessibilityIcon: Icon = (props) => {
   const gradientId = useId();
   return (
     <svg viewBox="0 0 32 32" aria-hidden="true" {...props}>
@@ -533,6 +611,10 @@ export const MacAccessibilityIcon: Icon = (props) => {
     </svg>
   );
 };
+export const MacAccessibilityIcon = definePluginComponent(
+  "component:components/Icons/MacAccessibilityIcon",
+  PluginOriginalMacAccessibilityIcon,
+);
 
 export const OnePasswordIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="none">

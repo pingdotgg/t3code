@@ -26,6 +26,12 @@ import {
   PullRequestReviewOutcomeBadge,
   resolvePullRequestState,
 } from "./pullRequestPresentation";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PullRequestLinkPreview = definePluginComponent(
+  "component:components/pullRequest/PullRequestLinkPreview/PullRequestLinkPreview",
+  PluginOriginalPullRequestLinkPreview,
+);
 
 interface PullRequestLinkPreviewTarget {
   readonly environmentId: EnvironmentId;
@@ -36,7 +42,7 @@ type PullRequestLinkElement = ReactElement<
   ComponentPropsWithoutRef<"a"> | ComponentPropsWithoutRef<"button">
 >;
 
-export function PullRequestLinkPreview({
+function PluginOriginalPullRequestLinkPreview({
   link,
   originalUrl,
   target,

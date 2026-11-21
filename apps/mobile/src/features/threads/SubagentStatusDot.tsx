@@ -2,6 +2,11 @@ import { View } from "react-native";
 
 import { cn } from "../../lib/cn";
 import type { SubagentRowTone } from "./threadAgentsPresentation";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const SubagentStatusDot = defineNativePluginFeature(
+  "native.features.threads.subagent-status-dot",
+  BuiltinSubagentStatusDot,
+);
 
 const TONE_CLASS = {
   working: "bg-adaptive-sky-600-400",
@@ -17,7 +22,7 @@ export const SUBAGENT_TONE_TEXT_CLASS = {
   stopped: "text-foreground-muted",
 } as const satisfies Record<SubagentRowTone, string>;
 
-export function SubagentStatusDot({
+function BuiltinSubagentStatusDot({
   tone,
   placement = "inline",
 }: {

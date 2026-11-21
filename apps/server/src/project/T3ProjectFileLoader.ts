@@ -1,7 +1,7 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -90,4 +90,4 @@ export const make = Effect.gen(function* () {
   return T3ProjectFileLoader.of({ load });
 });
 
-export const layer = Layer.effect(T3ProjectFileLoader, make);
+export const layer = builtinServiceLayer("t3.projects")(T3ProjectFileLoader, make);

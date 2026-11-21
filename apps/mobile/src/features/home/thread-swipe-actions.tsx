@@ -1,5 +1,6 @@
 import { msg, useMessages } from "gt-react-native";
 
+import { defineNativePluginFeature } from "../../plugins/features";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -142,7 +143,7 @@ const SwipeableScrollGateContext = createContext(true);
 // that feed it stay stable across row re-renders such as selection.
 const FAIL_OFFSET_Y: [number, number] = [-10, 10];
 
-export function SwipeableScrollGateProvider(props: {
+function BuiltinSwipeableScrollGateProvider(props: {
   readonly enabled: boolean;
   readonly activation?: SwipeRowActivation;
   readonly children: ReactNode;
@@ -257,7 +258,7 @@ interface ThreadSwipeableProps {
 
 const COLLAPSED_ROW_STYLE = { height: 0, overflow: "hidden" } as const;
 
-export function ThreadSwipeable(props: ThreadSwipeableProps) {
+function BuiltinThreadSwipeable(props: ThreadSwipeableProps) {
   const m = useMessages();
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const hasSecondaryAction = props.secondaryAction !== null;
@@ -582,7 +583,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   );
 }
 
-function SwipeActionButton(props: {
+function BuiltinSwipeActionButton(props: {
   readonly accessibilityLabel: string;
   readonly actionsWidth: number;
   readonly tone: "primary" | "secondary" | "danger";
@@ -802,7 +803,7 @@ function SwipeActionButton(props: {
   );
 }
 
-function ThreadSwipeActions(props: {
+function BuiltinThreadSwipeActions(props: {
   readonly backgroundColor: ColorValue;
   readonly compact: boolean;
   readonly fullSwipeAction?: "delete" | "primary";
@@ -873,3 +874,23 @@ function ThreadSwipeActions(props: {
     </View>
   );
 }
+
+const SwipeActionButton = defineNativePluginFeature(
+  "native.features.home.thread-swipe-actions.swipe-action-button",
+  BuiltinSwipeActionButton,
+);
+
+export const SwipeableScrollGateProvider = defineNativePluginFeature(
+  "native.features.home.thread-swipe-actions.swipeable-scroll-gate-provider",
+  BuiltinSwipeableScrollGateProvider,
+);
+
+export const ThreadSwipeable = defineNativePluginFeature(
+  "native.features.home.thread-swipe-actions.thread-swipeable",
+  BuiltinThreadSwipeable,
+);
+
+export const ThreadSwipeActions = defineNativePluginFeature(
+  "native.features.home.thread-swipe-actions",
+  BuiltinThreadSwipeActions,
+);

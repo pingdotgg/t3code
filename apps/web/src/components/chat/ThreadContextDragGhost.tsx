@@ -1,9 +1,15 @@
+import { definePluginComponent } from "~/plugins/features";
 import { MessagesSquareIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 
 import { useThreadContextDragGhost } from "./threadContextDrag";
 
-export function ThreadContextDragGhost() {
+export const ThreadContextDragGhost = definePluginComponent(
+  "component:components/chat/ThreadContextDragGhost/ThreadContextDragGhost",
+  PluginOriginalThreadContextDragGhost,
+);
+
+function PluginOriginalThreadContextDragGhost() {
   const ghost = useThreadContextDragGhost();
   if (ghost === null) return null;
   return createPortal(

@@ -13,8 +13,14 @@ import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import { SymbolView } from "./AppSymbol";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function FloatingActionButton(props: FloatingActionButtonProps) {
+export const FloatingActionButton = defineNativePluginFeature(
+  "native.components.ui.floating-action-button",
+  BuiltinFloatingActionButton,
+);
+
+function BuiltinFloatingActionButton(props: FloatingActionButtonProps) {
   const { themeVariables: colors } = useAppearancePreferences();
   const typography = useScaledTextRole("footnote");
   const { scale, iconSize: standardIconSize, fabSize, largeFabSize } = useAndroidControlSizing();

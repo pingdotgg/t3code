@@ -5,10 +5,16 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { cn } from "~/lib/utils";
 
 import { Button } from "../ui/button";
+import { definePluginComponent } from "~/plugins/features";
 
 import type { ChangeRequestTermKind } from "./changeRequestTerm";
 
-export function PullRequestActivityUnavailableState({
+export const PullRequestActivityUnavailableState = definePluginComponent(
+  "component:components/pullRequest/PullRequestActivityUnavailableState/PullRequestActivityUnavailableState",
+  PluginOriginalPullRequestActivityUnavailableState,
+);
+
+function PluginOriginalPullRequestActivityUnavailableState({
   error,
   term,
   onRetry,

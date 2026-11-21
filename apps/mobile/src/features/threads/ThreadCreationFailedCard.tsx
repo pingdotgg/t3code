@@ -3,8 +3,14 @@ import { Button } from "../../components/ui/Button";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function ThreadCreationFailedCard(props: {
+export const ThreadCreationFailedCard = defineNativePluginFeature(
+  "native.features.threads.thread-creation-failed-card",
+  BuiltinThreadCreationFailedCard,
+);
+
+function BuiltinThreadCreationFailedCard(props: {
   readonly reason: string;
   readonly onEditTask: () => void;
 }) {

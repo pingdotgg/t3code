@@ -45,6 +45,60 @@ import {
   formatResetsIn,
   resetCreditChoices,
 } from "@t3tools/shared/usageLimitsCopy";
+import { definePluginComponent } from "~/plugins/features";
+
+const AccountChip = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/AccountChip",
+  PluginOriginalAccountChip,
+);
+const AccountAvatar = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/AccountAvatar",
+  PluginOriginalAccountAvatar,
+);
+const AccountName = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/AccountName",
+  PluginOriginalAccountName,
+);
+const Row = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/Row",
+  PluginOriginalRow,
+);
+const SegmentPopover = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/SegmentPopover",
+  PluginOriginalSegmentPopover,
+);
+const PoolSegment = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/PoolSegment",
+  PluginOriginalPoolSegment,
+);
+const LegendRow = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/LegendRow",
+  PluginOriginalLegendRow,
+);
+const RedeemableSegment = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/RedeemableSegment",
+  PluginOriginalRedeemableSegment,
+);
+const PoolBar = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/PoolBar",
+  PluginOriginalPoolBar,
+);
+const PoolWindowCard = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/PoolWindowCard",
+  PluginOriginalPoolWindowCard,
+);
+const PoolSection = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/PoolSection",
+  PluginOriginalPoolSection,
+);
+export const UsageLimitsPooled = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/UsageLimitsPooled",
+  PluginOriginalUsageLimitsPooled,
+);
+const LimitNotices = definePluginComponent(
+  "component:components/usage/UsageLimitsPooled/LimitNotices",
+  PluginOriginalLimitNotices,
+);
 
 function accountInitials(email: string): string {
   const [local = "", domain = ""] = email.split("@");
@@ -59,7 +113,7 @@ function accountHue(email: string): number {
   return Math.abs(hash) % 360;
 }
 
-function AccountChip({ email }: { readonly email: string }) {
+function PluginOriginalAccountChip({ email }: { readonly email: string }) {
   const hue = accountHue(email);
   const gt = useGT();
   return (
@@ -74,7 +128,7 @@ function AccountChip({ email }: { readonly email: string }) {
   );
 }
 
-function AccountAvatar({
+function PluginOriginalAccountAvatar({
   account,
   className,
 }: {
@@ -101,7 +155,7 @@ function AccountAvatar({
   return account.email ? <AccountChip email={account.email} /> : null;
 }
 
-function AccountName({
+function PluginOriginalAccountName({
   account,
   className,
 }: {
@@ -123,7 +177,13 @@ function AccountName({
   );
 }
 
-function Row({ label, children }: { readonly label: string; readonly children: ReactNode }) {
+function PluginOriginalRow({
+  label,
+  children,
+}: {
+  readonly label: string;
+  readonly children: ReactNode;
+}) {
   return (
     <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3">
       <span className="text-muted-foreground">{label}</span>
@@ -132,7 +192,7 @@ function Row({ label, children }: { readonly label: string; readonly children: R
   );
 }
 
-function SegmentPopover({
+function PluginOriginalSegmentPopover({
   account,
   window,
   reset,
@@ -298,7 +358,7 @@ function ActiveSegmentPopover({
  * The confirm is a sibling of the popover, not a child: dialogs stack under
  * popovers, and the popover closes as the confirm opens.
  */
-function PoolSegment({
+function PluginOriginalPoolSegment({
   account,
   ...props
 }: {
@@ -318,7 +378,7 @@ function PoolSegment({
   );
 }
 
-function RedeemableSegment({
+function PluginOriginalRedeemableSegment({
   redeemAt,
   ...props
 }: Omit<Parameters<typeof SegmentTriggers>[0], "redeem"> & {
@@ -480,7 +540,7 @@ function SegmentTriggers({
   );
 }
 
-function LegendRow({
+function PluginOriginalLegendRow({
   payload,
   color,
   now,
@@ -542,7 +602,7 @@ function LegendRow({
   );
 }
 
-function PoolBar({
+function PluginOriginalPoolBar({
   pool,
   color,
   now,
@@ -591,7 +651,7 @@ function PoolBar({
   );
 }
 
-function PoolWindowCard({
+function PluginOriginalPoolWindowCard({
   pool,
   color,
   now,
@@ -636,7 +696,13 @@ function PoolWindowCard({
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PluginOriginalPoolSection({
+  pool,
+  now,
+}: {
+  readonly pool: LimitPool;
+  readonly now: number;
+}) {
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
@@ -671,7 +737,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
   );
 }
 
-export function UsageLimitsPooled({
+function PluginOriginalUsageLimitsPooled({
   presentations,
   now,
 }: {
@@ -750,7 +816,7 @@ export function UsageLimitsPooled({
   );
 }
 
-function LimitNotices({ notices }: { readonly notices: readonly string[] }) {
+function PluginOriginalLimitNotices({ notices }: { readonly notices: readonly string[] }) {
   if (notices.length === 0) return null;
   return (
     <Alert variant="warning" controlAlignment="first-line">

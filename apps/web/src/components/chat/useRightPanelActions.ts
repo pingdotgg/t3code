@@ -39,7 +39,9 @@ import { openDeviceSetupDialog } from "./ChatOverlayHosts";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
+import { CANVAS_STAGE_SELECTOR, eventPathContainsSelector } from "./composerFocusRedirect";
 interface RightPanelActionsInput {
+  readonly ownsChatInteraction: (target?: EventTarget | null) => boolean;
   readonly activeThreadRef: ScopedThreadRef | null;
   readonly activeProject: EnvironmentProject | null;
   readonly activeRightPanelSurface: RightPanelSurface | null;
@@ -74,6 +76,7 @@ interface RightPanelActionsInput {
  */
 export function useRightPanelActions(input: RightPanelActionsInput) {
   const {
+    ownsChatInteraction,
     closeRightPanelSurface,
     activeThreadRef,
     activeProject,
@@ -188,6 +191,15 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
           { kind: "device", ...activeRightPanelSurface.target },
           deviceStateLoaded ? deviceState : null,
         );
+      } else if (
+        activeRightPanelSurface?.kind === "canvas" &&
+        activeRightPanelSurface.documentId !== null
+      ) {
+        usePreviewMiniPlayerStore.getState().open(activeThreadRef, {
+          kind: "canvas",
+          documentId: activeRightPanelSurface.documentId,
+          name: activeRightPanelSurface.title ?? "Canvas",
+        });
       }
       useRightPanelStore.getState().setMaximized(activeThreadRef, false);
       useRightPanelStore.getState().close(activeThreadRef);
@@ -326,9 +338,9 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       embedded
         ? undefined
         : subscribePreviewAction((action) => {
-            if (action === "toggle-panel") togglePreviewPanelStable();
+            if (action === "toggle-panel" && ownsChatInteraction()) togglePreviewPanelStable();
           }),
-    [embedded, togglePreviewPanelStable],
+    [embedded, ownsChatInteraction, togglePreviewPanelStable],
   );
 
   const shortcuts = {
@@ -341,7 +353,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       if (!activeRightPanelSurface) return false;
       if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
     },
-    "diff.toggle": () => onToggleDiff(),
+    "diff.toggle": ({ event }) => {
+      // Mod+D duplicates the selection while the design canvas has focus.
+      if (eventPathContainsSelector(event, CANVAS_STAGE_SELECTOR)) return false;
+      onToggleDiff();
+    },
   } satisfies ChatShortcutCommands;
 
   return {

@@ -1,7 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -11,6 +10,7 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 // AppImage integrators choose the .desktop filename, so setDesktopName cannot identify it for protocol registration.
 const { logInfo, logWarning } = makeComponentLogger("desktop-linux-url-handler");
@@ -371,4 +371,8 @@ export const make = Effect.gen(function* () {
   return DesktopLinuxUrlHandler.of({ register });
 });
 
-export const layer = Layer.effect(DesktopLinuxUrlHandler, make);
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-linux-url-handler",
+  DesktopLinuxUrlHandler,
+  make,
+);

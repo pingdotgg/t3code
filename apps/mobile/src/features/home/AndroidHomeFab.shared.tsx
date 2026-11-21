@@ -1,6 +1,7 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import type { ReactNode } from "react";
 
-export function AndroidHomeFabLayout(props: {
+function BuiltinAndroidHomeFabLayout(props: {
   readonly onStartNewTask: () => void;
   readonly children: ReactNode;
   readonly sidebar?: boolean;
@@ -20,3 +21,8 @@ export function androidHomeFabPosition(safeAreaBottom: number, sidebar: boolean 
     bottom: sidebar ? Math.max(safeAreaBottom, 12) + 6 : safeAreaBottom + 16,
   };
 }
+
+export const AndroidHomeFabLayout = defineNativePluginFeature(
+  "native.features.home.android-home-fab.shared.android-home-fab-layout",
+  BuiltinAndroidHomeFabLayout,
+);

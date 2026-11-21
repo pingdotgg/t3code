@@ -9,8 +9,14 @@ import { WizardFooter, WizardPanel } from "../ui/wizard";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ProviderWizardAuthenticationStep({
+export const ProviderWizardAuthenticationStep = definePluginComponent(
+  "component:components/settings/ProviderWizardAuthenticationStep/ProviderWizardAuthenticationStep",
+  PluginOriginalProviderWizardAuthenticationStep,
+);
+
+function PluginOriginalProviderWizardAuthenticationStep({
   environmentId,
   environmentLabel,
   instanceId,

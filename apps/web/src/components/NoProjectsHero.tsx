@@ -10,8 +10,14 @@ import { Button } from "./ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
+import { definePluginComponent } from "~/plugins/features";
 
-export function NoProjectsHero() {
+export const NoProjectsHero = definePluginComponent(
+  "component:components/NoProjectsHero/NoProjectsHero",
+  PluginOriginalNoProjectsHero,
+);
+
+function PluginOriginalNoProjectsHero() {
   const gt = useGT();
   const contentArea = workspaceAreaProps("home", 1, gt("Home"));
   const primaryEnvironmentId = usePrimaryEnvironmentId();

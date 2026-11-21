@@ -1,4 +1,5 @@
 import { T, useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import * as Dialog from "../../components/ui/Dialog";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import * as Application from "expo-application";
@@ -21,7 +22,7 @@ import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 
-export function SettingsAboutRouteScreen() {
+function BuiltinSettingsAboutRouteScreen() {
   const gt = useGT();
   const insets = useSafeAreaInsets();
 
@@ -40,7 +41,7 @@ export function SettingsAboutRouteScreen() {
   );
 }
 
-function AppSettingsSection() {
+function BuiltinAppSettingsSection() {
   const gt = useGT();
   const [checkState, setCheckState] = useState<{
     readonly state: AppUpdateCheckState;
@@ -160,3 +161,13 @@ function AppSettingsSection() {
 function capitalize(value: string): string {
   return value.length > 0 ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
+
+const AppSettingsSection = defineNativePluginFeature(
+  "native.features.settings.settings-about-route-screen.app-settings-section",
+  BuiltinAppSettingsSection,
+);
+
+export const SettingsAboutRouteScreen = defineNativePluginFeature(
+  "settings.about",
+  BuiltinSettingsAboutRouteScreen,
+);

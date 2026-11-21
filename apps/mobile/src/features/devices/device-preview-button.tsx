@@ -1,10 +1,11 @@
 import { Plural, T, useGT, Var } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { Pressable, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 
-export function DevicePreviewButton(props: {
+function BuiltinDevicePreviewButton(props: {
   readonly count: number;
   readonly onPress: () => void;
   readonly compact?: boolean;
@@ -53,3 +54,8 @@ export function DevicePreviewButton(props: {
     </Pressable>
   );
 }
+
+export const DevicePreviewButton = defineNativePluginFeature(
+  "native.features.devices.device-preview-button",
+  BuiltinDevicePreviewButton,
+);

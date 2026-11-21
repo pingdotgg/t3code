@@ -5,6 +5,15 @@ import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
 import type { ReviewHighlightedToken } from "./reviewHighlightedToken.types";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const ReviewChangeBar = defineNativePluginFeature(
+  "native.features.review.review-diff-rendering.review-change-bar",
+  BuiltinReviewChangeBar,
+);
+export const DiffTokenText = defineNativePluginFeature(
+  "native.features.review.review-diff-rendering.diff-token-text",
+  BuiltinDiffTokenText,
+);
 
 export const REVIEW_MONO_FONT_FAMILY = Platform.select({
   ios: "ui-monospace",
@@ -37,7 +46,7 @@ function diffHighlightColor(change: ReviewRenderableLineRow["change"]): string |
   return undefined;
 }
 
-export function ReviewChangeBar(props: {
+function BuiltinReviewChangeBar(props: {
   readonly change: ReviewRenderableLineRow["change"];
   readonly height?: number;
 }) {
@@ -64,7 +73,7 @@ export function ReviewChangeBar(props: {
   );
 }
 
-export function DiffTokenText(props: {
+function BuiltinDiffTokenText(props: {
   readonly tokens: ReadonlyArray<ReviewHighlightedToken> | null;
   readonly fallback: string;
   readonly change?: ReviewRenderableLineRow["change"];

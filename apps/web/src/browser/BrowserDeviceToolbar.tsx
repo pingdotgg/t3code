@@ -26,6 +26,12 @@ import { cn } from "~/lib/utils";
 import { BROWSER_DEVICE_TOOLBAR_HEIGHT, resizeFreeformViewport } from "./browserViewportLayout";
 import { commitViewportAndAspectRatio } from "./browserDeviceToolbarState";
 import { ScreenRotationIcon } from "./ScreenRotationIcon";
+import { definePluginComponent } from "~/plugins/features";
+
+export const BrowserDeviceToolbar = definePluginComponent(
+  "component:browser/BrowserDeviceToolbar/BrowserDeviceToolbar",
+  PluginOriginalBrowserDeviceToolbar,
+);
 
 const RESPONSIVE_VALUE = "responsive";
 const SELECT_ITEMS = [
@@ -44,7 +50,7 @@ interface Props {
   readonly onChange: (setting: PreviewViewportSetting) => Promise<void>;
 }
 
-export function BrowserDeviceToolbar({
+function PluginOriginalBrowserDeviceToolbar({
   setting,
   width,
   aspectRatio,

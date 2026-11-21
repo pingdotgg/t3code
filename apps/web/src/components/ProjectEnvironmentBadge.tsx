@@ -4,8 +4,14 @@ import { useGT } from "gt-react";
 import type { SidebarProjectSnapshot } from "~/sidebarProjectGrouping";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ProjectEnvironmentBadge(props: {
+export const ProjectEnvironmentBadge = definePluginComponent(
+  "component:components/ProjectEnvironmentBadge/ProjectEnvironmentBadge",
+  PluginOriginalProjectEnvironmentBadge,
+);
+
+function PluginOriginalProjectEnvironmentBadge(props: {
   readonly group: Pick<SidebarProjectSnapshot, "memberProjects">;
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly machineByEnvironmentId: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>;

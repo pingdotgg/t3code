@@ -3,6 +3,21 @@ import { Children, isValidElement } from "react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+const Alert = definePluginComponent("component:components/ui/alert/Alert", PluginOriginalAlert);
+const AlertTitle = definePluginComponent(
+  "component:components/ui/alert/AlertTitle",
+  PluginOriginalAlertTitle,
+);
+const AlertDescription = definePluginComponent(
+  "component:components/ui/alert/AlertDescription",
+  PluginOriginalAlertDescription,
+);
+const AlertAction = definePluginComponent(
+  "component:components/ui/alert/AlertAction",
+  PluginOriginalAlertAction,
+);
 
 const alertVariants = cva("relative rounded-xl border px-3.5 py-3 text-card-foreground text-sm", {
   defaultVariants: {
@@ -47,7 +62,7 @@ function alertChildSlot(child: React.ReactElement): string | undefined {
   }
 }
 
-function Alert({
+function PluginOriginalAlert({
   className,
   variant,
   surface,
@@ -124,11 +139,11 @@ function Alert({
   );
 }
 
-function AlertTitle({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalAlertTitle({ className, ...props }: React.ComponentProps<"div">) {
   return <div className={cn("font-medium", className)} data-slot="alert-title" {...props} />;
 }
 
-function AlertDescription({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalAlertDescription({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn("flex flex-col gap-2.5 text-muted-foreground", className)}
@@ -138,7 +153,7 @@ function AlertDescription({ className, ...props }: React.ComponentProps<"div">) 
   );
 }
 
-function AlertAction({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalAlertAction({ className, ...props }: React.ComponentProps<"div">) {
   return <div className={cn("flex gap-1", className)} data-slot="alert-action" {...props} />;
 }
 

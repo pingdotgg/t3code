@@ -37,6 +37,12 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AppearanceSettingsPanel = definePluginComponent(
+  "component:components/settings/AppearanceSettingsPanel/AppearanceSettingsPanel",
+  PluginOriginalAppearanceSettingsPanel,
+);
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: msg("Artwork"),
@@ -85,7 +91,7 @@ const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   bars: msg("Bars", { $context: "show effort as bars" }),
 };
 
-export function AppearanceSettingsPanel() {
+export function PluginOriginalAppearanceSettingsPanel() {
   const searchableSetting = useSearchableSetting();
   const {
     appearanceMode,

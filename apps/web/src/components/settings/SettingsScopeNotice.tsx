@@ -22,6 +22,12 @@ import {
   settingsScopeEnvironmentLabels,
   settingsScopeProjectMachines,
 } from "./settingsScopeAxis";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SettingsScopeNotice = definePluginComponent(
+  "component:components/settings/SettingsScopeNotice/SettingsScopeNotice",
+  PluginOriginalSettingsScopeNotice,
+);
 
 interface ScopeChoice {
   label: string;
@@ -30,7 +36,7 @@ interface ScopeChoice {
   search: SettingsScopeSearch;
 }
 
-export function SettingsScopeNotice({
+function PluginOriginalSettingsScopeNotice({
   children,
   target,
   targetId,

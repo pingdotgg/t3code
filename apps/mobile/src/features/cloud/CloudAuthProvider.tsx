@@ -4,6 +4,12 @@ import type { ReactNode } from "react";
 
 import { cloudAccountService, deactivateCloudRelayAccount } from "./cloudAccountService";
 import { resolveCloudPublicConfig } from "./publicConfig";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const CloudAuthProvider = defineNativePluginFeature(
+  "native.features.cloud.cloud-auth-provider",
+  BuiltinCloudAuthProvider,
+);
 
 const cloudConfig = resolveCloudPublicConfig();
 // Build-time constant: null when this build has no cloud config.
@@ -19,7 +25,7 @@ if (publishableKey) {
   deactivateCloudRelayAccount();
 }
 
-export function CloudAuthProvider(props: { readonly children: ReactNode }) {
+function BuiltinCloudAuthProvider(props: { readonly children: ReactNode }) {
   if (!publishableKey) {
     return props.children;
   }

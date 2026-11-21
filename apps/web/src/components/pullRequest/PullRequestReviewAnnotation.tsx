@@ -42,6 +42,16 @@ import {
   PullRequestMarkdownTextarea,
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PendingReviewCommentCard = definePluginComponent(
+  "component:components/pullRequest/PullRequestReviewAnnotation/PendingReviewCommentCard",
+  PluginOriginalPendingReviewCommentCard,
+);
+export const ReviewThreadCard = definePluginComponent(
+  "component:components/pullRequest/PullRequestReviewAnnotation/ReviewThreadCard",
+  PluginOriginalReviewThreadCard,
+);
 
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
@@ -86,7 +96,7 @@ export function getReviewPositionAnchor(position: PullRequestReviewPosition): {
   }
 }
 
-export function PendingReviewCommentCard({
+function PluginOriginalPendingReviewCommentCard({
   comment,
   onRemove,
 }: {
@@ -183,7 +193,7 @@ export function InlineReviewThreads({
   );
 }
 
-export function ReviewThreadCard({
+function PluginOriginalReviewThreadCard({
   thread,
   workspaceRoot,
   canReply,

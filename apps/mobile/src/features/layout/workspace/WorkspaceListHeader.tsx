@@ -10,8 +10,9 @@ import {
   workspaceListFilterIcon,
   type WorkspaceListHeaderProps,
 } from "./WorkspaceListHeader.types";
+import { defineNativePluginFeature } from "../../../plugins/features";
 
-export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
+function BuiltinWorkspaceListHeader(props: WorkspaceListHeaderProps) {
   return props.sidebar ? <SidebarColumnHeader {...props} sidebar={props.sidebar} /> : null;
 }
 
@@ -73,3 +74,8 @@ function SidebarColumnHeader(
     />
   );
 }
+
+export const WorkspaceListHeader = defineNativePluginFeature(
+  "native.features.layout.workspace.workspace-list-header",
+  BuiltinWorkspaceListHeader,
+);

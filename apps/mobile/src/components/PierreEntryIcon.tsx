@@ -3,8 +3,14 @@ import { Image, type ImageStyle, type StyleProp } from "react-native";
 
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { resolveMarkdownFileIcon } from "../lib/markdownLinks";
+import { defineNativePluginFeature } from "../plugins/features";
 
-export function PierreEntryIcon(props: {
+export const PierreEntryIcon = defineNativePluginFeature(
+  "native.components.pierre-entry-icon",
+  BuiltinPierreEntryIcon,
+);
+
+function BuiltinPierreEntryIcon(props: {
   readonly path: string;
   readonly kind: "file" | "directory";
   readonly size?: number;

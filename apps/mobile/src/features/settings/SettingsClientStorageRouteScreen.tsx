@@ -1,4 +1,5 @@
 import { T, useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -24,7 +25,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { formatBytes } from "../../lib/formatBytes";
 
-export function SettingsClientStorageRouteScreen() {
+function BuiltinSettingsClientStorageRouteScreen() {
   const gt = useGT();
   const insets = useSafeAreaInsets();
   const summaryResult = useAtomValue(clientCacheSummaryAtom);
@@ -173,7 +174,7 @@ export function SettingsClientStorageRouteScreen() {
   );
 }
 
-function CacheEnvironmentRow(props: {
+function BuiltinCacheEnvironmentRow(props: {
   readonly environment: EnvironmentClientCacheSummary;
   readonly environmentLabel: string;
   readonly machine: EnvironmentMachineKind;
@@ -197,3 +198,13 @@ function CacheEnvironmentRow(props: {
     </View>
   );
 }
+
+const CacheEnvironmentRow = defineNativePluginFeature(
+  "native.features.settings.settings-client-storage-route-screen.cache-environment-row",
+  BuiltinCacheEnvironmentRow,
+);
+
+export const SettingsClientStorageRouteScreen = defineNativePluginFeature(
+  "settings.storage",
+  BuiltinSettingsClientStorageRouteScreen,
+);

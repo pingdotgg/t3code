@@ -45,6 +45,7 @@ import {
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
 
@@ -167,23 +168,23 @@ function planServerSettingsWrites(
   ];
 }
 
-export function SettingsThreadsRouteScreen() {
+function BuiltinSettingsThreadsRouteScreen() {
   return <ServerSettingsDetail page="threads" />;
 }
 
-export function SettingsEnvironmentSourceControlRouteScreen() {
+function BuiltinSettingsEnvironmentSourceControlRouteScreen() {
   return <ServerSettingsDetail page="source-control" />;
 }
 
-export function SettingsWorktreesRouteScreen() {
+function BuiltinSettingsWorktreesRouteScreen() {
   return <ServerSettingsDetail page="worktrees" />;
 }
 
-export function SettingsEnvironmentMaintenanceRouteScreen() {
+function BuiltinSettingsEnvironmentMaintenanceRouteScreen() {
   return <ServerSettingsDetail page="maintenance" />;
 }
 
-function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
+function BuiltinServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const gt = useGT();
   const m = useMessages();
   const environmentMenu = useSettingsEnvironmentMenu();
@@ -605,7 +606,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   );
 }
 
-function MixedValuesLabel(props: { readonly projectSelected: boolean }) {
+function BuiltinMixedValuesLabel(props: { readonly projectSelected: boolean }) {
   const gt = useGT();
   return (
     <Text
@@ -643,3 +644,33 @@ function ManagedPolicyNotice(props: { readonly targets: readonly ScopedMobileSet
     </Text>
   );
 }
+
+const ServerSettingsDetail = defineNativePluginFeature(
+  "native.features.settings.settings-server-controls-route-screen.server-settings-detail",
+  BuiltinServerSettingsDetail,
+);
+
+const MixedValuesLabel = defineNativePluginFeature(
+  "native.features.settings.settings-server-controls-route-screen.mixed-values-label",
+  BuiltinMixedValuesLabel,
+);
+
+export const SettingsThreadsRouteScreen = defineNativePluginFeature(
+  "settings.threads",
+  BuiltinSettingsThreadsRouteScreen,
+);
+
+export const SettingsEnvironmentSourceControlRouteScreen = defineNativePluginFeature(
+  "settings.source-control",
+  BuiltinSettingsEnvironmentSourceControlRouteScreen,
+);
+
+export const SettingsWorktreesRouteScreen = defineNativePluginFeature(
+  "settings.worktrees",
+  BuiltinSettingsWorktreesRouteScreen,
+);
+
+export const SettingsEnvironmentMaintenanceRouteScreen = defineNativePluginFeature(
+  "settings.maintenance",
+  BuiltinSettingsEnvironmentMaintenanceRouteScreen,
+);

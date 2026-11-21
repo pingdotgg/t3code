@@ -22,6 +22,49 @@ import {
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { definePluginComponent } from "~/plugins/features";
+
+const DialogTrigger = definePluginComponent(
+  "component:components/ui/dialog/DialogTrigger",
+  PluginOriginalDialogTrigger,
+);
+const DialogClose = definePluginComponent(
+  "component:components/ui/dialog/DialogClose",
+  PluginOriginalDialogClose,
+);
+const DialogBackdrop = definePluginComponent(
+  "component:components/ui/dialog/DialogBackdrop",
+  PluginOriginalDialogBackdrop,
+);
+const DialogViewport = definePluginComponent(
+  "component:components/ui/dialog/DialogViewport",
+  PluginOriginalDialogViewport,
+);
+const DialogPopup = definePluginComponent(
+  "component:components/ui/dialog/DialogPopup",
+  PluginOriginalDialogPopup,
+);
+const DialogHeader = definePluginComponent(
+  "component:components/ui/dialog/DialogHeader",
+  PluginOriginalDialogHeader,
+);
+const DialogFooter = definePluginComponent(
+  "component:components/ui/dialog/DialogFooter",
+  PluginOriginalDialogFooter,
+);
+const DialogTitle = definePluginComponent(
+  "component:components/ui/dialog/DialogTitle",
+  PluginOriginalDialogTitle,
+);
+const DialogDescription = definePluginComponent(
+  "component:components/ui/dialog/DialogDescription",
+  PluginOriginalDialogDescription,
+);
+const DialogPanel = definePluginComponent(
+  "component:components/ui/dialog/DialogPanel",
+  PluginOriginalDialogPanel,
+);
+const Dialog = definePluginComponent("component:components/ui/dialog/Dialog", PluginOriginalDialog);
 
 const ControlledOpenContext = createContext<boolean | undefined>(undefined);
 
@@ -43,7 +86,7 @@ function renderRetainedPopup(props: ComponentProps<"div">, state: { open: boolea
   );
 }
 
-function Dialog<Payload>(props: DialogPrimitive.Root.Props<Payload>) {
+function PluginOriginalDialog<Payload>(props: DialogPrimitive.Root.Props<Payload>) {
   return (
     <ControlledOpenContext value={props.open}>
       <DialogPrimitive.Root {...props} />
@@ -65,17 +108,21 @@ function useDialogActionInitialFocus() {
   return { popupRef, initialFocus };
 }
 
-const DialogPortal = DialogPrimitive.Portal;
+const PluginOriginalDialogPortal = DialogPrimitive.Portal;
+const DialogPortal = definePluginComponent(
+  "component:components/ui/dialog/DialogPortal",
+  PluginOriginalDialogPortal,
+);
 
-function DialogTrigger(props: DialogPrimitive.Trigger.Props) {
+function PluginOriginalDialogTrigger(props: DialogPrimitive.Trigger.Props) {
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
 }
 
-function DialogClose(props: DialogPrimitive.Close.Props) {
+function PluginOriginalDialogClose(props: DialogPrimitive.Close.Props) {
   return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
 
-function DialogBackdrop({
+function PluginOriginalDialogBackdrop({
   className,
   variant = "default",
   ...props
@@ -93,7 +140,7 @@ function DialogBackdrop({
   );
 }
 
-function DialogViewport({ className, ...props }: DialogPrimitive.Viewport.Props) {
+function PluginOriginalDialogViewport({ className, ...props }: DialogPrimitive.Viewport.Props) {
   return (
     <DialogPrimitive.Viewport
       // Electron drag regions ignore z-index, so without no-drag a click over a header drag strip never reaches the page.
@@ -107,7 +154,7 @@ function DialogViewport({ className, ...props }: DialogPrimitive.Viewport.Props)
   );
 }
 
-function DialogPopup({
+function PluginOriginalDialogPopup({
   className,
   children,
   showCloseButton = true,
@@ -187,7 +234,7 @@ function DialogAction(props: DialogActionProps) {
   return <Button data-slot="dialog-action" {...props} />;
 }
 
-function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalDialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
@@ -200,7 +247,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function DialogFooter({
+function PluginOriginalDialogFooter({
   className,
   variant = "default",
   ...props
@@ -221,7 +268,7 @@ function DialogFooter({
   );
 }
 
-function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
+function PluginOriginalDialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   return (
     <DialogPrimitive.Title
       className={cn("wrap-anywhere font-semibold text-xl leading-snug", className)}
@@ -231,7 +278,10 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
   );
 }
 
-function DialogDescription({ className, ...props }: DialogPrimitive.Description.Props) {
+function PluginOriginalDialogDescription({
+  className,
+  ...props
+}: DialogPrimitive.Description.Props) {
   return (
     <DialogPrimitive.Description
       className={cn("text-muted-foreground text-sm", className)}
@@ -241,7 +291,7 @@ function DialogDescription({ className, ...props }: DialogPrimitive.Description.
   );
 }
 
-function DialogPanel({
+function PluginOriginalDialogPanel({
   className,
   scrollFade = true,
   ...props

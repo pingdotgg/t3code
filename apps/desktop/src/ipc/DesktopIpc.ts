@@ -1,9 +1,10 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Option from "effect/Option";
+import { builtinServiceLayer, PluginKernel } from "@t3tools/shared/pluginKernel";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 
@@ -108,6 +109,15 @@ export const make = (
       yield* Effect.annotateCurrentSpan({ channel });
       const context = yield* Effect.context<R>();
       const runPromise = Effect.runPromiseWith(context);
+      const kernel = yield* Effect.serviceOption(PluginKernel);
+      const implementation =
+        Option.isSome(kernel) && !channel.startsWith("desktop:plugins:")
+          ? yield* kernel.value.registerBuiltin(
+              "t3.desktop.ipc",
+              `desktop.ipc.${channel}`,
+              Effect.succeed({ invoke: handler }),
+            )
+          : { invoke: handler };
 
       yield* Effect.acquireRelease(
         Effect.try({
@@ -120,7 +130,7 @@ export const make = (
                   if (!(yield* isTrustedSender(event))) {
                     return yield* new DesktopIpcUntrustedSenderError({ channel });
                   }
-                  return yield* handler(raw, event);
+                  return yield* implementation.invoke(raw, event);
                 }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invoke")),
               ),
             );
@@ -144,6 +154,14 @@ export const make = (
       yield* Effect.annotateCurrentSpan({ channel });
       const context = yield* Effect.context<R>();
       const runSync = Effect.runSyncWith(context);
+      const kernel = yield* Effect.serviceOption(PluginKernel);
+      const implementation = Option.isSome(kernel)
+        ? yield* kernel.value.registerBuiltin(
+            "t3.desktop.ipc",
+            `desktop.ipc.${channel}`,
+            Effect.succeed({ read: handler }),
+          )
+        : { read: handler };
 
       yield* Effect.acquireRelease(
         Effect.try({
@@ -158,7 +176,7 @@ export const make = (
                     yield* Effect.logWarning("Rejected sync IPC from an untrusted sender.");
                     return undefined;
                   }
-                  return yield* handler();
+                  return yield* implementation.read();
                 }).pipe(
                   Effect.annotateLogs({ channel }),
                   Effect.withSpan("desktop.ipc.invokeSync"),
@@ -180,7 +198,8 @@ export const make = (
   });
 
 export const layer = (ipcMain: DesktopIpcMain) =>
-  Layer.effect(
+  builtinServiceLayer(
+    "t3.desktop.desktop-ipc",
     DesktopIpc,
     Effect.gen(function* () {
       const electronWindow = yield* ElectronWindow.ElectronWindow;

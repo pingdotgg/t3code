@@ -2,6 +2,12 @@ import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { msg, useMessages } from "gt-react-native";
 
 import { SymbolView, type AppSymbolName } from "./ui/AppSymbol";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const EnvironmentMachineSymbol = defineNativePluginFeature(
+  "native.components.environment-machine-symbol",
+  BuiltinEnvironmentMachineSymbol,
+);
 
 export const ENVIRONMENT_MACHINE_SYMBOLS = {
   server: "server.rack",
@@ -23,7 +29,7 @@ const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = 
   "mac-studio": msg("Workstation"),
 };
 
-export function EnvironmentMachineSymbol(props: {
+function BuiltinEnvironmentMachineSymbol(props: {
   readonly kind: EnvironmentMachineKind;
   readonly size: number;
   readonly tintColorClassName: string;

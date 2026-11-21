@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import {
   CheckpointId,
   CheckpointScopeId,
@@ -319,155 +320,147 @@ export const derive: IdAllocatorV2Derive = {
     TurnItemId.make(joinId("turn-item", "runtime-request", input.requestId)),
 };
 
-export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
+const allocate: IdAllocatorV2Allocate = {
+  command: (input) =>
+    randomId<CommandId, typeof input>({
+      kind: "command",
+      prefix: "command",
+      parts: ["fixture", input.fixtureName, input.commandName],
+      make: CommandId.make,
+    })(input),
+  event: (input) =>
+    randomId<EventId, typeof input>({
+      kind: "event",
+      prefix: "event",
+      parts: [
+        ...(input.threadId === undefined ? [] : ["thread", input.threadId]),
+        ...(input.commandId === undefined ? [] : ["command", input.commandId]),
+        ...(input.providerSessionId === undefined
+          ? []
+          : ["provider-session", input.providerSessionId]),
+      ],
+      make: EventId.make,
+    })(input),
+  rawEvent: (input) =>
+    randomId<RawEventId, typeof input>({
+      kind: "raw_event",
+      prefix: "raw-event",
+      parts: [
+        "provider-session",
+        input.providerSessionId,
+        ...(input.method === null ? [] : ["method", input.method]),
+      ],
+      make: RawEventId.make,
+    })(input),
+  project: (input) =>
+    randomId<ProjectId, typeof input>({
+      kind: "project",
+      prefix: "project",
+      parts: ["fixture", input.fixtureName],
+      make: ProjectId.make,
+    })(input),
+  thread: (input) =>
+    randomId<ThreadId, typeof input>({
+      kind: "thread",
+      prefix: "thread",
+      parts: [
+        ...(input.fixtureName === undefined ? [] : ["fixture", input.fixtureName]),
+        ...(input.projectId === undefined ? [] : ["project", input.projectId]),
+      ],
+      make: ThreadId.make,
+    })(input),
+  message: (input) =>
+    randomId<MessageId, typeof input>({
+      kind: "message",
+      prefix: "message",
+      parts: ["thread", input.threadId, "ordinal", input.ordinal],
+      make: MessageId.make,
+    })(input),
+  providerSession: (input) =>
+    randomId<ProviderSessionId, typeof input>({
+      kind: "provider_session",
+      prefix: "provider-session",
+      parts: ["provider-instance", input.providerInstanceId, "thread", input.threadId],
+      make: ProviderSessionId.make,
+    })(input),
+  runtimeRequest: (input) =>
+    randomId<RuntimeRequestId, typeof input>({
+      kind: "runtime_request",
+      prefix: "runtime-request",
+      parts: [
+        "provider",
+        input.driver,
+        ...(input.providerTurnId === undefined ? [] : ["provider-turn", input.providerTurnId]),
+        ...(input.nativeRequestId === undefined ? [] : ["native-request", input.nativeRequestId]),
+      ],
+      make: RuntimeRequestId.make,
+    })(input),
+  checkpointScope: (input) =>
+    Effect.succeed(
+      CheckpointScopeId.make(
+        joinId("checkpoint-scope", "thread", input.threadId, "name", input.name),
+      ),
+    ),
+  checkpoint: (input) =>
+    Effect.succeed(
+      CheckpointId.make(joinId("checkpoint", "scope", input.checkpointScopeId, "name", input.name)),
+    ),
+  contextHandoff: (input) =>
+    randomId<ContextHandoffId, typeof input>({
+      kind: "context_handoff",
+      prefix: "context-handoff",
+      parts: [
+        "thread",
+        input.threadId,
+        "from-provider-instance",
+        input.fromProviderInstanceId,
+        "to-provider-instance",
+        input.toProviderInstanceId,
+      ],
+      make: ContextHandoffId.make,
+    })(input),
+  contextTransfer: (input) =>
+    randomId<ContextTransferId, typeof input>({
+      kind: "context_transfer",
+      prefix: "context-transfer",
+      parts: [
+        "type",
+        input.type,
+        "source-thread",
+        input.sourceThreadId,
+        "target-thread",
+        input.targetThreadId,
+      ],
+      make: ContextTransferId.make,
+    })(input),
+  plan: (input) =>
+    randomId<PlanId, typeof input>({
+      kind: "plan",
+      prefix: "plan",
+      parts: [
+        "thread",
+        input.threadId,
+        "provider",
+        input.driver,
+        ...(input.runId === undefined ? [] : ["run", input.runId]),
+      ],
+      make: PlanId.make,
+    })(input),
+};
+
+export const layer: Layer.Layer<IdAllocatorV2> = builtinSucceedLayer("t3.thread")(
   IdAllocatorV2,
-  IdAllocatorV2.of({
-    allocate: {
-      command: (input) =>
-        randomId<CommandId, typeof input>({
-          kind: "command",
-          prefix: "command",
-          parts: ["fixture", input.fixtureName, input.commandName],
-          make: CommandId.make,
-        })(input),
-      event: (input) =>
-        randomId<EventId, typeof input>({
-          kind: "event",
-          prefix: "event",
-          parts: [
-            ...(input.threadId === undefined ? [] : ["thread", input.threadId]),
-            ...(input.commandId === undefined ? [] : ["command", input.commandId]),
-            ...(input.providerSessionId === undefined
-              ? []
-              : ["provider-session", input.providerSessionId]),
-          ],
-          make: EventId.make,
-        })(input),
-      rawEvent: (input) =>
-        randomId<RawEventId, typeof input>({
-          kind: "raw_event",
-          prefix: "raw-event",
-          parts: [
-            "provider-session",
-            input.providerSessionId,
-            ...(input.method === null ? [] : ["method", input.method]),
-          ],
-          make: RawEventId.make,
-        })(input),
-      project: (input) =>
-        randomId<ProjectId, typeof input>({
-          kind: "project",
-          prefix: "project",
-          parts: ["fixture", input.fixtureName],
-          make: ProjectId.make,
-        })(input),
-      thread: (input) =>
-        randomId<ThreadId, typeof input>({
-          kind: "thread",
-          prefix: "thread",
-          parts: [
-            ...(input.fixtureName === undefined ? [] : ["fixture", input.fixtureName]),
-            ...(input.projectId === undefined ? [] : ["project", input.projectId]),
-          ],
-          make: ThreadId.make,
-        })(input),
-      message: (input) =>
-        randomId<MessageId, typeof input>({
-          kind: "message",
-          prefix: "message",
-          parts: ["thread", input.threadId, "ordinal", input.ordinal],
-          make: MessageId.make,
-        })(input),
-      providerSession: (input) =>
-        randomId<ProviderSessionId, typeof input>({
-          kind: "provider_session",
-          prefix: "provider-session",
-          parts: ["provider-instance", input.providerInstanceId, "thread", input.threadId],
-          make: ProviderSessionId.make,
-        })(input),
-      runtimeRequest: (input) =>
-        randomId<RuntimeRequestId, typeof input>({
-          kind: "runtime_request",
-          prefix: "runtime-request",
-          parts: [
-            "provider",
-            input.driver,
-            ...(input.providerTurnId === undefined ? [] : ["provider-turn", input.providerTurnId]),
-            ...(input.nativeRequestId === undefined
-              ? []
-              : ["native-request", input.nativeRequestId]),
-          ],
-          make: RuntimeRequestId.make,
-        })(input),
-      checkpointScope: (input) =>
-        Effect.succeed(
-          CheckpointScopeId.make(
-            joinId("checkpoint-scope", "thread", input.threadId, "name", input.name),
-          ),
-        ),
-      checkpoint: (input) =>
-        Effect.succeed(
-          CheckpointId.make(
-            joinId("checkpoint", "scope", input.checkpointScopeId, "name", input.name),
-          ),
-        ),
-      contextHandoff: (input) =>
-        randomId<ContextHandoffId, typeof input>({
-          kind: "context_handoff",
-          prefix: "context-handoff",
-          parts: [
-            "thread",
-            input.threadId,
-            "from-provider-instance",
-            input.fromProviderInstanceId,
-            "to-provider-instance",
-            input.toProviderInstanceId,
-          ],
-          make: ContextHandoffId.make,
-        })(input),
-      contextTransfer: (input) =>
-        randomId<ContextTransferId, typeof input>({
-          kind: "context_transfer",
-          prefix: "context-transfer",
-          parts: [
-            "type",
-            input.type,
-            "source-thread",
-            input.sourceThreadId,
-            "target-thread",
-            input.targetThreadId,
-          ],
-          make: ContextTransferId.make,
-        })(input),
-      plan: (input) =>
-        randomId<PlanId, typeof input>({
-          kind: "plan",
-          prefix: "plan",
-          parts: [
-            "thread",
-            input.threadId,
-            "provider",
-            input.driver,
-            ...(input.runId === undefined ? [] : ["run", input.runId]),
-          ],
-          make: PlanId.make,
-        })(input),
-    },
-    derive,
-  }),
+  IdAllocatorV2.of({ allocate, derive }),
 );
 
 /** For adapters: subagent threads already stored under a legacy derived id keep that id. */
 export const layerWithLegacySubagentThreads = (
   legacyThreadIds: ReadonlySet<string>,
 ): Layer.Layer<IdAllocatorV2> =>
-  Layer.effect(
+  builtinSucceedLayer("t3.thread")(
     IdAllocatorV2,
-    Effect.gen(function* () {
-      const base = yield* IdAllocatorV2;
-      return IdAllocatorV2.of({
-        allocate: base.allocate,
-        derive: { ...base.derive, subagentThread: makeDeriveSubagentThread(legacyThreadIds) },
-      });
+    IdAllocatorV2.of({
+      allocate,
+      derive: { ...derive, subagentThread: makeDeriveSubagentThread(legacyThreadIds) },
     }),
-  ).pipe(Layer.provide(layer));
+  );

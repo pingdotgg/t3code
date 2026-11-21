@@ -86,10 +86,32 @@ import {
   getProviderVersionLabel,
   providerAuthLabel,
 } from "./providerStatus";
+import { definePluginComponent } from "~/plugins/features";
+
+const ProviderStatusDiagnostic = definePluginComponent(
+  "component:components/settings/ProviderInstanceCard/ProviderStatusDiagnostic",
+  PluginOriginalProviderStatusDiagnostic,
+);
+const ProviderAuthEmail = definePluginComponent(
+  "component:components/settings/ProviderInstanceCard/ProviderAuthEmail",
+  PluginOriginalProviderAuthEmail,
+);
+const ProviderEnvironmentFieldRow = definePluginComponent(
+  "component:components/settings/ProviderInstanceCard/ProviderEnvironmentFieldRow",
+  PluginOriginalProviderEnvironmentFieldRow,
+);
+export const ProviderEnvironmentSection = definePluginComponent(
+  "component:components/settings/ProviderInstanceCard/ProviderEnvironmentSection",
+  PluginOriginalProviderEnvironmentSection,
+);
+export const ProviderInstanceCard = definePluginComponent(
+  "component:components/settings/ProviderInstanceCard/ProviderInstanceCard",
+  PluginOriginalProviderInstanceCard,
+);
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
-function ProviderStatusDiagnostic({
+function PluginOriginalProviderStatusDiagnostic({
   detail,
   children,
 }: {
@@ -208,7 +230,7 @@ export function deriveProviderModelsForDisplay(input: {
   return [...serverModels, ...customModels];
 }
 
-function ProviderAuthEmail(props: { readonly email: string | undefined }) {
+function PluginOriginalProviderAuthEmail(props: { readonly email: string | undefined }) {
   const gt = useGT();
   const email = props.email?.trim();
   if (!email) return null;
@@ -284,7 +306,7 @@ export function nextProviderEnvironmentWithFieldSecret(
     : [...others, { name: field.name, value: secret, sensitive: true }];
 }
 
-function ProviderEnvironmentFieldRow(props: {
+function PluginOriginalProviderEnvironmentFieldRow(props: {
   readonly field: ProviderEnvironmentField;
   readonly variable: ProviderInstanceEnvironmentVariable | undefined;
   readonly idPrefix: string;
@@ -353,7 +375,7 @@ function ProviderEnvironmentFieldRow(props: {
   );
 }
 
-export function ProviderEnvironmentSection(props: {
+function PluginOriginalProviderEnvironmentSection(props: {
   readonly environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>;
   readonly onChange: (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => void;
   /** Variables an administrator's policy pins: listed by name, never editable or removable. */
@@ -777,7 +799,7 @@ function useCustomModelSaves(
 
 /** Unknown drivers stay read-only to preserve fork config. projectOverride switches affect only the
  * project, not instance.enabled. */
-export function ProviderInstanceCard({
+function PluginOriginalProviderInstanceCard({
   instanceId,
   instance,
   driverOption,

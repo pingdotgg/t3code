@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "./plugins/PluginKernel.ts";
 import {
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
@@ -32,7 +33,6 @@ import * as Effect from "effect/Effect";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
@@ -349,7 +349,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
 export const layerTest = (
   overrides: DeepPartial<ServerSettings> = {},
   managedPolicy?: ManagedPolicySummary,
-) => Layer.effect(ServerSettingsService, makeTest(overrides, managedPolicy));
+) => builtinServiceLayer("t3.server")(ServerSettingsService, makeTest(overrides, managedPolicy));
 
 // Accept retired token delivery only on load so one old value cannot reset all settings.
 const PersistedResponseStreamingMode = Schema.Union([
@@ -1441,4 +1441,5 @@ const make = Effect.gen(function* () {
   } satisfies ServerSettingsService["Service"];
 });
 
-export const layer = Layer.effect(ServerSettingsService, make);
+// Runtime configuration remains available when the settings interface is disabled.
+export const layer = builtinServiceLayer("t3.server")(ServerSettingsService, make);

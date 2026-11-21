@@ -34,6 +34,16 @@ import {
   DialogPanel,
   DialogFooter,
 } from "./ui/dialog";
+import { definePluginComponent } from "~/plugins/features";
+
+export const CustomSnoozeDialogHost = definePluginComponent(
+  "component:components/CustomSnoozeDialog/CustomSnoozeDialogHost",
+  PluginOriginalCustomSnoozeDialogHost,
+);
+const CustomSnoozeDialog = definePluginComponent(
+  "component:components/CustomSnoozeDialog/CustomSnoozeDialog",
+  PluginOriginalCustomSnoozeDialog,
+);
 
 type SnoozeChoice = { readonly snoozedUntil: string };
 type Request = { readonly resolve: (choice: SnoozeChoice | null) => void };
@@ -56,14 +66,14 @@ function startOfLocalDay(ms: number) {
   return day;
 }
 
-export function CustomSnoozeDialogHost() {
+function PluginOriginalCustomSnoozeDialogHost() {
   const request = useRequest((state) => state.request);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves any pending snooze request promise with null when the dialog host unmounts
   useEffect(() => () => finish(null), []);
   return request ? <CustomSnoozeDialog /> : null;
 }
 
-function CustomSnoozeDialog() {
+function PluginOriginalCustomSnoozeDialog() {
   const gt = useGT();
   const id = useId();
   const navigate = useNavigate();

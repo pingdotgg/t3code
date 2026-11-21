@@ -10,6 +10,16 @@ import {
 
 import type { HsvColor } from "../../lib/color";
 import { cn } from "../../lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ColorSaturationValuePlane = definePluginComponent(
+  "component:components/ui/color-picker/ColorSaturationValuePlane",
+  PluginOriginalColorSaturationValuePlane,
+);
+export const ColorHueSlider = definePluginComponent(
+  "component:components/ui/color-picker/ColorHueSlider",
+  PluginOriginalColorHueSlider,
+);
 
 function clamp(value: number) {
   return Math.min(1, Math.max(0, value));
@@ -59,7 +69,7 @@ type ColorControlProps<T> = {
   className?: string;
 };
 
-export function ColorSaturationValuePlane({
+function PluginOriginalColorSaturationValuePlane({
   label,
   value,
   onChange,
@@ -180,7 +190,7 @@ export function ColorSaturationValuePlane({
   );
 }
 
-export function ColorHueSlider({
+function PluginOriginalColorHueSlider({
   label,
   value,
   onChange,

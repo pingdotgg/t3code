@@ -6,6 +6,11 @@ import { View } from "react-native";
 import { AppText as Text, AppTextInput } from "../../../components/ui/AppText";
 import { ListChoiceRow as SettingsChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./SettingsSection";
+import { defineNativePluginFeature } from "../../../plugins/features";
+export const BranchNamingSettings = defineNativePluginFeature(
+  "native.features.settings.components.branch-naming-settings",
+  BuiltinBranchNamingSettings,
+);
 
 const MODES = {
   static: {
@@ -24,7 +29,7 @@ const MODES = {
   },
 } satisfies Record<BranchNamingMode, { label: string; description: string }>;
 
-export function BranchNamingSettings(props: {
+function BuiltinBranchNamingSettings(props: {
   mode: BranchNamingMode | null;
   prefix: string | null;
   instructions: string | null;

@@ -1,8 +1,18 @@
 import { Separator as SeparatorPrimitive } from "@base-ui/react/separator";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-function Separator({ className, orientation = "horizontal", ...props }: SeparatorPrimitive.Props) {
+const Separator = definePluginComponent(
+  "component:components/ui/separator/Separator",
+  PluginOriginalSeparator,
+);
+
+function PluginOriginalSeparator({
+  className,
+  orientation = "horizontal",
+  ...props
+}: SeparatorPrimitive.Props) {
   return (
     <SeparatorPrimitive
       className={cn(

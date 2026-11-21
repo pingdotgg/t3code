@@ -1,4 +1,5 @@
 import { useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { useEffectEvent, useState } from "react";
 import { Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -16,7 +17,7 @@ interface WorkspacePaneDividerProps {
   readonly onResizeEnd?: () => void;
 }
 
-export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
+function BuiltinWorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   const gt = useGT();
   const [dragging, setDragging] = useState(false);
   const handleResizeStart = useEffectEvent(() => {
@@ -94,3 +95,8 @@ const styles = StyleSheet.create({
     width: 2,
   },
 });
+
+export const WorkspacePaneDivider = defineNativePluginFeature(
+  "native.features.layout.workspace-pane-divider",
+  BuiltinWorkspacePaneDivider,
+);

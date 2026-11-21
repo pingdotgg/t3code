@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItemStatus,
@@ -35,7 +36,12 @@ import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
 import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../providerInstances";
 
-export function SubagentTooltipContent(props: {
+export const SubagentTooltipContent = definePluginComponent(
+  "component:components/chat/SubagentTooltipContent/SubagentTooltipContent",
+  PluginOriginalSubagentTooltipContent,
+);
+
+function PluginOriginalSubagentTooltipContent(props: {
   title: string;
   model: string | null;
   providerInstanceId: ProviderInstanceId;

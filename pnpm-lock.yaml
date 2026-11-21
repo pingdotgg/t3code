@@ -443,6 +443,9 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@t3tools/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -470,6 +473,9 @@ importers:
       electron-webauthn:
         specifier: 'catalog:'
         version: 1.3.1(typescript@6.0.3)
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       ffi-rs:
         specifier: 1.3.2
         version: 1.3.2
@@ -613,6 +619,9 @@ importers:
       '@t3tools/mobile-terminal-native':
         specifier: file:./modules/t3-terminal
         version: file:apps/mobile/modules/t3-terminal
+      '@t3tools/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -875,6 +884,9 @@ importers:
       '@t3tools/issue-tracker-linear':
         specifier: workspace:*
         version: link:../../packages/issue-tracker-linear
+      '@t3tools/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@t3tools/provider-acp':
         specifier: workspace:*
         version: link:../../packages/provider-acp
@@ -941,6 +953,9 @@ importers:
       effect:
         specifier: 4.1.5
         version: 4.1.5
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       ffi-rs:
         specifier: 1.3.2
         version: 1.3.2
@@ -1110,6 +1125,9 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@t3tools/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
       '@t3tools/provider-core':
         specifier: workspace:*
         version: link:../../packages/provider-core
@@ -1682,6 +1700,37 @@ importers:
         specifier: 1.4.0
         version: 1.4.0(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
+  packages/plugin-sdk:
+    dependencies:
+      '@base-ui/react':
+        specifier: ^1.9.0
+        version: 1.9.0(@date-fns/tz@1.5.0)(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@t3tools/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@t3tools/provider-core':
+        specifier: workspace:*
+        version: link:../provider-core
+      '@t3tools/shared':
+        specifier: workspace:*
+        version: link:../shared
+      effect:
+        specifier: 4.1.5
+        version: 4.1.5
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.3.0
+      react:
+        specifier: 'catalog:'
+        version: 19.3.0
+      react-native:
+        specifier: 0.88.1
+        version: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
+
   packages/provider-acp:
     dependencies:
       '@t3tools/contracts':
@@ -2132,6 +2181,9 @@ importers:
 
   packages/shared:
     dependencies:
+      '@iconify-json/material-symbols':
+        specifier: 1.2.94
+        version: 1.2.94
       '@noble/curves':
         specifier: 'catalog:'
         version: 1.9.1
@@ -2141,18 +2193,33 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@xmldom/xmldom':
+        specifier: 0.9.12
+        version: 0.9.12
       effect:
         specifier: 4.1.5
         version: 4.1.5
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       ffi-rs:
         specifier: 1.3.2
         version: 1.3.2
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
+      fzstd:
+        specifier: 0.1.1
+        version: 0.1.1
       get-east-asian-width:
         specifier: ^1.6.0
         version: 1.6.0
       gt-i18n:
         specifier: 1.0.40
         version: 1.0.40
+      lucide:
+        specifier: ^0.564.0
+        version: 0.564.0
       mdast-util-directive:
         specifier: 'catalog:'
         version: 3.1.0(supports-color@8.1.1)
@@ -4647,6 +4714,12 @@ packages:
 
   '@iarna/toml@2.2.5':
     resolution: {integrity: sha512-trnsAYxU3xnS1gPHPyU961coFyLkh4gAD/0zQ5mymY4yOZ+CYvsPqUbOFSw0aDM4y0tV7tiFxL/1XfXPNC6IPg==}
+
+  '@iconify-json/material-symbols@1.2.94':
+    resolution: {integrity: sha512-9fcCVDfSF9tUy7j9BJmyIAeHJNsxv92U1sGgF0Lm9asu2hzsU8dmxeD5ckOApnC28Ira/N+5Nms/0h38P7c57Q==}
+
+  '@iconify/types@2.0.0':
+    resolution: {integrity: sha512-+wluvCrRhXrhyOmRDJ3q8mux9JkKy5SJ/v8ol2tu4FVjyYvtEzkc/3pK15ET6RKg4b4w4BmTk1+gsCUhf21Ykg==}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -9772,6 +9845,9 @@ packages:
   function-bind@1.1.2:
     resolution: {integrity: sha512-7XHNxH7qX9xG5mIwxkhumTox/MIRNcOgDrxWsMt2pAr23WHp6MrRlN7FBSFpCpr+oVO0F744iUgR82nJMfG2SA==}
 
+  fzstd@0.1.1:
+    resolution: {integrity: sha512-dkuVSOKKwh3eas5VkJy1AW1vFpet8TA/fGmVA5krThl8YcOVE/8ZIoEA1+U1vEn5ckxxhLirSdY837azmbaNHA==}
+
   generaltranslation@9.5.9:
     resolution: {integrity: sha512-/R/MvEEiB+Us/fj/YfuSTfhvzUfmvFpiHxGx2f+C6Wv0O875T0yJI3RLGDopqZVbnKPimog9eXofJL7W0SOxJg==}
 
@@ -10477,6 +10553,9 @@ packages:
     resolution: {integrity: sha512-JJ8GVTQqFwuliifD48U6+h7DXEHdkhJ/E87kksGByII3qHxtPciVb8T8woQONHBQgHVOl7rSMrrip3SeVNy7Fg==}
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  lucide@0.564.0:
+    resolution: {integrity: sha512-FasyXKHWon773WIl3HeCQpd5xS6E0aLjqxiQStlHNKktni+HDncc1sqY+6vRUbCfmDsIaKQz43EEQLAUDLZO0g==}
 
   lz-string@1.5.0:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
@@ -15379,6 +15458,12 @@ snapshots:
 
   '@iarna/toml@2.2.5': {}
 
+  '@iconify-json/material-symbols@1.2.94':
+    dependencies:
+      '@iconify/types': 2.0.0
+
+  '@iconify/types@2.0.0': {}
+
   '@img/colour@1.1.0': {}
 
   '@img/sharp-darwin-arm64@0.35.5':
@@ -19957,6 +20042,8 @@ snapshots:
 
   function-bind@1.1.2: {}
 
+  fzstd@0.1.1: {}
+
   generaltranslation@9.5.9:
     dependencies:
       '@generaltranslation/api': 0.5.6
@@ -20797,6 +20884,8 @@ snapshots:
   lucide-react@0.564.0(react@19.3.0):
     dependencies:
       react: 19.3.0
+
+  lucide@0.564.0: {}
 
   lz-string@1.5.0: {}
 

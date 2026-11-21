@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { createContext, use, useEffect, useState, type ReactNode } from "react";
 import { Animated, Platform, Pressable, View } from "react-native";
 import { useGT, useMessages } from "gt-react-native";
@@ -56,7 +57,7 @@ export function WorkspaceConnectionStatusProvider(props: { readonly children: Re
 }
 
 /** Native-driver animation blanks views re-hosted in RNSScreenStackHeaderSubview; use the JS style path. */
-function StatusFadeIn(props: {
+function BuiltinStatusFadeIn(props: {
   readonly children: ReactNode;
   readonly animate: boolean;
   readonly grow?: boolean;
@@ -94,7 +95,7 @@ function StatusFadeIn(props: {
   );
 }
 
-export function WorkspaceConnectionTitle(props: {
+function BuiltinWorkspaceConnectionTitle(props: {
   readonly brand: ReactNode;
   readonly onPress?: () => void;
   readonly grow?: boolean;
@@ -156,3 +157,13 @@ export function WorkspaceConnectionTitle(props: {
     </StatusFadeIn>
   );
 }
+
+const StatusFadeIn = defineNativePluginFeature(
+  "native.features.home.workspace-connection-title.status-fade-in",
+  BuiltinStatusFadeIn,
+);
+
+export const WorkspaceConnectionTitle = defineNativePluginFeature(
+  "native.features.home.workspace-connection-title",
+  BuiltinWorkspaceConnectionTitle,
+);

@@ -13,7 +13,6 @@ import * as Context from "effect/Context";
 import type { Session } from "electron";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -38,6 +37,7 @@ import {
   type BrowserImportPathContext,
   type BrowserImportSourceDefinition,
 } from "./Sources.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export class BrowserImportFailedError extends Schema.TaggedError<BrowserImportFailedError>()(
   "BrowserImportFailedError",
@@ -352,4 +352,4 @@ export const make = Effect.gen(function* BrowserImportMake() {
   return BrowserImport.of({ listSources, importCookies });
 });
 
-export const layer = Layer.effect(BrowserImport, make);
+export const layer = builtinServiceLayer("t3.desktop.browser-import", BrowserImport, make);

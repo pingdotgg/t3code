@@ -17,7 +17,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -58,6 +57,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
   resolveNotAppliedInstallVersion,
 } from "./updateMachine.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 const CHANNEL_CHANGE_RETRY_DELAY = Duration.seconds(1);
 const CHANNEL_CHANGE_RETRIES = 30;
@@ -1466,4 +1466,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopUpdates, make);
+export const layer = builtinServiceLayer("t3.desktop.desktop-updates", DesktopUpdates, make);

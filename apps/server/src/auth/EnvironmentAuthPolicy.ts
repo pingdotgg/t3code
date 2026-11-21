@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   AuthEnvironmentMaintainScope,
   type ServerAuthDescriptor,
@@ -5,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -61,4 +61,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(EnvironmentAuthPolicy, make);
+export const layer = builtinServiceLayer("t3.auth")(EnvironmentAuthPolicy, make);

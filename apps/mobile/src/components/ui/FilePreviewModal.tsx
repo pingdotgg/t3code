@@ -10,6 +10,7 @@ import type {
   FilePreviewViewerProps,
 } from "./FilePreviewModal.types";
 import { FilePreviewSession } from "./FilePreviewSession";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 export type {
   FilePreviewItem,
@@ -39,7 +40,12 @@ const NativeControls = requireNativeModule<{
 // Null tells the viewer an image failed; undefined means its URL has not arrived yet.
 const nativeUri = (image: FilePreviewImage) => (image.failed ? null : image.uri);
 
-function NativeFilePreview(props: FilePreviewViewerProps) {
+const NativeFilePreview = defineNativePluginFeature(
+  "native.components.ui.file-preview-modal.native-file-preview",
+  BuiltinNativeFilePreview,
+);
+
+function BuiltinNativeFilePreview(props: FilePreviewViewerProps) {
   const gt = useGT();
   const identifier = useId();
   // Later URLs reach the native presentation through updateFile instead of presenting again.
@@ -111,6 +117,11 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
 }
 
 /** Shows images, PDFs and documents full screen in the native viewer (Android: FilePreviewModal.android.tsx). */
-export function FilePreviewModal(props: FilePreviewModalProps) {
+function BuiltinFilePreviewModal(props: FilePreviewModalProps) {
   return <FilePreviewSession {...props} progressiveGallery Viewer={NativeFilePreview} />;
 }
+
+export const FilePreviewModal = defineNativePluginFeature(
+  "native.components.ui.file-preview-modal",
+  BuiltinFilePreviewModal,
+);

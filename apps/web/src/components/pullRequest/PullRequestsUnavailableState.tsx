@@ -5,8 +5,14 @@ import { ExternalLinkIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestsUnavailableState({
+export const PullRequestsUnavailableState = definePluginComponent(
+  "component:components/pullRequest/PullRequestsUnavailableState/PullRequestsUnavailableState",
+  PluginOriginalPullRequestsUnavailableState,
+);
+
+function PluginOriginalPullRequestsUnavailableState({
   title,
   error,
   onRetry,

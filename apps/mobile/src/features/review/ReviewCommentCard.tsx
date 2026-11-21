@@ -1,4 +1,5 @@
 import { useMessages } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { memo, useMemo, useState } from "react";
 import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import { ScrollView, StyleSheet, Text as NativeText, View, type ColorValue } from "react-native";
@@ -45,7 +46,7 @@ export function useReviewCommentColors(): ReviewCommentColors {
   };
 }
 
-export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
+const BuiltinReviewCommentCard = memo(function ReviewCommentCard(props: {
   readonly comment: ReviewInlineComment;
   readonly colors: ReviewCommentColors;
 }) {
@@ -245,3 +246,8 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     </View>
   );
 });
+
+export const ReviewCommentCard = defineNativePluginFeature(
+  "native.features.review.review-comment-card",
+  BuiltinReviewCommentCard,
+);

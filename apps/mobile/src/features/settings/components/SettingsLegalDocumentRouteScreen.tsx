@@ -13,13 +13,14 @@ import { LoadingStrip } from "../../../components/ui/LoadingStrip";
 import { SymbolView } from "../../../components/ui/AppSymbol";
 import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
 import { webViewDecelerationRate } from "../../../lib/webViewDecelerationRate";
+import { defineNativePluginFeature } from "../../../plugins/features";
 
 interface SettingsLegalDocumentRouteScreenProps {
   readonly documentName: string;
   readonly documentUrl: string;
 }
 
-export function SettingsLegalDocumentRouteScreen({
+function BuiltinSettingsLegalDocumentRouteScreen({
   documentName,
   documentUrl,
 }: SettingsLegalDocumentRouteScreenProps) {
@@ -152,3 +153,8 @@ export function SettingsLegalDocumentRouteScreen({
     </View>
   );
 }
+
+export const SettingsLegalDocumentRouteScreen = defineNativePluginFeature(
+  "native.features.settings.components.settings-legal-document-route-screen",
+  BuiltinSettingsLegalDocumentRouteScreen,
+);

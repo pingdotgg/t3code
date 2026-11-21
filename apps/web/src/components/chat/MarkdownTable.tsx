@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { T, useGT } from "gt-react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, type ComponentProps } from "react";
@@ -20,7 +21,7 @@ const TABLE_COPY_SERIALIZERS: Record<TableCopyFormat, (table: Element) => string
   html: serializeTableElementToHtml,
 };
 
-export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
+function PluginOriginalMarkdownTable({ children, ...props }: ComponentProps<"table">) {
   const gt = useGT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard<TableCopyFormat>({
@@ -86,3 +87,8 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
     </div>
   );
 }
+
+export const MarkdownTable = definePluginComponent(
+  "component:components/chat/MarkdownTable/MarkdownTable",
+  PluginOriginalMarkdownTable,
+);

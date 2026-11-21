@@ -1,8 +1,14 @@
 import type { ComponentProps } from "react";
 
 import { cn } from "../../lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-export function SettingsGroup({
+export const SettingsGroup = definePluginComponent(
+  "component:components/settings/SettingsGroup/SettingsGroup",
+  PluginOriginalSettingsGroup,
+);
+
+function PluginOriginalSettingsGroup({
   variant = "grouped",
   divided = true,
   className,

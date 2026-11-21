@@ -17,16 +17,97 @@ import {
 } from "~/components/ui/autocomplete";
 import { DIALOG_BACKDROP_CLASS, DIALOG_POPUP_CLASS } from "~/components/ui/dialog-styles";
 import { Button } from "~/components/ui/button";
+import { definePluginComponent } from "~/plugins/features";
 
-const CommandDialog = CommandDialogPrimitive.Root;
+const CommandDialogTrigger = definePluginComponent(
+  "component:components/ui/command/CommandDialogTrigger",
+  PluginOriginalCommandDialogTrigger,
+);
+const CommandDialogBackdrop = definePluginComponent(
+  "component:components/ui/command/CommandDialogBackdrop",
+  PluginOriginalCommandDialogBackdrop,
+);
+const CommandDialogViewport = definePluginComponent(
+  "component:components/ui/command/CommandDialogViewport",
+  PluginOriginalCommandDialogViewport,
+);
+const CommandDialogPopup = definePluginComponent(
+  "component:components/ui/command/CommandDialogPopup",
+  PluginOriginalCommandDialogPopup,
+);
+const Command = definePluginComponent(
+  "component:components/ui/command/Command",
+  PluginOriginalCommand,
+);
+const CommandInput = definePluginComponent(
+  "component:components/ui/command/CommandInput",
+  PluginOriginalCommandInput,
+);
+const CommandList = definePluginComponent(
+  "component:components/ui/command/CommandList",
+  PluginOriginalCommandList,
+);
+const CommandListVirtualized = definePluginComponent(
+  "component:components/ui/command/CommandListVirtualized",
+  PluginOriginalCommandListVirtualized,
+);
+const CommandListHeading = definePluginComponent(
+  "component:components/ui/command/CommandListHeading",
+  PluginOriginalCommandListHeading,
+);
+const CommandPanel = definePluginComponent(
+  "component:components/ui/command/CommandPanel",
+  PluginOriginalCommandPanel,
+);
+const CommandGroup = definePluginComponent(
+  "component:components/ui/command/CommandGroup",
+  PluginOriginalCommandGroup,
+);
+const CommandGroupLabel = definePluginComponent(
+  "component:components/ui/command/CommandGroupLabel",
+  PluginOriginalCommandGroupLabel,
+);
+const CommandCollection = definePluginComponent(
+  "component:components/ui/command/CommandCollection",
+  PluginOriginalCommandCollection,
+);
+const CommandItem = definePluginComponent(
+  "component:components/ui/command/CommandItem",
+  PluginOriginalCommandItem,
+);
+const CommandShortcut = definePluginComponent(
+  "component:components/ui/command/CommandShortcut",
+  PluginOriginalCommandShortcut,
+);
+const CommandFooter = definePluginComponent(
+  "component:components/ui/command/CommandFooter",
+  PluginOriginalCommandFooter,
+);
+const CommandFooterAction = definePluginComponent(
+  "component:components/ui/command/CommandFooterAction",
+  PluginOriginalCommandFooterAction,
+);
 
-const CommandDialogPortal = CommandDialogPrimitive.Portal;
+const PluginOriginalCommandDialog = CommandDialogPrimitive.Root;
+const CommandDialog = definePluginComponent(
+  "component:components/ui/command/CommandDialog",
+  PluginOriginalCommandDialog,
+);
 
-function CommandDialogTrigger(props: CommandDialogPrimitive.Trigger.Props) {
+const PluginOriginalCommandDialogPortal = CommandDialogPrimitive.Portal;
+const CommandDialogPortal = definePluginComponent(
+  "component:components/ui/command/CommandDialogPortal",
+  PluginOriginalCommandDialogPortal,
+);
+
+function PluginOriginalCommandDialogTrigger(props: CommandDialogPrimitive.Trigger.Props) {
   return <CommandDialogPrimitive.Trigger data-slot="command-dialog-trigger" {...props} />;
 }
 
-function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.Backdrop.Props) {
+function PluginOriginalCommandDialogBackdrop({
+  className,
+  ...props
+}: CommandDialogPrimitive.Backdrop.Props) {
   return (
     <CommandDialogPrimitive.Backdrop
       className={cn(DIALOG_BACKDROP_CLASS, "data-ending-style:pointer-events-none", className)}
@@ -36,7 +117,10 @@ function CommandDialogBackdrop({ className, ...props }: CommandDialogPrimitive.B
   );
 }
 
-function CommandDialogViewport({ className, ...props }: CommandDialogPrimitive.Viewport.Props) {
+function PluginOriginalCommandDialogViewport({
+  className,
+  ...props
+}: CommandDialogPrimitive.Viewport.Props) {
   // Short desktop windows would put the search field under the native window controls.
   const nativeTitlebarHeight = useNativeTitlebarHeight();
   const titlebarStyle = {
@@ -55,7 +139,7 @@ function CommandDialogViewport({ className, ...props }: CommandDialogPrimitive.V
   );
 }
 
-function CommandDialogPopup({
+function PluginOriginalCommandDialogPopup({
   className,
   children,
   onBackdropPointerDown,
@@ -87,7 +171,7 @@ function CommandDialogPopup({
   );
 }
 
-function Command({
+function PluginOriginalCommand({
   autoHighlight = "always",
   keepHighlight = true,
   ...props
@@ -103,7 +187,7 @@ function Command({
   );
 }
 
-function CommandInput({
+function PluginOriginalCommandInput({
   className,
   placeholder,
   ...props
@@ -125,7 +209,10 @@ function CommandInput({
   );
 }
 
-function CommandList({ className, ...props }: React.ComponentProps<typeof AutocompleteList>) {
+function PluginOriginalCommandList({
+  className,
+  ...props
+}: React.ComponentProps<typeof AutocompleteList>) {
   return (
     <AutocompleteList
       className={cn("not-empty:scroll-py-2 not-empty:p-2", className)}
@@ -135,7 +222,7 @@ function CommandList({ className, ...props }: React.ComponentProps<typeof Autoco
   );
 }
 
-function CommandListVirtualized({
+function PluginOriginalCommandListVirtualized({
   className,
   ...props
 }: React.ComponentProps<typeof AutocompleteListVirtualized>) {
@@ -148,7 +235,7 @@ function CommandListVirtualized({
   );
 }
 
-function CommandListHeading({
+function PluginOriginalCommandListHeading({
   className,
   ...props
 }: React.ComponentProps<typeof AutocompleteListHeading>) {
@@ -157,7 +244,7 @@ function CommandListHeading({
   );
 }
 
-function CommandPanel({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalCommandPanel({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
@@ -169,11 +256,14 @@ function CommandPanel({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function CommandGroup({ className, ...props }: React.ComponentProps<typeof AutocompleteGroup>) {
+function PluginOriginalCommandGroup({
+  className,
+  ...props
+}: React.ComponentProps<typeof AutocompleteGroup>) {
   return <AutocompleteGroup className={className} data-slot="command-group" {...props} />;
 }
 
-function CommandGroupLabel({
+function PluginOriginalCommandGroupLabel({
   className,
   ...props
 }: React.ComponentProps<typeof AutocompleteGroupLabel>) {
@@ -182,12 +272,14 @@ function CommandGroupLabel({
   );
 }
 
-function CommandCollection({ ...props }: React.ComponentProps<typeof AutocompleteCollection>) {
+function PluginOriginalCommandCollection({
+  ...props
+}: React.ComponentProps<typeof AutocompleteCollection>) {
   return <AutocompleteCollection data-slot="command-collection" {...props} />;
 }
 
 // Pass active to override primitive hover/keyboard highlights when the palette tracks its own row.
-function CommandItem({
+function PluginOriginalCommandItem({
   className,
   active,
   ...props
@@ -208,7 +300,7 @@ function CommandItem({
   );
 }
 
-function CommandShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
+function PluginOriginalCommandShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       className={cn(
@@ -221,7 +313,7 @@ function CommandShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
   );
 }
 
-function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalCommandFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
@@ -234,7 +326,7 @@ function CommandFooter({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function CommandFooterAction({
+function PluginOriginalCommandFooterAction({
   className,
   ...props
 }: Omit<React.ComponentProps<typeof Button>, "size" | "variant">) {

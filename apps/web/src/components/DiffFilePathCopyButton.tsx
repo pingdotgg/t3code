@@ -6,8 +6,14 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { ANCHORED_COPY_TOAST_TIMEOUT_MS, showAnchoredCopyErrorToast } from "./ui/anchoredCopyToast";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DiffFilePathCopyButton({
+export const DiffFilePathCopyButton = definePluginComponent(
+  "component:components/DiffFilePathCopyButton/DiffFilePathCopyButton",
+  PluginOriginalDiffFilePathCopyButton,
+);
+
+function PluginOriginalDiffFilePathCopyButton({
   filePath,
   workspaceRoot,
 }: {

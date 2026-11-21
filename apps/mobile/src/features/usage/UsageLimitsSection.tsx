@@ -40,6 +40,27 @@ import {
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const WindowRow = defineNativePluginFeature(
+  "native.features.usage.usage-limits-section.window-row",
+  BuiltinWindowRow,
+);
+
+const AccountInstanceLabel = defineNativePluginFeature(
+  "native.features.usage.usage-limits-section.account-instance-label",
+  BuiltinAccountInstanceLabel,
+);
+
+export const AccountLimits = defineNativePluginFeature(
+  "native.features.usage.usage-limits-section.account-limits",
+  BuiltinAccountLimits,
+);
+
+export const ResetCredits = defineNativePluginFeature(
+  "native.features.usage.usage-limits-section.reset-credits",
+  BuiltinResetCredits,
+);
 
 const PACE_LABEL = {
   ahead: msg("ahead of pace"),
@@ -55,7 +76,7 @@ function useBarColor(driver: Driver): string | null {
   return kind ? colors[kind] : null;
 }
 
-function WindowRow(props: {
+function BuiltinWindowRow(props: {
   readonly window: ServerProviderUsageWindow;
   readonly color: string | null;
   readonly now: number;
@@ -146,7 +167,7 @@ function WindowRow(props: {
   );
 }
 
-function AccountInstanceLabel({ value }: { readonly value: string }) {
+function BuiltinAccountInstanceLabel({ value }: { readonly value: string }) {
   const [revealed, setRevealed] = useState(false);
   const gt = useGT();
   if (!value.includes("@")) {
@@ -170,7 +191,7 @@ function AccountInstanceLabel({ value }: { readonly value: string }) {
   );
 }
 
-export function AccountLimits(props: {
+function BuiltinAccountLimits(props: {
   readonly driver: Driver;
   readonly accentColor?: string | undefined;
   readonly label: string;
@@ -244,7 +265,7 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: msg("That credit was already redeemed."),
 };
 
-export function ResetCredits(props: {
+function BuiltinResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;

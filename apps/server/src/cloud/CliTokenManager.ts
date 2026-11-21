@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 // @effect-diagnostics nodeBuiltinImport:off - The CLI loopback OAuth callback is a Node HTTP boundary.
 import * as NodeHttp from "node:http";
 
@@ -642,4 +643,4 @@ export const make = Effect.gen(function* () {
   return CloudCliTokenManager.of({ get, getExisting, hasCredential, store, clear });
 });
 
-export const layer = Layer.effect(CloudCliTokenManager, make);
+export const layer = builtinServiceLayer("t3.connections")(CloudCliTokenManager, make);

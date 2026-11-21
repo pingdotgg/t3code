@@ -8,8 +8,9 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useAssetUrl } from "../../state/assets";
 import { assetImageSource } from "../../lib/assetImageSource";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function ComposerQueuedEditBanner(props: {
+function BuiltinComposerQueuedEditBanner(props: {
   readonly saving: boolean;
   readonly onCancel: () => void;
 }) {
@@ -31,7 +32,7 @@ export function ComposerQueuedEditBanner(props: {
   );
 }
 
-export function ComposerQueuedEditAttachments(props: {
+function BuiltinComposerQueuedEditAttachments(props: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly disabled: boolean;
@@ -59,7 +60,7 @@ export function ComposerQueuedEditAttachments(props: {
   );
 }
 
-function QueuedEditAttachmentChip(props: {
+function BuiltinQueuedEditAttachmentChip(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatAttachment;
   readonly disabled: boolean;
@@ -112,3 +113,18 @@ function QueuedEditAttachmentChip(props: {
     </View>
   );
 }
+
+const QueuedEditAttachmentChip = defineNativePluginFeature(
+  "native.features.threads.composer-queued-edit.queued-edit-attachment-chip",
+  BuiltinQueuedEditAttachmentChip,
+);
+
+export const ComposerQueuedEditBanner = defineNativePluginFeature(
+  "native.features.threads.composer-queued-edit.composer-queued-edit-banner",
+  BuiltinComposerQueuedEditBanner,
+);
+
+export const ComposerQueuedEditAttachments = defineNativePluginFeature(
+  "native.features.threads.composer-queued-edit.composer-queued-edit-attachments",
+  BuiltinComposerQueuedEditAttachments,
+);

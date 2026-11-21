@@ -14,6 +14,11 @@ import { MOBILE_SHAPE } from "../../lib/designTokens";
 import { cn } from "../../lib/cn";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { GlassBackdrop } from "./GlassBackdrop";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const GlassSurface = defineNativePluginFeature(
+  "native.components.glass-surface",
+  BuiltinGlassSurface,
+);
 
 // Explicit mappings keep the native glassEffectStyle enum out of style-array conversion.
 const ThemedGlassView = withUniwind(GlassView, {
@@ -33,7 +38,7 @@ interface GlassSurfaceProps extends ViewProps {
   readonly fallbackClassName?: string;
 }
 
-export function GlassSurface({
+function BuiltinGlassSurface({
   ref,
   children,
   glassEffectStyle = "regular",

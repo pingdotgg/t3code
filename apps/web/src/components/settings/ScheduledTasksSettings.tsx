@@ -153,6 +153,28 @@ import {
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
+
+const Field = definePluginComponent(
+  "component:components/settings/ScheduledTasksSettings/Field",
+  PluginOriginalField,
+);
+export const ScheduledTasksSettings = definePluginComponent(
+  "component:components/settings/ScheduledTasksSettings/ScheduledTasksSettings",
+  PluginOriginalScheduledTasksSettings,
+);
+const ScheduledTaskEnvironmentSection = definePluginComponent(
+  "component:components/settings/ScheduledTasksSettings/ScheduledTaskEnvironmentSection",
+  PluginOriginalScheduledTaskEnvironmentSection,
+);
+const ScheduledTaskRow = definePluginComponent(
+  "component:components/settings/ScheduledTasksSettings/ScheduledTaskRow",
+  PluginOriginalScheduledTaskRow,
+);
+const ScheduledTaskEditorDialog = definePluginComponent(
+  "component:components/settings/ScheduledTasksSettings/ScheduledTaskEditorDialog",
+  PluginOriginalScheduledTaskEditorDialog,
+);
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_SHORT = [
@@ -318,7 +340,7 @@ function WebhookFiltersField({
   );
 }
 
-function Field({
+function PluginOriginalField({
   label,
   hint,
   htmlFor,
@@ -404,7 +426,7 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   return "outline";
 }
 
-export function ScheduledTasksSettings(target: {
+function PluginOriginalScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
 }) {
@@ -697,7 +719,7 @@ function ScheduledTaskEnvironmentSubtitle({
   );
 }
 
-function ScheduledTaskEnvironmentSection({
+function PluginOriginalScheduledTaskEnvironmentSection({
   environment,
   taskId,
   onEdit,
@@ -778,7 +800,7 @@ function ScheduledTaskEnvironmentSection({
   );
 }
 
-function ScheduledTaskRow({
+function PluginOriginalScheduledTaskRow({
   environmentId,
   task,
   timeZone,
@@ -1248,7 +1270,7 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
   );
 }
 
-function ScheduledTaskEditorDialog({
+function PluginOriginalScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
   onClose,

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CommandId,
   GitCommandError,
@@ -15,7 +16,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -254,7 +254,8 @@ const make = Effect.gen(function* () {
 
   // Scratch inside a checkout would inherit its git status and checkpoints; require a data dir outside work trees.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    gitWorkflow.repositoryRoot(config.baseDir).pipe(
+    // A disabled Git plugin throws on access; suspend turns that into an uncached failure.
+    Effect.suspend(() => gitWorkflow.repositoryRoot(config.baseDir)).pipe(
       Effect.catchIf(isGitMissing, () => Effect.succeed(null)),
       Effect.flatMap(
         (repositoryRoot): Effect.Effect<Result.Result<string, ScratchUnavailableError>> => {
@@ -518,4 +519,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ManagedProjectFolders, make);
+export const layer = builtinServiceLayer("t3.projects")(ManagedProjectFolders, make);

@@ -27,6 +27,7 @@ import type {
   FilePreviewSource,
   FilePreviewViewerProps,
 } from "./FilePreviewModal.types";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 interface FilePreviewSessionOptions {
   /** Opens before every image resolves; the viewer takes later URLs as they arrive. */
@@ -101,7 +102,12 @@ function pdfActionsSource(item: FilePreviewItem): MediaActionsSource {
   return { ...metadata, environmentId: item.environmentId, resource: item.resource };
 }
 
-function ResolvedFilePreview(
+const ResolvedFilePreview = defineNativePluginFeature(
+  "native.components.ui.file-preview-session.resolved-file-preview",
+  BuiltinResolvedFilePreview,
+);
+
+function BuiltinResolvedFilePreview(
   props: FilePreviewSessionOptions & {
     readonly source: FilePreviewSource;
     readonly onRequestClose: () => void;
@@ -229,7 +235,7 @@ function ResolvedFilePreview(
  * The part of FilePreviewModal both platforms share: it resolves sources, freezes the gallery
  * at opening and closes with its screen. Each platform's FilePreviewModal passes its viewer.
  */
-export function FilePreviewSession(props: FilePreviewModalProps & FilePreviewSessionOptions) {
+function BuiltinFilePreviewSession(props: FilePreviewModalProps & FilePreviewSessionOptions) {
   const group = useContext(FilePreviewGallery);
   const source =
     props.source === null
@@ -277,3 +283,8 @@ export function FilePreviewSession(props: FilePreviewModalProps & FilePreviewSes
     />
   );
 }
+
+export const FilePreviewSession = defineNativePluginFeature(
+  "native.components.ui.file-preview-session",
+  BuiltinFilePreviewSession,
+);

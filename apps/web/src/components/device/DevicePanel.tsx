@@ -41,11 +41,12 @@ import {
 } from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
+import { definePluginFeature } from "~/plugins/features";
 
 const deviceKey = (device: Pick<DeviceSummary, "hostId" | "id">) =>
   `${device.hostId}\u0000${device.id}`;
 
-export function DevicePanel(props: {
+function BuiltinDevicePanel(props: {
   readonly mode: PreviewPanelMode;
   readonly threadRef: ScopedThreadRef;
   readonly surface: Extract<RightPanelSurface, { kind: "device" }>;
@@ -518,3 +519,5 @@ function groupDevices(state: DeviceServiceState) {
   }
   return groups;
 }
+
+export const DevicePanel = definePluginFeature("chat.device", BuiltinDevicePanel);

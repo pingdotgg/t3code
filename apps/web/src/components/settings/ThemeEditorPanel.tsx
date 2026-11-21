@@ -51,6 +51,12 @@ import {
 } from "./themeInspector";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m, type MessageResolver } from "../../i18n/messages";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ThemeEditorPanel = definePluginComponent(
+  "component:components/settings/ThemeEditorPanel/ThemeEditorPanel",
+  PluginOriginalThemeEditorPanel,
+);
 
 const THEME_EDITOR_SIMPLE_ROLES: ReadonlyArray<ThemeColorRole> = ["canvas", "accent"];
 
@@ -322,7 +328,7 @@ function retireMergedTheme(retired: ThemeDefinition, mergeTarget: ThemeDefinitio
   }
 }
 
-export function ThemeEditorPanel({
+function PluginOriginalThemeEditorPanel({
   open,
   onOpenChange,
   onSaved,

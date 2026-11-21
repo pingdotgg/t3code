@@ -7,7 +7,6 @@ import type * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -20,6 +19,7 @@ import {
   loadWindowsForegroundApi,
 } from "./WindowsForeground.ts";
 import { startWindowsForegroundFocusThread } from "./WindowsForegroundFocusThread.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 function windowsForegroundFocusTarget(window: Electron.BrowserWindow) {
   return {
@@ -406,4 +406,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ElectronWindow, make);
+export const layer = builtinServiceLayer("t3.desktop.electron-window", ElectronWindow, make);

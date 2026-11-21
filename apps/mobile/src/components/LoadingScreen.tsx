@@ -5,8 +5,13 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 
 import { AppText as Text } from "./ui/AppText";
 import { BrandMark } from "./BrandMark";
+import { defineNativePluginFeature } from "../plugins/features";
+export const LoadingScreen = defineNativePluginFeature(
+  "native.components.loading-screen",
+  BuiltinLoadingScreen,
+);
 
-export function LoadingScreen(props: {
+function BuiltinLoadingScreen(props: {
   readonly message: string;
   readonly embedded?: boolean;
   readonly messagePlacement?: "above-spinner" | "below-spinner";

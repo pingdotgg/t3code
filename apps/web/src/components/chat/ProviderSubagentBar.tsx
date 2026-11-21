@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import {
   formatProviderSubagentStatus,
   type ProviderSubagentStatus,
@@ -17,7 +18,12 @@ import {
   ReadOnlyComposerStatus,
 } from "./ReadOnlyComposerBar";
 
-export function ProviderSubagentBar(props: {
+export const ProviderSubagentBar = definePluginComponent(
+  "component:components/chat/ProviderSubagentBar/ProviderSubagentBar",
+  PluginOriginalProviderSubagentBar,
+);
+
+function PluginOriginalProviderSubagentBar(props: {
   readonly provider: ProviderInstanceEntry | null;
   readonly showInstanceBadge: boolean;
   readonly modelLabel: string;

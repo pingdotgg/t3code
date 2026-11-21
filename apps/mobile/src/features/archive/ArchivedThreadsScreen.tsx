@@ -33,13 +33,35 @@ import { useEnvironmentScope } from "../../state/session";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
 import { SettingsScreenContent } from "../settings/components/SettingsScreen";
+import { defineNativePluginFeature } from "../../plugins/features";
+const ArchivedThreadsHeader = defineNativePluginFeature(
+  "native.features.archive.archived-threads-screen.archived-threads-header",
+  BuiltinArchivedThreadsHeader,
+);
+const ProjectGroupLabel = defineNativePluginFeature(
+  "native.features.archive.archived-threads-screen.project-group-label",
+  BuiltinProjectGroupLabel,
+);
+const ArchivedThreadRow = defineNativePluginFeature(
+  "native.features.archive.archived-threads-screen.archived-thread-row",
+  BuiltinArchivedThreadRow,
+);
+const ArchiveError = defineNativePluginFeature(
+  "native.features.archive.archived-threads-screen.archive-error",
+  BuiltinArchiveError,
+);
+
+export const ArchivedThreadsScreen = defineNativePluginFeature(
+  "native.features.archive.archived-threads-screen",
+  BuiltinArchivedThreadsScreen,
+);
 
 export interface ArchivedThreadsHeaderEnvironment {
   readonly environmentId: EnvironmentId;
   readonly label: string;
 }
 
-function ArchivedThreadsHeader(props: {
+function BuiltinArchivedThreadsHeader(props: {
   readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
@@ -137,7 +159,7 @@ type ArchivedThreadListItem =
       readonly thread: EnvironmentThreadShell;
     };
 
-function ProjectGroupLabel(props: {
+function BuiltinProjectGroupLabel(props: {
   readonly environmentLabel: string | null;
   readonly environmentMachine: EnvironmentMachineKind;
   readonly project: EnvironmentProject;
@@ -174,7 +196,7 @@ function ProjectGroupLabel(props: {
   );
 }
 
-function ArchivedThreadRow(props: {
+function BuiltinArchivedThreadRow(props: {
   readonly environmentLabel: string | null;
   readonly isFirst: boolean;
   readonly isLast: boolean;
@@ -272,7 +294,7 @@ function ArchivedThreadRow(props: {
   );
 }
 
-function ArchiveError(props: { readonly message: string; readonly onRetry: () => void }) {
+function BuiltinArchiveError(props: { readonly message: string; readonly onRetry: () => void }) {
   const gt = useGT();
   return (
     <View className="rounded-[20px] border border-danger-border bg-danger p-4">
@@ -287,7 +309,7 @@ function ArchiveError(props: { readonly message: string; readonly onRetry: () =>
   );
 }
 
-export function ArchivedThreadsScreen(props: {
+function BuiltinArchivedThreadsScreen(props: {
   readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
   readonly error: string | null;
   readonly groups: ReadonlyArray<ArchivedThreadGroup>;

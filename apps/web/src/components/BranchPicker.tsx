@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -20,7 +21,7 @@ import {
 } from "./ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-export function BranchPicker({
+function PluginOriginalBranchPicker({
   items,
   filteredItems,
   value,
@@ -199,7 +200,7 @@ export function BranchPicker({
   );
 }
 
-export function BranchPickerRefItem({
+function PluginOriginalBranchPickerRefItem({
   branch: refName,
   projectCwd: activeProjectCwd,
   index,
@@ -246,3 +247,12 @@ export function BranchPickerRefItem({
     </ComboboxItem>
   );
 }
+
+export const BranchPicker = definePluginComponent(
+  "component:components/BranchPicker/BranchPicker",
+  PluginOriginalBranchPicker,
+);
+export const BranchPickerRefItem = definePluginComponent(
+  "component:components/BranchPicker/BranchPickerRefItem",
+  PluginOriginalBranchPickerRefItem,
+);

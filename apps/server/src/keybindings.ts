@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "./plugins/PluginKernel.ts";
 import {
   KeybindingRule,
   KeybindingsConfigError,
@@ -19,7 +20,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
@@ -716,4 +716,5 @@ const make = Effect.gen(function* () {
   } satisfies Keybindings["Service"];
 });
 
-export const layer = Layer.effect(Keybindings, make);
+// Host config must remain readable while the interface plugin is disabled.
+export const layer = builtinServiceLayer("t3.server")(Keybindings, make);

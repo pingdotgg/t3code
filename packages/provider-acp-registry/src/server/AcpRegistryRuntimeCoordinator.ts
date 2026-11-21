@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   type AcpRegistryAcceptUrlAuthInput,
   type AcpRegistryUrlAuthAction,
@@ -8,7 +9,6 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -354,4 +354,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(AcpRegistryRuntimeCoordinator, make);
+export const layer = builtinServiceLayer("t3.providers")(AcpRegistryRuntimeCoordinator, make);

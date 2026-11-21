@@ -4,8 +4,20 @@ import { useEffect, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeIntersection } from "~/lib/observeIntersection";
 import { DiffFileHeaderSkeleton } from "../DiffPanelShell";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DiffFileLoadingBoundary({ load, count }: { load: () => void; count: number }) {
+export const DiffFileLoadingBoundary = definePluginComponent(
+  "component:components/diffs/DiffFileLoadingBoundary/DiffFileLoadingBoundary",
+  PluginOriginalDiffFileLoadingBoundary,
+);
+
+function PluginOriginalDiffFileLoadingBoundary({
+  load,
+  count,
+}: {
+  load: () => void;
+  count: number;
+}) {
   const gt = useGT();
   const [isNear, setIsNear] = useState(false);
   const loadLatest = useStableCallback(load);

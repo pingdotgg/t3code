@@ -2,6 +2,8 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useGT } from "gt-react-native";
 import { View } from "react-native";
 
+import { defineNativePluginFeature } from "../../plugins/features";
+
 import { EmptyState } from "../../components/ui/EmptyState";
 import type { useAttachmentDocument } from "../../lib/attachmentDocument";
 import { HtmlRenderWebView } from "../threads/HtmlRenderWebView";
@@ -19,7 +21,7 @@ export function nativeViewerKind(kind: ReturnType<typeof useAttachmentDocument>[
   return null;
 }
 
-export function AttachmentDocumentBody(props: {
+function BuiltinAttachmentDocumentBody(props: {
   readonly document: Pick<
     ReturnType<typeof useAttachmentDocument>,
     | "kind"
@@ -111,3 +113,8 @@ export function AttachmentDocumentBody(props: {
     </View>
   );
 }
+
+export const AttachmentDocumentBody = defineNativePluginFeature(
+  "native.features.files.attachment-document-body",
+  BuiltinAttachmentDocumentBody,
+);

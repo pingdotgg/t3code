@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type { ProjectThreadAwarenessV2Input } from "@t3tools/shared/agentAwareness";
 import { applyOrchestrationV2ThreadVisit, pendingGuestMessageCount } from "@t3tools/contracts";
 import { applyThreadPullRequestLinkUpdate } from "../sourceControl/threadPullRequests.ts";
@@ -2339,7 +2340,9 @@ const isInlineWorkOutput = (payloadJson: string) => {
   );
 };
 
-export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
+const threadLayer = builtinServiceLayer("t3.thread");
+
+export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = threadLayer(
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

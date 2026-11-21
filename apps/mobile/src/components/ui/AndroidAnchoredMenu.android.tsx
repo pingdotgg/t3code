@@ -20,6 +20,7 @@ import { WindowHingeContext } from "../../native/window-hinge-context";
 import { OverlayPortal } from "./OverlayPortal";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { MenuPopup } from "./MenuPopup";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 const SCREEN_MARGIN = 12;
 const ANCHOR_GAP = 6;
@@ -152,7 +153,7 @@ function extractTriggerAccessibility(
   return acc;
 }
 
-export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
+function BuiltinAndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const { scale, menuWidth: desiredMenuWidth, menuItemHeight } = useAndroidControlSizing();
   const [anchor, setAnchor] = useState<AnchorSnapshot | null>(null);
   const [path, setPath] = useState<readonly MenuAction[]>([]);
@@ -353,3 +354,8 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
     </>
   );
 }
+
+export const AndroidAnchoredMenu = defineNativePluginFeature(
+  "native.components.ui.android-anchored-menu",
+  BuiltinAndroidAnchoredMenu,
+);

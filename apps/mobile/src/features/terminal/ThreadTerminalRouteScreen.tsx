@@ -93,8 +93,9 @@ import {
 import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
 import { getKeyboardShowEpoch, subscribeKeyboardShowing } from "./terminalKeyboardShowing";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-function TerminalHeader(props: {
+function BuiltinTerminalHeader(props: {
   readonly subtitle: string;
   readonly isEnvironmentReady: boolean;
   readonly canOperateTerminal: boolean;
@@ -312,7 +313,7 @@ function useTerminalAccess(environmentId: EnvironmentId | null) {
   };
 }
 
-export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
+function BuiltinThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
   const connectionsReady = useConnectionsReady();
   const params = props.route.params;
   const selection = useThreadSelection();
@@ -1162,3 +1163,13 @@ function ThreadTerminal(props: {
     </>
   );
 }
+
+const TerminalHeader = defineNativePluginFeature(
+  "native.features.terminal.thread-terminal-route-screen.terminal-header",
+  BuiltinTerminalHeader,
+);
+
+export const ThreadTerminalRouteScreen = defineNativePluginFeature(
+  "terminal",
+  BuiltinThreadTerminalRouteScreen,
+);

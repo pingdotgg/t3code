@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import type { NativeAppIconReference } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -10,7 +11,6 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -276,4 +276,4 @@ export const make = Effect.gen(function* () {
   return NativeAppIconResolver.of({ resolve });
 });
 
-export const layer = Layer.effect(NativeAppIconResolver, make);
+export const layer = builtinServiceLayer("t3.server")(NativeAppIconResolver, make);

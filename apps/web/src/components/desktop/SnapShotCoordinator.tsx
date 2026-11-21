@@ -47,6 +47,12 @@ import {
 } from "../../questionAttachments";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SnapShotCoordinator = definePluginComponent(
+  "component:components/desktop/SnapShotCoordinator/SnapShotCoordinator",
+  PluginOriginalSnapShotCoordinator,
+);
 
 type CaptureTarget = DraftId | ScopedThreadRef;
 type CaptureFailure = "missing-project" | "delivery";
@@ -229,7 +235,7 @@ export async function deliverSnapShot(
   dispatchSnapShotComposerFocus();
 }
 
-export function SnapShotCoordinator() {
+function PluginOriginalSnapShotCoordinator() {
   const {
     activeDraftThread,
     activeThread,

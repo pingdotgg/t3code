@@ -31,6 +31,24 @@ export type SettingsFormDefinition = Pick<ProviderClientDefinition, "settingsSch
   readonly driverKind?: ProviderClientDefinition["driverKind"];
 };
 import { SettingsRow } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
+
+const ProviderSettingsSelect = definePluginComponent(
+  "component:components/settings/ProviderSettingsForm/ProviderSettingsSelect",
+  PluginOriginalProviderSettingsSelect,
+);
+const FieldFrame = definePluginComponent(
+  "component:components/settings/ProviderSettingsForm/FieldFrame",
+  PluginOriginalFieldFrame,
+);
+const ProviderSettingsFieldRow = definePluginComponent(
+  "component:components/settings/ProviderSettingsForm/ProviderSettingsFieldRow",
+  PluginOriginalProviderSettingsFieldRow,
+);
+export const ProviderSettingsForm = definePluginComponent(
+  "component:components/settings/ProviderSettingsForm/ProviderSettingsForm",
+  PluginOriginalProviderSettingsForm,
+);
 
 export interface ProviderSettingsFieldModel {
   readonly key: string;
@@ -372,42 +390,49 @@ function commandArgumentsEqual(left: ReadonlyArray<string>, right: ReadonlyArray
   return left.length === right.length && left.every((argument, index) => argument === right[index]);
 }
 
-function configuredCommandArgs(value: ProviderSettingsFormProps["value"]) {
+function configuredStringList(value: ProviderSettingsFormProps["value"], key: string) {
   const configured =
     value !== null && typeof value === "object"
-      ? (value as Record<string, unknown>).commandArgs
+      ? (value as Record<string, unknown>)[key]
       : undefined;
   return Array.isArray(configured)
     ? configured.filter((argument): argument is string => typeof argument === "string")
     : [];
 }
 
-function ProviderCommandArguments({
+function ProviderStringList({
+  field,
   value,
   onChange,
   managedReason,
 }: Pick<ProviderSettingsFormProps, "value" | "onChange"> & {
+  readonly field?: ProviderSettingsFieldModel;
   readonly managedReason: string | undefined;
 }) {
   const gt = useGT();
-  const args = configuredCommandArgs(value);
+  const fieldKey = field?.key ?? "commandArgs";
+  const args = configuredStringList(value, fieldKey);
   const [storedDraft, setDraft] = useState(() => seedRowsDraft(args, toCommandArgumentRows));
   const draft = reconcileRowsDraft(storedDraft, args, commandArgumentsEqual, toCommandArgumentRows);
   if (draft !== storedDraft) setDraft(draft);
   const rows = draft.rows;
 
   const updateArguments = (nextRows: typeof rows) => {
-    const next = nextRows.map((row) => row.value);
+    const next = nextRows
+      .map((row) => (field ? row.value.trim() : row.value))
+      .filter((item) => !field || item.length > 0);
     setDraft({ rows: nextRows, seen: draft.seen, lastPublished: next });
     const config =
       value !== null && typeof value === "object" ? { ...(value as Record<string, unknown>) } : {};
-    onChange({ ...config, commandArgs: next });
+    if (field?.clearWhenEmpty === "omit" && next.length === 0) delete config[fieldKey];
+    else config[fieldKey] = next;
+    onChange(config);
   };
 
   return (
     <SettingsRow
-      title={gt("Arguments")}
-      description={gt("One literal argument per row, in launch order.")}
+      title={field?.label ?? gt("Arguments")}
+      description={field?.description ?? gt("One literal argument per row, in launch order.")}
       managed={managedReason}
       control={
         <Button
@@ -417,7 +442,7 @@ function ProviderCommandArguments({
           onClick={() => updateArguments([...rows, makeCommandArgumentDraftRow("")])}
         >
           <PlusIcon />
-          <T>Add argument</T>
+          {field ? <T>Add item</T> : <T>Add argument</T>}
         </Button>
       }
     >
@@ -437,11 +462,18 @@ function ProviderCommandArguments({
                   onCommit={(next) =>
                     updateArguments(
                       rows.map((current) =>
-                        current.id === argument.id ? { ...current, value: next } : current,
+                        current.id === argument.id
+                          ? { ...current, value: field ? next.trim() : next }
+                          : current,
                       ),
                     )
                   }
-                  aria-label={gt("Argument {number}", { number: index + 1 })}
+                  aria-label={
+                    field
+                      ? `${field.label} ${index + 1}`
+                      : gt("Argument {number}", { number: index + 1 })
+                  }
+                  placeholder={field?.placeholder}
                   spellCheck={false}
                 />
                 <Button
@@ -451,7 +483,11 @@ function ProviderCommandArguments({
                   onClick={() =>
                     updateArguments(rows.filter((current) => current.id !== argument.id))
                   }
-                  aria-label={gt("Remove argument {number}", { number: index + 1 })}
+                  aria-label={
+                    field
+                      ? gt("Remove {label} {number}", { label: field.label, number: index + 1 })
+                      : gt("Remove argument {number}", { number: index + 1 })
+                  }
                 >
                   <XIcon />
                 </Button>
@@ -575,7 +611,7 @@ function SecretSettingsControl({
   );
 }
 
-function ProviderSettingsSelect({
+function PluginOriginalProviderSettingsSelect({
   field,
   value,
   inputId,
@@ -662,7 +698,7 @@ function ProviderSettingsTextInput({
   );
 }
 
-function FieldFrame(props: {
+function PluginOriginalFieldFrame(props: {
   readonly variant: ProviderSettingsFormProps["variant"];
   readonly children: ReactNode;
 }) {
@@ -682,7 +718,7 @@ interface ProviderSettingsFieldRowProps {
   readonly environmentId: EnvironmentId | undefined;
 }
 
-function ProviderSettingsFieldRow({
+function PluginOriginalProviderSettingsFieldRow({
   field,
   value,
   idPrefix,
@@ -692,6 +728,16 @@ function ProviderSettingsFieldRow({
   environmentId,
 }: ProviderSettingsFieldRowProps) {
   const gt = useGT();
+  if (field.control === "string-list") {
+    return (
+      <ProviderStringList
+        field={field}
+        value={value}
+        onChange={onChange}
+        managedReason={managedReason}
+      />
+    );
+  }
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
     variant === "dialog"
@@ -891,7 +937,7 @@ function ProviderSettingsFieldRow({
   );
 }
 
-export function ProviderSettingsForm({
+function PluginOriginalProviderSettingsForm({
   definition,
   value,
   idPrefix,
@@ -925,7 +971,7 @@ export function ProviderSettingsForm({
         />
       ))}
       {isLocalAcp ? (
-        <ProviderCommandArguments
+        <ProviderStringList
           value={value}
           onChange={onChange}
           managedReason={managed?.keys.has("commandArgs") ? managed.reason : undefined}

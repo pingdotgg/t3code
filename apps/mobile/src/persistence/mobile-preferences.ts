@@ -1,6 +1,6 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -638,4 +638,8 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(MobilePreferencesStore, make());
+export const layer = builtinServiceLayer(
+  "t3.mobile.mobile-preferences",
+  MobilePreferencesStore,
+  make(),
+);

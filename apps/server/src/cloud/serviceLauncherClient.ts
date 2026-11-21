@@ -1,10 +1,10 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -365,4 +365,5 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
   });
 });
 
-export const layer = Layer.effect(ServiceLauncherClient, make());
+// Host trial activation and process bookkeeping survive disabled connections.
+export const layer = builtinServiceLayer("t3.server")(ServiceLauncherClient, make());

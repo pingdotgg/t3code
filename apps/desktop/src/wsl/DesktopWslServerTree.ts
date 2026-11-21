@@ -1,12 +1,12 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 // WSL's plain Node cannot read server.asar. Electron's patched fs also reads its unpacked native siblings.
 
@@ -198,7 +198,11 @@ export const make = Effect.gen(function* () {
   return DesktopWslServerTree.of({ ensure, cleanupLegacy });
 });
 
-export const layer = Layer.effect(DesktopWslServerTree, make);
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-wsl-server-tree",
+  DesktopWslServerTree,
+  make,
+);
 
 export interface DesktopWslServerTreeTestStub {
   readonly result?: WslServerTreeResult;
@@ -206,7 +210,8 @@ export interface DesktopWslServerTreeTestStub {
 }
 
 export const layerTest = (stub: DesktopWslServerTreeTestStub = {}) =>
-  Layer.effect(
+  builtinServiceLayer(
+    "t3.desktop.desktop-wsl-server-tree",
     DesktopWslServerTree,
     Effect.gen(function* () {
       const environment = yield* DesktopEnvironment.DesktopEnvironment;

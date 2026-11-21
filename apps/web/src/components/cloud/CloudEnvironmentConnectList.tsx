@@ -45,6 +45,16 @@ import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
+import { definePluginComponent } from "~/plugins/features";
+
+const RemoteEnvironmentRowsSkeleton = definePluginComponent(
+  "component:components/cloud/CloudEnvironmentConnectList/RemoteEnvironmentRowsSkeleton",
+  PluginOriginalRemoteEnvironmentRowsSkeleton,
+);
+export const CloudEnvironmentConnectRows = definePluginComponent(
+  "component:components/cloud/CloudEnvironmentConnectList/CloudEnvironmentConnectRows",
+  PluginOriginalCloudEnvironmentConnectRows,
+);
 
 const EMPTY_DISCOVERY_REFRESH_INTERVAL_MS = 5_000;
 
@@ -63,7 +73,7 @@ export interface SavedCloudEnvironmentConnection {
   readonly serverConfig?: Pick<ServerConfig, "environment"> | null;
 }
 
-function RemoteEnvironmentRowsSkeleton() {
+function PluginOriginalRemoteEnvironmentRowsSkeleton() {
   return (
     <div className={ITEM_ROW_CLASSNAME}>
       <div className={ITEM_ROW_INNER_CLASSNAME}>
@@ -77,7 +87,7 @@ function RemoteEnvironmentRowsSkeleton() {
   );
 }
 
-export function CloudEnvironmentConnectRows({
+function PluginOriginalCloudEnvironmentConnectRows({
   primaryEnvironmentId,
   savedEnvironments,
   showSavedEnvironments = false,

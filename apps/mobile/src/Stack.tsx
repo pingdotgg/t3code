@@ -13,7 +13,7 @@ import {
 } from "@react-navigation/native";
 import { createNativeStackScreen } from "@react-navigation/native-stack";
 import { msg, T, useGT, useMessages } from "gt-react-native";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from "react-native";
 import { useResolveClassNames } from "uniwind";
 
@@ -156,6 +156,25 @@ import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { isPresentedRoute } from "./native/workspace-stack-projection";
 import { workspaceDetailRouter } from "./features/layout/workspace/workspace-detail-selection";
+import { defineNativePluginFeature } from "./plugins/features";
+import { SettingsPluginsRouteScreen } from "./features/settings/SettingsPluginsRouteScreen";
+
+const RootStackLayout = defineNativePluginFeature(
+  "native.stack.root-stack-layout",
+  BuiltinRootStackLayout,
+);
+const NotFoundScreen = defineNativePluginFeature(
+  "native.stack.not-found-screen",
+  BuiltinNotFoundScreen,
+);
+const GuardedScreenLayout = defineNativePluginFeature(
+  "native.stack.guarded-screen-layout",
+  BuiltinGuardedScreenLayout,
+);
+const ScreenRenderFallback = defineNativePluginFeature(
+  "native.stack.screen-render-fallback",
+  BuiltinScreenRenderFallback,
+);
 
 const settingsPage = () => pageRoute({ itemStyle: "standard" });
 
@@ -185,6 +204,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsArchive: msg("Archive", { $context: "noun, settings page of archived threads" }),
   SettingsNavigation: msg("Navigation tabs"),
   SettingsAppearance: msg("Appearance"),
+  SettingsPlugins: msg("Plugins"),
   SettingsProjectGrouping: msg("General"),
   SettingsOrganization: msg("General"),
   SettingsLanguage: msg("Language"),
@@ -327,6 +347,11 @@ const SETTINGS_SCREENS = {
     linking: "settings/appearance",
     options: settingsPage(),
   }),
+  SettingsPlugins: createNativeStackScreen({
+    screen: SettingsPluginsRouteScreen,
+    linking: "settings/plugins",
+    options: settingsPage(),
+  }),
   SettingsProjectGrouping: createNativeStackScreen({
     screen: SettingsProjectGroupingRouteScreen,
     linking: "settings/project-grouping",
@@ -461,7 +486,7 @@ export function rootPathnameFromState(state: NavigationState): string {
   return path.startsWith("/") ? path : `/${path}`;
 }
 
-function RootStackLayout(props: {
+function BuiltinRootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
 }) {
@@ -512,7 +537,7 @@ function RootStackLayout(props: {
   );
 }
 
-function NotFoundScreen() {
+function BuiltinNotFoundScreen() {
   const navigation = useNavigation();
   const screenBgStyle = StyleSheet.flatten(useResolveClassNames("bg-screen"));
   const primaryBgStyle = StyleSheet.flatten(useResolveClassNames("bg-primary"));
@@ -862,7 +887,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
   },
 });
 
-function GuardedScreenLayout(props: {
+function BuiltinGuardedScreenLayout(props: {
   readonly children: ReactNode;
   readonly route: { readonly name: string; readonly params?: object | undefined };
 }) {
@@ -878,7 +903,7 @@ function GuardedScreenLayout(props: {
   );
 }
 
-function ScreenRenderFallback(props: RenderFailureProps & { readonly routeName: string }) {
+function BuiltinScreenRenderFallback(props: RenderFailureProps & { readonly routeName: string }) {
   const navigation = useNavigation();
   const gt = useGT();
   const exit = navigation.canGoBack()
@@ -904,41 +929,48 @@ registerPresentedRoutes(
   }),
 );
 
-export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navigator }) {
-  const { width, height } = useWindowDimensions();
-  const nativeMetrics = useNativeLayoutMetrics();
-  const usesSplitView = deriveLayout({ width, height, nativeMetrics }).usesSplitView;
-  const resolve = useMessages();
+export const RootStack = RootStackConfig.with(
+  defineNativePluginFeature(
+    "native.navigation.root-stack",
+    function AdaptiveRootStack({
+      Navigator,
+    }: ComponentProps<Parameters<typeof RootStackConfig.with>[0]>) {
+      const { width, height } = useWindowDimensions();
+      const nativeMetrics = useNativeLayoutMetrics();
+      const usesSplitView = deriveLayout({ width, height, nativeMetrics }).usesSplitView;
+      const resolve = useMessages();
 
-  /* oxlint-disable react/no-unstable-nested-components -- React Navigation invokes screenLayout as a render callback. */
-  return (
-    <Navigator
-      screenLayout={(props) => <GuardedScreenLayout {...props} />}
-      screenOptions={({ route, navigation }) => {
-        const title =
-          route.name === "Home"
-            ? getCompactBrandHeaderOptions(undefined, resolve).title
-            : ROUTE_TITLES[route.name] === undefined
-              ? undefined
-              : resolve(ROUTE_TITLES[route.name]);
-        return {
-          ...(title === undefined ? {} : { title }),
-          ...(Platform.OS === "android"
-            ? {
-                animation: androidWorkspaceDestinationAnimation(
-                  route,
-                  navigation.getState().routes,
-                  usesSplitView,
-                ),
-              }
-            : {}),
-        };
-      }}
-    />
-  );
+      /* oxlint-disable react/no-unstable-nested-components -- React Navigation invokes screenLayout as a render callback. */
+      return (
+        <Navigator
+          screenLayout={(props) => <GuardedScreenLayout {...props} />}
+          screenOptions={({ route, navigation }) => {
+            const title =
+              route.name === "Home"
+                ? getCompactBrandHeaderOptions(undefined, resolve).title
+                : ROUTE_TITLES[route.name] === undefined
+                  ? undefined
+                  : resolve(ROUTE_TITLES[route.name]);
+            return {
+              ...(title === undefined ? {} : { title }),
+              ...(Platform.OS === "android"
+                ? {
+                    animation: androidWorkspaceDestinationAnimation(
+                      route,
+                      navigation.getState().routes,
+                      usesSplitView,
+                    ),
+                  }
+                : {}),
+            };
+          }}
+        />
+      );
 
-  /* oxlint-enable react/no-unstable-nested-components */
-});
+      /* oxlint-enable react/no-unstable-nested-components */
+    },
+  ),
+);
 
 type RootStackType = typeof RootStack;
 

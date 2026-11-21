@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import type { ReactNode } from "react";
 import { Platform, useWindowDimensions, View } from "react-native";
 
@@ -17,7 +18,7 @@ export interface ListRowContentProps {
   readonly disabled?: boolean;
 }
 
-export function ListRowLayout({
+function BuiltinListRowLayout({
   icon,
   leading,
   label,
@@ -84,3 +85,8 @@ export function ListRowLayout({
     </View>
   );
 }
+
+export const ListRowLayout = defineNativePluginFeature(
+  "native.components.ui.list-row-layout",
+  BuiltinListRowLayout,
+);

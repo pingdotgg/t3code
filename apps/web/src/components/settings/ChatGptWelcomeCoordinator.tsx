@@ -14,6 +14,12 @@ import {
   DialogFooter,
 } from "../ui/dialog";
 import { ChatGptUsageButton } from "./ChatGptUsageButton";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ChatGptWelcomeCoordinator = definePluginComponent(
+  "component:components/settings/ChatGptWelcomeCoordinator/ChatGptWelcomeCoordinator",
+  PluginOriginalChatGptWelcomeCoordinator,
+);
 
 const STORAGE_KEY = "t3:chatgpt-sharing-welcome:v1";
 function readAcknowledgedProfiles(): string[] {
@@ -27,7 +33,7 @@ function readAcknowledgedProfiles(): string[] {
   }
 }
 
-export function ChatGptWelcomeCoordinator() {
+function PluginOriginalChatGptWelcomeCoordinator() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const [acknowledged, setAcknowledged] = useState(readAcknowledgedProfiles);

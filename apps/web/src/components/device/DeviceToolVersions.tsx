@@ -3,8 +3,14 @@ import type { ReactNode } from "react";
 import type { DeviceToolVersions as ToolVersions } from "@t3tools/contracts";
 import { InlineButton } from "~/components/ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DeviceToolVersions({
+export const DeviceToolVersions = definePluginComponent(
+  "component:components/device/DeviceToolVersions/DeviceToolVersions",
+  PluginOriginalDeviceToolVersions,
+);
+
+function PluginOriginalDeviceToolVersions({
   tools,
   action,
   kind,

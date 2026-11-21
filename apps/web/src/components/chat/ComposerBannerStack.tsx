@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useGT } from "gt-react";
 import { InfoIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -36,7 +37,7 @@ const FADE_IN =
  * edge to edge, and the last joins the composer or the drawer below it. Detached cards stand
  * apart instead, for layouts where the composer must not move when a notice appears.
  */
-export function ComposerBannerStack({
+function PluginOriginalComposerBannerStack({
   items,
   detached = false,
 }: {
@@ -62,7 +63,7 @@ export function ComposerBannerStack({
 
 const SUBPIXEL_ROUNDING = 0.001;
 
-export function NoticeText({
+function PluginOriginalNoticeText({
   children,
   className,
   detailsLabel,
@@ -165,7 +166,7 @@ export function NoticeText({
   );
 }
 
-function NoticeCard({
+function PluginOriginalNoticeCard({
   item,
   detached = false,
 }: {
@@ -225,3 +226,16 @@ function NoticeCard({
     </ComposerBanner.Root>
   );
 }
+
+export const ComposerBannerStack = definePluginComponent(
+  "component:components/chat/ComposerBannerStack/ComposerBannerStack",
+  PluginOriginalComposerBannerStack,
+);
+export const NoticeText = definePluginComponent(
+  "component:components/chat/ComposerBannerStack/NoticeText",
+  PluginOriginalNoticeText,
+);
+const NoticeCard = definePluginComponent(
+  "component:components/chat/ComposerBannerStack/NoticeCard",
+  PluginOriginalNoticeCard,
+);

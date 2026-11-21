@@ -38,8 +38,54 @@ import {
   type PullRequestStatePresentation,
   type PullRequestGlyphIcon,
 } from "./pullRequestIcons";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestLabelChip({
+export const PullRequestLabelChip = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestLabelChip",
+  PluginOriginalPullRequestLabelChip,
+);
+export const PullRequestReviewDecisionGlyph = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestReviewDecisionGlyph",
+  PluginOriginalPullRequestReviewDecisionGlyph,
+);
+export const PullRequestStateGlyph = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestStateGlyph",
+  PluginOriginalPullRequestStateGlyph,
+);
+export const PullRequestConflictGlyph = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestConflictGlyph",
+  PluginOriginalPullRequestConflictGlyph,
+);
+export const PullRequestCheckStatusIcon = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestCheckStatusIcon",
+  PluginOriginalPullRequestCheckStatusIcon,
+);
+export const PullRequestReviewOutcomeIcon = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestReviewOutcomeIcon",
+  PluginOriginalPullRequestReviewOutcomeIcon,
+);
+export const PullRequestReviewOutcomeBadge = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestReviewOutcomeBadge",
+  PluginOriginalPullRequestReviewOutcomeBadge,
+);
+export const PullRequestActorAvatar = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestActorAvatar",
+  PluginOriginalPullRequestActorAvatar,
+);
+export const PullRequestActorLabel = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestActorLabel",
+  PluginOriginalPullRequestActorLabel,
+);
+export const PullRequestDiffStat = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestDiffStat",
+  PluginOriginalPullRequestDiffStat,
+);
+export const PullRequestMetaLine = definePluginComponent(
+  "component:components/pullRequest/pullRequestPresentation/PullRequestMetaLine",
+  PluginOriginalPullRequestMetaLine,
+);
+
+function PluginOriginalPullRequestLabelChip({
   label,
   size = "sm",
   className,
@@ -98,7 +144,7 @@ function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
   }
 }
 
-export function PullRequestReviewDecisionGlyph({
+function PluginOriginalPullRequestReviewDecisionGlyph({
   decision,
 }: {
   decision: PullRequestReviewDecision;
@@ -155,7 +201,7 @@ function resolvePullRequestConflict(
   };
 }
 
-export function PullRequestStateGlyph({
+function PluginOriginalPullRequestStateGlyph({
   state,
   isDraft,
   className,
@@ -180,7 +226,7 @@ export function PullRequestStateGlyph({
   );
 }
 
-export function PullRequestConflictGlyph({
+function PluginOriginalPullRequestConflictGlyph({
   state,
   isDraft,
   mergeability,
@@ -276,7 +322,7 @@ export function pullRequestCheckStatusLabel(
     : resolve(CHECK_STATUS_PRESENTATION[check.status].label);
 }
 
-export function PullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
+function PluginOriginalPullRequestCheckStatusIcon({ status }: { status: PullRequestCheckStatus }) {
   const presentation = CHECK_STATUS_PRESENTATION[status];
   return (
     <presentation.Icon
@@ -399,7 +445,7 @@ export function pullRequestReviewOutcomeStaleLabel(
   return resolve(REVIEW_OUTCOME_PRESENTATION[outcome].staleLabel);
 }
 
-export function PullRequestReviewOutcomeIcon({
+function PluginOriginalPullRequestReviewOutcomeIcon({
   outcome,
   className,
 }: {
@@ -444,7 +490,7 @@ export function pullRequestReviewOutcomeLabel(
   return resolve(REVIEW_OUTCOME_PRESENTATION[outcome].label);
 }
 
-export function PullRequestReviewOutcomeBadge({
+function PluginOriginalPullRequestReviewOutcomeBadge({
   outcome,
   className,
 }: {
@@ -463,7 +509,7 @@ export function PullRequestReviewOutcomeBadge({
   );
 }
 
-export function PullRequestActorAvatar({
+function PluginOriginalPullRequestActorAvatar({
   actor,
   className,
 }: {
@@ -495,7 +541,7 @@ export function PullRequestActorAvatar({
   );
 }
 
-export function PullRequestActorLabel({
+function PluginOriginalPullRequestActorLabel({
   actor,
   className,
   variant = "label",
@@ -551,7 +597,7 @@ export function PullRequestActorLabel({
   );
 }
 
-export function PullRequestDiffStat({
+function PluginOriginalPullRequestDiffStat({
   additions,
   deletions,
   className,
@@ -575,7 +621,7 @@ function separatorKey(segment: ReactNode): string {
   return `separator:${isValidElement(segment) ? String(segment.key) : String(segment)}`;
 }
 
-export function PullRequestMetaLine({
+function PluginOriginalPullRequestMetaLine({
   children,
   className,
 }: {

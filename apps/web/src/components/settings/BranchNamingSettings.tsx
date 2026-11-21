@@ -13,6 +13,12 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
+import { definePluginComponent } from "~/plugins/features";
+
+export const BranchNamingSettings = definePluginComponent(
+  "component:components/settings/BranchNamingSettings/BranchNamingSettings",
+  PluginOriginalBranchNamingSettings,
+);
 
 const MODES = {
   static: msg("Static prefix"),
@@ -20,7 +26,7 @@ const MODES = {
   custom: msg("Custom instructions"),
 } satisfies Record<BranchNamingMode, string>;
 
-export function BranchNamingSettings() {
+function PluginOriginalBranchNamingSettings() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();

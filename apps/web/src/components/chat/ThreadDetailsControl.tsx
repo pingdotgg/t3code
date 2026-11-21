@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { T, Var } from "gt-react";
@@ -31,7 +32,12 @@ const parts = {
   meta: THREAD_DETAILS_PANEL_META_ACTION_CLASS,
 };
 
-export function ThreadDetailsControl({
+export const ThreadDetailsControl = definePluginComponent(
+  "component:components/chat/ThreadDetailsControl/ThreadDetailsControl",
+  PluginOriginalThreadDetailsControl,
+);
+
+function PluginOriginalThreadDetailsControl({
   panel = true,
   part = "row",
   multiline = false,

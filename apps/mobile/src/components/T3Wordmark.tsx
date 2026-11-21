@@ -1,10 +1,16 @@
 import type { ColorValue } from "react-native";
 import Svg, { Path } from "react-native-svg";
 import { withUniwind } from "uniwind";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const T3Wordmark = defineNativePluginFeature(
+  "native.components.t3-wordmark",
+  BuiltinT3Wordmark,
+);
 
 const ThemedPath = withUniwind(Path);
 
-export function T3Wordmark(props: {
+function BuiltinT3Wordmark(props: {
   readonly height: number;
   readonly color?: ColorValue;
   readonly colorClassName?: string;

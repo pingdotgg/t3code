@@ -127,6 +127,7 @@ import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
 export const THREAD_COMPOSER_BOTTOM_GUTTER = COMPOSER_BOTTOM_GUTTER;
@@ -211,7 +212,7 @@ const FOLLOW_UP_ACTION_SUBTITLE = {
   restart: msg("Start the turn over with this message"),
 } as const;
 
-function SendActionButton(props: {
+function BuiltinSendActionButton(props: {
   readonly size?: "regular" | "large";
   readonly accessibilityLabel: string;
   readonly presentation: ComposerSendPresentation;
@@ -256,7 +257,7 @@ function SendActionButton(props: {
   );
 }
 
-export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
+const BuiltinThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
   const gt = useGT();
   const messages = useMessages();
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
@@ -1150,3 +1151,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </Animated.View>
   );
 };
+
+export const ThreadComposer = defineNativePluginFeature(
+  "native.features.threads.thread-composer",
+  BuiltinThreadComposer,
+);
+
+const SendActionButton = defineNativePluginFeature(
+  "native.features.threads.thread-composer.send-action-button",
+  BuiltinSendActionButton,
+);

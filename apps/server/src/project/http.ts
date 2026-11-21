@@ -1,10 +1,10 @@
+import { builtinHttpApiGroup } from "../plugins/httpComposition.ts";
 import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
   requiredScopesForProjectMutation,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
   annotateEnvironmentRequest,
@@ -32,7 +32,7 @@ const failProjectMutation = Effect.fn("environment.projects.failMutation")(funct
   return yield* failEnvironmentInternal("project_mutation_failed", cause);
 });
 
-export const layer = HttpApiBuilder.group(
+export const layer = builtinHttpApiGroup("t3.projects")(
   EnvironmentHttpApi,
   "projects",
   Effect.fnUntraced(function* (handlers) {

@@ -2,11 +2,11 @@ import { DesktopThemeSchema, type DesktopTheme } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 import { watchLinuxColorScheme, type LinuxColorScheme } from "./LinuxColorScheme.ts";
 
@@ -95,4 +95,4 @@ export const make = Effect.gen(function* () {
   return yield* makeWith(platform === "linux" ? watchLinuxColorScheme : undefined);
 });
 
-export const layer = Layer.effect(ElectronTheme, make);
+export const layer = builtinServiceLayer("t3.desktop.electron-theme", ElectronTheme, make);

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { use, type CSSProperties } from "react";
 
 import {
@@ -22,7 +23,7 @@ function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
 }
 
 /** Suspends during grammar loading; use plain text as the Suspense fallback. */
-export function HighlightedTokens({
+function PluginOriginalHighlightedTokens({
   code,
   language,
   embedded = NO_EMBEDDED_SCRIPTS,
@@ -119,3 +120,8 @@ export function wordsOf(tokens: ReadonlyArray<SyntaxToken>): Array<string | Word
   }
   return parts;
 }
+
+export const HighlightedTokens = definePluginComponent(
+  "component:components/chat/HighlightedTokens/HighlightedTokens",
+  PluginOriginalHighlightedTokens,
+);

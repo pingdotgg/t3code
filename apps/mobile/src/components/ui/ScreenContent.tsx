@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import type { ReactNode } from "react";
 import { Platform, View, type LayoutChangeEvent } from "react-native";
 
@@ -14,7 +15,7 @@ const SURFACE_CLASS_NAMES = {
  * The body below a screen's AppBar. On Android it is the rounded card every pane and sheet
  * draws under its bar; a screen picks only the card's surface.
  */
-export function ScreenContent({
+function BuiltinScreenContent({
   children,
   surface = "sheet",
   insetHorizontal,
@@ -57,3 +58,8 @@ export function ScreenContent({
     </View>
   );
 }
+
+export const ScreenContent = defineNativePluginFeature(
+  "native.components.ui.screen-content",
+  BuiltinScreenContent,
+);

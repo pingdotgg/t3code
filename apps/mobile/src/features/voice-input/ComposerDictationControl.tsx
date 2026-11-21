@@ -20,6 +20,47 @@ import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSi
 import { cn } from "../../lib/cn";
 import type { VoiceComposerPresentation } from "./voiceInputPresentation";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const VoiceActionButton = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.voice-action-button",
+  BuiltinVoiceActionButton,
+);
+
+export const ComposerDictationDraftContent = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.composer-dictation-draft-content",
+  BuiltinComposerDictationDraftContent,
+);
+
+export const ComposerDictationToolbar = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.composer-dictation-toolbar",
+  BuiltinComposerDictationToolbar,
+);
+
+export const DictationElapsedTime = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.dictation-elapsed-time",
+  BuiltinDictationElapsedTime,
+);
+
+export const ComposerDictationStatus = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.composer-dictation-status",
+  BuiltinComposerDictationStatus,
+);
+
+export const ComposerDictationCancelAction = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.composer-dictation-cancel-action",
+  BuiltinComposerDictationCancelAction,
+);
+
+export const ComposerDictationPrimaryAction = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.composer-dictation-primary-action",
+  BuiltinComposerDictationPrimaryAction,
+);
+
+export const ComposerDictationStartAction = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.composer-dictation-start-action",
+  BuiltinComposerDictationStartAction,
+);
 
 const DICTATION_TIMING = {
   duration: 220,
@@ -84,7 +125,7 @@ const WAVEFORM_TIMING = {
   reduceMotion: ReduceMotion.System,
 } as const;
 
-export function ComposerDictationDraftContent(props: {
+function BuiltinComposerDictationDraftContent(props: {
   readonly children: ReactNode;
   readonly className?: string;
   readonly compact: boolean;
@@ -118,7 +159,7 @@ export function ComposerDictationDraftContent(props: {
   );
 }
 
-export function ComposerDictationToolbar(props: {
+function BuiltinComposerDictationToolbar(props: {
   readonly children: ReactNode;
   readonly showsDictation: boolean;
   readonly visible?: boolean;
@@ -145,98 +186,105 @@ export function ComposerDictationToolbar(props: {
   );
 }
 
-const WaveformBar = memo(function WaveformBar(props: {
-  readonly audioLevels: SharedValue<ReadonlyArray<number>>;
-  readonly sampleIndex: number;
-  readonly height?: number;
-}) {
-  const { audioLevels, sampleIndex } = props;
-  const height = props.height ?? WAVEFORM_BAR_HEIGHT;
-  const animatedStyle = useAnimatedStyle(() => {
-    const level = audioLevels.value[sampleIndex] ?? 0;
-    return {
-      opacity: withTiming(0.22 + level * 0.78, WAVEFORM_TIMING),
-      transform: [
-        {
-          scaleY: withTiming(
-            (WAVEFORM_MIN_BAR_HEIGHT + level * (height - WAVEFORM_MIN_BAR_HEIGHT)) / height,
-            WAVEFORM_TIMING,
-          ),
-        },
-      ],
-    };
-  });
+const WaveformBar = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.waveform-bar",
+  memo(function WaveformBar(props: {
+    readonly audioLevels: SharedValue<ReadonlyArray<number>>;
+    readonly sampleIndex: number;
+    readonly height?: number;
+  }) {
+    const { audioLevels, sampleIndex } = props;
+    const height = props.height ?? WAVEFORM_BAR_HEIGHT;
+    const animatedStyle = useAnimatedStyle(() => {
+      const level = audioLevels.value[sampleIndex] ?? 0;
+      return {
+        opacity: withTiming(0.22 + level * 0.78, WAVEFORM_TIMING),
+        transform: [
+          {
+            scaleY: withTiming(
+              (WAVEFORM_MIN_BAR_HEIGHT + level * (height - WAVEFORM_MIN_BAR_HEIGHT)) / height,
+              WAVEFORM_TIMING,
+            ),
+          },
+        ],
+      };
+    });
 
-  return (
-    <Animated.View
-      className="w-0.5 rounded-full bg-foreground"
-      style={[{ height }, animatedStyle]}
-    />
-  );
-});
+    return (
+      <Animated.View
+        className="w-0.5 rounded-full bg-foreground"
+        style={[{ height }, animatedStyle]}
+      />
+    );
+  }),
+);
 
 const COMPACT_WAVEFORM_BAR_COUNT = 8;
 const COMPACT_WAVEFORM_BAR_HEIGHT = 14;
 
-export const CompactVoiceWaveform = memo(function CompactVoiceWaveform(props: {
-  readonly audioLevels: SharedValue<ReadonlyArray<number>>;
-}) {
-  return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      className="flex-row items-center gap-0.5"
-      style={{ height: COMPACT_WAVEFORM_BAR_HEIGHT }}
-    >
-      {Array.from({ length: COMPACT_WAVEFORM_BAR_COUNT }, (_, index) => (
-        <WaveformBar
-          key={index}
-          audioLevels={props.audioLevels}
-          height={COMPACT_WAVEFORM_BAR_HEIGHT}
-          sampleIndex={VOICE_WAVEFORM_SAMPLE_COUNT - COMPACT_WAVEFORM_BAR_COUNT + index}
-        />
-      ))}
-    </View>
-  );
-});
-
-const VoiceWaveform = memo(function VoiceWaveform(props: {
-  readonly audioLevels: SharedValue<ReadonlyArray<number>>;
-}) {
-  const [barCount, setBarCount] = useState(0);
-  const handleLayout = (event: LayoutChangeEvent) => {
-    setBarCount(
-      Math.max(
-        1,
-        Math.min(
-          VOICE_WAVEFORM_SAMPLE_COUNT,
-          Math.floor(event.nativeEvent.layout.width / WAVEFORM_BAR_SPACING),
-        ),
-      ),
+export const CompactVoiceWaveform = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.compact-voice-waveform",
+  memo(function CompactVoiceWaveform(props: {
+    readonly audioLevels: SharedValue<ReadonlyArray<number>>;
+  }) {
+    return (
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        className="flex-row items-center gap-0.5"
+        style={{ height: COMPACT_WAVEFORM_BAR_HEIGHT }}
+      >
+        {Array.from({ length: COMPACT_WAVEFORM_BAR_COUNT }, (_, index) => (
+          <WaveformBar
+            key={index}
+            audioLevels={props.audioLevels}
+            height={COMPACT_WAVEFORM_BAR_HEIGHT}
+            sampleIndex={VOICE_WAVEFORM_SAMPLE_COUNT - COMPACT_WAVEFORM_BAR_COUNT + index}
+          />
+        ))}
+      </View>
     );
-  };
+  }),
+);
 
-  return (
-    <View
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      className="min-w-0 flex-1 flex-row items-center justify-between overflow-hidden"
-      style={{ height: WAVEFORM_BAR_HEIGHT }}
-      onLayout={handleLayout}
-    >
-      {Array.from({ length: barCount }, (_, index) => (
-        <WaveformBar
-          key={index}
-          audioLevels={props.audioLevels}
-          sampleIndex={VOICE_WAVEFORM_SAMPLE_COUNT - barCount + index}
-        />
-      ))}
-    </View>
-  );
-});
+const VoiceWaveform = defineNativePluginFeature(
+  "native.features.voice-input.composer-dictation-control.voice-waveform",
+  memo(function VoiceWaveform(props: { readonly audioLevels: SharedValue<ReadonlyArray<number>> }) {
+    const [barCount, setBarCount] = useState(0);
+    const handleLayout = (event: LayoutChangeEvent) => {
+      setBarCount(
+        Math.max(
+          1,
+          Math.min(
+            VOICE_WAVEFORM_SAMPLE_COUNT,
+            Math.floor(event.nativeEvent.layout.width / WAVEFORM_BAR_SPACING),
+          ),
+        ),
+      );
+    };
+
+    return (
+      <View
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        className="min-w-0 flex-1 flex-row items-center justify-between overflow-hidden"
+        style={{ height: WAVEFORM_BAR_HEIGHT }}
+        onLayout={handleLayout}
+      >
+        {Array.from({ length: barCount }, (_, index) => (
+          <WaveformBar
+            key={index}
+            audioLevels={props.audioLevels}
+            sampleIndex={VOICE_WAVEFORM_SAMPLE_COUNT - barCount + index}
+          />
+        ))}
+      </View>
+    );
+  }),
+);
 
 /** Use system tabular figures; DM Sans lacks them and would jitter. */
-export function DictationElapsedTime(props: {
+function BuiltinDictationElapsedTime(props: {
   readonly seconds: number;
   readonly className?: string;
 }) {
@@ -251,7 +299,7 @@ export function DictationElapsedTime(props: {
   );
 }
 
-function VoiceActionButton(props: {
+function BuiltinVoiceActionButton(props: {
   readonly size?: "regular" | "large";
   readonly accessibilityLabel: string;
   readonly disabled?: boolean;
@@ -349,7 +397,7 @@ export function ComposerDictationError(props: {
   );
 }
 
-export function ComposerDictationStatus(props: {
+function BuiltinComposerDictationStatus(props: {
   readonly audioLevels: SharedValue<ReadonlyArray<number>>;
   readonly elapsedSeconds: number;
   readonly phase: VoiceInputPhase;
@@ -389,7 +437,7 @@ export function ComposerDictationStatus(props: {
   );
 }
 
-export function ComposerDictationCancelAction(props: {
+function BuiltinComposerDictationCancelAction(props: {
   readonly size?: "regular" | "large";
   readonly presentation: VoiceComposerPresentation;
   readonly onCancel: () => void;
@@ -406,7 +454,7 @@ export function ComposerDictationCancelAction(props: {
   );
 }
 
-export function ComposerDictationPrimaryAction(props: {
+function BuiltinComposerDictationPrimaryAction(props: {
   readonly size?: "regular" | "large";
   readonly state: VoiceInputState;
   readonly presentation: VoiceComposerPresentation;
@@ -438,7 +486,7 @@ export function ComposerDictationPrimaryAction(props: {
   return <ComposerDictationStartAction {...props} />;
 }
 
-export function ComposerDictationStartAction(props: {
+function BuiltinComposerDictationStartAction(props: {
   readonly size?: "regular" | "large";
   readonly state: VoiceInputState;
   readonly isAvailable: boolean;

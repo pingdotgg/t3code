@@ -6,9 +6,22 @@ import {
   type SearchMatchHint,
   type SearchRange,
 } from "@t3tools/shared/paletteSearch";
+import { definePluginComponent } from "~/plugins/features";
+
+const HighlightedSearchText = definePluginComponent(
+  "component:components/ThreadSearchMatch/HighlightedSearchText",
+  PluginOriginalHighlightedSearchText,
+);
+export const ThreadSearchMatchExcerpt = definePluginComponent(
+  "component:components/ThreadSearchMatch/ThreadSearchMatchExcerpt",
+  PluginOriginalThreadSearchMatchExcerpt,
+);
 
 /** `text` with each range in semibold foreground. */
-function HighlightedSearchText(props: { text: string; ranges: ReadonlyArray<SearchRange> }) {
+function PluginOriginalHighlightedSearchText(props: {
+  text: string;
+  ranges: ReadonlyArray<SearchRange>;
+}) {
   if (props.ranges.length === 0) return props.text;
   return splitSearchText(props.text, props.ranges).map((part) =>
     part.highlighted ? (
@@ -35,7 +48,7 @@ export function SearchMatchHintLine(props: { hint: SearchMatchHint }) {
   );
 }
 
-export function ThreadSearchMatchExcerpt(props: {
+function PluginOriginalThreadSearchMatchExcerpt(props: {
   match: {
     readonly source: "user" | "assistant";
     readonly snippet: string;

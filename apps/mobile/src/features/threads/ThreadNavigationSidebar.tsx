@@ -81,6 +81,16 @@ import {
 } from "./threadListV2";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const ThreadNavigationSidebarPane = defineNativePluginFeature(
+  "native.features.threads.thread-navigation-sidebar.thread-navigation-sidebar-pane",
+  BuiltinThreadNavigationSidebarPane,
+);
+export const ThreadNavigationSidebar = defineNativePluginFeature(
+  "sidebar",
+  BuiltinThreadNavigationSidebar,
+);
 
 type SidebarListItem =
   | ThreadListV2ListItem
@@ -110,7 +120,7 @@ interface ThreadNavigationSidebarProps {
   readonly searchQuery: string;
 }
 
-export function ThreadNavigationSidebar(props: ThreadNavigationSidebarProps) {
+function BuiltinThreadNavigationSidebar(props: ThreadNavigationSidebarProps) {
   return (
     <ThreadPrDemandProvider visible={props.visible}>
       <WorkspaceSidebarColumn width={props.width}>
@@ -120,7 +130,7 @@ export function ThreadNavigationSidebar(props: ThreadNavigationSidebarProps) {
   );
 }
 
-function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
+function BuiltinThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const gt = useGT();
   const messages = useMessages();
   const floatingTabsEnabled = useAndroidFloatingTabs();

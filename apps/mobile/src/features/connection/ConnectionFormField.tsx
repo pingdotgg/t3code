@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { View } from "react-native";
 
 import { AppText, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
@@ -8,7 +9,7 @@ type ConnectionFormFieldProps = Omit<AppTextInputProps, "accessibilityLabel" | "
   readonly className?: string;
 };
 
-export function ConnectionFormField({ label, className, ...inputProps }: ConnectionFormFieldProps) {
+function BuiltinConnectionFormField({ label, className, ...inputProps }: ConnectionFormFieldProps) {
   return (
     <View collapsable={false} className={cn("gap-1.5", className)}>
       <AppText
@@ -26,3 +27,8 @@ export function ConnectionFormField({ label, className, ...inputProps }: Connect
     </View>
   );
 }
+
+export const ConnectionFormField = defineNativePluginFeature(
+  "native.features.connection.connection-form-field",
+  BuiltinConnectionFormField,
+);

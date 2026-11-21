@@ -41,6 +41,7 @@ import {
   snoozeDateToPickerDate,
   snoozePickerLabels,
 } from "./customSnoozeDate";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 type Props = {
   readonly onClose: () => void;
@@ -63,7 +64,7 @@ function systemUses24HourClock() {
   return requireNativeModule<{ is24HourFormat(): boolean }>("T3NativeControls").is24HourFormat();
 }
 
-export function CustomSnoozeSheet(props: Props) {
+function BuiltinCustomSnoozeSheet(props: Props) {
   const gt = useGT();
   const m = useMessages();
   const locale = useFormattingLocale();
@@ -277,7 +278,7 @@ export function CustomSnoozeSheet(props: Props) {
   );
 }
 
-function SnoozeDateTimePicker(props: {
+function BuiltinSnoozeDateTimePicker(props: {
   readonly date: Date;
   readonly picker: "date" | "time";
   readonly is24Hour: boolean;
@@ -302,3 +303,13 @@ function SnoozeDateTimePicker(props: {
     />
   );
 }
+
+export const CustomSnoozeSheet = defineNativePluginFeature(
+  "native.features.threads.custom-snooze-sheet",
+  BuiltinCustomSnoozeSheet,
+);
+
+const SnoozeDateTimePicker = defineNativePluginFeature(
+  "native.features.threads.custom-snooze-sheet.snooze-date-time-picker",
+  BuiltinSnoozeDateTimePicker,
+);

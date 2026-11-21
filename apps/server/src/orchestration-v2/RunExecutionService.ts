@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -704,7 +705,7 @@ export const layer: Layer.Layer<
   | PreviewAgentActivity.PreviewAgentActivity
   | TurnItemPositionStore.TurnItemPositionStoreV2
   | ThreadCommandExecutor.ThreadCommandExecutor
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   RunExecutionServiceV2,
   Effect.gen(function* () {
     const scope = yield* Effect.scope;

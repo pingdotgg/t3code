@@ -21,6 +21,12 @@ import {
   type CaptureSetupStep,
 } from "./SnapShotSetupDialog.logic";
 import { msg, T, useGT, useMessages } from "gt-react";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SnapShotSetupDialog = definePluginComponent(
+  "component:components/settings/SnapShotSetupDialog/SnapShotSetupDialog",
+  PluginOriginalSnapShotSetupDialog,
+);
 
 const SETUP_STEPS = [
   { id: "access", label: msg("Access", { $context: "setup step: capture permissions" }) },
@@ -64,7 +70,7 @@ const GNOME_ACCESS_COPY = {
   },
 };
 
-export function SnapShotSetupDialog({
+function PluginOriginalSnapShotSetupDialog({
   state,
   initialStep,
   wasEnabled,

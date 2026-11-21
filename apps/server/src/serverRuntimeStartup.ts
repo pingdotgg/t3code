@@ -1,3 +1,4 @@
+import { builtinService, builtinServiceLayer } from "./plugins/PluginKernel.ts";
 import {
   CommandId,
   DEFAULT_MODEL,
@@ -21,7 +22,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -389,6 +389,16 @@ const runStartupPhase = <A, E, R>(phase: string, effect: Effect.Effect<A, E, R>)
     Effect.withSpan(`server.startup.${phase}`, { attributes: { "startup.phase": phase } }),
   );
 
+/** Feature startup and its finalizers share the plugin's enabled lifetime. */
+export const runPluginStartup = <A, E, R>(
+  pluginId: string,
+  key: string,
+  startup: Effect.Effect<A, E, R>,
+) =>
+  builtinService(pluginId, key, startup.pipe(Effect.as({})), { lifecycle: true }).pipe(
+    Effect.asVoid,
+  );
+
 interface StartupOptions {
   readonly activate?: Effect.Effect<void>;
   readonly awaitAuxiliaryParked?: Effect.Effect<void>;
@@ -468,33 +478,35 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
   const commandGate = yield* makeCommandGate;
   const httpListening = yield* Deferred.make<void>();
   const effectWorkerFiber = yield* Ref.make<Fiber.Fiber<void, never> | null>(null);
+  const bootstrapTargetsRef = yield* Ref.make<AutoBootstrapWelcomeTargets>({});
 
   yield* Effect.addFinalizer(() =>
-    Effect.gen(function* () {
-      yield* commandGate.failCommandReady(
-        new ServerRuntimeStartupError({
-          mode: serverConfig.mode,
-          host: serverConfig.host ?? null,
-          port: serverConfig.port,
-          cause: "Server runtime is shutting down.",
-        }),
-      );
-      const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
-      if (workerFiber !== null) {
-        yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
-      }
-      yield* providerRuntimeRecovery.prepareForShutdown.pipe(
-        Effect.ensuring(providerSessions.shutdown),
-      );
-      const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
-      yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
-    }).pipe(
-      Effect.withSpan("server.shutdown"),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("V2 orchestration shutdown reconciliation failed", {
-          cause: Cause.pretty(cause),
-        }),
-      ),
+    commandGate.failCommandReady(
+      new ServerRuntimeStartupError({
+        mode: serverConfig.mode,
+        host: serverConfig.host ?? null,
+        port: serverConfig.port,
+        cause: "Server runtime is shutting down.",
+      }),
+    ),
+  );
+
+  const shutdownThreads = Effect.gen(function* () {
+    const workerFiber = yield* Ref.getAndSet(effectWorkerFiber, null);
+    if (workerFiber !== null) {
+      yield* Fiber.interrupt(workerFiber).pipe(Effect.ignore);
+    }
+    yield* providerRuntimeRecovery.prepareForShutdown.pipe(
+      Effect.ensuring(providerSessions.shutdown),
+    );
+    const reconciliation = yield* providerRuntimeRecovery.reconcile("shutdown");
+    yield* Effect.logInfo("V2 orchestration shutdown reconciliation completed", reconciliation);
+  }).pipe(
+    Effect.withSpan("server.shutdown"),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("V2 orchestration shutdown reconciliation failed", {
+        cause: Cause.pretty(cause),
+      }),
     ),
   );
 
@@ -531,101 +543,125 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
 
     const welcomeBase = yield* resolveWelcomeBase;
     const environment = yield* serverEnvironment.getDescriptor;
-    const legacyMigrationThreadCount = yield* legacyV1ThreadImporter.pendingThreadCount;
-    if (legacyMigrationThreadCount > 0) {
-      yield* lifecycleEvents.publish({
-        version: 1,
-        type: "legacyThreadMigration",
-        payload: {
-          status: "running",
-          totalThreadCount: legacyMigrationThreadCount,
-        },
-      });
-    }
-    const { recovery, bootstrap: bootstrapTargets } = yield* runOrderedV2StartupPhases({
-      importLegacyShells: runStartupPhase(
-        "orchestration-v2.legacy-v1.import-shells",
-        legacyV1ThreadImporter.reconcileShells.pipe(
+    yield* runPluginStartup(
+      "t3.thread",
+      "t3/server/startup/threads",
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() => shutdownThreads);
+        const legacyMigrationThreadCount = yield* legacyV1ThreadImporter.pendingThreadCount;
+        if (legacyMigrationThreadCount > 0) {
+          yield* lifecycleEvents.publish({
+            version: 1,
+            type: "legacyThreadMigration",
+            payload: {
+              status: "running",
+              totalThreadCount: legacyMigrationThreadCount,
+            },
+          });
+        }
+        const { recovery } = yield* runOrderedV2StartupPhases({
+          importLegacyShells: runStartupPhase(
+            "orchestration-v2.legacy-v1.import-shells",
+            legacyV1ThreadImporter.reconcileShells.pipe(
+              Effect.tap((summary) =>
+                summary.importedThreadCount === 0
+                  ? Effect.void
+                  : Effect.logInfo("Imported legacy v1 thread shells", summary),
+              ),
+            ),
+          ),
+          recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
+          recoverDelegatedTasks: runStartupPhase(
+            "orchestration-v2.delegated-tasks.recover",
+            orchestrator.recoverDelegatedTasks,
+          ),
+          startEffectWorker: runStartupPhase(
+            "orchestration-v2.effect-worker.start",
+            startEffectWorkerWithRelay({
+              runWorker: EffectWorker.runDaemon,
+              startRelay: runPluginStartup(
+                "t3.connections",
+                "t3/server/startup/agent-awareness",
+                Effect.suspend(() => agentAwarenessRelay.start()),
+              ),
+              workerFiberRef: effectWorkerFiber,
+            }),
+          ),
+          autoBootstrap: serverConfig.autoBootstrapProjectFromCwd
+            ? runPluginStartup(
+                "t3.projects",
+                "t3/server/startup/project-bootstrap",
+                runStartupPhase(
+                  "welcome.autobootstrap",
+                  resolveAutoBootstrapWelcomeTargets.pipe(
+                    Effect.provideService(SecureRandom.SecureRandom, random),
+                    Effect.tap((targets) => Ref.set(bootstrapTargetsRef, targets)),
+                  ),
+                ),
+              )
+            : Effect.void,
+        });
+        yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
+        // Runs after activation: the status check fetches every enabled project's
+        // remote, and awaiting it here held command readiness for that long.
+        yield* runPluginStartup(
+          "t3.git",
+          "t3/server/startup/auto-pull",
+          runStartupPhase(
+            "projects.auto-pull",
+            Effect.gen(function* () {
+              const projects = yield* (yield* ProjectStore.ProjectStoreV2).listShells();
+              const settings = yield* serverSettings.getSettings;
+              yield* autoPullProjects(projects, settings);
+            }),
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Failed to load projects for automatic pull", { cause }),
+            ),
+            forkParked,
+          ),
+        );
+
+        const importPendingTranscripts = legacyV1ThreadImporter.importPendingTranscripts.pipe(
           Effect.tap((summary) =>
             summary.importedThreadCount === 0
               ? Effect.void
-              : Effect.logInfo("Imported legacy v1 thread shells", summary),
+              : Effect.logInfo("Hydrated legacy v1 thread transcripts", summary),
           ),
-        ),
-      ),
-      recover: runStartupPhase("orchestration-v2.recovery", providerRuntimeRecovery.recover),
-      recoverDelegatedTasks: runStartupPhase(
-        "orchestration-v2.delegated-tasks.recover",
-        orchestrator.recoverDelegatedTasks,
-      ),
-      startEffectWorker: runStartupPhase(
-        "orchestration-v2.effect-worker.start",
-        startEffectWorkerWithRelay({
-          runWorker: EffectWorker.runDaemon,
-          startRelay: agentAwarenessRelay.start(),
-          workerFiberRef: effectWorkerFiber,
-        }),
-      ),
-      autoBootstrap: (serverConfig.autoBootstrapProjectFromCwd
-        ? runStartupPhase(
-            "welcome.autobootstrap",
-            resolveAutoBootstrapWelcomeTargets.pipe(
-              Effect.provideService(SecureRandom.SecureRandom, random),
-            ),
-          )
-        : Effect.succeed({})
-      ).pipe(Effect.map((targets): AutoBootstrapWelcomeTargets => targets)),
-    });
-    yield* Effect.logInfo("V2 orchestration recovery completed", recovery);
-    // Runs after activation: the status check fetches every enabled project's
-    // remote, and awaiting it here held command readiness for that long.
-    yield* runStartupPhase(
-      "projects.auto-pull",
-      Effect.gen(function* () {
-        const projects = yield* (yield* ProjectStore.ProjectStoreV2).listShells();
-        const settings = yield* serverSettings.getSettings;
-        yield* autoPullProjects(projects, settings);
-      }),
-    ).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Failed to load projects for automatic pull", { cause }),
-      ),
-      forkParked,
-    );
-
-    const importPendingTranscripts = legacyV1ThreadImporter.importPendingTranscripts.pipe(
-      Effect.tap((summary) =>
-        summary.importedThreadCount === 0
-          ? Effect.void
-          : Effect.logInfo("Hydrated legacy v1 thread transcripts", summary),
-      ),
-    );
-    yield* (
-      legacyMigrationThreadCount > 0
-        ? importPendingTranscripts.pipe(
-            Effect.tap(() =>
-              lifecycleEvents.publish({
-                version: 1,
-                type: "legacyThreadMigration",
-                payload: {
-                  status: "complete",
-                  totalThreadCount: legacyMigrationThreadCount,
-                },
+        );
+        yield* (
+          legacyMigrationThreadCount > 0
+            ? importPendingTranscripts.pipe(
+                Effect.tap(() =>
+                  lifecycleEvents.publish({
+                    version: 1,
+                    type: "legacyThreadMigration",
+                    payload: {
+                      status: "complete",
+                      totalThreadCount: legacyMigrationThreadCount,
+                    },
+                  }),
+                ),
+              )
+            : importPendingTranscripts
+        ).pipe(forkParked);
+        yield* forkParked(
+          Effect.gen(function* () {
+            yield* Effect.logDebug("startup phase: recording startup heartbeat");
+            yield* recordStartupHeartbeat.pipe(
+              Effect.withSpan("server.startup.heartbeat.record", {
+                attributes: { "startup.phase": "heartbeat.record" },
               }),
-            ),
-          )
-        : importPendingTranscripts
-    ).pipe(forkParked);
+              Effect.ignoreCause({ log: true }),
+            );
+          }),
+        );
+      }),
+    );
+    const bootstrapTargets = yield* Ref.get(bootstrapTargetsRef);
 
     yield* forkParked(
       Effect.gen(function* () {
-        yield* Effect.logDebug("startup phase: recording startup heartbeat");
-        yield* recordStartupHeartbeat.pipe(
-          Effect.withSpan("server.startup.heartbeat.record", {
-            attributes: { "startup.phase": "heartbeat.record" },
-          }),
-          Effect.ignoreCause({ log: true }),
-        );
         if (serverConfig.startupPresentation === "headless") {
           yield* Effect.logDebug("startup phase: headless access info");
           const accessInfo = yield* issueHeadlessServeAccessInfo();
@@ -728,4 +764,4 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
 });
 
 export const layerWithOptions = (options?: StartupOptions) =>
-  Layer.effect(ServerRuntimeStartup, make(options));
+  builtinServiceLayer("t3.server")(ServerRuntimeStartup, make(options));

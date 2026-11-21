@@ -28,10 +28,20 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { definePluginComponent } from "~/plugins/features";
 
-const ProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
+export const ProviderAuthenticationSection = definePluginComponent(
+  "component:components/settings/ProviderAuthenticationSection/ProviderAuthenticationSection",
+  PluginOriginalProviderAuthenticationSection,
+);
 
-export function ProviderAuthenticationSection({
+const PluginOriginalProviderAuthTerminal = lazy(() => import("./ProviderAuthTerminal"));
+const ProviderAuthTerminal = definePluginComponent(
+  "component:components/settings/ProviderAuthenticationSection/ProviderAuthTerminal",
+  PluginOriginalProviderAuthTerminal,
+);
+
+function PluginOriginalProviderAuthenticationSection({
   environmentId,
   environmentLabel,
   instanceId,

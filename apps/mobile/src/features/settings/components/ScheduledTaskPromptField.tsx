@@ -13,8 +13,13 @@ import {
 } from "../../voice-input/ComposerDictationControl";
 import type { useVoiceInputController } from "../../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../../voice-input/voiceInputPresentation";
+import { defineNativePluginFeature } from "../../../plugins/features";
+export const ScheduledTaskPromptField = defineNativePluginFeature(
+  "native.features.settings.components.scheduled-task-prompt-field",
+  BuiltinScheduledTaskPromptField,
+);
 
-export function ScheduledTaskPromptField(props: {
+function BuiltinScheduledTaskPromptField(props: {
   readonly value: string;
   readonly onChange: (value: string) => void;
   readonly selection: ComposerEditorSelection;

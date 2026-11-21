@@ -1,3 +1,4 @@
+import { definePluginFeature } from "~/plugins/features";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
@@ -231,7 +232,7 @@ interface DiffPanelProps {
   visible: boolean;
 }
 
-export default function DiffPanel({
+export function BuiltinDiffPanel({
   mode = "inline",
   composerDraftTarget,
   workspaceMutationId,
@@ -1825,3 +1826,5 @@ export default function DiffPanel({
     </DiffPanelShell>
   );
 }
+
+export default definePluginFeature("diff", BuiltinDiffPanel);

@@ -33,6 +33,7 @@ import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { definePluginComponent } from "~/plugins/features";
 
 /** Holds the page still behind the open picker; its lifetime is the popup element's. */
 function lockBackgroundScroll(popup: HTMLElement | null) {
@@ -88,7 +89,7 @@ function lockBackgroundScroll(popup: HTMLElement | null) {
 /** What a docked effort column needs from its picker: the model it serves. */
 export const DockedPickerContext = createContext<{ modelLabel: string }>({ modelLabel: "" });
 
-export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
+const PluginOriginalProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
   workspaceCwd?: string | null;
   activeInstanceId: ProviderInstanceId;
@@ -503,3 +504,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     </Popover>
   );
 });
+export const ProviderModelPicker = definePluginComponent(
+  "component:components/chat/ProviderModelPicker/ProviderModelPicker",
+  PluginOriginalProviderModelPicker,
+);

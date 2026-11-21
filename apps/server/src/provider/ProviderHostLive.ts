@@ -1,5 +1,6 @@
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderCredentialError } from "@t3tools/provider-core/server/errors";
+import { isBuiltinDisabledError } from "@t3tools/shared/pluginKernel";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -62,7 +63,17 @@ export const layer = Layer.effect(
       }),
       ...Option.match(portDiscovery, {
         onNone: () => ({}),
-        onSome: (discovery) => ({ trackAgent: discovery.trackAgent }),
+        // Port discovery belongs to t3.preview; agents still run while it is disabled.
+        onSome: (discovery) => ({
+          trackAgent: () => {
+            try {
+              return discovery.trackAgent();
+            } catch (error) {
+              if (isBuiltinDisabledError(error, "t3.preview")) return () => undefined;
+              throw error;
+            }
+          },
+        }),
       }),
       resolveAttachmentPath: (attachment) =>
         resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment }),

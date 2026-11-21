@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { T } from "gt-react";
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
 import { type ComponentProps, type ReactNode, type RefObject } from "react";
@@ -52,7 +53,7 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
   readonly testId?: string;
 };
 
-export function CommandPaletteContent({
+function PluginOriginalCommandPaletteContent({
   children,
   escapeLabel,
   footerActionLabel,
@@ -129,3 +130,8 @@ export function CommandPaletteContent({
     </div>
   );
 }
+
+export const CommandPaletteContent = definePluginComponent(
+  "component:components/CommandPaletteContent/CommandPaletteContent",
+  PluginOriginalCommandPaletteContent,
+);

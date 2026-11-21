@@ -22,8 +22,13 @@ import {
   useAppearancePreferences,
   useAndroidFloatingTabs,
 } from "../settings/appearance/AppearancePreferencesProvider";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const AndroidHomeFabLayout = defineNativePluginFeature(
+  "native.features.home.android-home-fab.android-home-fab-layout",
+  BuiltinAndroidHomeFabLayout,
+);
 
-export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidHomeFabLayout>) {
+function BuiltinAndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidHomeFabLayout>) {
   const floatingTabsEnabled = useAndroidFloatingTabs();
   const insets = useSafeAreaInsets();
   const { appearance } = useAppearancePreferences();

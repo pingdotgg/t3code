@@ -6,6 +6,12 @@ import { ScrollView, View } from "react-native";
 import { AppText as Text } from "./ui/AppText";
 import { Button } from "./ui/Button";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const RenderFailureView = defineNativePluginFeature(
+  "native.components.render-error-boundary.render-failure-view",
+  BuiltinRenderFailureView,
+);
 
 interface RenderErrorBoundaryProps {
   readonly children: ReactNode;
@@ -39,7 +45,7 @@ function errorDetails(error: unknown, componentStack?: string): string {
     : description;
 }
 
-export class RenderErrorBoundary extends Component<
+class BuiltinRenderErrorBoundary extends Component<
   RenderErrorBoundaryProps,
   RenderErrorBoundaryState
 > {
@@ -88,7 +94,12 @@ export class RenderErrorBoundary extends Component<
   }
 }
 
-export function RenderFailureView(
+export const RenderErrorBoundary = defineNativePluginFeature(
+  "native.components.render-error-boundary",
+  BuiltinRenderErrorBoundary,
+);
+
+function BuiltinRenderFailureView(
   props: RenderFailureProps & {
     readonly title?: string;
     readonly bottomInset?: number;

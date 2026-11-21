@@ -18,6 +18,42 @@ import type { ColorValue } from "react-native";
 import type { HeaderBarButtonSearchBarPlacementItem } from "react-native-screens";
 import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "./StackHeader";
+import { defineNativePluginFeature } from "../plugins/features";
+
+const NativeHeaderToolbarRoot = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-root",
+  BuiltinNativeHeaderToolbarRoot,
+);
+
+const NativeHeaderToolbarButton = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-button",
+  BuiltinNativeHeaderToolbarButton,
+);
+
+const NativeHeaderToolbarMenu = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-menu",
+  BuiltinNativeHeaderToolbarMenu,
+);
+
+const NativeHeaderToolbarMenuAction = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-menu-action",
+  BuiltinNativeHeaderToolbarMenuAction,
+);
+
+const NativeHeaderToolbarLabel = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-label",
+  BuiltinNativeHeaderToolbarLabel,
+);
+
+const NativeHeaderToolbarSpacer = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-spacer",
+  BuiltinNativeHeaderToolbarSpacer,
+);
+
+const NativeHeaderToolbarSearchBarSlot = defineNativePluginFeature(
+  "native.native.native-header-toolbar.native-header-toolbar-search-bar-slot",
+  BuiltinNativeHeaderToolbarSearchBarSlot,
+);
 
 function labelFromChildren(children: ReactNode): string {
   const parts: string[] = [];
@@ -224,7 +260,7 @@ function collectToolbarItems(children: ReactNode, register: RegisterHandler): Na
   return items;
 }
 
-function NativeHeaderToolbarRoot(props: {
+function BuiltinNativeHeaderToolbarRoot(props: {
   readonly placement?: "left" | "right" | "bottom";
   readonly children?: ReactNode;
 }) {
@@ -287,7 +323,7 @@ function NativeHeaderToolbarRoot(props: {
   );
 }
 
-function NativeHeaderToolbarButton(_props: {
+function BuiltinNativeHeaderToolbarButton(_props: {
   readonly accessibilityLabel?: string;
   readonly axisBehavior?: NativeStackHeaderAxisBehavior;
   readonly disabled?: boolean;
@@ -304,7 +340,7 @@ function NativeHeaderToolbarButton(_props: {
 }
 NativeHeaderToolbarButton.displayName = "NativeHeaderToolbarButton";
 
-function NativeHeaderToolbarMenu(_props: {
+function BuiltinNativeHeaderToolbarMenu(_props: {
   readonly accessibilityLabel?: string;
   readonly axisBehavior?: NativeStackHeaderAxisBehavior;
   readonly children?: ReactNode;
@@ -321,7 +357,7 @@ function NativeHeaderToolbarMenu(_props: {
 }
 NativeHeaderToolbarMenu.displayName = "NativeHeaderToolbarMenu";
 
-function NativeHeaderToolbarMenuAction(_props: {
+function BuiltinNativeHeaderToolbarMenuAction(_props: {
   readonly children?: ReactNode;
   readonly destructive?: boolean;
   readonly disabled?: boolean;
@@ -340,12 +376,12 @@ function NativeHeaderToolbarCustom(_props: { readonly children: ReactElement }) 
 }
 NativeHeaderToolbarCustom.displayName = "NativeHeaderToolbarCustom";
 
-function NativeHeaderToolbarLabel(_props: { readonly children?: ReactNode }) {
+function BuiltinNativeHeaderToolbarLabel(_props: { readonly children?: ReactNode }) {
   return null;
 }
 NativeHeaderToolbarLabel.displayName = "NativeHeaderToolbarLabel";
 
-function NativeHeaderToolbarSpacer(_props: {
+function BuiltinNativeHeaderToolbarSpacer(_props: {
   readonly flexible?: boolean;
   readonly sharesBackground?: boolean;
   readonly width?: number;
@@ -354,7 +390,7 @@ function NativeHeaderToolbarSpacer(_props: {
 }
 NativeHeaderToolbarSpacer.displayName = "NativeHeaderToolbarSpacer";
 
-function NativeHeaderToolbarSearchBarSlot() {
+function BuiltinNativeHeaderToolbarSearchBarSlot() {
   return null;
 }
 NativeHeaderToolbarSearchBarSlot.displayName = "NativeHeaderToolbarSearchBarSlot";

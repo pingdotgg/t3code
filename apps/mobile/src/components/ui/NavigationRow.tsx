@@ -6,8 +6,14 @@ import { cn } from "../../lib/cn";
 import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function NavigationRow({
+export const NavigationRow = defineNativePluginFeature(
+  "native.components.ui.navigation-row",
+  BuiltinNavigationRow,
+);
+
+function BuiltinNavigationRow({
   title,
   titleClassName,
   subtitle,

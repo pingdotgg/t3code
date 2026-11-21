@@ -3,21 +3,19 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import * as ClaudeAdapterV2 from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import * as CodexAdapterV2 from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as ProviderProcesses from "../process/providerProcesses.ts";
-import type * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
+import * as ClaudePlugin from "../plugins/builtin/providers/claude.ts";
+import * as CodexPlugin from "../plugins/builtin/providers/codex.ts";
+import * as CursorPlugin from "../plugins/builtin/providers/cursor.ts";
 import * as CursorAgentSdkProcessRunner from "@t3tools/provider-cursor/server/CursorAgentSdkProcessRunner";
-import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export type ProviderOrchestrationAdapterInfrastructure =
-  | ClaudeAdapterV2.ClaudeAgentSdkQueryRunner
-  | CodexAdapterV2.CodexAppServerClientFactory
-  | CursorAgentSdk.CursorAgentSdkRunner
-  | CursorSdk.CursorSdk
+  | ClaudePlugin.AdapterInfrastructure
+  | CodexPlugin.AdapterInfrastructure
+  | CursorPlugin.AdapterInfrastructure
   | IdAllocator.IdAllocatorV2;
 
 // Subagent threads created before short ids keep their stored id when an adapter resumes them.
@@ -60,8 +58,8 @@ const resolveCursorWorkerLaunch = Effect.gen(function* () {
 
 /** Reuse the continuation worker's exact layer reference so memoization shares one queue. */
 export const layer = Layer.mergeAll(
-  ClaudeAdapterV2.layerQueryRunner,
-  CodexAdapterV2.layerAppServerClientFactory,
+  ClaudePlugin.layerAdapterInfrastructure,
+  CodexPlugin.layerAdapterInfrastructure,
   Layer.unwrap(
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -70,7 +68,7 @@ export const layer = Layer.mergeAll(
       );
     }),
   ),
-  CursorSdk.layer,
+  CursorPlugin.layerSdk,
   layerIdAllocator,
   ProviderContinuationRequests.layer,
 );

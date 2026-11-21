@@ -10,6 +10,12 @@ import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DeviceDuoControls = definePluginComponent(
+  "component:components/device/DeviceDuoControls/DeviceDuoControls",
+  PluginOriginalDeviceDuoControls,
+);
 
 const FOLDS = [
   { id: "closed", angle: 0 },
@@ -21,7 +27,7 @@ const STANDS = [
   { id: "tent", label: msg("Tent stand") },
 ] as const;
 
-export function DeviceDuoControls(props: {
+function PluginOriginalDeviceDuoControls(props: {
   screen: DeviceScreenSize;
   state: DuoControlState;
   enabled: boolean;

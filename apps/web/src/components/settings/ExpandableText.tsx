@@ -4,8 +4,14 @@ import { InlineButton } from "../ui/button";
 import { useId, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ExpandableText({
+export const ExpandableText = definePluginComponent(
+  "component:components/settings/ExpandableText/ExpandableText",
+  PluginOriginalExpandableText,
+);
+
+function PluginOriginalExpandableText({
   text,
   collapsedText = text,
   className,

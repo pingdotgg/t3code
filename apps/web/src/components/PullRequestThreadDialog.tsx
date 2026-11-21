@@ -39,6 +39,12 @@ import {
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
 import { toastManager } from "./ui/toast";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PullRequestThreadDialog = definePluginComponent(
+  "component:components/PullRequestThreadDialog/PullRequestThreadDialog",
+  PluginOriginalPullRequestThreadDialog,
+);
 
 interface PullRequestThreadDialogProps {
   open: boolean;
@@ -67,7 +73,7 @@ function pullRequestStatusTone(state: string | undefined): string {
   }
 }
 
-export function PullRequestThreadDialog({
+function PluginOriginalPullRequestThreadDialog({
   open,
   environmentId,
   threadId,

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { ComponentPropsWithoutRef } from "react";
 
 import { cn } from "../lib/utils";
@@ -10,7 +11,7 @@ const WIDTH_CLASS: Record<WorkspacePageWidth, string> = {
   expanded: "max-w-6xl",
 };
 
-export function WorkspacePageContainer({
+function PluginOriginalWorkspacePageContainer({
   width = "readable",
   className,
   ...props
@@ -26,3 +27,8 @@ export function WorkspacePageContainer({
     />
   );
 }
+
+export const WorkspacePageContainer = definePluginComponent(
+  "component:components/WorkspacePageContainer/WorkspacePageContainer",
+  PluginOriginalWorkspacePageContainer,
+);

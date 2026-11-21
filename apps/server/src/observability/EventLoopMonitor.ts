@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - only node:perf_hooks exposes the event loop delay histogram, and node:os the load average.
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as NodeOS from "node:os";
 import * as NodePerfHooks from "node:perf_hooks";
 
@@ -140,7 +141,7 @@ const layerWith = (
   makeSampler: Effect.Effect<Effect.Effect<EventLoopReadings>, never, Scope.Scope>,
   stallLog: StallLogOptions,
 ) =>
-  Layer.effect(
+  builtinServiceLayer("t3.server")(
     EventLoopMonitor,
     Effect.gen(function* () {
       const sample = yield* makeSampler;

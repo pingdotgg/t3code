@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   AuthAdministrativeClientScopes,
   AuthStandardClientScopes,
@@ -874,7 +875,7 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(PairingGrantStore, make).pipe(
+export const layer = builtinServiceLayer("t3.auth")(PairingGrantStore, make).pipe(
   Layer.provideMerge(AuthPairingLinks.layer),
   Layer.provideMerge(AuthConnectDevices.layer),
 );

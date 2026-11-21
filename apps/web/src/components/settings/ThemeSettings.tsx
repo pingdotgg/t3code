@@ -54,6 +54,24 @@ import {
 } from "./ThemePreviewCircles";
 import { ThemeWireframe } from "./ThemeWireframe";
 import { T, useGT } from "gt-react";
+import { definePluginComponent } from "~/plugins/features";
+
+const ThemeVariantTooltip = definePluginComponent(
+  "component:components/settings/ThemeSettings/ThemeVariantTooltip",
+  PluginOriginalThemeVariantTooltip,
+);
+const ThemeLibraryCard = definePluginComponent(
+  "component:components/settings/ThemeSettings/ThemeLibraryCard",
+  PluginOriginalThemeLibraryCard,
+);
+const CustomThemeCollectionCard = definePluginComponent(
+  "component:components/settings/ThemeSettings/CustomThemeCollectionCard",
+  PluginOriginalCustomThemeCollectionCard,
+);
+export const ThemeLibrary = definePluginComponent(
+  "component:components/settings/ThemeSettings/ThemeLibrary",
+  PluginOriginalThemeLibrary,
+);
 
 const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
   T3_CHAT_THEME,
@@ -88,7 +106,13 @@ function downloadThemeFile(filename: string, contents: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-function ThemeVariantTooltip({ label, children }: { label: string; children: ReactElement }) {
+function PluginOriginalThemeVariantTooltip({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactElement;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger render={children} />
@@ -97,7 +121,7 @@ function ThemeVariantTooltip({ label, children }: { label: string; children: Rea
   );
 }
 
-function ThemeLibraryCard({
+function PluginOriginalThemeLibraryCard({
   theme,
   isActive,
   onUse,
@@ -476,7 +500,7 @@ function ThemeLibraryCard({
   );
 }
 
-function CustomThemeCollectionCard({
+function PluginOriginalCustomThemeCollectionCard({
   themes,
   activeModesFor,
   onUse,
@@ -555,7 +579,7 @@ function CustomThemeCollectionCard({
   );
 }
 
-export function ThemeLibrary({
+function PluginOriginalThemeLibrary({
   theme,
   setTheme,
   appearanceMode,

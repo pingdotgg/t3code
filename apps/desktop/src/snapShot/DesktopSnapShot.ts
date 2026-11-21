@@ -28,7 +28,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
@@ -93,6 +92,7 @@ import {
 } from "./snapShot.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { readImageDimensions } from "@t3tools/shared/imageDimensions";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 const isCaptureSetupRequiredError = Schema.is(CaptureSetupRequiredError);
 
@@ -1803,4 +1803,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopSnapShot, make);
+export const layer = builtinServiceLayer("t3.desktop.desktop-snap-shot", DesktopSnapShot, make);

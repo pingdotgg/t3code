@@ -43,6 +43,24 @@ import { crossesReleaseTrack } from "@t3tools/shared/cliRelease";
 import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ServerUpdatesAction = definePluginComponent(
+  "component:components/ServerUpdateAction/ServerUpdatesAction",
+  PluginOriginalServerUpdatesAction,
+);
+export const ServerUpdateProgress = definePluginComponent(
+  "component:components/ServerUpdateAction/ServerUpdateProgress",
+  PluginOriginalServerUpdateProgress,
+);
+export const ServerUpdateAction = definePluginComponent(
+  "component:components/ServerUpdateAction/ServerUpdateAction",
+  PluginOriginalServerUpdateAction,
+);
+export const OutdatedServerUpdateAction = definePluginComponent(
+  "component:components/ServerUpdateAction/OutdatedServerUpdateAction",
+  PluginOriginalOutdatedServerUpdateAction,
+);
 
 const UPDATE_STAGE_LABELS: Record<ServerUpdateStage, string> = {
   downloading: msg("Downloading…"),
@@ -186,7 +204,7 @@ export function useServerUpdate() {
   };
 }
 
-export function ServerUpdatesAction({
+function PluginOriginalServerUpdatesAction({
   targets,
   label,
   variant = "outline",
@@ -254,7 +272,7 @@ export function canUpdateServer(
   return sessionGrantsScope(result.value, AuthEnvironmentMaintainScope);
 }
 
-export function ServerUpdateProgress({
+function PluginOriginalServerUpdateProgress({
   state,
 }: {
   readonly state: Exclude<ServerUpdateState, { status: "idle" }>;
@@ -284,7 +302,7 @@ export function ServerUpdateProgress({
 }
 
 /** client-runtime owns self-updates so unmounting during reconnect preserves operation state. */
-export function ServerUpdateAction({
+function PluginOriginalServerUpdateAction({
   environmentId,
   serverLabel,
   selfUpdate,
@@ -447,7 +465,7 @@ export function ServerUpdateAction({
 }
 
 /** Read the host descriptor's version because the host never delivers server config. */
-export function OutdatedServerUpdateAction({
+function PluginOriginalOutdatedServerUpdateAction({
   environmentId,
   serverLabel,
   fromVersion,

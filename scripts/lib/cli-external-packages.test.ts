@@ -30,8 +30,10 @@ type PackageManifest = typeof PackageManifest.Type;
 const decodeManifest = Schema.decodeUnknownSync(Schema.fromJsonString(PackageManifest));
 
 describe("shouldBundleCliDependency", () => {
-  it("leaves native addons and their dlopen wrappers external", () => {
+  it("leaves native addons, wrappers and the plugin compiler external", () => {
     for (const id of [
+      "esbuild",
+      "@esbuild/linux-x64",
       "node-pty",
       "ffi-rs",
       "@yuuang/ffi-rs-win32-x64-msvc",

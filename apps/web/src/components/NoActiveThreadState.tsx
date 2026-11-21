@@ -3,8 +3,14 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { isElectron } from "../env";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
+import { definePluginComponent } from "~/plugins/features";
 
-export function NoActiveThreadState() {
+export const NoActiveThreadState = definePluginComponent(
+  "component:components/NoActiveThreadState/NoActiveThreadState",
+  PluginOriginalNoActiveThreadState,
+);
+
+function PluginOriginalNoActiveThreadState() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">

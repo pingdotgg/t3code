@@ -24,6 +24,9 @@ import type { AppBarMenu, AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { useControlTheme } from "./useControlTheme";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const AppBar = defineNativePluginFeature("native.components.ui.app-bar", BuiltinAppBar);
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -44,7 +47,7 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
   );
 }
 
-export function AppBar(props: AppBarProps) {
+function BuiltinAppBar(props: AppBarProps) {
   const gt = useGT();
   const m = useMessages();
   const locale = useLocale();

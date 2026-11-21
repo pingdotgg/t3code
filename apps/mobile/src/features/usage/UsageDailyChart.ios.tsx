@@ -5,6 +5,12 @@ import type { DailyTotals } from "@t3tools/shared/usageMerge";
 
 import { buildChartDays, type UsageChartMetric } from "./usageChartData";
 import { useProviderColors } from "./usageProviders";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const UsageDailyChart = defineNativePluginFeature(
+  "native.features.usage.usage-daily-chart",
+  BuiltinUsageDailyChart,
+);
 
 export interface UsageDailyChartProps {
   readonly days: readonly string[];
@@ -13,7 +19,7 @@ export interface UsageDailyChartProps {
   readonly height: number;
 }
 
-export function UsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
+function BuiltinUsageDailyChart({ days, daily, metric, height }: UsageDailyChartProps) {
   const colors = useProviderColors();
 
   const data: ChartDataPoint[] = buildChartDays(days, daily, metric).flatMap((day) =>

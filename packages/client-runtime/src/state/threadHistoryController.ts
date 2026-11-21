@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -48,7 +49,7 @@ export class ThreadHistoryController extends Context.Service<
   }
 >()("@t3tools/client-runtime/state/threadHistoryController") {}
 
-export const layer: Layer.Layer<ThreadHistoryController> = Layer.effect(
+export const layer: Layer.Layer<ThreadHistoryController> = builtinServiceLayer("t3.client")(
   ThreadHistoryController,
   Effect.gen(function* () {
     const handlers = yield* Ref.make(new Map<string, ThreadHistoryHandler>());

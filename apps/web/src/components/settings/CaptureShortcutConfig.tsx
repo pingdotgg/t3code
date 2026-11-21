@@ -20,10 +20,16 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { shortcutToKeybindingInput } from "./KeybindingsSettings.logic";
 import { useSnapShotShortcutRecorder } from "./useSnapShotShortcutRecorder";
+import { definePluginComponent } from "~/plugins/features";
+
+export const CaptureShortcutConfig = definePluginComponent(
+  "component:components/settings/CaptureShortcutConfig/CaptureShortcutConfig",
+  PluginOriginalCaptureShortcutConfig,
+);
 
 const DEFAULT_SHORTCUT = parseKeybindingShortcut("Ctrl+Shift+2")!;
 
-export function CaptureShortcutConfig({
+function PluginOriginalCaptureShortcutConfig({
   state,
   disabled = false,
   onBusyChange,

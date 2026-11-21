@@ -36,6 +36,12 @@ import {
 import { IntervalSecondsField } from "./IntervalSecondsField";
 import { PolicyTooltip, SettingResetButton, SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
+import { definePluginComponent } from "~/plugins/features";
+
+const BackgroundActivityAdvancedDialog = definePluginComponent(
+  "component:components/settings/BackgroundActivitySettings/BackgroundActivityAdvancedDialog",
+  PluginOriginalBackgroundActivityAdvancedDialog,
+);
 
 const BACKGROUND_ACTIVITY_PROFILE_LABELS: Record<BackgroundActivityProfile, string> = {
   balanced: msg("Balanced"),
@@ -88,7 +94,7 @@ function backgroundActivityProfileSettings(profile: BackgroundActivityProfile) {
   };
 }
 
-function BackgroundActivityAdvancedDialog({
+function PluginOriginalBackgroundActivityAdvancedDialog({
   open,
   onOpenChange,
 }: {

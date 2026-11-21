@@ -1,6 +1,7 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
 import { useAtomRefresh } from "@effect/atom-react";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
@@ -68,7 +69,12 @@ const VERDICTS = [
   },
 ] as const;
 
-export function PullRequestReviewSheet({
+export const PullRequestReviewSheet = defineNativePluginFeature(
+  "native.features.pull-requests.pull-request-review-sheet",
+  BuiltinPullRequestReviewSheet,
+);
+
+function BuiltinPullRequestReviewSheet({
   route,
 }: StaticScreenProps<PullRequestParams & { readonly mode: "review" | "comment" }>) {
   const params = route.params;

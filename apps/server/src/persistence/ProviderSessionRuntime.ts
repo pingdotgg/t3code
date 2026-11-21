@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Arr from "effect/Array";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -439,4 +439,4 @@ export const make = Effect.gen(function* () {
   } satisfies ProviderSessionRuntimeRepository["Service"];
 });
 
-export const layer = Layer.effect(ProviderSessionRuntimeRepository, make);
+export const layer = builtinServiceLayer("t3.persistence")(ProviderSessionRuntimeRepository, make);

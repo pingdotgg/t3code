@@ -8,8 +8,9 @@ import {
   showAnchoredCopyErrorToast,
 } from "../ui/anchoredCopyToast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export const MessageCopyButton = memo(function MessageCopyButton({
+const PluginOriginalMessageCopyButton = memo(function MessageCopyButton({
   text,
   label: labelProp,
   icon: Icon = CopyIcon,
@@ -59,3 +60,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
     </Tooltip>
   );
 });
+export const MessageCopyButton = definePluginComponent(
+  "component:components/chat/MessageCopyButton/MessageCopyButton",
+  PluginOriginalMessageCopyButton,
+);

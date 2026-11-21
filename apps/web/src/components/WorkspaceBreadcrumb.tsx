@@ -1,6 +1,24 @@
 import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "../lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const WorkspaceBreadcrumb = definePluginComponent(
+  "component:components/WorkspaceBreadcrumb/WorkspaceBreadcrumb",
+  PluginOriginalWorkspaceBreadcrumb,
+);
+export const WorkspaceBreadcrumbText = definePluginComponent(
+  "component:components/WorkspaceBreadcrumb/WorkspaceBreadcrumbText",
+  PluginOriginalWorkspaceBreadcrumbText,
+);
+export const WorkspaceBreadcrumbItem = definePluginComponent(
+  "component:components/WorkspaceBreadcrumb/WorkspaceBreadcrumbItem",
+  PluginOriginalWorkspaceBreadcrumbItem,
+);
+export const WorkspaceBreadcrumbSeparator = definePluginComponent(
+  "component:components/WorkspaceBreadcrumb/WorkspaceBreadcrumbSeparator",
+  PluginOriginalWorkspaceBreadcrumbSeparator,
+);
 
 interface WorkspaceBreadcrumbProps {
   readonly ariaLabel: string;
@@ -8,7 +26,11 @@ interface WorkspaceBreadcrumbProps {
   readonly className?: string;
 }
 
-export function WorkspaceBreadcrumb({ ariaLabel, children, className }: WorkspaceBreadcrumbProps) {
+function PluginOriginalWorkspaceBreadcrumb({
+  ariaLabel,
+  children,
+  className,
+}: WorkspaceBreadcrumbProps) {
   return (
     <nav aria-label={ariaLabel} className={cn("min-w-0", className)}>
       <ol className="m-0 flex min-w-0 list-none items-center gap-2 p-0 text-sm sm:gap-3">
@@ -24,7 +46,11 @@ interface WorkspaceBreadcrumbItemProps {
   readonly current?: boolean;
 }
 
-export function WorkspaceBreadcrumbText({ children, className, ...props }: ComponentProps<"span">) {
+function PluginOriginalWorkspaceBreadcrumbText({
+  children,
+  className,
+  ...props
+}: ComponentProps<"span">) {
   return (
     <span
       data-slot="workspace-breadcrumb-text"
@@ -39,7 +65,7 @@ export function WorkspaceBreadcrumbText({ children, className, ...props }: Compo
   );
 }
 
-export function WorkspaceBreadcrumbItem({
+function PluginOriginalWorkspaceBreadcrumbItem({
   children,
   className,
   current = false,
@@ -58,7 +84,7 @@ export function WorkspaceBreadcrumbItem({
   );
 }
 
-export function WorkspaceBreadcrumbSeparator({
+function PluginOriginalWorkspaceBreadcrumbSeparator({
   className,
   children = "/",
 }: {

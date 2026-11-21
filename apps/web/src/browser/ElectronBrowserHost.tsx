@@ -1,3 +1,4 @@
+import { definePluginFeature } from "~/plugins/features";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
@@ -131,7 +132,7 @@ export function startElectronBrowserHost(): () => void {
   };
 }
 
-export function ElectronBrowserHost() {
+export function BuiltinElectronBrowserHost() {
   const previewByThreadKey = useActivePreviewSessions();
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   useDesktopHostedPreviewSessions(primaryEnvironmentId);
@@ -188,3 +189,8 @@ function useTabProfileId(profileId: string | undefined): string | undefined {
   }
   return profileId ?? fallback;
 }
+
+export const ElectronBrowserHost = definePluginFeature(
+  "preview.native-host",
+  BuiltinElectronBrowserHost,
+);

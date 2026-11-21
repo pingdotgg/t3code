@@ -10,7 +10,6 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -26,6 +25,7 @@ import {
 } from "../linuxSecretStorage.ts";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { isValidDistroName } from "../wsl/wslPathParsing.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export interface DesktopSettings {
   readonly localEnvironmentEnabled: boolean;
@@ -608,10 +608,15 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopAppSettings, make);
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-app-settings",
+  DesktopAppSettings,
+  make,
+);
 
 export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SETTINGS) =>
-  Layer.effect(
+  builtinServiceLayer(
+    "t3.desktop.desktop-app-settings",
     DesktopAppSettings,
     Effect.gen(function* () {
       const settingsRef = yield* SynchronizedRef.make(initialSettings);

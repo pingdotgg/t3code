@@ -3,8 +3,14 @@ import type { ReactNode } from "react";
 
 import { AppText as Text } from "./AppText";
 import { Button } from "./Button";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function EmptyState(props: {
+export const EmptyState = defineNativePluginFeature(
+  "native.components.ui.empty-state",
+  BuiltinEmptyState,
+);
+
+function BuiltinEmptyState(props: {
   readonly title: string;
   readonly detail: string;
   readonly actionLabel?: string;

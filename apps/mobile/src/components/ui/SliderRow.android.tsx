@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { Slider } from "@expo/ui/jetpack-compose";
 import { fillMaxWidth } from "@expo/ui/jetpack-compose/modifiers";
 import * as Haptics from "expo-haptics";
@@ -10,7 +11,7 @@ import { NativeThemeHost } from "./NativeThemeHost.android";
 import { useControlTheme } from "./useControlTheme";
 import type { SliderRowProps } from "./SliderRow.types";
 
-export function SliderRow(props: SliderRowProps) {
+function BuiltinSliderRow(props: SliderRowProps) {
   const { colors } = useControlTheme();
   // The value of the drag in progress; null between drags.
   const draft = useRef<number | null>(null);
@@ -77,3 +78,8 @@ export function SliderRow(props: SliderRowProps) {
     </View>
   );
 }
+
+export const SliderRow = defineNativePluginFeature(
+  "native.components.ui.slider-row",
+  BuiltinSliderRow,
+);

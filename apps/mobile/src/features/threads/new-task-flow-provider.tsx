@@ -115,6 +115,12 @@ import {
   type WorktreeRepositorySelection,
 } from "@t3tools/client-runtime/state/thread-repositories";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const NewTaskFlowProvider = defineNativePluginFeature(
+  "native.features.threads.new-task-flow-provider",
+  BuiltinNewTaskFlowProvider,
+);
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -235,7 +241,7 @@ type NewTaskFlowContextValue = {
 
 const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(null);
 
-export function NewTaskFlowProvider(
+function BuiltinNewTaskFlowProvider(
   props: React.PropsWithChildren<{
     active?: boolean;
     /** Identifies the draft route this flow serves; a new key starts a fresh flow. */

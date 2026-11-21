@@ -6,6 +6,12 @@ import { isValidHistoryTimestamp, type BrowserHistoryEntry } from "~/browserHist
 import { RelativeTime } from "~/components/RelativeTime";
 
 import { PreviewFaviconIcon } from "./PreviewFaviconIcon";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PreviewRecentUrlCard = definePluginComponent(
+  "component:components/preview/PreviewRecentUrlCard/PreviewRecentUrlCard",
+  PluginOriginalPreviewRecentUrlCard,
+);
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -14,7 +20,7 @@ interface Props {
   onRemove: () => void;
 }
 
-export function PreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Props) {
+function PluginOriginalPreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Props) {
   const gt = useGT();
   const parsed = new URL(entry.url);
   const path = parsed.pathname === "/" ? "" : parsed.pathname;

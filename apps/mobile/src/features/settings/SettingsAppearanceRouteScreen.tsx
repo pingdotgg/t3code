@@ -1,6 +1,7 @@
 import { useGT } from "gt-react-native";
 import { Platform } from "react-native";
 import { AndroidNavigationAppearanceSection } from "./appearance/sections/AndroidNavigationAppearanceSection";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -11,7 +12,7 @@ import { TextAppearanceSection } from "./appearance/sections/TextAppearanceSecti
 import { ThemeAppearanceSection } from "./appearance/sections/ThemeAppearanceSection";
 import { ToolCallsAppearanceSection } from "./appearance/sections/ToolCallsAppearanceSection";
 
-export function SettingsAppearanceRouteScreen() {
+function BuiltinSettingsAppearanceRouteScreen() {
   const gt = useGT();
   const insets = useSafeAreaInsets();
 
@@ -36,3 +37,8 @@ export function SettingsAppearanceRouteScreen() {
     </SettingsScreen>
   );
 }
+
+export const SettingsAppearanceRouteScreen = defineNativePluginFeature(
+  "settings.appearance",
+  BuiltinSettingsAppearanceRouteScreen,
+);

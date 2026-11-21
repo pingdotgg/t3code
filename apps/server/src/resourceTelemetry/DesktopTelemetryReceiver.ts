@@ -1,3 +1,4 @@
+import { builtinServiceLayer, builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -753,7 +754,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   });
 });
 
-export const layer = Layer.effect(DesktopTelemetryReceiver, make());
+export const layer = builtinServiceLayer("t3.server")(DesktopTelemetryReceiver, make());
 
 export const layerTest = (
   overrides: Partial<DesktopTelemetryReceiver["Service"]> = {},
@@ -767,7 +768,7 @@ export const layerTest = (
       lastSampleAt: Option.none<DateTime.Utc>(),
       lastError: Option.some("Desktop telemetry test implementation is unavailable."),
     });
-  return Layer.succeed(
+  return builtinSucceedLayer("t3.server")(
     DesktopTelemetryReceiver,
     DesktopTelemetryReceiver.of({
       latest,

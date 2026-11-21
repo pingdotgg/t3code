@@ -21,6 +21,16 @@ import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const SubagentMetadata = defineNativePluginFeature(
+  "native.features.threads.subagent-row.subagent-metadata",
+  BuiltinSubagentMetadata,
+);
+export const SubagentRow = defineNativePluginFeature(
+  "native.features.threads.subagent-row",
+  BuiltinSubagentRow,
+);
 
 type SubagentRowSubagent = Pick<
   OrchestrationV2Subagent,
@@ -38,7 +48,7 @@ type SubagentRowSubagent = Pick<
   | "remoteChild"
 >;
 
-export function SubagentRow(props: {
+function BuiltinSubagentRow(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: SubagentRowSubagent;
   readonly elapsed: ReactNode;
@@ -111,7 +121,7 @@ export function SubagentRow(props: {
   );
 }
 
-function SubagentMetadata(props: {
+function BuiltinSubagentMetadata(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: SubagentRowSubagent;
 }) {

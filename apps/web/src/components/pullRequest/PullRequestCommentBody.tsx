@@ -5,8 +5,14 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { observeResize } from "~/lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestCommentBody({
+export const PullRequestCommentBody = definePluginComponent(
+  "component:components/pullRequest/PullRequestCommentBody/PullRequestCommentBody",
+  PluginOriginalPullRequestCommentBody,
+);
+
+function PluginOriginalPullRequestCommentBody({
   className,
   ...props
 }: ComponentProps<typeof PullRequestMarkdown>) {

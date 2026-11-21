@@ -12,6 +12,12 @@ import { publishSubscriptionUsage } from "./publishSubscriptionUsage";
 import { buildSubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
 import { createWidgetTheme } from "./widgetTheme";
 import type { MessageResolver } from "../i18n/messages";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const SubscriptionUsageCoordinator = defineNativePluginFeature(
+  "native.widgets.subscription-usage-coordinator",
+  BuiltinSubscriptionUsageCoordinator,
+);
 
 // Isolate quota changes from the much busier thread/config presentation stream.
 // One atom per UI language, so a language switch republishes the widget's copy.
@@ -37,7 +43,7 @@ function snapshotAtom(locale: string, resolve: MessageResolver) {
   return atom;
 }
 
-export function SubscriptionUsageCoordinator() {
+function BuiltinSubscriptionUsageCoordinator() {
   const {
     themeMode,
     themeAppearance,

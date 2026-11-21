@@ -1,18 +1,36 @@
-import {
-  createContext,
-  use,
-  useId,
-  useLayoutEffect,
-  useRef,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { use, useId, useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
 
-const GroupedRows = createContext(false);
+export const WorkLogBlock = definePluginComponent(
+  "component:components/chat/WorkLog/WorkLogBlock",
+  PluginOriginalWorkLogBlock,
+);
+export const WorkLogList = definePluginComponent(
+  "component:components/chat/WorkLog/WorkLogList",
+  PluginOriginalWorkLogList,
+);
+const WorkLogLine = definePluginComponent(
+  "component:components/chat/WorkLog/WorkLogLine",
+  PluginOriginalWorkLogLine,
+);
+export const WorkLogButton = definePluginComponent(
+  "component:components/chat/WorkLog/WorkLogButton",
+  PluginOriginalWorkLogButton,
+);
+export const WorkLogRow = definePluginComponent(
+  "component:components/chat/WorkLog/WorkLogRow",
+  PluginOriginalWorkLogRow,
+);
+export const WorkLogDetails = definePluginComponent(
+  "component:components/chat/WorkLog/WorkLogDetails",
+  PluginOriginalWorkLogDetails,
+);
+
+const GroupedRows = createPluginContext("components/chat/WorkLog/GroupedRows", false);
 
 /** Groups may span virtualized timeline items. Each part owns its trailing space. */
-export function WorkLogBlock({
+function PluginOriginalWorkLogBlock({
   layout = "standalone",
   continues = false,
   children,
@@ -36,7 +54,7 @@ export function WorkLogBlock({
   );
 }
 
-export function WorkLogList({ children }: { children: ReactNode }) {
+function PluginOriginalWorkLogList({ children }: { children: ReactNode }) {
   return (
     <GroupedRows value>
       <div className="flex min-w-0 flex-col">{children}</div>
@@ -56,7 +74,13 @@ const focusRingClassName =
 
 type LineProps = Omit<ComponentProps<"div">, "className" | "style" | "children">;
 
-function WorkLogLine({ icon, label, trailing, wrapLabel, ...lineProps }: RowContent & LineProps) {
+function PluginOriginalWorkLogLine({
+  icon,
+  label,
+  trailing,
+  wrapLabel,
+  ...lineProps
+}: RowContent & LineProps) {
   return (
     <div
       {...lineProps}
@@ -98,7 +122,7 @@ function useRowClassName(interactive: boolean, focusable = interactive) {
   );
 }
 
-export function WorkLogButton({
+function PluginOriginalWorkLogButton({
   icon,
   label,
   trailing,
@@ -121,7 +145,7 @@ type RowProps = Omit<ComponentProps<"div">, "className" | "style"> & {
  * Div disclosure permits selectable detail and nested actions. `toggle` goes on
  * the header line only: assistive tech hides a button's children.
  */
-export function WorkLogRow({
+function PluginOriginalWorkLogRow({
   icon,
   label,
   trailing,
@@ -149,7 +173,7 @@ export function WorkLogRow({
 
 const LIVE_EDGE_PX = 4;
 
-export function WorkLogDetails({
+function PluginOriginalWorkLogDetails({
   children,
   kind = "text",
   followLive = false,

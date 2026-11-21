@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import type { RuntimeSubagent } from "@t3tools/client-runtime/state/subagentRuntime";
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
@@ -47,7 +48,7 @@ function formatCompactElapsedSeconds(totalSeconds: number, resolve: MessageResol
   );
 }
 
-export function AgentElapsed({
+function PluginOriginalAgentElapsed({
   agent,
   compact = false,
 }: {
@@ -71,3 +72,8 @@ export function AgentElapsed({
     />
   );
 }
+
+export const AgentElapsed = definePluginComponent(
+  "component:components/chat/AgentElapsed/AgentElapsed",
+  PluginOriginalAgentElapsed,
+);

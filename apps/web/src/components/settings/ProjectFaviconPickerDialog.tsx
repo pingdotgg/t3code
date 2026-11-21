@@ -22,6 +22,12 @@ import { useProjectFilePickerQuery } from "../files/projectFilesQueryState";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "../ui/command";
 import { toastManager } from "../ui/toast";
 import { ProjectFaviconThumbnail } from "./ProjectFaviconThumbnail";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ProjectFaviconPickerDialog = definePluginComponent(
+  "component:components/settings/ProjectFaviconPickerDialog/ProjectFaviconPickerDialog",
+  PluginOriginalProjectFaviconPickerDialog,
+);
 
 function emptyMessage(
   query: string,
@@ -42,7 +48,7 @@ export function canPickExternalProjectFavicon(cwd: string, platform: string): bo
   return !isWindowsPlatform(platform) || isWindowsAbsolutePath(cwd);
 }
 
-export function ProjectFaviconPickerDialog(props: {
+function PluginOriginalProjectFaviconPickerDialog(props: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly onOpenChange: (open: boolean) => void;

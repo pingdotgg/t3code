@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
+import { builtinServiceLayer, isBuiltinDisabledCause } from "./plugins/PluginKernel.ts";
 import {
   CheckpointScopeId,
   GitCommandError,
@@ -25,7 +26,6 @@ import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
-import * as Layer from "effect/Layer";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -2082,19 +2082,27 @@ const make = Effect.gen(function* () {
   });
 
   const start = Effect.fn("StorageCleanup.start")(function* () {
-    const unsubscribe = yield* terminals.subscribeMetadata((event) =>
-      Effect.sync(() => {
-        if (event.type === "snapshot") {
-          liveTerminals.clear();
-          for (const terminal of event.terminals) noteTerminal(terminal);
-        } else if (event.type === "upsert") {
-          noteTerminal(event.terminal);
-        } else {
-          const threadTerminals = liveTerminals.get(event.threadId);
-          threadTerminals?.delete(event.terminalId);
-          if (threadTerminals?.size === 0) liveTerminals.delete(event.threadId);
-        }
-      }),
+    // With t3.terminal disabled no terminal is live, so nothing needs to be kept.
+    const unsubscribe = yield* Effect.suspend(() =>
+      terminals.subscribeMetadata((event) =>
+        Effect.sync(() => {
+          if (event.type === "snapshot") {
+            liveTerminals.clear();
+            for (const terminal of event.terminals) noteTerminal(terminal);
+          } else if (event.type === "upsert") {
+            noteTerminal(event.terminal);
+          } else {
+            const threadTerminals = liveTerminals.get(event.threadId);
+            threadTerminals?.delete(event.terminalId);
+            if (threadTerminals?.size === 0) liveTerminals.delete(event.threadId);
+          }
+        }),
+      ),
+    ).pipe(
+      Effect.catchCauseIf(
+        (cause) => isBuiltinDisabledCause(cause, "t3.terminal"),
+        () => Effect.succeed(() => undefined),
+      ),
     );
     yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
     const changes = yield* settingsService.subscribeChanges;
@@ -2159,4 +2167,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(StorageCleanup, make);
+export const layer = builtinServiceLayer("t3.thread")(StorageCleanup, make);

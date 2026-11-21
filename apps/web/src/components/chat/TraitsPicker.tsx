@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
@@ -108,7 +109,12 @@ type TraitsPersistence =
       onModelOptionsChange: (nextOptions: ProviderOptions | undefined) => void;
     };
 
-function DefaultBadge() {
+const DefaultBadge = definePluginComponent(
+  "component:components/chat/TraitsPicker/DefaultBadge",
+  PluginOriginalDefaultBadge,
+);
+
+function PluginOriginalDefaultBadge() {
   return (
     <Badge variant="outline" size="sm" className="min-w-0">
       <T context="the default option in a list">Default</T>
@@ -388,7 +394,9 @@ export const ULTRATHINK_IN_BODY_NOTE = msg(
   'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
 );
 
-const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelectionInput) {
+const PluginOriginalTraitsMenuContent = memo(function TraitsMenuContentImpl(
+  props: TraitsSelectionInput,
+) {
   const traits = useTraitsSelection(props);
   const resolve = useMessages();
   const {
@@ -501,8 +509,12 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
     </>
   );
 });
+const TraitsMenuContent = definePluginComponent(
+  "component:components/chat/TraitsPicker/TraitsMenuContent",
+  PluginOriginalTraitsMenuContent,
+);
 
-export const TraitsPicker = memo(function TraitsPicker({
+const PluginOriginalTraitsPicker = memo(function TraitsPicker({
   size = "sm",
   hidden = false,
   disabled = false,
@@ -587,3 +599,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     </Menu>
   );
 });
+export const TraitsPicker = definePluginComponent(
+  "component:components/chat/TraitsPicker/TraitsPicker",
+  PluginOriginalTraitsPicker,
+);

@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "../../plugins/PluginKernel.ts";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type AntigravityAuthMethod,
@@ -144,7 +145,10 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       transformSessionUpdate: normalizeAntigravitySessionUpdate,
     }).pipe(
       Layer.provide(
-        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+        builtinSucceedLayer("t3.providers")(
+          ChildProcessSpawner.ChildProcessSpawner,
+          input.childProcessSpawner,
+        ),
       ),
     ),
   );

@@ -6,6 +6,16 @@ import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
+import { definePluginComponent } from "~/plugins/features";
+
+const HighlightedTokens = definePluginComponent(
+  "component:components/search/HighlightedSearchLine/HighlightedTokens",
+  PluginOriginalHighlightedTokens,
+);
+const SyntaxHighlightedTokens = definePluginComponent(
+  "component:components/search/HighlightedSearchLine/SyntaxHighlightedTokens",
+  PluginOriginalSyntaxHighlightedTokens,
+);
 
 interface Range {
   readonly start: number;
@@ -101,7 +111,7 @@ function tokenStyle(token: CodeToken): CSSProperties {
   };
 }
 
-function HighlightedTokens(props: {
+function PluginOriginalHighlightedTokens(props: {
   readonly line: string;
   readonly ranges: ReadonlyArray<Range>;
   readonly tokens: ReadonlyArray<CodeToken>;
@@ -139,7 +149,7 @@ function firstLineTokens(
   }
 }
 
-function SyntaxHighlightedTokens(props: {
+function PluginOriginalSyntaxHighlightedTokens(props: {
   readonly line: string;
   readonly language: string;
   readonly ranges: ReadonlyArray<Range>;
@@ -159,7 +169,7 @@ function SyntaxHighlightedTokens(props: {
   );
 }
 
-export const HighlightedSearchLine = memo(function HighlightedSearchLine(props: {
+const PluginOriginalHighlightedSearchLine = memo(function HighlightedSearchLine(props: {
   readonly match: ProjectContentMatch;
   readonly path: string;
   readonly theme: "light" | "dark";
@@ -186,3 +196,7 @@ export const HighlightedSearchLine = memo(function HighlightedSearchLine(props: 
     </RenderErrorBoundary>
   );
 });
+export const HighlightedSearchLine = definePluginComponent(
+  "component:components/search/HighlightedSearchLine/HighlightedSearchLine",
+  PluginOriginalHighlightedSearchLine,
+);

@@ -17,6 +17,12 @@ import {
 import { textDirection } from "~/textDirection";
 
 import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DiffCommentAnnotation = definePluginComponent(
+  "component:components/diffs/DiffCommentAnnotation/DiffCommentAnnotation",
+  PluginOriginalDiffCommentAnnotation,
+);
 
 interface DiffCommentSecondaryAction {
   readonly label: string;
@@ -46,7 +52,7 @@ interface DiffCommentAnnotationProps {
   completionScope?: PullRequestCompletionScope | null;
 }
 
-export function DiffCommentAnnotation({
+function PluginOriginalDiffCommentAnnotation({
   environmentId,
   projectId,
   ownerKey,

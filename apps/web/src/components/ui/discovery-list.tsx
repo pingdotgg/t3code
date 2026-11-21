@@ -1,6 +1,16 @@
 import type { ComponentProps, ReactNode } from "react";
+import { definePluginComponent } from "~/plugins/features";
 
-export function DiscoveryList({ children }: { readonly children: ReactNode }) {
+export const DiscoveryList = definePluginComponent(
+  "component:components/ui/discovery-list/DiscoveryList",
+  PluginOriginalDiscoveryList,
+);
+export const DiscoveryListRow = definePluginComponent(
+  "component:components/ui/discovery-list/DiscoveryListRow",
+  PluginOriginalDiscoveryListRow,
+);
+
+function PluginOriginalDiscoveryList({ children }: { readonly children: ReactNode }) {
   return (
     <div className="flex flex-col divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-background">
       {children}
@@ -8,7 +18,7 @@ export function DiscoveryList({ children }: { readonly children: ReactNode }) {
   );
 }
 
-export function DiscoveryListRow({
+function PluginOriginalDiscoveryListRow({
   icon,
   title,
   description,

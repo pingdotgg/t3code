@@ -12,8 +12,14 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { definePluginComponent } from "~/plugins/features";
 
-export function NotificationSettings() {
+export const NotificationSettings = definePluginComponent(
+  "component:components/settings/NotificationSettings/NotificationSettings",
+  PluginOriginalNotificationSettings,
+);
+
+function PluginOriginalNotificationSettings() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const m = useMessages();

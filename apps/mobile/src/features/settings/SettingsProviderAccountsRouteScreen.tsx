@@ -1,5 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { T, useGT, Var } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   isAtomCommandInterrupted,
@@ -39,7 +40,7 @@ import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
 import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
-export function SettingsProviderAccountsRouteScreen() {
+function BuiltinSettingsProviderAccountsRouteScreen() {
   const gt = useGT();
   const environmentMenu = useSettingsEnvironmentMenu();
   const { selectedTargets } = useSettingsEnvironmentFilter();
@@ -142,7 +143,7 @@ function canManageProvider(provider: ServerProvider) {
   );
 }
 
-function ProviderAccount({
+function BuiltinProviderAccount({
   environment,
   provider,
   divider,
@@ -541,7 +542,7 @@ function ProviderAccount({
   );
 }
 
-function ProviderAccountSummary({
+function BuiltinProviderAccountSummary({
   name,
   status,
   email,
@@ -585,3 +586,18 @@ function ProviderAccountSummary({
     </Pressable>
   );
 }
+
+const ProviderAccount = defineNativePluginFeature(
+  "native.features.settings.settings-provider-accounts-route-screen.provider-account",
+  BuiltinProviderAccount,
+);
+
+const ProviderAccountSummary = defineNativePluginFeature(
+  "native.features.settings.settings-provider-accounts-route-screen.provider-account-summary",
+  BuiltinProviderAccountSummary,
+);
+
+export const SettingsProviderAccountsRouteScreen = defineNativePluginFeature(
+  "settings.providers",
+  BuiltinSettingsProviderAccountsRouteScreen,
+);

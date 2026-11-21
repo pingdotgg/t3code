@@ -13,8 +13,13 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const ThreadFileNavigatorPane = defineNativePluginFeature(
+  "native.features.files.thread-file-navigator-pane",
+  BuiltinThreadFileNavigatorPane,
+);
 
-export function ThreadFileNavigatorPane(props: {
+function BuiltinThreadFileNavigatorPane(props: {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
   readonly projectName: string;

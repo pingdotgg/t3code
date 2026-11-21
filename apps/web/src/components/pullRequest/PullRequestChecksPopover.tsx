@@ -27,9 +27,23 @@ import {
   pullRequestChecksStatePresentation,
   summarizePullRequestChecks,
 } from "./pullRequestPresentation";
+import { definePluginComponent } from "~/plugins/features";
+
+const LazyChecksBody = definePluginComponent(
+  "component:components/pullRequest/PullRequestChecksPopover/LazyChecksBody",
+  PluginOriginalLazyChecksBody,
+);
+const ChecksBody = definePluginComponent(
+  "component:components/pullRequest/PullRequestChecksPopover/ChecksBody",
+  PluginOriginalChecksBody,
+);
+export const PullRequestChecksPopover = definePluginComponent(
+  "component:components/pullRequest/PullRequestChecksPopover/PullRequestChecksPopover",
+  PluginOriginalPullRequestChecksPopover,
+);
 
 // Fetch only on open to avoid per-row requests.
-function LazyChecksBody({
+function PluginOriginalLazyChecksBody({
   environmentId,
   reference,
   threadRef,
@@ -56,7 +70,7 @@ function LazyChecksBody({
   return <ChecksBody checks={detailQuery.data.checks} threadRef={threadRef} />;
 }
 
-function ChecksBody({
+function PluginOriginalChecksBody({
   checks,
   threadRef,
 }: {
@@ -140,7 +154,7 @@ function ChecksBody({
   );
 }
 
-export function PullRequestChecksPopover({
+function PluginOriginalPullRequestChecksPopover({
   checksState,
   checks,
   stale = false,

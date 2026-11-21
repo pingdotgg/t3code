@@ -1,3 +1,8 @@
+import {
+  definePluginComponent,
+  definePluginFeature,
+  createPluginContext,
+} from "~/plugins/features";
 import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -304,7 +309,7 @@ const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   slack: MessageSquareIcon,
 } satisfies Record<CodexArtifactTemplateKind, LucideIcon>;
 
-function CodexArtifactTemplateCard(props: {
+function PluginOriginalCodexArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
@@ -1066,9 +1071,9 @@ function useChatMarkdownState({
   };
 }
 
-const ChatMarkdownRendererContext = React.createContext<
+const ChatMarkdownRendererContext = createPluginContext<
   ReturnType<typeof useChatMarkdownState>["componentState"]
->(null!);
+>("components/ChatMarkdown/ChatMarkdownRendererContext", null!);
 
 // Isolate streamed source text from the renderer context; only offset-based renderers need it.
 const ChatMarkdownTextContext = React.createContext("");
@@ -1853,6 +1858,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
+const PLUGIN_CHAT_MARKDOWN_COMPONENTS = Object.fromEntries(
+  Object.entries(CHAT_MARKDOWN_COMPONENTS).map(([name, renderer]) => [
+    name,
+    definePluginComponent(`markdown.element.${name}`, renderer),
+  ]),
+) as typeof CHAT_MARKDOWN_COMPONENTS;
+
 const REMARK_MATH: Pluggable = [remarkMath, { singleDollarTextMath: true }];
 // Shared lists, so every message with the same options shares a processor and its cache.
 const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
@@ -1889,7 +1901,7 @@ function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: Pluggable
     renderer = createMarkdownRenderer({
       remarkPlugins,
       rehypePlugins,
-      components: CHAT_MARKDOWN_COMPONENTS,
+      components: PLUGIN_CHAT_MARKDOWN_COMPONENTS,
       urlTransform: markdownUrlTransform,
     });
     byRehype.set(rehypePlugins, renderer);
@@ -1918,7 +1930,7 @@ const MarkdownSource = memo(function MarkdownSource({
     : createMarkdownRenderer({
         remarkPlugins,
         rehypePlugins,
-        components: CHAT_MARKDOWN_COMPONENTS,
+        components: PLUGIN_CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });
   const element = render(text);
@@ -2019,4 +2031,11 @@ function ChatMarkdown({
   );
 }
 
-export default memo(ChatMarkdown);
+export const BuiltinChatMarkdown = memo(ChatMarkdown);
+
+export default definePluginFeature("markdown", BuiltinChatMarkdown);
+
+const CodexArtifactTemplateCard = definePluginComponent(
+  "component:components/ChatMarkdown/CodexArtifactTemplateCard",
+  PluginOriginalCodexArtifactTemplateCard,
+);

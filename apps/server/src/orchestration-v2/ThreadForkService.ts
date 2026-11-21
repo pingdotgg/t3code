@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import {
   ContextTransferId,
   OrchestrationV2Actor,
@@ -71,7 +72,7 @@ export class ThreadForkServiceV2 extends Context.Service<
   ThreadForkServiceV2Shape
 >()("t3/orchestration-v2/ThreadForkService/ThreadForkServiceV2") {}
 
-export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
+export const layer: Layer.Layer<ThreadForkServiceV2> = builtinSucceedLayer("t3.thread")(
   ThreadForkServiceV2,
   ThreadForkServiceV2.of({
     plan: Effect.fn("ThreadForkService.plan")(function* (input) {

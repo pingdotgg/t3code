@@ -1,3 +1,4 @@
+import { builtinSucceedLayer, builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   ModelCapabilities,
   TrimmedNonEmptyString,
@@ -204,7 +205,7 @@ const BundledOnlyModelManifest: ModelManifest["Service"] = {
   refreshInBackground: Effect.void,
 };
 
-const layerBundledOnly = Layer.succeed(ModelManifest, BundledOnlyModelManifest);
+const layerBundledOnly = builtinSucceedLayer("t3.server")(ModelManifest, BundledOnlyModelManifest);
 
 export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -288,13 +289,13 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ModelManifest, make);
+export const layer = builtinServiceLayer("t3.server")(ModelManifest, make);
 
 export const layerTest = Layer.suspend(() =>
   layerModelCatalog.pipe(Layer.provideMerge(layerBundledOnly)),
 );
 
-export const layerModelCatalog = Layer.effect(
+export const layerModelCatalog = builtinServiceLayer("t3.server")(
   ModelCatalog.ModelCatalog,
   Effect.gen(function* () {
     const manifest = yield* ModelManifest;

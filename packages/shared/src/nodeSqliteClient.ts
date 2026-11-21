@@ -27,6 +27,8 @@ import type { Borrower, Connection } from "effect/sql/SqlConnection";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 
+import { builtinServiceLayer } from "./pluginKernel.ts";
+
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
 export interface SqliteClientConfig {
@@ -1144,4 +1146,6 @@ const make = Effect.fn("makeWithDatabase")(function* (
 });
 
 export const layer = (config: SqliteClientConfig): Layer.Layer<Client.SqlClient, SqlError> =>
-  Layer.effect(Client.SqlClient, make(config)).pipe(Layer.provide(Reactivity.layer));
+  builtinServiceLayer("t3.persistence")(Client.SqlClient, make(config)).pipe(
+    Layer.provide(Reactivity.layer),
+  );

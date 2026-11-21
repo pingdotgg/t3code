@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import * as Application from "expo-application";
@@ -80,7 +81,7 @@ function appIdentity() {
   };
 }
 
-export function SettingsDiagnosticsRouteScreen() {
+function BuiltinSettingsDiagnosticsRouteScreen() {
   const insets = useSafeAreaInsets();
   const state = useCrashLogState();
   const gt = useGT();
@@ -205,7 +206,7 @@ function CrashReportsSetting() {
   );
 }
 
-function EmptyState(props: {
+function BuiltinEmptyState(props: {
   readonly icon: "exclamationmark.triangle" | "checkmark.circle";
   readonly title: string;
   readonly detail: string;
@@ -225,7 +226,7 @@ function EmptyState(props: {
   );
 }
 
-function CrashRow(props: { readonly record: StartupCrashRecord; readonly first: boolean }) {
+function BuiltinCrashRow(props: { readonly record: StartupCrashRecord; readonly first: boolean }) {
   const { record } = props;
   return (
     <View className={props.first ? "gap-1.5 p-4" : "gap-1.5 border-t border-border-subtle p-4"}>
@@ -243,3 +244,18 @@ function CrashRow(props: { readonly record: StartupCrashRecord; readonly first: 
     </View>
   );
 }
+
+const EmptyState = defineNativePluginFeature(
+  "native.features.diagnostics.settings-diagnostics-route-screen.empty-state",
+  BuiltinEmptyState,
+);
+
+const CrashRow = defineNativePluginFeature(
+  "native.features.diagnostics.settings-diagnostics-route-screen.crash-row",
+  BuiltinCrashRow,
+);
+
+export const SettingsDiagnosticsRouteScreen = defineNativePluginFeature(
+  "native.features.diagnostics.settings-diagnostics-route-screen",
+  BuiltinSettingsDiagnosticsRouteScreen,
+);

@@ -27,6 +27,72 @@ import {
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
 import { announceSidebarVisibility } from "~/lib/accessibilityAnnouncements";
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
+
+const SidebarProvider = definePluginComponent(
+  "component:components/ui/sidebar/SidebarProvider",
+  PluginOriginalSidebarProvider,
+);
+const Sidebar = definePluginComponent(
+  "component:components/ui/sidebar/Sidebar",
+  PluginOriginalSidebar,
+);
+const SidebarTrigger = definePluginComponent(
+  "component:components/ui/sidebar/SidebarTrigger",
+  PluginOriginalSidebarTrigger,
+);
+const SidebarRail = definePluginComponent(
+  "component:components/ui/sidebar/SidebarRail",
+  PluginOriginalSidebarRail,
+);
+const SidebarInput = definePluginComponent(
+  "component:components/ui/sidebar/SidebarInput",
+  PluginOriginalSidebarInput,
+);
+const SidebarInset = definePluginComponent(
+  "component:components/ui/sidebar/SidebarInset",
+  PluginOriginalSidebarInset,
+);
+const SidebarHeader = definePluginComponent(
+  "component:components/ui/sidebar/SidebarHeader",
+  PluginOriginalSidebarHeader,
+);
+const SidebarFooter = definePluginComponent(
+  "component:components/ui/sidebar/SidebarFooter",
+  PluginOriginalSidebarFooter,
+);
+const SidebarContent = definePluginComponent(
+  "component:components/ui/sidebar/SidebarContent",
+  PluginOriginalSidebarContent,
+);
+const SidebarGroup = definePluginComponent(
+  "component:components/ui/sidebar/SidebarGroup",
+  PluginOriginalSidebarGroup,
+);
+const SidebarMenu = definePluginComponent(
+  "component:components/ui/sidebar/SidebarMenu",
+  PluginOriginalSidebarMenu,
+);
+const SidebarMenuItem = definePluginComponent(
+  "component:components/ui/sidebar/SidebarMenuItem",
+  PluginOriginalSidebarMenuItem,
+);
+const SidebarMenuButton = definePluginComponent(
+  "component:components/ui/sidebar/SidebarMenuButton",
+  PluginOriginalSidebarMenuButton,
+);
+const SidebarMenuSub = definePluginComponent(
+  "component:components/ui/sidebar/SidebarMenuSub",
+  PluginOriginalSidebarMenuSub,
+);
+const SidebarMenuSubItem = definePluginComponent(
+  "component:components/ui/sidebar/SidebarMenuSubItem",
+  PluginOriginalSidebarMenuSubItem,
+);
+const SidebarMenuSubButton = definePluginComponent(
+  "component:components/ui/sidebar/SidebarMenuSubButton",
+  PluginOriginalSidebarMenuSubButton,
+);
 
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing) * 3)";
@@ -83,8 +149,14 @@ type SidebarInstanceContextProps = {
   side: "left" | "right";
 };
 
-const SidebarContext = React.createContext<SidebarContextProps | null>(null);
-const SidebarInstanceContext = React.createContext<SidebarInstanceContextProps | null>(null);
+const SidebarContext = createPluginContext<SidebarContextProps | null>(
+  "components/ui/sidebar/SidebarContext",
+  null,
+);
+const SidebarInstanceContext = createPluginContext<SidebarInstanceContextProps | null>(
+  "components/ui/sidebar/SidebarInstanceContext",
+  null,
+);
 
 function useSidebar() {
   const context = React.use(SidebarContext);
@@ -187,7 +259,7 @@ function createSidebarOpenStore(defaultOpen: boolean, storageKey: string | undef
   };
 }
 
-function SidebarProvider({
+function PluginOriginalSidebarProvider({
   defaultOpen = true,
   storageKey,
   className,
@@ -279,7 +351,7 @@ function resolveSidebarResizable({
   };
 }
 
-function Sidebar({
+function PluginOriginalSidebar({
   side = "left",
   variant = "sidebar",
   collapsible = "offcanvas",
@@ -426,7 +498,11 @@ function Sidebar({
   );
 }
 
-function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+function PluginOriginalSidebarTrigger({
+  className,
+  onClick,
+  ...props
+}: React.ComponentProps<typeof Button>) {
   const { toggleSidebar } = useSidebar();
   const isOpen = useSidebarVisibility();
 
@@ -459,7 +535,7 @@ function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptio
   return Math.max(options.minWidth, Math.min(width, options.maxWidth));
 }
 
-function SidebarRail({
+function PluginOriginalSidebarRail({
   className,
   onClick,
   onPointerCancel,
@@ -630,7 +706,10 @@ function SidebarRail({
   );
 }
 
-function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
+function PluginOriginalSidebarInput({
+  className,
+  ...props
+}: Omit<InputProps, "unstyled" | "variant">) {
   return (
     <Input
       className={cn(
@@ -643,7 +722,7 @@ function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "va
   );
 }
 
-function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
+function PluginOriginalSidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   return (
     <main
       className={cn(
@@ -657,7 +736,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
   );
 }
 
-function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalSidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn("flex flex-col gap-2 p-2", className)}
@@ -668,7 +747,7 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalSidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
@@ -682,7 +761,7 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function SidebarContent({
+function PluginOriginalSidebarContent({
   className,
   fixedHeader,
   ...props
@@ -716,7 +795,7 @@ function SidebarContent({
   );
 }
 
-function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalSidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
@@ -730,7 +809,7 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
+function PluginOriginalSidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
       className={cn("flex w-full min-w-0 flex-col gap-1", className)}
@@ -741,7 +820,7 @@ function SidebarMenu({ className, ...props }: React.ComponentProps<"ul">) {
   );
 }
 
-function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
+function PluginOriginalSidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
   return (
     <li
       className={cn("group/menu-item relative", className)}
@@ -775,7 +854,7 @@ const sidebarMenuButtonVariants = cva(
   },
 );
 
-function SidebarMenuButton({
+function PluginOriginalSidebarMenuButton({
   isActive = false,
   variant = "default",
   size = "default",
@@ -828,7 +907,7 @@ function SidebarMenuButton({
   );
 }
 
-function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
+function PluginOriginalSidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
       className={cn(
@@ -843,7 +922,7 @@ function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
   );
 }
 
-function SidebarMenuSubItem({ className, ...props }: React.ComponentProps<"li">) {
+function PluginOriginalSidebarMenuSubItem({ className, ...props }: React.ComponentProps<"li">) {
   return (
     <li
       className={cn("group/menu-sub-item relative", className)}
@@ -854,7 +933,7 @@ function SidebarMenuSubItem({ className, ...props }: React.ComponentProps<"li">)
   );
 }
 
-function SidebarMenuSubButton({
+function PluginOriginalSidebarMenuSubButton({
   size = "md",
   isActive = false,
   className,

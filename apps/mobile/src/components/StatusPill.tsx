@@ -2,6 +2,11 @@ import { View } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
 import { cn } from "../lib/cn";
+import { defineNativePluginFeature } from "../plugins/features";
+export const StatusPill = defineNativePluginFeature(
+  "native.components.status-pill",
+  BuiltinStatusPill,
+);
 
 export interface StatusTone {
   readonly label: string;
@@ -9,7 +14,7 @@ export interface StatusTone {
   readonly textClassName: string;
 }
 
-export function StatusPill(
+function BuiltinStatusPill(
   props: StatusTone & {
     readonly size?: "default" | "compact";
   },

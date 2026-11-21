@@ -1,4 +1,5 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as NodeURL from "node:url";
 
 import type { ChatAttachment, ModelSelection, ProviderApprovalDecision } from "@t3tools/contracts";
@@ -904,6 +905,6 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   } satisfies OpenCodeRuntime["Service"];
 });
 
-export const layer = Layer.effect(OpenCodeRuntime, makeOpenCodeRuntime).pipe(
+export const layer = builtinServiceLayer("t3.providers")(OpenCodeRuntime, makeOpenCodeRuntime).pipe(
   Layer.provide(NetService.layer),
 );

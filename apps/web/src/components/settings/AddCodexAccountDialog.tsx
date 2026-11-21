@@ -21,10 +21,16 @@ import { Input } from "../ui/input";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 import { MultipleAccountsNote } from "./MultipleAccountsNote";
 import { SettingsRow } from "./settingsLayout";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AddCodexAccountDialog = definePluginComponent(
+  "component:components/settings/AddCodexAccountDialog/AddCodexAccountDialog",
+  PluginOriginalAddCodexAccountDialog,
+);
 
 const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 
-export function AddCodexAccountDialog({
+function PluginOriginalAddCodexAccountDialog({
   environmentId,
   onClose,
   renderSetup,

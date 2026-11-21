@@ -6,8 +6,13 @@ import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { useNativePaste } from "../lib/useNativePaste";
 import type { ComposerEditorProps } from "./T3ComposerEditor.types";
+import { defineNativePluginFeature } from "../plugins/features";
+export const ComposerEditor = defineNativePluginFeature(
+  "native.native.t3-composer-editor.composer-editor",
+  BuiltinComposerEditor,
+);
 
-export function ComposerEditor({
+function BuiltinComposerEditor({
   ref,
   skills: _skills,
   selection,

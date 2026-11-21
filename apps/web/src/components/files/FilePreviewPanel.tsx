@@ -142,6 +142,44 @@ import {
   setProjectFileQueryData,
   useProjectFileQuery,
 } from "./projectFilesQueryState";
+import { definePluginComponent, definePluginFeature } from "~/plugins/features";
+
+const WorkspaceImagePreview = definePluginComponent(
+  "component:components/files/FilePreviewPanel/WorkspaceImagePreview",
+  PluginOriginalWorkspaceImagePreview,
+);
+export const WorkspaceBrowserPreview = definePluginComponent(
+  "component:components/files/FilePreviewPanel/WorkspaceBrowserPreview",
+  PluginOriginalWorkspaceBrowserPreview,
+);
+const WorkspaceVideoPreview = definePluginComponent(
+  "component:components/files/FilePreviewPanel/WorkspaceVideoPreview",
+  PluginOriginalWorkspaceVideoPreview,
+);
+const WorkspaceAudioPreview = definePluginComponent(
+  "component:components/files/FilePreviewPanel/WorkspaceAudioPreview",
+  PluginOriginalWorkspaceAudioPreview,
+);
+const EditableFileSurface = definePluginComponent(
+  "component:components/files/FilePreviewPanel/EditableFileSurface",
+  PluginOriginalEditableFileSurface,
+);
+const RenderedMarkdownSurface = definePluginComponent(
+  "component:components/files/FilePreviewPanel/RenderedMarkdownSurface",
+  PluginOriginalRenderedMarkdownSurface,
+);
+const WorkspacePdfSaveAction = definePluginComponent(
+  "component:components/files/FilePreviewPanel/WorkspacePdfSaveAction",
+  PluginOriginalWorkspacePdfSaveAction,
+);
+const WorkspaceDocumentPreview = definePluginComponent(
+  "component:components/files/FilePreviewPanel/WorkspaceDocumentPreview",
+  PluginOriginalWorkspaceDocumentPreview,
+);
+export const WorkspaceLargeTextPreview = definePluginComponent(
+  "component:components/files/FilePreviewPanel/WorkspaceLargeTextPreview",
+  PluginOriginalWorkspaceLargeTextPreview,
+);
 
 const NO_FILE_REVISION_ATOM = Atom.make(null);
 
@@ -182,7 +220,7 @@ type FilePostRender = <LAnnotation>(
   phase: PostRenderPhase,
 ) => void;
 
-function WorkspaceImagePreview(props: {
+function PluginOriginalWorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -265,7 +303,7 @@ const htmlPreviewFrame = (
   ),
 });
 
-export function WorkspaceBrowserPreview(props: {
+function PluginOriginalWorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -361,7 +399,7 @@ export function WorkspaceBrowserPreview(props: {
   );
 }
 
-function WorkspacePdfSaveAction(props: {
+function PluginOriginalWorkspacePdfSaveAction(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: AssetResource;
   readonly name: string;
@@ -403,7 +441,7 @@ function WorkspacePdfSaveAction(props: {
   );
 }
 
-function WorkspaceVideoPreview(props: {
+function PluginOriginalWorkspaceVideoPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -460,7 +498,7 @@ function WorkspaceVideoPreview(props: {
   );
 }
 
-function WorkspaceAudioPreview(props: {
+function PluginOriginalWorkspaceAudioPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -513,7 +551,7 @@ function WorkspaceAudioPreview(props: {
   );
 }
 
-function WorkspaceDocumentPreview(props: {
+function PluginOriginalWorkspaceDocumentPreview(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
@@ -897,7 +935,7 @@ interface FileSelectionOverride {
   range: SelectedLineRange | null;
 }
 
-function EditableFileSurface({
+function PluginOriginalEditableFileSurface({
   environmentId,
   projectId,
   cwd,
@@ -1192,7 +1230,7 @@ function selectRenderedContentOnSelectAll(event: ReactKeyboardEvent<HTMLElement>
   window.getSelection()?.selectAllChildren(event.currentTarget);
 }
 
-function RenderedMarkdownSurface({
+function PluginOriginalRenderedMarkdownSurface({
   environmentId,
   cwd,
   relativePath,
@@ -1266,7 +1304,7 @@ function initialExplorerOpen(): boolean {
   }
 }
 
-export default function FilePreviewPanel({
+export function BuiltinFilePreviewPanel({
   environmentId,
   cwd,
   projectName,
@@ -1954,7 +1992,7 @@ export default function FilePreviewPanel({
 }
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
-export function WorkspaceLargeTextPreview(props: {
+function PluginOriginalWorkspaceLargeTextPreview(props: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   absolutePath: string;
@@ -2087,3 +2125,4 @@ export function WorkspaceLargeTextPreview(props: {
     </>
   );
 }
+export default definePluginFeature("file-preview", BuiltinFilePreviewPanel);

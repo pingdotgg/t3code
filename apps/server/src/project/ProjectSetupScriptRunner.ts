@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { linkOriginIsFenced, ProjectId, type ProjectScript, ThreadId } from "@t3tools/contracts";
 import {
   projectScriptRuntimeEnv,
@@ -12,7 +13,6 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -629,4 +629,4 @@ export const make = Effect.gen(function* () {
   return ProjectSetupScriptRunner.of({ runForThread });
 });
 
-export const layer = Layer.effect(ProjectSetupScriptRunner, make);
+export const layer = builtinServiceLayer("t3.projects")(ProjectSetupScriptRunner, make);

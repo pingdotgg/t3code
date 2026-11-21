@@ -1,3 +1,4 @@
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
 import { useNativeFileDrag } from "../useNativeFileDrag";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { useAtomValue } from "@effect/atom-react";
@@ -42,7 +43,6 @@ import {
   encodeComposerContextClipboardHtml,
 } from "@t3tools/shared/composerContextClipboard";
 import {
-  createContext,
   use,
   useEffect,
   useEffectEvent,
@@ -231,19 +231,22 @@ type OpenCitationComment = {
   removeOnCancel?: CitationInsertedSpaces;
 };
 
-const ComposerCitationCommentContext = createContext<{
+const ComposerCitationCommentContext = createPluginContext<{
   openComment: OpenCitationComment | null;
   onOpenChange: (citeKey: string, open: boolean) => void;
   onDraftChange: (citeKey: string, comment: string) => void;
   onSubmitAndSend: () => boolean;
-}>({
+}>("components/ComposerPromptEditorTiptap/ComposerCitationCommentContext", {
   openComment: null,
   onOpenChange: () => {},
   onDraftChange: () => {},
   onSubmitAndSend: () => false,
 });
 
-const RichComposerSkillsContext = createContext<ReadonlyArray<ServerProviderSkill>>([]);
+const RichComposerSkillsContext = createPluginContext<ReadonlyArray<ServerProviderSkill>>(
+  "components/ComposerPromptEditorTiptap/RichComposerSkillsContext",
+  [],
+);
 
 const SURROUND_CLOSE: Record<string, string> = {
   "(": ")",
@@ -289,7 +292,7 @@ const ComposerMentionExtension = Node.create({
   },
 });
 
-function ComposerMentionNodeView({ node }: NodeViewProps) {
+function PluginOriginalComposerMentionNodeView({ node }: NodeViewProps) {
   const gt = useGT();
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
@@ -412,7 +415,7 @@ function composerSkillMeta(
   };
 }
 
-function ComposerSkillNodeView({ node }: NodeViewProps) {
+function PluginOriginalComposerSkillNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const skills = use(RichComposerSkillsContext);
   const skillName = (node.attrs.skillName as string) ?? "";
@@ -461,7 +464,7 @@ const ComposerCitationExtension = Node.create({
   },
 });
 
-function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
+function PluginOriginalComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
   const commentContext = use(ComposerCitationCommentContext);
   const citation = node.attrs.citation as AssistantCitation;
   const citeKey = node.attrs.citeKey as string;
@@ -598,7 +601,7 @@ const ComposerContextReferenceExtension = Node.create({
   },
 });
 
-function ComposerContextReferenceNodeView({ node }: NodeViewProps) {
+function PluginOriginalComposerContextReferenceNodeView({ node }: NodeViewProps) {
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ComposerContextReferenceChip
@@ -787,7 +790,7 @@ function replaceSkillChips(
   editor.view.dispatch(transaction);
 }
 
-export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
+function PluginOriginalComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   const restoreFocusRef = useRef(false);
   const { onChange: onPromptChange } = props;
   const [selection, setSelection] = useState<{
@@ -946,7 +949,7 @@ function createComposerExtensions(richText: boolean) {
 const RICH_TEXT_EXTENSIONS = createComposerExtensions(true);
 const PLAIN_TEXT_EXTENSIONS = createComposerExtensions(false);
 
-function ComposerPromptEditorTiptapInner(
+function PluginOriginalComposerPromptEditorTiptapInner(
   props: ComposerPromptEditorProps & {
     initialExpandedCursor: number;
     restoreFocusRef: RefObject<boolean>;
@@ -1641,7 +1644,7 @@ function ComposerPromptEditorTiptapInner(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the controlled value and cursor into the Tiptap document before paint
   useLayoutEffect(() => {
     latestValueRef.current = value;
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampEditorCursor(value, cursor);
@@ -1755,7 +1758,7 @@ function ComposerPromptEditorTiptapInner(
   }, [editor, restoreFocusRef]);
 
   const focusAt = (nextCursor: number, exactExpandedCursor?: number) => {
-    if (!editor) return;
+    if (!editor || editor.isDestroyed) return;
     // view.focus() writes selection immediately; bare DOM focus waits 20ms and can misplace fast dictation.
     editor.view.focus();
     if (snapshotRef.current.value !== latestValueRef.current) return;
@@ -2066,3 +2069,28 @@ function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {
   const containerRect = container.getBoundingClientRect();
   return containerRect.height > 0 ? containerRect : null;
 }
+
+const ComposerMentionNodeView = definePluginComponent(
+  "component:components/ComposerPromptEditorTiptap/ComposerMentionNodeView",
+  PluginOriginalComposerMentionNodeView,
+);
+const ComposerSkillNodeView = definePluginComponent(
+  "component:components/ComposerPromptEditorTiptap/ComposerSkillNodeView",
+  PluginOriginalComposerSkillNodeView,
+);
+const ComposerCitationNodeView = definePluginComponent(
+  "component:components/ComposerPromptEditorTiptap/ComposerCitationNodeView",
+  PluginOriginalComposerCitationNodeView,
+);
+const ComposerContextReferenceNodeView = definePluginComponent(
+  "component:components/ComposerPromptEditorTiptap/ComposerContextReferenceNodeView",
+  PluginOriginalComposerContextReferenceNodeView,
+);
+export const ComposerPromptEditorTiptap = definePluginComponent(
+  "component:components/ComposerPromptEditorTiptap/ComposerPromptEditorTiptap",
+  PluginOriginalComposerPromptEditorTiptap,
+);
+const ComposerPromptEditorTiptapInner = definePluginComponent(
+  "component:components/ComposerPromptEditorTiptap/ComposerPromptEditorTiptapInner",
+  PluginOriginalComposerPromptEditorTiptapInner,
+);

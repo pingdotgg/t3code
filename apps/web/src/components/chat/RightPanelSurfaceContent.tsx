@@ -14,6 +14,8 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
 import { LinkedThreadPane } from "./LinkedThreadPane";
 import SideThreadPane from "./SideThreadPane";
+import { definePluginComponent } from "~/plugins/features";
+import { PluginPanel } from "~/plugins/panels";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -29,14 +31,31 @@ import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { ThreadPullRequestsPanel } from "../pullRequest/ThreadPullRequestsPanel";
 
-const PreviewPanel = lazy(() =>
+const PluginOriginalPreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
-const DiffPanel = lazy(() => import("../DiffPanel"));
-const DevicePanel = lazy(() =>
+const PluginOriginalDiffPanel = lazy(() => import("../DiffPanel"));
+const PluginOriginalDevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
-const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const PluginOriginalFilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+
+const PreviewPanel = definePluginComponent(
+  "component:components/chat/RightPanelSurfaceContent/PreviewPanel",
+  PluginOriginalPreviewPanel,
+);
+const DiffPanel = definePluginComponent(
+  "component:components/chat/RightPanelSurfaceContent/DiffPanel",
+  PluginOriginalDiffPanel,
+);
+const DevicePanel = definePluginComponent(
+  "component:components/chat/RightPanelSurfaceContent/DevicePanel",
+  PluginOriginalDevicePanel,
+);
+const FilePreviewPanel = definePluginComponent(
+  "component:components/chat/RightPanelSurfaceContent/FilePreviewPanel",
+  PluginOriginalFilePreviewPanel,
+);
 
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -63,10 +82,11 @@ interface RightPanelFileProps {
   readonly onPendingChange: (relativePath: string, pending: boolean) => void;
 }
 
-export function RightPanelSurfaceContent(props: {
+function PluginOriginalRightPanelSurfaceContent(props: {
   readonly surface: RightPanelSurface | null;
   readonly activeSurfaceId: string | null;
   readonly threadRef: ScopedThreadRef;
+  readonly projectId: ProjectId | null;
   readonly environmentId: EnvironmentId;
   readonly visible: boolean;
   readonly composerDraftTarget: ScopedThreadRef | DraftId;
@@ -89,6 +109,8 @@ export function RightPanelSurfaceContent(props: {
   const gt = useGT();
   if (surface === null) return null;
   switch (surface.kind) {
+    case "plugin":
+      return <PluginPanel surface={surface} threadRef={threadRef} />;
     case "preview":
       return (
         <Suspense fallback={null}>
@@ -233,6 +255,18 @@ export function RightPanelSurfaceContent(props: {
           visible={visible && props.activeSurfaceId === surface.id}
         />
       );
+    case "canvas":
+      return (
+        <Suspense fallback={null}>
+          <PluginPanel
+            mode="embedded"
+            visible={visible}
+            threadRef={threadRef}
+            projectId={props.projectId}
+            surface={surface}
+          />
+        </Suspense>
+      );
     case "device":
       return (
         <Suspense fallback={null}>
@@ -289,3 +323,8 @@ export function RightPanelSurfaceContent(props: {
     }
   }
 }
+
+export const RightPanelSurfaceContent = definePluginComponent(
+  "component:components/chat/RightPanelSurfaceContent/RightPanelSurfaceContent",
+  PluginOriginalRightPanelSurfaceContent,
+);

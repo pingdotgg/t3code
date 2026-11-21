@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useAtomValue } from "@effect/atom-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -70,7 +71,12 @@ function taskScheduleLine(
   );
 }
 
-export function ThreadAutomationsPanel(props: {
+export const ThreadAutomationsPanel = definePluginComponent(
+  "component:components/chat/ThreadAutomationsPanel/ThreadAutomationsPanel",
+  PluginOriginalThreadAutomationsPanel,
+);
+
+function PluginOriginalThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {

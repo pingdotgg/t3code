@@ -19,6 +19,12 @@ import {
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
 import type { MessageResolver } from "../i18n/messages";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ConfirmDialogHost = definePluginComponent(
+  "component:components/ConfirmDialogHost/ConfirmDialogHost",
+  PluginOriginalConfirmDialogHost,
+);
 
 type ConfirmationCopy = {
   readonly title: string;
@@ -56,7 +62,7 @@ function resolveConfirmDialogCopy(message: string, resolve: MessageResolver): Co
   };
 }
 
-export function ConfirmDialogHost() {
+function PluginOriginalConfirmDialogHost() {
   const m = useMessages();
   const state = useSyncExternalStore(
     subscribeConfirmDialogHost,

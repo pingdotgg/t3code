@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   type AuthEnvironmentScope,
   type AuthSessionId,
@@ -14,7 +15,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -154,7 +154,10 @@ const makeIssuer = Effect.gen(function* () {
   return PeerClientPairingIssuer.of({ issue });
 });
 
-export const layerIssuer = Layer.effect(PeerClientPairingIssuer, makeIssuer);
+export const layerIssuer = builtinServiceLayer("t3.connections")(
+  PeerClientPairingIssuer,
+  makeIssuer,
+);
 
 const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
@@ -264,4 +267,4 @@ const make = Effect.gen(function* () {
   return PeerClientPairing.of({ request, requestForLink });
 });
 
-export const layer = Layer.effect(PeerClientPairing, make);
+export const layer = builtinServiceLayer("t3.connections")(PeerClientPairing, make);

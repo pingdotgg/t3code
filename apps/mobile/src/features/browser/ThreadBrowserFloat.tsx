@@ -1,4 +1,5 @@
 import { useIsFocused } from "@react-navigation/native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import type { EnvironmentId, PreviewSessionSnapshot, ThreadId } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
 import * as Option from "effect/Option";
@@ -18,7 +19,12 @@ const PLAYER_LONG_SIDE = 184;
 const PLAYER_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
 const PLAYER_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
-export function ThreadBrowserFloat(props: {
+export const ThreadBrowserFloat = defineNativePluginFeature(
+  "native.features.browser.thread-browser-float",
+  BuiltinThreadBrowserFloat,
+);
+
+function BuiltinThreadBrowserFloat(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly tabs: ReadonlyArray<PreviewSessionSnapshot>;

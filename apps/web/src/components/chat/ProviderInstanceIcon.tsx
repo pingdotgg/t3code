@@ -25,6 +25,7 @@ import {
   officialAcpRegistryIconUrlForAgentId,
   resolveOfficialAcpRegistryIconUrl,
 } from "../settings/AcpRegistryIcon";
+import { definePluginComponent } from "~/plugins/features";
 
 const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
@@ -86,7 +87,7 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
   );
 }
 
-export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
+const PluginOriginalProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
   accentColor?: string | undefined;
@@ -192,3 +193,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     </span>
   );
 });
+export const ProviderInstanceIcon = definePluginComponent(
+  "component:components/chat/ProviderInstanceIcon/ProviderInstanceIcon",
+  PluginOriginalProviderInstanceIcon,
+);

@@ -10,13 +10,21 @@ import {
 import { MOBILE_TEXT_CLASSES } from "../../lib/typography";
 
 import { cn } from "../../lib/cn";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+export const AppText = defineNativePluginFeature("native.components.ui.app-text", BuiltinAppText);
+
+export const AppTextInput = defineNativePluginFeature(
+  "native.components.ui.app-text.app-text-input",
+  BuiltinAppTextInput,
+);
 
 export type AppTextProps = RNTextProps & {
   readonly className?: string;
   readonly textRole?: keyof typeof MOBILE_TEXT_CLASSES;
 };
 
-export function AppText({ className, textRole, ...props }: AppTextProps) {
+function BuiltinAppText({ className, textRole, ...props }: AppTextProps) {
   return (
     <RNText
       className={cn(
@@ -35,7 +43,7 @@ export type AppTextInputProps = Omit<RNTextInputProps, "placeholderTextColor"> &
   readonly ref?: React.Ref<TextInputInstance>;
 };
 
-export function AppTextInput({ className, ref, ...props }: AppTextInputProps) {
+function BuiltinAppTextInput({ className, ref, ...props }: AppTextInputProps) {
   return (
     <RNTextInput
       ref={ref}

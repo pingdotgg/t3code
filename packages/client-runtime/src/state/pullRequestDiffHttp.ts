@@ -1,5 +1,6 @@
 import { msg } from "gt-i18n";
 import { type MarkedText, markedTextEnglish } from "../errors/translatable.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   EnvironmentAuthInvalidError,
   type PullRequestDiffInput,
@@ -88,27 +89,28 @@ export class PullRequestDiffLoader extends Context.Service<
   }
 >()("@t3tools/client-runtime/state/pullRequestDiffHttp/PullRequestDiffLoader") {}
 
-export const layer: Layer.Layer<PullRequestDiffLoader, never, HttpClient.HttpClient> = Layer.effect(
-  PullRequestDiffLoader,
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
-    const remoteAuthorization = yield* Effect.serviceOption(
-      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-    );
-    // The HTTP fetch owns the load span.
-    return PullRequestDiffLoader.of({
-      load: Effect.fnUntraced(
-        function* (prepared, input) {
-          return yield* fetchEnvironmentPullRequestDiff({
-            prepared,
-            diff: input,
-            signer,
-            remoteAuthorization,
-          });
-        },
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-      ),
-    });
-  }),
-);
+export const layer: Layer.Layer<PullRequestDiffLoader, never, HttpClient.HttpClient> =
+  builtinServiceLayer("t3.client")(
+    PullRequestDiffLoader,
+    Effect.gen(function* () {
+      const httpClient = yield* HttpClient.HttpClient;
+      const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+      const remoteAuthorization = yield* Effect.serviceOption(
+        RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+      );
+      // The HTTP fetch owns the load span.
+      return PullRequestDiffLoader.of({
+        load: Effect.fnUntraced(
+          function* (prepared, input) {
+            return yield* fetchEnvironmentPullRequestDiff({
+              prepared,
+              diff: input,
+              signer,
+              remoteAuthorization,
+            });
+          },
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+        ),
+      });
+    }),
+  );

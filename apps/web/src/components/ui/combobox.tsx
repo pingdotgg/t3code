@@ -5,16 +5,62 @@ import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { definePluginComponent, createPluginContext } from "~/plugins/features";
 
-const ComboboxContext = React.createContext<{
+const Combobox = definePluginComponent(
+  "component:components/ui/combobox/Combobox",
+  PluginOriginalCombobox,
+);
+const ComboboxInput = definePluginComponent(
+  "component:components/ui/combobox/ComboboxInput",
+  PluginOriginalComboboxInput,
+);
+const ComboboxSearchInput = definePluginComponent(
+  "component:components/ui/combobox/ComboboxSearchInput",
+  PluginOriginalComboboxSearchInput,
+);
+const ComboboxTrigger = definePluginComponent(
+  "component:components/ui/combobox/ComboboxTrigger",
+  PluginOriginalComboboxTrigger,
+);
+const ComboboxPopup = definePluginComponent(
+  "component:components/ui/combobox/ComboboxPopup",
+  PluginOriginalComboboxPopup,
+);
+const ComboboxItem = definePluginComponent(
+  "component:components/ui/combobox/ComboboxItem",
+  PluginOriginalComboboxItem,
+);
+const ComboboxEmpty = definePluginComponent(
+  "component:components/ui/combobox/ComboboxEmpty",
+  PluginOriginalComboboxEmpty,
+);
+const ComboboxList = definePluginComponent(
+  "component:components/ui/combobox/ComboboxList",
+  PluginOriginalComboboxList,
+);
+const ComboboxListVirtualized = definePluginComponent(
+  "component:components/ui/combobox/ComboboxListVirtualized",
+  PluginOriginalComboboxListVirtualized,
+);
+const ComboboxClear = definePluginComponent(
+  "component:components/ui/combobox/ComboboxClear",
+  PluginOriginalComboboxClear,
+);
+const ComboboxStatus = definePluginComponent(
+  "component:components/ui/combobox/ComboboxStatus",
+  PluginOriginalComboboxStatus,
+);
+
+const ComboboxContext = createPluginContext<{
   chipsRef: React.RefObject<Element | null> | null;
   multiple: boolean;
-}>({
+}>("components/ui/combobox/ComboboxContext", {
   chipsRef: null,
   multiple: false,
 });
 
-function Combobox<Value, Multiple extends boolean | undefined = false>(
+function PluginOriginalCombobox<Value, Multiple extends boolean | undefined = false>(
   props: ComboboxPrimitive.Root.Props<Value, Multiple>,
 ) {
   const chipsRef = React.useRef<Element | null>(null);
@@ -26,7 +72,7 @@ function Combobox<Value, Multiple extends boolean | undefined = false>(
   );
 }
 
-function ComboboxInput({
+function PluginOriginalComboboxInput({
   className,
   showTrigger = true,
   showClear = false,
@@ -104,7 +150,7 @@ function ComboboxInput({
   );
 }
 
-function ComboboxSearchInput(props: React.ComponentProps<typeof ComboboxInput>) {
+function PluginOriginalComboboxSearchInput(props: React.ComponentProps<typeof ComboboxInput>) {
   return (
     <label className="block min-w-0 shrink-0 cursor-text px-3 pt-2.5">
       <div className="relative -translate-y-px border-b border-border/70 pb-1.5 transition-colors focus-within:border-ring">
@@ -124,7 +170,11 @@ function ComboboxSearchInput(props: React.ComponentProps<typeof ComboboxInput>) 
   );
 }
 
-function ComboboxTrigger({ className, children, ...props }: ComboboxPrimitive.Trigger.Props) {
+function PluginOriginalComboboxTrigger({
+  className,
+  children,
+  ...props
+}: ComboboxPrimitive.Trigger.Props) {
   return (
     <ComboboxPrimitive.Trigger className={className} data-slot="combobox-trigger" {...props}>
       {children}
@@ -132,7 +182,7 @@ function ComboboxTrigger({ className, children, ...props }: ComboboxPrimitive.Tr
   );
 }
 
-function ComboboxPopup({
+function PluginOriginalComboboxPopup({
   className,
   children,
   side = "bottom",
@@ -185,7 +235,7 @@ function ComboboxPopup({
   );
 }
 
-function ComboboxItem({
+function PluginOriginalComboboxItem({
   className,
   children,
   hideIndicator: _hideIndicator = false,
@@ -216,7 +266,7 @@ function ComboboxItem({
   );
 }
 
-function ComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
+function PluginOriginalComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
   return (
     <ComboboxPrimitive.Empty
       className={cn(
@@ -229,7 +279,7 @@ function ComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
   );
 }
 
-function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
+function PluginOriginalComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
   return (
     <ScrollArea scrollbarGutter scrollFade>
       <ComboboxPrimitive.List
@@ -242,7 +292,10 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
 }
 
 /** Omits ScrollArea when an external virtualizer owns scrolling. */
-function ComboboxListVirtualized({ className, ...props }: ComboboxPrimitive.List.Props) {
+function PluginOriginalComboboxListVirtualized({
+  className,
+  ...props
+}: ComboboxPrimitive.List.Props) {
   return (
     <ComboboxPrimitive.List
       className={cn("size-full min-w-0 not-empty:px-1 not-empty:py-1", className)}
@@ -252,11 +305,11 @@ function ComboboxListVirtualized({ className, ...props }: ComboboxPrimitive.List
   );
 }
 
-function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
+function PluginOriginalComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
   return <ComboboxPrimitive.Clear className={className} data-slot="combobox-clear" {...props} />;
 }
 
-function ComboboxStatus({ className, ...props }: ComboboxPrimitive.Status.Props) {
+function PluginOriginalComboboxStatus({ className, ...props }: ComboboxPrimitive.Status.Props) {
   return (
     <ComboboxPrimitive.Status
       className={cn(

@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
@@ -373,4 +373,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ServerSecretStore, make);
+export const layer = builtinServiceLayer("t3.auth")(ServerSecretStore, make);

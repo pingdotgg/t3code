@@ -72,6 +72,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
+import * as DesktopPluginRuntime from "../plugins/DesktopPluginRuntime.ts";
 import * as LoopbackTunnel from "../preview/LoopbackTunnel.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as AppleSpeech from "../speech/AppleSpeech.ts";
@@ -199,6 +200,9 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         Effect.provideService(DesktopRendererHistory.DesktopRendererHistory, {
           shutdown: stub.flushRendererHistory ?? Effect.void,
         } as DesktopRendererHistory.DesktopRendererHistory["Service"]),
+        Effect.provideService(DesktopPluginRuntime.DesktopPluginRuntime, {
+          start: Effect.void,
+        } as unknown as DesktopPluginRuntime.DesktopPluginRuntime["Service"]),
       );
     return yield* runApp.pipe(
       Effect.provide(

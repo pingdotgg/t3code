@@ -18,6 +18,7 @@ import {
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import {
   resolveNativeTerminalSurfaceView,
@@ -84,7 +85,7 @@ function estimateGridSize(input: {
   };
 }
 
-const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
+const BuiltinFallbackTerminalSurface = memo(function FallbackTerminalSurface({
   ref,
   ...props
 }: ReadyTerminalSurfaceProps) {
@@ -204,7 +205,12 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
   );
 });
 
-export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
+const FallbackTerminalSurface = defineNativePluginFeature(
+  "native.features.terminal.native-terminal-surface.fallback-terminal-surface",
+  BuiltinFallbackTerminalSurface,
+);
+
+const BuiltinTerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
   // The text fallback draws escape sequences literally, so it gets displayed text, not the replay.
   const buffer = useTerminalSurfaceBuffer(
     resolveNativeTerminalSurfaceView() || props.output === null
@@ -213,6 +219,11 @@ export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurf
   );
   return <ReadyTerminalSurface key={props.terminalKey} {...props} buffer={buffer} />;
 });
+
+export const TerminalSurface = defineNativePluginFeature(
+  "native.features.terminal.native-terminal-surface.terminal-surface",
+  BuiltinTerminalSurface,
+);
 
 const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
   ref,

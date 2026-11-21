@@ -25,6 +25,16 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { definePluginComponent } from "~/plugins/features";
+
+export const LinkPullRequestDialogHost = definePluginComponent(
+  "component:components/pullRequest/LinkPullRequestDialog/LinkPullRequestDialogHost",
+  PluginOriginalLinkPullRequestDialogHost,
+);
+const LinkPullRequestDialog = definePluginComponent(
+  "component:components/pullRequest/LinkPullRequestDialog/LinkPullRequestDialog",
+  PluginOriginalLinkPullRequestDialog,
+);
 
 // Host in chat to survive command palette dismissal.
 const linkPullRequestDialogThreadAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
@@ -43,7 +53,7 @@ interface LinkPullRequestDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export function LinkPullRequestDialogHost() {
+function PluginOriginalLinkPullRequestDialogHost() {
   const threadRef = useAtomValue(linkPullRequestDialogThreadAtom);
   const thread = useThreadShell(threadRef);
   const linking = usePullRequestLinking(threadRef?.environmentId);
@@ -60,7 +70,7 @@ export function LinkPullRequestDialogHost() {
   );
 }
 
-function LinkPullRequestDialog({
+function PluginOriginalLinkPullRequestDialog({
   open,
   threadRef,
   projectId,

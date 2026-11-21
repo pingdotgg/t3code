@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type {
   ResourceTelemetryProcessCategory,
   ServerProcessResourceHistoryInput,
@@ -5,7 +6,6 @@ import type {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ResourceTelemetry from "../resourceTelemetry/ResourceTelemetry.ts";
@@ -85,4 +85,4 @@ export const make = Effect.fn("makeProcessResourceMonitor")(function* () {
   return ProcessResourceMonitor.of({ readHistory });
 });
 
-export const layer = Layer.effect(ProcessResourceMonitor, make());
+export const layer = builtinServiceLayer("t3.server")(ProcessResourceMonitor, make());

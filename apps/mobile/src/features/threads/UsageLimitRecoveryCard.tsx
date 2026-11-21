@@ -21,8 +21,13 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { useDeadlinePassed } from "../../lib/clock";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const UsageLimitRecoveryCard = defineNativePluginFeature(
+  "native.features.threads.usage-limit-recovery-card",
+  BuiltinUsageLimitRecoveryCard,
+);
 
-export function UsageLimitRecoveryCard({
+function BuiltinUsageLimitRecoveryCard({
   thread,
   environmentId,
 }: {

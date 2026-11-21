@@ -1,3 +1,5 @@
+import { definePluginComponent, definePluginFeature, PluginSlot } from "~/plugins/features";
+import { PluginNavigation } from "~/plugins/contributions";
 import { useAtomValue } from "@effect/atom-react";
 import { useGT } from "gt-react";
 import * as Schema from "effect/Schema";
@@ -314,7 +316,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
   };
 }
 
-function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
+function PluginOriginalSidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   const gt = useGT();
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
@@ -417,7 +419,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   );
 }
 
-export function AppSidebarLayout({
+export function BuiltinAppSidebarLayout({
   children,
   showSidebar = true,
 }: {
@@ -495,11 +497,15 @@ export function AppSidebarLayout({
               style={windowControlsInsetStyle}
             >
               <ThreadSidebar routeReveal={sidebarRouteReveal} />
+              <PluginNavigation location="sidebar" />
               <SidebarRail onDoubleClick={resetSidebarWidth} />
             </Sidebar>
           </>
         ) : null}
-        {children}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <PluginSlot slot="app.banner" props={{}} />
+          {children}
+        </div>
         <BackgroundThreadAnnouncer />
         <SidebarControl showSidebar={showSidebar} />
         {isElectron ? <HistorySwipeNavigation /> : null}
@@ -507,3 +513,9 @@ export function AppSidebarLayout({
     </PanelAnimationSuppressionProvider>
   );
 }
+
+const SidebarControl = definePluginComponent(
+  "component:components/AppSidebarLayout/SidebarControl",
+  PluginOriginalSidebarControl,
+);
+export const AppSidebarLayout = definePluginFeature("app-layout", BuiltinAppSidebarLayout);

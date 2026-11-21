@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   OrchestrationV2GetTurnItemResult,
   OrchestrationV2ThreadHistoryPage,
@@ -15,7 +16,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -272,4 +272,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(PeerThreadRelay, make);
+export const layer = builtinServiceLayer("t3.connections")(PeerThreadRelay, make);

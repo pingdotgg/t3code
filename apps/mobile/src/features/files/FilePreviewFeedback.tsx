@@ -3,8 +3,17 @@ import { View } from "react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
+import { defineNativePluginFeature } from "../../plugins/features";
+export const FilePreviewLoading = defineNativePluginFeature(
+  "native.features.files.file-preview-feedback.file-preview-loading",
+  BuiltinFilePreviewLoading,
+);
+export const FilePreviewNotice = defineNativePluginFeature(
+  "native.features.files.file-preview-feedback.file-preview-notice",
+  BuiltinFilePreviewNotice,
+);
 
-export function FilePreviewLoading(props: {
+function BuiltinFilePreviewLoading(props: {
   readonly message: string;
   readonly background?: "sheet" | "card";
 }) {
@@ -21,7 +30,7 @@ export function FilePreviewLoading(props: {
   );
 }
 
-export function FilePreviewNotice(props: { readonly title?: string; readonly children: string }) {
+function BuiltinFilePreviewNotice(props: { readonly title?: string; readonly children: string }) {
   return (
     <View className="border-b border-warning-border bg-warning px-4 py-2">
       {props.title ? (

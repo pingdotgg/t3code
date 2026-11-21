@@ -20,8 +20,14 @@ import {
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { definePluginComponent } from "~/plugins/features";
 
-export function AssistantSelectionToolbar({
+export const AssistantSelectionToolbar = definePluginComponent(
+  "component:components/chat/AssistantSelectionToolbar/AssistantSelectionToolbar",
+  PluginOriginalAssistantSelectionToolbar,
+);
+
+function PluginOriginalAssistantSelectionToolbar({
   viewport,
   threadRef,
   onCite,

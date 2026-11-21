@@ -1,3 +1,4 @@
+import { builtinServiceLayer, builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import {
   ProviderInstanceId,
   ProviderSetupError,
@@ -7,6 +8,7 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
@@ -42,6 +44,7 @@ export const ProviderAdapterRegistryV2Error = Schema.Union([
 export type ProviderAdapterRegistryV2Error = typeof ProviderAdapterRegistryV2Error.Type;
 
 export interface ProviderAdapterRegistryV2Shape {
+  readonly subscribeChanges?: Effect.Effect<PubSub.Subscription<void>, never, Scope.Scope>;
   readonly get: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2["Service"], ProviderAdapterRegistryV2Error>;
@@ -66,12 +69,13 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
   ProviderAdapterRegistryV2,
   never,
   ProviderInstanceRegistry.ProviderInstanceRegistry | ModelManifest.ModelManifest
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   ProviderAdapterRegistryV2,
   Effect.gen(function* () {
     const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifest = yield* ModelManifest.ModelManifest;
     return ProviderAdapterRegistryV2.of({
+      subscribeChanges: instances.subscribeChanges,
       get: Effect.fn("ProviderAdapterRegistryV2.get")(function (instanceId) {
         return instances.getInstance(instanceId).pipe(
           Effect.flatMap((instance) => {
@@ -196,7 +200,7 @@ function makeRegistry(
 export function layerFromAdapters(
   adapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>,
 ): Layer.Layer<ProviderAdapterRegistryV2> {
-  return Layer.succeed(
+  return builtinSucceedLayer("t3.thread")(
     ProviderAdapterRegistryV2,
     ProviderAdapterRegistryV2.of(makeRegistry(adapters)),
   );
@@ -205,7 +209,7 @@ export function layerFromAdapters(
 export function layerFromAdaptersEffect<R, E>(
   adapters: Effect.Effect<ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>, E, R>,
 ): Layer.Layer<ProviderAdapterRegistryV2, E, Exclude<R, Scope.Scope>> {
-  return Layer.effect(
+  return builtinServiceLayer("t3.thread")(
     ProviderAdapterRegistryV2,
     adapters.pipe(Effect.map((entries) => ProviderAdapterRegistryV2.of(makeRegistry(entries)))),
   );

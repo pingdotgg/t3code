@@ -71,6 +71,32 @@ import {
 } from "../ServerUpdateAction";
 import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
+import { definePluginComponent } from "~/plugins/features";
+
+export const SavedBackendListRow = definePluginComponent(
+  "component:components/settings/SavedEnvironmentRows/SavedBackendListRow",
+  PluginOriginalSavedBackendListRow,
+);
+const CloudLinkSwitch = definePluginComponent(
+  "component:components/settings/SavedEnvironmentRows/CloudLinkSwitch",
+  PluginOriginalCloudLinkSwitch,
+);
+const ConfiguredCloudLinkRow = definePluginComponent(
+  "component:components/settings/SavedEnvironmentRows/ConfiguredCloudLinkRow",
+  PluginOriginalConfiguredCloudLinkRow,
+);
+export const CloudLinkRow = definePluginComponent(
+  "component:components/settings/SavedEnvironmentRows/CloudLinkRow",
+  PluginOriginalCloudLinkRow,
+);
+const EmptyRemoteEnvironments = definePluginComponent(
+  "component:components/settings/SavedEnvironmentRows/EmptyRemoteEnvironments",
+  PluginOriginalEmptyRemoteEnvironments,
+);
+export const CloudRemoteEnvironmentRows = definePluginComponent(
+  "component:components/settings/SavedEnvironmentRows/CloudRemoteEnvironmentRows",
+  PluginOriginalCloudRemoteEnvironmentRows,
+);
 
 type SavedBackendListRowProps = {
   environment: EnvironmentPresentation;
@@ -124,7 +150,7 @@ export function savedBackendStatus(
   }
 }
 
-export function SavedBackendListRow({
+function PluginOriginalSavedBackendListRow({
   environment,
   removingEnvironmentId,
   onSetEnabled,
@@ -474,7 +500,7 @@ export function SavedBackendListRow({
   );
 }
 
-function CloudLinkSwitch({
+function PluginOriginalCloudLinkSwitch({
   checked,
   disabled,
   disabledReason,
@@ -562,7 +588,7 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
   );
 }
 
-function ConfiguredCloudLinkRow({
+function PluginOriginalConfiguredCloudLinkRow({
   environmentId,
   canManageRelay,
   connectDeviceApproval,
@@ -858,7 +884,7 @@ export interface ConnectDeviceApprovalControl {
   readonly canManage: boolean;
 }
 
-export function CloudLinkRow({
+function PluginOriginalCloudLinkRow({
   environmentId,
   canReadRelay,
   canManageRelay,
@@ -890,7 +916,11 @@ export function CloudLinkRow({
   );
 }
 
-function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
+function PluginOriginalEmptyRemoteEnvironments({
+  cloudEnabled = true,
+}: {
+  readonly cloudEnabled?: boolean;
+}) {
   const gt = useGT();
   return (
     <Empty className="min-h-52">
@@ -913,7 +943,7 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
   );
 }
 
-export function CloudRemoteEnvironmentRows({
+function PluginOriginalCloudRemoteEnvironmentRows({
   primaryEnvironmentId,
   savedEnvironments,
   only,

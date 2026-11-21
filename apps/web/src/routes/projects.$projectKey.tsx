@@ -1,4 +1,5 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { registerBuiltinRoute } from "~/plugins/routing";
+import { redirect, createFileRoute } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/projects/$projectKey")({
   beforeLoad: async ({ context, params }) => {
@@ -15,3 +16,5 @@ export const Route = createFileRoute("/projects/$projectKey")({
     });
   },
 });
+
+registerBuiltinRoute("/projects/$projectKey", Route);

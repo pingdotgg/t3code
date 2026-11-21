@@ -15,6 +15,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RefreshIcon } from "../ui/refresh-icon";
+import { definePluginComponent } from "~/plugins/features";
 
 function getIncompatibleVersion(status: ServerProvider) {
   const compatibility = status.compatibilityAdvisory;
@@ -136,7 +137,7 @@ export function getProviderStatusMessage(
       : resolve(msg("{provider} provider has limited availability.", { provider: providerName }));
 }
 
-export const ProviderStatusBanner = memo(function ProviderStatusBanner({
+const PluginOriginalProviderStatusBanner = memo(function ProviderStatusBanner({
   environmentId,
   onDismiss,
   onOpenProviderSetup,
@@ -251,3 +252,7 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
     </div>
   );
 });
+export const ProviderStatusBanner = definePluginComponent(
+  "component:components/chat/ProviderStatusBanner/ProviderStatusBanner",
+  PluginOriginalProviderStatusBanner,
+);

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -6,7 +7,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -388,4 +388,4 @@ export const make = Effect.gen(function* () {
   return ProjectFaviconResolver.of({ resolvePath, invalidate });
 });
 
-export const layer = Layer.effect(ProjectFaviconResolver, make);
+export const layer = builtinServiceLayer("t3.projects")(ProjectFaviconResolver, make);

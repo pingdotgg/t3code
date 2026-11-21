@@ -1,6 +1,6 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 
 import {
@@ -552,4 +552,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(GitWorkflowService, make);
+export const layer = builtinServiceLayer("t3.git")(GitWorkflowService, make);

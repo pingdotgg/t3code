@@ -13,9 +13,15 @@ import { I18nManager, Pressable, View, type StyleProp, type ViewStyle } from "re
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { resolveScaledTextRole } from "../lib/appearancePreferences";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const ScrollComposeButton = defineNativePluginFeature(
+  "native.components.scroll-compose-button",
+  BuiltinScrollComposeButton,
+);
 
 /** Keep the animated width and icon positioning entirely inside Compose, not Yoga. */
-export function ScrollComposeButton(props: {
+function BuiltinScrollComposeButton(props: {
   readonly expanded: boolean;
   readonly onPress: () => void;
   readonly size?: number;

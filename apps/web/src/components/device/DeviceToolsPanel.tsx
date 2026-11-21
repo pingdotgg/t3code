@@ -21,6 +21,48 @@ import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { cn } from "~/lib/utils";
 import type { DeviceControls } from "./useDeviceControls";
 import { deviceEventLogAtom } from "./deviceHubAtoms";
+import { definePluginComponent } from "~/plugins/features";
+
+export const DeviceToolsPanel = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/DeviceToolsPanel",
+  PluginOriginalDeviceToolsPanel,
+);
+const Section = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/Section",
+  PluginOriginalSection,
+);
+const Row = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/Row",
+  PluginOriginalRow,
+);
+const SwitchRow = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/SwitchRow",
+  PluginOriginalSwitchRow,
+);
+const ChoiceSelect = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/ChoiceSelect",
+  PluginOriginalChoiceSelect,
+);
+const SubmitRow = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/SubmitRow",
+  PluginOriginalSubmitRow,
+);
+const LocationSection = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/LocationSection",
+  PluginOriginalLocationSection,
+);
+const PermissionsSection = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/PermissionsSection",
+  PluginOriginalPermissionsSection,
+);
+const EventLogSection = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/EventLogSection",
+  PluginOriginalEventLogSection,
+);
+const EventLogEntries = definePluginComponent(
+  "component:components/device/DeviceToolsPanel/EventLogEntries",
+  PluginOriginalEventLogEntries,
+);
 
 const TEXT_SIZES: ReadonlyArray<{ value: DeviceTextSize; label: string }> = [
   { value: "small", label: msg("Small") },
@@ -81,7 +123,7 @@ const LOCATION_PRESETS = [
   { label: msg("Tokyo", { $context: "city name" }), latitude: 35.6762, longitude: 139.6503 },
 ] as const;
 
-export function DeviceToolsPanel(props: {
+function PluginOriginalDeviceToolsPanel(props: {
   readonly controls: DeviceControls;
   readonly hostDiagnostics: string | undefined;
   readonly device: DeviceSummary;
@@ -345,7 +387,10 @@ export function DeviceToolsPanel(props: {
   );
 }
 
-function Section(props: { readonly title: string; readonly children: React.ReactNode }) {
+function PluginOriginalSection(props: {
+  readonly title: string;
+  readonly children: React.ReactNode;
+}) {
   return (
     <section className="flex flex-col gap-2 border-b px-3 py-2.5 last:border-b-0">
       <h3 className="text-xs font-medium text-muted-foreground">{props.title}</h3>
@@ -354,7 +399,7 @@ function Section(props: { readonly title: string; readonly children: React.React
   );
 }
 
-function Row(props: { readonly label: string; readonly children: React.ReactNode }) {
+function PluginOriginalRow(props: { readonly label: string; readonly children: React.ReactNode }) {
   return (
     <div className="flex min-h-7 items-center justify-between gap-3">
       <span className="shrink-0 text-xs text-muted-foreground">{props.label}</span>
@@ -363,7 +408,7 @@ function Row(props: { readonly label: string; readonly children: React.ReactNode
   );
 }
 
-function SwitchRow(props: {
+function PluginOriginalSwitchRow(props: {
   readonly label: string;
   readonly checked: boolean | undefined;
   readonly disabled: boolean;
@@ -382,7 +427,7 @@ function SwitchRow(props: {
   );
 }
 
-function ChoiceSelect<V extends string>(props: {
+function PluginOriginalChoiceSelect<V extends string>(props: {
   readonly ariaLabel: string;
   readonly value: V | null;
   readonly options: ReadonlyArray<{ readonly value: V; readonly label: string }>;
@@ -421,7 +466,7 @@ function ChoiceSelect<V extends string>(props: {
   );
 }
 
-function SubmitRow(props: {
+function PluginOriginalSubmitRow(props: {
   readonly placeholder: string;
   readonly action: string;
   readonly disabled: boolean;
@@ -464,7 +509,7 @@ function SubmitRow(props: {
   );
 }
 
-function LocationSection(props: {
+function PluginOriginalLocationSection(props: {
   readonly disabled: boolean;
   readonly canClear: boolean;
   readonly onSet: (latitude: number, longitude: number) => Promise<unknown>;
@@ -558,7 +603,7 @@ function LocationSection(props: {
   );
 }
 
-function PermissionsSection(props: {
+function PluginOriginalPermissionsSection(props: {
   readonly permissions: ReadonlyArray<{ value: DevicePermission; label: string }>;
   readonly canReset: boolean;
   readonly defaultAppId: string;
@@ -627,7 +672,7 @@ function PermissionsSection(props: {
   );
 }
 
-function EventLogSection(props: {
+function PluginOriginalEventLogSection(props: {
   readonly access: DeviceHubAccess;
   readonly device: DeviceSummary;
 }) {
@@ -649,7 +694,7 @@ function EventLogSection(props: {
 }
 
 // The panel unmounts while closed, so the log streams only while it is open.
-function EventLogEntries(props: {
+function PluginOriginalEventLogEntries(props: {
   readonly access: DeviceHubAccess;
   readonly device: DeviceSummary;
 }) {

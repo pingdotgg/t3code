@@ -1,7 +1,7 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { type CheckpointRef } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 import type { CheckpointStoreError } from "./Errors.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
@@ -194,4 +194,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(CheckpointStore, make);
+export const layer = builtinServiceLayer("t3.thread")(CheckpointStore, make);

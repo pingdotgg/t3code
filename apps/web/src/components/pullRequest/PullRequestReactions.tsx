@@ -25,6 +25,16 @@ import {
   pullRequestReactionTooltip,
   pullRequestReactionsSignature,
 } from "@t3tools/client-runtime/pull-request-reactions";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ReactionBar = definePluginComponent(
+  "component:components/pullRequest/PullRequestReactions/ReactionBar",
+  PluginOriginalReactionBar,
+);
+export const PullRequestReactionBar = definePluginComponent(
+  "component:components/pullRequest/PullRequestReactions/PullRequestReactionBar",
+  PluginOriginalPullRequestReactionBar,
+);
 
 const PILL_CLASS =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
@@ -33,7 +43,7 @@ const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, PendingPullRequestR
   new Map();
 
 /** Reaction pills with a picker. `onReact` resolves to whether the host saved the change. */
-export function ReactionBar({
+function PluginOriginalReactionBar({
   reactions,
   canReact,
   onReact,
@@ -155,7 +165,7 @@ export function ReactionBar({
   );
 }
 
-export function PullRequestReactionBar({
+function PluginOriginalPullRequestReactionBar({
   reactions,
   canReact,
   subjectId,

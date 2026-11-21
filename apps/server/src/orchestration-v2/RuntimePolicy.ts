@@ -1,3 +1,4 @@
+import { builtinServiceLayer, builtinSucceedLayer } from "../plugins/PluginKernel.ts";
 import {
   isRuntimeModeAbove,
   managedRuntimeModeCeilingMessage,
@@ -79,15 +80,18 @@ export class RuntimePolicyV2 extends Context.Service<RuntimePolicyV2, RuntimePol
   "t3/orchestration-v2/RuntimePolicy/RuntimePolicyV2",
 ) {}
 
-export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2, {
-  resolve: Effect.fn("RuntimePolicyV2.resolve")(function (input) {
-    return Effect.succeed({
-      runtimeMode: input.thread.runtimeMode,
-      interactionMode: input.thread.interactionMode,
-      cwd: input.thread.worktreePath,
-    });
-  }),
-});
+export const layer: Layer.Layer<RuntimePolicyV2> = builtinSucceedLayer("t3.thread")(
+  RuntimePolicyV2,
+  {
+    resolve: Effect.fn("RuntimePolicyV2.resolve")(function (input) {
+      return Effect.succeed({
+        runtimeMode: input.thread.runtimeMode,
+        interactionMode: input.thread.interactionMode,
+        cwd: input.thread.worktreePath,
+      });
+    }),
+  },
+);
 
 export function providerRuntimeMode(
   runtimeMode: RuntimeMode,
@@ -124,7 +128,7 @@ export const layerEnforcingCeiling: Layer.Layer<
   RuntimePolicyV2,
   never,
   RuntimePolicyV2 | ServerSettings.ServerSettingsService
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   RuntimePolicyV2,
   Effect.gen(function* () {
     const base = yield* RuntimePolicyV2;
@@ -145,7 +149,7 @@ export const layerFromProjectStore: Layer.Layer<
   | ProviderInstanceRegistry.ProviderInstanceRegistry
   | ServerSettings.ServerSettingsService
   | WorkspaceFolders.WorkspaceFolders
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   RuntimePolicyV2,
   Effect.gen(function* () {
     const projects = yield* ProjectStore.ProjectStoreV2;
@@ -215,7 +219,7 @@ export const layerFromProjectStore: Layer.Layer<
 export function layerWithOverride(
   override: RuntimePolicyV2Override,
 ): Layer.Layer<RuntimePolicyV2, never, RuntimePolicyV2> {
-  return Layer.effect(
+  return builtinServiceLayer("t3.thread")(
     RuntimePolicyV2,
     Effect.gen(function* () {
       const base = yield* RuntimePolicyV2;

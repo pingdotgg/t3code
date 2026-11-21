@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   type AuthClientPresentationMetadata,
   ServerPrepareTriageError,
@@ -7,7 +8,6 @@ import {
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -214,4 +214,4 @@ const make = Effect.gen(function* () {
   return TriageService.of({ prepare });
 });
 
-export const layer = Layer.effect(TriageService, make);
+export const layer = builtinServiceLayer("t3.server")(TriageService, make);

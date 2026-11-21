@@ -15,10 +15,16 @@ import {
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
+import { definePluginComponent } from "~/plugins/features";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
-export function PullRequestComposer({
+export const PullRequestComposer = definePluginComponent(
+  "component:components/pullRequest/PullRequestComposer/PullRequestComposer",
+  PluginOriginalPullRequestComposer,
+);
+
+function PluginOriginalPullRequestComposer({
   environmentId,
   reference,
   detail,

@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { DesktopUpdateState } from "@t3tools/contracts";
@@ -75,67 +76,78 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     }
   };
 
-  const layerUpdater = Layer.succeed(ElectronUpdater.ElectronUpdater, {
-    setFeedURL: (options) =>
-      Effect.sync(() => {
-        feedUrls.push(options);
-      }),
-    setAutoDownload: () => Effect.void,
-    setAutoInstallOnAppQuit: () => Effect.void,
-    setChannel: () => Effect.void,
-    setAllowPrerelease: () => Effect.void,
-    allowDowngrade: Effect.sync(() => allowDowngrade),
-    setAllowDowngrade: (value) =>
-      Effect.sync(() => {
-        allowDowngrade = value;
-      }),
-    setFullChangelog: (value) =>
-      Effect.sync(() => {
-        fullChangelog = value;
-      }),
-    setDisableDifferentialDownload: () => options.setDisableDifferentialDownload ?? Effect.void,
-    checkForUpdates: Effect.sync(() => {
-      checkCount += 1;
-      checkAllowedDowngrade.push(allowDowngrade);
-    }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
-    downloadUpdate: Effect.sync(() => {
-      downloadCount += 1;
-    }).pipe(Effect.andThen(options.downloadUpdate ?? Effect.void)),
-    quitAndInstall: () =>
-      Effect.sync(() => {
-        quitAndInstallCount += 1;
-        installSteps.push("quitAndInstall");
-      }).pipe(Effect.andThen(options.quitAndInstall ?? Effect.void)),
-    on: (eventName, listener) =>
-      Effect.acquireRelease(
+  const layerUpdater = builtinSucceedLayer(
+    "t3.desktop.updates-test-harness",
+    ElectronUpdater.ElectronUpdater,
+    {
+      setFeedURL: (options) =>
         Effect.sync(() => {
-          addListener(eventName, listener as unknown as (...args: readonly unknown[]) => void);
+          feedUrls.push(options);
         }),
-        () =>
+      setAutoDownload: () => Effect.void,
+      setAutoInstallOnAppQuit: () => Effect.void,
+      setChannel: () => Effect.void,
+      setAllowPrerelease: () => Effect.void,
+      allowDowngrade: Effect.sync(() => allowDowngrade),
+      setAllowDowngrade: (value) =>
+        Effect.sync(() => {
+          allowDowngrade = value;
+        }),
+      setFullChangelog: (value) =>
+        Effect.sync(() => {
+          fullChangelog = value;
+        }),
+      setDisableDifferentialDownload: () => options.setDisableDifferentialDownload ?? Effect.void,
+      checkForUpdates: Effect.sync(() => {
+        checkCount += 1;
+        checkAllowedDowngrade.push(allowDowngrade);
+      }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
+      downloadUpdate: Effect.sync(() => {
+        downloadCount += 1;
+      }).pipe(Effect.andThen(options.downloadUpdate ?? Effect.void)),
+      quitAndInstall: () =>
+        Effect.sync(() => {
+          quitAndInstallCount += 1;
+          installSteps.push("quitAndInstall");
+        }).pipe(Effect.andThen(options.quitAndInstall ?? Effect.void)),
+      on: (eventName, listener) =>
+        Effect.acquireRelease(
           Effect.sync(() => {
-            removeListener(eventName, listener as unknown as (...args: readonly unknown[]) => void);
+            addListener(eventName, listener as unknown as (...args: readonly unknown[]) => void);
           }),
-      ).pipe(Effect.asVoid),
-  } satisfies ElectronUpdater.ElectronUpdater["Service"]);
+          () =>
+            Effect.sync(() => {
+              removeListener(
+                eventName,
+                listener as unknown as (...args: readonly unknown[]) => void,
+              );
+            }),
+        ).pipe(Effect.asVoid),
+    } satisfies ElectronUpdater.ElectronUpdater["Service"],
+  );
 
-  const layerWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
-    create: () => Effect.die("unexpected BrowserWindow creation"),
-    main: Effect.succeedNone,
-    currentMainOrFirst: Effect.succeedNone,
-    focusedMainOrFirst: Effect.succeedNone,
-    setMain: () => Effect.void,
-    clearMain: () => Effect.void,
-    prepareReveal: () => Effect.succeed(false),
-    reveal: () => Effect.void,
-    sendAll: (_channel, state) =>
-      Effect.sync(() => {
-        sentStates.push(state as DesktopUpdateState);
+  const layerWindow = builtinSucceedLayer(
+    "t3.desktop.updates-test-harness",
+    ElectronWindow.ElectronWindow,
+    {
+      create: () => Effect.die("unexpected BrowserWindow creation"),
+      main: Effect.succeedNone,
+      currentMainOrFirst: Effect.succeedNone,
+      focusedMainOrFirst: Effect.succeedNone,
+      setMain: () => Effect.void,
+      clearMain: () => Effect.void,
+      prepareReveal: () => Effect.succeed(false),
+      reveal: () => Effect.void,
+      sendAll: (_channel, state) =>
+        Effect.sync(() => {
+          sentStates.push(state as DesktopUpdateState);
+        }),
+      destroyAll: Effect.sync(() => {
+        installSteps.push("destroyAll");
       }),
-    destroyAll: Effect.sync(() => {
-      installSteps.push("destroyAll");
-    }),
-    syncAllAppearance: () => Effect.void,
-  } satisfies ElectronWindow.ElectronWindow["Service"]);
+      syncAllAppearance: () => Effect.void,
+    } satisfies ElectronWindow.ElectronWindow["Service"],
+  );
 
   const layerSshEnvironment = Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {
     closeAllTunnels: Effect.sync(() => {
@@ -212,35 +224,39 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   const setUpdateChannelError = options.setUpdateChannelError;
   const layerSettings =
     setUpdateChannelError || options.beforeSetUpdateChannel || options.savedChannel
-      ? Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
-          get: Effect.sync(() => testSettings),
-          load: Effect.sync(() => testSettings),
-          setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
-          setServerExposureMode: () => Effect.die("unexpected server exposure update"),
-          setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
-          setUpdateChannel: (channel) =>
-            setUpdateChannelError
-              ? Effect.fail(setUpdateChannelError)
-              : (options.beforeSetUpdateChannel ?? Effect.void).pipe(
-                  Effect.andThen(
-                    Effect.sync(() => {
-                      const changed = testSettings.updateChannel !== channel;
-                      testSettings = {
-                        ...testSettings,
-                        updateChannel: channel,
-                        updateChannelConfiguredByUser: true,
-                      };
-                      return { settings: testSettings, changed };
-                    }),
+      ? builtinSucceedLayer(
+          "t3.desktop.updates-test-harness",
+          DesktopAppSettings.DesktopAppSettings,
+          {
+            get: Effect.sync(() => testSettings),
+            load: Effect.sync(() => testSettings),
+            setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
+            setServerExposureMode: () => Effect.die("unexpected server exposure update"),
+            setTailscaleServe: () => Effect.die("unexpected Tailscale Serve update"),
+            setUpdateChannel: (channel) =>
+              setUpdateChannelError
+                ? Effect.fail(setUpdateChannelError)
+                : (options.beforeSetUpdateChannel ?? Effect.void).pipe(
+                    Effect.andThen(
+                      Effect.sync(() => {
+                        const changed = testSettings.updateChannel !== channel;
+                        testSettings = {
+                          ...testSettings,
+                          updateChannel: channel,
+                          updateChannelConfiguredByUser: true,
+                        };
+                        return { settings: testSettings, changed };
+                      }),
+                    ),
                   ),
-                ),
-          setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
-          setWslDistro: () => Effect.die("unexpected WSL distro change"),
-          setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
-          setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
-          applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
-          applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
-        } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
+            setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
+            setWslDistro: () => Effect.die("unexpected WSL distro change"),
+            setLocalEnvironmentEnabled: () => Effect.die("unexpected local environment toggle"),
+            setWslOnly: () => Effect.die("unexpected WSL-only toggle"),
+            applyWslWindowsFallback: Effect.die("unexpected WSL Windows fallback"),
+            applyWslWindowsFallbackInMemory: Effect.die("unexpected WSL Windows fallback"),
+          } satisfies DesktopAppSettings.DesktopAppSettings["Service"],
+        )
       : DesktopAppSettings.layer;
 
   const updateRestartMarkers = new Set<string>();

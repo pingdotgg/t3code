@@ -1,6 +1,5 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -11,6 +10,7 @@ export type PrimaryBackendStartup =
   | { readonly _tag: "Starting" }
   | { readonly _tag: "Ready" }
   | ({ readonly _tag: "Failing" } & BackendStartupFailure);
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export class DesktopState extends Context.Service<
   DesktopState,
@@ -30,4 +30,4 @@ const make = Effect.all({
   primaryBackendStartup: SubscriptionRef.make<PrimaryBackendStartup>({ _tag: "Starting" }),
 });
 
-export const layer = Layer.effect(DesktopState, make);
+export const layer = builtinServiceLayer("t3.desktop.desktop-state", DesktopState, make);

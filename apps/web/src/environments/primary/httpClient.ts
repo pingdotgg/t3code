@@ -1,7 +1,7 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 import { resolvePrimaryEnvironmentHttpUrl } from "./target";
 
@@ -22,4 +22,4 @@ const make = Effect.suspend(() =>
   makeEnvironmentHttpApiClient(resolvePrimaryEnvironmentHttpUrl("/")),
 );
 
-export const layer = Layer.effect(PrimaryEnvironmentHttpClient, make);
+export const layer = builtinServiceLayer("t3.client")(PrimaryEnvironmentHttpClient, make);

@@ -14,6 +14,7 @@ import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import type { PendingApproval } from "../../lib/threadActivity";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 export interface PendingApprovalCardProps {
   readonly canOperateThread: boolean;
@@ -25,7 +26,7 @@ export interface PendingApprovalCardProps {
   ) => Promise<unknown>;
 }
 
-export function PendingApprovalCard(props: PendingApprovalCardProps) {
+function BuiltinPendingApprovalCard(props: PendingApprovalCardProps) {
   const gt = useGT();
   const m = useMessages();
   const options: ReadonlyArray<ProviderApprovalOption> = props.approval.options ?? [
@@ -111,3 +112,8 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
     </View>
   );
 }
+
+export const PendingApprovalCard = defineNativePluginFeature(
+  "native.features.threads.pending-approval-card",
+  BuiltinPendingApprovalCard,
+);

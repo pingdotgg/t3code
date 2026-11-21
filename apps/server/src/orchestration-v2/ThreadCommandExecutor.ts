@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type { ThreadId } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 
 export class ThreadCommandExecutor extends Context.Service<
@@ -28,4 +28,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ThreadCommandExecutor, make);
+export const layer = builtinServiceLayer("t3.thread")(ThreadCommandExecutor, make);

@@ -10,6 +10,12 @@ import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 import { Button } from "../ui/button";
 import { OpenMediaLink } from "./OpenMediaLink";
 import { MediaActions, type MediaActionSource } from "./MediaActions";
+import { definePluginComponent } from "~/plugins/features";
+
+export const MediaVideoPlayer = definePluginComponent(
+  "component:components/media/MediaVideoPlayer/MediaVideoPlayer",
+  PluginOriginalMediaVideoPlayer,
+);
 
 interface MediaVideoPlayerProps {
   readonly src: string | null;
@@ -30,7 +36,7 @@ interface MediaVideoPlayerProps {
   readonly actionsSource?: MediaActionSource | undefined;
 }
 
-export function MediaVideoPlayer({
+function PluginOriginalMediaVideoPlayer({
   src: latestSrc,
   label,
   sourceFailed = false,

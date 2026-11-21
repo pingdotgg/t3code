@@ -1,9 +1,9 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -1258,4 +1258,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(BitbucketApi, make);
+export const layer = builtinServiceLayer("t3.git")(BitbucketApi, make);

@@ -1,6 +1,12 @@
 import { cva, type VariantProps } from "class-variance-authority";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+const Skeleton = definePluginComponent(
+  "component:components/ui/skeleton/Skeleton",
+  PluginOriginalSkeleton,
+);
 
 const skeletonVariants = cva("bg-muted-foreground/15 motion-safe:animate-skeleton", {
   variants: {
@@ -13,7 +19,7 @@ const skeletonVariants = cva("bg-muted-foreground/15 motion-safe:animate-skeleto
   defaultVariants: { shape: "block" },
 });
 
-function Skeleton({
+function PluginOriginalSkeleton({
   className,
   shape,
   ...props

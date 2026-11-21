@@ -6,8 +6,9 @@ import { Pressable, ScrollView, View } from "react-native";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { AccountLimits, ResetCredits } from "../usage/UsageLimitsSection";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function ComposerUsageLimits({
+function BuiltinComposerUsageLimits({
   report,
   environmentId,
   maxHeight,
@@ -97,3 +98,8 @@ export function ComposerUsageLimits({
     </View>
   );
 }
+
+export const ComposerUsageLimits = defineNativePluginFeature(
+  "native.features.threads.composer-usage-limits",
+  BuiltinComposerUsageLimits,
+);

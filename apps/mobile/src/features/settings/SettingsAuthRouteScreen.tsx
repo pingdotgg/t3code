@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { useAuth } from "@clerk/expo";
 import {
   AuthView,
@@ -10,6 +11,10 @@ import { View } from "react-native";
 
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { T3ConnectProfilePage } from "../cloud/T3ConnectProfilePage";
+const ConfiguredSettingsAuthRouteScreen = defineNativePluginFeature(
+  "native.features.settings.settings-auth-route-screen.configured-settings-auth-route-screen",
+  BuiltinConfiguredSettingsAuthRouteScreen,
+);
 
 const USER_PROFILE_CUSTOM_PAGES = [
   {
@@ -21,11 +26,11 @@ const USER_PROFILE_CUSTOM_PAGES = [
 ] satisfies UserProfileCustomPage[];
 
 // Without cloud config the app has no entry point here and appLinking drops the deep link.
-export function SettingsAuthRouteScreen() {
+function BuiltinSettingsAuthRouteScreen() {
   return hasCloudPublicConfig() ? <ConfiguredSettingsAuthRouteScreen /> : null;
 }
 
-function ConfiguredSettingsAuthRouteScreen() {
+function BuiltinConfiguredSettingsAuthRouteScreen() {
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const navigation = useNavigation();
   const handleHostBack = () => navigation.goBack();
@@ -59,3 +64,8 @@ function ConfiguredSettingsAuthRouteScreen() {
     </View>
   );
 }
+
+export const SettingsAuthRouteScreen = defineNativePluginFeature(
+  "settings.auth",
+  BuiltinSettingsAuthRouteScreen,
+);

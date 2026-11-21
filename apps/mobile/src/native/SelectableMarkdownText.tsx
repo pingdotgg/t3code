@@ -10,6 +10,12 @@ import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types
 import { MobileEnrichedMarkdownText } from "./EnrichedMarkdownText";
 import { themeColorWithAlpha } from "../lib/mobileTheme";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
+import { defineNativePluginFeature } from "../plugins/features";
+
+export const SelectableMarkdownText = defineNativePluginFeature(
+  "markdown",
+  BuiltinSelectableMarkdownText,
+);
 
 export type {
   MarkdownFileContextMenu,
@@ -22,7 +28,7 @@ export type {
   SelectableMarkdownSkill,
 } from "./SelectableMarkdownText.types";
 
-export function SelectableMarkdownText(props: SelectableMarkdownTextProps) {
+function BuiltinSelectableMarkdownText(props: SelectableMarkdownTextProps) {
   const [citation, setCitation] = useState<AssistantCitation | null>(null);
   const gt = useGT();
   const hasCitations = props.markdown.includes("t3-citation:");

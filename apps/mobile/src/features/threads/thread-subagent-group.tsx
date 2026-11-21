@@ -30,14 +30,29 @@ import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { subagentThreadTarget } from "./threadAgentsPresentation";
 import { useLinkedThreadReach } from "../../state/linkedThread";
 import { WorkLogBlock } from "./work-log-layout";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 import { useOpenLinkedThreadRead } from "./useOpenLinkedThread";
 
+const SubagentElapsed = defineNativePluginFeature(
+  "native.features.threads.thread-subagent-group.subagent-elapsed",
+  BuiltinSubagentElapsed,
+);
+const SubagentAvatar = defineNativePluginFeature(
+  "native.features.threads.thread-subagent-group.subagent-avatar",
+  BuiltinSubagentAvatar,
+);
+
+export const ThreadSubagentGroup = defineNativePluginFeature(
+  "native.features.threads.thread-subagent-group",
+  BuiltinThreadSubagentGroup,
+);
+
 type SubagentItem = Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
 type AgentTiming = Pick<OrchestrationV2Subagent, "status" | "startedAt" | "completedAt">;
 
-function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTiming> }) {
+function BuiltinSubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTiming> }) {
   const live = agents.some((agent) => isActiveSubagentStatus(agent.status));
   const nowMs = useVisibleSecondClock(live);
   const messages = useMessages();
@@ -47,7 +62,7 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
   ) : null;
 }
 
-function SubagentAvatar(props: {
+function BuiltinSubagentAvatar(props: {
   readonly item: SubagentItem;
   readonly config: ServerConfig | null | undefined;
 }) {
@@ -101,7 +116,7 @@ function SubagentAvatar(props: {
   );
 }
 
-export function ThreadSubagentGroup(props: {
+function BuiltinThreadSubagentGroup(props: {
   readonly activities: ReadonlyArray<ThreadFeedActivity>;
   readonly environmentId: EnvironmentId;
   readonly anchorKey: string;

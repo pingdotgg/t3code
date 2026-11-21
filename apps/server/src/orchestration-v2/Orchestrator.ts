@@ -6,6 +6,7 @@ import type {
   OrchestrationV2ThreadHistoryPage,
   ProjectId,
 } from "@t3tools/contracts";
+import { builtinService, builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -1614,6 +1615,11 @@ const hasRunningDelegatedTasks = (subagents: ReadonlyArray<OrchestrationV2Subage
   );
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  const projectionReducer = yield* builtinService(
+    "t3.thread",
+    "t3/orchestration-v2/ProjectionReducerV2",
+    Effect.succeed({ applyToProjection }),
+  );
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -1944,7 +1950,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection = { ...projection, thread: event.payload, updatedAt: event.occurredAt };
           continue;
         }
-        projection = applyToProjection(projection, event);
+        projection = projectionReducer.applyToProjection(projection, event);
       }
       return projection;
     });
@@ -17188,6 +17194,6 @@ export const layer: Layer.Layer<
   | ServerSettings.ServerSettingsService
   | TaskFolderStore.TaskFolderStore
   | ThreadForkServiceV2
-> = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
+> = builtinServiceLayer("t3.thread")(OrchestratorV2, makeOrchestrator()).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
 );

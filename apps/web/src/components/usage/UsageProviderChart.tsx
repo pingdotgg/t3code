@@ -14,6 +14,12 @@ import { formatRelativeHourShort } from "@t3tools/shared/usageFormatCopy";
 import { cn } from "~/lib/utils";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 import { observeResize } from "~/lib/observeResize";
+import { definePluginComponent } from "~/plugins/features";
+
+export const UsageProviderChart = definePluginComponent(
+  "component:components/usage/UsageProviderChart/UsageProviderChart",
+  PluginOriginalUsageProviderChart,
+);
 
 const VIEW_WIDTH = 960;
 const VIEW_HEIGHT = 260;
@@ -405,7 +411,7 @@ function UsageChartPlot({
   );
 }
 
-export function UsageProviderChart({
+function PluginOriginalUsageProviderChart({
   providers,
   loadingProviders = NONE_LOADING,
   days,

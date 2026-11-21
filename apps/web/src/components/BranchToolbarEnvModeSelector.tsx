@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
@@ -38,7 +39,7 @@ interface BranchToolbarEnvModeSelectorProps {
   onUsePreviousWorktree?: () => void;
 }
 
-export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
+const PluginOriginalBranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
   forceNewWorktree = false,
   envLocked,
   effectiveEnvMode,
@@ -186,3 +187,8 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     </Select>
   );
 });
+
+export const BranchToolbarEnvModeSelector = definePluginComponent(
+  "component:components/BranchToolbarEnvModeSelector/BranchToolbarEnvModeSelector",
+  PluginOriginalBranchToolbarEnvModeSelector,
+);

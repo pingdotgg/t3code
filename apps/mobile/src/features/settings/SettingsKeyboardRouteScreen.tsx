@@ -1,4 +1,5 @@
 import { msg, T, useGT, useMessages } from "gt-react-native";
+import { defineNativePluginFeature } from "../../plugins/features";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -41,7 +42,7 @@ const ENTER_BEHAVIOR_OPTIONS: ReadonlyArray<{
   },
 ];
 
-export function SettingsKeyboardRouteScreen() {
+function BuiltinSettingsKeyboardRouteScreen() {
   const gt = useGT();
   const m = useMessages();
   const insets = useSafeAreaInsets();
@@ -83,3 +84,8 @@ export function SettingsKeyboardRouteScreen() {
     </SettingsScreen>
   );
 }
+
+export const SettingsKeyboardRouteScreen = defineNativePluginFeature(
+  "settings.keybindings",
+  BuiltinSettingsKeyboardRouteScreen,
+);

@@ -9,8 +9,15 @@ import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 
 import { FILE_LINK_REVEAL_UNSAFE_CSS } from "./fileSurfaceChrome";
 import { SourceSelection } from "./sourceSelection";
+import { definePluginComponent } from "~/plugins/features";
 
-export default function ReadOnlySourcePreview(props: {
+const ReadOnlySourcePreview = definePluginComponent(
+  "component:components/files/ReadOnlySourcePreview/ReadOnlySourcePreview",
+  PluginOriginalReadOnlySourcePreview,
+);
+export default ReadOnlySourcePreview;
+
+function PluginOriginalReadOnlySourcePreview(props: {
   readonly name: string;
   readonly text: string;
   readonly cacheKey?: string;

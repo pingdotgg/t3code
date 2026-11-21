@@ -9,13 +9,19 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { definePluginComponent } from "~/plugins/features";
+
+const PullRequestBaseFreshnessWarning = definePluginComponent(
+  "component:components/pullRequest/PullRequestBaseBranch/PullRequestBaseFreshnessWarning",
+  PluginOriginalPullRequestBaseFreshnessWarning,
+);
 
 interface BaseFreshness {
   readonly behindBy: number | null;
   readonly methods: ReadonlyArray<PullRequestUpdateMethod>;
 }
 
-function PullRequestBaseFreshnessWarning({
+function PluginOriginalPullRequestBaseFreshnessWarning({
   baseBranch,
   freshness,
   pending,

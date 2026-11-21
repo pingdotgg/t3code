@@ -1,3 +1,4 @@
+import { builtinContextLayer } from "../plugins/PluginKernel.ts";
 import {
   providerInstanceConfigEnabledFlag,
   ProviderInstanceId,
@@ -16,7 +17,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
+import type * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -30,6 +31,14 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import { buildUnavailableProviderSnapshot } from "./unavailableProviderSnapshot.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
+import type { ProviderDriverContributionEntry } from "./ProviderDriverCatalog.ts";
+import { ProviderDriverError } from "./Errors.ts";
+import {
+  ProviderAdapterOpenSessionError,
+  ProviderAdapterTurnStartError,
+  type ProviderAdapterV2OpenSessionInput,
+  type ProviderAdapterV2TurnInput,
+} from "@t3tools/provider-core/server/ProviderAdapter";
 
 export class ProviderInstanceRegistry extends Context.Service<
   ProviderInstanceRegistry,
@@ -50,11 +59,51 @@ interface InstanceSecrets {
   readonly config: ReadonlyArray<SettingsSecretSlot & { readonly value: string }>;
 }
 
+function validateProviderInstance(
+  instance: ProviderInstance,
+  instanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+) {
+  if (
+    !instance ||
+    instance.instanceId !== instanceId ||
+    instance.driverKind !== driver ||
+    typeof instance.enabled !== "boolean" ||
+    instance.continuationIdentity?.driverKind !== driver ||
+    typeof instance.continuationIdentity.continuationKey !== "string" ||
+    !Effect.isEffect(instance.snapshot?.getSnapshot) ||
+    !Effect.isEffect(instance.snapshot.refresh) ||
+    !Stream.isStream(instance.snapshot.streamChanges) ||
+    typeof instance.snapshot.resolveMaintenance !== "function" ||
+    typeof instance.snapshot.applyUsageLimits !== "function" ||
+    instance.orchestrationAdapter?.instanceId !== instanceId ||
+    instance.orchestrationAdapter.driver !== driver ||
+    typeof instance.orchestrationAdapter.getCapabilities !== "function" ||
+    typeof instance.orchestrationAdapter.planSelectionTransition !== "function" ||
+    typeof instance.orchestrationAdapter.openSession !== "function" ||
+    typeof instance.textGeneration?.generateTranscriptionPostProcessing !== "function" ||
+    typeof instance.textGeneration.generateCommitMessage !== "function" ||
+    typeof instance.textGeneration.generatePrContent !== "function" ||
+    typeof instance.textGeneration.generateBranchName !== "function" ||
+    typeof instance.textGeneration.generateThreadTitle !== "function" ||
+    typeof instance.textGeneration.generateReviewGuide !== "function"
+  )
+    throw new Error("Provider factory returned an invalid instance.");
+}
+
 interface LiveEntry {
   readonly instance: ProviderInstance;
   readonly scope: Scope.Closeable;
   readonly entry: ProviderInstanceConfig;
   readonly secrets: InstanceSecrets;
+  readonly driverRevision: number;
+  readonly activity: {
+    sessions: number;
+    operations: number;
+    accepting: boolean;
+    closed: boolean;
+    readonly lock: Semaphore.Semaphore;
+  };
 }
 
 interface RegistryState {
@@ -203,6 +252,7 @@ const isEntryEnabled = Effect.fn("ProviderInstanceRegistry.isEntryEnabled")(func
 
 const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R>(input: {
   readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
+  readonly contributionsById: ReadonlyMap<ProviderDriverKind, ProviderDriverContributionEntry<R>>;
   readonly blockedReason: BlockedReason;
   readonly parentScope: Scope.Scope;
   readonly instanceId: ProviderInstanceId;
@@ -210,6 +260,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   readonly entry: ProviderInstanceConfig;
   readonly deferSecrets: boolean;
   readonly carriedSecrets?: InstanceSecrets | undefined;
+  readonly onSessionsDrained: () => Effect.Effect<void>;
 }): Effect.fn.Return<
   | { readonly kind: "live"; readonly live: LiveEntry }
   | {
@@ -242,8 +293,8 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
       }),
     };
   }
-  const driver = driversById.get(entry.driver);
-  if (!driver) {
+  const contribution = input.contributionsById.get(entry.driver);
+  if (!contribution) {
     return {
       kind: "unavailable" as const,
       snapshot: yield* buildUnavailableProviderSnapshot({
@@ -255,9 +306,24 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
       }),
     };
   }
+  const driver = contribution.driver;
 
   const decoder = Schema.decodeUnknownEffect(driver.configSchema);
-  const decodeResult = yield* decoder(entry.config ?? driver.defaultConfig()).pipe(Effect.result);
+  const decodeResult = yield* Effect.suspend(() =>
+    decoder(entry.config ?? driver.defaultConfig()),
+  ).pipe(
+    Effect.catchDefect((cause) =>
+      Effect.fail(
+        new ProviderDriverError({
+          driver: entry.driver,
+          instanceId,
+          detail: "Provider config decoder threw an unexpected error.",
+          cause,
+        }),
+      ),
+    ),
+    Effect.result,
+  );
   if (decodeResult._tag === "Failure") {
     const issue = decodeResult.failure;
     const detail = issue.message ?? String(issue);
@@ -317,9 +383,38 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   }
 
   const childScope = yield* Scope.fork(parentScope);
+  if (contribution.retain) {
+    const retained = yield* contribution.retain.pipe(
+      Effect.catchDefect((cause) =>
+        Effect.fail(
+          new ProviderDriverError({
+            driver: entry.driver,
+            instanceId,
+            detail: "Provider plugin generation is no longer available.",
+            cause,
+          }),
+        ),
+      ),
+      Effect.result,
+    );
+    if (retained._tag === "Failure") {
+      yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
+      return {
+        kind: "unavailable" as const,
+        snapshot: yield* buildUnavailableProviderSnapshot({
+          driverKind: entry.driver,
+          instanceId,
+          displayName: entry.displayName,
+          accentColor: entry.accentColor,
+          reason: retained.failure.detail,
+        }),
+      };
+    }
+    yield* Scope.addFinalizer(childScope, retained.success);
+  }
 
-  const createResult = yield* driver
-    .create({
+  const createResult = yield* Effect.suspend(() =>
+    driver.create({
       instanceId,
       displayName: entry.displayName,
       accentColor: entry.accentColor,
@@ -329,8 +424,24 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         secrets.config.length === 0
           ? typedConfig
           : withSettingsSecrets(typedConfig, secrets.config),
-    })
-    .pipe(Effect.provideService(Scope.Scope, childScope), Effect.result);
+    }),
+  ).pipe(
+    Effect.tap((instance) =>
+      Effect.sync(() => validateProviderInstance(instance, instanceId, entry.driver)),
+    ),
+    Effect.provideService(Scope.Scope, childScope),
+    Effect.catchDefect((cause) =>
+      Effect.fail(
+        new ProviderDriverError({
+          driver: entry.driver,
+          instanceId,
+          detail: "Provider factory threw an unexpected error.",
+          cause,
+        }),
+      ),
+    ),
+    Effect.result,
+  );
   if (createResult._tag === "Failure") {
     yield* Effect.logError("Failed to create provider instance", {
       instanceId: rawInstanceId,
@@ -350,31 +461,265 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
     };
   }
 
+  const activity = {
+    sessions: 0,
+    operations: 0,
+    accepting: true,
+    closed: false,
+    lock: yield* Semaphore.make(1),
+  };
+  yield* Scope.addFinalizer(
+    childScope,
+    Effect.sync(() => {
+      activity.closed = true;
+    }),
+  );
+  const retainOperation = <A, E, R>(operation: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      activity.lock.withPermits(1)(
+        Effect.suspend(() => {
+          if (activity.closed) return Effect.interrupt;
+          activity.operations += 1;
+          return Effect.void;
+        }),
+      ),
+      () => operation,
+      () =>
+        activity.lock
+          .withPermits(1)(
+            Effect.sync(() => {
+              activity.operations -= 1;
+              return !activity.accepting && activity.sessions === 0 && activity.operations === 0;
+            }),
+          )
+          .pipe(Effect.flatMap((drained) => (drained ? input.onSessionsDrained() : Effect.void))),
+    );
+  // Finite provider calls share their factory scope with sessions. Change streams
+  // remain scope-owned subscriptions and must not pin a replacement indefinitely.
+  const retainMethod =
+    <Args extends ReadonlyArray<unknown>, A, E, R>(
+      method: (...args: Args) => Effect.Effect<A, E, R>,
+    ) =>
+    (...args: Args) =>
+      retainOperation(Effect.suspend(() => method(...args)));
+  const original = createResult.success;
+  const auth = original.auth;
+  const acp = original.acpSessionManagement;
+  const instance: ProviderInstance = {
+    ...original,
+    snapshot: {
+      ...original.snapshot,
+      getSnapshot: retainOperation(original.snapshot.getSnapshot),
+      refresh: retainOperation(original.snapshot.refresh),
+      resolveMaintenance: retainMethod(
+        original.snapshot.resolveMaintenance.bind(original.snapshot),
+      ),
+      applyUsageLimits: retainMethod(original.snapshot.applyUsageLimits.bind(original.snapshot)),
+      ...(original.snapshot.refreshUsage
+        ? { refreshUsage: retainOperation(original.snapshot.refreshUsage) }
+        : {}),
+    },
+    textGeneration: {
+      generateTranscriptionPostProcessing: retainMethod(
+        original.textGeneration.generateTranscriptionPostProcessing.bind(original.textGeneration),
+      ),
+      generateCommitMessage: retainMethod(
+        original.textGeneration.generateCommitMessage.bind(original.textGeneration),
+      ),
+      generatePrContent: retainMethod(
+        original.textGeneration.generatePrContent.bind(original.textGeneration),
+      ),
+      generateBranchName: retainMethod(
+        original.textGeneration.generateBranchName.bind(original.textGeneration),
+      ),
+      generateThreadTitle: retainMethod(
+        original.textGeneration.generateThreadTitle.bind(original.textGeneration),
+      ),
+      generateReviewGuide: retainMethod(
+        original.textGeneration.generateReviewGuide.bind(original.textGeneration),
+      ),
+    },
+    ...(original.snapshotForCwd
+      ? { snapshotForCwd: retainMethod(original.snapshotForCwd.bind(original)) }
+      : {}),
+    ...(original.refreshModels
+      ? { refreshModels: retainMethod(original.refreshModels.bind(original)) }
+      : {}),
+    ...(original.invalidateCaches
+      ? { invalidateCaches: retainOperation(original.invalidateCaches) }
+      : {}),
+    ...(original.afterUpdate ? { afterUpdate: retainOperation(original.afterUpdate) } : {}),
+    ...(original.consumeResetCredit
+      ? { consumeResetCredit: retainMethod(original.consumeResetCredit.bind(original)) }
+      : {}),
+    ...(auth
+      ? {
+          auth: {
+            ...auth,
+            start: retainMethod(auth.start.bind(auth)),
+            complete: retainMethod(auth.complete.bind(auth)),
+            cancel: retainMethod(auth.cancel.bind(auth)),
+            logout: retainMethod(auth.logout.bind(auth)),
+            ...(auth.reconnectProfile
+              ? { reconnectProfile: retainMethod(auth.reconnectProfile.bind(auth)) }
+              : {}),
+            ...(auth.importProfile
+              ? { importProfile: retainMethod(auth.importProfile.bind(auth)) }
+              : {}),
+            ...(auth.adoptCredentials
+              ? { adoptCredentials: retainMethod(auth.adoptCredentials.bind(auth)) }
+              : {}),
+            ...(auth.respond ? { respond: retainMethod(auth.respond.bind(auth)) } : {}),
+            ...(auth.removeMethod
+              ? { removeMethod: retainMethod(auth.removeMethod.bind(auth)) }
+              : {}),
+            ...(auth.isChangingCredentials
+              ? { isChangingCredentials: retainOperation(auth.isChangingCredentials) }
+              : {}),
+            ...(auth.invalidate ? { invalidate: retainOperation(auth.invalidate) } : {}),
+            ...(auth.refreshMethods
+              ? { refreshMethods: retainOperation(auth.refreshMethods) }
+              : {}),
+            ...(auth.withAccess
+              ? {
+                  withAccess: <A, E, R>(task: Effect.Effect<A, E, R>) =>
+                    retainOperation(auth.withAccess!(task)),
+                }
+              : {}),
+          },
+        }
+      : {}),
+    ...(acp
+      ? {
+          acpSessionManagement: {
+            listSessions: retainMethod(acp.listSessions.bind(acp)),
+            logout: retainMethod(acp.logout.bind(acp)),
+            deleteSession: retainMethod(acp.deleteSession.bind(acp)),
+            listProviders: retainMethod(acp.listProviders.bind(acp)),
+            setProvider: retainMethod(acp.setProvider.bind(acp)),
+            disableProvider: retainMethod(acp.disableProvider.bind(acp)),
+          },
+        }
+      : {}),
+    orchestrationAdapter: {
+      ...original.orchestrationAdapter,
+      getCapabilities: retainMethod(
+        original.orchestrationAdapter.getCapabilities.bind(original.orchestrationAdapter),
+      ),
+      planSelectionTransition: retainMethod(
+        original.orchestrationAdapter.planSelectionTransition.bind(original.orchestrationAdapter),
+      ),
+      openSession: Effect.fn("ProviderInstanceRegistry.openSession")(function* (
+        sessionInput: ProviderAdapterV2OpenSessionInput,
+      ) {
+        const release = (lease: { released: boolean }) =>
+          activity.lock
+            .withPermits(1)(
+              Effect.sync(() => {
+                if (lease.released) return false;
+                lease.released = true;
+                activity.sessions -= 1;
+                return activity.sessions === 0 && activity.operations === 0;
+              }),
+            )
+            .pipe(Effect.flatMap((drained) => (drained ? input.onSessionsDrained() : Effect.void)));
+        const lease = yield* Effect.acquireRelease(
+          activity.lock.withPermits(1)(
+            Effect.gen(function* () {
+              if (!activity.accepting) {
+                return yield* new ProviderAdapterOpenSessionError({
+                  driver: original.driverKind,
+                  providerSessionId: sessionInput.providerSessionId,
+                  cause: "Provider configuration changed. Retry after its active sessions finish.",
+                });
+              }
+              activity.sessions += 1;
+              return { released: false };
+            }),
+          ),
+          release,
+        );
+        const runtime = yield* original.orchestrationAdapter
+          .openSession(sessionInput)
+          .pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? release(lease) : Effect.void)));
+        const admitTurn = (turnInput: ProviderAdapterV2TurnInput) =>
+          Effect.suspend(() =>
+            activity.accepting
+              ? Effect.void
+              : Effect.fail(
+                  new ProviderAdapterTurnStartError({
+                    driver: original.driverKind,
+                    threadId: turnInput.threadId,
+                    providerThreadId: turnInput.providerThread.id,
+                    runId: turnInput.runId,
+                    cause:
+                      "Provider plugin changed or was disabled. Reconnect after its active sessions finish.",
+                  }),
+                ),
+          );
+        return {
+          ...runtime,
+          acceptingTurns: Effect.sync(() => activity.accepting),
+          startTurn: (turnInput) =>
+            admitTurn(turnInput).pipe(Effect.andThen(() => runtime.startTurn(turnInput))),
+          ...(runtime.compactThread
+            ? {
+                compactThread: (turnInput: ProviderAdapterV2TurnInput) =>
+                  admitTurn(turnInput).pipe(
+                    Effect.andThen(() => runtime.compactThread!(turnInput)),
+                  ),
+              }
+            : {}),
+        };
+      }),
+    },
+  };
   return {
     kind: "live" as const,
     live: {
-      instance: createResult.success,
+      instance,
       scope: childScope,
       entry,
       secrets,
+      driverRevision: contribution.revision,
+      activity,
     },
   };
 });
 
 const makeReconcile = <R>(input: {
   readonly state: RegistryState;
-  readonly driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>;
+  readonly drivers: Effect.Effect<readonly ProviderDriverContributionEntry<R>[]>;
   readonly blockedReason: BlockedReason;
   readonly parentScope: Scope.Scope;
+  readonly onSessionsDrained: () => Effect.Effect<void>;
 }): ((
   configMap: ProviderInstanceConfigMap,
   rebuild?: ReadonlySet<ProviderInstanceId>,
   deferSecrets?: boolean,
   carried?: ReadonlyMap<ProviderInstanceId, InstanceSecrets>,
 ) => Effect.Effect<void, never, R | SecretResolver.SecretResolver>) => {
-  const { state, driversById, blockedReason, parentScope } = input;
-  return (configMap, rebuild = new Set(), deferSecrets = false, carried = new Map()) =>
+  const { state, blockedReason, parentScope, onSessionsDrained } = input;
+  // Rebuilds requested while an instance was pinned by active sessions wait for its drain.
+  const pendingRebuild = new Set<ProviderInstanceId>();
+  const pendingCarried = new Map<ProviderInstanceId, InstanceSecrets>();
+  return (
+    configMap,
+    requestedRebuild = new Set(),
+    deferSecrets = false,
+    requestedCarried = new Map(),
+  ) =>
     Effect.gen(function* () {
+      const contributionsById = new Map(
+        (yield* input.drivers).map((entry) => [entry.driver.driverKind, entry]),
+      );
+      const driversById = new Map<ProviderDriverKind, AnyProviderDriver<R>>(
+        [...contributionsById].map(([driverKind, entry]) => [driverKind, entry.driver]),
+      );
+      const rebuild = new Set([...pendingRebuild, ...requestedRebuild]);
+      const carried = new Map([...pendingCarried, ...requestedCarried]);
+      pendingRebuild.clear();
+      pendingCarried.clear();
       const previousEntries = yield* Ref.get(state.entries);
       const previousUnavailable = yield* Ref.get(state.unavailable);
       const previousSecretsUnreadable = yield* Ref.get(state.secretsUnreadable);
@@ -383,20 +728,41 @@ const makeReconcile = <R>(input: {
         nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
       );
 
-      // Close changed/removed scopes before replacements to preserve one live scope per id.
+      // Active session scopes pin their factory generation. Stop admitting new
+      // sessions on stale instances, then apply the latest change when they drain.
       const removedIds: Array<ProviderInstanceId> = [];
       const replacedIds = new Set<ProviderInstanceId>();
+      const pinnedRemoved = new Map<ProviderInstanceId, LiveEntry>();
+      let admissionChanged = false;
       for (const [instanceId, live] of previousEntries) {
-        if (!nextKeys.has(instanceId)) {
-          removedIds.push(instanceId);
+        const nextEntry = configMap[instanceId];
+        const changed =
+          nextEntry === undefined ||
+          rebuild.has(instanceId) ||
+          !entryEqual(live.entry, nextEntry) ||
+          live.driverRevision !== contributionsById.get(nextEntry.driver)?.revision;
+        if (!changed) {
+          if (!live.activity.accepting) admissionChanged = true;
+          live.activity.accepting = true;
           continue;
         }
-        const nextEntry = configMap[instanceId];
-        if (
-          rebuild.has(instanceId) ||
-          (nextEntry !== undefined && !entryEqual(live.entry, nextEntry))
-        ) {
-          replacedIds.add(instanceId);
+        // Closing under the lock stops new sessions and operations before the scope closes.
+        const closed = yield* live.activity.lock.withPermits(1)(
+          Effect.sync(() => {
+            if (live.activity.accepting) admissionChanged = true;
+            live.activity.accepting = false;
+            if (live.activity.sessions > 0 || live.activity.operations > 0) return false;
+            live.activity.closed = true;
+            return true;
+          }),
+        );
+        if (closed && nextKeys.has(instanceId)) replacedIds.add(instanceId);
+        else if (closed) removedIds.push(instanceId);
+        else if (!nextKeys.has(instanceId)) pinnedRemoved.set(instanceId, live);
+        else if (rebuild.has(instanceId)) {
+          pendingRebuild.add(instanceId);
+          const secrets = carried.get(instanceId);
+          if (secrets !== undefined) pendingCarried.set(instanceId, secrets);
         }
       }
       const retiredIds = [...removedIds, ...replacedIds];
@@ -461,6 +827,7 @@ const makeReconcile = <R>(input: {
 
         const result = yield* buildEntry({
           driversById,
+          contributionsById,
           blockedReason,
           parentScope,
           instanceId,
@@ -468,6 +835,7 @@ const makeReconcile = <R>(input: {
           entry,
           deferSecrets,
           carriedSecrets: carried.get(instanceId),
+          onSessionsDrained,
         });
         if (result.kind === "live") {
           builtEntries.set(instanceId, result.live);
@@ -475,6 +843,10 @@ const makeReconcile = <R>(input: {
           builtUnavailable.set(instanceId, result.snapshot);
           if (result.secretsUnreadable) builtSecretsUnreadable.set(instanceId, entry);
         }
+      }
+      for (const [instanceId, live] of pinnedRemoved) {
+        builtEntries.set(instanceId, live);
+        nextOrder.push(instanceId);
       }
 
       if (previousOrder.length === nextOrder.length) {
@@ -489,6 +861,7 @@ const makeReconcile = <R>(input: {
       }
 
       const entriesChanged =
+        admissionChanged ||
         orderChanged ||
         removedIds.length > 0 ||
         replacedIds.size > 0 ||
@@ -518,6 +891,9 @@ export const makeProviderInstanceRegistry = Effect.fn(
   readonly configMap: ProviderInstanceConfigMap;
   /** A reason to show instead of running a driver, such as an administrator's policy. */
   readonly blockedReason?: BlockedReason | undefined;
+  readonly driverCatalog?: {
+    readonly list: Effect.Effect<readonly ProviderDriverContributionEntry<R>[]>;
+  };
 }): Effect.fn.Return<
   {
     readonly registry: ProviderInstanceRegistry["Service"];
@@ -526,15 +902,24 @@ export const makeProviderInstanceRegistry = Effect.fn(
   never,
   R | SecretResolver.SecretResolver | Scope.Scope
 > {
-  const driversById = new Map<ProviderDriverKind, AnyProviderDriver<R>>(
-    input.drivers.map((driver) => [driver.driverKind, driver]),
+  const drivers: Effect.Effect<readonly ProviderDriverContributionEntry<R>[]> =
+    input.driverCatalog?.list ??
+    Effect.succeed(input.drivers.map((driver) => ({ driver, revision: 0, pluginId: "static" })));
+  const currentDriversById = drivers.pipe(
+    Effect.map(
+      (entries) =>
+        new Map<ProviderDriverKind, AnyProviderDriver<R>>(
+          entries.map((entry) => [entry.driver.driverKind, entry.driver]),
+        ),
+    ),
   );
 
   // Capture the enclosing scope so per-instance child scopes can be
   // attached to it at `reconcile` time. Without this, `reconcile`
   // called later (e.g. from the hydration layer) would attach child
   // scopes to the *caller's* scope instead of the registry's.
-  const parentScope = yield* Scope.Scope;
+  const registryScope = yield* Scope.Scope;
+  const parentScope = yield* Scope.fork(registryScope);
 
   const driverContext = yield* Effect.context<R | SecretResolver.SecretResolver>();
 
@@ -547,34 +932,44 @@ export const makeProviderInstanceRegistry = Effect.fn(
   yield* Effect.addFinalizer(() => PubSub.shutdown(changes));
 
   const state: RegistryState = { entries, unavailable, secretsUnreadable, changes };
-  const reconcileWithR = makeReconcile({
-    state,
-    driversById,
-    blockedReason: input.blockedReason ?? (() => undefined),
-    parentScope,
-  });
   const configMapRef = yield* Ref.make(input.configMap);
   const semaphore = yield* Semaphore.make(1);
+  let closing = false;
+  const reconcileWithR = makeReconcile({
+    state,
+    drivers,
+    blockedReason: input.blockedReason ?? (() => undefined),
+    parentScope,
+    onSessionsDrained: () => applyLatest(),
+  });
+  const applyLatest = (configMap?: ProviderInstanceConfigMap): Effect.Effect<void> =>
+    semaphore.withPermits(1)(
+      Effect.gen(function* () {
+        if (closing) return;
+        if (configMap !== undefined) yield* Ref.set(configMapRef, configMap);
+        yield* reconcileWithR(yield* Ref.get(configMapRef));
+      }).pipe(Effect.provideContext(driverContext)),
+    );
   const reconcile: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["reconcile"] =
-    (configMap) =>
-      semaphore.withPermits(1)(
-        Ref.set(configMapRef, configMap).pipe(
-          Effect.andThen(reconcileWithR(configMap)),
-          Effect.provideContext(driverContext),
-        ),
-      );
+    applyLatest;
 
   // Rebuilds an instance only when it was unavailable or its secrets changed, so a refresh does
   // not restart providers whose credentials are the same. Without `checked` the cached values are
   // dropped first; with it, only that reference takes the checked value and the rest carry over.
   const reloadWhere = Effect.fn("ProviderInstanceRegistry.reloadWhere")(
     function* (
-      select: (rawInstanceId: string, entry: ProviderInstanceConfig) => boolean,
+      select: (
+        rawInstanceId: string,
+        entry: ProviderInstanceConfig,
+        driversById: ReadonlyMap<ProviderDriverKind, AnyProviderDriver<R>>,
+      ) => boolean,
       checked?: CheckedSecret,
     ) {
+      const driversById = yield* currentDriversById;
       const configMap = yield* Ref.get(configMapRef);
       const targets = yield* Effect.filter(Object.entries(configMap), ([rawInstanceId, entry]) =>
-        select(rawInstanceId, entry) && secretReferencesOf(driversById, entry).length > 0
+        select(rawInstanceId, entry, driversById) &&
+        secretReferencesOf(driversById, entry).length > 0
           ? isEntryEnabled(driversById, entry)
           : Effect.succeed(false),
       );
@@ -649,7 +1044,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
   const applySecret: ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutatorShape["applySecret"] =
     (reference, value) =>
       reloadWhere(
-        (_, entry) =>
+        (_, entry, driversById) =>
           secretReferencesOf(driversById, entry).some((candidate) =>
             sameReference(candidate, reference),
           ),
@@ -663,12 +1058,23 @@ export const makeProviderInstanceRegistry = Effect.fn(
       Effect.provideContext(driverContext),
     ),
   );
+  // Dynamic child scopes live under parentScope, so this root finalizer always
+  // disables drain reconciliation before shutdown closes any provider instance.
+  yield* Scope.addFinalizer(
+    registryScope,
+    Effect.sync(() => {
+      closing = true;
+    }),
+  );
+  const startupDriversById = yield* currentDriversById;
   const startupReferences = yield* Effect.filter(Object.entries(input.configMap), ([, entry]) =>
-    secretReferencesOf(driversById, entry).length > 0
-      ? isEntryEnabled(driversById, entry)
+    secretReferencesOf(startupDriversById, entry).length > 0
+      ? isEntryEnabled(startupDriversById, entry)
       : Effect.succeed(false),
   ).pipe(
-    Effect.map((targets) => targets.flatMap(([, entry]) => secretReferencesOf(driversById, entry))),
+    Effect.map((targets) =>
+      targets.flatMap(([, entry]) => secretReferencesOf(startupDriversById, entry)),
+    ),
   );
   if (startupReferences.length > 0) {
     // The read waits outside the lock so other mutations are not held for a vault prompt; a
@@ -678,7 +1084,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
       yield* semaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* Ref.get(configMapRef);
-          if (current === input.configMap) yield* reconcileWithR(current);
+          if (!closing && current === input.configMap) yield* reconcileWithR(current);
         }),
       );
     }).pipe(Effect.provideContext(driverContext), Effect.forkScoped);
@@ -717,12 +1123,16 @@ export const layer = <R>(input: {
   readonly drivers: ReadonlyArray<AnyProviderDriver<R>>;
   readonly configMap: ProviderInstanceConfigMap;
   readonly blockedReason?: BlockedReason | undefined;
+  readonly driverCatalog?: {
+    readonly list: Effect.Effect<readonly ProviderDriverContributionEntry<R>[]>;
+  };
 }): Layer.Layer<
   ProviderInstanceRegistry | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
   never,
   R | SecretResolver.SecretResolver
 > =>
-  Layer.effectContext(
+  builtinContextLayer(
+    "t3.server",
     makeProviderInstanceRegistry(input).pipe(
       Effect.map(({ registry, mutator }) =>
         Context.make(ProviderInstanceRegistry, registry).pipe(

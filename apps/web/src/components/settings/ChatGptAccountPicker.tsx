@@ -12,8 +12,14 @@ import {
 } from "../ui/dialog";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ChatGptAccountPicker({
+export const ChatGptAccountPicker = definePluginComponent(
+  "component:components/settings/ChatGptAccountPicker/ChatGptAccountPicker",
+  PluginOriginalChatGptAccountPicker,
+);
+
+function PluginOriginalChatGptAccountPicker({
   open,
   methods,
   onClose,

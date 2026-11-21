@@ -19,6 +19,7 @@ import {
   replacedVersionedAppImagePath,
 } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 export interface DesktopPreReadyCommandLineReader {
   readonly hasSwitch: (switchName: string) => boolean;
@@ -190,5 +191,9 @@ export const make = Effect.gen(function* () {
 // Complete scheme privileges and switches before later layers can observe app readiness.
 export const layer = Layer.mergeAll(
   ElectronProtocol.layerSchemePrivileges,
-  Layer.effect(DesktopPreReadyElectronOptions, make),
+  builtinServiceLayer(
+    "t3.desktop.desktop-pre-ready-platform",
+    DesktopPreReadyElectronOptions,
+    make,
+  ),
 );

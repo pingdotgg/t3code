@@ -1,4 +1,5 @@
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import { clientPluginKernelLayer } from "@t3tools/client-runtime/plugins/runtime";
 import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Socket from "effect/socket/Socket";
@@ -35,6 +36,7 @@ const layerRelayTracing = RelayTracing.layer(
 ).pipe(Layer.provide(layerHttpClient));
 
 type RuntimeLayerSource =
+  | typeof clientPluginKernelLayer
   | typeof layerHttpClient
   | typeof Dpop.layer
   | typeof Socket.layerWebSocketConstructorGlobal
@@ -43,7 +45,10 @@ type RuntimeLayerSource =
   | ReturnType<typeof ManagedRelayLayer.layer>;
 
 const primaryHttpRuntime = ManagedRuntime.make(
-  PrimaryEnvironmentHttpClient.layer.pipe(Layer.provide(PrimaryEnvironmentHttpLayer.layer)),
+  PrimaryEnvironmentHttpClient.layer.pipe(
+    Layer.provide(PrimaryEnvironmentHttpLayer.layer),
+    Layer.provide(clientPluginKernelLayer),
+  ),
 );
 
 export type PrimaryHttpEffectRunner = <A, E>(
@@ -72,7 +77,7 @@ const layerRuntime = Layer.mergeAll(
   ManagedRelayLayer.layer(configuredRelayUrl()).pipe(
     Layer.provide(Layer.mergeAll(layerHttpClient, Dpop.layer)),
   ),
-);
+).pipe(Layer.provideMerge(clientPluginKernelLayer));
 
 export const runtime: ManagedRuntime.ManagedRuntime<
   Layer.Success<RuntimeLayerSource>,

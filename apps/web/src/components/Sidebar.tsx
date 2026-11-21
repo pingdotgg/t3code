@@ -282,6 +282,7 @@ import {
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
 } from "./sidebar/SidebarListMarkers";
+import { definePluginFeature } from "~/plugins/features";
 
 function sameSidebarProviderEntries(
   left: ReadonlyMap<string, SidebarProviderEntry>,
@@ -908,7 +909,7 @@ function readRouteThreadKey(router: AnyRouter): string | null {
   return ref === null ? null : scopedThreadKey(ref);
 }
 
-export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
+export function BuiltinSidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const gt = useGT();
   const messages = useMessages();
   const {
@@ -3763,3 +3764,5 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     </SidebarFolderDrop>
   );
 }
+
+export default definePluginFeature("sidebar.thread", BuiltinSidebar);

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -115,7 +116,12 @@ function resolveThreadLineageWindow<Row>(
   return { visibleRows, hiddenCount: rows.length - visibleRows.length };
 }
 
-function ThreadLineageRowList(props: {
+const ThreadLineageRowList = definePluginComponent(
+  "component:components/chat/ThreadRelationshipsControl/ThreadLineageRowList",
+  PluginOriginalThreadLineageRowList,
+);
+
+function PluginOriginalThreadLineageRowList(props: {
   readonly hiddenCount: number;
   readonly onShowMore: () => void;
   readonly children: ReactNode;
@@ -159,7 +165,12 @@ const lineageRowStatus = (row: LineageRow) =>
 const isFinishedAgentStatus = (status: string | null | undefined) =>
   ["completed", "failed", "error", "cancelled", "interrupted", "idle"].includes(status ?? "");
 
-function ThreadLineageGroup<Row extends LineageRow>(props: {
+const ThreadLineageGroup = definePluginComponent(
+  "component:components/chat/ThreadRelationshipsControl/ThreadLineageGroup",
+  PluginOriginalThreadLineageGroup,
+);
+
+function PluginOriginalThreadLineageGroup<Row extends LineageRow>(props: {
   readonly label: string | null;
   readonly rows: ReadonlyArray<Row>;
   readonly expanded: boolean;
@@ -462,7 +473,12 @@ function DelegatedFromRow(props: {
   );
 }
 
-export function ThreadRelationshipsPanel(props: {
+export const ThreadRelationshipsPanel = definePluginComponent(
+  "component:components/chat/ThreadRelationshipsControl/ThreadRelationshipsPanel",
+  PluginOriginalThreadRelationshipsPanel,
+);
+
+function PluginOriginalThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly showLineage: boolean;

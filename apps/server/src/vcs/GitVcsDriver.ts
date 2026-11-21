@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as NodeBuffer from "node:buffer";
 
 import * as Clock from "effect/Clock";
@@ -2512,5 +2513,7 @@ export const make = Effect.gen(function* () {
   return GitVcsDriver.of(git);
 });
 
-export const layerVcs = Layer.effect(VcsDriver.VcsDriver, makeVcsDriver);
-export const layer = Layer.effect(GitVcsDriver, make).pipe(Layer.provide(CheckoutCloner.layer));
+export const layerVcs = builtinServiceLayer("t3.git")(VcsDriver.VcsDriver, makeVcsDriver);
+export const layer = builtinServiceLayer("t3.git")(GitVcsDriver, make).pipe(
+  Layer.provide(CheckoutCloner.layer),
+);

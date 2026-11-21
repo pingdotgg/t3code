@@ -2,6 +2,7 @@ import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/c
 import { createModelSelection } from "@t3tools/shared/model";
 import { T, useGT, useMessages } from "gt-react";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
+import { definePluginComponent } from "~/plugins/features";
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -18,7 +19,7 @@ export type RuntimeModeOption = {
   mode: RuntimeMode;
   disabledReason?: string;
 } & (typeof runtimeModeConfig)[RuntimeMode];
-export const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
+const PluginOriginalComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   runtimeMode: RuntimeMode;
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   size?: "sm" | "xs";
@@ -97,6 +98,11 @@ export const ComposerFooterModeControls = memo(function ComposerFooterModeContro
 
   return accessDisplay === "hidden" ? null : permissionsChip;
 });
+
+export const ComposerFooterModeControls = definePluginComponent(
+  "component:components/chat/ComposerFooterControls/ComposerFooterModeControls",
+  PluginOriginalComposerFooterModeControls,
+);
 
 /**
  * Permission modes as one horizontal toggle, with the shown mode named below.
@@ -191,76 +197,83 @@ export function ComposerPermissionsSection(props: {
   );
 }
 
-export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
-  children?: React.ReactNode;
-  compact: boolean;
-  canOperateThread: boolean;
-  isPreparingWorktree: boolean;
-  pendingAction: {
-    questionIndex: number;
-    isLastQuestion: boolean;
-    canAdvance: boolean;
-    isResponding: boolean;
-    isComplete: boolean;
-  } | null;
-  isRunning: boolean;
-  canInterrupt: boolean;
-  runId: string | null;
-  followUpBehavior: "queue" | "steer";
-  canSteer: boolean;
-  alternateShortcutLabel: string | null;
-  voiceInputActive?: boolean;
-  isSendBusy: boolean;
-  sendDisabledReason: string | null;
-  isEnvironmentUnavailable: boolean;
-  hasSendableContent: boolean;
-  canResume: boolean;
-  preserveComposerFocusOnPointerDown?: boolean;
-  isEditingQueuedMessage: boolean;
-  onSubmitMessage: React.MouseEventHandler<HTMLButtonElement>;
-  onResume: () => void;
-  onPreviousPendingQuestion: () => void;
-  onInterrupt: () => void;
-  compactBeforeSendTokens: number | null;
-  hideCompactToggle: boolean;
-  keepFullHistory: boolean;
-  onToggleKeepFullHistory: () => void;
-}) {
-  return (
-    <>
-      <ComposerPrimaryActions
-        compact={props.compact}
-        canOperateThread={props.canOperateThread}
-        pendingAction={props.pendingAction}
-        isRunning={props.isRunning}
-        canInterrupt={props.canInterrupt}
-        runId={props.runId}
-        followUpBehavior={props.followUpBehavior}
-        canSteer={props.canSteer}
-        alternateShortcutLabel={props.alternateShortcutLabel}
-        voiceInputActive={props.voiceInputActive ?? false}
-        isSendBusy={props.isSendBusy}
-        sendDisabledReason={props.sendDisabledReason}
-        isEnvironmentUnavailable={props.isEnvironmentUnavailable}
-        isPreparingWorktree={props.isPreparingWorktree}
-        hasSendableContent={props.hasSendableContent}
-        canResume={props.canResume}
-        preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
-        isEditingQueuedMessage={props.isEditingQueuedMessage}
-        onSubmitMessage={props.onSubmitMessage}
-        onResume={props.onResume}
-        onPreviousPendingQuestion={props.onPreviousPendingQuestion}
-        onInterrupt={props.onInterrupt}
-        compactBeforeSendTokens={props.compactBeforeSendTokens}
-        hideCompactToggle={props.hideCompactToggle}
-        keepFullHistory={props.keepFullHistory}
-        onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-      >
-        {props.children}
-      </ComposerPrimaryActions>
-    </>
-  );
-});
+const PluginOriginalComposerFooterPrimaryActions = memo(
+  function ComposerFooterPrimaryActions(props: {
+    children?: React.ReactNode;
+    compact: boolean;
+    canOperateThread: boolean;
+    isPreparingWorktree: boolean;
+    pendingAction: {
+      questionIndex: number;
+      isLastQuestion: boolean;
+      canAdvance: boolean;
+      isResponding: boolean;
+      isComplete: boolean;
+    } | null;
+    isRunning: boolean;
+    canInterrupt: boolean;
+    runId: string | null;
+    followUpBehavior: "queue" | "steer";
+    canSteer: boolean;
+    alternateShortcutLabel: string | null;
+    voiceInputActive?: boolean;
+    isSendBusy: boolean;
+    sendDisabledReason: string | null;
+    isEnvironmentUnavailable: boolean;
+    hasSendableContent: boolean;
+    canResume: boolean;
+    preserveComposerFocusOnPointerDown?: boolean;
+    isEditingQueuedMessage: boolean;
+    onSubmitMessage: React.MouseEventHandler<HTMLButtonElement>;
+    onResume: () => void;
+    onPreviousPendingQuestion: () => void;
+    onInterrupt: () => void;
+    compactBeforeSendTokens: number | null;
+    hideCompactToggle: boolean;
+    keepFullHistory: boolean;
+    onToggleKeepFullHistory: () => void;
+  }) {
+    return (
+      <>
+        <ComposerPrimaryActions
+          compact={props.compact}
+          canOperateThread={props.canOperateThread}
+          pendingAction={props.pendingAction}
+          isRunning={props.isRunning}
+          canInterrupt={props.canInterrupt}
+          runId={props.runId}
+          followUpBehavior={props.followUpBehavior}
+          canSteer={props.canSteer}
+          alternateShortcutLabel={props.alternateShortcutLabel}
+          voiceInputActive={props.voiceInputActive ?? false}
+          isSendBusy={props.isSendBusy}
+          sendDisabledReason={props.sendDisabledReason}
+          isEnvironmentUnavailable={props.isEnvironmentUnavailable}
+          isPreparingWorktree={props.isPreparingWorktree}
+          hasSendableContent={props.hasSendableContent}
+          canResume={props.canResume}
+          preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
+          isEditingQueuedMessage={props.isEditingQueuedMessage}
+          onSubmitMessage={props.onSubmitMessage}
+          onResume={props.onResume}
+          onPreviousPendingQuestion={props.onPreviousPendingQuestion}
+          onInterrupt={props.onInterrupt}
+          compactBeforeSendTokens={props.compactBeforeSendTokens}
+          hideCompactToggle={props.hideCompactToggle}
+          keepFullHistory={props.keepFullHistory}
+          onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+        >
+          {props.children}
+        </ComposerPrimaryActions>
+      </>
+    );
+  },
+);
+
+export const ComposerFooterPrimaryActions = definePluginComponent(
+  "component:components/chat/ComposerFooterControls/ComposerFooterPrimaryActions",
+  PluginOriginalComposerFooterPrimaryActions,
+);
 
 /**
  * The composer's model picker. It owns the single- and multi-model selection

@@ -1,10 +1,10 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { type RemoteOpenTarget } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import { readTailscaleSshEnabled, readTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
@@ -99,4 +99,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(RemoteOpenTargets, make);
+export const layer = builtinServiceLayer("t3.connections")(RemoteOpenTargets, make);

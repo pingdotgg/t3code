@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   ACP_REGISTRY_MAX_AGENTS,
   AcpRegistryOperationError,
@@ -541,7 +542,7 @@ export class AcpRegistryCatalog extends Context.Service<
 >()("@t3tools/provider-acp-registry/server/AcpRegistrySupport/AcpRegistryCatalog") {}
 
 const layer = (options: AcpRegistryCatalogOptions) =>
-  Layer.effect(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
+  builtinServiceLayer("t3.providers")(AcpRegistryCatalog, makeAcpRegistryCatalog(options));
 
 export const layerFromHost = Layer.merge(
   Layer.unwrap(

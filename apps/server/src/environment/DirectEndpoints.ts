@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type { ServerDirectEndpoint } from "@t3tools/contracts";
 import {
   buildTailscaleHttpsBaseUrl,
@@ -7,7 +8,6 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import { HttpClient } from "effect/http";
@@ -186,4 +186,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DirectEndpoints, make);
+export const layer = builtinServiceLayer("t3.connections")(DirectEndpoints, make);

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -416,6 +417,6 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   return RepositoryIdentityResolver.of({ resolve });
 });
 
-export const layer = Layer.effect(RepositoryIdentityResolver, make()).pipe(
+export const layer = builtinServiceLayer("t3.projects")(RepositoryIdentityResolver, make()).pipe(
   Layer.provide(ProcessRunner.layer),
 );

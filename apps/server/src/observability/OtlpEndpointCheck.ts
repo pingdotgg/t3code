@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type {
   OtlpEndpointCheckInput,
   OtlpEndpointCheckResult,
@@ -7,7 +8,6 @@ import { layerOtlpSerialization } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { OtlpSerialization } from "effect/observability";
@@ -86,4 +86,4 @@ const make = Effect.gen(function* () {
   return OtlpEndpointCheck.of({ check });
 });
 
-export const layer = Layer.effect(OtlpEndpointCheck, make);
+export const layer = builtinServiceLayer("t3.server")(OtlpEndpointCheck, make);

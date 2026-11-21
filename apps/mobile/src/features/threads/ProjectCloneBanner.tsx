@@ -7,8 +7,18 @@ import { View } from "react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { cn } from "../../lib/cn";
 import { AppText as Text } from "../../components/ui/AppText";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function ProjectCloneBanner(props: {
+const BannerAction = defineNativePluginFeature(
+  "native.features.threads.project-clone-banner.banner-action",
+  BuiltinBannerAction,
+);
+export const ProjectCloneBanner = defineNativePluginFeature(
+  "native.features.threads.project-clone-banner",
+  BuiltinProjectCloneBanner,
+);
+
+function BuiltinProjectCloneBanner(props: {
   readonly clone: ProjectCloneSnapshot;
   readonly onCancel: () => void;
   readonly onRetry: () => void;
@@ -68,7 +78,7 @@ export function ProjectCloneBanner(props: {
   );
 }
 
-function BannerAction(props: { readonly label: string; readonly onPress: () => void }) {
+function BuiltinBannerAction(props: { readonly label: string; readonly onPress: () => void }) {
   return (
     <Button
       label={props.label}

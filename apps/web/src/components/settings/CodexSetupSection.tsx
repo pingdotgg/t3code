@@ -57,6 +57,32 @@ import {
   settleHandoffAuthorizationPage,
   settleProviderInstall,
 } from "./CodexSetupSection.logic";
+import { definePluginComponent } from "~/plugins/features";
+
+export const CodexSetupSection = definePluginComponent(
+  "component:components/settings/CodexSetupSection/CodexSetupSection",
+  PluginOriginalCodexSetupSection,
+);
+export const AddManagedCodexAccountDialog = definePluginComponent(
+  "component:components/settings/CodexSetupSection/AddManagedCodexAccountDialog",
+  PluginOriginalAddManagedCodexAccountDialog,
+);
+const ManagedCodexSetup = definePluginComponent(
+  "component:components/settings/CodexSetupSection/ManagedCodexSetup",
+  PluginOriginalManagedCodexSetup,
+);
+export const CodexManagedRuntimeFields = definePluginComponent(
+  "component:components/settings/CodexSetupSection/CodexManagedRuntimeFields",
+  PluginOriginalCodexManagedRuntimeFields,
+);
+const CodexSignInDescription = definePluginComponent(
+  "component:components/settings/CodexSetupSection/CodexSignInDescription",
+  PluginOriginalCodexSignInDescription,
+);
+const CodexWelcomeCard = definePluginComponent(
+  "component:components/settings/CodexSetupSection/CodexWelcomeCard",
+  PluginOriginalCodexWelcomeCard,
+);
 
 const noop = () => undefined;
 
@@ -108,7 +134,7 @@ interface CodexSetupSectionProps {
   readonly onSignInCancelled?: (() => void) | undefined;
 }
 
-export function CodexSetupSection(props: CodexSetupSectionProps) {
+function PluginOriginalCodexSetupSection(props: CodexSetupSectionProps) {
   const gt = useGT();
   const m = useMessages();
   const [requested, setRequested] = useState(false);
@@ -228,7 +254,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
   return content;
 }
 
-export function AddManagedCodexAccountDialog({
+function PluginOriginalAddManagedCodexAccountDialog({
   environmentId,
   onClose,
   onAccountCreated,
@@ -265,7 +291,7 @@ export function AddManagedCodexAccountDialog({
   );
 }
 
-function ManagedCodexSetup({
+function PluginOriginalManagedCodexSetup({
   environmentId,
   instanceId,
   provider,
@@ -1120,7 +1146,7 @@ function ManagedCodexSetup({
   );
 }
 
-export function CodexManagedRuntimeFields({
+function PluginOriginalCodexManagedRuntimeFields({
   environmentId,
   instanceId,
   provider,
@@ -1199,7 +1225,7 @@ export function CodexManagedRuntimeFields({
   );
 }
 
-function CodexSignInDescription({
+function PluginOriginalCodexSignInDescription({
   label: labelOverride,
   expanded = false,
   controls,
@@ -1228,7 +1254,7 @@ function CodexSignInDescription({
   );
 }
 
-function CodexWelcomeCard({
+function PluginOriginalCodexWelcomeCard({
   title,
   description,
   control,

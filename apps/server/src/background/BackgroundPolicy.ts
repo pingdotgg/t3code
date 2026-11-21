@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   type AuthSessionId,
   type BackgroundPolicySnapshot,
@@ -15,7 +16,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -294,4 +294,4 @@ export const make = Effect.fn("background.policy.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(BackgroundPolicy, make());
+export const layer = builtinServiceLayer("t3.server")(BackgroundPolicy, make());

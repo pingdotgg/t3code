@@ -37,10 +37,36 @@ import {
   resolvePullRequestState,
 } from "./pullRequestPresentation";
 import { resolveFilterOptions } from "./pullRequestListOptions";
+import { definePluginComponent } from "~/plugins/features";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
-export function GhostBar({ className }: { className?: string | undefined }) {
+export const GhostBar = definePluginComponent(
+  "component:components/pullRequest/PullRequestGhosts/GhostBar",
+  PluginOriginalGhostBar,
+);
+export const PullRequestListGhost = definePluginComponent(
+  "component:components/pullRequest/PullRequestGhosts/PullRequestListGhost",
+  PluginOriginalPullRequestListGhost,
+);
+export const PullRequestDetailGhost = definePluginComponent(
+  "component:components/pullRequest/PullRequestGhosts/PullRequestDetailGhost",
+  PluginOriginalPullRequestDetailGhost,
+);
+export const PullRequestPeopleGhost = definePluginComponent(
+  "component:components/pullRequest/PullRequestGhosts/PullRequestPeopleGhost",
+  PluginOriginalPullRequestPeopleGhost,
+);
+export const PullRequestTimelineGhost = definePluginComponent(
+  "component:components/pullRequest/PullRequestGhosts/PullRequestTimelineGhost",
+  PluginOriginalPullRequestTimelineGhost,
+);
+export const PullRequestConversationGhost = definePluginComponent(
+  "component:components/pullRequest/PullRequestGhosts/PullRequestConversationGhost",
+  PluginOriginalPullRequestConversationGhost,
+);
+
+function PluginOriginalGhostBar({ className }: { className?: string | undefined }) {
   return <span aria-hidden className={cn("block h-3 rounded bg-muted-foreground/15", className)} />;
 }
 
@@ -52,7 +78,13 @@ const DEFAULT_DETAIL_TABS = [
   { value: "code", label: msg("Code", { $context: "pull request tab" }) },
 ] as const;
 
-export function PullRequestListGhost({ rows = 7, caption }: { rows?: number; caption?: string }) {
+function PluginOriginalPullRequestListGhost({
+  rows = 7,
+  caption,
+}: {
+  rows?: number;
+  caption?: string;
+}) {
   const gt = useGT();
   return (
     <div role="status" aria-label={caption ?? gt("Loading pull requests")} className="space-y-0.5">
@@ -82,7 +114,7 @@ export function PullRequestListGhost({ rows = 7, caption }: { rows?: number; cap
   );
 }
 
-export function PullRequestDetailGhost({
+function PluginOriginalPullRequestDetailGhost({
   seed: entry,
   summary,
   actions,
@@ -443,7 +475,7 @@ export function PullRequestDetailGhost({
   );
 }
 
-export function PullRequestPeopleGhost({ rows = 4 }: { rows?: number }) {
+function PluginOriginalPullRequestPeopleGhost({ rows = 4 }: { rows?: number }) {
   const gt = useGT();
   return (
     <div
@@ -461,7 +493,7 @@ export function PullRequestPeopleGhost({ rows = 4 }: { rows?: number }) {
   );
 }
 
-export function PullRequestTimelineGhost({ rows = 6 }: { rows?: number }) {
+function PluginOriginalPullRequestTimelineGhost({ rows = 6 }: { rows?: number }) {
   const gt = useGT();
   return (
     <div
@@ -482,7 +514,7 @@ export function PullRequestTimelineGhost({ rows = 6 }: { rows?: number }) {
   );
 }
 
-export function PullRequestConversationGhost({
+function PluginOriginalPullRequestConversationGhost({
   rows = 3,
   terminology,
 }: {

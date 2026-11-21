@@ -1,7 +1,7 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
@@ -876,4 +876,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(AzureDevOpsPullRequestCli, make);
+export const layer = builtinServiceLayer("t3.pull-requests")(AzureDevOpsPullRequestCli, make);

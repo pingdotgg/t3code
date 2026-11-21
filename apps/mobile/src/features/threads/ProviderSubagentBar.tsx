@@ -13,8 +13,14 @@ import { Button } from "../../components/ui/Button";
 import { NativeChildWorkSheet } from "./NativeChildWorkSheet";
 import { ReadOnlyComposerBar } from "./ReadOnlyComposerBar";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function ProviderSubagentBar(props: {
+export const ProviderSubagentBar = defineNativePluginFeature(
+  "native.features.threads.provider-subagent-bar",
+  BuiltinProviderSubagentBar,
+);
+
+function BuiltinProviderSubagentBar(props: {
   readonly provider: { readonly driver: string; readonly iconUrl?: string | undefined } | null;
   readonly modelLabel: string;
   readonly effortLabel: string | null;

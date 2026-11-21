@@ -20,6 +20,7 @@ import { getMobileUniwindThemeName } from "../../../../lib/mobileThemeRuntime";
 import type { MessageResolver } from "../../../../i18n/messages";
 import { cn } from "../../../../lib/cn";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
+import { defineNativePluginFeature } from "../../../../plugins/features";
 
 const THEME_NAMES: Readonly<Record<string, string>> = {
   grove: msg("Grove", { $context: "color theme name" }),
@@ -47,7 +48,7 @@ const APPEARANCE_MODES: ReadonlyArray<{
 
 const previewPercentage = (value: number) => `${value * 100}%`;
 
-const PreviewOrb = memo(function PreviewOrb(props: {
+const BuiltinPreviewOrb = memo(function PreviewOrb(props: {
   readonly appearance: MobileThemeAppearance;
   readonly compact?: boolean;
   readonly themeId: MobileThemeId;
@@ -130,7 +131,12 @@ const PreviewOrb = memo(function PreviewOrb(props: {
   );
 });
 
-function ThemeCard(props: {
+const PreviewOrb = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.theme-appearance-section.preview-orb",
+  BuiltinPreviewOrb,
+);
+
+function BuiltinThemeCard(props: {
   readonly disabled: boolean;
   readonly darkSelected: boolean;
   readonly label: string;
@@ -205,7 +211,7 @@ function ThemeCard(props: {
   );
 }
 
-function PreviewPane(props: { readonly compact?: boolean }) {
+function BuiltinPreviewPane(props: { readonly compact?: boolean }) {
   return (
     <View className="flex-1 overflow-hidden bg-screen">
       <View
@@ -234,7 +240,10 @@ function PreviewPane(props: { readonly compact?: boolean }) {
   );
 }
 
-function ModePreview(props: { readonly mode: MobileThemeMode; readonly themeIds: MobileThemeIds }) {
+function BuiltinModePreview(props: {
+  readonly mode: MobileThemeMode;
+  readonly themeIds: MobileThemeIds;
+}) {
   const { themeVariablesByAppearance } = useAppearancePreferences();
   if (props.mode === "system") {
     return (
@@ -270,7 +279,7 @@ function ModePreview(props: { readonly mode: MobileThemeMode; readonly themeIds:
   );
 }
 
-function ModeCard(props: {
+function BuiltinModeCard(props: {
   readonly disabled: boolean;
   readonly label: string;
   readonly mode: MobileThemeMode;
@@ -307,11 +316,11 @@ function ModeCard(props: {
   );
 }
 
-function SectionLabel({ children }: { readonly children: string }) {
+function BuiltinSectionLabel({ children }: { readonly children: string }) {
   return <Text className="px-2 text-sm font-t3-medium text-foreground-muted">{children}</Text>;
 }
 
-export function ThemeAppearanceSection() {
+function BuiltinThemeAppearanceSection() {
   const gt = useGT();
   const m = useMessages();
   const {
@@ -365,3 +374,33 @@ export function ThemeAppearanceSection() {
     </View>
   );
 }
+
+const ThemeCard = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.theme-appearance-section.theme-card",
+  BuiltinThemeCard,
+);
+
+const PreviewPane = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.theme-appearance-section.preview-pane",
+  BuiltinPreviewPane,
+);
+
+const ModePreview = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.theme-appearance-section.mode-preview",
+  BuiltinModePreview,
+);
+
+const ModeCard = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.theme-appearance-section.mode-card",
+  BuiltinModeCard,
+);
+
+const SectionLabel = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.theme-appearance-section.section-label",
+  BuiltinSectionLabel,
+);
+
+export const ThemeAppearanceSection = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.theme-appearance-section",
+  BuiltinThemeAppearanceSection,
+);

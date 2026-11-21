@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import { EnvironmentHttpCommonError, OrchestrationV2ShellResumable } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -125,36 +126,37 @@ export class ShellSnapshotLoader extends Context.Service<
   }
 >()("@t3tools/client-runtime/state/shellSnapshotHttp/ShellSnapshotLoader") {}
 
-export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClient> = Layer.effect(
-  ShellSnapshotLoader,
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    // Resolve the DPoP signer optionally: it is only needed for relay/DPoP
-    // connections, so the loader must not hard-require it.
-    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
-    const remoteAuthorization = yield* Effect.serviceOption(
-      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-    );
-    return ShellSnapshotLoader.of({
-      load: Effect.fn("ShellSnapshotLoader.load")(function (prepared, options) {
-        return fetchEnvironmentShellSnapshot({
-          prepared,
-          signer,
-          remoteAuthorization,
-          ...options,
-        }).pipe(
-          Effect.map(Option.some<ShellHttpAnswer>),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.catchCause((cause) =>
-            Effect.logWarning(
-              "Could not load the environment shell snapshot over HTTP; using the socket snapshot instead.",
-            ).pipe(
-              Effect.annotateLogs({ cause: Cause.pretty(cause) }),
-              Effect.as(Option.none<ShellHttpAnswer>()),
+export const layer: Layer.Layer<ShellSnapshotLoader, never, HttpClient.HttpClient> =
+  builtinServiceLayer("t3.client")(
+    ShellSnapshotLoader,
+    Effect.gen(function* () {
+      const httpClient = yield* HttpClient.HttpClient;
+      // Resolve the DPoP signer optionally: it is only needed for relay/DPoP
+      // connections, so the loader must not hard-require it.
+      const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+      const remoteAuthorization = yield* Effect.serviceOption(
+        RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+      );
+      return ShellSnapshotLoader.of({
+        load: Effect.fn("ShellSnapshotLoader.load")(function (prepared, options) {
+          return fetchEnvironmentShellSnapshot({
+            prepared,
+            signer,
+            remoteAuthorization,
+            ...options,
+          }).pipe(
+            Effect.map(Option.some<ShellHttpAnswer>),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.catchCause((cause) =>
+              Effect.logWarning(
+                "Could not load the environment shell snapshot over HTTP; using the socket snapshot instead.",
+              ).pipe(
+                Effect.annotateLogs({ cause: Cause.pretty(cause) }),
+                Effect.as(Option.none<ShellHttpAnswer>()),
+              ),
             ),
-          ),
-        );
-      }),
-    });
-  }),
-);
+          );
+        }),
+      });
+    }),
+  );

@@ -3,8 +3,14 @@ import type { ComponentProps } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestEditButton({
+export const PullRequestEditButton = definePluginComponent(
+  "component:components/pullRequest/PullRequestEditButton/PullRequestEditButton",
+  PluginOriginalPullRequestEditButton,
+);
+
+function PluginOriginalPullRequestEditButton({
   className,
   ...props
 }: Omit<ComponentProps<typeof Button>, "children" | "render" | "size" | "variant"> & {

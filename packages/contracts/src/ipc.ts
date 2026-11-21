@@ -15,6 +15,13 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { type ClientSettings, type QuitConfirmationMode, SnapShotShortcut } from "./settings.ts";
 import type { EditorId } from "./editor.ts";
 import { KeybindingShortcut, type PreviewForwardedShortcut } from "./keybindings.ts";
+import type {
+  PluginSnapshot,
+  PluginSetEnabledInput,
+  PluginReloadInput,
+  PluginInvokeInput,
+  PluginInvokeResult,
+} from "./plugins.ts";
 
 import type {
   DesktopAppActivationRequest,
@@ -1105,6 +1112,13 @@ export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
+  /** Local desktop plugins belong to the desktop host, independently of remote servers. */
+  plugins?: {
+    readonly list: () => Promise<PluginSnapshot>;
+    readonly setEnabled: (input: PluginSetEnabledInput) => Promise<PluginSnapshot>;
+    readonly reload: (input?: PluginReloadInput) => Promise<PluginSnapshot>;
+    readonly invoke: (input: PluginInvokeInput) => Promise<PluginInvokeResult>;
+  };
   getAppBranding: () => DesktopAppBranding | null;
   /** `null` until the desktop host has read the login shell's environment; ask again later. */
   getRelayTelemetryEnabled: () => boolean | null;

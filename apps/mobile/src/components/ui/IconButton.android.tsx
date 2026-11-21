@@ -11,8 +11,14 @@ import { View } from "react-native";
 import { useControlTheme } from "./useControlTheme";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { SymbolView } from "./AppSymbol";
+import { defineNativePluginFeature } from "../../plugins/features";
 
-export function IconButton(props: IconButtonProps) {
+export const IconButton = defineNativePluginFeature(
+  "native.components.ui.icon-button",
+  BuiltinIconButton,
+);
+
+function BuiltinIconButton(props: IconButtonProps) {
   const { colors } = useControlTheme();
   const { iconSize, buttonSize } = useAndroidControlSizing();
   const variant = props.variant ?? "standard";

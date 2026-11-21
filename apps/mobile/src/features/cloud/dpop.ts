@@ -1,3 +1,4 @@
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -56,8 +57,13 @@ const digest = (algorithm: Digest.Algorithm, data: Uint8Array) =>
   });
 
 export const layer = Layer.mergeAll(
-  Layer.succeed(SecureRandom.SecureRandom, SecureRandom.make(ExpoCrypto.getRandomBytes)),
-  Layer.succeed(
+  builtinSucceedLayer(
+    "t3.mobile.dpop",
+    SecureRandom.SecureRandom,
+    SecureRandom.make(ExpoCrypto.getRandomBytes),
+  ),
+  builtinSucceedLayer(
+    "t3.mobile.dpop",
     Digest.Digest,
     Digest.Digest.of({
       digest,

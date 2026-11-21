@@ -3,7 +3,7 @@ import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { SelectionRow } from "../../components/ui/SelectionRow";
+import { SelectionRow as BuiltinSelectionRow } from "../../components/ui/SelectionRow";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
@@ -52,10 +52,11 @@ import {
   useConnectionDiagnosis,
 } from "../connection/ConnectionDiagnosisDetails";
 import { environmentStatusText } from "../connection/environmentStatusText";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 const BRANCH_SEARCH_DEBOUNCE_MS = 150;
 
-function EnvironmentPickerRow(props: {
+function BuiltinEnvironmentPickerRow(props: {
   environmentId: EnvironmentId;
   title: string;
   selected: boolean;
@@ -148,7 +149,7 @@ function EnvironmentPickerRow(props: {
   );
 }
 
-function ToggleRow(props: {
+function BuiltinToggleRow(props: {
   readonly title: string;
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
@@ -173,7 +174,7 @@ function ToggleRow(props: {
   );
 }
 
-function PickerSurface(props: { readonly children: ReactNode }) {
+function BuiltinPickerSurface(props: { readonly children: ReactNode }) {
   return (
     <View
       className={
@@ -187,7 +188,7 @@ function PickerSurface(props: { readonly children: ReactNode }) {
   );
 }
 
-export function NewTaskEnvironmentPickerRouteScreen() {
+function BuiltinNewTaskEnvironmentPickerRouteScreen() {
   const gt = useGT();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
@@ -229,7 +230,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
   );
 }
 
-export function NewTaskBranchPickerRouteScreen() {
+function BuiltinNewTaskBranchPickerRouteScreen() {
   const gt = useGT();
   const flow = useNewTaskFlow();
   const canWriteSourceControl = useEnvironmentScope(
@@ -344,7 +345,7 @@ export function NewTaskBranchPickerRouteScreen() {
   );
 }
 
-export function NewTaskRepositoriesPickerRouteScreen() {
+function BuiltinNewTaskRepositoriesPickerRouteScreen() {
   const gt = useGT();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
@@ -442,7 +443,7 @@ export function NewTaskRepositoriesPickerRouteScreen() {
   );
 }
 
-export function BranchPickerScreen(props: {
+function BuiltinBranchPickerScreen(props: {
   readonly title: string;
   readonly project: EnvironmentProject | null;
   readonly branches: readonly VcsRef[];
@@ -593,3 +594,43 @@ export function BranchPickerScreen(props: {
     </View>
   );
 }
+
+const EnvironmentPickerRow = defineNativePluginFeature(
+  "native.features.threads.new-task-context-picker-screens.environment-picker-row",
+  BuiltinEnvironmentPickerRow,
+);
+
+const ToggleRow = defineNativePluginFeature(
+  "native.features.threads.new-task-context-picker-screens.toggle-row",
+  BuiltinToggleRow,
+);
+
+const PickerSurface = defineNativePluginFeature(
+  "native.features.threads.new-task-context-picker-screens.picker-surface",
+  BuiltinPickerSurface,
+);
+
+export const NewTaskEnvironmentPickerRouteScreen = defineNativePluginFeature(
+  "native.features.threads.new-task-context-picker-screens.new-task-environment-picker-route-screen",
+  BuiltinNewTaskEnvironmentPickerRouteScreen,
+);
+
+export const NewTaskBranchPickerRouteScreen = defineNativePluginFeature(
+  "native.features.threads.new-task-context-picker-screens.new-task-branch-picker-route-screen",
+  BuiltinNewTaskBranchPickerRouteScreen,
+);
+
+export const NewTaskRepositoriesPickerRouteScreen = defineNativePluginFeature(
+  "native.features.threads.new-task-context-picker-screens.new-task-repositories-picker-route-screen",
+  BuiltinNewTaskRepositoriesPickerRouteScreen,
+);
+
+export const BranchPickerScreen = defineNativePluginFeature(
+  "native.features.threads.new-task-context-picker-screens.branch-picker-screen",
+  BuiltinBranchPickerScreen,
+);
+
+const SelectionRow = defineNativePluginFeature(
+  "native.components.ui.selection-row",
+  BuiltinSelectionRow,
+);

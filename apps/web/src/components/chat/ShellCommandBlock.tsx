@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import {
   commandHighlightLanguage,
   withVisibleControlCharacters,
@@ -19,7 +20,12 @@ function loadEmbeddedScripts() {
 }
 
 // Match highlighted layout to prevent reflow when the grammar arrives.
-function PlainWords({ code }: { code: string }) {
+const PlainWords = definePluginComponent(
+  "component:components/chat/ShellCommandBlock/PlainWords",
+  PluginOriginalPlainWords,
+);
+
+function PluginOriginalPlainWords({ code }: { code: string }) {
   return code.split(/(\s+)/u).map((part, index) =>
     index % 2 === 1 || part === "" ? (
       part
@@ -32,7 +38,18 @@ function PlainWords({ code }: { code: string }) {
   );
 }
 
-function HighlightedCommand({ code, theme }: { code: string; theme: "light" | "dark" }) {
+const HighlightedCommand = definePluginComponent(
+  "component:components/chat/ShellCommandBlock/HighlightedCommand",
+  PluginOriginalHighlightedCommand,
+);
+
+function PluginOriginalHighlightedCommand({
+  code,
+  theme,
+}: {
+  code: string;
+  theme: "light" | "dark";
+}) {
   const { embeddedScripts } = use(loadEmbeddedScripts());
   const language = commandHighlightLanguage(code);
   const embedded = language === "shellscript" ? embeddedScripts(code) : [];
@@ -47,7 +64,12 @@ function HighlightedCommand({ code, theme }: { code: string; theme: "light" | "d
   );
 }
 
-export function ShellCommandBlock({ command }: { command: string }) {
+export const ShellCommandBlock = definePluginComponent(
+  "component:components/chat/ShellCommandBlock/ShellCommandBlock",
+  PluginOriginalShellCommandBlock,
+);
+
+function PluginOriginalShellCommandBlock({ command }: { command: string }) {
   const resolvedTheme = useRenderedAppearance();
   const code = withVisibleControlCharacters(command.trim());
   if (!code) return null;

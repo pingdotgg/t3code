@@ -23,6 +23,12 @@ import {
   emptyEditorDescriptor,
   validateDraft,
 } from "./customModelEditor.logic";
+import { definePluginComponent } from "~/plugins/features";
+
+export const CustomModelEditor = definePluginComponent(
+  "component:components/settings/CustomModelEditor/CustomModelEditor",
+  PluginOriginalCustomModelEditor,
+);
 
 const CUSTOM_ID_VALUE = "__custom__";
 const START_FROM_NONE = "__none__";
@@ -37,7 +43,7 @@ interface CustomModelEditorProps {
   readonly onDraftChange: () => void;
 }
 
-export function CustomModelEditor({
+function PluginOriginalCustomModelEditor({
   instanceId,
   driverKind,
   entry,

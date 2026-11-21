@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { type ToolActivityIcon } from "@t3tools/contracts";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
@@ -56,7 +57,7 @@ export type WorkEntryIconName =
   | "x"
   | "zap";
 
-function BrowserAppIcon({ className }: { className: string }) {
+function PluginOriginalBrowserAppIcon({ className }: { className: string }) {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -76,7 +77,7 @@ function BrowserAppIcon({ className }: { className: string }) {
   );
 }
 
-export function ToolActivityIconView(props: {
+function PluginOriginalToolActivityIconView(props: {
   icon: ToolActivityIcon | undefined;
   fallbackName: WorkEntryIconName;
   className: string;
@@ -128,7 +129,7 @@ export function ToolActivityIconView(props: {
   );
 }
 
-function NativeAppToolActivityIcon(props: {
+function PluginOriginalNativeAppToolActivityIcon(props: {
   app: Extract<ToolActivityIcon, { readonly _tag: "native-app" }>["app"];
   fallbackName: WorkEntryIconName;
   className: string;
@@ -166,7 +167,7 @@ function NativeAppToolActivityIcon(props: {
 
 const loadedToolActivityIconSrcs = new Map<string, string>();
 
-function ToolActivityImageIcon(props: {
+function PluginOriginalToolActivityImageIcon(props: {
   cacheKey: string;
   src: string;
   fallbackName: WorkEntryIconName;
@@ -229,7 +230,13 @@ function ToolActivityImageIcon(props: {
   );
 }
 
-function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className: string }) {
+function PluginOriginalWorkEntryIcon({
+  name,
+  className,
+}: {
+  name: WorkEntryIconName;
+  className: string;
+}) {
   switch (name) {
     case "pull-request":
       return <PullRequestGlyph.pullRequest className={className} aria-hidden />;
@@ -274,3 +281,28 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <ZapIcon className={className} aria-hidden />;
   }
 }
+
+const BrowserAppIcon = definePluginComponent(
+  "component:components/chat/TimelineToolActivityIcon/BrowserAppIcon",
+  PluginOriginalBrowserAppIcon,
+);
+
+export const ToolActivityIconView = definePluginComponent(
+  "component:components/chat/TimelineToolActivityIcon/ToolActivityIconView",
+  PluginOriginalToolActivityIconView,
+);
+
+const NativeAppToolActivityIcon = definePluginComponent(
+  "component:components/chat/TimelineToolActivityIcon/NativeAppToolActivityIcon",
+  PluginOriginalNativeAppToolActivityIcon,
+);
+
+const ToolActivityImageIcon = definePluginComponent(
+  "component:components/chat/TimelineToolActivityIcon/ToolActivityImageIcon",
+  PluginOriginalToolActivityImageIcon,
+);
+
+const WorkEntryIcon = definePluginComponent(
+  "component:components/chat/TimelineToolActivityIcon/WorkEntryIcon",
+  PluginOriginalWorkEntryIcon,
+);

@@ -8,13 +8,13 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -780,4 +780,4 @@ export const make = Effect.gen(function* BrowserSessionMake() {
   });
 }).pipe(Effect.withSpan("BrowserSession.make"));
 
-export const layer = Layer.effect(BrowserSession, make);
+export const layer = builtinServiceLayer("t3.desktop.browser-session", BrowserSession, make);

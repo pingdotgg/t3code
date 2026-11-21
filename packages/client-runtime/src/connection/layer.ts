@@ -1,3 +1,4 @@
+import { builtinLifecycleLayer } from "@t3tools/shared/pluginKernel";
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -83,7 +84,9 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
     layerOnboarding,
     ConnectionResolver.layer,
   );
-  const layerConnectionStartup = Layer.effectDiscard(
+  const layerConnectionStartup = builtinLifecycleLayer(
+    "t3.client",
+    "t3/client/connection/layer.ts#lifecycle-1",
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;

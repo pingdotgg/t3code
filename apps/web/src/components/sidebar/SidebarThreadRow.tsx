@@ -132,6 +132,32 @@ import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
 import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
+import { definePluginComponent } from "~/plugins/features";
+
+export const JumpHintBadge = definePluginComponent(
+  "component:components/sidebar/SidebarThreadRow/JumpHintBadge",
+  PluginOriginalJumpHintBadge,
+);
+const WorkingDuration = definePluginComponent(
+  "component:components/sidebar/SidebarThreadRow/WorkingDuration",
+  PluginOriginalWorkingDuration,
+);
+const SidebarProviderStack = definePluginComponent(
+  "component:components/sidebar/SidebarThreadRow/SidebarProviderStack",
+  PluginOriginalSidebarProviderStack,
+);
+const SidebarThreadTooltip = definePluginComponent(
+  "component:components/sidebar/SidebarThreadRow/SidebarThreadTooltip",
+  PluginOriginalSidebarThreadTooltip,
+);
+const SnoozeMenuButton = definePluginComponent(
+  "component:components/sidebar/SidebarThreadRow/SnoozeMenuButton",
+  PluginOriginalSnoozeMenuButton,
+);
+export const SortableThreadRow = definePluginComponent(
+  "component:components/sidebar/SidebarThreadRow/SortableThreadRow",
+  PluginOriginalSortableThreadRow,
+);
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -163,7 +189,7 @@ function RelativeTimeLabel(props: { timestamp: string | null }) {
     : compactSidebarTimeLabel(props.timestamp, Date.parse(`${nowMinute}:00.000Z`), m);
 }
 
-export function JumpHintBadge(props: { label: string }) {
+function PluginOriginalJumpHintBadge(props: { label: string }) {
   return (
     <Kbd aria-hidden data-jump-hint>
       {props.label}
@@ -174,7 +200,10 @@ export function JumpHintBadge(props: { label: string }) {
 export const JUMP_HINT_SLOT_CLASS_NAME =
   "[&>:not([data-jump-hint])]:invisible [&>:not([data-jump-hint])]:absolute";
 
-function WorkingDuration(props: { environmentId: EnvironmentId; startedAt: string | null }) {
+function PluginOriginalWorkingDuration(props: {
+  environmentId: EnvironmentId;
+  startedAt: string | null;
+}) {
   const startedMs = props.startedAt !== null ? Date.parse(props.startedAt) : Number.NaN;
   if (Number.isNaN(startedMs)) return null;
   return <WorkingDurationLabel environmentId={props.environmentId} startedMs={startedMs} />;
@@ -204,7 +233,7 @@ function terminalProcessLabel(count: number, resolve: MessageResolver): string {
   );
 }
 
-function SidebarProviderStack(props: {
+function PluginOriginalSidebarProviderStack(props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
 }) {
@@ -252,7 +281,7 @@ function SidebarProviderStack(props: {
   );
 }
 
-function SidebarThreadTooltip({
+function PluginOriginalSidebarThreadTooltip({
   thread,
   project,
   projectDisplayName,
@@ -395,7 +424,7 @@ function SidebarThreadTooltip({
   );
 }
 
-function SnoozeMenuButton(props: {
+function PluginOriginalSnoozeMenuButton(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil">) => void;
@@ -478,7 +507,7 @@ const SIDEBAR_SORTABLE_DRAG_ENABLED = { draggable: false } as const;
 // Takes the row's props rather than a render function: a closure from the
 // sidebar body is new on every sidebar render, which rebuilt the bag and
 // re-rendered every memoized row with it.
-export function SortableThreadRow(
+function PluginOriginalSortableThreadRow(
   props: Omit<SidebarThreadRowProps, "sortable"> & {
     sortableId: string;
     sortableDisabled: boolean;
@@ -675,7 +704,9 @@ function ThreadRenameInput(props: {
   );
 }
 
-const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+const PluginOriginalSidebarThreadRow = memo(function SidebarThreadRow(
+  props: SidebarThreadRowProps,
+) {
   const gt = useGT();
   const messages = useMessages();
   const {
@@ -1744,6 +1775,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     </li>
   );
 });
+const SidebarThreadRow = definePluginComponent(
+  "component:components/sidebar/SidebarThreadRow/SidebarThreadRow",
+  PluginOriginalSidebarThreadRow,
+);
 
 function latestRunDiff(
   thread: SidebarThreadSummary,
@@ -1759,7 +1794,7 @@ const scrollHighlightedResultIntoView = (node: HTMLLIElement | null) => {
   node?.scrollIntoView({ block: "nearest" });
 };
 
-export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
+const PluginOriginalSidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
   isSettled: boolean;
   thread: SidebarThreadSummary;
   project: EnvironmentProject | null;
@@ -1979,3 +2014,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
     </li>
   );
 });
+export const SidebarSearchResultRow = definePluginComponent(
+  "component:components/sidebar/SidebarThreadRow/SidebarSearchResultRow",
+  PluginOriginalSidebarSearchResultRow,
+);

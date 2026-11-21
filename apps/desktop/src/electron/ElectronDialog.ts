@@ -1,10 +1,10 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
+import { builtinSucceedLayer } from "@t3tools/shared/pluginKernel";
 
 export class ElectronDialogPickFolderError extends Schema.TaggedError<ElectronDialogPickFolderError>()(
   "ElectronDialogPickFolderError",
@@ -196,4 +196,4 @@ export const make = ElectronDialog.of({
   }),
 });
 
-export const layer = Layer.succeed(ElectronDialog, make);
+export const layer = builtinSucceedLayer("t3.desktop.electron-dialog", ElectronDialog, make);

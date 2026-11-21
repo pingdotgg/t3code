@@ -18,9 +18,15 @@ import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
+import { definePluginComponent } from "~/plugins/features";
+
+export const LocalEnvironmentSetting = definePluginComponent(
+  "component:components/settings/LocalEnvironmentSetting/LocalEnvironmentSetting",
+  PluginOriginalLocalEnvironmentSetting,
+);
 
 // Toggling relaunches desktop; the switch reflects startup state.
-export function LocalEnvironmentSetting() {
+function PluginOriginalLocalEnvironmentSetting() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const setEnabled = window.desktopBridge?.setLocalEnvironmentEnabled;

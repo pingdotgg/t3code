@@ -73,8 +73,62 @@ import {
   pullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { definePluginComponent } from "~/plugins/features";
 
 import { changeRequestTermKind, type ChangeRequestTermKind } from "./changeRequestTerm";
+
+const TimelineBody = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/TimelineBody",
+  PluginOriginalTimelineBody,
+);
+const ActorName = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/ActorName",
+  PluginOriginalActorName,
+);
+const TimelineMarker = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/TimelineMarker",
+  PluginOriginalTimelineMarker,
+);
+const IconMarker = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/IconMarker",
+  PluginOriginalIconMarker,
+);
+const ActorTimelineMarker = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/ActorTimelineMarker",
+  PluginOriginalActorTimelineMarker,
+);
+const ReviewStateBadge = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/ReviewStateBadge",
+  PluginOriginalReviewStateBadge,
+);
+const OpenOnHostButton = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/OpenOnHostButton",
+  PluginOriginalOpenOnHostButton,
+);
+const ConversationCard = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/ConversationCard",
+  PluginOriginalConversationCard,
+);
+const ConversationGroup = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/ConversationGroup",
+  PluginOriginalConversationGroup,
+);
+const CommitEvent = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/CommitEvent",
+  PluginOriginalCommitEvent,
+);
+const LifecycleEvent = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/LifecycleEvent",
+  PluginOriginalLifecycleEvent,
+);
+const ReviewVerdictEvent = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/ReviewVerdictEvent",
+  PluginOriginalReviewVerdictEvent,
+);
+export const PullRequestTimelineTab = definePluginComponent(
+  "component:components/pullRequest/PullRequestTimelineTab/PullRequestTimelineTab",
+  PluginOriginalPullRequestTimelineTab,
+);
 
 interface ReactionSurface {
   revealAnchor?: string | null;
@@ -88,7 +142,7 @@ interface ReactionSurface {
   readonly onRefresh: () => void;
 }
 
-function TimelineBody({
+function PluginOriginalTimelineBody({
   body,
   markdown,
   cwd,
@@ -117,11 +171,11 @@ function TimelineBody({
   );
 }
 
-function ActorName({ actor }: { actor: PullRequestActor | null }) {
+function PluginOriginalActorName({ actor }: { actor: PullRequestActor | null }) {
   return <span className="font-semibold text-foreground">{actor?.login ?? "ghost"}</span>;
 }
 
-function TimelineMarker({
+function PluginOriginalTimelineMarker({
   children,
   className,
 }: {
@@ -140,7 +194,13 @@ function TimelineMarker({
   );
 }
 
-function IconMarker({ icon, className }: { icon: ReactNode; className?: string | undefined }) {
+function PluginOriginalIconMarker({
+  icon,
+  className,
+}: {
+  icon: ReactNode;
+  className?: string | undefined;
+}) {
   return (
     <TimelineMarker className={className}>
       <span className="flex size-7 items-center justify-center bg-background text-muted-foreground">
@@ -150,7 +210,7 @@ function IconMarker({ icon, className }: { icon: ReactNode; className?: string |
   );
 }
 
-function ActorTimelineMarker({
+function PluginOriginalActorTimelineMarker({
   actors,
   className,
   fallback,
@@ -182,7 +242,7 @@ function friendlyReviewState(value: string): string {
   return words.replace(/^\w/u, (letter) => letter.toUpperCase());
 }
 
-function ReviewStateBadge({ state }: { state: string }) {
+function PluginOriginalReviewStateBadge({ state }: { state: string }) {
   return (
     <span className="text-3xs font-medium text-muted-foreground">{friendlyReviewState(state)}</span>
   );
@@ -219,7 +279,13 @@ function AddToChatButton({
   );
 }
 
-function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: string) => void }) {
+function PluginOriginalOpenOnHostButton({
+  url,
+  onOpen,
+}: {
+  url: string | null;
+  onOpen: (url: string) => void;
+}) {
   const gt = useGT();
   return url === null ? null : (
     <Button
@@ -234,7 +300,7 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
   );
 }
 
-function ConversationCard({
+function PluginOriginalConversationCard({
   event,
   editable,
   cwd,
@@ -390,7 +456,7 @@ function uniqueConversationActors(events: ReadonlyArray<PullRequestTimelineEvent
   return [...actors.values()];
 }
 
-function ConversationGroup({
+function PluginOriginalConversationGroup({
   revealAnchor,
   events,
   editable,
@@ -616,7 +682,7 @@ function ReviewThreadEvent({
   );
 }
 
-function CommitEvent({
+function PluginOriginalCommitEvent({
   event,
   onOpen,
 }: {
@@ -659,7 +725,7 @@ function CommitEvent({
   );
 }
 
-function LifecycleEvent({
+function PluginOriginalLifecycleEvent({
   event,
   term,
 }: {
@@ -722,7 +788,7 @@ function staleReviewOutcomeLabel(
   }
 }
 
-function ReviewVerdictEvent({
+function PluginOriginalReviewVerdictEvent({
   event,
   outcome,
   stale,
@@ -819,7 +885,7 @@ function ReviewVerdictEvent({
   );
 }
 
-export function PullRequestTimelineTab({
+function PluginOriginalPullRequestTimelineTab({
   revealUrl,
   onRevealSettled,
   scrollerRef,

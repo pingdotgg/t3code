@@ -31,6 +31,12 @@ import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PullRequestReviewerPicker = definePluginComponent(
+  "component:components/pullRequest/PullRequestReviewerPicker/PullRequestReviewerPicker",
+  PluginOriginalPullRequestReviewerPicker,
+);
 
 const TRUNCATED_LABELS: Record<
   ReviewerTruncation,
@@ -56,7 +62,7 @@ const TRUNCATED_LABELS: Record<
     resolve(msg("More people match than the host returned. Keep typing to narrow it down.")),
 };
 
-export function PullRequestReviewerPicker({
+function PluginOriginalPullRequestReviewerPicker({
   environmentId,
   reference,
   allowed,

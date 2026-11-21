@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   ModelSelection,
   OrchestrationV2ThreadProjection,
@@ -56,7 +57,7 @@ export const layer: Layer.Layer<
   ProviderSwitchServiceV2,
   never,
   ProviderAdapterRegistry.ProviderAdapterRegistryV2
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   ProviderSwitchServiceV2,
   Effect.gen(function* () {
     const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;

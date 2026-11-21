@@ -12,6 +12,7 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 import { ToolActivityIconView, type WorkEntryIconName } from "./TimelineToolActivityIcon";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { WorkLogRow } from "./WorkLog";
+import { definePluginComponent } from "~/plugins/features";
 
 const APPROVAL_PRESENTATION = {
   command: {
@@ -40,7 +41,7 @@ const APPROVAL_PRESENTATION = {
   { icon: WorkEntryIconName; label: string; detailLabel: string }
 >;
 
-export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalRow({
+const PluginOriginalTimelinePendingApprovalRow = memo(function TimelinePendingApprovalRow({
   approval,
 }: {
   approval: PendingApproval;
@@ -130,3 +131,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
     </WorkLogRow>
   );
 });
+export const TimelinePendingApprovalRow = definePluginComponent(
+  "component:components/chat/TimelinePendingApprovalRow/TimelinePendingApprovalRow",
+  PluginOriginalTimelinePendingApprovalRow,
+);

@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useNativeFileDrag } from "../../useNativeFileDrag";
 import { useAssetUrlState } from "../../assets/assetUrls";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
@@ -55,7 +56,7 @@ interface MarkdownFileLinkProps {
 
 const MARKDOWN_FILE_LINK_CLASS_NAME = "chat-markdown-file-link";
 
-export const MarkdownFileLink = memo(function MarkdownFileLink({
+const PluginOriginalMarkdownFileLink = memo(function MarkdownFileLink({
   environmentId,
   href,
   targetPath,
@@ -463,3 +464,7 @@ function AppBundleIcon(props: { environmentId: EnvironmentId | null; path: strin
     </span>
   );
 }
+export const MarkdownFileLink = definePluginComponent(
+  "component:components/chat/MarkdownFileLink/MarkdownFileLink",
+  PluginOriginalMarkdownFileLink,
+);

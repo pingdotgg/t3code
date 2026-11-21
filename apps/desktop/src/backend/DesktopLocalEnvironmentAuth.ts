@@ -7,7 +7,6 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -16,6 +15,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 
 // Each /oauth/token attempt may take 10 s, so a backend busy after ready needs several attempts.
 const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(60);
@@ -132,4 +132,8 @@ export const make = Effect.gen(function* () {
   return DesktopLocalEnvironmentAuth.of({ getBearerToken });
 });
 
-export const layer = Layer.effect(DesktopLocalEnvironmentAuth, make);
+export const layer = builtinServiceLayer(
+  "t3.desktop.desktop-local-environment-auth",
+  DesktopLocalEnvironmentAuth,
+  make,
+);

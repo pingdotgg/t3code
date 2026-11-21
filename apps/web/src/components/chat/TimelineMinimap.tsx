@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { resolveTimelineMinimapPreview, type TimelineMinimapItem } from "./timelineMinimapItems";
 import { useRef, useState, type MouseEvent } from "react";
 import { T, useGT } from "gt-react";
@@ -30,7 +31,7 @@ function onMouseButtonsReleased(onRelease: () => void): () => void {
   return stop;
 }
 
-export function TimelineMinimap({
+function PluginOriginalTimelineMinimap({
   hasPersistentGutter,
   hitStripWidth,
   currentIndex,
@@ -266,7 +267,7 @@ export function TimelineMinimap({
   );
 }
 
-function TimelineMinimapNavigationButton({
+function PluginOriginalTimelineMinimapNavigationButton({
   direction,
   disabled,
   interactive,
@@ -310,3 +311,13 @@ function TimelineMinimapNavigationButton({
     </Tooltip>
   );
 }
+
+export const TimelineMinimap = definePluginComponent(
+  "component:components/chat/TimelineMinimap/TimelineMinimap",
+  PluginOriginalTimelineMinimap,
+);
+
+const TimelineMinimapNavigationButton = definePluginComponent(
+  "component:components/chat/TimelineMinimap/TimelineMinimapNavigationButton",
+  PluginOriginalTimelineMinimapNavigationButton,
+);

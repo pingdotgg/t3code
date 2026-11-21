@@ -1,5 +1,9 @@
 import { copySnapshot } from "./copySnapshot";
 import { VoiceInputSetup } from "./VoiceInputSetup";
+import { definePluginFeature, PluginSlot } from "~/plugins/features";
+import type { ComposerBannerContributionProps } from "~/plugins/api";
+import { usePluginContributions, type PluginAction } from "~/plugins/contributions";
+import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
@@ -359,6 +363,8 @@ export interface ChatComposerHandle {
 }
 
 export interface ChatComposerProps {
+  /** Routes window-level actions when multiple conversations are mounted. */
+  ownsGlobalInput?: (target: EventTarget | null) => boolean;
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
@@ -493,7 +499,7 @@ export interface ChatComposerProps {
 const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
-export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
+export const BuiltinChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const gt = useGT();
   const m = useMessages();
   const {
@@ -554,6 +560,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onComposerOverlayHeightChange,
     promptRef,
     composerRef,
+    ownsGlobalInput,
     composerImagesRef,
     composerFilesRef,
     composerTerminalContextsRef,
@@ -593,6 +600,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     supportsQuestionAttachments,
   });
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const pluginActions = usePluginContributions("actions", environmentId);
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
     heldRequestIds,
@@ -967,6 +975,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const selectedProviderSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
+  const occupiedSlashCommands = new Set([
+    "model",
+    "plan",
+    "default",
+    ...selectedProviderSlashCommands.map((command) => command.name.toLowerCase()),
+  ]);
+  const pluginSlashActions = pluginActions.filter(
+    (action): action is PluginAction & { readonly slashCommand: string } => {
+      const command = action.slashCommand;
+      if (
+        typeof command !== "string" ||
+        !/^[a-z][a-z0-9-]*$/u.test(command) ||
+        occupiedSlashCommands.has(command)
+      ) {
+        return false;
+      }
+      occupiedSlashCommands.add(command);
+      return true;
+    },
+  );
   const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
     useProviderWorkspaceSnapshotRefresh({
       environmentId,
@@ -1081,6 +1109,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const onKeyDown = (event: Event) => {
       if (
         event instanceof KeyboardEvent &&
+        (ownsGlobalInput === undefined || ownsGlobalInput(event.target)) &&
         event.target instanceof Node &&
         composerFormRef.current?.contains(event.target) &&
         isPasteAsTextShortcut(event, isMacPlatform(navigator.platform))
@@ -1093,6 +1122,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     };
     const onDesktopPasteAsText = () => {
       const activeElement = document.activeElement;
+      if (ownsGlobalInput !== undefined && !ownsGlobalInput(activeElement)) return;
       const blocksPasteToFocus =
         activeElement instanceof Element &&
         activeElement.closest(
@@ -1115,7 +1145,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       target.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("blur", onBlur);
     };
-  }, [backgroundThread]);
+  }, [backgroundThread, ownsGlobalInput]);
 
   const composerSendState = deriveComposerSendState({
     prompt,
@@ -1141,7 +1171,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerReviewComments.length === 0;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
   const {
-    items: composerMenuItems,
+    items: builtinComposerMenuItems,
     isLoading: isComposerMenuLoading,
     emptyState: composerMenuEmptyState,
   } = useComposerMenuItems({
@@ -1165,6 +1195,37 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     questionAttachmentTarget,
     modelMentions: { instanceEntries: providerInstanceEntries, modelOptionsByInstance },
   });
+
+  const composerMenuItems = ((): ComposerCommandItem[] => {
+    if (
+      composerTrigger?.kind !== "slash-command" ||
+      composerTrigger.rangeStart !== 0 ||
+      (activePendingProgress?.customAnswer ?? prompt).slice(composerTrigger.rangeEnd).trim() !== ""
+    ) {
+      return builtinComposerMenuItems;
+    }
+    const pluginSlashCommandItems = pluginSlashActions
+      .filter((action) => !action.requiresThread || routeKind === "server")
+      .map((action) => ({
+        id: `plugin-command:${action.id}`,
+        type: "plugin-command" as const,
+        actionId: action.id,
+        command: action.slashCommand,
+        label: `/${action.slashCommand}`,
+        description: action.description ?? action.title,
+      }));
+    if (pluginSlashCommandItems.length === 0) return builtinComposerMenuItems;
+    const builtInSlashCommandItems = builtinComposerMenuItems.filter(
+      (item) => item.type === "slash-command",
+    );
+    const otherSlashCommandItems = builtinComposerMenuItems.filter(
+      (item) => item.type === "provider-slash-command" || item.type === "skill",
+    );
+    return searchSlashCommandItems(
+      [...builtInSlashCommandItems, ...pluginSlashCommandItems, ...otherSlashCommandItems],
+      composerTrigger.query.trim().toLowerCase(),
+    );
+  })();
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1953,6 +2014,61 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
 
   const { onUsageLimitsCommand } = props;
+  const runPluginSlashAction = (action: PluginAction) => {
+    void Promise.resolve()
+      .then(() =>
+        action.run({
+          environmentId,
+          threadRef: routeKind === "server" ? routeThreadRef : null,
+          navigate: async (path) => {
+            await navigate({ href: path });
+          },
+        }),
+      )
+      .catch((error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: gt("Extension command failed"),
+          description: error instanceof Error ? error.message : String(error),
+        });
+      });
+  };
+  const consumePluginSlashAction = (action: PluginAction, commandPrompt: string) => {
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    if (action.requiresThread && routeKind !== "server") {
+      toastManager.add({
+        type: "info",
+        title: gt("Open an existing thread to use this command"),
+      });
+      return;
+    }
+    if (activePendingProgress?.activeQuestion && activePendingUserInput) {
+      if (
+        activePendingProgress.activeQuestion.allowCustomAnswer === false ||
+        activePendingProgress.customAnswer !== commandPrompt
+      ) {
+        return;
+      }
+      onChangeActivePendingUserInputCustomAnswer(
+        activePendingProgress.activeQuestion.id,
+        "",
+        0,
+        0,
+        false,
+      );
+      setComposerCursor(0);
+      setComposerTrigger(null);
+    } else if (
+      !applyPromptReplacement(0, commandPrompt.length, "", {
+        expectedText: commandPrompt,
+        focusEditorAfterReplace: false,
+      })
+    ) {
+      return;
+    }
+    setComposerHighlightedItemId(null);
+    runPluginSlashAction(action);
+  };
   const onSelectComposerItem = (item: ComposerCommandItem) => {
     if (composerSelectLockRef.current) return;
     composerSelectLockRef.current = true;
@@ -1961,6 +2077,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     });
     const { snapshot, trigger } = resolveActiveComposerTrigger();
     if (!trigger) return;
+    if (item.type === "plugin-command") {
+      const action = pluginSlashActions.find(
+        (candidate) => candidate.id === item.actionId && candidate.slashCommand === item.command,
+      );
+      if (
+        !action ||
+        trigger.kind !== "slash-command" ||
+        trigger.rangeStart !== 0 ||
+        snapshot.value.slice(trigger.rangeEnd).trim() !== ""
+      ) {
+        return;
+      }
+      consumePluginSlashAction(action, snapshot.value);
+      return;
+    }
     if (item.type === "path") {
       if (!isPathSuggestionCurrent(item.searchTarget, trigger, environmentId, gitCwd)) return;
       const replacement = `${serializeComposerFileLink(item.path)} `;
@@ -2192,6 +2323,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
+    const commandPrompt = activePendingProgress?.customAnswer ?? promptRef.current;
+    const pluginAction = pluginSlashActions.find(
+      (action) => commandPrompt.trim().toLowerCase() === `/${action.slashCommand}`,
+    );
+    if (pluginAction) {
+      event?.preventDefault();
+      consumePluginSlashAction(pluginAction, commandPrompt);
+      return true;
+    }
     if (voiceInputActive) {
       event?.preventDefault();
       submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
@@ -2385,7 +2525,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? promptSuggestion
       : null;
 
-  const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
+  const onBuiltinComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
       keybindings,
       getShortcutContext,
@@ -2426,6 +2566,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       dismissPromptSuggestion,
     })(key, event, isTaskItem);
 
+  const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem = false) => {
+    const selectedItem = activeComposerMenuItemRef.current ?? composerMenuItemsRef.current[0];
+    if (
+      selectedItem?.type === "plugin-command" &&
+      (key === "Enter" || key === "Tab") &&
+      (event.shiftKey || event.altKey || event.isComposing || event.keyCode === 229 || event.repeat)
+    ) {
+      const submissionIntent = composerSubmissionIntentForKey({
+        event,
+        keybindings,
+        context: getShortcutContext(event.target),
+        isSoftwareKeyboardOpen,
+        isDraftThread: routeKind === "draft",
+        isRunning: phase === "running" || phase === "connecting",
+        sendShortcut: settings.sendShortcut,
+        prompt: promptRef.current,
+      });
+      const { trigger } = resolveActiveComposerTrigger();
+      if (
+        !(key === "Tab" && event.shiftKey && submissionIntent === null) &&
+        !isLiteralPendingAnswer &&
+        (composerMenuOpen || trigger !== null) &&
+        (submissionIntent === null || submissionIntent === "foreground")
+      ) {
+        return false;
+      }
+    }
+    return onBuiltinComposerCommandKey(key, event, isTaskItem);
+  };
+
   const {
     stashQueue,
     isStashMenuOpen,
@@ -2436,6 +2606,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     toggleStashMenuStable,
   } = useComposerStash({
     environmentId,
+    ownsGlobalInput,
     composerDraftTarget,
     promptRef,
     readAttachmentDraft: () => ({
@@ -3478,6 +3649,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack items={shelfItems} />
+          <PluginSlot<ComposerBannerContributionProps>
+            slot="chat.composer.banners"
+            props={{
+              environmentId,
+              threadRef: routeKind === "server" ? routeThreadRef : null,
+            }}
+          />
           {showComposerTopDrawer ? (
             <ComposerBanner.Attachment>
               <ComposerBanner.Root data-chat-composer-top-drawer="true" variant="info">
@@ -3603,7 +3781,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </div>
             ) : null}
 
-            <div
+            <ComposerSurface.Body
               ref={(node) => {
                 setComposerMenuAnchor(node);
                 const stopObserving = observeWrappedPrompt(node);
@@ -3612,12 +3790,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   stopObserving?.();
                 };
               }}
-              data-chat-composer-body="true"
-              className={cn(
-                "relative px-4 pb-2",
-                "pt-3.5 sm:pt-4",
-                isComposerCollapsedMobile && "hidden",
-              )}
+              className={cn("px-4", isComposerCollapsedMobile && "hidden")}
             >
               {isStashMenuOpen && !composerMenuOpen && (
                 <ComposerCommandMenuLayer anchor={composerMenuAnchor} canOverflowTop>
@@ -3795,7 +3968,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   </div>
                 ) : null}
               </div>
-            </div>
+            </ComposerSurface.Body>
 
             <ComposerPromptLengthValidation
               message={providerInputSubmissionError ?? composerSubmissionError}
@@ -3815,10 +3988,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             ) : null}
 
             {isComposerCollapsedMobile && speechInput.state.phase === "idle" ? null : (
-              <div
-                data-chat-composer-footer="true"
+              <ComposerSurface.Toolbar
                 className={cn(
-                  "flex min-w-0 flex-nowrap items-center overflow-visible px-2 pb-2",
+                  "justify-normal gap-0 px-2 pb-2 sm:px-2 sm:pb-2",
                   pendingUserInputs.length > 0 && "pt-2",
                   showMobilePendingAnswerActions &&
                     speechInput.state.phase === "idle" &&
@@ -3931,7 +4103,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     />
                   </ComposerFooterPrimaryActions>
                 </div>
-              </div>
+              </ComposerSurface.Toolbar>
             )}
             {showInlineRestingControls ? (
               <div className="h-8">
@@ -3960,3 +4132,5 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     </form>
   );
 });
+
+export const ChatComposer = definePluginFeature("chat.composer", BuiltinChatComposer);

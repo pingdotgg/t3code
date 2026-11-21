@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   CommandId,
   type GitCommandError,
@@ -521,4 +522,4 @@ export const layer: Layer.Layer<
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster
   | TaskFolders.TaskFolders
-> = Layer.effect(WorktreeMcpService, make);
+> = builtinServiceLayer("t3.mcp")(WorktreeMcpService, make);

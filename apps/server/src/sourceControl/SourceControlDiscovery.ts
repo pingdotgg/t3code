@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   type SourceControlDiscoveryResult,
   type VcsDiscoveryItem,
@@ -6,7 +7,6 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -149,4 +149,4 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(SourceControlDiscovery, make);
+export const layer = builtinServiceLayer("t3.git")(SourceControlDiscovery, make);

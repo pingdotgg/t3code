@@ -1,8 +1,8 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import { pipe } from "effect/Function";
-import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
@@ -198,4 +198,4 @@ export const make = Effect.fn("MobileStorage.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(MobileStorage, make());
+export const layer = builtinServiceLayer("t3.mobile.mobile-storage", MobileStorage, make());

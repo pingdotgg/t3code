@@ -1,6 +1,12 @@
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-export function BrowserMockup({ className }: { className?: string }) {
+export const BrowserMockup = definePluginComponent(
+  "component:components/preview/BrowserMockup/BrowserMockup",
+  PluginOriginalBrowserMockup,
+);
+
+function PluginOriginalBrowserMockup({ className }: { className?: string }) {
   return (
     <div
       aria-hidden

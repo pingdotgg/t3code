@@ -3,6 +3,11 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
+import { definePluginFeature, PluginBanner } from "~/plugins/features";
+import { ChatTopbar } from "./chat/ChatTopbar";
+import { registerVisibleCanvasThreadHost } from "./canvas/canvasDocumentStore";
+import { threadContextReference } from "../lib/composerContextRecords";
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
@@ -133,6 +138,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   type MouseEvent as ReactMouseEvent,
   type SetStateAction,
+  type SyntheticEvent,
   use,
   useEffect,
   useLayoutEffect,
@@ -257,7 +263,10 @@ import {
   DraftId,
 } from "../composerDraftStore";
 import { type TerminalContextDraft } from "../lib/terminalContext";
-import { collectInlineContextIds } from "../lib/composerContextReferences";
+import {
+  ensureInlineContextReferences,
+  collectInlineContextIds,
+} from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQueryRefresh } from "../state/query";
@@ -425,15 +434,21 @@ const EMPTY_COMPOSER_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
 
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 
-type ChatViewProps =
+export type ChatViewProps = {
+  /** Read-only reference material attached to every turn sent from this view. */
+  contextThreadRef?: ScopedThreadRef;
+} & (
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       forceExpandedMobileComposer?: boolean;
-      /** A side chat in its parent's right panel; the parent keeps the keyboard and workspace UI. */
-      embedded?: SideChatParentPanel;
+      /**
+       * A side chat in its parent's right panel; the parent keeps the keyboard and workspace UI.
+       * `true` mounts a full conversation inside another workspace surface without a parent panel.
+       */
+      embedded?: SideChatParentPanel | boolean;
       routeKind: "server";
       draftId?: never;
     }
@@ -446,13 +461,17 @@ type ChatViewProps =
       embedded?: never;
       routeKind: "draft";
       draftId: DraftId;
-    };
+    }
+);
+
+// Global input belongs to the conversation last interacted with, including portal menus.
+let activeChatViewRoot: HTMLElement | null = null;
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
 const ignoreComposerFocus = () => {};
 
-export default function ChatView(props: ChatViewProps) {
+export function BuiltinChatView(props: ChatViewProps) {
   const gt = useGT();
   const messages = useMessages();
   const {
@@ -462,12 +481,28 @@ export default function ChatView(props: ChatViewProps) {
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
     forceExpandedMobileComposer = false,
-    embedded: parentPanel,
+    embedded: embeddedProp,
+    contextThreadRef,
   } = props;
-  const embedded = parentPanel !== undefined;
+  const parentPanel = typeof embeddedProp === "object" ? embeddedProp : undefined;
+  const embedded = parentPanel !== undefined || embeddedProp === true;
   const panelHostShell = useQuietThreadShell(parentPanel?.hostRef ?? null);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const chatViewRootRef = useRef<HTMLDivElement | null>(null);
+  const activateChatView = (event: SyntheticEvent) => {
+    const targetRoot =
+      event.target instanceof Element ? event.target.closest("[data-chat-view]") : null;
+    if (targetRoot !== null && targetRoot !== chatViewRootRef.current) return;
+    activeChatViewRoot = chatViewRootRef.current;
+  };
+  const ownsChatInteraction = (target: EventTarget | null = document.activeElement) => {
+    const targetRoot = target instanceof Element ? target.closest("[data-chat-view]") : null;
+    if (targetRoot !== null) return targetRoot === chatViewRootRef.current;
+    return activeChatViewRoot?.isConnected
+      ? activeChatViewRoot === chatViewRootRef.current
+      : !embedded;
+  };
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
   const routeThreadRef = scopeThreadRef(environmentId, threadId);
@@ -490,9 +525,35 @@ export default function ChatView(props: ChatViewProps) {
   const setThreadInteractionMode = useOrchestrationCommand(threadEnvironment.setInteractionMode, {
     reportFailure: false,
   });
-  const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
+  const dispatchStartThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
+  const contextThread = useQuietThreadShell(contextThreadRef ?? null);
+  const startThreadTurn = (request: Parameters<typeof dispatchStartThreadTurn>[0]) => {
+    if (
+      contextThreadRef === undefined ||
+      contextThreadRef.environmentId !== request.environmentId ||
+      contextThreadRef.threadId === request.input.threadId
+    ) {
+      return dispatchStartThreadTurn(request);
+    }
+    const record = threadContextRecord(contextThreadRef, contextThread?.title ?? "Main thread");
+    const { context: messageContext, ...message } = request.input.message;
+    const context = {
+      version: 1 as const,
+      records: [
+        ...(messageContext?.records ?? []).filter(
+          (existing) => existing.contextId !== record.contextId,
+        ),
+        record,
+      ],
+    };
+    const text = ensureInlineContextReferences(message.text, [threadContextReference(record)]);
+    return dispatchStartThreadTurn({
+      ...request,
+      input: { ...request.input, message: { ...message, text, context } },
+    });
+  };
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
@@ -539,7 +600,8 @@ export default function ChatView(props: ChatViewProps) {
         });
   const promptRef = useRef("");
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
-  const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const sharedComposerRef = useComposerHandleContext();
+  const composerRef = (!embedded ? sharedComposerRef : null) ?? localComposerRef;
   const queuedRunEdit = useQueuedRunEdit({
     environmentId,
     routeThreadRef,
@@ -752,6 +814,21 @@ export default function ChatView(props: ChatViewProps) {
   // Focusing the composer without a tap raises the on-screen keyboard on touch devices.
   const isCoarsePointer = useMediaQuery({ pointer: "coarse" });
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the workspace layout element as the visible canvas host for this thread until unmount
+  useEffect(() => {
+    if (routeKind !== "server" || !workspaceLayoutElement) return;
+    return registerVisibleCanvasThreadHost(routeThreadRef, workspaceLayoutElement);
+  }, [routeKind, routeThreadRef, workspaceLayoutElement]);
+  const attachChatViewRoot = (element: HTMLDivElement | null) => {
+    if (element === null && activeChatViewRoot === chatViewRootRef.current) {
+      activeChatViewRoot = null;
+    }
+    chatViewRootRef.current = element;
+    setWorkspaceLayoutElement(element);
+    if (element && !embedded && !activeChatViewRoot?.isConnected) {
+      activeChatViewRoot = element;
+    }
+  };
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
@@ -1156,7 +1233,7 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelPresent = rightPanelPresence.present;
   const rightPanelControlsInPanel =
     shouldUsePlanSidebarSheet && rightPanelPresent && rightPanelOpen;
-  const rightPanelControlsAtRoot = rightPanelPresent && !shouldUsePlanSidebarSheet;
+  const rightPanelControlsAtRoot = !embedded && rightPanelPresent && !shouldUsePlanSidebarSheet;
   const renderedRightPanelSurface = rightPanelPresence.value?.activeSurface ?? null;
   const renderedRightPanelSurfaces = rightPanelPresence.value?.surfaces ?? [];
   const previewMiniPlayerVisible = shouldRenderPreviewMiniPlayer(
@@ -1930,10 +2007,13 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
   const onInterruptStable = useStableCallback(onInterrupt);
+  const focusOwnedComposerStable = useStableCallback(() => {
+    if (ownsChatInteraction()) focusComposerStable();
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window listener for the desktop snapshot event that focuses the composer
   useEffect(
-    () => (embedded ? undefined : subscribeSnapShotComposerFocus(focusComposerStable)),
-    [embedded, focusComposerStable],
+    () => (embedded ? undefined : subscribeSnapShotComposerFocus(focusOwnedComposerStable)),
+    [embedded, focusOwnedComposerStable],
   );
   const insertArtifactTemplate = (template: CodexArtifactTemplate) => {
     const composer = composerRef.current;
@@ -2022,7 +2102,9 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadRef &&
     activePreviewMiniPlayer &&
     previewMiniPlayerVisible &&
-    (activePreviewMiniPlayer.source.kind === "device" || canOperatePreview)
+    (activePreviewMiniPlayer.source.kind === "canvas"
+      ? canOperateThread
+      : activePreviewMiniPlayer.source.kind === "device" || canOperatePreview)
       ? activePreviewMiniPlayer
       : null;
   const canvasPreview = useThreadPreviewCanvasSource(activeThreadRef, shownPreviewMiniPlayer);
@@ -2205,6 +2287,7 @@ export default function ChatView(props: ChatViewProps) {
     attachTimelineViewport,
     attachComposerOverlay: attachFollowComposerOverlay,
   } = useTimelineFollow({
+    ownsChatInteraction,
     legendListRef,
     composerTimelineInset,
     routeThreadKey,
@@ -2224,7 +2307,7 @@ export default function ChatView(props: ChatViewProps) {
     workspaceLayoutElement,
     !embedded,
     terminalUiState.terminalOpen,
-    isCoarsePointer ? ignoreComposerFocus : focusComposerStable,
+    isCoarsePointer ? ignoreComposerFocus : focusOwnedComposerStable,
   );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus on a fine pointer
@@ -2247,6 +2330,7 @@ export default function ChatView(props: ChatViewProps) {
           frame = null;
           if (document.querySelector("[data-mcp-app-fullscreen]") !== null) return;
           if (
+            ownsChatInteraction() &&
             !isInSideChatPane(document.activeElement) &&
             shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())
           ) {
@@ -2266,6 +2350,7 @@ export default function ChatView(props: ChatViewProps) {
     focusComposerStable,
     isCoarsePointer,
     isMobileViewport,
+    ownsChatInteraction,
     terminalUiState.terminalOpen,
   ]);
 
@@ -2478,6 +2563,7 @@ export default function ChatView(props: ChatViewProps) {
     toggleThreadPanelStable,
     shortcuts: rightPanelShortcuts,
   } = useRightPanelActions({
+    ownsChatInteraction,
     activeThreadRef,
     activeProject,
     activeRightPanelSurface,
@@ -2521,6 +2607,7 @@ export default function ChatView(props: ChatViewProps) {
     threadStatusLine,
     shortcuts: threadLifecycleShortcuts,
   } = useThreadLifecycle({
+    startThreadTurn,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -2838,6 +2925,7 @@ export default function ChatView(props: ChatViewProps) {
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
     embedded,
+    ownsChatInteraction,
     composerElement: composerOverlayElement,
     keybindings,
     scriptKeybindings,
@@ -2899,6 +2987,7 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (embedded || backgroundThread) return;
     return window.desktopBridge?.onMenuAction((action) => {
+      if (!ownsChatInteraction()) return;
       if (action === "rightPanel.toggle") toggleRightPanelStable();
       else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
       else if (action === "rightPanel.close") closeActiveRightPanelSurfaceStable();
@@ -2906,12 +2995,13 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     embedded,
     backgroundThread,
+    ownsChatInteraction,
     toggleRightPanelStable,
     toggleRightPanelMaximizedStable,
     closeActiveRightPanelSurfaceStable,
   ]);
 
-  usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
+  usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef, ownsChatInteraction);
   // A delegated task is a remote thread's subagent.
   const isSubagentThread =
     activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;
@@ -3014,6 +3104,7 @@ export default function ChatView(props: ChatViewProps) {
     scheduleComposerFocus: scheduleComposerFocusStable,
   });
   const { onResume, isResuming } = useComposerResume({
+    startThreadTurn,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -3034,6 +3125,8 @@ export default function ChatView(props: ChatViewProps) {
     setThreadError,
   });
   const { onSend } = useComposerSend({
+    embedded,
+    contextThreadRef,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -3353,6 +3446,7 @@ export default function ChatView(props: ChatViewProps) {
       surface={renderedRightPanelSurface}
       activeSurfaceId={activeRightPanelSurface?.id ?? null}
       threadRef={activeThreadRef}
+      projectId={activeProject?.id ?? null}
       environmentId={activeThread.environmentId}
       visible={rightPanelOpen}
       composerDraftTarget={composerDraftTarget}
@@ -3442,8 +3536,15 @@ export default function ChatView(props: ChatViewProps) {
 
   const content = (
     <div
-      ref={setWorkspaceLayoutElement}
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      ref={attachChatViewRoot}
+      data-chat-view={embedded ? "embedded" : "workspace"}
+      onFocusCapture={activateChatView}
+      onPointerDownCapture={activateChatView}
+      className={cn(
+        "relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background",
+        embedded &&
+          "[&_[data-workspace-titlebar-controls]]:relative [&_[data-workspace-titlebar-controls]]:top-auto [&_[data-workspace-titlebar-controls]]:right-auto",
+      )}
     >
       {embedded ? null : (
         <DeviceSetupDialogHost
@@ -3463,21 +3564,16 @@ export default function ChatView(props: ChatViewProps) {
         inert={rightPanelMaximized}
         onMouseUp={preventMiddleClickPasteOutsideEditable}
       >
-        {embedded ? null : (
-          <header
+        {parentPanel !== undefined ? null : (
+          <ChatTopbar
             ref={threadPanelPopoverAnchorRef}
-            data-chat-header
+            desktop={isElectron && !embedded}
             className={cn(
-              "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
-              isElectron
-                ? cn(
-                    "drag-region flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
-                    reserveTitleBarControlInset &&
-                      !inlineRightPanelOwnsTitleBar &&
-                      "wco:pr-(--workspace-native-controls-inset)",
-                  )
-                : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-(--workspace-gutter-start) pr-(--workspace-gutter-end)",
-              COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+              isElectron &&
+                reserveTitleBarControlInset &&
+                !inlineRightPanelOwnsTitleBar &&
+                "wco:pr-(--workspace-native-controls-inset)",
+              !embedded && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
             {isElectron && rightPanelControlsAtRoot ? (
@@ -3486,8 +3582,10 @@ export default function ChatView(props: ChatViewProps) {
                 className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
               />
             ) : null}
-            {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
-            {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
+            {!embedded && !rightPanelControlsAtRoot && !rightPanelControlsInPanel
+              ? panelLayoutControls
+              : null}
+            {!embedded && inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
             <ChatHeader
               activeThreadEnvironmentId={activeThread.environmentId}
               activeThreadId={activeThread.id}
@@ -3498,16 +3596,23 @@ export default function ChatView(props: ChatViewProps) {
               parentThreadLink={headerParentThreadLink}
               onOpenThread={onOpenRelatedThreadStable}
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
+              reservePanelControlSpace={!embedded}
               onNewThreadInProject={handleNewThreadInActiveProjectStable}
               {...(activeDraftLogicalProjectKey
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
             />
-          </header>
+            {embedded && !rightPanelControlsInPanel
+              ? inlineRightPanelOwnsTitleBar
+                ? threadPanelHeaderControl
+                : panelLayoutControls
+              : null}
+          </ChatTopbar>
         )}
 
         <div className="relative flex min-h-0 min-w-0 flex-1">
+          <PluginBanner slot="chat.banner" threadRef={activeThreadRef} />
           <ThreadFindCanvas
             findOptions={{
               skills: timelineSkills,
@@ -3758,6 +3863,7 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                                 onMultipleModelSelectionsChange={setMultipleModelSelectionsStable}
                                 composerRef={composerRef}
+                                ownsGlobalInput={ownsChatInteraction}
                                 composerDraftTarget={composerDraftTarget}
                                 environmentId={environmentId}
                                 attachmentUploadsCapabilityKnown={attachmentUploadsCapabilityKnown}
@@ -4137,6 +4243,7 @@ export default function ChatView(props: ChatViewProps) {
           }
           surfaces={renderedRightPanelSurfaces}
           environmentId={activeThreadRef.environmentId}
+          threadRef={activeThreadRef}
           activeSurfaceId={renderedRightPanelSurface?.id ?? null}
           pendingSurfaceIds={pendingFileSurfaceIds}
           previewSessions={activePreviewState.sessions}
@@ -4174,6 +4281,7 @@ export default function ChatView(props: ChatViewProps) {
           deviceAvailable={activeThreadRef !== null}
           sideChatAvailable={sideChat.available}
           sideChatDisabledReason={sideChatDisabledReason}
+          projectId={activeProject?.id ?? null}
         >
           {rightPanelContent}
         </ChatRightPanel>
@@ -4210,7 +4318,10 @@ function preventMiddleClickPasteOutsideEditable(event: ReactMouseEvent) {
   event.preventDefault();
 }
 
-function PreviewSessionSync(props: { readonly threadRef: ScopedThreadRef }) {
+export function BuiltinPreviewSessionSync(props: { readonly threadRef: ScopedThreadRef }) {
   usePreviewSession(props.threadRef);
   return null;
 }
+const PreviewSessionSync = definePluginFeature("preview.session-sync", BuiltinPreviewSessionSync);
+
+export default definePluginFeature("chat", BuiltinChatView);

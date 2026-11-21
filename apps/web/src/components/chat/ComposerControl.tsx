@@ -4,6 +4,20 @@ import { useRender } from "@base-ui/react/use-render";
 import type { ComponentType, SVGProps } from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ComposerControl = definePluginComponent(
+  "component:components/chat/ComposerControl/ComposerControl",
+  PluginOriginalComposerControl,
+);
+export const ComposerControlIcon = definePluginComponent(
+  "component:components/chat/ComposerControl/ComposerControlIcon",
+  PluginOriginalComposerControlIcon,
+);
+export const ComposerSelectControl = definePluginComponent(
+  "component:components/chat/ComposerControl/ComposerSelectControl",
+  PluginOriginalComposerSelectControl,
+);
 
 export type ComposerControlSize = "sm" | "xs";
 
@@ -23,7 +37,7 @@ type ComposerControlProps = useRender.ComponentProps<"button"> & {
   size?: ComposerControlSize;
 };
 
-export function ComposerControl({
+function PluginOriginalComposerControl({
   className,
   size = "sm",
   render,
@@ -40,7 +54,7 @@ export function ComposerControl({
   });
 }
 
-export function ComposerControlIcon({
+function PluginOriginalComposerControlIcon({
   icon: Icon,
   className,
   opticalSize = "default",
@@ -64,7 +78,7 @@ export function ComposerControlIcon({
   );
 }
 
-export function ComposerSelectControl({
+function PluginOriginalComposerSelectControl({
   className,
   children,
   size = "sm",

@@ -1,14 +1,28 @@
 import { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-const PreviewCard = PreviewCardPrimitive.Root;
+const PreviewCardTrigger = definePluginComponent(
+  "component:components/ui/preview-card/PreviewCardTrigger",
+  PluginOriginalPreviewCardTrigger,
+);
+const PreviewCardPopup = definePluginComponent(
+  "component:components/ui/preview-card/PreviewCardPopup",
+  PluginOriginalPreviewCardPopup,
+);
 
-function PreviewCardTrigger(props: PreviewCardPrimitive.Trigger.Props) {
+const PluginOriginalPreviewCard = PreviewCardPrimitive.Root;
+const PreviewCard = definePluginComponent(
+  "component:components/ui/preview-card/PreviewCard",
+  PluginOriginalPreviewCard,
+);
+
+function PluginOriginalPreviewCardTrigger(props: PreviewCardPrimitive.Trigger.Props) {
   return <PreviewCardPrimitive.Trigger data-slot="preview-card-trigger" {...props} />;
 }
 
-function PreviewCardPopup({
+function PluginOriginalPreviewCardPopup({
   className,
   align = "start",
   side = "top",

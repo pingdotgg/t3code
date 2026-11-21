@@ -1,3 +1,4 @@
+import { definePluginFeature } from "~/plugins/features";
 import type {
   EditorId,
   EnvironmentId,
@@ -95,7 +96,7 @@ interface ThreadDetailsPanelProps extends Pick<
   usage: ThreadDetailsUsageInput;
 }
 
-export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+export function BuiltinThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
   const gt = useGT();
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
@@ -373,3 +374,5 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     </ThreadDetailsCard>
   );
 }
+
+export const ThreadDetailsPanel = definePluginFeature("chat.details", BuiltinThreadDetailsPanel);

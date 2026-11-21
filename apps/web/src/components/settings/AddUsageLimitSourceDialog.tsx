@@ -17,9 +17,15 @@ import { Input } from "../ui/input";
 import { sourceIdFromUrl } from "./AddUsageLimitSourceDialog.logic";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { Label } from "../ui/label";
+import { definePluginComponent } from "~/plugins/features";
+
+export const AddUsageLimitSourceDialog = definePluginComponent(
+  "component:components/settings/AddUsageLimitSourceDialog/AddUsageLimitSourceDialog",
+  PluginOriginalAddUsageLimitSourceDialog,
+);
 
 /** Send the management key once to server secret storage; settings retain only a redaction marker. */
-export function AddUsageLimitSourceDialog({
+function PluginOriginalAddUsageLimitSourceDialog({
   open,
   onOpenChange,
   environmentId,

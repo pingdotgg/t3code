@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
@@ -194,7 +195,11 @@ const toolCallExpandedBodyClassName =
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
-export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
+function PluginOriginalReasoningTraceContent({
+  entries,
+}: {
+  entries: ReadonlyArray<TimelineWorkEntry>;
+}) {
   const ctx = use(TimelineRowCtx);
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
   const isStreaming = (entry: TimelineWorkEntry) =>
@@ -228,7 +233,9 @@ type WorkEntryRowProps = {
   onContentReady?: (() => void) | undefined;
 };
 
-export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowProps) {
+const PluginOriginalSimpleWorkEntryRow = memo(function SimpleWorkEntryRow(
+  props: WorkEntryRowProps,
+) {
   const ctx = use(TimelineRowCtx);
   const item = props.workEntry.projectedItem?.item;
   const childThreadId =
@@ -281,7 +288,7 @@ export function ViewedImagesTimelineRow({
   );
 }
 
-function WorkEntryLogRow(props: WorkEntryRowProps) {
+function PluginOriginalWorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
@@ -740,7 +747,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   );
 }
 
-function QuestionAnswerHistory({
+function PluginOriginalQuestionAnswerHistory({
   answer,
 }: {
   answer: import("@t3tools/contracts").UserInputAttachmentAnswerPayload;
@@ -801,3 +808,23 @@ function QuestionAnswerHistory({
     </div>
   );
 }
+
+export const ReasoningTraceContent = definePluginComponent(
+  "component:components/chat/TimelineWorkEntryRow/ReasoningTraceContent",
+  PluginOriginalReasoningTraceContent,
+);
+
+const WorkEntryLogRow = definePluginComponent(
+  "component:components/chat/TimelineWorkEntryRow/WorkEntryLogRow",
+  PluginOriginalWorkEntryLogRow,
+);
+
+const QuestionAnswerHistory = definePluginComponent(
+  "component:components/chat/TimelineWorkEntryRow/QuestionAnswerHistory",
+  PluginOriginalQuestionAnswerHistory,
+);
+
+export const SimpleWorkEntryRow = definePluginComponent(
+  "component:components/chat/TimelineWorkEntryRow/SimpleWorkEntryRow",
+  PluginOriginalSimpleWorkEntryRow,
+);

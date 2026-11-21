@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   IsoDateTime,
   MessageId,
@@ -17,7 +18,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -717,7 +717,7 @@ export const make = Effect.gen(function* () {
   return ThreadSearch.of({ search, searchThreads, searchOlderSettled });
 });
 
-export const layer = Layer.effect(ThreadSearch, make);
+export const layer = builtinServiceLayer("t3.thread")(ThreadSearch, make);
 
 /**
  * The client search: message hits, and with `olderSettledBefore`, the rows of the best older

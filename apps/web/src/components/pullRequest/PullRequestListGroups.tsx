@@ -4,6 +4,7 @@ import { useMessages } from "gt-react";
 import { useDeferredValue, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 import { Separator } from "../ui/separator";
 import {
   pullRequestEntryKey,
@@ -37,7 +38,12 @@ function firstPaintGroups<Group extends { entries: ReadonlyArray<unknown> }>(
   });
 }
 
-function PullRequestGroupHeader({
+const PullRequestGroupHeader = definePluginComponent(
+  "component:components/pullRequest/PullRequestListGroups/PullRequestGroupHeader",
+  PluginOriginalPullRequestGroupHeader,
+);
+
+function PluginOriginalPullRequestGroupHeader({
   group,
   count,
 }: {

@@ -14,6 +14,7 @@ export interface PreviewMiniPlayerSize {
 
 export type PreviewMiniPlayerSource =
   | { readonly kind: "browser"; readonly tabId: string }
+  | { readonly kind: "canvas"; readonly documentId: string; readonly name: string }
   | {
       readonly kind: "device";
       readonly hostId: string;
@@ -49,9 +50,14 @@ interface PreviewMiniPlayerStoreState {
 }
 
 export function previewMiniPlayerSourceKey(source: PreviewMiniPlayerSource): string {
-  return source.kind === "browser"
-    ? `browser:${source.tabId}`
-    : `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;
+  switch (source.kind) {
+    case "browser":
+      return `browser:${source.tabId}`;
+    case "canvas":
+      return `canvas:${source.documentId}`;
+    case "device":
+      return `device:${encodeURIComponent(source.hostId)}:${encodeURIComponent(source.deviceId)}`;
+  }
 }
 
 export const browserMiniPlayerSource = (tabId: string): PreviewMiniPlayerSource => ({

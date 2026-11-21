@@ -9,6 +9,7 @@ import {
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -19,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
+import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
 import * as ServerConfig from "../config.ts";
@@ -63,6 +65,7 @@ const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 interface HarnessOptions {
   readonly vcsProcess?: Layer.Layer<VcsProcess.VcsProcess>;
   readonly git?: typeof layerRealGit;
+  readonly gitWorkflow?: Layer.Layer<GitWorkflow.GitWorkflowService>;
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
   ) => ProjectService.ProjectService["Service"];
@@ -81,7 +84,7 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(RuntimeLayer.layerProjectService),
     Layer.provideMerge(layerEnrichment),
     Layer.provideMerge(WorkspacePaths.layer),
-    Layer.provideMerge(layerGitWorkflow(options?.vcsProcess)),
+    Layer.provideMerge(options?.gitWorkflow ?? layerGitWorkflow(options?.vcsProcess)),
     Layer.provideMerge(options?.git ?? layerRealGit),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerSettings.layerTest()),
@@ -118,6 +121,52 @@ const requireRoot = Effect.gen(function* () {
   const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
   return Option.getOrThrow(yield* scratch.scratchRoot);
 });
+
+it.effect("boots without Git and probes Scratch again after Git is enabled", () =>
+  Effect.gen(function* () {
+    const kernel = yield* PluginKernel;
+    const probes = yield* Ref.make(0);
+    const gitWorkflow = Layer.effect(
+      GitWorkflow.GitWorkflowService,
+      Effect.gen(function* () {
+        const workflow = yield* GitWorkflow.GitWorkflowService;
+        return yield* kernel.registerBuiltin(
+          "t3.git",
+          GitWorkflow.GitWorkflowService.key,
+          Effect.succeed(workflow),
+        );
+      }),
+    ).pipe(
+      Layer.provide(
+        Layer.mock(GitWorkflow.GitWorkflowService)({
+          repositoryRoot: () => Ref.update(probes, (value) => value + 1).pipe(Effect.as(null)),
+        }),
+      ),
+    );
+    yield* withScratch(
+      ({ baseDir }) =>
+        Effect.gen(function* () {
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const path = yield* Path.Path;
+          assert.isTrue(Option.isNone(yield* folders.scratchRoot));
+          assert.equal(yield* Ref.get(probes), 0);
+          const unavailable = yield* Effect.flip(folders.ensureScratchProject);
+          assert.equal(unavailable._tag, "ScratchUnavailableError");
+          yield* kernel.setEnabled("t3.git", true);
+          assert.equal(
+            Option.getOrThrow(yield* folders.scratchRoot),
+            path.join(baseDir, "scratch"),
+          );
+          assert.equal(
+            Option.getOrThrow(yield* folders.scratchRoot),
+            path.join(baseDir, "scratch"),
+          );
+          assert.equal(yield* Ref.get(probes), 1);
+        }),
+      { gitWorkflow },
+    );
+  }).pipe(Effect.scoped, Effect.provide(layerWithEnabled({ "t3.git": false }))),
+);
 
 it.effect("offers nothing, and says why once, when the data dir sits inside a Git checkout", () => {
   const warnings: string[] = [];

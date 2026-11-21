@@ -25,6 +25,9 @@ import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 
 interface ComposerResumeInput {
+  readonly startThreadTurn: (
+    request: Parameters<typeof threadEnvironment.startTurn.run>[1],
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
@@ -57,6 +60,7 @@ interface ComposerResumeInput {
  */
 export function useComposerResume(input: ComposerResumeInput) {
   const {
+    startThreadTurn,
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
@@ -76,9 +80,6 @@ export function useComposerResume(input: ComposerResumeInput) {
     scrollToEnd,
     setThreadError,
   } = input;
-  const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
-    reportFailure: false,
-  });
   const resumeThreadQueue = useOrchestrationCommand(threadEnvironment.resumeThreadQueue, {
     reportFailure: false,
   });

@@ -1,7 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -209,4 +209,4 @@ const make = Effect.gen(function* () {
   return WorkspacePaths.of({ normalizeWorkspaceRoot, resolveRelativePathWithinRoot });
 });
 
-export const layer = Layer.effect(WorkspacePaths, make);
+export const layer = builtinServiceLayer("t3.projects")(WorkspacePaths, make);

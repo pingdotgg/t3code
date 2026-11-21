@@ -6,8 +6,39 @@ import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
 
-const Select = SelectPrimitive.Root;
+const SelectTrigger = definePluginComponent(
+  "component:components/ui/select/SelectTrigger",
+  PluginOriginalSelectTrigger,
+);
+const SelectButton = definePluginComponent(
+  "component:components/ui/select/SelectButton",
+  PluginOriginalSelectButton,
+);
+const SelectValue = definePluginComponent(
+  "component:components/ui/select/SelectValue",
+  PluginOriginalSelectValue,
+);
+const SelectPopup = definePluginComponent(
+  "component:components/ui/select/SelectPopup",
+  PluginOriginalSelectPopup,
+);
+const SelectItem = definePluginComponent(
+  "component:components/ui/select/SelectItem",
+  PluginOriginalSelectItem,
+);
+const SelectGroup = definePluginComponent(
+  "component:components/ui/select/SelectGroup",
+  PluginOriginalSelectGroup,
+);
+const SelectGroupLabel = definePluginComponent(
+  "component:components/ui/select/SelectGroupLabel",
+  PluginOriginalSelectGroupLabel,
+);
+
+const PluginOriginalSelect = SelectPrimitive.Root;
+const Select = definePluginComponent("component:components/ui/select/Select", PluginOriginalSelect);
 
 const selectTriggerVariants = cva(
   "relative inline-flex cursor-pointer select-none items-center justify-between gap-2 border rounded-lg text-left text-base outline-none transition-[color,box-shadow,background-color] data-disabled:pointer-events-none data-disabled:opacity-64 sm:text-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
@@ -35,7 +66,7 @@ const selectTriggerVariants = cva(
   },
 );
 
-function SelectTrigger({
+function PluginOriginalSelectTrigger({
   className,
   size = "default",
   variant = "default",
@@ -58,7 +89,7 @@ function SelectTrigger({
   );
 }
 
-function SelectButton({
+function PluginOriginalSelectButton({
   className,
   size = "default",
   children,
@@ -85,7 +116,7 @@ function SelectButton({
   });
 }
 
-function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
+function PluginOriginalSelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   return (
     <SelectPrimitive.Value
       className={cn("flex-1 truncate data-placeholder:text-placeholder", className)}
@@ -95,7 +126,7 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   );
 }
 
-function SelectPopup({
+function PluginOriginalSelectPopup({
   className,
   children,
   side = "bottom",
@@ -164,7 +195,7 @@ function SelectPopup({
   );
 }
 
-function SelectItem({
+function PluginOriginalSelectItem({
   className,
   children,
   hideIndicator: _hideIndicator = false,
@@ -191,11 +222,11 @@ function SelectItem({
   );
 }
 
-function SelectGroup(props: SelectPrimitive.Group.Props) {
+function PluginOriginalSelectGroup(props: SelectPrimitive.Group.Props) {
   return <SelectPrimitive.Group data-slot="select-group" {...props} />;
 }
 
-function SelectGroupLabel(props: SelectPrimitive.GroupLabel.Props) {
+function PluginOriginalSelectGroupLabel(props: SelectPrimitive.GroupLabel.Props) {
   return (
     <SelectPrimitive.GroupLabel
       className="px-2 py-1.5 font-medium text-muted-foreground text-xs"

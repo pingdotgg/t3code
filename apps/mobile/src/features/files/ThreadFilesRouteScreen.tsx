@@ -1,3 +1,4 @@
+import { defineNativePluginFeature } from "../../plugins/features";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
@@ -75,7 +76,7 @@ import {
 } from "./filePath";
 import { useWorkspaceFileAssetUrlState } from "./workspaceFileAssetUrl";
 
-function FilesBrowserHeader(props: {
+function BuiltinFilesBrowserHeader(props: {
   readonly projectName: string;
   readonly searchQuery: string;
   readonly onSearchQueryChange: (query: string) => void;
@@ -102,7 +103,7 @@ function FilesBrowserHeader(props: {
   );
 }
 
-function FileHeader(props: {
+function BuiltinFileHeader(props: {
   readonly title: string;
   readonly subtitle: string;
   readonly activeMode: string;
@@ -237,7 +238,7 @@ function FileSourceSurface(props: ComponentProps<typeof SourceFileSurface>) {
   );
 }
 
-function FileContent(props: {
+function BuiltinFileContent(props: {
   readonly activeMode: FileViewMode;
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
@@ -413,7 +414,7 @@ function useThreadFilesWorkspace(params: {
   };
 }
 
-function FilesUnavailable({
+function BuiltinFilesUnavailable({
   title,
   detail,
   onBack,
@@ -443,7 +444,7 @@ function FilesUnavailable({
   );
 }
 
-function FilesToolbarBottomFade() {
+function BuiltinFilesToolbarBottomFade() {
   const sheetColor = String(useUniwindTheme()["--color-sheet"]);
 
   if (process.env.EXPO_OS !== "ios") {
@@ -471,7 +472,7 @@ function FilesToolbarBottomFade() {
   );
 }
 
-export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
+function BuiltinThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const navigation = useNavigation();
   const gt = useGT();
   const { fileInspector } = useWorkspacePaneState();
@@ -634,7 +635,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   );
 }
 
-export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
+function BuiltinThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const navigation = useNavigation();
   const gt = useGT();
   const { fileInspector } = useWorkspacePaneState();
@@ -1100,3 +1101,35 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     </View>,
   );
 }
+
+const FilesBrowserHeader = defineNativePluginFeature(
+  "native.features.files.thread-files-route-screen.files-browser-header",
+  BuiltinFilesBrowserHeader,
+);
+
+const FileHeader = defineNativePluginFeature(
+  "native.features.files.thread-files-route-screen.file-header",
+  BuiltinFileHeader,
+);
+
+const FileContent = defineNativePluginFeature(
+  "native.features.files.thread-files-route-screen.file-content",
+  BuiltinFileContent,
+);
+
+const FilesUnavailable = defineNativePluginFeature(
+  "native.features.files.thread-files-route-screen.files-unavailable",
+  BuiltinFilesUnavailable,
+);
+
+const FilesToolbarBottomFade = defineNativePluginFeature(
+  "native.features.files.thread-files-route-screen.files-toolbar-bottom-fade",
+  BuiltinFilesToolbarBottomFade,
+);
+
+export const ThreadFilesTreeScreen = defineNativePluginFeature(
+  "file-tree",
+  BuiltinThreadFilesTreeScreen,
+);
+
+export const ThreadFileScreen = defineNativePluginFeature("file-preview", BuiltinThreadFileScreen);

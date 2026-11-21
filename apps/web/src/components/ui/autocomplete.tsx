@@ -4,10 +4,64 @@ import { ChevronsUpDownIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { Input } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { definePluginComponent } from "~/plugins/features";
 
-const Autocomplete = AutocompletePrimitive.Root;
+const AutocompleteInput = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteInput",
+  PluginOriginalAutocompleteInput,
+);
+const AutocompletePopup = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompletePopup",
+  PluginOriginalAutocompletePopup,
+);
+const AutocompleteItem = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteItem",
+  PluginOriginalAutocompleteItem,
+);
+const AutocompleteGroup = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteGroup",
+  PluginOriginalAutocompleteGroup,
+);
+const AutocompleteGroupLabel = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteGroupLabel",
+  PluginOriginalAutocompleteGroupLabel,
+);
+const AutocompleteListHeading = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteListHeading",
+  PluginOriginalAutocompleteListHeading,
+);
+const AutocompleteListVirtualized = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteListVirtualized",
+  PluginOriginalAutocompleteListVirtualized,
+);
+const AutocompleteEmpty = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteEmpty",
+  PluginOriginalAutocompleteEmpty,
+);
+const AutocompleteList = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteList",
+  PluginOriginalAutocompleteList,
+);
+const AutocompleteClear = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteClear",
+  PluginOriginalAutocompleteClear,
+);
+const AutocompleteCollection = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteCollection",
+  PluginOriginalAutocompleteCollection,
+);
+const AutocompleteTrigger = definePluginComponent(
+  "component:components/ui/autocomplete/AutocompleteTrigger",
+  PluginOriginalAutocompleteTrigger,
+);
 
-function AutocompleteInput({
+const PluginOriginalAutocomplete = AutocompletePrimitive.Root;
+const Autocomplete = definePluginComponent(
+  "component:components/ui/autocomplete/Autocomplete",
+  PluginOriginalAutocomplete,
+);
+
+function PluginOriginalAutocompleteInput({
   className,
   showTrigger = false,
   showClear = false,
@@ -73,7 +127,7 @@ function AutocompleteInput({
   );
 }
 
-function AutocompletePopup({
+function PluginOriginalAutocompletePopup({
   className,
   children,
   side = "bottom",
@@ -120,7 +174,11 @@ function AutocompletePopup({
   );
 }
 
-function AutocompleteItem({ className, children, ...props }: AutocompletePrimitive.Item.Props) {
+function PluginOriginalAutocompleteItem({
+  className,
+  children,
+  ...props
+}: AutocompletePrimitive.Item.Props) {
   return (
     <AutocompletePrimitive.Item
       className={cn(
@@ -135,7 +193,10 @@ function AutocompleteItem({ className, children, ...props }: AutocompletePrimiti
   );
 }
 
-function AutocompleteGroup({ className, ...props }: AutocompletePrimitive.Group.Props) {
+function PluginOriginalAutocompleteGroup({
+  className,
+  ...props
+}: AutocompletePrimitive.Group.Props) {
   return (
     <AutocompletePrimitive.Group
       className={cn("[[role=group]+&]:mt-1.5", className)}
@@ -147,7 +208,10 @@ function AutocompleteGroup({ className, ...props }: AutocompletePrimitive.Group.
 
 const GROUP_LABEL_CLASS_NAME = "px-2 py-1.5 font-medium text-muted-foreground text-xs";
 
-function AutocompleteGroupLabel({ className, ...props }: AutocompletePrimitive.GroupLabel.Props) {
+function PluginOriginalAutocompleteGroupLabel({
+  className,
+  ...props
+}: AutocompletePrimitive.GroupLabel.Props) {
   return (
     <AutocompletePrimitive.GroupLabel
       className={cn(GROUP_LABEL_CLASS_NAME, className)}
@@ -157,7 +221,10 @@ function AutocompleteGroupLabel({ className, ...props }: AutocompletePrimitive.G
   );
 }
 
-function AutocompleteListHeading({ className, ...props }: React.ComponentProps<"div">) {
+function PluginOriginalAutocompleteListHeading({
+  className,
+  ...props
+}: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(GROUP_LABEL_CLASS_NAME, className)}
@@ -168,7 +235,10 @@ function AutocompleteListHeading({ className, ...props }: React.ComponentProps<"
   );
 }
 
-function AutocompleteListVirtualized({ className, ...props }: AutocompletePrimitive.List.Props) {
+function PluginOriginalAutocompleteListVirtualized({
+  className,
+  ...props
+}: AutocompletePrimitive.List.Props) {
   return (
     <AutocompletePrimitive.List
       className={cn("size-full min-w-0", className)}
@@ -178,7 +248,10 @@ function AutocompleteListVirtualized({ className, ...props }: AutocompletePrimit
   );
 }
 
-function AutocompleteEmpty({ className, ...props }: AutocompletePrimitive.Empty.Props) {
+function PluginOriginalAutocompleteEmpty({
+  className,
+  ...props
+}: AutocompletePrimitive.Empty.Props) {
   return (
     <AutocompletePrimitive.Empty
       className={cn(
@@ -191,7 +264,7 @@ function AutocompleteEmpty({ className, ...props }: AutocompletePrimitive.Empty.
   );
 }
 
-function AutocompleteList({ className, ...props }: AutocompletePrimitive.List.Props) {
+function PluginOriginalAutocompleteList({ className, ...props }: AutocompletePrimitive.List.Props) {
   return (
     // A flex column lets the viewport shrink with a height-capped parent instead of overflowing it.
     <ScrollArea className="flex flex-col" scrollbarGutter scrollFade>
@@ -204,7 +277,10 @@ function AutocompleteList({ className, ...props }: AutocompletePrimitive.List.Pr
   );
 }
 
-function AutocompleteClear({ className, ...props }: AutocompletePrimitive.Clear.Props) {
+function PluginOriginalAutocompleteClear({
+  className,
+  ...props
+}: AutocompletePrimitive.Clear.Props) {
   return (
     <AutocompletePrimitive.Clear
       className={cn(
@@ -219,11 +295,13 @@ function AutocompleteClear({ className, ...props }: AutocompletePrimitive.Clear.
   );
 }
 
-function AutocompleteCollection({ ...props }: AutocompletePrimitive.Collection.Props) {
+function PluginOriginalAutocompleteCollection({
+  ...props
+}: AutocompletePrimitive.Collection.Props) {
   return <AutocompletePrimitive.Collection data-slot="autocomplete-collection" {...props} />;
 }
 
-function AutocompleteTrigger({
+function PluginOriginalAutocompleteTrigger({
   className,
   children,
   ...props

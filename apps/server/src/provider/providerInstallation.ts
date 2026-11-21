@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   AntigravitySettings,
   CodexSettings,
@@ -11,7 +12,6 @@ import {
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
@@ -252,4 +252,4 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
   return { start, cancel, subscribe, remove };
 });
 
-export const layer = Layer.effect(ProviderInstallation, make());
+export const layer = builtinServiceLayer("t3.providers")(ProviderInstallation, make());

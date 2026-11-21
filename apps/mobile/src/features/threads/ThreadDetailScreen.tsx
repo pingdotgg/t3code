@@ -224,6 +224,7 @@ import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
 import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
+import { defineNativePluginFeature } from "../../plugins/features";
 
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;
@@ -395,7 +396,7 @@ const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
 
 // Anchors, the submitted message, follow state and pending scrolls belong to
 // one thread, so the body remounts when the thread changes.
-export function ThreadDetailScreen(props: ThreadDetailScreenProps) {
+function BuiltinThreadDetailScreen(props: ThreadDetailScreenProps) {
   const [statusRequests, setStatusRequests] = useState<
     Record<string, BackgroundWorkStopRequest | undefined>
   >({});
@@ -2012,3 +2013,8 @@ function ThreadDetailBody(
     </View>
   );
 }
+
+export const ThreadDetailScreen = defineNativePluginFeature(
+  "native.features.threads.thread-detail-screen",
+  BuiltinThreadDetailScreen,
+);

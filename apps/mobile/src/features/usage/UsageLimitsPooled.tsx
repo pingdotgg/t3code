@@ -33,6 +33,27 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { refillLabel, ResetCredits, resetLabels } from "./UsageLimitsSection";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const AccountSegment = defineNativePluginFeature(
+  "native.features.usage.usage-limits-pooled.account-segment",
+  BuiltinAccountSegment,
+);
+
+const PoolWindowCard = defineNativePluginFeature(
+  "native.features.usage.usage-limits-pooled.pool-window-card",
+  BuiltinPoolWindowCard,
+);
+
+export const UsageLimitsSection = defineNativePluginFeature(
+  "native.features.usage.usage-limits-pooled.usage-limits-section",
+  BuiltinUsageLimitsSection,
+);
+
+export const UsageLimitAccountScreen = defineNativePluginFeature(
+  "native.features.usage.usage-limits-pooled.usage-limit-account-screen",
+  BuiltinUsageLimitAccountScreen,
+);
 
 const PACE_LABEL = {
   ahead: msg("Ahead of pace"),
@@ -123,7 +144,7 @@ function PaceGap({
   );
 }
 
-function AccountSegment({
+function BuiltinAccountSegment({
   remaining,
   color,
   refillPercent,
@@ -168,7 +189,7 @@ function AccountSegment({
   );
 }
 
-function PoolWindowCard({
+function BuiltinPoolWindowCard({
   pool,
   color,
   now,
@@ -465,7 +486,7 @@ function PoolWindowCard({
   );
 }
 
-export function UsageLimitsSection({
+function BuiltinUsageLimitsSection({
   now,
   failedLabels,
   selectedEnvironmentIds,
@@ -593,7 +614,7 @@ type AccountScreenProps = StaticScreenProps<{
   now: number;
 }>;
 
-export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
+function BuiltinUsageLimitAccountScreen({ route }: AccountScreenProps) {
   const insets = useSafeAreaInsets();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const { accountKey, windowId, windowKind, environmentIds, now } = route.params;

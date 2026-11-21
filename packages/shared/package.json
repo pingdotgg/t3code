@@ -642,6 +642,34 @@
     "./paletteSearchCopy": {
       "types": "./src/paletteSearchCopy.ts",
       "import": "./src/paletteSearchCopy.ts"
+    },
+    "./pluginCompiler": {
+      "types": "./src/pluginCompiler.ts",
+      "import": "./src/pluginCompiler.ts"
+    },
+    "./pluginRuntime": {
+      "types": "./src/pluginRuntime.ts",
+      "import": "./src/pluginRuntime.ts"
+    },
+    "./pluginKernel": {
+      "types": "./src/pluginKernel.ts",
+      "import": "./src/pluginKernel.ts"
+    },
+    "./canvasOps": {
+      "types": "./src/canvasOps.ts",
+      "import": "./src/canvasOps.ts"
+    },
+    "./canvasImport": {
+      "types": "./src/canvasImport/index.ts",
+      "import": "./src/canvasImport/index.ts"
+    },
+    "./canvasImportFormats": {
+      "types": "./src/canvasImport/formats.ts",
+      "import": "./src/canvasImport/formats.ts"
+    },
+    "./canvasExport": {
+      "types": "./src/canvasExport.ts",
+      "import": "./src/canvasExport.ts"
     }
   },
   "scripts": {
@@ -649,13 +677,19 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
+    "@iconify-json/material-symbols": "1.2.94",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "@xmldom/xmldom": "0.9.12",
     "effect": "catalog:",
+    "esbuild": "0.28.2",
     "ffi-rs": "1.3.2",
+    "fflate": "0.8.3",
+    "fzstd": "0.1.1",
     "get-east-asian-width": "^1.6.0",
     "gt-i18n": "1.0.40",
+    "lucide": "^0.564.0",
     "mdast-util-directive": "catalog:",
     "mdast-util-to-hast": "^13.2.1",
     "micromark-extension-directive": "catalog:",

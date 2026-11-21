@@ -96,6 +96,17 @@ import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+import { defineNativePluginFeature } from "../../plugins/features";
+
+const ThreadListV2Section = defineNativePluginFeature(
+  "native.features.threads.thread-list-v2-items.thread-list-v2-section",
+  BuiltinThreadListV2Section,
+);
+
+const ThreadListV2ShelfHeader = defineNativePluginFeature(
+  "native.features.threads.thread-list-v2-items.thread-list-v2-shelf-header",
+  BuiltinThreadListV2ShelfHeader,
+);
 
 interface StatusLabel {
   // Null when the icon and timer carry the status on their own.
@@ -232,7 +243,7 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
   },
 ];
 
-function ThreadListV2Section(props: {
+function BuiltinThreadListV2Section(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
   readonly tone?: "default" | "snoozed";
@@ -309,12 +320,17 @@ function ThreadListV2Section(props: {
   );
 }
 
-const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
+const BuiltinThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
 }) {
   return <ThreadListV2Section {...props} />;
 });
+
+const ThreadListV2SectionDivider = defineNativePluginFeature(
+  "native.features.threads.thread-list-v2-items.thread-list-v2-section-divider",
+  BuiltinThreadListV2SectionDivider,
+);
 
 type ThreadListV2ShelfHeaderProps = {
   readonly count: number;
@@ -345,7 +361,7 @@ const SHELF_COPY = {
   },
 } as const;
 
-function ThreadListV2ShelfHeader(
+function BuiltinThreadListV2ShelfHeader(
   props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_COPY },
 ) {
   const gt = useGT();
@@ -368,25 +384,40 @@ function ThreadListV2ShelfHeader(
   );
 }
 
-export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingShelfHeader(
+const BuiltinThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingShelfHeader(
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="working" />;
 });
 
-export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
+export const ThreadListV2WorkingShelfHeader = defineNativePluginFeature(
+  "native.features.threads.thread-list-v2-items.thread-list-v2-working-shelf-header",
+  BuiltinThreadListV2WorkingShelfHeader,
+);
+
+const BuiltinThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="snoozed" />;
 });
 
-export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(
+export const ThreadListV2SnoozedShelfHeader = defineNativePluginFeature(
+  "native.features.threads.thread-list-v2-items.thread-list-v2-snoozed-shelf-header",
+  BuiltinThreadListV2SnoozedShelfHeader,
+);
+
+const BuiltinThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="settled" />;
 });
 
-export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
+export const ThreadListV2SettledShelfHeader = defineNativePluginFeature(
+  "native.features.threads.thread-list-v2-items.thread-list-v2-settled-shelf-header",
+  BuiltinThreadListV2SettledShelfHeader,
+);
+
+const BuiltinThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
   readonly pane?: "screen" | "sidebar";
   readonly hiddenCount: number;
   /** Older settled threads are loading, or their last read failed. */
@@ -434,6 +465,11 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
   );
 });
 
+export const ThreadListV2ShowMoreRow = defineNativePluginFeature(
+  "native.features.threads.thread-list-v2-items.thread-list-v2-show-more-row",
+  BuiltinThreadListV2ShowMoreRow,
+);
+
 const PENDING_TASK_MENU_ACTIONS: MenuAction[] = [
   {
     id: "delete",
@@ -452,7 +488,7 @@ const DRAFT_TASK_MENU_ACTIONS: MenuAction[] = [
   },
 ];
 
-export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props: {
+const BuiltinThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props: {
   readonly pendingTask: PendingNewTask;
   readonly selected?: boolean;
   readonly project: EnvironmentProject | null;
@@ -742,7 +778,12 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   );
 });
 
-export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+export const ThreadListV2PendingRow = defineNativePluginFeature(
+  "native.features.threads.thread-list-v2-items.thread-list-v2-pending-row",
+  BuiltinThreadListV2PendingRow,
+);
+
+const BuiltinThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
   readonly hasQueuedMessages?: boolean;
@@ -1794,3 +1835,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </View>
   );
 });
+
+export const ThreadListV2Row = defineNativePluginFeature(
+  "native.features.threads.thread-list-v2-items.thread-list-v2-row",
+  BuiltinThreadListV2Row,
+);

@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
   UsageLimitSourceError,
@@ -248,7 +249,7 @@ export const make = Effect.gen(function* () {
   } satisfies UsageLimitSources["Service"];
 });
 
-export const layer = Layer.effect(UsageLimitSources, make).pipe(
+export const layer = builtinServiceLayer("t3.usage")(UsageLimitSources, make).pipe(
   Layer.provide(SecretResolverLayer.layer),
 );
 
@@ -290,7 +291,7 @@ export class UsageLimitResetFallback extends Context.Reference<{
   defaultValue: () => ({ resetAt: () => Effect.succeed(null) }),
 }) {}
 
-export const layerResetFallback = Layer.effect(
+export const layerResetFallback = builtinServiceLayer("t3.usage")(
   UsageLimitResetFallback,
   Effect.gen(function* () {
     const sources = yield* UsageLimitSources;

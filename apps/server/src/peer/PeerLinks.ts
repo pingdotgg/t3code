@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "@t3tools/shared/pluginKernel";
 import {
   AuthMcpClientAccess,
   AuthMcpRegistrationError,
@@ -22,7 +23,6 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Redacted from "effect/Redacted";
@@ -778,4 +778,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(PeerLinks, make);
+export const layer = builtinServiceLayer("t3.connections")(PeerLinks, make);

@@ -1,4 +1,5 @@
 import { classifyCodexManagedError } from "../provider/CodexManagedErrors.ts";
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
@@ -272,7 +273,7 @@ export const layer: Layer.Layer<
   | RuntimePolicy.RuntimePolicyV2
   | TurnItemPositionStore.TurnItemPositionStoreV2
   | TaskFolders.TaskFolders
-> = Layer.effect(
+> = builtinServiceLayer("t3.thread")(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;

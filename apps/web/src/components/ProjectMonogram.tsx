@@ -1,10 +1,16 @@
 import type { ProjectIconColor } from "@t3tools/contracts";
 import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
+import { definePluginComponent } from "~/plugins/features";
+
+export const ProjectMonogram = definePluginComponent(
+  "component:components/ProjectMonogram/ProjectMonogram",
+  PluginOriginalProjectMonogram,
+);
 
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
-export function ProjectMonogram({
+function PluginOriginalProjectMonogram({
   text,
   color,
   className,

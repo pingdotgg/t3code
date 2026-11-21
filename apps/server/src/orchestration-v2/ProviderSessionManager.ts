@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -35,6 +36,7 @@ import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -453,7 +455,7 @@ export const layerWithOptions = (
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
   | ProviderInstallationGate.ProviderInstallationGate
 > =>
-  Layer.effect(
+  builtinServiceLayer("t3.thread")(
     ProviderSessionManagerV2,
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -1730,6 +1732,25 @@ export const layerWithOptions = (
           return;
         }
 
+        const acceptingTurns =
+          entry.runtime.acceptingTurns === undefined ? true : yield* entry.runtime.acceptingTurns;
+        const hasPendingWork =
+          !acceptingTurns && entry.runtime.hasPendingBackgroundWork !== undefined
+            ? yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                Effect.catchCause(() => Effect.succeed(false)),
+              )
+            : false;
+        if (!acceptingTurns && !hasPendingWork) {
+          yield* releaseEntry({
+            providerSessionId,
+            reason: "idle_timeout",
+            detail: "Provider plugin generation retired.",
+            onlyIfIdleGeneration: entry.idleGeneration,
+            gracefulSubscribers: true,
+          }).pipe(logReleaseFailure(providerSessionId), Effect.forkIn(layerScope));
+          return;
+        }
+
         yield* cancelIdleFiber(entry.idleFiber);
         const generation = entry.idleGeneration + 1;
         const idleFiber = yield* Effect.sleep(Duration.millis(idleTimeoutMs)).pipe(
@@ -2971,11 +2992,7 @@ export const layerWithOptions = (
             return observeActivity(
               entry.runtime.providerSessionId,
               event.type === "turn.terminal"
-                ? markIdle(
-                    entry.runtime.providerSessionId,
-                    event.providerThreadId,
-                    event.runOrdinal,
-                  )
+                ? Effect.void
                 : metadataOnly
                   ? Effect.void
                   : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
@@ -3047,6 +3064,20 @@ export const layerWithOptions = (
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
                   yield* releaseLiveOutput;
                 }),
+              ),
+              // Deliver the terminal before a retired generation closes its own
+              // event pump. Subscribers drain the queued event during release.
+              Effect.andThen(
+                event.type === "turn.terminal"
+                  ? observeActivity(
+                      entry.runtime.providerSessionId,
+                      markIdle(
+                        entry.runtime.providerSessionId,
+                        event.providerThreadId,
+                        event.runOrdinal,
+                      ),
+                    )
+                  : Effect.void,
               ),
             );
           }),
@@ -3125,6 +3156,28 @@ export const layerWithOptions = (
         ),
       );
 
+      if (registry.subscribeChanges) {
+        const subscribeChanges = registry.subscribeChanges;
+        yield* Effect.gen(function* () {
+          const changes = yield* subscribeChanges;
+          // Subscription acquisition must not block the session manager's startup.
+          // Check current sessions before waiting, including changes during acquisition.
+          return yield* Effect.gen(function* () {
+            for (const entry of (yield* Ref.get(sessions)).values()) {
+              if (
+                entry.runtime.acceptingTurns !== undefined &&
+                !(yield* entry.runtime.acceptingTurns)
+              ) {
+                yield* scheduleIdleReleaseInternal(entry.runtime.providerSessionId).pipe(
+                  logReleaseFailure(entry.runtime.providerSessionId),
+                );
+              }
+            }
+            yield* PubSub.take(changes);
+          }).pipe(Effect.forever);
+        }).pipe(Effect.forkScoped);
+      }
+
       return ProviderSessionManagerV2.of({
         shutdown,
         open: (input) =>
@@ -3147,7 +3200,36 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               const live = (yield* Ref.get(sessions)).get(key);
               if (live !== undefined) yield* releaseForLinkedEnvironments(live);
-              const existing = (yield* Ref.get(sessions)).get(key);
+              let existing = (yield* Ref.get(sessions)).get(key);
+              if (
+                existing?.runtime.acceptingTurns !== undefined &&
+                !(yield* existing.runtime.acceptingTurns)
+              ) {
+                const hasPendingWork =
+                  existing.runtime.hasPendingBackgroundWork === undefined
+                    ? false
+                    : yield* existing.runtime.hasPendingBackgroundWork.pipe(
+                        Effect.catchCause(() => Effect.succeed(false)),
+                      );
+                if (existing.busyTurns.size === 0 && !hasPendingWork) {
+                  yield* releaseEntry({
+                    providerSessionId: input.providerSessionId,
+                    reason: "idle_timeout",
+                    detail: "Provider plugin generation retired.",
+                    onlyIfIdleGeneration: existing.idleGeneration,
+                    gracefulSubscribers: true,
+                  });
+                  existing = (yield* Ref.get(sessions)).get(key);
+                }
+                if (existing !== undefined) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause:
+                      "Provider plugin changed or was disabled. Its active turn must finish before reconnecting.",
+                  });
+                }
+              }
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {

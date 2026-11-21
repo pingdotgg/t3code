@@ -24,6 +24,8 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { PluginKernel, layerWithEnabled } from "@t3tools/shared/pluginKernel";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -35,6 +37,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
@@ -46,9 +49,15 @@ import { CodexDriver, type CodexDriverEnv } from "./Drivers/CodexDriver.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistry.ts";
+import {
+  makeProviderInstanceRegistry,
+  layer as providerInstanceRegistryLayer,
+  ProviderInstanceRegistry,
+} from "./ProviderInstanceRegistry.ts";
 import { ProviderDriverError } from "./Errors.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
+import { ProviderInstanceRegistryMutator } from "./ProviderInstanceRegistryMutator.ts";
+import { ProviderDriverCatalog, ProviderDriverCatalogLive } from "./ProviderDriverCatalog.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
@@ -107,6 +116,7 @@ const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
 });
 
 const makeClaudeConfig = (overrides: Partial<ClaudeSettings>): ClaudeSettings => ({
+  pluginDirectories: [],
   enabled: false,
   binaryPath: "claude",
   homePath: "",
@@ -215,6 +225,66 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     Layer.provide(SqlitePersistence.layerMemory),
     Layer.provideMerge(PortScanner.layerTest),
     Layer.provideMerge(layerBase),
+  );
+
+  it.live(
+    "boots with provider admission disabled and preserves individual disables on re-enable",
+    () =>
+      Effect.gen(function* () {
+        const kernel = yield* PluginKernel;
+        const catalog = yield* ProviderDriverCatalog;
+        yield* catalog.setEnabled(false);
+        const instanceId = ProviderInstanceId.make("codex_disabled_at_boot");
+        const configMap: ProviderInstanceConfigMap = {
+          [instanceId]: { driver: CodexDriver.driverKind, config: makeCodexConfig({}) },
+        };
+        const driverCatalog = {
+          list: catalog.list.pipe(
+            Effect.map((entries) =>
+              entries
+                .filter((entry) => entry.driver === CodexDriver)
+                .map((entry) => ({ ...entry, driver: CodexDriver })),
+            ),
+          ),
+        };
+        const context = yield* Layer.build(
+          providerInstanceRegistryLayer({ drivers: [CodexDriver], configMap, driverCatalog }),
+        );
+        const registry = Context.get(context, ProviderInstanceRegistry);
+        const mutator = Context.get(context, ProviderInstanceRegistryMutator);
+        expect(yield* registry.listInstances).toEqual([]);
+        expect((yield* registry.listUnavailable).map((provider) => provider.instanceId)).toEqual([
+          instanceId,
+        ]);
+
+        yield* kernel.setEnabled("t3.providers", true);
+        yield* catalog.setEnabled(true);
+        yield* mutator.reconcile(configMap);
+        expect((yield* registry.listInstances).map((instance) => instance.instanceId)).toEqual([
+          instanceId,
+        ]);
+        expect(yield* registry.listUnavailable).toEqual([]);
+
+        const unregister = yield* catalog.register("t3.provider.codex", []);
+        yield* Effect.addFinalizer(() => unregister);
+        yield* catalog.setEnabled(false);
+        yield* mutator.reconcile(configMap);
+        yield* kernel.setEnabled("t3.providers", false);
+        yield* kernel.setEnabled("t3.providers", true);
+        yield* catalog.setEnabled(true);
+        yield* mutator.reconcile(configMap);
+        expect(yield* registry.listInstances).toEqual([]);
+        expect((yield* registry.listUnavailable).map((provider) => provider.instanceId)).toEqual([
+          instanceId,
+        ]);
+      }).pipe(
+        Effect.provide(
+          ProviderDriverCatalogLive.pipe(
+            Layer.provideMerge(layerTest),
+            Layer.provideMerge(layerWithEnabled({ "t3.providers": false })),
+          ),
+        ),
+      ),
   );
 
   it.effect.each(["replacement", "removal", "creation failure"] as const)(
@@ -935,7 +1005,37 @@ describe("ProviderInstanceRegistry secret environment", () => {
         Effect.sync(() => {
           created.push(input.environment);
           configs.push(input.config);
-          return { instanceId: input.instanceId, enabled: input.enabled } as ProviderInstance;
+          // The registry only accepts a complete instance; these tests never call its methods.
+          const unused = () => Effect.die("unused");
+          return {
+            instanceId: input.instanceId,
+            driverKind,
+            continuationIdentity: { driverKind, continuationKey: `fake:${input.instanceId}` },
+            displayName: undefined,
+            enabled: input.enabled,
+            snapshot: {
+              getSnapshot: Effect.die("unused"),
+              refresh: Effect.die("unused"),
+              streamChanges: Stream.empty,
+              resolveMaintenance: unused,
+              applyUsageLimits: unused,
+            },
+            orchestrationAdapter: {
+              instanceId: input.instanceId,
+              driver: driverKind,
+              getCapabilities: unused,
+              planSelectionTransition: unused,
+              openSession: unused,
+            },
+            textGeneration: {
+              generateTranscriptionPostProcessing: unused,
+              generateCommitMessage: unused,
+              generatePrContent: unused,
+              generateBranchName: unused,
+              generateThreadTitle: unused,
+              generateReviewGuide: unused,
+            },
+          } as unknown as ProviderInstance;
         }),
     };
     const gate = Deferred.makeUnsafe<void>();

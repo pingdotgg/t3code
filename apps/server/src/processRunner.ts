@@ -1,7 +1,7 @@
+import { builtinServiceLayer } from "./plugins/PluginKernel.ts";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -406,4 +406,4 @@ export const make = Effect.fn("ProcessRunner.make")(function* () {
   });
 });
 
-export const layer = Layer.effect(ProcessRunner, make());
+export const layer = builtinServiceLayer("t3.server")(ProcessRunner, make());

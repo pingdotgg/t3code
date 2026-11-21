@@ -4,8 +4,14 @@ import { type ClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipb
 import { cn } from "~/lib/utils";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { definePluginComponent } from "~/plugins/features";
 
-export function PullRequestCopyableCode({
+export const PullRequestCopyableCode = definePluginComponent(
+  "component:components/pullRequest/PullRequestCopyableCode/PullRequestCopyableCode",
+  PluginOriginalPullRequestCopyableCode,
+);
+
+function PluginOriginalPullRequestCopyableCode({
   value,
   target,
   copyLabel,

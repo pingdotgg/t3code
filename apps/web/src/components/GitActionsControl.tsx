@@ -136,6 +136,32 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { ChangeBreakdownGrid } from "./pullRequest/ChangeBreakdownGrid";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { definePluginComponent } from "~/plugins/features";
+
+const GitActionItemIcon = definePluginComponent(
+  "component:components/GitActionsControl/GitActionItemIcon",
+  PluginOriginalGitActionItemIcon,
+);
+const GitQuickActionIcon = definePluginComponent(
+  "component:components/GitActionsControl/GitQuickActionIcon",
+  PluginOriginalGitQuickActionIcon,
+);
+const GitActionElapsedTime = definePluginComponent(
+  "component:components/GitActionsControl/GitActionElapsedTime",
+  PluginOriginalGitActionElapsedTime,
+);
+const GitActionProgressButtonContent = definePluginComponent(
+  "component:components/GitActionsControl/GitActionProgressButtonContent",
+  PluginOriginalGitActionProgressButtonContent,
+);
+const GitActionSuccessButtonContent = definePluginComponent(
+  "component:components/GitActionsControl/GitActionSuccessButtonContent",
+  PluginOriginalGitActionSuccessButtonContent,
+);
+export const PublishRepositoryDialog = definePluginComponent(
+  "component:components/GitActionsControl/PublishRepositoryDialog",
+  PluginOriginalPublishRepositoryDialog,
+);
 
 /** The folder a Git actions control acts on: a thread's own folder or a tracked repository. */
 export interface GitActionsTarget {
@@ -285,7 +311,7 @@ const COMMIT_DIALOG_DESCRIPTION = msg(
   "Review and confirm your commit. Leave the message blank to auto-generate one.",
 );
 
-function GitActionItemIcon({
+function PluginOriginalGitActionItemIcon({
   icon,
   SourceControlIcon,
 }: {
@@ -297,7 +323,7 @@ function GitActionItemIcon({
   return <SourceControlIcon />;
 }
 
-function GitQuickActionIcon({
+function PluginOriginalGitQuickActionIcon({
   quickAction,
   SourceControlIcon,
   className = "size-3.5",
@@ -326,7 +352,7 @@ function GitQuickActionIcon({
   return <InfoIcon className={className} />;
 }
 
-function GitActionElapsedTime({
+function PluginOriginalGitActionElapsedTime({
   startedAtMs,
   className,
 }: {
@@ -359,7 +385,7 @@ function RunningGitActionElapsedTime({
   );
 }
 
-function GitActionProgressButtonContent({
+function PluginOriginalGitActionProgressButtonContent({
   progress,
   id,
 }: {
@@ -417,7 +443,11 @@ function GitActionProgressButtonContent({
   );
 }
 
-function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSuccess }) {
+function PluginOriginalGitActionSuccessButtonContent({
+  success,
+}: {
+  success: InlineGitActionSuccess;
+}) {
   const hasDescription = success.description !== null;
 
   return (
@@ -464,7 +494,7 @@ interface PublishRepositoryDialogProps {
   readonly offeredProviders: OfferedSourceControlProviders | undefined;
 }
 
-export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
+function PluginOriginalPublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const gt = useGT();
   const messages = useMessages();
   const openLink = useOpenLink(props.threadRef);
@@ -996,7 +1026,9 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 }
 
 // Local state belongs to one checkout; a new key drops it when the target changes.
-export const GitActionsControl = memo(function GitActionsControl(props: GitActionsControlProps) {
+const PluginOriginalGitActionsControl = memo(function GitActionsControl(
+  props: GitActionsControlProps,
+) {
   const checkoutKey = JSON.stringify([
     props.threadRef?.environmentId ?? null,
     props.target?.key ?? null,
@@ -1004,6 +1036,10 @@ export const GitActionsControl = memo(function GitActionsControl(props: GitActio
   ]);
   return <CheckoutGitActionsControl key={checkoutKey} {...props} />;
 });
+export const GitActionsControl = definePluginComponent(
+  "component:components/GitActionsControl/GitActionsControl",
+  PluginOriginalGitActionsControl,
+);
 
 function CheckoutGitActionsControl({
   target,

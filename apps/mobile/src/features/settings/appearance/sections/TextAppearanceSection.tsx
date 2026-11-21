@@ -1,4 +1,5 @@
 import { useGT } from "gt-react-native";
+import { defineNativePluginFeature } from "../../../../plugins/features";
 import {
   BASE_FONT_SIZE_STEP,
   MAX_BASE_FONT_SIZE,
@@ -13,7 +14,7 @@ import {
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 
-export function TextAppearanceSection() {
+function BuiltinTextAppearanceSection() {
   const gt = useGT();
   const { isReady, appearance, setBaseFontSize, mathRenderingEnabled, setMathRenderingEnabled } =
     useAppearancePreferences();
@@ -43,3 +44,8 @@ export function TextAppearanceSection() {
     </SettingsSection>
   );
 }
+
+export const TextAppearanceSection = defineNativePluginFeature(
+  "native.features.settings.appearance.sections.text-appearance-section",
+  BuiltinTextAppearanceSection,
+);

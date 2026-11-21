@@ -10,6 +10,12 @@ import { DiscoveryList } from "../ui/discovery-list";
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
+import { definePluginComponent } from "~/plugins/features";
+
+export const PreviewEmptyState = definePluginComponent(
+  "component:components/preview/PreviewEmptyState/PreviewEmptyState",
+  PluginOriginalPreviewEmptyState,
+);
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -20,7 +26,7 @@ interface Props {
   onOpenUrl: (url: string) => void;
 }
 
-export function PreviewEmptyState({
+function PluginOriginalPreviewEmptyState({
   threadRef,
   environmentId,
   configuredUrls,

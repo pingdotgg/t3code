@@ -1,8 +1,8 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -190,4 +190,4 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
   return ResourceMonitorBinary.of({ resolve });
 });
 
-export const layer = Layer.effect(ResourceMonitorBinary, make());
+export const layer = builtinServiceLayer("t3.server")(ResourceMonitorBinary, make());

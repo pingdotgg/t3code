@@ -4,8 +4,14 @@ import { ExternalLinkIcon } from "lucide-react";
 import { CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
 import { ensureLocalApi } from "../../localApi";
 import { Button } from "../ui/button";
+import { definePluginComponent } from "~/plugins/features";
 
-export function ChatGptUsageButton(props: Omit<ComponentProps<typeof Button>, "onClick">) {
+export const ChatGptUsageButton = definePluginComponent(
+  "component:components/settings/ChatGptUsageButton/ChatGptUsageButton",
+  PluginOriginalChatGptUsageButton,
+);
+
+function PluginOriginalChatGptUsageButton(props: Omit<ComponentProps<typeof Button>, "onClick">) {
   return (
     <Button
       variant="ghost-muted"

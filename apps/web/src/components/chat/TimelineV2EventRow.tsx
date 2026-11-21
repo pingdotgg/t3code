@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { WorkLogBlock } from "./WorkLog";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
@@ -17,7 +18,11 @@ import { SecretRequestCard } from "./SecretRequestCard";
 import { TimelineRowCtx, type TimelineRow } from "./timelineRowContext";
 import { subagentGroupTiming } from "./TimelineV2EventRow.logic";
 
-export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
+function PluginOriginalV2EventTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "event" }>;
+}) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility } = row.projectedItem;
   if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
@@ -52,7 +57,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   );
 }
 
-const V2SubagentGroup = memo(function V2SubagentGroup({
+const PluginOriginalV2SubagentGroup = memo(function V2SubagentGroup({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "event" }>;
@@ -169,3 +174,13 @@ const V2SubagentGroup = memo(function V2SubagentGroup({
     </WorkLogBlock>
   );
 });
+
+export const V2EventTimelineRow = definePluginComponent(
+  "component:components/chat/TimelineV2EventRow/V2EventTimelineRow",
+  PluginOriginalV2EventTimelineRow,
+);
+
+const V2SubagentGroup = definePluginComponent(
+  "component:components/chat/TimelineV2EventRow/V2SubagentGroup",
+  PluginOriginalV2SubagentGroup,
+);

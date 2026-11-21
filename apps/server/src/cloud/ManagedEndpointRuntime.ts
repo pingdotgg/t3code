@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import { RotatingFileSink, RotatingFileSinkError } from "@t3tools/shared/logging";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -9,7 +10,6 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -984,4 +984,4 @@ export const make = Effect.gen(function* () {
   return runtime;
 });
 
-export const layer = Layer.effect(CloudManagedEndpointRuntime, make);
+export const layer = builtinServiceLayer("t3.connections")(CloudManagedEndpointRuntime, make);

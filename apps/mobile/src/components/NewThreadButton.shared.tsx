@@ -4,8 +4,14 @@ import { Pressable, type StyleProp, type ViewStyle } from "react-native";
 import { cn } from "../lib/cn";
 import { AppText } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
+import { defineNativePluginFeature } from "../plugins/features";
 
-export function NewThreadButton(props: {
+export const NewThreadButton = defineNativePluginFeature(
+  "native.components.new-thread-button.shared.new-thread-button",
+  BuiltinNewThreadButton,
+);
+
+function BuiltinNewThreadButton(props: {
   readonly onPress: () => void;
   readonly extended?: boolean;
   readonly expanded?: boolean;

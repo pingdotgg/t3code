@@ -1,3 +1,4 @@
+import { builtinServiceLayer } from "../plugins/PluginKernel.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import type {
   ProjectCloneSnapshot,
@@ -20,7 +21,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
-import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -517,4 +517,4 @@ function describeCloneFailure(cause: Cause.Cause<unknown>): string {
     : "The repository could not be cloned.";
 }
 
-export const layer = Layer.effect(ProjectCloneTracker, make);
+export const layer = builtinServiceLayer("t3.projects")(ProjectCloneTracker, make);

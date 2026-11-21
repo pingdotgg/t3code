@@ -1,3 +1,4 @@
+import { definePluginComponent } from "~/plugins/features";
 import { useGT } from "gt-react";
 import { ChevronRightIcon } from "lucide-react";
 import {
@@ -12,7 +13,7 @@ import {
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { findRevealRef, MarkdownFindContext } from "./markdownFindContext";
 
-export function MarkdownDetails({
+function PluginOriginalMarkdownDetails({
   children,
   open = false,
   dir,
@@ -66,3 +67,8 @@ export function MarkdownDetails({
     </div>
   );
 }
+
+export const MarkdownDetails = definePluginComponent(
+  "component:components/chat/MarkdownDetails/MarkdownDetails",
+  PluginOriginalMarkdownDetails,
+);

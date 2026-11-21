@@ -9,6 +9,7 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { T, useGT, useMessages } from "gt-react";
 import { CircleAlertIcon, ImageIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
 import { type ComponentProps, useLayoutEffect, useRef } from "react";
+import { definePluginComponent } from "~/plugins/features";
 
 import {
   type ComposerFileAttachment,
@@ -77,7 +78,7 @@ function ComposerImageFallback() {
   );
 }
 
-function ComposerVideoThumbnail({ file }: { file: File }) {
+function PluginOriginalComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = (video: HTMLVideoElement | null) => {
     if (!video) return;
     return attachVideoThumbnail(video, file);
@@ -96,7 +97,7 @@ function ComposerVideoThumbnail({ file }: { file: File }) {
   );
 }
 
-function SnapShotAttachmentFrame({
+function PluginOriginalSnapShotAttachmentFrame({
   animationId,
   animationSource,
   arrival,
@@ -136,6 +137,16 @@ function SnapShotAttachmentFrame({
     />
   );
 }
+
+const ComposerVideoThumbnail = definePluginComponent(
+  "component:components/chat/ComposerAttachmentStrip/ComposerVideoThumbnail",
+  PluginOriginalComposerVideoThumbnail,
+);
+
+const SnapShotAttachmentFrame = definePluginComponent(
+  "component:components/chat/ComposerAttachmentStrip/SnapShotAttachmentFrame",
+  PluginOriginalSnapShotAttachmentFrame,
+);
 
 /** Image, SnapShot and video tiles above the composer editor. */
 export function ComposerAttachmentMediaRow({
