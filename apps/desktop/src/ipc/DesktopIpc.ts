@@ -113,7 +113,7 @@ export const make = (
       const implementation =
         Option.isSome(kernel) && !channel.startsWith("desktop:plugins:")
           ? yield* kernel.value.registerBuiltin(
-              "t3.desktop.ipc",
+              "t3.desktop.desktop-ipc",
               `desktop.ipc.${channel}`,
               Effect.succeed({ invoke: handler }),
             )
@@ -157,7 +157,7 @@ export const make = (
       const kernel = yield* Effect.serviceOption(PluginKernel);
       const implementation = Option.isSome(kernel)
         ? yield* kernel.value.registerBuiltin(
-            "t3.desktop.ipc",
+            "t3.desktop.desktop-ipc",
             `desktop.ipc.${channel}`,
             Effect.succeed({ read: handler }),
           )
