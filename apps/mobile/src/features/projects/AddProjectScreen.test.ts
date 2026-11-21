@@ -29,6 +29,7 @@ const state = vi.hoisted(() => ({
     repositoryIdentity?: { canonicalKey: string };
   }[],
   cloneDestinations: [] as string[],
+  draftsError: null as Error | null,
   createResult: null as Promise<unknown> | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
@@ -181,7 +182,9 @@ vi.mock("../../state/projects", () => ({
 }));
 
 vi.mock("../../state/use-composer-drafts", () => ({
-  waitForComposerDraftsLoaded: async () => {},
+  waitForComposerDraftsLoaded: async () => {
+    if (state.draftsError) throw state.draftsError;
+  },
   createNewTaskDraft: () => "prompt-draft",
   setComposerDraftText: () => {},
 }));
@@ -240,13 +243,14 @@ function renderScreen(render: () => ReactNode) {
   return screen;
 }
 
-function cloneAction() {
+function cloneAction(prompt?: string) {
   const action = findAction(
     renderScreen(() =>
       AddProjectDestinationScreen({
         environmentId: "environment",
         remoteUrl: "https://example.com/owner/repo.git",
         repositoryName: "repo",
+        ...(prompt ? { prompt } : {}),
       }),
     ),
     "Clone project",
@@ -295,11 +299,25 @@ describe("clone project permissions", () => {
       "opens the existing project of that repository instead of cloning into its folder",
       "example.com/owner/repo",
       false,
+      true,
     ],
-    ["leaves a folder holding another repository to the clone", "example.com/owner/other", true],
-  ])("%s", async (_name, canonicalKey, clones) => {
+    [
+      "leaves a folder holding another repository to the clone",
+      "example.com/owner/other",
+      true,
+      false,
+    ],
+    [
+      "does not open the existing project without the prompt it could not store",
+      "example.com/owner/repo",
+      false,
+      false,
+    ],
+  ])("%s", async (name, canonicalKey, clones, opens) => {
     state.scopes.add(AuthOrchestrationOperateScope);
     state.cloneDestinations = [];
+    state.alert.mockReset();
+    state.draftsError = name.includes("could not store") ? new Error("Drafts unavailable") : null;
     state.startCloneResult = Promise.resolve(
       AsyncResult.failure(Cause.fail(new Error("Destination is not empty"))),
     );
@@ -313,10 +331,12 @@ describe("clone project permissions", () => {
       },
     ];
     try {
-      await cloneAction()();
+      await cloneAction("Fix the bike")();
 
       expect(state.cloneDestinations.length > 0).toBe(clones);
+      expect(state.alert.mock.calls.length > 0).toBe(opens);
     } finally {
+      state.draftsError = null;
       state.existingProjects = [];
       state.startCloneResult = null;
     }

@@ -796,6 +796,7 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
   });
   const projects = useProjects();
 
+  /** Opens the project registered at `path`, if any. Rejects when the prompt cannot be stored. */
   return async (
     path: string,
     originRoute: ReturnType<typeof getActiveRoute>,
@@ -816,7 +817,9 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
     ) {
       return false;
     }
-    const prompt = clone?.prompt;
+    const draftId = clone?.prompt
+      ? await draftWithPrompt(existing.environmentId, existing.id, clone.prompt)
+      : null;
     // Adding an archived project's folder again brings the project back.
     const unarchived =
       existing.archivedAt == null ||
@@ -837,12 +840,7 @@ function useOpenExistingProject(environment: EnvironmentOption | null) {
         environmentId: existing.environmentId,
         projectId: existing.id,
         title: existing.title,
-        ...(prompt
-          ? await draftWithPrompt(existing.environmentId, existing.id, prompt).then(
-              (draftId) => ({ draftId }),
-              () => ({}),
-            )
-          : {}),
+        ...(draftId === null ? {} : { draftId }),
       },
       originRoute,
     );
@@ -1588,12 +1586,14 @@ export function AddProjectDestinationScreen(props: {
 
     const originRoute = getActiveRoute(navigation);
     setIsSubmitting(true);
-    if (
-      await openExistingProject(await resolveHomePath(resolved.path), originRoute, {
-        remoteUrl,
-        prompt: prompt ?? null,
-      })
-    ) {
+    const handled = await openExistingProject(await resolveHomePath(resolved.path), originRoute, {
+      remoteUrl,
+      prompt: prompt ?? null,
+    }).catch((cause: unknown) => {
+      setError(errorMessage(cause));
+      return true;
+    });
+    if (handled) {
       setIsSubmitting(false);
       return;
     }
