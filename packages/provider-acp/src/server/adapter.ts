@@ -8763,6 +8763,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               status === "completed" ? context.checkPromptOutcome : undefined;
             if (checkPromptOutcome === undefined) {
               yield* finalizeTurn(context, status);
+              yield* options.testHooks?.afterDeferredFinalize?.() ?? Effect.void;
               return;
             }
             if (
@@ -8771,12 +8772,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ) {
               return;
             }
-            // A completed status implies the prompt ended with end_turn.
+            // A completed status implies end_turn. Deferred finalization reports hidden failures
+            // directly rather than re-running followPrompt's resumeWith retry loop.
             const hiddenFailure = yield* Effect.suspend(() =>
               checkPromptOutcome({ stopReason: "end_turn" }),
             ).pipe(
-              Effect.catchDefect((defect) =>
-                Effect.logWarning("Could not check deferred ACP prompt outcome.", defect).pipe(
+              Effect.catchDefect(() =>
+                Effect.logWarning("Could not check deferred ACP prompt outcome.").pipe(
                   Effect.as(undefined),
                 ),
               ),
@@ -8797,11 +8799,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* finalizeTurn(context, status);
               }),
             );
-          }).pipe(
-            Effect.andThen(() => options.testHooks?.afterDeferredFinalize?.() ?? Effect.void),
-            Effect.forkIn(sessionScope),
-            Effect.asVoid,
-          );
+            yield* options.testHooks?.afterDeferredFinalize?.() ?? Effect.void;
+          }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
 

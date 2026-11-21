@@ -1669,7 +1669,7 @@ describe("AcpAdapterV2", () => {
         let nextOutcome: () => Effect.Effect<PromptOutcome | undefined> = () => Effect.undefined;
         const promptSettled = yield* Queue.unbounded<void>();
         const deferredScheduled = yield* Queue.unbounded<void>();
-        const deferredFinalized = yield* Queue.unbounded<void>();
+        let nextDeferredFinalized: Deferred.Deferred<void> | undefined;
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           selfInvocation,
@@ -1678,8 +1678,13 @@ describe("AcpAdapterV2", () => {
               Queue.offer(promptSettled, undefined).pipe(Effect.asVoid),
             onDeferredFinalizeScheduled: () =>
               Queue.offer(deferredScheduled, undefined).pipe(Effect.asVoid),
-            afterDeferredFinalize: () =>
-              Queue.offer(deferredFinalized, undefined).pipe(Effect.asVoid),
+            afterDeferredFinalize: () => {
+              const milestone = nextDeferredFinalized;
+              nextDeferredFinalized = undefined;
+              return milestone === undefined
+                ? Effect.void
+                : Deferred.succeed(milestone, undefined).pipe(Effect.asVoid);
+            },
           },
           flavor: {
             driver: ACP_TEST_DRIVER,
@@ -1790,7 +1795,6 @@ describe("AcpAdapterV2", () => {
         yield* TestClock.adjust("3000 millis");
 
         const firstTerminal = yield* Queue.take(terminals);
-        yield* Queue.take(deferredFinalized);
         assert.equal(firstTerminal.status, "failed");
         assert.deepEqual(firstTerminal.failure, quota);
         assert.equal(firstTerminal.threadDisposition, "broken");
@@ -1815,17 +1819,18 @@ describe("AcpAdapterV2", () => {
         yield* Deferred.await(workRaceStarted);
 
         yield* emitSubagent("tool-call-generic-2", "running", "tool_call");
+        const workRaceSettled = yield* Deferred.make<void>();
+        nextDeferredFinalized = workRaceSettled;
         nextOutcome = () => Effect.undefined;
         yield* Deferred.succeed(releaseWorkRace, undefined);
-        // Settle the stale callback while the second subagent still holds the turn open.
-        yield* Queue.take(deferredFinalized);
+        // Settle the exact blocked attempt while the second subagent still holds the turn open.
+        yield* Deferred.await(workRaceSettled);
         assert.deepEqual(yield* Queue.clear(terminals), []);
 
         yield* emitSubagent("tool-call-generic-2", "completed");
         yield* Queue.take(deferredScheduled);
         yield* TestClock.adjust("3000 millis");
         const secondTerminal = yield* Queue.take(terminals);
-        yield* Queue.take(deferredFinalized);
         assert.equal(secondTerminal.status, "completed");
 
         subagentStatuses.set("tool-call-generic-1", "running");
@@ -1859,9 +1864,11 @@ describe("AcpAdapterV2", () => {
         const thirdTerminal = yield* Queue.take(terminals);
         assert.equal(thirdTerminal.status, "interrupted");
 
+        const interruptRaceSettled = yield* Deferred.make<void>();
+        nextDeferredFinalized = interruptRaceSettled;
         nextOutcome = () => Effect.undefined;
         yield* Deferred.succeed(releaseInterruptRace, undefined);
-        yield* Queue.take(deferredFinalized);
+        yield* Deferred.await(interruptRaceSettled);
         assert.deepEqual(yield* Queue.clear(terminals), []);
 
         subagentStatuses.set("tool-call-generic-1", "completed");
