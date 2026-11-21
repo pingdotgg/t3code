@@ -128,7 +128,6 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--run-id",
   "--runtime-file",
   "-s",
-  "--save-script",
   "--scale",
   "--scope",
   "--search-path",
