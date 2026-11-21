@@ -323,4 +323,31 @@ describe("deriveThreadTurnSubagents", () => {
       accessibilityLabel: "1 agent done",
     });
   });
+
+  it("lists one agent when a second call resumes the same child thread", () => {
+    const child = ThreadId.make("thread-opencode-child");
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun],
+      subagents: [
+        subagent({
+          id: "launch",
+          childThreadId: child,
+          title: "Count doc files",
+          status: "completed",
+        }),
+        subagent({
+          id: "redirect",
+          childThreadId: child,
+          title: "Redirect: only markdown",
+          model: null,
+          status: "completed",
+          startedAt: at("2026-06-20T00:00:05.000Z"),
+          updatedAt: at("2026-06-20T00:00:06.000Z"),
+        }),
+      ],
+    });
+
+    expect(turn?.subagents.map((entry) => entry.childThreadId)).toEqual([child]);
+    expect(resolveSubagentPillSegment(turn)?.label).toBe("1 done");
+  });
 });
