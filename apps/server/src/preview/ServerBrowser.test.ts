@@ -680,6 +680,30 @@ it.effect("preview_open reports its navigation timeout instead of the request bu
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("preview_open reports a tab setup timeout instead of the request budget", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      contextFailure = Object.assign(
+        new Error("browserType.connectOverCDP: Timeout 15000ms exceeded."),
+        { name: "TimeoutError" },
+      );
+
+      const error = yield* broker
+        .invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { url: "http://localhost:1337/", reuseExistingTab: false, open: false },
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      // The setup failed fast; the 660s first-open budget is not what timed out.
+      expect(error.message).not.toContain("660000ms");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect(
   "an initial download stays available after preview_open reports the navigation error",
   () =>
