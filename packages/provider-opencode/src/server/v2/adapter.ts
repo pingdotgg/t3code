@@ -629,6 +629,17 @@ const isUsageLimit = (error: {
   error.type === "provider.rate-limit" ||
   claudeUsageLimit(error.message) !== undefined;
 
+// ChatGPT-backed OpenAI models put the usage-limit reset in the 429 body as Unix seconds.
+const decodeUsageLimitBody = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ error: Schema.Struct({ resets_at: Schema.Finite }) })),
+);
+const usageLimitResetAt = (body: string | undefined) =>
+  decodeUsageLimitBody(body).pipe(
+    Option.flatMap(({ error }) => DateTime.make(error.resets_at * 1000)),
+    Option.map(DateTime.formatIso),
+    Option.getOrNull,
+  );
+
 const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
 const RECONNECT_ATTEMPTS = 5;
@@ -3017,7 +3028,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
               class: isUsageLimit(event.data.error) ? "usage_limit" : "provider_error",
-              resetAt: claudeUsageLimit(message)?.resetAt ?? null,
+              resetAt: claudeUsageLimit(message)?.resetAt ?? usageLimitResetAt(response?.body),
             }),
           });
         }
