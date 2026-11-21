@@ -1539,32 +1539,31 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends M1 to the base-branch stack and the operator lands it bottom-up.
 
-## Start work from Linear and GitHub issues (L1)
+## Add Linear and GitHub issues to a board as work (L1)
 
 **Depends on.** M1.
 
 **Files.**
 
 - [ ] Create `apps/board/src/settings/IntegrationsPage.tsx`.
-- [ ] Create `apps/board/src/issues/IssuePicker.tsx` and `apps/board/src/issues/IssueChip.tsx`.
+- [ ] Create `apps/board/src/issues/IssuePicker.tsx`, `apps/board/src/issues/AddFromIssue.tsx`, and `apps/board/src/issues/IssueChip.tsx`.
 - [ ] Create `apps/board/src/issues/issueLinks.ts` and `apps/board/src/issues/issueLinks.test.ts`.
-- [ ] Edit `apps/board/src/board/CreateBoard.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and `apps/board/src/orchestrator/brief.ts`.
+- [ ] Edit `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/board/TicketFrame.tsx`, `apps/board/src/settings/SettingsNav.tsx`, `apps/board/src/domain/ticket.ts`, `apps/board/src/domain/forYou.ts`, `apps/board/src/orchestrator/brief.md`, and `apps/board/src/orchestrator/brief.ts`.
 
 **Build.**
 
 - [ ] Add an Integrations page to the settings screen in W1's Orca layout. Connect Linear with a personal API key through `issueTrackers.connect`, which T3 probes and keeps as an engine secret. Show each tracker from `issueTrackers.list`, disconnect with a null token, and bind each project to a Linear team through `issueTrackers.bindProject`. Copy the flow from T3 web's `apps/web/src/components/settings/IntegrationsSettings.tsx` and `IssueTrackerSettings.tsx`, read only.
-- [ ] Give the new-board dialog a **Create From** row like Orca's Create worktree dialog in `/home/kyle/personalDev/main/artifacts/agent-board-prototype/refs/orca-create-worktree.png`, with Prompt, GitHub, Linear, Branch, and Name tabs and a search box. The Linear and GitHub tabs search through `issues.list` and `issues.candidates`, and the Branch tab lists bases from `vcs.listRefs`. Copy issue rows and search from T3 web's `apps/web/src/components/issue/`, read only.
-- [ ] Picking an issue fills the board's name and goal, and the orchestrator's first message carries the issue's description and comments from `issues.detail` and `issues.comments`.
+- [ ] A board is a goal the orchestrator organizes, so issues come in as work on an existing board, never as the seed of a new one. Add **Add from tracker** to the orchestrator card. It opens a picker with GitHub and Linear tabs and a search box, laid out like the issue picker in Orca's Create worktree dialog. The tabs search through `issues.list`. Copy issue rows and search from T3 web's `apps/web/src/components/issue/`, read only.
+- [ ] Picking an issue sends the orchestrator a ticket request that carries the issue's description and comments from `issues.detail` and `issues.comments`.
 - [ ] Add an optional `issue` field, holding the tracker and the key, to the ticket schema in `domain/ticket.ts`, and tell the orchestrator in `brief.md` to set it when a ticket maps to an issue, such as a Linear child issue.
 - [ ] In `IssueChip.tsx`, show a linked ticket's issue key, state, and assignee from `issues.detail` on its frame, open the issue in B11's panel on click, and list its linked threads from `issues.linkedThreads`.
 - [ ] Route every tracker write through the operator. `brief.md` tells the orchestrator to ask for a create, a state change, or a comment as a For-you item of a new `tracker_write` kind that states the exact change. **Approve** makes that change through `issues.create`, `issues.setState`, or `issues.comment` and messages the orchestrator the result, and **Hold** changes nothing.
 - [ ] Gate the agents' own tracker tools, per `apps/board/docs/issue-tools-probe.md`. Every agent in a T3 thread has T3's eight issue tools, named `mcp__t3-code__*` in Claude threads and `mcp__t3_code__*` in Codex threads, and T3 runs `create_issue`, `comment_on_issue`, and `set_issue_state` with no approval in every runtime mode. For Claude threads, write a permission rule that asks for those three tools into the project's and each ticket worktree's `.claude/settings.local.json`, so each call waits as an engine approval card in B8's For-you lane. For Codex threads, gate the three `mcp__t3_code__` writes and Codex's own `mcp__codex_apps__linear_*` writes through Codex's approval settings, or turn tracker writes off for Codex orchestrators and say why in the dialog. The operator's `omp-kit` Linear rule never fires on an MCP tool, so it is no fallback. Reads stay free.
-- [ ] Add **Add from Linear** to the orchestrator card. It opens the same picker and sends the picked issue to the orchestrator as a new ticket request.
 - [ ] In `issueLinks.ts`, keep the pure pieces, which find issue keys in text, join tickets to issues, and turn an approved `tracker_write` item into the T3 call's input.
 
 **You see.**
 
-- [ ] Settings connects Linear, the new-board dialog starts a board from a Linear or GitHub issue like Orca's dialog, ticket frames show their issue's state, and every write to the tracker waits for the operator's approval.
+- [ ] Settings connects Linear, **Add from tracker** brings a Linear or GitHub issue onto a board as a ticket, ticket frames show their issue's state, and every write to the tracker waits for the operator's approval.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -1572,15 +1571,15 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Linear lanes read the operator's workspace with a key the operator enters at lane time, and never write to it. Write lanes use a scratch Linear workspace key the operator provides, or the shared lane repo from the boot recipe.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk's dialog has no Create From row, so record that fact. Connect Linear at head. Save `l1-connect.png`. Pass when `issueTrackers.list` shows Linear connected and the key appears in no board file or log.
+- [ ] Lane 1. Regression lane against trunk. Trunk's orchestrator card has no **Add from tracker**, so record that fact. Connect Linear at head. Save `l1-connect.png`. Pass when `issueTrackers.list` shows Linear connected and the key appears in no board file or log.
 - [ ] Lane 2. Bind the project to a team. Save `l1-bind.png`. Pass when `issues.list` returns that team's issues.
 - [ ] Lane 3. Search the Linear tab. Save `l1-search.png`. Pass when the results match Linear's own search for the same text.
-- [ ] Lane 4. Create a board from an issue. Save `l1-from-issue.png`. Pass when the orchestrator's first message holds the issue's description and comments.
+- [ ] Lane 4. Add a Linear issue to an existing board with **Add from tracker**. Save `l1-from-issue.png`. Pass when the orchestrator's new ticket carries the issue's description and comments and links the issue.
 - [ ] Lane 5. Load a `tickets.json` whose tickets link child issues. Save `l1-ticket-chip.png`. Pass when each frame shows the key, state, and assignee Linear reports.
-- [ ] Lane 6. Search the GitHub tab on the shared lane repo after opening three lane issues there. Save `l1-github.png`. Pass when all three are listed and one starts a board.
+- [ ] Lane 6. Search the GitHub tab on the shared lane repo after opening three lane issues there. Save `l1-github.png`. Pass when all three are listed and adding one creates a linked ticket.
 - [ ] Lane 7. Have a real Claude orchestrator change an issue's state in the scratch tracker twice, once through a `tracker_write` item and once by calling `set_issue_state` itself, then have a Codex orchestrator call it once. Save `l1-write.png`. Pass when every call waits for the operator with the exact change shown, **Hold** leaves the issue unchanged, and **Approve** changes it.
-- [ ] Lane 8. Use **Add from Linear** on an existing board. Save `l1-add.png`. Pass when the orchestrator adds a ticket linked to that issue.
-- [ ] Lane 9. Run the Windows app and open the new-board dialog on the Linear tab. Save `l1-windows.png` from a full-window capture. Pass when it matches the layout of Orca's dialog in the reference screenshot.
+- [ ] Lane 8. Add a second issue to the same board. Save `l1-add.png`. Pass when the orchestrator files it as its own ticket next to the first, linked to that issue.
+- [ ] Lane 9. Run the Windows app and open **Add from tracker** on the Linear tab. Save `l1-windows.png` from a full-window capture. Pass when it matches the layout of the issue picker in Orca's dialog.
 - [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `l1-checks.txt`. Pass when all three exit 0.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
