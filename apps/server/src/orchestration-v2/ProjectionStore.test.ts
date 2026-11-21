@@ -3155,10 +3155,11 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
       readonly root?: string;
       readonly worktreePath?: string;
       readonly archived?: boolean;
+      readonly native?: boolean;
     }) =>
       ({
         createdBy: "user",
-        creationSource: input.parent === undefined ? "web" : "mcp",
+        creationSource: input.native ? "provider" : input.parent === undefined ? "web" : "mcp",
         id: id(input.name),
         projectId,
         title: input.name,
@@ -3193,7 +3194,7 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
       });
     yield* createThread({ name: "root", worktreePath });
     yield* createThread({ name: "child", parent: "root", root: "root", worktreePath });
-    yield* createThread({ name: "grandchild", parent: "child", root: "root" });
+    yield* createThread({ name: "grandchild", parent: "child", root: "root", native: true });
     yield* createThread({ name: "archived-child", parent: "root", root: "root", archived: true });
     yield* createThread({ name: "other", worktreePath: "/repo" });
     yield* createThread({ name: "other-child", parent: "other", root: "other", worktreePath });
@@ -3207,6 +3208,79 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     assert.sameMembers([...(yield* family(id("root")))], tree);
     assert.sameMembers([...(yield* family(id("grandchild")))], tree);
     assert.deepEqual([...(yield* family(id("missing")))], []);
+
+    const nativeRootId = NodeId.make("node:family:grandchild-root");
+    const nativeRoot = {
+      id: nativeRootId,
+      threadId: id("grandchild"),
+      runId: null,
+      parentNodeId: null,
+      rootNodeId: nativeRootId,
+      kind: "root_turn" as const,
+      countsForRun: false,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: now,
+      completedAt: null,
+    };
+    for (const status of ["pending", "running", "completed", "failed", "cancelled"] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:family:native-root:${status}`),
+        type: "node.updated",
+        threadId: id("grandchild"),
+        nodeId: nativeRootId,
+        driver,
+        occurredAt: now,
+        payload: { ...nativeRoot, status },
+      });
+      const snapshot = yield* store.getShellSnapshot({ location: "active", familyOf: id("root") });
+      const projection = yield* store.getThreadProjection(id("grandchild"));
+      const shells = [
+        yield* store.getThreadShell(id("grandchild")),
+        snapshot.threads.find((thread) => thread.id === id("grandchild")),
+        ProjectionStore.threadShellFromProjection(projection),
+      ];
+      assert.deepEqual(
+        shells.map((shell) => shell?.status),
+        Array(3).fill(status === "pending" ? "queued" : status),
+      );
+      yield* assertShellIndexCoversShells();
+    }
+
+    const followupRunId = RunId.make("run:family:grandchild-followup");
+    yield* store.apply({
+      id: EventId.make("event:family:grandchild-followup"),
+      type: "run.created",
+      threadId: id("grandchild"),
+      runId: followupRunId,
+      occurredAt: now,
+      payload: {
+        id: followupRunId,
+        threadId: id("grandchild"),
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message:family:grandchild-followup"),
+        rootNodeId: NodeId.make("node:family:grandchild-followup"),
+        activeAttemptId: null,
+        status: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    });
+    assert.equal((yield* store.getThreadShell(id("grandchild")))?.status, "running");
+    assert.equal(
+      ProjectionStore.threadShellFromProjection(yield* store.getThreadProjection(id("grandchild")))
+        .status,
+      "running",
+    );
 
     // Includes another root's idle child on the same path, which a shell may leave out.
     const { statements, tracer } = traceSqlStatements();
