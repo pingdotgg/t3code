@@ -38,14 +38,41 @@ export type DesktopSecondaryBootstrapsRead =
 
 export interface DesktopSecondaryBootstrapsReader {
   readonly readResult: () => DesktopSecondaryBootstrapsRead;
+  readonly refresh: () => Promise<DesktopSecondaryBootstrapsRead>;
   readonly readSnapshot: () => ReadonlyArray<DesktopEnvironmentBootstrap>;
 }
 
 /** Empty reads clear the snapshot; failed reads retain platform registrations. */
 export function createDesktopSecondaryBootstrapsReader(
-  resolveBridge: () => Pick<DesktopBridge, "getLocalEnvironmentBootstraps"> | undefined,
+  resolveBridge: () =>
+    | Pick<DesktopBridge, "getLocalEnvironmentBootstraps" | "refreshLocalEnvironmentBootstraps">
+    | undefined,
 ): DesktopSecondaryBootstrapsReader {
   let snapshot: ReadonlyArray<DesktopEnvironmentBootstrap> = [];
+
+  const updateSnapshot = (
+    entries: ReadonlyArray<DesktopEnvironmentBootstrap>,
+  ): DesktopSecondaryBootstrapsRead => {
+    const next = entries.filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID);
+    if (
+      next.length !== snapshot.length ||
+      next.some((entry, index) => {
+        const previous = snapshot[index];
+        return (
+          previous === undefined ||
+          entry.id !== previous.id ||
+          entry.label !== previous.label ||
+          entry.runningDistro !== previous.runningDistro ||
+          entry.httpBaseUrl !== previous.httpBaseUrl ||
+          entry.wsBaseUrl !== previous.wsBaseUrl ||
+          entry.bootstrapToken !== previous.bootstrapToken
+        );
+      })
+    ) {
+      snapshot = next;
+    }
+    return { _tag: "Success", bootstraps: snapshot };
+  };
 
   const readResult = (): DesktopSecondaryBootstrapsRead => {
     const bridge = resolveBridge();
@@ -54,27 +81,7 @@ export function createDesktopSecondaryBootstrapsReader(
       return { _tag: "Success", bootstraps: snapshot };
     }
     try {
-      const next = bridge
-        .getLocalEnvironmentBootstraps()
-        .filter((entry) => entry.id !== PRIMARY_LOCAL_ENVIRONMENT_ID);
-      if (
-        next.length !== snapshot.length ||
-        next.some((entry, index) => {
-          const previous = snapshot[index];
-          return (
-            previous === undefined ||
-            entry.id !== previous.id ||
-            entry.label !== previous.label ||
-            entry.runningDistro !== previous.runningDistro ||
-            entry.httpBaseUrl !== previous.httpBaseUrl ||
-            entry.wsBaseUrl !== previous.wsBaseUrl ||
-            entry.bootstrapToken !== previous.bootstrapToken
-          );
-        })
-      ) {
-        snapshot = next;
-      }
-      return { _tag: "Success", bootstraps: snapshot };
+      return updateSnapshot(bridge.getLocalEnvironmentBootstraps());
     } catch (cause) {
       return { _tag: "Failure", cause };
     }
@@ -82,6 +89,15 @@ export function createDesktopSecondaryBootstrapsReader(
 
   return {
     readResult,
+    refresh: async () => {
+      const bridge = resolveBridge();
+      if (bridge?.refreshLocalEnvironmentBootstraps === undefined) return readResult();
+      try {
+        return updateSnapshot(await bridge.refreshLocalEnvironmentBootstraps());
+      } catch (cause) {
+        return { _tag: "Failure", cause };
+      }
+    },
     readSnapshot: () => {
       const result = readResult();
       return result._tag === "Success" ? result.bootstraps : snapshot;
@@ -93,8 +109,8 @@ const desktopSecondaryBootstrapsReader = createDesktopSecondaryBootstrapsReader(
   () => window.desktopBridge,
 );
 
-export function readDesktopSecondaryBootstrapsResult(): DesktopSecondaryBootstrapsRead {
-  return desktopSecondaryBootstrapsReader.readResult();
+export function refreshDesktopSecondaryBootstraps(): Promise<DesktopSecondaryBootstrapsRead> {
+  return desktopSecondaryBootstrapsReader.refresh();
 }
 
 export function readDesktopSecondaryBootstraps(): ReadonlyArray<DesktopEnvironmentBootstrap> {
