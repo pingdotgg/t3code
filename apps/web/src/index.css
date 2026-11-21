@@ -6433,7 +6433,9 @@ body {
 }
 
 /* The editor and its placeholder; .ProseMirror outranks Tiptap's injected base CSS, which
-   disables ligatures. Ligatures match sent messages. */
+   disables ligatures. Ligatures match sent messages. Chromium reshapes edited text from a reused
+   prefix that assumes two characters of context, so long contextual runs (Fira Code's dots)
+   vanish; any non-zero word-spacing makes it reshape the whole run instead. */
 .composer-text,
 .composer-text.ProseMirror {
   line-height: 1.25rem;
@@ -6441,6 +6443,7 @@ body {
   overflow-wrap: break-word;
   font-variant-ligatures: normal;
   font-feature-settings: normal;
+  word-spacing: 0.01px;
 }
 
 .composer-prompt-body {

@@ -478,6 +478,14 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
         return "deferred" as const;
       }
       const revision = threadOutboxRevision(queuedMessage.messageId);
+      if (queuedMessage.restoreToDraft === false) {
+        const removed = yield* storage("remove-unsendable", queuedMessage.messageId, () =>
+          removeThreadOutboxMessage(queuedMessage, revision, () => !editing()),
+        );
+        if (!removed) return "deferred" as const;
+        setThreadComposerError(threadKey, message, queuedMessage.messageId);
+        return "restored" as const;
+      }
       yield* storage("load-drafts", queuedMessage.messageId, () => waitForComposerDraftsLoaded());
       if (editing()) return "deferred" as const;
       const originalDraft = getComposerDraftSnapshot(draftKey);
@@ -541,6 +549,9 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
                 pullRequestReference: queuedMessage.creation.pullRequestReference,
                 ...(queuedMessage.creation.startFromOrigin !== undefined
                   ? { startFromOrigin: queuedMessage.creation.startFromOrigin }
+                  : {}),
+                ...(queuedMessage.creation.repositories !== undefined
+                  ? { repositories: queuedMessage.creation.repositories }
                   : {}),
               },
             }
@@ -1196,6 +1207,9 @@ export function createThreadOutboxDelivery(): {
         branch: workspace.branch,
         worktreePath: workspace.worktreePath,
         startFromOrigin: workspace.startFromOrigin ?? false,
+        ...(workspace.repositories === undefined
+          ? {}
+          : { worktreeRepositories: workspace.repositories }),
         worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
       }),
     });

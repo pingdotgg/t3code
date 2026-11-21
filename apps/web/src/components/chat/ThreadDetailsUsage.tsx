@@ -5,9 +5,6 @@ import type {
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
-  resolveProviderLimitPool,
-  resolveProviderUsageLimits,
-  displayLimitWindows,
   type LimitPace,
   type LimitPoolWindow,
   limitPoolNotice,
@@ -37,6 +34,7 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
 
 const USAGE_ROW_CLASS =
   "col-span-full grid min-w-0 grid-cols-subgrid items-center gap-x-1.5 text-meta";
@@ -48,15 +46,23 @@ const PACE_LABEL: Record<LimitPace, string> = {
 };
 export interface ThreadDetailsUsageInput {
   readonly providerInstanceId: ProviderInstanceId | null;
+  readonly model: string | null;
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
 }
 type UsageTone = "error" | "warning" | null;
 
+function limitTone(left: number): UsageTone {
+  if (left <= 10) return "error";
+  if (left <= 20) return "warning";
+  return null;
+}
+
 /** Provider limits share the canvas's icon and label columns; each row opens the usage page. */
 export function ThreadDetailsUsage({
   providerInstanceId,
+  model,
   providers,
   sources,
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
@@ -64,19 +70,18 @@ export function ThreadDetailsUsage({
   const m = useMessages();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
-  const limits =
-    providerInstanceId !== null
-      ? resolveProviderUsageLimits(providerInstanceId, providers, sources)
-      : undefined;
-  const ownNotice = limits
-    ? limitsNotice(limits, m)
-    : gt("This provider has not reported usage limits.");
-  const pool =
-    providerInstanceId !== null && ownNotice !== null
-      ? resolveProviderLimitPool(providerInstanceId, providers, sources, now)
-      : undefined;
+  // The hub a model routes to pools the accounts it spends, when the instance reads none of its own.
+  const resolved = resolveThreadDetailsLimits(providerInstanceId, model, providers, sources, now);
+  const limits = resolved?.kind === "instance" ? resolved.limits : undefined;
+  const ownNotice =
+    resolved === null
+      ? gt("This provider has not reported usage limits.")
+      : limits
+        ? limitsNotice(limits, m)
+        : null;
+  const pool = resolved?.kind === "pool" ? resolved.windows : undefined;
   const rows = pool
-    ? displayLimitWindows(pool).map((pooled) => ({
+    ? pool.map((pooled) => ({
         window: pooledWindow(pooled, now),
         accounts: pooled.members.length,
       }))
@@ -312,8 +317,8 @@ function LimitRow({
       shortLabel={weekly && !modelLabel ? window.label.replace(/\s*·\s*Weekly$/i, "") : undefined}
       icon={modelLabel ? <BoxIcon /> : weekly ? <CalendarRangeIcon /> : <TimerIcon />}
       fill={left}
+      tone={limitTone(left)}
       tick={timeLeft}
-      tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
       opensUsage

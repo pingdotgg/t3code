@@ -1764,6 +1764,7 @@ export function PullRequestDetailPanel({
         number={reference.number}
         tabs={visibleTabs}
         activeTab={tab}
+        threadRef={threadRef}
         {...(onBack ? { onBack } : {})}
         {...(onClose ? { onClose } : {})}
       />
@@ -1794,6 +1795,7 @@ export function PullRequestDetailPanel({
       >
         <PullRequestDetailCrumbs
           detail={detail}
+          threadRef={threadRef}
           toneClassName={statePresentation?.toneClassName ?? null}
           repositoryUrl={repositoryUrl}
           openOnHostText={openOnHostText}
@@ -1856,6 +1858,7 @@ export function PullRequestDetailPanel({
                 pullRequestKey={pullRequestKey}
                 detail={detail}
                 terminology={terminology}
+                threadRef={threadRef}
                 linkThreadRef={
                   threadRef ??
                   (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
@@ -1954,6 +1957,7 @@ export function PullRequestDetailPanel({
                 : "translate-y-1 opacity-0 duration-100",
             )}
             inert={!condensed}
+            data-workspace-scroll-swap
           >
             {detail ? (
               <div className="flex min-w-0 items-center gap-2 px-4 pt-1 pb-1 text-meta text-muted-foreground">
@@ -1999,6 +2003,7 @@ export function PullRequestDetailPanel({
                 : "translate-y-0 opacity-100 delay-50",
             )}
             inert={condensed}
+            data-workspace-scroll-swap
           >
             {detail ? (
               <div className="col-span-2 flex min-w-0 flex-col gap-1.5 px-4 pt-1.5 pb-2.5">
@@ -2216,7 +2221,9 @@ export function PullRequestDetailPanel({
             {mountedTabs.has("timeline") ? (
               <div {...tabPaneProps("timeline")}>
                 {activityPending ? (
-                  <PullRequestTimelineGhost />
+                  <div tabIndex={-1} data-workspace-focus-default className="h-full outline-none">
+                    <PullRequestTimelineGhost />
+                  </div>
                 ) : activityError ? (
                   <PullRequestActivityUnavailableState
                     error={activityError}
@@ -2241,12 +2248,15 @@ export function PullRequestDetailPanel({
               <div {...tabPaneProps("code")}>
                 <Suspense
                   fallback={
-                    <DiffPanelLoadingState
-                      label={gt(
-                        "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
-                        { term: changeRequestTermKind(terminology) },
-                      )}
-                    />
+                    // Loading placeholders hold panel focus until the tab's scroller replaces them.
+                    <div tabIndex={-1} data-workspace-focus-default className="h-full outline-none">
+                      <DiffPanelLoadingState
+                        label={gt(
+                          "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
+                          { term: changeRequestTermKind(terminology) },
+                        )}
+                      />
+                    </div>
                   }
                 >
                   <PullRequestCodeTab

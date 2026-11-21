@@ -14,6 +14,7 @@ import {
   type EnvironmentId,
   type IssueTrackerKind,
   type PreviewAnnotationPayload,
+  type PreviewSessionSnapshot,
   type ProjectId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -128,7 +129,9 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { m } from "../i18n/messages";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 
-const SideChatPane = lazy(() => import("./chat/SideChatPane"));
+// Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
+import SideThreadPane from "./chat/SideThreadPane";
+import { LinkedThreadPane } from "./chat/LinkedThreadPane";
 const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
@@ -296,7 +299,11 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
     device: true,
     "side-chat": sideChat.available,
   };
-  const open = (kind: LauncherSurfaceKind, browserProfileId?: string) => {
+  const open = (
+    kind: LauncherSurfaceKind,
+    browserProfileId?: string,
+    duplicateFrom?: PreviewSessionSnapshot,
+  ) => {
     if (!available[kind]) return;
     const store = useRightPanelStore.getState();
     switch (kind) {
@@ -327,6 +334,7 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
           threadRef,
           openPreview,
           ...(browserProfileId === undefined ? {} : { profileId: browserProfileId }),
+          ...(duplicateFrom === undefined ? {} : { duplicateFrom }),
         }).then((result) => {
           if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
           const error = squashAtomCommandFailure(result);
@@ -544,11 +552,15 @@ function ThreadSurfacePane({
   const { visible, paneId } = useLayoutPane();
   const handleNewThread = useNewThreadHandler();
   const { projectRef } = context;
-  const add = (kind: LauncherSurfaceKind, browserProfileId?: string) => {
+  const add = (
+    kind: LauncherSurfaceKind,
+    browserProfileId?: string,
+    duplicateFrom?: PreviewSessionSnapshot,
+  ) => {
     if (paneId !== null && openers.available[kind]) {
       requestLayoutSurfacePlacement(threadRef, { kind: "pane", paneId });
     }
-    openers.open(kind, browserProfileId);
+    openers.open(kind, browserProfileId, duplicateFrom);
   };
   const getShortcutContext = () => ({
     terminalFocus: false,
@@ -584,7 +596,7 @@ function ThreadSurfacePane({
       threadTitle={threadTitle}
       onActivate={(active) => {
         // Choosing a side chat's tab puts the keyboard in its message box, even when it shows.
-        if (active.kind === "side-chat") requestSideChatComposerFocus(threadRef, active.id);
+        if (active.kind === "thread") requestSideChatComposerFocus(threadRef, active.id);
       }}
       onCloseSurface={close}
       onRenameDevice={(id, title) =>
@@ -596,6 +608,11 @@ function ThreadSurfacePane({
       onCopyFilePath={(path) => copyLayoutFilePath(threadRef, path)}
       onAddBrowser={() => add("browser")}
       onAddBrowserInProfile={(profileId) => add("browser", profileId)}
+      onDuplicateBrowser={(tab) => {
+        const snapshot =
+          tab.kind === "preview" && tab.resourceId ? previewState.sessions[tab.resourceId] : null;
+        if (snapshot) add("browser", undefined, snapshot);
+      }}
       onNewThread={
         projectRef === null
           ? undefined
@@ -707,6 +724,7 @@ function ThreadSurfaceContent({
   const shortcutLabels = useTerminalShortcutLabels();
   const shell = context.serverThread;
   const sideChatParentPanel: SideChatParentPanel = {
+    hostRef: threadRef,
     openToolDiff: (target) => {
       useDiffPanelStore.getState().selectToolCall(threadRef, target);
       useRightPanelStore.getState().open(threadRef, "diff");
@@ -715,16 +733,24 @@ function ThreadSurfaceContent({
   };
 
   switch (surface.kind) {
-    case "side-chat":
+    case "thread":
       return (
-        <Suspense fallback={null}>
-          <SideChatPane
-            parentRef={threadRef}
-            threadId={surface.threadId}
-            parentPanel={sideChatParentPanel}
-            onClose={() => void closeThreadSurface(threadRef, surface.id)}
-          />
-        </Suspense>
+        <SideThreadPane
+          key={surface.id}
+          parentRef={threadRef}
+          surface={surface}
+          parentPanel={sideChatParentPanel}
+          onClose={() => void closeThreadSurface(threadRef, surface.id)}
+        />
+      );
+    case "linked-thread":
+      return (
+        <LinkedThreadPane
+          key={surface.id}
+          panelRef={threadRef}
+          surface={surface}
+          visible={visible}
+        />
       );
     case "preview":
       return (
@@ -1231,7 +1257,11 @@ export function ThreadSurfaceServices() {
     const closer: SurfaceCloser = (threadRef, surfaces) => {
       for (const surface of surfaces) {
         if (
-          surface.kind === "side-chat" &&
+          surface.kind === "thread" &&
+          // Only a side chat the shell still lists is thrown away with its tab; a subagent belongs
+          // to its parent's work, and an unlisted side chat is already deleted.
+          readThreadShell(scopeThreadRef(threadRef.environmentId, surface.threadId))?.lineage
+            .sideChat === true &&
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
         ) {
           void deleteThread({

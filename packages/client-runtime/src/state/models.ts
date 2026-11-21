@@ -116,6 +116,8 @@ export interface ThreadRuntimeSummary {
   readonly lastError: string | null;
   readonly lastErrorClass?: OrchestrationV2ProviderFailureClass | null;
   readonly lastErrorCode?: string | null;
+  /** The record `lastError` came from, with its change time so a repeated failure differs. */
+  readonly lastErrorSource?: string | null;
   readonly usageLimitResetAt?: string | null;
   readonly updatedAt: string;
 }

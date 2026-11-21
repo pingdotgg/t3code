@@ -42,9 +42,16 @@ vi.mock(import("../../state/entities"), () => ({
   useAnyEnvironmentHiding: (() => false) as never,
 }));
 vi.mock(import("../../state/environments"), () => ({
+  // The click rule reads the client setting, whose module asks for these.
+  useEnvironments: (() => []) as never,
+  usePrimaryEnvironment: (() => null) as never,
   useEnvironment: (() => null) as never,
   useEnvironmentMachines: (() => new Map()) as never,
   useEnvironmentProviders: (() => new Map()) as never,
+}));
+vi.mock(import("../../state/peerLinks"), () => ({
+  peerLinkEnvironment: { readThread: {} } as never,
+  useLinkedEnvironments: (() => new Map()) as never,
 }));
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
   useArchivedThreadSnapshots: (() => ({
@@ -58,7 +65,11 @@ vi.mock(import("../../state/use-atom-command"), () => ({
       : AsyncResult.failure(Cause.fail(new Error("Connection lost")))) as never,
 }));
 
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+
 import { render } from "../../../test/render";
+import { isMacPlatform } from "../../lib/utils";
+import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { ScrollArea } from "../ui/scroll-area";
 import { ToastProvider } from "../ui/toast";
@@ -68,6 +79,7 @@ const environmentId = EnvironmentId.make("environment");
 const threadId = ThreadId.make("fork");
 
 function setup() {
+  useRightPanelStore.setState(useRightPanelStore.getInitialState());
   state.commandSucceeds = false;
   state.relatedShells = [];
   state.threadTitles = { source: "Source" };
@@ -168,7 +180,7 @@ it.each([
   }
 });
 
-it("opens an idle child from Lineage when its shell has not been loaded", async () => {
+it("opens an idle child beside the thread, and in its place with the modifier", async () => {
   setup();
   const projection = makeThreadProjectionFixture();
   const childId = ThreadId.make("omitted-child");
@@ -214,10 +226,23 @@ it("opens an idle child from Lineage when its shell has not been loaded", async 
   await expect.element(previousAgents).toHaveAttribute("aria-expanded", "true");
   const child = screen.getByRole("button", { name: /Idle child/ });
   await expect.element(child).toBeEnabled();
+  const panelRef = scopeThreadRef(environmentId, projection.thread.id);
+  const panel = () =>
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, panelRef);
   await child.click();
+  expect(panel()).toMatchObject({
+    isOpen: true,
+    activeSurfaceId: "thread:omitted-child",
+    surfaces: [{ kind: "thread", threadId: childId }],
+  });
+  expect(screen.router?.state.location.pathname).toBe("/");
+  // Idle children can be omitted from the shell; the route loads the child's own detail.
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
+  await child.click({ modifiers: [isMacPlatform(navigator.platform) ? "Meta" : "Control"] });
   await vi.waitFor(() =>
     expect(screen.router?.state.location.pathname).toBe("/local/omitted-child"),
   );
+  expect(panel().surfaces).toHaveLength(1);
 });
 
 it("shows a lineage thread's full title in its tooltip", async () => {
@@ -338,8 +363,9 @@ it("folds a finished remote subagent into previous agents with its full title in
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
   );
+  // This client is not connected there, so the row reads the thread through this environment.
   expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
-    "Runs on Remote VM with a long machine name in the office. Connect to it to open the thread there.",
+    "Read the thread on Remote VM with a long machine name in the office",
   );
 
   await row.click({ force: true });

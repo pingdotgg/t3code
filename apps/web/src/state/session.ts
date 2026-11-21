@@ -117,6 +117,12 @@ export function usePreparedConnection(environmentId: EnvironmentId | null) {
   );
 }
 
+/** Each environment's prepared connection, in the order of the ids. */
+export const preparedConnectionsAtom = environmentAtomList(
+  "web-prepared-connections",
+  environmentSession.preparedConnectionValueAtom,
+);
+
 export function readPreparedConnection(environmentId: EnvironmentId) {
   return Option.getOrNull(
     appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),

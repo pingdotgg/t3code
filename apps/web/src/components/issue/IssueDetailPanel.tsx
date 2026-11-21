@@ -617,6 +617,7 @@ export function IssueDetailPanel({
     >
       <div className="@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2">
         <WorkItemDetailCrumbs
+          threadRef={threadRef}
           subject={{
             url: detail.url,
             scope: detail.scope,

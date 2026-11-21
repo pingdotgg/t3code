@@ -179,9 +179,9 @@ export function WorkItemCommentCard({
       className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-inset data-[pr-link-target=true]:ring-primary/40 rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
     >
       <div className="flex flex-wrap items-center gap-1.5 px-3">
-        <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
+        <h3 className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
           {header}
-        </div>
+        </h3>
         {actions}
       </div>
       {children}
@@ -1062,7 +1062,9 @@ export function PullRequestSummaryTab({
         scrollRef.current = node;
         scrollerRef?.(node);
       }}
-      className="h-full overflow-y-auto"
+      tabIndex={-1}
+      data-workspace-focus-default
+      className="h-full overflow-y-auto outline-none"
       data-pull-request-summary-scroll
     >
       <div

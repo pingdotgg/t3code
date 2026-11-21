@@ -167,9 +167,12 @@ T3_MCP_BEARER_TOKEN=<provider-session-token>
 ```
 
 The extension preserves public names under `mcp__t3-code__` for saved loadouts
-and tool selectors. Modern Pi also receives hidden `mcp__t3_code__` aliases,
-which reserve the normalized namespace against configured MCP servers without
-adding declarations or search results. On Pi 0.99+,
+and tool selectors. Modern Pi also receives `mcp__t3_code__` aliases, Pi's own
+name for the server, which reserve it against configured MCP servers. They are
+`model-only` and hide their own declarations, so the model can call them without
+added declarations, search results, or codemode entries. An alias follows its
+public tool: dropped when that tool is excluded, and off while a direct one is
+off. Pi's `hidden` exposure would make them unreachable. On Pi 0.99+,
 `orchestrator_capabilities`, `delegate_task`, and `task_status` remain directly
 available; optional tools are discovered through Pi's builtin `tool_search`.
 On older Pi or without builtin search, all tools remain directly available.
@@ -451,12 +454,30 @@ The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
 idempotent retries.
 
+`outputSchema` (also on `t3_thread_launch`) asks the run for a result as data.
+The run stores the schema, the turn's prompt ends with how to hand the result
+back, and the agent calls `t3_submit_output`. The server checks the value
+against the schema before storing it, so the caller never parses a reply. A send
+that asks for a result is queued instead of steered: the result belongs to one
+whole turn. A turn can end without submitting; the caller sees a finished run
+with no `output`.
+
+### `t3_submit_output`
+
+Stores the calling thread's result on its running turn, once it fits the schema
+that turn was sent with. A turn that was asked for nothing answers for the
+newest turn that was asked and has not answered yet, which is how an agent that
+ended its turn to wait gives its result after it is woken. A rejection names what did not fit, so the agent can
+correct it and call again; a later accepted submission replaces an earlier one.
+
 ### `t3_thread_wait`
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,
 `interrupted`, or `rolled_back`. Without `runId`, it pins the latest run at call
 time; an idle thread returns immediately. A timeout reports the latest durable
-status and does not cancel work.
+status and does not cancel work. `output` carries what the run submitted
+against its `outputSchema`; with `untilOutput`, a completed run that has not
+submitted yet is waited on until it has.
 
 ### `t3_thread_interrupt`
 

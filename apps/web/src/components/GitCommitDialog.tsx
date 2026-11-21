@@ -118,6 +118,7 @@ export function GitCommitDialog({
   canWriteSourceControl,
   canChangeThreadBranch,
   canOpenFiles,
+  folderName = null,
   onSubmit,
   onOpenFile,
   retainedMessage = "",
@@ -130,6 +131,8 @@ export function GitCommitDialog({
   /** A new branch also moves the thread onto it. */
   canChangeThreadBranch: boolean;
   canOpenFiles: boolean;
+  /** The folder the commit runs in, named when a project has several. */
+  folderName?: string | null;
   onSubmit: (submission: GitCommitDialogSubmission) => void;
   onOpenFile: (path: string) => void;
   /** A message a failed commit left behind, offered again when the dialog reopens. */
@@ -199,6 +202,14 @@ export function GitCommitDialog({
           <DialogTitle>{gt("Commit changes")}</DialogTitle>
         </DialogHeader>
         <DialogPanel>
+          {folderName ? (
+            <p className="mb-3 flex min-w-0 gap-1.5 text-meta">
+              <span className="shrink-0 text-muted-foreground">
+                <T context="the folder Git actions run in">Folder</T>
+              </span>
+              <span className="min-w-0 truncate">{folderName}</span>
+            </p>
+          ) : null}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor={branchFieldId}>
               <T>Branch</T>

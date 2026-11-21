@@ -42,6 +42,7 @@ import {
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
+  type ScopedThreadRef,
   type ServerProvider,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -67,6 +68,8 @@ import { flushSync } from "react-dom";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
+import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import { useLinkedThreadOpener } from "../../state/linkedThreadView";
 import {
   useProjects,
   useQuietThreadProjection,
@@ -96,6 +99,8 @@ import { useEnvironmentQuery } from "../../state/query";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
+import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
+import { openSideThread } from "../../lib/sideChatPane";
 
 import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -249,11 +254,11 @@ function relationshipHint(
   sideChat: boolean,
   resolve: MessageResolver,
 ) {
-  if (sideChat) return resolve(msg("Open side chat in this chat"));
+  if (sideChat) return resolve(msg("Open side chat"));
   if (edge.kind === "transfer") return resolve(msg("Open context transfer in this chat"));
   if (edge.kind === "subagent") {
     return edge.sourceThreadId === currentThreadId
-      ? resolve(msg("Open subagent in this chat"))
+      ? resolve(msg("Open subagent"))
       : resolve(msg("Open parent agent in this chat"));
   }
   return edge.sourceThreadId === currentThreadId
@@ -311,18 +316,18 @@ function currentSubagent<Agent extends RuntimeSubagent>(
 }
 
 /**
- * A task delegated to a linked environment. It has no thread here, so it opens
- * the thread there, when this client is connected to that environment.
+ * A task delegated to a linked environment. It has no thread here, so it opens the thread there:
+ * in place when this client is connected to that environment, else read-only through this one.
  */
 function RemoteSubagentRow(props: {
   readonly agent: RemoteSubagent;
+  /** The thread that delegated the task; its environment holds the link and its panel shows the read. */
+  readonly parentRef: ScopedThreadRef;
   readonly provider: ServerProvider | undefined;
   readonly anyInstanceBadge: boolean;
 }) {
   const gt = useGT();
   const m = useMessages();
-  const navigate = useNavigate();
-  const environment = useEnvironment(props.agent.remoteChild.environmentId);
   const { remoteChild } = props.agent;
   const status = props.agent.status;
   const failed = status === "failed";
@@ -352,6 +357,8 @@ function RemoteSubagentRow(props: {
       })
     : null;
   // Same two lines as a local child: title and state, then where and what it runs on, and its time.
+  const opener = useLinkedThreadOpener(props.parentRef, remoteChild, title);
+  const trigger = useSideThreadTrigger();
   return (
     <li className="group relative flex min-h-9 items-center rounded-lg">
       <Tooltip>
@@ -363,16 +370,7 @@ function RemoteSubagentRow(props: {
               variant="ghost"
               part="row"
               className={THREAD_LINEAGE_ROW_CLASS}
-              aria-disabled={environment === null || undefined}
-              onClick={() => {
-                if (environment === null) return;
-                void navigate({
-                  to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(
-                    scopeThreadRef(remoteChild.environmentId, remoteChild.threadId),
-                  ),
-                });
-              }}
+              {...(opener ? trigger(opener.open, { panel: opener.mode === "linked" }) : {})}
             />
           }
         >
@@ -431,10 +429,8 @@ function RemoteSubagentRow(props: {
           <LineageTooltipContent
             title={title}
             hint={
-              environment === null
-                ? gt("Runs on {label}. Connect to it to open the thread there.", {
-                    label: remoteChild.label,
-                  })
+              opener?.mode === "linked"
+                ? gt("Read the thread on {label}", { label: remoteChild.label })
                 : gt("Open on {label}", { label: remoteChild.label })
             }
           />
@@ -586,6 +582,7 @@ function useThreadLineage(props: {
       : null;
   const parentProjection = useQuietThreadProjection(parentRef)?.projection;
   const navigate = useNavigate();
+  const trigger = useSideThreadTrigger();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
   const stopSession = useAtomCommand(threadEnvironment.stopSession);
   const interruptTurn = useAtomCommand(threadEnvironment.interruptTurn);
@@ -753,6 +750,20 @@ function useThreadLineage(props: {
     void (isParent || routeRef.threadId !== threadId
       ? open()
       : runInNewLayoutTab(open, { ghostOf: ref }));
+  };
+
+  // A subagent or side chat of this thread opens beside it or in its place, as the click asks.
+  const openSideThreadRow = (threadId: ThreadId, intent: SideThreadOpenIntent) => {
+    openSideThread({
+      threadRef: scopeThreadRef(props.environmentId, threadId),
+      panelRef: ref,
+      intent,
+      navigate: (threadRef) =>
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        }),
+    });
   };
 
   const merge = async () => {
@@ -1001,16 +1012,13 @@ export function ThreadRelationshipsPanel(props: {
       ? "group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0 [@media(hover:none)]:opacity-0"
       : "";
     const project = projects.find((project) => project.id === node?.thread?.projectId);
-    const relationship =
-      node?.thread?.lineage.sideChat === true && !isParent
-        ? gt("Side chat")
-        : relationshipLabel(edge, props.threadId, m);
-    const hint = relationshipHint(
-      edge,
-      props.threadId,
-      node?.thread?.lineage.sideChat === true && !isParent,
-      m,
-    );
+    const isSideChat = node?.thread?.lineage.sideChat === true && !isParent;
+    const relationship = isSideChat ? gt("Side chat") : relationshipLabel(edge, props.threadId, m);
+    const hint = relationshipHint(edge, props.threadId, isSideChat, m);
+    const openProps =
+      isSideChat || (isSubagent && !isParent)
+        ? trigger((intent) => openSideThreadRow(threadId, intent))
+        : { onClick: () => openThread(threadId) };
     const RelationshipPopup = agent ? ThreadHoverCardPopup : TooltipPopup;
     const relationshipTooltip = agent ? (
       <SubagentTooltipContent
@@ -1125,7 +1133,7 @@ export function ThreadRelationshipsPanel(props: {
               part="row"
               className={THREAD_LINEAGE_ROW_CLASS}
               aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus, m)}`}
-              onClick={() => openThread(threadId)}
+              {...openProps}
             />
           }
         >
@@ -1144,7 +1152,9 @@ export function ThreadRelationshipsPanel(props: {
           providers={providers}
           providerEntries={providerEntries}
           driver={providerDriver}
-          onOpenThread={(memberThreadId) => openThread(memberThreadId as ThreadId)}
+          onOpenThread={(memberThreadId, intent) =>
+            openSideThreadRow(memberThreadId as ThreadId, intent)
+          }
           onStop={canStopWorkflow ? () => void stopWorkflow(agent.id) : undefined}
           stopping={stoppingId === agent.id}
           stopDisabled={stoppingId !== null}
@@ -1247,6 +1257,7 @@ export function ThreadRelationshipsPanel(props: {
       <RemoteSubagentRow
         key={row.remote.id}
         agent={row.remote}
+        parentRef={ref}
         // Its provider instance belongs to the environment it runs in.
         provider={providersByEnvironment
           .get(row.remote.remoteChild.environmentId)

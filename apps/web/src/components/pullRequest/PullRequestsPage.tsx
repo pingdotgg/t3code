@@ -1440,7 +1440,7 @@ export function PullRequestsPage() {
             size="sm"
             variant="secondary"
             disabled={listQuery.isPending}
-            onClick={() => listQuery.refresh()}
+            onClick={listQuery.retry}
           >
             <RefreshIcon size="sm" refreshing={listQuery.isPending} />
             <T>Retry</T>
@@ -1508,7 +1508,7 @@ export function PullRequestsPage() {
       {listError && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-control border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
           <span>{gt("{error} Showing the last pull requests loaded.", { error: listError })}</span>
-          <Button size="xs" variant="secondary" onClick={() => listQuery.refresh()}>
+          <Button size="xs" variant="secondary" onClick={listQuery.retry}>
             <T>Retry</T>
           </Button>
         </div>
