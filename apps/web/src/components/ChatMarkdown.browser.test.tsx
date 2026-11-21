@@ -296,7 +296,7 @@ it("sizes a raw HTML image by width and height written with px units", async () 
   expect({ width, height }).toEqual({ width: 14, height: 7 });
 });
 
-it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
+it("reuses a remounted streaming reply's existing blocks without replaying their fade", async () => {
   setup();
   const message = (
     <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
@@ -306,9 +306,13 @@ it("reuses the parse of a streaming reply's finished blocks when it remounts", a
       <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\n"} isStreaming />,
     );
     await first.rerender(message);
+    const appended = first.getByText("Still growing").element();
+    expect(appended.getAnimations().some((animation) => animation instanceof CSSTransition)).toBe(
+      true,
+    );
   }
   await using screen = await render(message);
-  await expect.element(screen.getByText("Still growing")).toBeVisible();
+  expect(getComputedStyle(screen.getByText("Still growing").element()).opacity).toBe("1");
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
 });
 
