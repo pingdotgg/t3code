@@ -1888,7 +1888,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] No new unit test. The change is packaging and CI. Run `vp test run` from `apps/board`, and it passes.
+- [ ] `release-notes.test.mjs` picks the previous tag from a fixed tag list (`board-v0.1.0`, `board-v0.2.0`, and a `v0.1.11` from upstream, giving `board-v0.1.0` for `board-v0.2.0`), and joins a fixed summary and a fixed GitHub list into the literal `release-notes.md`. Run `node --test apps/board/scripts/release-notes.test.mjs`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Live lanes run the real workflow on the fork and install on this Windows machine. Each release made by a lane is a pre-release named `board-v0.0.<n>-test`, deleted at cleanup.
 
