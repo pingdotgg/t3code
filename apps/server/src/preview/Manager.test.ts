@@ -59,6 +59,29 @@ it.layer(layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("reports whether an open tab shows a path", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const prefix = `/api/assets/${threadId}-token/`;
+
+      const opened = yield* manager.open({
+        threadId,
+        url: `http://127.0.0.1:3773${prefix}notes.pdf`,
+      });
+      expect(yield* manager.showsPathPrefix(prefix)).toBe(true);
+
+      yield* manager.reportStatus({
+        threadId,
+        tabId: opened.tabId,
+        navStatus: { _tag: "Success", url: "http://localhost:5173/", title: "Dev" },
+        canGoBack: true,
+        canGoForward: false,
+      });
+      expect(yield* manager.showsPathPrefix(prefix)).toBe(false);
+    }),
+  );
+
   it.effect("keeps the tab's profile across status reports", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

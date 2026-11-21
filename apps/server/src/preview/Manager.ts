@@ -65,6 +65,8 @@ export class PreviewManager extends Context.Service<
       handler: (snapshots: ReadonlyArray<PreviewSessionSnapshot>) => Effect.Effect<void>,
     ) => Effect.Effect<void, never, Scope.Scope>;
     readonly list: (input: PreviewListInput) => Effect.Effect<PreviewListResult>;
+    /** Whether any open tab shows a URL whose path starts with `prefix`. */
+    readonly showsPathPrefix: (prefix: string) => Effect.Effect<boolean>;
     readonly events: Stream.Stream<PreviewEvent>;
     readonly subscribeEvents: Effect.Effect<PubSub.Subscription<PreviewEvent>, never, Scope.Scope>;
   }
@@ -463,6 +465,18 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     },
   );
 
+  const showsPathPrefix: PreviewManager["Service"]["showsPathPrefix"] = (prefix) =>
+    SynchronizedRef.get(stateRef).pipe(
+      Effect.map((state) => {
+        for (const { snapshot } of state.sessions.values()) {
+          const { navStatus } = snapshot;
+          if (navStatus._tag === "Idle" || !URL.canParse(navStatus.url)) continue;
+          if (new URL(navStatus.url).pathname.startsWith(prefix)) return true;
+        }
+        return false;
+      }),
+    );
+
   const requestReveal: PreviewManager["Service"]["requestReveal"] = Effect.fn(
     "PreviewManager.requestReveal",
   )(function* (input) {
@@ -505,6 +519,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     close,
     registerBeforeClose,
     list,
+    showsPathPrefix,
     events,
     subscribeEvents: PubSub.subscribe(eventsPubSub),
   });
