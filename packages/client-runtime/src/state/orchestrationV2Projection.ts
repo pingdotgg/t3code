@@ -1,5 +1,8 @@
 import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
-import { applyOrchestrationV2ThreadVisit } from "@t3tools/contracts";
+import {
+  applyOrchestrationV2ThreadVisit,
+  isQueuedProviderThreadPlaceholder,
+} from "@t3tools/contracts";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
@@ -311,6 +314,7 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.active-reordered":
     case "thread.metadata-updated":
     case "thread.pull-request-synced":
+    case "thread.issue-synced":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
     case "thread.model-selection-updated":
@@ -329,11 +333,16 @@ export function applyOrchestrationV2ProjectionEvent(
       };
     case "run.created":
     case "run.updated": {
-      const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
+      // Lifecycle updates carry the run as it was when the turn started. What the run returned
+      // is written by its own event, and an update without it must not take it away.
+      const known = base.runs.find((run) => run.id === event.payload.id);
+      const run =
+        event.payload.output === undefined && known?.output !== undefined
+          ? { ...event.payload, output: known.output }
+          : event.payload;
+      const next = { ...base, runs: upsertEntity(base.runs, run) };
       const visible = { ...next, visibleTurnItems: activeVisibleTurnItems(next) };
-      const wasQueued = base.runs.some(
-        (run) => run.id === event.payload.id && run.status === "queued",
-      );
+      const wasQueued = known?.status === "queued";
       return wasQueued && event.payload.status !== "queued"
         ? { ...visible, visibleTurnItems: restoreQueuedUserItems(visible, event.payload.id) }
         : visible;
@@ -348,6 +357,13 @@ export function applyOrchestrationV2ProjectionEvent(
                 restartCancelledBackgroundWork: event.payload.restartCancelledBackgroundWork,
               }
             : run,
+        ),
+      };
+    case "run.output-submitted":
+      return {
+        ...base,
+        runs: base.runs.map((run) =>
+          run.id === event.payload.runId ? { ...run, output: event.payload.output } : run,
         ),
       };
     case "run-attempt.created":
@@ -382,7 +398,15 @@ export function applyOrchestrationV2ProjectionEvent(
         ),
       };
     case "provider-thread.updated":
-      return { ...base, providerThreads: upsertEntity(base.providerThreads, event.payload) };
+      return {
+        ...base,
+        thread:
+          event.payload.appThreadId === base.thread.id &&
+          !isQueuedProviderThreadPlaceholder(event.payload)
+            ? { ...base.thread, activeProviderThreadId: event.payload.id }
+            : base.thread,
+        providerThreads: upsertEntity(base.providerThreads, event.payload),
+      };
     case "provider-turn.updated":
       return {
         ...base,
