@@ -28,8 +28,8 @@ const STATUS = {
 
 /**
  * One check as Orca's checks list draws it: a chevron, its status icon, its name, the time, and the
- * link out. The host reports no start time, so the time column holds only what the description
- * says or how long the board has watched a running check. Opening the row shows the description
+ * link out. The host reports no start time, so the time column holds only how long the board has
+ * watched a running check. Opening the row shows the description
  * and the link, where Orca shows the run's output.
  */
 export function CheckRow({ check, now }: { check: CheckRun; now: number }) {
@@ -49,11 +49,10 @@ export function CheckRow({ check, now }: { check: CheckRun; now: number }) {
   const { label, tone, Icon } = stuck
     ? { label: "Stuck", tone: "text-rose-500", Icon: LoaderCircle }
     : STATUS[check.status];
-  const running =
+  const time =
     check.runningSince === null
       ? null
       : `Running for ${formatElapsed(Math.max(0, Math.floor((now - check.runningSince) / 1_000)))}`;
-  const time = running;
   const timeTone = stuck ? "text-rose-500" : "text-muted";
   return (
     <li
