@@ -36,7 +36,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
 import { readIssueListPreferences } from "../issue/issueListPreferences";
 import { IssueGlyph } from "../issue/issuePresentation";
-import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
+import { useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
@@ -230,8 +230,8 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigateToMainApp = useNavigateToMainApp();
   const gt = useGT();
   const { isMobile, setOpenMobile } = useSidebar();
-  const isOnUtilityPage = useLocation({
-    select: (location) => isSidebarUtilityPage(location.pathname),
+  const isOnProjectPage = useLocation({
+    select: (location) => location.pathname.startsWith("/projects/"),
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
@@ -270,7 +270,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 
   return (
     <SidebarMenu className="flex-row items-center">
-      {isOnUtilityPage ? (
+      {isOnProjectPage ? (
         <SidebarMenuItem className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleBackClick}>
             <ArrowLeftIcon />
