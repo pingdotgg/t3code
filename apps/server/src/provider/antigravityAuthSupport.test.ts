@@ -803,9 +803,11 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
   const preflightHelper = (exitDelay: Effect.Effect<void>) => {
     const spawns = { count: 0 };
     const started = Deferred.makeUnsafe<void>();
-    const spawner = ChildProcessSpawner.make(() =>
+    const spawner = ChildProcessSpawner.make((command) =>
       Effect.sync(() => {
         spawns.count += 1;
+        // The helper prints the marker and the URL it was given.
+        const url = command._tag === "StandardCommand" ? String(command.args.at(-1)) : "";
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Deferred.succeed(started, undefined).pipe(
@@ -818,9 +820,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
           stdin: Sink.drain,
           stdout: Stream.empty,
           stderr: Stream.encodeText(
-            Stream.make(
-              `${ANTIGRAVITY_AUTH_BROWSER_MARKER}"https://example.invalid/lathe-antigravity-browser-preflight"\n`,
-            ),
+            Stream.make(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}${JSON.stringify(url)}\n`),
           ),
           all: Stream.empty,
           getInputFd: () => Sink.drain,
@@ -877,7 +877,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       if (Result.isFailure(result)) {
         expect(result.failure).toMatchObject({
           _tag: "AcpTransportError",
-          detail: "Antigravity browser suppression verification timed out.",
+          detail: "The browser launch helper verification timed out.",
         });
       }
 
