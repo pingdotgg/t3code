@@ -700,7 +700,7 @@ describe("Antigravity subscription limits", () => {
         yield* TestClock.setTime(
           DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")),
         );
-        const { probe, tokenPath } = yield* fixture({ missingToken: true });
+        const { probe, requests, tokenPath } = yield* fixture({ missingToken: true });
         // The 1.5.x CLI's access token lives an hour; its refresh token keeps the sign-in valid.
         yield* fs.writeFileString(
           path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
@@ -718,6 +718,12 @@ describe("Antigravity subscription limits", () => {
         );
         const limits = yield* probe;
         expect(limits.unavailable?.message ?? "").not.toMatch(/sign-in has expired/);
+        expect(limits.windows).toHaveLength(4);
+        const refresh = new URLSearchParams(
+          requests.find((request) => request.url.endsWith("/token"))?.body,
+        );
+        expect(refresh.get("refresh_token")).toBe("refresh-a");
+        expect(refresh.get("client_id")).toMatch(/^1071006060591-/);
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
