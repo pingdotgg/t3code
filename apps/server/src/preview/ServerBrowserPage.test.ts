@@ -61,7 +61,6 @@ describe("snapshot deadline diagnostics", () => {
           title: "",
           loading: false,
           visibleText: "",
-          interactiveElements: [],
         }),
         ariaSnapshot: async () => "",
         ...options.page,
@@ -282,8 +281,9 @@ describe("server browser element refs", () => {
     const result = await takeSnapshot();
     expect(buttonLocator(result.accessibilityTree, "Open menu")).toBeDefined();
     expect(String(result.accessibilityTree)).toContain('link "Sign in"');
-    const elements: ReadonlyArray<{ readonly name: string }> | undefined =
-      result.interactiveElements;
+    const elements = (
+      result as { readonly interactiveElements?: ReadonlyArray<{ readonly name: string }> }
+    ).interactiveElements;
     if (elements !== undefined) {
       expect(elements.map((element) => element.name)).toEqual(
         expect.arrayContaining(["Sign in", "Open menu", "Dismiss local database notice"]),
