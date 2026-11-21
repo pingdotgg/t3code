@@ -105,10 +105,6 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
-const LOCAL_DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
-  source: "local",
-  commandPath: "/usr/local/bin/droid",
-});
 const DEVIN_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "devin" });
 const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
   source: "local",
@@ -2478,7 +2474,7 @@ describe("AcpAdapterV2", () => {
       settings: DROID_SETTINGS,
       maxAutonomy: "auto-medium",
     },
-    { agent: "a local droid command", settings: LOCAL_DROID_SETTINGS, maxAutonomy: "auto-high" },
+    { agent: "a local droid command", settings: DROID_LOCAL_SETTINGS, maxAutonomy: "auto-high" },
   ])(
     "keeps Factory Droid's autonomy level on the thread's runtime mode for $agent",
     ({ settings, maxAutonomy }) =>
