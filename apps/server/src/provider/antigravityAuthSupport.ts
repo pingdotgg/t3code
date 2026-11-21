@@ -58,6 +58,8 @@ const browserHelperSource =
   `"${ANTIGRAVITY_AUTH_BROWSER_MARKER}"+JSON.stringify(process.argv[1])+"\\n",` +
   `()=>process.exit(0))`;
 const browserPreflightUrl = "https://example.invalid/t3-antigravity-browser-preflight";
+// Helper path -> fingerprint of the runtime file and environment that last passed the preflight.
+const verifiedBrowserHelpers = new Map<string, string>();
 
 const removedEnvironmentKeys = new Set([
   "GEMINI_API_KEY",
@@ -472,7 +474,21 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     ...(caBundlePath === undefined ? {} : { caBundlePath }),
   };
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
-  yield* Effect.gen(function* () {
+  const runtimeInfo = yield* fs.stat(helperExecutable).pipe(Effect.option);
+  const fingerprint = Option.map(runtimeInfo, (info) =>
+    JSON.stringify([
+      platform,
+      String(info.dev),
+      String(Option.getOrUndefined(info.ino)),
+      String(info.size),
+      Option.getOrUndefined(info.mtime)?.getTime(),
+      Object.entries(environment).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    ]),
+  );
+  const alreadyVerified =
+    Option.isSome(fingerprint) &&
+    verifiedBrowserHelpers.get(helperExecutable) === fingerprint.value;
+  const preflight = Effect.gen(function* () {
     const child = yield* spawner.spawn(
       ChildProcess.make(helperExecutable, ["-e", browserHelperSource, "--", browserPreflightUrl], {
         env: environment,
@@ -510,6 +526,10 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         : authSupportError("Antigravity browser suppression could not be verified."),
     ),
   );
+  if (!alreadyVerified) {
+    yield* preflight;
+    if (Option.isSome(fingerprint)) verifiedBrowserHelpers.set(helperExecutable, fingerprint.value);
+  }
 
   for (const directory of [geminiHome, acpDirectory, tempDirectory]) {
     yield* fs
