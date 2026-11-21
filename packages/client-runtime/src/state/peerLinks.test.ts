@@ -2,9 +2,12 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  NodeId,
+  RunId,
   TurnItemId,
   WS_METHODS,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadStreamItem,
   type PeerLinkSummary,
@@ -181,11 +184,31 @@ it.effect.each([
   "window moves",
   "history request fails",
   "history request waits",
+  "rollback during backfill",
   "history removed",
   "route restart",
 ] as const)("shows the current linked history on reopen (%s)", (change) =>
   Effect.gen(function* () {
-    const older = messageRow("Earlier message", 2);
+    const rolledBack = change === "rollback during backfill";
+    const earlier = messageRow("Earlier message", 2);
+    const run: OrchestrationV2Run = {
+      id: RunId.make("earlier-run"),
+      threadId: v2ThreadId,
+      ordinal: 1,
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      modelSelection: v2Projection.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make("Earlier message"),
+      rootNodeId: NodeId.make("earlier-node"),
+      activeAttemptId: null,
+      status: "completed",
+      requestedAt: v2Now,
+      startedAt: v2Now,
+      completedAt: v2Now,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const older = rolledBack ? { ...earlier, item: { ...earlier.item, runId: run.id } } : earlier;
     const oldest = messageRow("Oldest message", 1);
     // One new turn pushes the previous boundary past a full 20-turn page.
     const between =
@@ -209,6 +232,7 @@ it.effect.each([
       projection: {
         ...v2Projection,
         thread: { ...v2Projection.thread, title },
+        runs: rolledBack ? [run] : [],
         turnItems: [row.item],
         visibleTurnItems: [row],
       },
@@ -220,6 +244,7 @@ it.effect.each([
       stopped: Deferred.Deferred<void>;
     }>();
     const requested: string[] = [];
+    const pageStarted = yield* Deferred.make<void>();
     const releasePage = yield* Deferred.make<void>();
     const client = {
       [WS_METHODS.peerLinksSubscribeThread]: () =>
@@ -250,7 +275,18 @@ it.effect.each([
           ) {
             return yield* Effect.fail("history unavailable");
           }
-          if (change === "history request waits") yield* Deferred.await(releasePage);
+          if ((change === "history request waits" || rolledBack) && cursor === refreshedCursor) {
+            yield* Deferred.succeed(pageStarted, undefined);
+            yield* Deferred.await(releasePage);
+          }
+          if (rolledBack && cursor === restoredNext) {
+            return {
+              snapshotSequence: 9,
+              items: [oldest],
+              nextCursor: null,
+              hasMoreHistory: false,
+            };
+          }
           if (change === "history removed") {
             return {
               snapshotSequence: 8,
@@ -360,6 +396,7 @@ it.effect.each([
     const removed = change === "history removed";
     const refetched =
       removed ||
+      rolledBack ||
       change === "window moves" ||
       change === "away update" ||
       change === "history request fails" ||
@@ -384,7 +421,32 @@ it.effect.each([
       expect((yield* Queue.take(views)).thread.projection?.thread.title).toBe("Renamed again");
       yield* Deferred.succeed(releasePage, undefined);
     }
-    while (resumed.history.loading) resumed = yield* Queue.take(views);
+    if (rolledBack) {
+      yield* Deferred.await(pageStarted);
+      yield* Queue.offer(reopened.items, {
+        kind: "event",
+        sequence: 9,
+        event: {
+          id: EventId.make("rollback-during-backfill"),
+          type: "run.updated",
+          threadId: v2ThreadId,
+          runId: run.id,
+          occurredAt: v2Now,
+          payload: { ...run, status: "rolled_back" },
+        },
+      });
+      resumed = yield* Queue.take(views);
+      expect(resumed.thread.sequence).toBe(9);
+      yield* Deferred.succeed(releasePage, undefined);
+    }
+    while (resumed.history.loading) {
+      resumed = yield* Queue.take(views);
+      if (rolledBack) {
+        expect(
+          resumed.thread.projection?.visibleTurnItems.map((row) => row.sourceItemId),
+        ).not.toContain(older.sourceItemId);
+      }
+    }
     if (change === "history request fails") {
       expect(resumed.history.failed).toBe(true);
       unmount();
@@ -396,19 +458,24 @@ it.effect.each([
       while (resumed.history.loading) resumed = yield* Queue.take(views);
     }
     expect(resumed.thread.projection?.visibleTurnItems.map((row) => row.sourceItemId)).toEqual([
-      ...(removed || change === "window moves" ? [oldest.sourceItemId] : []),
-      ...(removed ? [] : [older.sourceItemId]),
+      ...(removed || rolledBack || change === "window moves" ? [oldest.sourceItemId] : []),
+      ...(removed || rolledBack ? [] : [older.sourceItemId]),
       ...between.map((row) => row.sourceItemId),
       recent.sourceItemId,
       ...(moved ? [latest.sourceItemId] : []),
     ]);
     expect(resumed.thread.historyCursor).toBe(
-      removed || change === "window moves" ? null : refetched ? restoredNext : originalNext,
+      removed || rolledBack || change === "window moves"
+        ? null
+        : refetched
+          ? restoredNext
+          : originalNext,
     );
     expect(requested).toEqual([
       originalCursor,
       ...(refetched ? [refreshedCursor] : []),
       ...(change === "window moves" ? [refreshedNext] : []),
+      ...(rolledBack ? [restoredNext] : []),
       ...(change === "history request fails" ? [refreshedCursor] : []),
     ]);
   }).pipe(Effect.scoped),

@@ -425,7 +425,8 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
           const nextCursor = thread.historyCursor;
           if (
             restoreThrough !== null &&
-            (nextCursor === null || includesHistoryAnchor(page.success.items, restoreThrough))
+            (nextCursor === null ||
+              includesHistoryAnchor(thread.projection?.visibleTurnItems ?? [], restoreThrough))
           ) {
             restoreThrough = null;
           }
