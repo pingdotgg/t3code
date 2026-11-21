@@ -283,6 +283,24 @@ describe("IssueService", () => {
         yield* enterprise.resolveUrl("https://code.acme.test/acme/web/issues/7"),
       ).toMatchObject({ projectId: "ghes", host: "code.acme.test", key: "7", writable: true });
 
+      // The same holds for a self-hosted Forgejo.
+      const forgejo = yield* makeService({
+        projects: [
+          project({
+            id: "forge",
+            repository: "acme/web",
+            provider: "forgejo",
+            host: "code.acme.test",
+          }),
+        ],
+        trackers: [fakeTracker({ kind: IssueTrackerKind.make("forgejo") })],
+      });
+      expect(yield* forgejo.resolveUrl("https://code.acme.test/acme/web/issues/7")).toMatchObject({
+        projectId: "forge",
+        host: "code.acme.test",
+        key: "7",
+      });
+
       // A fork lists its upstream's issues and its own, counted once, and may write to both.
       const fork = project({ id: "fork", repository: "acme/web" });
       const forked = yield* makeService({
@@ -598,14 +616,17 @@ describe("IssueService with a standalone tracker", () => {
     }),
   );
 
-  it.effect("lists a bound project's standalone scope beside its git host and serves both", () =>
+  it.effect("lists a bound project's standalone scopes beside its git host and serves them", () =>
     Effect.gen(function* () {
       const listed: string[] = [];
       const record = (tracker: IssueTrackerKind): Partial<IssueTrackerApi> => ({
         listIssues: (input) =>
           Effect.sync(() => {
             listed.push(`${tracker} ${input.host} ${input.scope}`);
-            return { items: [issue(tracker === LINEAR ? "ENG-1" : "1")], nextCursor: null };
+            return {
+              items: [issue(tracker === LINEAR ? `${input.scope}-1` : "1")],
+              nextCursor: null,
+            };
           }),
       });
       const projects = [project({ id: "web", repository: "acme/web" }), project({ id: "notes" })];
@@ -613,7 +634,9 @@ describe("IssueService with a standalone tracker", () => {
       const bound = yield* makeService({
         projects: [...projects, project({ id: "api", repository: "acme/api" })],
         trackers,
-        bindings: { ["web" as ProjectId]: { tracker: LINEAR, scope: "ENG" } },
+        bindings: {
+          ["web" as ProjectId]: { tracker: LINEAR, scope: "ENG", additionalScopes: ["OPS"] },
+        },
       });
 
       const result = yield* bound.list({ state: "open" });
@@ -621,17 +644,23 @@ describe("IssueService with a standalone tracker", () => {
         "github github.com acme/api",
         "github github.com acme/web",
         "linear linear.app ENG",
+        "linear linear.app OPS",
       ]);
       expect(result.entries.map((entry) => [entry.tracker, entry.scope, entry.key]).sort()).toEqual(
         [
           ["github", "acme/api", "1"],
           ["github", "acme/web", "1"],
           ["linear", "ENG", "ENG-1"],
+          ["linear", "OPS", "OPS-1"],
         ],
       );
-      expect(result.trackers.map((tracker) => [tracker.tracker, tracker.host]).sort()).toEqual([
-        ["github", "github.com"],
-        ["linear", "linear.app"],
+      expect(
+        result.trackers
+          .map((tracker) => [tracker.tracker, tracker.host, tracker.projectCount])
+          .sort(),
+      ).toEqual([
+        ["github", "github.com", 2],
+        ["linear", "linear.app", 1],
       ]);
       expect(result.scopes).toContainEqual({
         projectId: "web",
@@ -642,9 +671,14 @@ describe("IssueService with a standalone tracker", () => {
       // Narrowed to one project, both of its trackers are still read.
       listed.length = 0;
       const selected = yield* bound.list({ state: "open", projectId: "web" as ProjectId });
-      expect(listed.sort()).toEqual(["github github.com acme/web", "linear linear.app ENG"]);
+      expect(listed.sort()).toEqual([
+        "github github.com acme/web",
+        "linear linear.app ENG",
+        "linear linear.app OPS",
+      ]);
       expect(selected.entries.map((entry) => [entry.projectId, entry.scope]).sort()).toEqual([
         ["web", "ENG"],
+        ["web", "OPS"],
         ["web", "acme/web"],
       ]);
       listed.length = 0;
@@ -658,6 +692,14 @@ describe("IssueService with a standalone tracker", () => {
         key: "ENG-1",
       };
       expect(yield* bound.detail(linearRef)).toMatchObject({ host: "linear.app", writable: true });
+      expect(yield* bound.detail({ ...linearRef, scope: "OPS", key: "OPS-1" })).toMatchObject({
+        writable: true,
+      });
+      expect(yield* bound.detail({ ...linearRef, scope: "QA", key: "QA-1" })).toMatchObject({
+        writable: false,
+      });
+      expect((yield* bound.projectScope("web" as ProjectId)).scope).toBe("ENG");
+      expect((yield* bound.projectScope("web" as ProjectId, "ops-12")).scope).toBe("OPS");
       expect(
         yield* bound.detail({
           projectId: "web" as ProjectId,

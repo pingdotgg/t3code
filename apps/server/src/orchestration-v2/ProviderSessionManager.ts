@@ -2,18 +2,21 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  CommandId,
   isOrchestrationV2WorkActive,
   ModelSelection,
   type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   type OrchestrationV2PromptSuggestion,
+  type OrchestrationV2RestartCancelledBackgroundWork as Work,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   ProviderInstanceId,
   ProviderSessionId,
+  type RunId,
   ThreadId,
   type OrchestrationV2TurnItem,
   type ProviderThreadId,
@@ -54,7 +57,15 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import {
+  awaitingProviderThreadId,
+  cancelledRosterTaskWork,
+  cancelledTurnItemWork,
+  latestStartedRun,
+  mergeRestartCancelledBackgroundWork,
+} from "./RestartBackgroundNote.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -141,6 +152,15 @@ export type ProviderSessionReleaseReason = typeof ProviderSessionReleaseReason.T
 const releasedToolCallTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]> = [
   "command_execution",
   "dynamic_tool",
+];
+const lostWorkItemTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]> = [
+  ...releasedToolCallTypes,
+  "subagent",
+];
+const lostTurnItemStatuses: ReadonlyArray<OrchestrationV2TurnItem["status"]> = [
+  "interrupted",
+  "failed",
+  "cancelled",
 ];
 const activeTurnItemStatuses: ReadonlyArray<OrchestrationV2TurnItem["status"]> = [
   "pending",
@@ -950,8 +970,20 @@ export const layerWithOptions = (
             const projection = yield* projectionStore.getThreadRecords(threadId, [
               "providerThreads",
             ]);
-            for (const providerThread of projection.providerThreads) {
-              if (providerThread.providerSessionId !== providerSessionId) continue;
+            const sessionThreads = projection.providerThreads.filter(
+              (providerThread) => providerThread.providerSessionId === providerSessionId,
+            );
+            // Read before subscribers fail: a run's consumer may end this work first.
+            const openItems =
+              input.reason === "runtime_error" && sessionThreads.length > 0
+                ? (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+                    turnItemTypes: lostWorkItemTypes,
+                    turnItemStatuses: activeTurnItemStatuses,
+                  })).turnItems
+                : [];
+            for (const providerThread of sessionThreads) {
+              const noteLostWork =
+                input.reason === "runtime_error" && providerThread.ownerNodeId === null;
               released.push({
                 threadId,
                 providerSessionId,
@@ -960,6 +992,14 @@ export const layerWithOptions = (
                 taskIds: new Set(
                   (providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId),
                 ),
+                lostTasks: noteLostWork ? (providerThread.pendingBackgroundTasks ?? []) : [],
+                lostItems: noteLostWork
+                  ? openItems.filter(
+                      (item) =>
+                        item.providerThreadId === providerThread.id &&
+                        (item.type !== "subagent" || item.origin === "provider_native"),
+                    )
+                  : [],
               });
             }
           }
@@ -1050,23 +1090,36 @@ export const layerWithOptions = (
         // after each pass: queued events can also store more cut-off items.
         let pending = yield* readCutOff;
         for (let pass = 0; pass < 3 && pending.length > 0; pass++) {
+          const { nodes } = yield* projectionStore.getThreadRecords(threadId, ["nodes"], {
+            nodeIds: pending.flatMap((item) => (item.nodeId === null ? [] : [item.nodeId])),
+          });
           for (const item of pending) {
             const now = yield* DateTime.now;
-            yield* eventSink.writeIfTurnItemUnchanged({
-              expected: item,
-              events: [
-                {
-                  id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
-                  type: "turn-item.updated",
-                  threadId,
-                  ...(item.runId === null ? {} : { runId: item.runId }),
-                  ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
-                  driver,
-                  occurredAt: now,
-                  payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
-                },
-              ],
+            const node = nodes.find((candidate) => candidate.id === item.nodeId);
+            const events: Array<OrchestrationV2DomainEvent> = [];
+            if (node !== undefined && isOrchestrationV2WorkActive(node.status)) {
+              events.push({
+                id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                type: "node.updated",
+                threadId,
+                ...(node.runId === null ? {} : { runId: node.runId }),
+                nodeId: node.id,
+                driver,
+                occurredAt: now,
+                payload: { ...node, status: "interrupted", completedAt: now },
+              });
+            }
+            events.push({
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "turn-item.updated",
+              threadId,
+              ...(item.runId === null ? {} : { runId: item.runId }),
+              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+              driver,
+              occurredAt: now,
+              payload: { ...item, status: "interrupted", completedAt: now, updatedAt: now },
             });
+            yield* eventSink.writeIfTurnItemUnchanged({ expected: item, events });
           }
           pending = yield* readCutOff;
         }
@@ -1168,6 +1221,75 @@ export const layerWithOptions = (
         });
       });
 
+      // Like restart recovery: an unexpected exit records the work it cancelled on the run that
+      // started it and wakes that run, so the agent restarts awaited work instead of waiting on it.
+      const writeReleasedWorkNote = Effect.fn("ProviderSessionManager.writeReleasedWorkNote")(
+        function* (released: ReleasedProviderThread) {
+          const { threadId, providerSessionId, lostTasks, lostItems } = released;
+          if (lostTasks.length === 0 && lostItems.length === 0) return;
+          const { runs, turnItems } = yield* projectionStore.getThreadRecords(
+            threadId,
+            ["runs", "turnItems"],
+            { turnItemTypes: lostWorkItemTypes, turnItemStatuses: lostTurnItemStatuses },
+          );
+          // Either this release or the run's consumer ended it; a late completion means it finished.
+          const lostItemIds = new Set(lostItems.map((item) => item.id));
+          const lost = [
+            ...lostTasks.map((task) => ({
+              providerThreadId: released.providerThreadId,
+              work: cancelledRosterTaskWork(task),
+            })),
+            ...turnItems.flatMap((item) => {
+              const work = lostItemIds.has(item.id) ? cancelledTurnItemWork(item) : undefined;
+              const providerThreadId = awaitingProviderThreadId(item, runs);
+              return work === undefined || providerThreadId == null
+                ? []
+                : [{ providerThreadId, work }];
+            }),
+          ];
+          const workByRun = new Map<RunId, { run: OrchestrationV2Run; work: Array<Work> }>();
+          for (const { providerThreadId, work } of lost) {
+            const run = latestStartedRun(runs, providerThreadId);
+            if (run === undefined) continue;
+            const entry = workByRun.get(run.id) ?? { run, work: [] };
+            entry.work.push(work);
+            workByRun.set(run.id, entry);
+          }
+          if (workByRun.size === 0) return;
+          const now = yield* DateTime.now;
+          const events: Array<OrchestrationV2DomainEvent> = [];
+          const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = [];
+          for (const { run, work } of workByRun.values()) {
+            events.push({
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "run.background-work-cancelled",
+              threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                runId: run.id,
+                restartCancelledBackgroundWork: mergeRestartCancelledBackgroundWork(
+                  run.restartCancelledBackgroundWork ?? [],
+                  work,
+                ),
+              },
+            });
+            effects.push({
+              id: `effect:restart-continuation:${run.id}`,
+              commandId: CommandId.make(`command:provider-exit-continuation:${run.id}`),
+              threadId,
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: run.id,
+                cause: "provider_exit",
+              },
+            });
+          }
+          yield* eventSink.writeWithEffects({ events, effects });
+        },
+      );
+
       const writeReleasedBackgroundWorkEvents = (
         released: ReadonlyArray<ReleasedProviderThread>,
         releasedAt: DateTime.Utc,
@@ -1178,6 +1300,7 @@ export const layerWithOptions = (
             writeReleasedRosterEvents(providerThread).pipe(
               Effect.andThen(writeReleasedToolCallEvents(providerThread, releasedAt)),
               Effect.andThen(writeReleasedSubagentEvents(providerThread, releasedAt)),
+              Effect.andThen(writeReleasedWorkNote(providerThread)),
             ),
           { discard: true },
         );
