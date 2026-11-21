@@ -512,6 +512,7 @@ export const make = Effect.gen(function* () {
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
     mapError: (error: VcsError) => GitLabCliError,
+    notFoundDetail?: string,
   ) =>
     process
       .run({
@@ -527,7 +528,7 @@ export const make = Effect.gen(function* () {
             : {}),
         },
         classifyFailure: classifyGlabFailure,
-        notFoundDetail: "Merge request not found.",
+        ...(notFoundDetail === undefined ? {} : { notFoundDetail }),
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
@@ -547,16 +548,19 @@ export const make = Effect.gen(function* () {
     readonly reference: string;
     readonly args: ReadonlyArray<string>;
   }) =>
-    run(input, (error) =>
-      GitLabMergeRequestNotFoundError.fromVcsError(
-        {
-          operation: "execute",
-          command: "glab",
-          cwd: input.cwd,
-          reference: input.reference,
-        },
-        error,
-      ),
+    run(
+      input,
+      (error) =>
+        GitLabMergeRequestNotFoundError.fromVcsError(
+          {
+            operation: "execute",
+            command: "glab",
+            cwd: input.cwd,
+            reference: input.reference,
+          },
+          error,
+        ),
+      "Merge request not found.",
     );
 
   return GitLabCli.of({

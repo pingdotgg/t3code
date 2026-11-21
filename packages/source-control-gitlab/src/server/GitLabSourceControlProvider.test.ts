@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCli from "./GitLabCli.ts";
 import { parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
@@ -18,7 +19,11 @@ import { definition } from "../shared/definition.ts";
 function makeProvider(gitlab: Partial<GitLabCli.GitLabCli["Service"]>) {
   return GitLabSourceControlProvider.make.pipe(
     Effect.provide(
-      Layer.mergeAll(Layer.mock(GitLabCli.GitLabCli)(gitlab), TestSourceControlHost.layer()),
+      Layer.mergeAll(
+        Layer.mock(GitLabCli.GitLabCli)(gitlab),
+        TestSourceControlHost.layer(),
+        SourceControlRateLimit.layer,
+      ),
     ),
   );
 }
@@ -215,6 +220,51 @@ it.effect(
     }),
 );
 
+it.effect("holds background merge request lookups while the host is rate-limit paused", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const provider = yield* makeProvider({
+      listMergeRequests: () =>
+        Effect.suspend(() => {
+          calls += 1;
+          return calls === 1
+            ? Effect.fail(
+                new GitLabCli.GitLabCliRateLimitError({
+                  operation: "execute",
+                  command: "glab",
+                  cwd: "/repo",
+                  cause: new Error("429"),
+                }),
+              )
+            : Effect.succeed([]);
+        }),
+    });
+    const lookup = provider.listChangeRequests({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("gitlab"),
+          name: "GitLab",
+          baseUrl: "https://gitlab.com",
+        },
+        remoteName: "origin",
+        remoteUrl: "https://gitlab.com/group/project.git",
+      },
+      headSelector: "feature",
+      state: "open",
+    });
+
+    yield* Effect.flip(lookup);
+    const paused = yield* Effect.flip(lookup);
+    assert.propertyVal(paused.cause, "_tag", "SourceControlRateLimitPausedError");
+    assert.propertyVal(paused.cause, "host", "gitlab.com");
+    assert.strictEqual(calls, 1);
+
+    yield* lookup.pipe(Effect.provideService(SourceControlRateLimit.Interactive, true));
+    assert.strictEqual(calls, 2);
+  }),
+);
+
 it.effect.each(["merge_requests", "issues"])(
   "resolves %s subjects on the linked host without using the checkout",
   (kind) =>
@@ -343,8 +393,9 @@ it.effect.each([
     });
     const provider = yield* GitLabSourceControlProvider.make.pipe(
       Effect.provide(
-        Layer.merge(
+        Layer.mergeAll(
           host,
+          SourceControlRateLimit.layer,
           GitLabCli.layer.pipe(
             Layer.provide(host),
             Layer.provide(FileSystem.layerNoop({ readFileString: () => Effect.succeed("Body") })),

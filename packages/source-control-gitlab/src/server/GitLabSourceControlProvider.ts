@@ -12,6 +12,7 @@ import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabChangeRequestTemplate from "./gitLabChangeRequestTemplate.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
   combinedAuthOutput,
   firstSafeAuthLine,
@@ -169,6 +170,30 @@ export const discovery = {
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
   const { git } = yield* SourceControlHost.SourceControlHost;
+  const limits = yield* SourceControlRateLimit.SourceControlRateLimit;
+
+  /**
+   * Shares the pause PullRequestService keys by the project's host, so background branch lookups
+   * do not keep spending a throttled quota. Interactive reads still go out.
+   */
+  const throttled = Effect.fn("GitLabSourceControlProvider.throttled")(function* <A>(
+    context: SourceControlProvider.SourceControlProviderContext | undefined,
+    effect: Effect.Effect<A, GitLabCli.GitLabCliError>,
+  ) {
+    const host = context === undefined ? undefined : URL.parse(context.provider.baseUrl)?.hostname;
+    if (!host) return yield* effect;
+    const key = { provider: SourceControlProviderKind.make("gitlab"), host };
+    const interactive = yield* SourceControlRateLimit.Interactive;
+    const lease = yield* limits.check(key, interactive ? { allowPaused: true } : undefined);
+    return yield* effect.pipe(
+      Effect.tap(() => limits.recordSuccess({ ...key, lease })),
+      Effect.tapError((error) =>
+        error._tag === "GitLabCliRateLimitError"
+          ? limits.recordRateLimit({ ...key, lease })
+          : Effect.void,
+      ),
+    );
+  });
 
   const readLinkSubject = Effect.fn("GitLabSourceControlProvider.readLinkSubject")(function* (
     input: { readonly cwd: string; readonly url: URL },
@@ -237,31 +262,34 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("GitLabSourceControlProvider.listChangeRequests")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
-        return gitlab
-          .listMergeRequests({
+        return throttled(
+          input.context,
+          gitlab.listMergeRequests({
             cwd: input.cwd,
             headSelector: input.headSelector,
             ...(source ? { source } : {}),
             state: input.state,
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
-          })
-          .pipe(
-            Effect.map((items) => items.map(toChangeRequest)),
-            Effect.mapError(
-              (error) =>
-                new SourceControlProviderError({
-                  provider: SourceControlProviderKind.make("gitlab"),
-                  operation: "listChangeRequests",
-                  command: error.command,
-                  cwd: input.cwd,
-                  reference: SourceControlProvider.transportSafeSourceControlErrorValue(
-                    input.headSelector,
-                  ),
-                  detail: error.detail,
-                  cause: error,
-                }),
-            ),
-          );
+          }),
+        ).pipe(
+          Effect.map((items) => items.map(toChangeRequest)),
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: SourceControlProviderKind.make("gitlab"),
+                operation: "listChangeRequests",
+                ...(error._tag === "SourceControlRateLimitPausedError"
+                  ? {}
+                  : { command: error.command }),
+                cwd: input.cwd,
+                reference: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.headSelector,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
+        );
       },
     ),
     getChangeRequest: Effect.fn("GitLabSourceControlProvider.getChangeRequest")(function (input) {

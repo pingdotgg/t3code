@@ -11,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as GitLabCli from "./GitLabCli.ts";
@@ -61,6 +62,7 @@ it.effect("lists a nested-group fork's merge requests by source branch and names
             }),
           ),
           Layer.provide(FileSystem.layerNoop({})),
+          Layer.provideMerge(SourceControlRateLimit.layer),
         ),
       ),
     );
@@ -135,7 +137,9 @@ const withRepository = <A, E>(
     yield* git("add", "README.md");
     yield* git("commit", "-m", "Initial commit");
     const provider = yield* GitLabSourceControlProvider.make.pipe(
-      Effect.provide(Layer.mock(GitLabCli.GitLabCli)({})),
+      Effect.provide(
+        Layer.merge(Layer.mock(GitLabCli.GitLabCli)({}), SourceControlRateLimit.layer),
+      ),
     );
     return yield* test({
       git,
