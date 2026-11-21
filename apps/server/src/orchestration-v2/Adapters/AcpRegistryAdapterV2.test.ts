@@ -1165,6 +1165,56 @@ describe("AcpRegistryAdapterV2", () => {
       },
     );
 
+    // Mistral Vibe 3.1 keeps a renamed model's old ID as a catalog alias and
+    // resolves it in session/set_config_option, so the agent judges a stored
+    // name it no longer lists.
+    it.effect.each([
+      { name: "resolves", stored: "mistral-large-4-0-3", resolvedTo: "mistral-large-4-0" },
+      { name: "rejects", stored: "missing", resolvedTo: undefined },
+      { name: "keeps default", stored: "default", resolvedTo: "mistral-medium-latest" },
+    ] as const)("lets Mistral Vibe judge an unlisted stored model: $name", (testCase) => {
+      const vibeModel = (currentValue: string) => ({
+        ...modelOption("model", currentValue),
+        options: ["mistral-large-4-0", "mistral-medium-latest"].map((value) => ({
+          value,
+          name: value,
+        })),
+      });
+      return Effect.gen(function* () {
+        const { configurations } = yield* openWithStoredPicks({
+          agentId: "mistral-vibe",
+          setup: { configOptions: [vibeModel("mistral-medium-latest")] },
+          storedModel: testCase.stored,
+          ...(testCase.resolvedTo === undefined ? { rejectedModel: testCase.stored } : {}),
+          pickFrames:
+            testCase.stored === "default"
+              ? []
+              : [
+                  outbound("session/set_config_option", {
+                    sessionId: "agent-session",
+                    configId: "model",
+                    value: testCase.stored,
+                  }),
+                  testCase.resolvedTo === undefined
+                    ? {
+                        type: "emit_inbound",
+                        frame: {
+                          kind: "response",
+                          method: "session/set_config_option",
+                          error: { code: -32602, message: `Unknown model: ${testCase.stored}` },
+                        },
+                      }
+                    : answer("session/set_config_option", {
+                        configOptions: [vibeModel(testCase.resolvedTo)],
+                      }),
+                ],
+        });
+        if (testCase.resolvedTo !== undefined) {
+          assert.equal(configurations[0]?.currentModelId, testCase.resolvedTo);
+        }
+      }).pipe(Effect.provide(layerTest));
+    });
+
     // regression: #19519 models come from session model state, not a hardcoded list
     it.effect("keeps unadvertised default and auto selections agent-controlled", () =>
       Effect.gen(function* () {
