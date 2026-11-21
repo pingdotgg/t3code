@@ -1716,13 +1716,17 @@ const make = Effect.gen(function* () {
         proofKeyThumbprint: proof.clientProofKeyThumbprint,
         requireApproval: settings.requireConnectDeviceApproval,
       });
+      // The host enforces the credential on its own clock; the relay checks this expiry on its clock.
+      const relayExpiresAt = DateTime.add(issued.expiresAt, {
+        milliseconds: yield* Ref.get(relayClockOffsetMillis),
+      });
       const responsePayload = {
         iss: `t3-env:${environmentId}`,
         aud: normalizeRelayIssuer(relayIssuer),
         sub: environmentId,
         jti: yield* random.uuidV4(),
         iat: nowSeconds,
-        exp: Math.floor(issued.expiresAt.epochMilliseconds / 1_000),
+        exp: Math.floor(relayExpiresAt.epochMilliseconds / 1_000),
         environmentId,
         clientProofKeyThumbprint: proof.clientProofKeyThumbprint,
         requestNonce: proof.nonce,
@@ -1743,7 +1747,7 @@ const make = Effect.gen(function* () {
         );
       return {
         credential: issued.credential,
-        expiresAt: DateTime.formatIso(issued.expiresAt),
+        expiresAt: DateTime.formatIso(relayExpiresAt),
         proof: responseProof,
       } satisfies RelayEnvironmentMintResponse;
     },

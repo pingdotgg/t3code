@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,6 +16,7 @@ import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } fr
 import {
   RELAY_HEALTH_REQUEST_TYP,
   RELAY_LINK_PROOF_TYP,
+  RELAY_MINT_REQUEST_TYP,
   signRelayJwt,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
@@ -236,7 +238,16 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         Effect.provideService(
           EnvironmentAuth.EnvironmentAuth,
-          EnvironmentAuth.EnvironmentAuth.of({} as EnvironmentAuth.EnvironmentAuth["Service"]),
+          EnvironmentAuth.EnvironmentAuth.of({
+            // Credentials expire two minutes after the host's clock (the epoch, here).
+            issueConnectCredential: () =>
+              Effect.succeed({
+                credential: "connect-credential",
+                expiresAt: DateTime.makeUnsafe(120_000),
+              }),
+          } as Partial<
+            EnvironmentAuth.EnvironmentAuth["Service"]
+          > as EnvironmentAuth.EnvironmentAuth["Service"]),
         ),
         Effect.provideService(
           CliTokenManager.CloudCliTokenManager,
@@ -731,6 +742,30 @@ describe("releaseManagedTunnelOnShutdown", () => {
         expect(yield* link.answerHealthRequest({ proof: healthProof })).toMatchObject({
           status: "online",
         });
+
+        // The relay checks the minted credential's expiry on its clock: 120 s after its 180 s.
+        const mintProof = yield* signRelayJwt({
+          privateKey: relayKeys.privateKey,
+          typ: RELAY_MINT_REQUEST_TYP,
+          payload: {
+            iss: "https://relay.example.test",
+            aud: "t3-env:env_123",
+            sub: "user-123",
+            jti: "mint-jti",
+            iat: 180,
+            exp: 300,
+            environmentId: "env_123",
+            clientProofKeyThumbprint: "client-jkt",
+            cnf: { jkt: "client-jkt" },
+            nonce: "mint-nonce",
+            scope: ["environment:connect"],
+          },
+        });
+        const minted = yield* link.mintCredential({ proof: mintProof });
+        expect(minted.expiresAt).toBe("1970-01-01T00:05:00.000Z");
+        expect(
+          JSON.parse(Buffer.from(minted.proof.split(".")[1]!, "base64url").toString()),
+        ).toMatchObject({ iat: 180, exp: 300 });
       }).pipe(
         provideReleaseHarness({
           store,
