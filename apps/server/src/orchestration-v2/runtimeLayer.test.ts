@@ -12084,7 +12084,13 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
 });
 
 it.layer(layerTest)("snooze queued runs", (it) => {
-  it.effect.each(["notification", "delegated-completion", "user", "limited-user"] as const)(
+  it.effect.each([
+    "notification",
+    "delegated-completion",
+    "scheduled-task",
+    "user",
+    "limited-user",
+  ] as const)(
     "only user messages block snooze with a queued %s run, unless a usage limit holds them",
     (kind) =>
       Effect.gen(function* () {
@@ -12154,8 +12160,17 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" || kind === "limited-user" ? "user" : "agent",
-          creationSource: kind === "user" || kind === "limited-user" ? "web" : "server",
+          createdBy:
+            kind === "user" || kind === "limited-user" || kind === "scheduled-task"
+              ? "user"
+              : "agent",
+          creationSource:
+            kind === "user" || kind === "limited-user" || kind === "scheduled-task"
+              ? "web"
+              : "server",
+          ...(kind === "scheduled-task"
+            ? { scheduledTaskId: ScheduledTaskId.make(`${threadId}:task`) }
+            : {}),
           ...(kind === "notification"
             ? {
                 notification: {
@@ -12272,7 +12287,7 @@ it.layer(layerTest)("snooze queued runs", (it) => {
       }),
   );
 
-  it.effect.each(["notification", "user"] as const)(
+  it.effect.each(["notification", "scheduled task", "user"] as const)(
     "a %s message on a snoozed thread keeps the snooze only when automatic",
     (kind) =>
       Effect.gen(function* () {
@@ -12308,8 +12323,8 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           attachments: [],
           modelSelection,
           dispatchMode: { type: "queue_after_active" },
-          createdBy: kind === "user" ? "user" : "agent",
-          creationSource: kind === "user" ? "web" : "provider",
+          createdBy: kind === "notification" ? "agent" : "user",
+          creationSource: kind === "notification" ? "provider" : "web",
           ...(kind === "notification"
             ? {
                 notification: {
@@ -12318,6 +12333,9 @@ it.layer(layerTest)("snooze queued runs", (it) => {
                   summary: "Background activity updated",
                 },
               }
+            : {}),
+          ...(kind === "scheduled task"
+            ? { scheduledTaskId: ScheduledTaskId.make(`${threadId}:task`) }
             : {}),
         });
         const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;

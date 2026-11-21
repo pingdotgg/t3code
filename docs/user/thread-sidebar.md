@@ -372,6 +372,6 @@ you confirm; one day means 24 hours. On web and desktop, you can also snooze
 several selected threads together. Choose **Wake thread** to bring a thread back early.
 
 A snoozed thread keeps working and stays hidden until its wake time, even while
-its agent wakes itself for background work. It comes back early for an approval,
+its agent wakes itself for background work or a scheduled task runs in it. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
