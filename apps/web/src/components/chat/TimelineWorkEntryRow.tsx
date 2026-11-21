@@ -27,7 +27,7 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { memo, use, useState, type KeyboardEvent } from "react";
+import { memo, use, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
@@ -42,6 +42,7 @@ import * as DateTime from "effect/DateTime";
 import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
+import { observeResize } from "../../lib/observeResize";
 import { useThreadShell } from "../../state/entities";
 import {
   threadReadTargetId,
@@ -300,6 +301,20 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
+  const noticeMessage =
+    workEntry.structuredPayload?.type === "system_notice"
+      ? workEntry.structuredPayload.message
+      : null;
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const [noticeCutOff, setNoticeCutOff] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- only layout knows whether a notice fits its row
+  useLayoutEffect(() => {
+    const label = labelRef.current;
+    if (!label || noticeMessage === null) return;
+    const measure = () => setNoticeCutOff(label.scrollWidth > label.clientWidth);
+    measure();
+    return observeResize(label, measure);
+  }, [noticeMessage]);
   const onInitialOutputReady = () => {
     if (groupView) groupView.onContentReady?.(workEntry.id);
     else props.onContentReady?.();
@@ -479,9 +494,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     plainOutput !== undefined &&
     workEntry.projectedItem !== undefined &&
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
-  // A sign-in notice is one line, so expanding it would only repeat the row.
+  // A notice's details repeat its row, so it expands only to show text the row cuts off.
   const canExpandProjectedItem =
-    mcpSignIn === null &&
+    (noticeMessage === null || noticeCutOff) &&
     (plainOutput !== undefined
       ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
       : workEntry.projectedItem === undefined
@@ -559,6 +574,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <div className="min-w-0 flex-1 overflow-hidden">
           <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
             <span
+              ref={labelRef}
               className={cn(
                 answerPreview || mcpSignIn ? "min-w-0" : "min-w-0 flex-1",
                 "truncate",
@@ -610,12 +626,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       }
       trailing={
         <>
-          {/* First, so revealing it takes label space instead of moving the controls. A label
-              that ends in an action keeps that space reserved, so the action stays put too. */}
+          {/* First, so revealing it takes label space instead of moving the controls. Notices
+              keep that space reserved, so hovering never changes what fits or moves Sign in. */}
           <TimelineRowTimestamp
             createdAt={workEntry.createdAt}
             timestampFormat={timestampFormat}
-            className={mcpSignIn ? "static" : ""}
+            className={noticeMessage === null ? "" : "static"}
           />
           {createdThread ? (
             <button
