@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -101,10 +102,10 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     downloadUpdate: Effect.sync(() => {
       downloadCount += 1;
     }).pipe(Effect.andThen(options.downloadUpdate ?? Effect.void)),
-    quitAndInstall: () =>
+    quitAndInstall: ({ isForceRunAfter }) =>
       Effect.sync(() => {
         quitAndInstallCount += 1;
-        installSteps.push("quitAndInstall");
+        installSteps.push(isForceRunAfter ? "quitAndInstall" : "quitAndInstall:noRunAfter");
       }).pipe(Effect.andThen(options.quitAndInstall ?? Effect.void)),
     on: (eventName, listener) =>
       Effect.acquireRelease(
@@ -136,6 +137,13 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     }),
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"]);
+
+  const layerApp = Layer.mock(ElectronApp.ElectronApp, {
+    relaunch: () =>
+      Effect.sync(() => {
+        installSteps.push("relaunch");
+      }),
+  });
 
   const layerSshEnvironment = Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {
     closeAllTunnels: Effect.sync(() => {
@@ -295,6 +303,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     Layer.provide(DesktopUpdatePolicy.layerTest(options.policy)),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),
+    Layer.provideMerge(layerApp),
     Layer.provideMerge(layerBackend),
     Layer.provideMerge(layerSshEnvironment),
     Layer.provideMerge(DesktopState.layer),
