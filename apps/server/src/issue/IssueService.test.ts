@@ -274,6 +274,22 @@ describe("IssueService", () => {
         host: "gitea.test",
       });
 
+      // A port-bearing link names a distinct server; a default-port-only binding must not serve it.
+      const defaultPortOnly = yield* makeService({
+        projects: [
+          project({ id: "plain", repository: "acme/web", provider: "forgejo", host: "gitea.test" }),
+        ],
+        trackers: [fakeTracker({ kind: IssueTrackerKind.make("forgejo") })],
+      });
+      expect(
+        yield* defaultPortOnly
+          .resolveUrl("https://gitea.test:8443/acme/web/issues/3")
+          .pipe(Effect.result),
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "IssueUnavailableError", reason: "tracker-unsupported" },
+      });
+
       // A GitHub Enterprise Server's hostname need not say "github"; its project vouches for it.
       const enterprise = yield* makeService({
         projects: [project({ id: "ghes", repository: "acme/web", host: "code.acme.test" })],
