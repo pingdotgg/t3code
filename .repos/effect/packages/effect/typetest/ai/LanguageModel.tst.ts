@@ -1,4 +1,4 @@
-import { Context, Effect, Schema, SchemaGetter, type Stream } from "effect"
+import { Context, Effect, type Option, Schema, SchemaGetter, type Stream } from "effect"
 import { type AiError, type Chat, LanguageModel, Tool, Toolkit } from "effect/ai"
 import type * as Response from "effect/ai/Response"
 import { describe, expect, it } from "tstyche"
@@ -67,7 +67,36 @@ describe("LanguageModel", () => {
       type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
       type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
 
-      expect<ToolCallParams>().type.toBe<string>()
+      expect<ToolCallParams>().type.toBe<Schema.Json>()
+    })
+
+    it("types encoded tool parameters as JSON when tool call resolution is disabled", () => {
+      const toolkit = Toolkit.make(Tool.make("Schedule", { parameters: Schema.Struct({ at: Schema.Date }) }))
+      const program = LanguageModel.generateText({
+        prompt: "hello",
+        toolkit,
+        disableToolCallResolution: true
+      })
+
+      type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
+      type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
+
+      expect<ToolCallParams>().type.toBeAssignableTo<Schema.Json>()
+    })
+
+    it("does not type JSON-encoded number parameters as numbers when tool call resolution is disabled", () => {
+      const toolkit = Toolkit.make(Tool.make("Measure", { parameters: Schema.Struct({ value: Schema.Number }) }))
+      const program = LanguageModel.generateText({
+        prompt: "hello",
+        toolkit,
+        disableToolCallResolution: true
+      })
+
+      type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
+      type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
+
+      // The JSON codec encodes non-finite numbers as strings, e.g. "Infinity"
+      expect<ToolCallParams>().type.not.toBeAssignableTo<{ readonly value: number }>()
     })
 
     it("uses opaque tool parameters when tool call resolution is enabled", () => {
@@ -310,7 +339,7 @@ describe("LanguageModel", () => {
       type StreamPart = typeof stream extends Stream.Stream<infer A, any, any> ? A : never
       type ToolCallParams = Extract<StreamPart, { readonly type: "tool-call" }>["params"]
 
-      expect<ToolCallParams>().type.toBe<string>()
+      expect<ToolCallParams>().type.toBe<Schema.Json>()
     })
 
     it("returns undeclared tool names with opaque parameters when tool call validation is deferred", () => {
@@ -376,6 +405,34 @@ describe("LanguageModel", () => {
   })
 
   describe("generateObject", () => {
+    it("infers the object value from allowEmpty", () => {
+      const schema = Schema.Struct({ answer: Schema.Number })
+      type Value = typeof schema.Type
+      const options = { prompt: "hello", schema }
+      const flag = null as unknown as boolean
+
+      Effect.gen(function*() {
+        const strictOptions: LanguageModel.GenerateObjectOptions<{}, typeof schema> = options
+        const strict = yield* LanguageModel.generateObject(strictOptions)
+        expect<typeof strict.value>().type.toBe<Value>()
+
+        expect(LanguageModel.generateObject<Record<string, any>, typeof schema, typeof options>)
+          .type.not.toBeCallableWith({ ...options, allowEmpty: true })
+
+        const absent = yield* LanguageModel.generateObject(options)
+        const enabled = yield* LanguageModel.generateObject({ ...options, allowEmpty: true })
+        const widened = yield* LanguageModel.generateObject({ ...options, allowEmpty: flag })
+
+        expect<typeof absent.value>().type.toBe<Value>()
+        expect<typeof enabled.value>().type.toBe<Option.Option<Value>>()
+        expect<typeof widened.value>().type.toBe<Value | Option.Option<Value>>()
+
+        const chat = null as unknown as Chat.Chat
+        const chatResponse = yield* chat.generateObject({ ...options, allowEmpty: true })
+        expect<typeof chatResponse.value>().type.toBe<Option.Option<Value>>()
+      })
+    })
+
     it("uses encoded tool parameters when tool call resolution is disabled", () => {
       const toolkit = Toolkit.make(TransformTool)
       const program = LanguageModel.generateObject({
@@ -388,7 +445,7 @@ describe("LanguageModel", () => {
       type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
       type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
 
-      expect<ToolCallParams>().type.toBe<string>()
+      expect<ToolCallParams>().type.toBe<Schema.Json>()
     })
   })
 
@@ -405,7 +462,7 @@ describe("LanguageModel", () => {
       type ProgramSuccess = typeof program extends Effect.Effect<infer A, any, any> ? A : never
       type ToolCallParams = ProgramSuccess["toolCalls"][number]["params"]
 
-      expect<ToolCallParams>().type.toBe<string>()
+      expect<ToolCallParams>().type.toBe<Schema.Json>()
     })
   })
 })

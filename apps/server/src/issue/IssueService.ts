@@ -29,6 +29,7 @@ import {
   type IssueTemplateList,
   type IssueTrackerSummary,
   type IssueTrackerProjectBinding,
+  issueTrackerBindingScopes,
   type IssueUpdateInput,
   type OrchestrationProjectShell,
   type ProjectId,
@@ -157,9 +158,10 @@ export class IssueService extends Context.Service<
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
     readonly setState: (input: IssueSetStateInput) => Effect.Effect<void, IssueError>;
     readonly react: (input: IssueReactionInput) => Effect.Effect<void, IssueError>;
-    /** The tracker and container a project's own issues live in. */
+    /** The tracker and container a project's own issues live in, or the one `key` names. */
     readonly projectScope: (
       projectId: ProjectId,
+      key?: string,
     ) => Effect.Effect<IssueScopeRef & { readonly host: string }, IssueError>;
     /**
      * Resolve through a matching project, preferring `preferredProjectId`; other scopes are read-only.
@@ -186,11 +188,18 @@ const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository;
 
-  const resolveStandaloneBinding = (binding: IssueTrackerProjectBinding | undefined) => {
-    if (binding === undefined) return null;
+  const resolveStandaloneBindings = (
+    binding: IssueTrackerProjectBinding | undefined,
+  ): ReadonlyArray<ProjectTrackerBinding> => {
+    if (binding === undefined) return [];
     const api = registry.get(binding.tracker);
-    if (api === null || !isStandaloneIssueTracker(api)) return null;
-    return { tracker: binding.tracker, host: api.standalone.host, scope: binding.scope };
+    if (api === null || !isStandaloneIssueTracker(api)) return [];
+    const host = api.standalone.host;
+    return issueTrackerBindingScopes(binding).map((scope) => ({
+      tracker: binding.tracker,
+      host,
+      scope,
+    }));
   };
 
   /**
@@ -206,9 +215,8 @@ const make = Effect.gen(function* () {
       : repositoryIdentities.resolve(project.workspaceRoot)
     ).pipe(
       Effect.map((repositoryIdentity) => {
-        const standalone = resolveStandaloneBinding(binding);
         const gitHost = resolveGitHostBindings({ ...project, repositoryIdentity });
-        return standalone === null ? gitHost : [standalone, ...gitHost];
+        return [...resolveStandaloneBindings(binding), ...gitHost];
       }),
     );
 
@@ -428,7 +436,7 @@ const make = Effect.gen(function* () {
           if (page._tag === "Failure") {
             if (cursor !== undefined) nextCursors[key] = cursor;
             recordFailure(project, page.failure);
-            // A fork reads two repositories, so its failure names the one that failed.
+            // A fork or a multi-team binding reads several scopes; the failure names its own.
             const forked = supported.some(
               (other) => other.project.id === project.project.id && other.scope !== project.scope,
             );
@@ -670,9 +678,12 @@ const make = Effect.gen(function* () {
 
   const projectScope: IssueService["Service"]["projectScope"] = Effect.fn(
     "IssueService.projectScope",
-  )(function* (projectId) {
+  )(function* (projectId, key) {
     const { supported } = yield* listProjects({ projectId });
-    const [own] = supported;
+    const prefix = key?.toLowerCase();
+    const own =
+      supported.find((candidate) => prefix?.startsWith(`${candidate.scope.toLowerCase()}-`)) ??
+      supported[0];
     if (own === undefined) {
       return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
     }
