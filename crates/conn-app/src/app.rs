@@ -148,6 +148,9 @@ impl ConnApp {
                 crate::panels::RightPanelEvent::OpenFile(path) => {
                     app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
                 }
+                crate::panels::RightPanelEvent::OpenTab(tab) => {
+                    app.select_right_panel_tab(*tab, cx);
+                }
             },
         )
         .detach();

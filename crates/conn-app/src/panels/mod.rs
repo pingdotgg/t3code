@@ -51,6 +51,8 @@ use self::terminal::TerminalPanel;
 pub(crate) enum RightPanelEvent {
     /// The Files tree asked to open a file as its own tab.
     OpenFile(String),
+    /// A surface asked to show another surface (e.g. Linked items opening a pull request).
+    OpenTab(RightPanelTab),
 }
 
 impl gpui_kit::EventEmitter<RightPanelEvent> for RightPanel {}
@@ -132,6 +134,8 @@ impl RightPanel {
         let linked_items =
             cx.new(|cx| LinkedItemsPanel::new(tokens.clone(), connection.clone(), window, cx));
         let device = cx.new(|cx| DevicePanel::new(tokens.clone(), connection.clone(), window, cx));
+        cx.subscribe(&linked_items, Self::on_linked_items_event)
+            .detach();
 
         Self {
             tokens,
@@ -470,6 +474,47 @@ impl Render for RightPanel {
 }
 
 /// Hands the selected thread's project and folder to the project-scoped surfaces.
+impl RightPanel {
+    fn on_linked_items_event(
+        &mut self,
+        _: Entity<LinkedItemsPanel>,
+        event: &linked_items::LinkedItemsEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match event {
+            linked_items::LinkedItemsEvent::OpenPullRequest {
+                project_id,
+                host,
+                repository,
+                number,
+                url,
+            } => {
+                let Some(project_id) = project_id.clone().or_else(|| self.project_id.clone())
+                else {
+                    open_external(url);
+                    return;
+                };
+                let (host, repository, number, url) =
+                    (host.clone(), repository.clone(), *number, url.clone());
+                self.pull_request.update(cx, |p, cx| {
+                    p.open_pull_request(project_id, Some(host), repository, number, Some(url), cx);
+                });
+                self.set_tab(RightPanelTab::PullRequest, cx);
+                cx.emit(RightPanelEvent::OpenTab(RightPanelTab::PullRequest));
+            }
+            // Conn opens an Issue surface; until conn-gpui has one, the tracker's page.
+            linked_items::LinkedItemsEvent::OpenIssue { url, .. } => open_external(url),
+        }
+    }
+}
+
+/// Opens `url` in the default browser.
+fn open_external(url: &str) {
+    if let Err(err) = std::process::Command::new("open").arg(url).spawn() {
+        log::warn!("could not open {url}: {err}");
+    }
+}
+
 /// Hands the selected thread and its folder to the thread-scoped surfaces.
 fn for_each_thread_panel(
     panel: &RightPanel,

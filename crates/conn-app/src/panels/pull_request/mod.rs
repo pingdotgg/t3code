@@ -283,6 +283,32 @@ impl PullRequestPanel {
         self.resolve_and_load(cx);
     }
 
+    /// Shows one pull request, opened from Linked items or Tasks, until the thread changes
+    /// (Conn opens a `pull-request` surface for that reference).
+    pub(crate) fn open_pull_request(
+        &mut self,
+        project_id: String,
+        host: Option<String>,
+        repository: String,
+        number: i64,
+        url: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.reset_transient_ui();
+        let target = ResolvedPullRequestTarget {
+            reference: PullRequestRef {
+                project_id,
+                host,
+                expected_account_id: None,
+                allow_stale: None,
+                repository,
+                number,
+            },
+            url,
+        };
+        self.load_pull_request(target, false, cx);
+    }
+
     fn reset_transient_ui(&mut self) {
         self.editing_title = false;
         self.editing_body = false;
