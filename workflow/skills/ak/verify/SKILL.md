@@ -20,10 +20,10 @@ This order holds for every skill that checks a page, and it outranks a general "
    late, so look them up (`ToolSearch` "preview") before deciding they are missing. Each agent
    gets its own tab, and nothing extra runs on the host.
 2. **A remote browser** on another machine, such as `brave-windows`, when the preview tools are
-   absent or can't reach the page. Work in new tabs only and close the ones you opened.
+   absent or can't reach the page, or when the check needs the user's logins. Work in new tabs
+   only and close the ones you opened.
 3. **A local browser** (`chrome-devtools`, Playwright) only when both fail. It starts a browser on
-   the machine that runs the server and every other agent, and eats its RAM. Say in your report
-   that you fell back to it, and why.
+   the machine that runs the server and every other agent, and eats its RAM.
 
 ## Phase 1: build the checklist
 
