@@ -10,40 +10,42 @@ export function cachedVideoThumbnail(key: string): VideoThumbnail | null {
   return thumbnails.get(key) ?? null;
 }
 
-async function extractFrame(uri: string) {
+async function extractFrame(uri: string, signal: AbortSignal) {
   const { createVideoPlayer } = await import("expo-video");
+  if (signal.aborted) return null;
   const player = createVideoPlayer(null);
+  const { promise: stopped, resolve: resolveStopped } = Promise.withResolvers<null>();
+  const { promise: attached, resolve: resolveAttached } = Promise.withResolvers<void>();
+  const stop = () => resolveStopped(null);
+  const timeout = setTimeout(stop, 15_000);
   let disposed = false;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
   let attachedSubscription: { remove(): void } | undefined;
+  signal.addEventListener("abort", stop, { once: true });
   try {
     // Never play or change audio settings: thumbnails must leave the shared audio session alone.
     player.bufferOptions = { preferredForwardBufferDuration: 1 };
-    const timedOut = new Promise<null>((resolve) => {
-      timeout = setTimeout(() => resolve(null), 15_000);
-    });
     // iOS resolves replaceAsync before the main thread attaches the item, and until then
     // generateThumbnailsAsync finds no asset and returns no frames.
-    const attached = new Promise<void>((resolve) => {
-      attachedSubscription = player.addListener("sourceChange", ({ source }) => {
-        if (source) resolve();
-      });
+    attachedSubscription = player.addListener("sourceChange", ({ source }) => {
+      if (source) resolveAttached();
     });
     const frame = (async () => {
       await player.replaceAsync({ uri, contentType: "progressive" });
       await attached;
-      if (disposed) return null;
+      if (disposed || signal.aborted) return null;
       const [thumbnail] = await player.generateThumbnailsAsync([0], {
         maxWidth: 480,
         maxHeight: 480,
       });
       return thumbnail ?? null;
     })();
-    return await Promise.race([frame, timedOut]);
+    return await Promise.race([frame, stopped]);
   } finally {
     disposed = true;
     clearTimeout(timeout);
+    signal.removeEventListener("abort", stop);
     attachedSubscription?.remove();
+    resolveAttached();
     player.release();
   }
 }
@@ -68,10 +70,8 @@ export function loadVideoThumbnail(
       if (!source) return null;
       try {
         if (signal.aborted) return null;
-        // A started extraction finishes even if its reader leaves: its requests are already in
-        // flight, and a re-signed URL for the same video replaces the reader, not the frame.
-        const thumbnail = await extractFrame(source.uri);
-        if (!thumbnail) return null;
+        const thumbnail = await extractFrame(source.uri, signal);
+        if (!thumbnail || signal.aborted) return null;
         thumbnails.set(key, thumbnail);
         if (thumbnails.size > MAX_CACHED_THUMBNAILS) {
           thumbnails.delete(thumbnails.keys().next().value!);
