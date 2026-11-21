@@ -1,10 +1,7 @@
 const SCROLL_GATE_DRAG_THRESHOLD = 4;
 const SCROLL_GATE_SETTLE_MS = 160;
 
-export function createSwipeableScrollGate(
-  onChange: (active: boolean) => void,
-  settleMs = SCROLL_GATE_SETTLE_MS,
-) {
+export function createSwipeableScrollGate(onChange: (active: boolean) => void) {
   let active = false;
   let dragging = false;
   let dragStartY = 0;
@@ -29,7 +26,7 @@ export function createSwipeableScrollGate(
       settleTimer = null;
       dragging = false;
       setActive(false);
-    }, settleMs);
+    }, SCROLL_GATE_SETTLE_MS);
   };
 
   return {

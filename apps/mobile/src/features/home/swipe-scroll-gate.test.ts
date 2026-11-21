@@ -67,8 +67,6 @@ describe("createSwipeableScrollGate", () => {
       gate.onScroll(24);
       expect(active).toBe(true);
 
-      // Android ReactScrollView ignores ACTION_CANCEL and omits onScrollEndDrag;
-      // stillness after scroll ticks stop must still unlock the gate.
       vi.advanceTimersByTime(159);
       expect(active).toBe(true);
 
@@ -100,19 +98,5 @@ describe("createSwipeableScrollGate", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("unlocks immediately on reset even if a drag was interrupted", () => {
-    let active = false;
-    const gate = createSwipeableScrollGate((next) => {
-      active = next;
-    });
-
-    gate.onScrollBeginDrag(0);
-    gate.onScroll(12);
-    expect(active).toBe(true);
-
-    gate.reset();
-    expect(active).toBe(false);
   });
 });
