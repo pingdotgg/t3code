@@ -3253,6 +3253,75 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect.each([
+    {
+      action: "github_create_issue",
+      resources: ["*"],
+      metadata: { input: { title: "Fix approvals", labels: ["bug"] } },
+      prompt: "github_create_issue",
+      sourceTool: "execute",
+    },
+    {
+      action: "shell",
+      resources: ["rm -rf build/*"],
+      prompt: "rm -rf build/*",
+    },
+    {
+      action: "external_directory",
+      resources: ["/first/config.json", "/second/*"],
+      prompt: "/first/config.json\n/second/*",
+    },
+    { action: "custom", resources: [], prompt: "custom" },
+  ])("shows a $action permission prompt for $resources", ({ prompt, sourceTool, ...permission }) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        ...(sourceTool === undefined
+          ? []
+          : [
+              event("session.tool.input.started", {
+                sessionID: SESSION,
+                assistantMessageID: shellAsk.data.source.messageID,
+                id: shellAsk.data.source.id,
+                name: sourceTool,
+              }),
+            ]),
+        event("permission.asked", { ...shellAsk.data, ...permission, save: ["*"] }),
+        out("permission.reply", {
+          sessionID: SESSION,
+          requestID: shellAsk.data.id,
+          decision: "once",
+        }),
+        reply("permission.reply", null),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const requested = yield* Deferred.make<RuntimeRequestId>();
+      const events = yield* runtime.events.pipe(
+        Stream.tap((entry) =>
+          entry.type === "runtime_request.updated" && entry.runtimeRequest.status === "pending"
+            ? Deferred.succeed(requested, entry.runtimeRequest.id)
+            : Effect.void,
+        ),
+        Stream.takeUntil((entry) => entry.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* runtime.startTurn(turnInput(thread));
+      const requestId = yield* Deferred.await(requested);
+      yield* runtime.respondToRuntimeRequest({ requestId, decision: "accept" });
+
+      const items = (yield* Fiber.join(events)).flatMap((entry) =>
+        entry.type === "turn_item.updated" && entry.turnItem.type === "approval_request"
+          ? [entry.turnItem]
+          : [],
+      );
+      assert.equal(items[0]?.prompt, prompt);
+      assert.equal(items[0]?.title, permission.action);
+    }),
+  );
+
   it.effect("asks a subagent's permission request on the parent thread's turn", () =>
     Effect.gen(function* () {
       const child = "ses_f0e5aa64cffelFnoQRL0DAA9BH";

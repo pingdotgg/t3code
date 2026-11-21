@@ -592,6 +592,12 @@ type OpenCodePermissionRequestKind = Extract<
   "command" | "file-read" | "file-change"
 >;
 
+// MCP tools ask with a bare "*" resource; the permission is the tool name.
+export const openCodePermissionPrompt = (
+  permission: string,
+  resources: ReadonlyArray<string>,
+): string => (resources.every((resource) => resource === "*") ? permission : resources.join("\n"));
+
 export function openCodePermissionRequestKind(
   permission: string,
   toolName?: string,
@@ -2036,10 +2042,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             type: "approval_request",
             requestId: pending.requestId,
             requestKind: pending.requestKind === "user_input" ? "command" : pending.requestKind,
-            prompt:
-              permission.patterns.length === 0
-                ? permission.permission
-                : permission.patterns.join("\n"),
+            prompt: openCodePermissionPrompt(permission.permission, permission.patterns),
           };
         };
 

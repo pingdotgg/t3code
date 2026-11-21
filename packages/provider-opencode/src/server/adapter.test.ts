@@ -1462,6 +1462,19 @@ describe("OpenCodeAdapterV2", () => {
         );
         yield* Effect.promise(() =>
           nativeEvents.push({
+            type: "permission.asked",
+            properties: {
+              id: "mcp-permission",
+              sessionID: nativeSessionId,
+              permission: "github_create_issue",
+              patterns: ["*"],
+              always: ["*"],
+              metadata: {},
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
             type: "message.part.updated",
             properties: {
               sessionID: nativeSessionId,
@@ -1533,6 +1546,10 @@ describe("OpenCodeAdapterV2", () => {
             (event) =>
               event.type === "runtime_request.updated" && event.runtimeRequest.kind === "file-read",
           ),
+        );
+        assert.deepEqual(
+          items.flatMap((item) => (item.type === "approval_request" ? [item.prompt] : [])),
+          ["/outside/*", "github_create_issue"],
         );
         const assistant = items.filter((item) => item.type === "assistant_message");
         assert.equal(assistant.at(-1)?.text, "Tool results received");
