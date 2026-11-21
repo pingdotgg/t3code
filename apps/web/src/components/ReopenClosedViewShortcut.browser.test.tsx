@@ -1,5 +1,13 @@
 import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -210,6 +218,53 @@ describe("root reopen shortcut", () => {
     });
     expect(state.navigate).toHaveBeenCalledTimes(2);
     expect(useClosedViewStore.getState().entries).toEqual([]);
+  });
+
+  it("follows both queued restores from a page with an allowing navigation blocker", async () => {
+    setup();
+    const olderRef = { ...ref, threadId: "thread-2" } as ScopedThreadRef;
+    const store = useClosedViewStore.getState();
+    store.remember({
+      kind: "panel-tab",
+      threadRef: olderRef,
+      surface: { kind: "diff", id: "diff" },
+    });
+    store.remember({ kind: "browser", threadRef: ref, snapshot });
+    const opened = Promise.withResolvers<ReturnType<typeof AsyncResult.success>>();
+    state.openPreview.mockReturnValue(opened.promise);
+
+    const history = createMemoryHistory({ initialEntries: ["/welcome"] });
+    const root = createRootRoute({
+      component: () => (
+        <>
+          <ReopenClosedViewShortcut />
+          <Outlet />
+        </>
+      ),
+    });
+    const router = createRouter({
+      history,
+      routeTree: root.addChildren([
+        createRoute({ getParentRoute: () => root, path: "welcome" }),
+        createRoute({ getParentRoute: () => root, path: "$environmentId/$threadId" }),
+      ]),
+    });
+    state.navigate.mockImplementation(router.navigate);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    // The test supplies its own routes and history.
+    await using _view = await render(<RouterProvider router={router} />, { router: false });
+    using _blocker = {
+      [Symbol.dispose]: history.block({ blockerFn: () => false, enableBeforeUnload: false }),
+    };
+
+    await act(() => {
+      press();
+      press();
+    });
+    await act(() => opened.resolve(AsyncResult.success({ tabId: "new-tab" })));
+
+    expect(useClosedViewStore.getState().entries).toEqual([]);
+    expect(history.location.pathname).toBe("/remote/thread-2");
   });
 
   it("does not create a second browser when navigation fails after restoring it", async () => {

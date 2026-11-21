@@ -7,7 +7,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useNavigate, useParams, useRouter } from "@tanstack/react-router";
+import { linkOptions, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef } from "react";
 
@@ -48,6 +48,12 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 import { readIssueListPreferences } from "./issue/issueListPreferences";
+
+declare module "@tanstack/react-router" {
+  interface HistoryState {
+    reopenedViewId?: string;
+  }
+}
 
 const PREVIEW_FORWARDED_COMMANDS = [
   "workspace.focusNext",
@@ -147,28 +153,48 @@ export function ReopenClosedViewShortcut() {
     useClosedViewStore.getState().remove(restore.id);
     if (router.history.location !== request.location) return;
 
-    let navigation: Promise<void>;
+    let destination;
     if (globalPullRequests) {
       const selected = selectSelectedRightPanelSurface(
         useRightPanelStore.getState().byThreadKey,
         ref,
       );
-      navigation = navigate({
+      destination = linkOptions({
         to: "/pull-requests",
         search: (previous) => pullRequestsSearchForRestore(previous, selected),
       });
     } else if (globalIssues) {
-      navigation = navigate({ to: "/issues", search: readIssueListPreferences() });
+      destination = linkOptions({ to: "/issues", search: readIssueListPreferences() });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
-      navigation =
+      destination =
         draftId !== null
-          ? navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(draftId) })
-          : navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+          ? linkOptions({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(draftId) })
+          : linkOptions({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
     }
-    // History updates before the route loads. Queued reopens can follow this hop only.
-    request.location = router.history.location;
-    await navigation;
+
+    const { history } = router;
+    if (router.buildLocation(destination).publicHref === history.location.href) {
+      const { reopenedViewId } = history.location.state;
+      await navigate({ ...destination, state: reopenedViewId ? { reopenedViewId } : {} });
+      return;
+    }
+
+    // An allowing blocker can defer the commit. Only the reopen's first history hop extends the queue.
+    const unsubscribe = history.subscribe(({ location, action }) => {
+      if (location === request.location) return;
+      unsubscribe();
+      if (action.type === "PUSH" && location.state.reopenedViewId === restore.id) {
+        request.location = location;
+      }
+    });
+    try {
+      await navigate({ ...destination, state: { reopenedViewId: restore.id } });
+    } catch (error) {
+      unsubscribe();
+      throw error;
+    }
+    unsubscribe();
   });
 
   const enqueueReopen = useEffectEvent(() => {
