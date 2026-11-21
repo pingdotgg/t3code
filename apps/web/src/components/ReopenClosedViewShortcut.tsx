@@ -7,7 +7,7 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef } from "react";
 
@@ -72,6 +72,7 @@ const isGlobalIssues = (ref: ScopedThreadRef) =>
 export function ReopenClosedViewShortcut() {
   const gt = useGT();
   const navigate = useNavigate();
+  const router = useRouter();
   const params = useParams({ strict: false });
   const target = resolveThreadRouteTarget(params);
   const draft = useComposerDraftStore((state) =>
@@ -94,8 +95,10 @@ export function ReopenClosedViewShortcut() {
   const hasHistory = useClosedViewStore((state) => state.entries.length > 0);
   const openPreview = useAtomCommand(previewEnvironment.open);
   const pending = useRef(Promise.resolve());
+  type ReopenNavigation = { location: typeof router.history.location };
+  const reopenNavigation = useRef<ReopenNavigation | null>(null);
 
-  const reopenNext = useEffectEvent(async () => {
+  const reopenNext = useEffectEvent(async (request: ReopenNavigation) => {
     const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
     const drafts = useComposerDraftStore.getState();
     const panelsByThread = useRightPanelStore.getState().byThreadKey;
@@ -142,28 +145,39 @@ export function ReopenClosedViewShortcut() {
       return;
     }
     useClosedViewStore.getState().remove(restore.id);
+    if (router.history.location !== request.location) return;
+
+    let navigation: Promise<void>;
     if (globalPullRequests) {
       const selected = selectSelectedRightPanelSurface(
         useRightPanelStore.getState().byThreadKey,
         ref,
       );
-      await navigate({
+      navigation = navigate({
         to: "/pull-requests",
         search: (previous) => pullRequestsSearchForRestore(previous, selected),
       });
     } else if (globalIssues) {
-      await navigate({ to: "/issues", search: readIssueListPreferences() });
+      navigation = navigate({ to: "/issues", search: readIssueListPreferences() });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
-      if (draftId !== null)
-        await navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(draftId) });
-      else await navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+      navigation =
+        draftId !== null
+          ? navigate({ to: "/draft/$draftId", params: buildDraftThreadRouteParams(draftId) })
+          : navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
     }
+    // History updates before the route loads. Queued reopens can follow this hop only.
+    request.location = router.history.location;
+    await navigation;
   });
 
   const enqueueReopen = useEffectEvent(() => {
+    const location = router.history.location;
+    const previous = reopenNavigation.current;
+    const request = previous?.location === location ? previous : { location };
+    reopenNavigation.current = request;
     pending.current = pending.current
-      .then(() => reopenNext())
+      .then(() => reopenNext(request))
       .catch((error: unknown) => {
         toastManager.add({
           type: "error",

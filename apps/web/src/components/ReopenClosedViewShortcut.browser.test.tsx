@@ -122,9 +122,10 @@ async function renderShortcut() {
   stack.defer(() => {
     delete window.desktopBridge;
   });
-  stack.use(await render(<ReopenClosedViewShortcut />));
+  const screen = stack.use(await render(<ReopenClosedViewShortcut />));
   const environment = stack.move();
   return {
+    router: screen.router!,
     /** Attaches an element to the document until the test ends. */
     append(element: HTMLElement) {
       document.body.append(element);
@@ -148,6 +149,43 @@ function press(target: Element = document.body) {
 }
 
 describe("root reopen shortcut", () => {
+  it.each([
+    { action: "switch routes", goBack: false, expectedPath: "/newer" },
+    { action: "leave and return", goBack: true, expectedPath: "/" },
+  ])(
+    "restores both queued views without navigating when you $action during the reopen",
+    async ({ goBack, expectedPath }) => {
+      setup();
+      const store = useClosedViewStore.getState();
+      store.remember({ kind: "panel-tab", threadRef: ref, surface: { kind: "diff", id: "diff" } });
+      store.remember({ kind: "browser", threadRef: ref, snapshot });
+      const result = Promise.withResolvers<ReturnType<typeof AsyncResult.success>>();
+      state.openPreview.mockReturnValue(result.promise);
+      await using view = await renderShortcut();
+      const { history } = view.router;
+      state.navigate.mockImplementation(async () => {
+        history.push("/restored-owner");
+      });
+
+      await act(() => {
+        press();
+        menuAction?.("view.reopenClosed");
+      });
+      await act(() => {
+        history.push("/newer");
+        if (goBack) history.back();
+      });
+      await act(() => result.resolve(AsyncResult.success({ tabId: "new-tab" })));
+
+      expect(useClosedViewStore.getState().entries).toEqual([]);
+      const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+      expect(panel.surfaces.map((surface) => surface.id)).toEqual(
+        expect.arrayContaining(["browser:new-tab", "diff"]),
+      );
+      expect(history.location.pathname).toBe(expectedPath);
+    },
+  );
+
   it("serializes deliberate presses while a browser restore waits for RPC", async () => {
     setup();
     useClosedViewStore
