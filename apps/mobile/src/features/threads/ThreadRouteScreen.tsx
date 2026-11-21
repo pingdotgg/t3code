@@ -127,12 +127,8 @@ import {
   useWorkspaceBackNavigation,
 } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { openSettings } from "../settings/settings-navigation";
-import {
-  InspectorContentScope,
-  ThreadInspectorHeader,
-  ThreadInspectorPreview,
-  type ThreadInspectorPresentation,
-} from "./thread-inspector-preview";
+import { ThreadInspectorHeader, type ThreadInspectorPresentation } from "./thread-inspector-header";
+import { InspectorContentScope, ThreadInspectorPreview } from "./thread-inspector-preview";
 import { useStartSideChat } from "./useStartSideChat";
 import { useThreadStatusAnnouncements } from "./useThreadStatusAnnouncements";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
@@ -1125,6 +1121,7 @@ function ThreadRouteContent(
           onResumeQueue={composer.canResume ? handleResumeQueue : null}
           onSendMessage={composer.onSendMessage}
           offersSideChat={composer.sideChatUnavailableReason === null}
+          onSendCommand={composer.onSendCommand}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}
           onRespondToApproval={requests.onRespondToApproval}
