@@ -1,8 +1,16 @@
-import type { ContextMenuItem, EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  type ContextMenuItem,
+  type EnvironmentId,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import {
   deriveMultiRepoKey,
   listMultiRepoProjectsToSetUp,
+  type MultiRepoProjectSetup,
 } from "@t3tools/client-runtime/state/project-grouping";
 import { msg } from "gt-react";
 import type { CommandPaletteMultiRepoSetup } from "./commandPaletteBus";
@@ -23,24 +31,41 @@ export function isMultiRepoSetupMenuId(id: string | null): id is MultiRepoSetupM
   return id?.startsWith("multi-repo-setup:") === true;
 }
 
-/** "Set up on <machine>" items for a project's menu; built only when the menu opens. */
-export function buildMultiRepoProjectSetupMenu(input: {
+interface MultiRepoSetupEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly connection: { readonly phase: string };
+  readonly serverConfig?: {
+    readonly environment: {
+      readonly capabilities: {
+        readonly multiRepoProjects?: boolean;
+        readonly projectCloneTracking?: boolean;
+      };
+    };
+  } | null;
+}
+
+interface MultiRepoSetupInput<Environment extends MultiRepoSetupEnvironment> {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly projectRefs: ReadonlyArray<ScopedProjectRef>;
-  readonly environments: ReadonlyArray<{
-    readonly environmentId: EnvironmentId;
-    readonly label: string;
-    readonly connection: { readonly phase: string };
-    readonly serverConfig?: {
-      readonly environment: {
-        readonly capabilities: {
-          readonly multiRepoProjects?: boolean;
-          readonly projectCloneTracking?: boolean;
-        };
-      };
-    } | null;
-  }>;
-}) {
+  readonly environments: ReadonlyArray<Environment>;
+  readonly canSetUp: (environmentId: EnvironmentId) => boolean;
+}
+
+/** The grants the setup form needs on the target: inspect the folder, clone, add the project. */
+export const MULTI_REPO_SETUP_SCOPES = [
+  AuthFilesystemReadScope,
+  AuthSourceControlWriteScope,
+  AuthOrchestrationOperateScope,
+] as const;
+
+/**
+ * Machines the multi-repo project behind `projectRefs` can be set up on: connected,
+ * capable, allowed by `canSetUp`, and without the project yet, whatever the grouping.
+ */
+export function listMultiRepoSetupTargets<Environment extends MultiRepoSetupEnvironment>(
+  input: MultiRepoSetupInput<Environment>,
+): Array<{ readonly environment: Environment; readonly setup: MultiRepoProjectSetup }> {
   const projectKeys = new Set(
     input.projects
       .filter((project) =>
@@ -53,20 +78,29 @@ export function buildMultiRepoProjectSetupMenu(input: {
         return key === null ? [] : [key];
       }),
   );
-  const setupsByAction = new Map<MultiRepoSetupMenuId, CommandPaletteMultiRepoSetup>();
-  const items: Array<ContextMenuItem<MultiRepoSetupMenuId>> = [];
-  if (projectKeys.size === 0) return { items, setupsByAction };
-  for (const environment of input.environments) {
+  if (projectKeys.size === 0) return [];
+  return input.environments.flatMap((environment) => {
     if (
       environment.connection.phase !== "connected" ||
-      !canSetUpMultiRepoProjects(environment.serverConfig?.environment.capabilities)
+      !canSetUpMultiRepoProjects(environment.serverConfig?.environment.capabilities) ||
+      !input.canSetUp(environment.environmentId)
     ) {
-      continue;
+      return [];
     }
     const setup = listMultiRepoProjectsToSetUp(input.projects, environment.environmentId).find(
       (candidate) => projectKeys.has(candidate.key),
     );
-    if (!setup) continue;
+    return setup ? [{ environment, setup }] : [];
+  });
+}
+
+/** "Set up on <machine>" items for a project's menu; built only when the menu opens. */
+export function buildMultiRepoProjectSetupMenu(
+  input: MultiRepoSetupInput<MultiRepoSetupEnvironment>,
+) {
+  const setupsByAction = new Map<MultiRepoSetupMenuId, CommandPaletteMultiRepoSetup>();
+  const items: Array<ContextMenuItem<MultiRepoSetupMenuId>> = [];
+  for (const { environment, setup } of listMultiRepoSetupTargets(input)) {
     const id: MultiRepoSetupMenuId = `multi-repo-setup:${environment.environmentId}`;
     setupsByAction.set(id, { environmentId: environment.environmentId, setup });
     items.push({

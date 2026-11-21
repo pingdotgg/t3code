@@ -1280,7 +1280,7 @@
   "75b6d7c3bc9c72da": "{editor} で開けませんでした",
   "31dc19d033af2774": "リンクを開けません。",
   "029d8d0201aed231": "システム設定を開けません。",
-  "bb5f4466ea3a139f": "Set up on {environment}",
+  "bb5f4466ea3a139f": "{environment} にセットアップ",
   "3c62c10c044daf15": "Set up on...",
   "9af3083226778d3c": "Open VSX から不正な形式のテーマ詳細が返されました。",
   "b42cb65fd27d4d34": "Open VSX の応答に時間がかかりすぎました。",
@@ -2231,16 +2231,22 @@
   "a14791cb283d578e": "Repositories to clone",
   "5ae8ad42b49296a3": "Git URLs or owner/repo names (only for an empty folder)",
   "548f9db69b69ff04": "追加しています…",
-  "0d93660600cf66a2": "Multi-repo project",
-  "80f5c1f3edbc545e": "Choose a folder containing repositories, or an empty folder to clone into. Every new workspace uses one branch across all members.",
-  "f483c3f170663a6e": [
+  "330852bbf2b84a34": [
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " に ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " を使用"
+    " をセットアップ"
   ],
+  "0d93660600cf66a2": "Multi-repo project",
+  "80f5c1f3edbc545e": "Choose a folder containing repositories, or an empty folder to clone into. Every new workspace uses one branch across all members.",
   "b9e49ec03efc8383": "アクティブなスレッドがありません",
   "fc7b51a6f2a86236": "続けるスレッドを選択",
   "7543807a82fa9ccd": "既存のスレッドを選択するか、新しいスレッドを作成して始めましょう。",
@@ -7853,6 +7859,14 @@
   "04d1b655740efd75": "この選択はこのデバイスにのみ適用されます。共有をやめるには [オフ] を選択してください。",
   "7c34683f9c12650d": "キーを削除…",
   "0e8b39933f68ff59": "キーを削除",
+  "f483c3f170663a6e": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " を使用"
+  ],
   "cd67d110c09bfdf4": "アカウントのメールアドレスの表示を切り替え",
   "6b2ce50ea6a13f57": "クリックしてメールアドレスを表示",
   "34ce8910007bfaf1": "クリックしてメールアドレスを非表示",

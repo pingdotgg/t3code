@@ -3155,6 +3155,9 @@ function OpenCommandPaletteDialog(props: {
         {...(multiRepoForm.setup
           ? {
               setup: multiRepoForm.setup,
+              environmentLabel:
+                environmentLabelById.get(multiRepoForm.environmentId) ??
+                multiRepoForm.environmentId,
               initialFolder: getCloneDestinationPath(
                 getAddProjectInitialQueryForEnvironment(multiRepoForm.environmentId),
                 inferProjectTitleFromPath(multiRepoForm.setup.source.workspaceRoot),

@@ -2561,7 +2561,6 @@
   "8475f5e6fa1241c2": "Project creation started, but this client has not received it yet. Check the project list before trying again.",
   "a14791cb283d578e": "Repositories to clone",
   "7d98c91f28e8a436": "Git URLs or owner/repo names",
-  "1defc23e25b809f7": "Use {title}",
   "ded6131ad03ddf85": "Pick a folder with repositories, or an empty folder to clone into.",
   "7c36d9988b605593": "Give {app} access to {owner}",
   "9b771434a1d169dd": "It isn't installed there, so GitHub requests for {repository} use your own login and its lower rate limit.",

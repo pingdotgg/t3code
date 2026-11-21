@@ -6,10 +6,7 @@ import {
 import { useEnvironmentScope } from "../state/session";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { parseMultiRepoCloneInput } from "@t3tools/client-runtime/operations/projects";
-import {
-  listMultiRepoProjectsToSetUp,
-  type MultiRepoProjectSetup,
-} from "@t3tools/client-runtime/state/project-grouping";
+import type { MultiRepoProjectSetup } from "@t3tools/client-runtime/state/project-grouping";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
@@ -29,6 +26,7 @@ export function MultiRepoProjectForm(props: {
   projects: ReadonlyArray<EnvironmentProject>;
   /** Starts on cloning this project from another machine into `initialFolder`. */
   setup?: MultiRepoProjectSetup;
+  environmentLabel?: string;
   initialFolder?: string;
   onBack: () => void;
   onCreated: (project: ScopedProjectRef) => Promise<void>;
@@ -57,7 +55,6 @@ export function MultiRepoProjectForm(props: {
   const canInspect = useAtomValue(
     projectEnvironment.inspectMultiRepoFolder.permissionAtom(props.environmentId),
   );
-  const setups = listMultiRepoProjectsToSetUp(props.projects, props.environmentId);
   // Cloning another machine's project keeps its member folders and title.
   const [selected, setSelected] = useState<MultiRepoProjectSetup | null>(props.setup ?? null);
 
@@ -140,7 +137,14 @@ export function MultiRepoProjectForm(props: {
   return (
     <div className="space-y-4 p-4">
       <h2 className="text-lg font-medium">
-        <T>Multi-repo project</T>
+        {props.setup ? (
+          <T>
+            Set up <Var>{props.setup.source.title}</Var> on{" "}
+            <Var>{props.environmentLabel ?? props.environmentId}</Var>
+          </T>
+        ) : (
+          <T>Multi-repo project</T>
+        )}
       </h2>
       <p className="text-sm text-muted-foreground">
         <T>
@@ -165,27 +169,6 @@ export function MultiRepoProjectForm(props: {
         }}
         disabled={busy}
       />
-      {setups.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
-          {setups.map((setup) => (
-            <Button
-              key={setup.key}
-              variant={selected?.key === setup.key ? "secondary" : "outline"}
-              size="sm"
-              disabled={busy}
-              aria-pressed={selected?.key === setup.key}
-              onClick={() => {
-                setSelected(setup);
-                setRepositories(remoteList(setup));
-              }}
-            >
-              <T>
-                Use <Var>{setup.source.title}</Var>
-              </T>
-            </Button>
-          ))}
-        </div>
-      ) : null}
       {error ? (
         <p role="alert" className="text-sm text-destructive">
           {error}

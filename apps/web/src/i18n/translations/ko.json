@@ -1280,7 +1280,7 @@
   "75b6d7c3bc9c72da": "{editor}에서 열 수 없습니다",
   "31dc19d033af2774": "링크를 열 수 없습니다.",
   "029d8d0201aed231": "시스템 설정을 열 수 없습니다.",
-  "bb5f4466ea3a139f": "Set up on {environment}",
+  "bb5f4466ea3a139f": "{environment}에 설정",
   "3c62c10c044daf15": "Set up on...",
   "9af3083226778d3c": "Open VSX에서 잘못된 형식의 테마 정보를 반환했습니다.",
   "b42cb65fd27d4d34": "Open VSX의 응답이 너무 오래 걸렸습니다.",
@@ -2232,16 +2232,22 @@
   "a14791cb283d578e": "Repositories to clone",
   "5ae8ad42b49296a3": "Git URLs or owner/repo names (only for an empty folder)",
   "548f9db69b69ff04": "추가하는 중…",
-  "0d93660600cf66a2": "Multi-repo project",
-  "80f5c1f3edbc545e": "Choose a folder containing repositories, or an empty folder to clone into. Every new workspace uses one branch across all members.",
-  "f483c3f170663a6e": [
+  "330852bbf2b84a34": [
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "에 ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " 사용"
+    " 설정"
   ],
+  "0d93660600cf66a2": "Multi-repo project",
+  "80f5c1f3edbc545e": "Choose a folder containing repositories, or an empty folder to clone into. Every new workspace uses one branch across all members.",
   "b9e49ec03efc8383": "활성 스레드 없음",
   "fc7b51a6f2a86236": "계속할 스레드를 선택하세요",
   "7543807a82fa9ccd": "기존 스레드를 선택하거나 새 스레드를 만들어 시작하세요.",
@@ -7855,6 +7861,14 @@
   "04d1b655740efd75": "이 선택은 이 기기에만 적용됩니다. 공유를 중지하려면 끄기를 선택하세요.",
   "7c34683f9c12650d": "키 제거…",
   "0e8b39933f68ff59": "키 제거",
+  "f483c3f170663a6e": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " 사용"
+  ],
   "cd67d110c09bfdf4": "계정 이메일 표시 전환",
   "6b2ce50ea6a13f57": "클릭하여 이메일 표시",
   "34ce8910007bfaf1": "클릭하여 이메일 숨기기",

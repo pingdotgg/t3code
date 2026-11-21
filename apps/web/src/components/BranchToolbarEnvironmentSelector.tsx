@@ -10,6 +10,7 @@ import { memo } from "react";
 import { T, useGT } from "gt-react";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
+import type { AddProjectTarget } from "../hooks/useAddProjectTargets";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
@@ -29,11 +30,15 @@ interface BranchToolbarEnvironmentSelectorProps {
   availableEnvironments: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
   onAddToMachine?: (() => void) | undefined;
+  /** Machines to set a multi-repo project up on, one item each. */
+  setUpTargets?: readonly AddProjectTarget[] | undefined;
+  onSetUp?: ((environmentId: EnvironmentId) => void) | undefined;
 }
 
 // Action values cannot collide with server-minted environment IDs.
 const AUTO_VALUE = "action:auto";
 const ADD_MACHINE_VALUE = "action:add-machine";
+const SET_UP_PREFIX = "action:set-up:";
 const environmentValue = (id: EnvironmentId) => `env:${id}`;
 
 export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvironmentSelector({
@@ -44,6 +49,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   availableEnvironments,
   onEnvironmentChange,
   onAddToMachine,
+  setUpTargets = [],
+  onSetUp,
 }: BranchToolbarEnvironmentSelectorProps) {
   const gt = useGT();
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -54,6 +61,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   const activeEnvironment =
     availableEnvironments.find((env) => env.environmentId === environmentId) ?? null;
 
+  const setUpItems = onSetUp ? setUpTargets : [];
   const environmentItems = [
     ...(onAutoEnvironment
       ? [{ value: AUTO_VALUE, label: autoEnvironmentLabel ?? gt("Auto balance") }]
@@ -63,11 +71,18 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       label: env.label,
     })),
     ...(onAddToMachine ? [{ value: ADD_MACHINE_VALUE, label: gt("Add to another machine") }] : []),
+    ...setUpItems.map((target) => ({
+      value: `${SET_UP_PREFIX}${target.environmentId}`,
+      label: gt("Set up on {environment}", { environment: target.label }),
+    })),
   ];
 
   // Match the xs control's height and padding: the composer strip has no min-height,
   // and its glass seam assumes that height even when this label is the only control.
-  if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
+  if (
+    envLocked ||
+    (onEnvironmentChange === undefined && onAddToMachine === undefined && setUpItems.length === 0)
+  ) {
     const lockedRow = (
       <span
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
@@ -95,6 +110,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
       onValueChange={(value) => {
         if (value === ADD_MACHINE_VALUE) {
           onAddToMachine?.();
+        } else if (value?.startsWith(SET_UP_PREFIX)) {
+          onSetUp?.(value.slice(SET_UP_PREFIX.length) as EnvironmentId);
         } else if (value === AUTO_VALUE) {
           onAutoEnvironment?.();
         } else if (value?.startsWith("env:")) {
@@ -170,6 +187,17 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
               </span>
             </SelectItem>
           ) : null}
+          {setUpItems.map((target) => (
+            <SelectItem
+              key={target.environmentId}
+              value={`${SET_UP_PREFIX}${target.environmentId}`}
+            >
+              <span className={ADD_TO_MACHINE_LABEL_CLASS}>
+                <PlusIcon aria-hidden="true" className="size-3" />
+                {gt("Set up on {environment}", { environment: target.label })}
+              </span>
+            </SelectItem>
+          ))}
         </SelectGroup>
       </SelectPopup>
     </Select>

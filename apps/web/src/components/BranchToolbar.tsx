@@ -47,6 +47,8 @@ import {
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { openAddProjectToMachine } from "./AddProjectToMachineDialog";
 import { type AddProjectTarget, useAddProjectTargets } from "../hooks/useAddProjectTargets";
+import { useMultiRepoSetupTargets } from "../hooks/useMultiRepoSetupTargets";
+import { openCommandPalette } from "../commandPaletteBus";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
@@ -701,9 +703,22 @@ export const BranchToolbar = memo(function BranchToolbar({
     ],
   );
 
-  const addTargets = useAddProjectTargets(activeProject, availableEnvironments);
-  const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) =>
-    openAddProjectToMachine({ projectRef: activeProjectRef, targetEnvironmentId });
+  const isMultiRepo = activeProject?.multiRepo != null;
+  const singleRepoTargets = useAddProjectTargets(activeProject, availableEnvironments);
+  const multiRepoTargets = useMultiRepoSetupTargets(activeProject);
+  const addTargets = isMultiRepo ? multiRepoTargets : singleRepoTargets;
+  const onAddToMachine = (targetEnvironmentId: EnvironmentId | null) => {
+    if (!isMultiRepo) {
+      openAddProjectToMachine({ projectRef: activeProjectRef, targetEnvironmentId });
+      return;
+    }
+    const target = multiRepoTargets.find((t) => t.environmentId === targetEnvironmentId);
+    if (target) {
+      openCommandPalette({
+        multiRepoSetup: { environmentId: target.environmentId, setup: target.setup },
+      });
+    }
+  };
   // A project on one machine still gets the picker when it can be added to another.
   const hasMultipleEnvironments = (availableEnvironments?.length ?? 0) > 1 || addTargets.length > 0;
   const showEnvironmentPicker = hasMultipleEnvironments && onEnvironmentChange !== undefined;
@@ -814,7 +829,11 @@ export const BranchToolbar = memo(function BranchToolbar({
                 environmentId={environmentId}
                 availableEnvironments={availableEnvironments}
                 {...(showEnvironmentPicker ? { onEnvironmentChange } : {})}
-                {...(addTargets.length > 0 ? { onAddToMachine: () => onAddToMachine(null) } : {})}
+                {...(isMultiRepo
+                  ? { setUpTargets: multiRepoTargets, onSetUp: onAddToMachine }
+                  : singleRepoTargets.length > 0
+                    ? { onAddToMachine: () => onAddToMachine(null) }
+                    : {})}
               />
               {showWorkspaceControls ? (
                 <Separator

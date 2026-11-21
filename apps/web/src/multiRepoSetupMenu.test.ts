@@ -50,7 +50,11 @@ function projectRef(source: EnvironmentProject): ScopedProjectRef {
 }
 
 const source = project();
-const baseInput = { projects: [source], projectRefs: [projectRef(source)] };
+const baseInput = {
+  projects: [source],
+  projectRefs: [projectRef(source)],
+  canSetUp: () => true,
+};
 
 describe("multi-repo sidebar setup menu", () => {
   it("offers a direct action for one missing machine and carries the existing setup into the palette intent", () => {
@@ -127,6 +131,17 @@ describe("multi-repo sidebar setup menu", () => {
     expect(menu.setupsByAction.size).toBe(0);
   });
 
+  it("omits targets this client may not set the project up on", () => {
+    const menu = buildMultiRepoProjectSetupMenu({
+      ...baseInput,
+      environments: [environment(), environment(server, "Build server")],
+      canSetUp: (environmentId) => environmentId !== desktop,
+    });
+    expect([...menu.setupsByAction.values()].map((intent) => intent.environmentId)).toEqual([
+      server,
+    ]);
+  });
+
   it("recognizes an existing setup despite different paths, remote syntax and member order", () => {
     const existing = project(desktop, {
       workspaceRoot: "/home/me/renamed",
@@ -156,6 +171,7 @@ describe("multi-repo sidebar setup menu", () => {
       projects: [unrelated, source, copy],
       projectRefs: [projectRef(copy)],
       environments: [environment()],
+      canSetUp: () => true,
     });
     expect(menu.items).toHaveLength(1);
     expect(menu.setupsByAction.get("multi-repo-setup:desktop")?.setup.source).toBe(source);
@@ -172,6 +188,7 @@ describe("multi-repo sidebar setup menu", () => {
         projects: [source, project(server)],
         projectRefs: [projectRef(source)],
         environments: [environment()],
+        canSetUp: () => true,
       }).items,
     ).toEqual([]);
   });

@@ -1280,7 +1280,7 @@
   "75b6d7c3bc9c72da": "Не удалось открыть в {editor}",
   "31dc19d033af2774": "Не удалось открыть ссылку.",
   "029d8d0201aed231": "Не удалось открыть системные настройки.",
-  "bb5f4466ea3a139f": "Set up on {environment}",
+  "bb5f4466ea3a139f": "Настроить на {environment}",
   "3c62c10c044daf15": "Set up on...",
   "9af3083226778d3c": "Open VSX вернул некорректные данные темы.",
   "b42cb65fd27d4d34": "Open VSX слишком долго не отвечал.",
@@ -2233,16 +2233,22 @@
   "a14791cb283d578e": "Repositories to clone",
   "5ae8ad42b49296a3": "Git URLs or owner/repo names (only for an empty folder)",
   "548f9db69b69ff04": "Добавление…",
-  "0d93660600cf66a2": "Multi-repo project",
-  "80f5c1f3edbc545e": "Choose a folder containing repositories, or an empty folder to clone into. Every new workspace uses one branch across all members.",
-  "f483c3f170663a6e": [
-    "Использовать ",
+  "330852bbf2b84a34": [
+    "Настроить ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
+    },
+    " на ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
     }
   ],
+  "0d93660600cf66a2": "Multi-repo project",
+  "80f5c1f3edbc545e": "Choose a folder containing repositories, or an empty folder to clone into. Every new workspace uses one branch across all members.",
   "b9e49ec03efc8383": "Нет активного треда",
   "fc7b51a6f2a86236": "Выберите тред, чтобы продолжить",
   "7543807a82fa9ccd": "Выберите существующий тред или создайте новый, чтобы начать.",
@@ -7890,6 +7896,14 @@
   "04d1b655740efd75": "Этот выбор действует только на этом устройстве. Выберите «Выкл.», чтобы прекратить использование.",
   "7c34683f9c12650d": "Удалить ключ…",
   "0e8b39933f68ff59": "Удалить ключ",
+  "f483c3f170663a6e": [
+    "Использовать ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "cd67d110c09bfdf4": "Показать/скрыть email аккаунта",
   "6b2ce50ea6a13f57": "Нажмите, чтобы показать email",
   "34ce8910007bfaf1": "Нажмите, чтобы скрыть email",

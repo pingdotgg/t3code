@@ -1280,7 +1280,7 @@
   "75b6d7c3bc9c72da": "Konnte nicht in {editor} geöffnet werden",
   "31dc19d033af2774": "Link kann nicht geöffnet werden.",
   "029d8d0201aed231": "Systemeinstellungen können nicht geöffnet werden.",
-  "bb5f4466ea3a139f": "Set up on {environment}",
+  "bb5f4466ea3a139f": "Auf {environment} einrichten",
   "3c62c10c044daf15": "Set up on...",
   "9af3083226778d3c": "Open VSX hat fehlerhafte Design-Details zurückgegeben.",
   "b42cb65fd27d4d34": "Open VSX hat zu lange für eine Antwort gebraucht.",
@@ -2233,16 +2233,22 @@
   "a14791cb283d578e": "Repositories to clone",
   "5ae8ad42b49296a3": "Git URLs or owner/repo names (only for an empty folder)",
   "548f9db69b69ff04": "Wird hinzugefügt…",
-  "0d93660600cf66a2": "Multi-repo project",
-  "80f5c1f3edbc545e": "Choose a folder containing repositories, or an empty folder to clone into. Every new workspace uses one branch across all members.",
-  "f483c3f170663a6e": [
+  "330852bbf2b84a34": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " verwenden"
+    " auf ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " einrichten"
   ],
+  "0d93660600cf66a2": "Multi-repo project",
+  "80f5c1f3edbc545e": "Choose a folder containing repositories, or an empty folder to clone into. Every new workspace uses one branch across all members.",
   "b9e49ec03efc8383": "Kein aktiver Thread",
   "fc7b51a6f2a86236": "Wähle einen Thread, um weiterzumachen",
   "7543807a82fa9ccd": "Wähle einen vorhandenen Thread oder erstelle einen neuen, um loszulegen.",
@@ -7891,6 +7897,14 @@
   "04d1b655740efd75": "Diese Auswahl gilt nur für dieses Gerät. Wähle „Aus“, um die Freigabe zu beenden.",
   "7c34683f9c12650d": "Schlüssel entfernen…",
   "0e8b39933f68ff59": "Schlüssel entfernen",
+  "f483c3f170663a6e": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " verwenden"
+  ],
   "cd67d110c09bfdf4": "Sichtbarkeit der Konto-E-Mail umschalten",
   "6b2ce50ea6a13f57": "Klicken, um die E-Mail anzuzeigen",
   "34ce8910007bfaf1": "Klicken, um die E-Mail auszublenden",

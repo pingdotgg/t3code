@@ -135,6 +135,7 @@ import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { buildMultiRepoProjectSetupMenu, isMultiRepoSetupMenuId } from "../multiRepoSetupMenu";
+import { readCanSetUpMultiRepoProject } from "../hooks/useMultiRepoSetupTargets";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
@@ -379,6 +380,7 @@ function readProjectSetupMenu(group: Pick<SidebarProjectSnapshot, "memberProject
     projects: readProjects(),
     projectRefs: group.memberProjectRefs,
     environments: readEnvironments(),
+    canSetUp: readCanSetUpMultiRepoProject,
   });
 }
 

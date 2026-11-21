@@ -1798,7 +1798,7 @@ export function AddProjectMultiRepoScreen(props: {
   const setups = environment
     ? listMultiRepoProjectsToSetUp(projects, environment.environmentId)
     : [];
-  // The route's project until the user picks or types; derived, so a cold link fills in once
+  // The route's project until the user types; derived, so a cold link fills in once
   // projects load. Cloning another machine's project keeps its member folders and title.
   const sourceKey = deriveMultiRepoKey(
     projects.find(
@@ -1807,13 +1807,10 @@ export function AddProjectMultiRepoScreen(props: {
         project.id === stringParam(props.sourceProjectId),
     )?.multiRepo,
   );
-  const [choice, setChoice] = useState<{
-    readonly setup: MultiRepoProjectSetup | null;
-    readonly repositories: string;
-  } | null>(null);
+  const [editedRepositories, setEditedRepositories] = useState<string | null>(null);
   const sourceSetup = setups.find((setup) => setup.key === sourceKey) ?? null;
-  const selected = choice ? choice.setup : sourceSetup;
-  const repositories = choice ? choice.repositories : remoteList(selected);
+  const selected = editedRepositories === null ? sourceSetup : null;
+  const repositories = editedRepositories ?? remoteList(selected);
   const { pathInput, setPathInput, navigateToBrowsePath, isBrowseNavigating } = useBrowsePathInput(
     environment,
     "",
@@ -1913,21 +1910,12 @@ export function AddProjectMultiRepoScreen(props: {
             placeholder={gt("Git URLs or owner/repo names")}
             value={repositories}
             onChangeText={(value) => {
-              setChoice({ setup: null, repositories: value });
+              setEditedRepositories(value);
             }}
             multiline
             autoCapitalize="none"
             autoCorrect={false}
           />
-          {setups.map((setup) => (
-            <NavigationRow
-              key={setup.key}
-              title={gt("Use {title}", { title: setup.source.title })}
-              onPress={() => {
-                setChoice({ setup, repositories: remoteList(setup) });
-              }}
-            />
-          ))}
           <PrimaryActionButton
             label={gt("Add project")}
             disabled={!canAddProject || busy || isBrowseNavigating || !pathInput.trim()}

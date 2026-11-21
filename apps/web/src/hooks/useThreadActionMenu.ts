@@ -40,6 +40,7 @@ import {
 import { readEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { openCommandPalette } from "../commandPaletteBus";
 import { buildMultiRepoProjectSetupMenu, isMultiRepoSetupMenuId } from "../multiRepoSetupMenu";
+import { readCanSetUpMultiRepoProject } from "./useMultiRepoSetupTargets";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
 import {
@@ -163,6 +164,7 @@ export function useThreadActionMenu(input: {
                 )
                 .map((candidate) => scopeProjectRef(candidate.environmentId, candidate.id)),
         environments: readEnvironments(),
+        canSetUp: readCanSetUpMultiRepoProject,
       });
       const threadItems = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
