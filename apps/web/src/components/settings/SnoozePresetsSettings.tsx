@@ -304,7 +304,7 @@ function SnoozePresetList(props: {
             className="flex flex-wrap items-center gap-2"
           >
             <SnoozePresetFields preset={preset} onChange={(next) => props.onChange(index, next)} />
-            <div className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            <div className="ms-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
               {preview.tone === "menu" ? (
                 <span className="truncate">
                   <span className="text-foreground">{preview.label}</span>

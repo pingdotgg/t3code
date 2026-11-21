@@ -458,7 +458,7 @@ export function CloudVoiceConfiguration({
         )}
         <DialogFooter>
           {connected && canManage && saved && (active || routed) && !remove && (
-            <div className="sm:mr-auto">
+            <div className="sm:me-auto">
               <Button
                 type="button"
                 size="sm"

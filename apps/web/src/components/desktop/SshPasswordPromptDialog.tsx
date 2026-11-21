@@ -174,7 +174,7 @@ function ActiveSshPasswordPrompt({
           <DialogDescription>
             <T>
               Enter the password or verification code required by{" "}
-              <code>
+              <code dir="ltr">
                 <Var>{target}</Var>
               </code>
               . T3 Code passes your response to the local SSH process and keeps it in memory to
@@ -207,6 +207,7 @@ function ActiveSshPasswordPrompt({
                 ) : null}
               </div>
               <Input
+                dir="ltr"
                 ref={inputRef}
                 autoComplete="current-password"
                 disabled={isResponding || isExpired}

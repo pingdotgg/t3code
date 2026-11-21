@@ -1,5 +1,6 @@
 import { Spinner } from "~/components/ui/spinner";
 
+import { useDirection } from "@base-ui/react/direction-provider";
 import { Toast } from "@base-ui/react/toast";
 import { msg, useGT } from "gt-react";
 import {
@@ -127,7 +128,7 @@ function errorDescriptionClampClass(type: unknown, description: unknown): string
   return "line-clamp-4";
 }
 
-const toastCornerDismissClass = "absolute z-20 -top-1.5 -right-1.5";
+const toastCornerDismissClass = "absolute z-20 -top-1.5 -end-1.5";
 const toastCornerOrbClass = cn(
   "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/60 bg-popover/92 text-muted-foreground shadow-sm outline-none backdrop-blur-sm",
   "transition-[color,background-color,box-shadow] hover:bg-popover hover:text-foreground",
@@ -175,7 +176,7 @@ function CopyErrorButton({ text }: { text: string }) {
 }
 
 const toastExpandablePanelClassName =
-  "mt-2 max-h-40 min-h-0 overflow-y-auto overscroll-contain pr-0.5 select-text";
+  "mt-2 max-h-40 min-h-0 overflow-y-auto overscroll-contain pe-0.5 select-text";
 
 function ToastExpandableSection({
   children,
@@ -193,7 +194,7 @@ function ToastExpandableSection({
     <div className="min-w-0">
       <button
         aria-expanded={open}
-        className="inline-flex cursor-pointer items-center gap-1 rounded-md py-0.5 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        className="inline-flex cursor-pointer items-center gap-1 rounded-md py-0.5 text-start text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
         onClick={() => setOpen((prev) => !prev)}
         type="button"
       >
@@ -261,7 +262,7 @@ function ToastDescriptionAndExpandable({
               aria-label={open ? collapseLabel : expandLabel}
               aria-expanded={open}
               className={cn(
-                "group flex min-w-0 w-full cursor-pointer select-none items-start gap-1.5 rounded-sm text-left outline-none ring-offset-background",
+                "group flex min-w-0 w-full cursor-pointer select-none items-start gap-1.5 rounded-sm text-start outline-none ring-offset-background",
                 "transition-colors hover:bg-muted/40",
                 "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
               )}
@@ -339,7 +340,7 @@ function deriveToastBodyDescriptor(toast: {
     hasVisibleToastAction(toast.actionProps) ||
     hasAdditionalActions ||
     hasSecondaryAction;
-  const inlineContentEndPad = hasTrailingControls ? "pr-6" : "pr-3.5";
+  const inlineContentEndPad = hasTrailingControls ? "pe-6" : "pe-3.5";
   return {
     Icon,
     stackedActionLayout,
@@ -381,13 +382,13 @@ function ToastBodyContent({
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col gap-0.5",
-          stackedActionLayout ? "pr-5" : "flex-1",
+          stackedActionLayout ? "pe-5" : "flex-1",
         )}
       >
         <div
           className={cn(
             "flex min-w-0 gap-2",
-            !stackedActionLayout && !hasTrailingControls && "pr-6",
+            !stackedActionLayout && !hasTrailingControls && "pe-6",
           )}
         >
           {leadingIcon ? (
@@ -573,6 +574,7 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
 }
 
 function Toasts({ position }: { position: ToastPosition }) {
+  const direction = useDirection();
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
   const gt = useGT();
@@ -597,12 +599,12 @@ function Toasts({ position }: { position: ToastPosition }) {
       <Toast.Viewport
         aria-label={gt("Notifications", { $context: "screen reader name of the toast area" })}
         className={cn(
-          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
+          "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)] [--toast-exit-x:calc(100%+var(--toast-inset))] rtl:[--toast-exit-x:calc(-100%-var(--toast-inset))]",
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
           "data-[position*=bottom]:bottom-(--toast-inset)",
-          "data-[position*=left]:left-(--toast-inset)",
-          "data-[position*=right]:right-(--toast-inset)",
-          "data-[position*=center]:-translate-x-1/2 data-[position*=center]:left-1/2",
+          "data-[position*=left]:start-(--toast-inset)",
+          "data-[position*=right]:end-(--toast-inset)",
+          "data-[position*=center]:-translate-x-1/2 rtl:data-[position*=center]:translate-x-1/2 data-[position*=center]:start-1/2",
         )}
         data-position={position}
         data-slot="toast-viewport"
@@ -624,12 +626,12 @@ function Toasts({ position }: { position: ToastPosition }) {
             <Toast.Root
               className={cn(
                 "dropdown-glass absolute z-[calc(9999-var(--toast-index))] w-full overflow-visible select-none rounded-lg text-popover-foreground shadow-xl shadow-black/25 [transition:transform_.5s_cubic-bezier(.22,1,.36,1),opacity_.5s,height_.15s]",
-                "data-[position*=right]:right-0 data-[position*=right]:left-auto",
-                "data-[position*=left]:right-auto data-[position*=left]:left-0",
-                "data-[position*=center]:right-0 data-[position*=center]:left-0",
+                "data-[position*=right]:end-0 data-[position*=right]:start-auto",
+                "data-[position*=left]:end-auto data-[position*=left]:start-0",
+                "data-[position*=center]:end-0 data-[position*=center]:start-0",
                 "data-[position*=top]:top-0 data-[position*=top]:bottom-auto data-[position*=top]:origin-top",
                 "data-[position*=bottom]:top-auto data-[position*=bottom]:bottom-0 data-[position*=bottom]:origin-bottom",
-                "after:absolute after:left-0 after:h-[calc(var(--toast-gap)+1px)] after:w-full",
+                "after:absolute after:start-0 after:h-[calc(var(--toast-gap)+1px)] after:w-full",
                 "data-[position*=top]:after:top-full",
                 "data-[position*=bottom]:after:bottom-full",
                 visibleIndex > 0
@@ -648,10 +650,10 @@ function Toasts({ position }: { position: ToastPosition }) {
                 "data-position:data-expanded:transform-[translateX(var(--toast-swipe-movement-x))_translateY(var(--toast-calc-offset-y))]",
                 "data-[position*=top]:data-starting-style:transform-[translateY(calc(-100%-var(--toast-inset)))]",
                 "data-[position*=bottom]:data-starting-style:transform-[translateY(calc(100%+var(--toast-inset)))]",
-                "data-[position*=top]:data-[position*=right]:data-starting-style:transform-[translateX(calc(100%+var(--toast-inset)))_translateY(var(--toast-calc-offset-y))]",
+                "data-[position*=top]:data-[position*=right]:data-starting-style:transform-[translateX(var(--toast-exit-x))_translateY(var(--toast-calc-offset-y))]",
                 "data-ending-style:opacity-0",
                 "data-ending-style:not-data-limited:not-data-swipe-direction:transform-[translateY(calc(100%+var(--toast-inset)))]",
-                "data-[position*=top]:data-[position*=right]:data-ending-style:not-data-limited:not-data-swipe-direction:transform-[translateX(calc(100%+var(--toast-inset)))_translateY(var(--toast-calc-offset-y))]",
+                "data-[position*=top]:data-[position*=right]:data-ending-style:not-data-limited:not-data-swipe-direction:transform-[translateX(var(--toast-exit-x))_translateY(var(--toast-calc-offset-y))]",
                 "data-ending-style:data-[swipe-direction=left]:transform-[translateX(calc(var(--toast-swipe-movement-x)-100%-var(--toast-inset)))_translateY(var(--toast-calc-offset-y))]",
                 "data-ending-style:data-[swipe-direction=right]:transform-[translateX(calc(var(--toast-swipe-movement-x)+100%+var(--toast-inset)))_translateY(var(--toast-calc-offset-y))]",
                 "data-ending-style:data-[swipe-direction=up]:transform-[translateY(calc(var(--toast-swipe-movement-y)-100%-var(--toast-inset)))]",
@@ -672,7 +674,7 @@ function Toasts({ position }: { position: ToastPosition }) {
               swipeDirection={
                 position.includes("center")
                   ? [isTop ? "up" : "down"]
-                  : position.includes("left")
+                  : position.includes("left") === (direction === "ltr")
                     ? ["left", isTop ? "up" : "down"]
                     : ["right", isTop ? "up" : "down"]
               }
@@ -699,9 +701,9 @@ function Toasts({ position }: { position: ToastPosition }) {
                 className={cn(
                   // overflow-x:clip preserves visible vertical overflow; hidden would force overflow-y:auto
                   // and clip detail panels.
-                  "pointer-events-auto min-h-0 overflow-y-visible pl-3.5 text-sm transition-opacity duration-250 [overflow-x:clip] data-expanded:opacity-100",
+                  "pointer-events-auto min-h-0 overflow-y-visible ps-3.5 text-sm transition-opacity duration-250 [overflow-x:clip] data-expanded:opacity-100",
                   stackedActionLayout
-                    ? "flex flex-col gap-2 py-2.5 pr-3.5"
+                    ? "flex flex-col gap-2 py-2.5 pe-3.5"
                     : cn("py-3", "flex items-center justify-between gap-1.5", inlineContentEndPad),
                   hideCollapsedContent &&
                     "not-data-expanded:pointer-events-none not-data-expanded:opacity-0",
@@ -798,9 +800,9 @@ function AnchoredToasts() {
                       </div>
                       <Toast.Content
                         className={cn(
-                          "pointer-events-auto min-h-0 overflow-y-visible pl-3.5 text-sm [overflow-x:clip]",
+                          "pointer-events-auto min-h-0 overflow-y-visible ps-3.5 text-sm [overflow-x:clip]",
                           stackedActionLayout
-                            ? "flex flex-col gap-2 py-2.5 pr-3.5"
+                            ? "flex flex-col gap-2 py-2.5 pe-3.5"
                             : cn(
                                 "py-3",
                                 "flex items-center justify-between gap-1.5",

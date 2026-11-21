@@ -65,7 +65,7 @@ export function MarkdownMermaidCodeBlock({
         <RenderErrorBoundary resetKeys={[code, theme]} fallback={children}>
           <Suspense
             fallback={
-              <pre className="invisible" aria-hidden>
+              <pre dir="ltr" className="invisible" aria-hidden>
                 {code}
               </pre>
             }
@@ -73,7 +73,7 @@ export function MarkdownMermaidCodeBlock({
             <MermaidDiagram source={code} onExpand={onExpand} />
           </Suspense>
           {searching ? (
-            <pre ref={sourceRevealRef} hidden aria-hidden>
+            <pre dir="ltr" ref={sourceRevealRef} hidden aria-hidden>
               {code}
             </pre>
           ) : null}

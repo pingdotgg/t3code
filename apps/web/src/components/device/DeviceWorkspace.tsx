@@ -125,7 +125,7 @@ export function DeviceWorkspace(props: {
           axOverlay={axOverlay}
           onAxOverlayChange={setAxOverlay}
           onClose={() => setToolsOpen(false)}
-          className="absolute inset-y-0 right-0 z-10 w-full max-w-72 border-l shadow-lg @[700px]:static @[700px]:w-72 @[700px]:shrink-0 @[700px]:shadow-none"
+          className="absolute inset-y-0 end-0 z-10 w-full max-w-72 border-s shadow-lg @[700px]:static @[700px]:w-72 @[700px]:shrink-0 @[700px]:shadow-none"
         />
       ) : null}
     </>

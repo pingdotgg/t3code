@@ -320,7 +320,7 @@ export function DeviceStreamView(props: {
           "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none",
           // Overlay so the ring paints above the stream canvas.
           "after:pointer-events-none after:absolute after:inset-0 after:z-10 focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ring",
-          controlsInset && "pr-14",
+          controlsInset && "pe-14",
         )}
         tabIndex={0}
         role="application"
@@ -401,7 +401,7 @@ export function DeviceStreamView(props: {
                   }}
                 >
                   {element.label ? (
-                    <span className="absolute -top-3.5 left-0 max-w-full truncate rounded-sm bg-info px-1 text-3xs leading-3.5 text-white">
+                    <span className="absolute -top-3.5 start-0 max-w-full truncate rounded-sm bg-info px-1 text-3xs leading-3.5 text-white">
                       {element.label}
                     </span>
                   ) : null}
@@ -441,7 +441,7 @@ export function DeviceStreamView(props: {
           />
         ) : null}
         {props.allowPhoneView && !props.renderControls && status === "streaming" ? (
-          <div className="absolute top-3 left-3 flex gap-1 rounded-lg border border-border/50 bg-background/90 p-1 shadow-sm">
+          <div className="absolute top-3 start-3 flex gap-1 rounded-lg border border-border/50 bg-background/90 p-1 shadow-sm">
             <Button
               variant={showPhone ? "secondary" : "ghost"}
               size="xs"

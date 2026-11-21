@@ -77,7 +77,7 @@ describe("formatSamplingStatus", () => {
     expect([0, 500, 2_000].map((intervalMs) => formatSamplingStatus(intervalMs))).toEqual([
       "Sampling on demand",
       "Sampling every 500 ms",
-      "Sampling every 2 seconds",
+      `Sampling every ${(2).toLocaleString()} seconds`,
     ]);
   });
 });

@@ -88,7 +88,7 @@ export function SourceControlAccountSettings({
       <p className="text-xs text-muted-foreground">
         <T>
           Sign in with{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">
+          <code dir="ltr" className="rounded bg-muted px-1 py-px text-2xs">
             <Var>{credentials.loginCommand}</Var>
           </code>{" "}
           on the server host, then rescan to choose accounts here.
@@ -103,7 +103,7 @@ export function SourceControlAccountSettings({
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
           <T>
             Choose which{" "}
-            <code className="rounded bg-muted px-1 py-px text-2xs">
+            <code dir="ltr" className="rounded bg-muted px-1 py-px text-2xs">
               <Var>{cliName}</Var>
             </code>{" "}
             login each <Var>{label}</Var> host uses, or turn a host off.

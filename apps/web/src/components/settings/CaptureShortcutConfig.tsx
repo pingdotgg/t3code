@@ -338,7 +338,10 @@ export function CaptureShortcutConfig({
                   "Add this binding to your Hyprland config, then save. Change the keys if needed.",
                 )}
           </p>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted/50 p-3">
+          <pre
+            dir="ltr"
+            className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted/50 p-3"
+          >
             {state.shortcutBinding}
           </pre>
           <Button

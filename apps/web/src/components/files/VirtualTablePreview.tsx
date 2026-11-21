@@ -74,6 +74,7 @@ export default function VirtualTablePreview(props: {
   const tableWidth = props.source ? "100%" : Math.max(width, offset(props.columns) + rowHeader);
   return (
     <div
+      dir="ltr"
       ref={ref}
       className="relative min-h-0 flex-1 overflow-x-auto contain-strict"
       onScroll={(event) => {
@@ -96,7 +97,7 @@ export default function VirtualTablePreview(props: {
               {props.header.map((cell, i) => (
                 <th
                   key={i}
-                  className="min-w-32 max-w-80 border-b px-3 py-1.5 text-left font-medium whitespace-nowrap"
+                  className="min-w-32 max-w-80 border-b px-3 py-1.5 text-start font-medium whitespace-nowrap"
                 >
                   {cell}
                 </th>
@@ -136,7 +137,7 @@ export default function VirtualTablePreview(props: {
               role="row"
               className="relative z-10 flex min-h-[29px] shrink-0 border-b border-border bg-muted/60 font-medium backdrop-blur"
             >
-              <div className="sticky left-0 z-10 w-14 shrink-0 border-r border-border bg-background" />
+              <div className="sticky start-0 z-10 w-14 shrink-0 border-e border-border bg-background" />
               <div style={{ width: offset(firstColumn), flexShrink: 0 }} />
               {columns.map((column) => (
                 <Tooltip key={column}>
@@ -145,7 +146,7 @@ export default function VirtualTablePreview(props: {
                       <div
                         role="columnheader"
                         aria-colindex={column + 1}
-                        className="shrink-0 overflow-hidden border-r border-border/40 px-3 py-1.5 text-ellipsis whitespace-pre"
+                        className="shrink-0 overflow-hidden border-e border-border/40 px-3 py-1.5 text-ellipsis whitespace-pre"
                         style={{ width: sizes[column] }}
                       >
                         {props.header?.[column] ?? columnLabel(column)}
@@ -217,7 +218,7 @@ function RowPage(
           >
             <div
               role={props.source ? undefined : "rowheader"}
-              className={`${props.source ? "sticky left-0" : "relative"} z-1 shrink-0 border-r border-border bg-background px-2 py-1.5 text-right font-normal text-muted-foreground tabular-nums select-none`}
+              className={`${props.source ? "sticky start-0" : "relative"} z-1 shrink-0 border-e border-border bg-background px-2 py-1.5 text-end font-normal text-muted-foreground tabular-nums select-none`}
               style={{
                 width: props.rowHeader,
                 transform: props.source ? undefined : "translateX(var(--preview-scroll-left, 0px))",
@@ -241,7 +242,7 @@ function RowPage(
                 className={
                   props.source
                     ? `min-w-0 flex-1 px-3 py-1 ${props.wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`
-                    : "shrink-0 border-r border-border/40 px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums"
+                    : "shrink-0 border-e border-border/40 px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums"
                 }
                 style={props.source ? undefined : { width: props.sizes[column] }}
               >
@@ -432,6 +433,7 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
   });
   return (
     <div
+      dir="ltr"
       ref={ref}
       tabIndex={0}
       className="min-h-0 flex-1 overflow-auto"

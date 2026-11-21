@@ -130,7 +130,7 @@ export function SidebarUpdateCapsule({
         />
         <span
           className={cn(
-            "pointer-events-none relative hidden min-w-0 flex-1 truncate pl-3 text-xs transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
+            "pointer-events-none relative hidden min-w-0 flex-1 truncate ps-3 text-xs transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
             expandedControlClassName,
           )}
         >
@@ -143,7 +143,7 @@ export function SidebarUpdateCapsule({
           <button
             type="button"
             className={cn(
-              "relative hidden shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
+              "relative hidden shrink-0 cursor-pointer pe-3 ps-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current transition-opacity duration-200 ease-out starting:opacity-0 motion-reduce:transition-none",
               expandedControlClassName,
             )}
             onClick={runAction}

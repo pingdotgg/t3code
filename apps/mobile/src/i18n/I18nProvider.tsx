@@ -1,11 +1,28 @@
+import "./intl-polyfills";
+import { reloadAppAsync } from "expo";
 import { resolveLocaleSelection } from "@t3tools/client-runtime/locales";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { GTProvider, initializeGT, useLocale } from "gt-react-native";
-import { createContext, use, useDeferredValue, useEffect, useMemo, type ReactNode } from "react";
-import { Platform, TurboModuleRegistry, View, type TurboModule } from "react-native";
+import {
+  createContext,
+  use,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  AppState,
+  I18nManager,
+  Platform,
+  TurboModuleRegistry,
+  View,
+  type TurboModule,
+} from "react-native";
 
-import { mobilePreferencesAtom } from "../state/preferences";
+import { mobilePreferencesAtom, savedMobileLanguageAtom } from "../state/preferences";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
 
@@ -28,6 +45,7 @@ const CATALOGS: Readonly<Record<string, () => unknown>> = {
   ko: () => require("./translations/ko.json"),
   ru: () => require("./translations/ru.json"),
   sv: () => require("./translations/sv.json"),
+  ar: () => require("./translations/ar.json"),
 };
 
 initializeGT({
@@ -63,9 +81,19 @@ export function useLanguagePreference(): string {
 
 /** Translates the app into the saved language; "system" follows the device. Mounted once in App. */
 export function I18nProvider(props: { readonly children: ReactNode }) {
+  const saved = useAtomValue(savedMobileLanguageAtom);
+  const savedLanguage = AsyncResult.isSuccess(saved) ? (saved.value ?? DEFAULT_LOCALE) : null;
+  const [systemLocales, setSystemLocales] = useState(readSystemLocales);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Android device language can change while the app is in the background.
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") setSystemLocales(readSystemLocales());
+    });
+    return () => subscription.remove();
+  }, []);
   const { catalogLocale, formattingLocale } = resolveLocaleSelection(
     useLanguagePreference(),
-    readSystemLocales(),
+    systemLocales,
     SUPPORTED_LOCALES,
     DEFAULT_LOCALE,
   );
@@ -74,6 +102,22 @@ export function I18nProvider(props: { readonly children: ReactNode }) {
   const selection = useDeferredValue(
     useMemo(() => ({ catalogLocale, formattingLocale }), [catalogLocale, formattingLocale]),
   );
+  const savedCatalogLocale =
+    savedLanguage === null
+      ? null
+      : resolveLocaleSelection(savedLanguage, systemLocales, SUPPORTED_LOCALES, DEFAULT_LOCALE)
+          .catalogLocale;
+  const wantedRTL = savedCatalogLocale === null ? null : savedCatalogLocale === "ar";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- React Native applies persisted layout direction when it recreates the app.
+  useEffect(() => {
+    if (wantedRTL === null || I18nManager.isRTL === wantedRTL) return;
+    // Allowing device RTL with forceRTL(false) would keep an Arabic device in RTL.
+    I18nManager.allowRTL(wantedRTL);
+    I18nManager.forceRTL(wantedRTL);
+    void reloadAppAsync().catch((error: unknown) =>
+      console.warn("Could not reload the app after a layout direction change.", error),
+    );
+  }, [wantedRTL]);
   return (
     <GTProvider locale={selection.catalogLocale} fallback={<View className="flex-1 bg-screen" />}>
       <ActiveLocale />

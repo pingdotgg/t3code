@@ -80,7 +80,7 @@ function StructuredValue({
   const isJson = highlightJson && isJsonToolText(text);
   if (!text) return null;
   return (
-    <pre className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}>
+    <pre dir="ltr" className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}>
       {language || isJson ? (
         <RenderErrorBoundary fallback={text}>
           <Suspense fallback={text}>

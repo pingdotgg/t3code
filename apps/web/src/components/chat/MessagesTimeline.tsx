@@ -1760,13 +1760,13 @@ function ContextCompactionTimelineRow({
           {row.title ? (
             <T>
               <Var>{row.title}</Var> <Var>{row.tokenCounts.before}</Var>
-              <ArrowRightIcon aria-hidden="true" className="size-3" />
+              <ArrowRightIcon aria-hidden="true" className="size-3 rtl:-scale-x-100" />
               <Var>{row.tokenCounts.after}</Var> tokens
             </T>
           ) : (
             <T>
               Context compacted <Var>{row.tokenCounts.before}</Var>
-              <ArrowRightIcon aria-hidden="true" className="size-3" />
+              <ArrowRightIcon aria-hidden="true" className="size-3 rtl:-scale-x-100" />
               <Var>{row.tokenCounts.after}</Var> tokens
             </T>
           )}
@@ -1883,7 +1883,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           {row.expanded ? (
             <ChevronDownIcon className="size-3.5" />
           ) : (
-            <ChevronRightIcon className="size-3.5" />
+            <ChevronRightIcon className="size-3.5 rtl:-scale-x-100" />
           )}
         </button>
         <TimelineRowTimestamp
@@ -1912,12 +1912,12 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
         data-superseded-attempt-id={row.attemptId}
         onClick={toggle}
         aria-busy={loading}
-        className="flex w-full cursor-pointer select-none items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex w-full cursor-pointer select-none items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-start transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         {row.expanded ? (
           <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
         ) : (
-          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground rtl:-scale-x-100" />
         )}
         <span className="text-xs font-medium text-foreground/80">
           {row.label}

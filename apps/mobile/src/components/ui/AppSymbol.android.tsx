@@ -1,3 +1,5 @@
+import { I18nManager } from "react-native";
+import { directionalSymbols } from "./directional-symbol";
 import type { Icon } from "@tabler/icons-react-native/types";
 /* Package-root imports eagerly register the entire Tabler icon set in Metro. */
 import IconAdjustmentsHorizontal from "@tabler/icons-react-native/IconAdjustmentsHorizontal";
@@ -392,7 +394,13 @@ function AppSymbolView(props: AppSymbolViewProps) {
       testID={props.testID}
     />
   );
-  return transformed ? <View style={props.style}>{icon}</View> : icon;
+  const orientedIcon =
+    I18nManager.isRTL && directionalSymbols[sfSymbol] !== undefined ? (
+      <View style={{ transform: [{ scaleX: -1 }] }}>{icon}</View>
+    ) : (
+      icon
+    );
+  return transformed ? <View style={props.style}>{orientedIcon}</View> : orientedIcon;
 }
 
 export const SymbolView = withUniwind(AppSymbolView);

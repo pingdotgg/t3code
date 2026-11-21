@@ -1,3 +1,4 @@
+import { isUiRtl } from "~/lib/inlineDirection";
 import * as Schema from "effect/Schema";
 import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useState } from "react";
 
@@ -15,7 +16,7 @@ export interface UseResizableWidthOptions {
   readonly defaultWidth: number;
   readonly minWidth: number;
   readonly maxWidth: number;
-  readonly edge: "left" | "right";
+  readonly edge: "left" | "right" | "inline-start";
 }
 
 export interface ResizableWidthHandlers {
@@ -80,7 +81,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     const startWidth = clampedWidth;
     return {
       width: startWidth,
-      edge,
+      edge: edge === "inline-start" ? (isUiRtl() ? "right" : "left") : edge,
       bounds: { min: minWidth, max: maxWidth },
       resize(nextWidth) {
         host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${nextWidth}px`);

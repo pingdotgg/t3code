@@ -674,7 +674,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               <ChevronRightIcon
                 className={cn(
                   "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
-                  expanded && "rotate-90",
+                  expanded ? "rotate-90" : "rtl:rotate-180",
                 )}
               />
             </span>
@@ -721,7 +721,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           ) : (
             <>
               {expandedBody ? (
-                <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+                <pre dir="ltr" className={toolCallExpandedBodyClassName}>
+                  {expandedBody}
+                </pre>
               ) : null}
               {plainOutputFetches && workEntry.projectedItem ? (
                 <FetchedToolOutput

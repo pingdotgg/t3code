@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useRef, useState } from "react";
 import {
+  I18nManager,
   Platform,
   Pressable,
   ScrollView,
@@ -170,7 +171,7 @@ export function ComposerToolbarScroller(props: {
 }) {
   const metricsRef = useRef({
     contentWidth: 0,
-    offsetX: 0,
+    offsetX: null as number | null,
     viewportWidth: 0,
     showLeftFade: false,
     showRightFade: false,
@@ -183,8 +184,9 @@ export function ComposerToolbarScroller(props: {
   const updateScrollEdges = useCallback(() => {
     const metrics = metricsRef.current;
     const maxOffset = Math.max(0, metrics.contentWidth - metrics.viewportWidth);
-    const showLeftFade = metrics.offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON;
-    const showRightFade = metrics.offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON;
+    const offsetX = metrics.offsetX ?? (I18nManager.isRTL ? maxOffset : 0);
+    const showLeftFade = offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON;
+    const showRightFade = offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON;
     if (metrics.showLeftFade === showLeftFade && metrics.showRightFade === showRightFade) {
       return;
     }
@@ -215,7 +217,8 @@ export function ComposerToolbarScroller(props: {
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const offsetX = event.nativeEvent.contentOffset.x;
-      if (Math.abs(metricsRef.current.offsetX - offsetX) < 1) return;
+      if (metricsRef.current.offsetX !== null && Math.abs(metricsRef.current.offsetX - offsetX) < 1)
+        return;
       metricsRef.current.offsetX = offsetX;
       updateScrollEdges();
     },
@@ -246,7 +249,8 @@ export function ComposerToolbarScroller(props: {
       {scrollEdges.showLeftFade ? (
         <View
           className={cn(
-            "absolute inset-y-0 left-0",
+            "absolute inset-y-0",
+            I18nManager.isRTL ? "end-0" : "start-0",
             props.fadeOpaque === undefined && "bg-linear-to-r to-transparent",
             props.fadeOpaque === undefined &&
               (props.fadeSurface === "sheet" ? "from-sheet" : "from-card"),
@@ -264,7 +268,8 @@ export function ComposerToolbarScroller(props: {
       {scrollEdges.showRightFade ? (
         <View
           className={cn(
-            "absolute inset-y-0 right-0",
+            "absolute inset-y-0",
+            I18nManager.isRTL ? "start-0" : "end-0",
             props.fadeOpaque === undefined && "bg-linear-to-r from-transparent",
             props.fadeOpaque === undefined &&
               (props.fadeSurface === "sheet" ? "to-sheet" : "to-card"),

@@ -82,7 +82,7 @@ export function PreviewFindBar({ tabId, focusRequestId, onClose }: PreviewFindBa
   const navigationDisabled = !result || result.matches === 0;
 
   return (
-    <div className="absolute top-3 right-3 z-40 w-[min(22rem,calc(100%-1.5rem))]">
+    <div className="absolute top-3 end-3 z-40 w-[min(22rem,calc(100%-1.5rem))]">
       <InputGroup
         variant="popover"
         size="lg"

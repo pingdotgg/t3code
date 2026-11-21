@@ -504,6 +504,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       editable.setSpan(
         ComposerChipSpan(
           T3ContextChip(
+            rtl = layoutDirection == LAYOUT_DIRECTION_RTL,
             content = T3ContextChip.Content(
               label = token.label,
               detail = token.detail,

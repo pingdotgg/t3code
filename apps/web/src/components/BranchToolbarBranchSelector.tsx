@@ -890,6 +890,7 @@ export function BranchToolbarBranchSelector({
             />
             <ComposerContextLabel displayMode={displayMode}>
               <MiddleTruncate
+                dir="ltr"
                 value={triggerLabel}
                 variant="cap-aligned"
                 className="w-full"

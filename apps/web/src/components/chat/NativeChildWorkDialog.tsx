@@ -132,7 +132,7 @@ function NativeChildStep(props: { readonly step: OrchestrationV2NativeChildStep 
         {step.status !== null && step.status !== "DONE" ? ` · ${stepLabel(step.status)}` : ""}
       </span>
       {step.toolCalls.length === 0 ? null : (
-        <code className="whitespace-pre-wrap break-all text-xs text-foreground">
+        <code dir="ltr" className="whitespace-pre-wrap break-all text-xs text-foreground">
           {step.toolCalls.map((call) => `${call.name} ${call.input}`).join("\n")}
         </code>
       )}

@@ -130,7 +130,7 @@ export function SettingsScopeNotice({
         type="button"
         className={cn(
           ITEM_ROW_CLASSNAME,
-          "flex w-full min-w-0 cursor-pointer items-center gap-3 text-left outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          "flex w-full min-w-0 cursor-pointer items-center gap-3 text-start outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         )}
         onClick={() => {
           if (targetId)
@@ -161,7 +161,10 @@ export function SettingsScopeNotice({
             </Tooltip>
           ) : null}
         </span>
-        <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <ChevronRightIcon
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground rtl:-scale-x-100"
+        />
       </button>
     ));
   };

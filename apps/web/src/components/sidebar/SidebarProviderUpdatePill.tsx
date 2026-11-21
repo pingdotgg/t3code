@@ -161,7 +161,7 @@ export function SidebarProviderUpdatePill() {
         <div
           key={displayedView.key}
           aria-hidden="true"
-          className={`pointer-events-none absolute inset-y-0 left-0 w-full origin-left scale-x-0 transition-transform duration-(--provider-update-pill-dismiss-ms) ease-linear starting:scale-x-100 border-r border-current/15 inset-shadow-2xs inset-shadow-white/8 ${
+          className={`pointer-events-none absolute inset-y-0 start-0 w-full origin-left scale-x-0 transition-transform duration-(--provider-update-pill-dismiss-ms) ease-linear starting:scale-x-100 border-e border-current/15 inset-shadow-2xs inset-shadow-white/8 ${
             PROVIDER_UPDATE_PILL_PROGRESS_STYLES[displayedView.tone]
           }`}
           style={
@@ -179,7 +179,7 @@ export function SidebarProviderUpdatePill() {
               type="button"
               aria-label={displayedView.description}
               data-provider-update-main
-              className="relative z-[1] flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left"
+              className="relative z-[1] flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-start"
               onClick={openProviderSettings}
             >
               {displayedView.tone === "loading" ? (
@@ -204,7 +204,7 @@ export function SidebarProviderUpdatePill() {
               <button
                 type="button"
                 aria-label={gt("Dismiss provider update notice")}
-                className="relative z-[1] mr-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                className="relative z-[1] me-1 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md opacity-70 outline-none hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 onClick={() => startExit(displayedView.key, null, displayedView.dismissKeys)}
               >
                 <XIcon className="size-3.5 shrink-0" />

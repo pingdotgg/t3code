@@ -234,7 +234,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                     </span>
                   </span>
                 </TooltipTrigger>
-                <TooltipPopup side="left">
+                <TooltipPopup side="inline-start">
                   <T>
                     Open in the browser panel. <Var>{externalClickLabel}</Var> for your browser.
                   </T>
@@ -243,7 +243,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
               {actionCount > 0 ? (
                 <div
                   className={cn(
-                    "absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5",
+                    "absolute end-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5",
                     // A forward stays visible: it holds a port on this machine.
                     !forward &&
                       "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100",
@@ -279,7 +279,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                           />
                         )}
                       </TooltipTrigger>
-                      <TooltipPopup side="left">
+                      <TooltipPopup side="inline-start">
                         {forward ? (
                           <T>
                             Forwarded to localhost:<Var>{forward.localPort}</Var> on this machine.
@@ -312,7 +312,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                           <SquareIcon aria-hidden className="size-3 fill-current" />
                         )}
                       </TooltipTrigger>
-                      <TooltipPopup side="left">
+                      <TooltipPopup side="inline-start">
                         <T>Stop server</T>
                       </TooltipPopup>
                     </Tooltip>

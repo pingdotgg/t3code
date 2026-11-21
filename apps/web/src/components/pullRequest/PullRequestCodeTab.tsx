@@ -943,7 +943,9 @@ function PullRequestCodeTab({
         {rawSlices.map((slice) => (
           <div key={`${slice.reason}:${slice.text.slice(0, 64)}`} className="space-y-2">
             <p className="text-xs text-muted-foreground">{messages(slice.reason)}</p>
-            <pre className="whitespace-pre-wrap break-words font-mono text-xs">{slice.text}</pre>
+            <pre dir="ltr" className="whitespace-pre-wrap break-words font-mono text-xs">
+              {slice.text}
+            </pre>
           </div>
         ))}
       </div>
@@ -954,7 +956,9 @@ function PullRequestCodeTab({
         {rawSlices.map((slice) => (
           <div key={`${slice.reason}:${slice.text.slice(0, 64)}`} className="space-y-2">
             <p className="text-xs text-muted-foreground">{messages(slice.reason)}</p>
-            <pre className="whitespace-pre-wrap break-words font-mono text-xs">{slice.text}</pre>
+            <pre dir="ltr" className="whitespace-pre-wrap break-words font-mono text-xs">
+              {slice.text}
+            </pre>
           </div>
         ))}
       </div>
@@ -1157,14 +1161,14 @@ function PullRequestCodeTab({
         variant="ghost-muted"
         aria-expanded={!collapsed}
         aria-label={collapsed ? gt("Expand diff") : gt("Collapse diff")}
-        className="mr-1"
+        className="me-1"
         onClick={(event) => {
           event.stopPropagation();
           toggleFile(item.id);
         }}
       >
         {collapsed ? (
-          <ChevronRightIcon className="size-4" />
+          <ChevronRightIcon className="size-4 rtl:-scale-x-100" />
         ) : (
           <ChevronDownIcon className="size-4" />
         )}
@@ -1443,7 +1447,7 @@ function PullRequestCodeTab({
                         />
                         <TooltipPopup side="top">{entry.messageHeadline}</TooltipPopup>
                       </Tooltip>
-                      <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                      <span className="ms-auto shrink-0 font-mono text-xs text-muted-foreground">
                         {entry.oid.slice(0, 7)}
                       </span>
                     </span>
@@ -1900,7 +1904,7 @@ function PullRequestCodeTab({
         <div className="shrink-0 border-b border-border/60">
           <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
             <h2>
-              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
+              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-start text-xs text-muted-foreground">
                 <span>
                   {nextCursor === null
                     ? gt("Conversations not on the current diff")
@@ -1908,7 +1912,10 @@ function PullRequestCodeTab({
                 </span>
                 <ChevronRightIcon
                   aria-hidden
-                  className={cn("size-3.5 transition-transform", orphansOpen && "rotate-90")}
+                  className={cn(
+                    "size-3.5 transition-transform",
+                    orphansOpen ? "rotate-90" : "rtl:rotate-180",
+                  )}
                 />
                 <span aria-hidden className="tabular-nums">
                   {orphanThreads.length}

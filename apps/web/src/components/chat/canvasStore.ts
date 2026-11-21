@@ -3,6 +3,7 @@ import { createStore } from "zustand";
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import type { DetailsCardMeasurement } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout, type ChatCanvasPreview } from "./chatCanvasLayout";
+import { resolvePreviewMiniPlayerFrame } from "../preview/previewMiniPlayerLayout";
 import { resolveThreadDetailsCardLayout } from "./threadDetailsCardLayout";
 
 interface CanvasEdges {
@@ -22,6 +23,7 @@ export interface ChatCanvasMeasurements {
   readonly timelineGutter: number;
   /** The find bar's box in canvas coordinates while it is shown. */
   readonly findBar: CanvasEdges | null;
+  readonly rtl?: boolean;
 }
 
 interface ChatCanvasStoreState {
@@ -55,7 +57,8 @@ const sameMeasurements = (a: ChatCanvasMeasurements, b: ChatCanvasMeasurements) 
   a.minChatWidth === b.minChatWidth &&
   a.composerHeight === b.composerHeight &&
   a.timelineGutter === b.timelineGutter &&
-  sameEdges(a.findBar, b.findBar);
+  sameEdges(a.findBar, b.findBar) &&
+  Boolean(a.rtl) === Boolean(b.rtl);
 
 /**
  * One store per chat view: the canvas measures into it, and the chat view's
@@ -96,12 +99,38 @@ export function resolveChatCanvasModel({
   detailsCardInlineOpen: boolean;
 }) {
   const container = { width: measurements.width, height: measurements.height };
+  const rtl = measurements.rtl === true;
+  const mirrorX = (x: number, width: number) => container.width - width - x;
   const { findBar } = measurements;
+  const logicalFindBar =
+    rtl && findBar
+      ? {
+          left: container.width - findBar.right,
+          right: container.width - findBar.left,
+          bottom: findBar.bottom,
+        }
+      : findBar;
+  const initialPreviewWidth =
+    rtl && preview && preview.position !== null && container.width > 0 && container.height > 0
+      ? resolvePreviewMiniPlayerFrame({ ...preview, container }).width
+      : null;
+  const mirrorPreview = (width: number) =>
+    preview && preview.position !== null
+      ? {
+          ...preview,
+          position: {
+            x: mirrorX(preview.position.x, width),
+            y: preview.position.y,
+          },
+        }
+      : preview;
+  const logicalPreview =
+    initialPreviewWidth !== null ? mirrorPreview(initialPreviewWidth) : preview;
   const detailsCardTopInset = findBar?.bottom ?? 0;
   const lane = { padding: measurements.padding, minChatWidth: measurements.minChatWidth };
   // The preview avoids where an open inline card would sit, whether or not a
   // preview overlap has pushed the card itself into popover mode.
-  const preferredDetailsCard = resolveThreadDetailsCardLayout({
+  const logicalPreferredDetailsCard = resolveThreadDetailsCardLayout({
     container,
     narrowestWidth: measurements.narrowestWidth ?? measurements.width,
     lane,
@@ -119,35 +148,75 @@ export function resolveChatCanvasModel({
       : null;
   const detailsCard =
     detailsCardInlineOpen &&
-    preferredDetailsCard &&
-    detailsCardMeasured?.width === preferredDetailsCard.width &&
+    logicalPreferredDetailsCard &&
+    detailsCardMeasured?.width === logicalPreferredDetailsCard.width &&
     detailsCardMeasured.fullContentHeight > 0
       ? {
-          left: preferredDetailsCard.x,
-          right: preferredDetailsCard.x + preferredDetailsCard.width,
+          left: logicalPreferredDetailsCard.x,
+          right: logicalPreferredDetailsCard.x + logicalPreferredDetailsCard.width,
           bottom:
-            preferredDetailsCard.y +
-            Math.min(detailsCardMeasured.fullContentHeight, preferredDetailsCard.height),
+            logicalPreferredDetailsCard.y +
+            Math.min(detailsCardMeasured.fullContentHeight, logicalPreferredDetailsCard.height),
         }
       : null;
-  const layout = resolveChatCanvasLayout({
+  let logicalLayout = resolveChatCanvasLayout({
     container,
-    preview,
+    preview: logicalPreview,
     padding: measurements.padding,
     maxChatWidth: measurements.maxChatWidth,
     minChatWidth: measurements.minChatWidth,
     composerHeight: measurements.composerHeight,
     detailsCard,
-    findBar,
+    findBar: logicalFindBar,
   });
-  const detailsCardPlacement = resolveThreadDetailsCardLayout({
+  if (
+    initialPreviewWidth !== null &&
+    logicalLayout.frame !== null &&
+    logicalLayout.frame.width !== initialPreviewWidth
+  ) {
+    logicalLayout = resolveChatCanvasLayout({
+      container,
+      preview: mirrorPreview(logicalLayout.frame.width),
+      padding: measurements.padding,
+      maxChatWidth: measurements.maxChatWidth,
+      minChatWidth: measurements.minChatWidth,
+      composerHeight: measurements.composerHeight,
+      detailsCard,
+      findBar: logicalFindBar,
+    });
+  }
+  const logicalDetailsCardPlacement = resolveThreadDetailsCardLayout({
     container,
     narrowestWidth: measurements.narrowestWidth ?? measurements.width,
     lane,
-    frame: layout.frame,
-    overlapsDetailsCard: layout.overlapsDetailsCard,
+    frame: logicalLayout.frame,
+    overlapsDetailsCard: logicalLayout.overlapsDetailsCard,
     topInset: detailsCardTopInset,
   });
+  const layout =
+    rtl && logicalLayout.frame
+      ? {
+          ...logicalLayout,
+          frame: {
+            ...logicalLayout.frame,
+            x: mirrorX(logicalLayout.frame.x, logicalLayout.frame.width),
+          },
+        }
+      : logicalLayout;
+  const preferredDetailsCard =
+    rtl && logicalPreferredDetailsCard
+      ? {
+          ...logicalPreferredDetailsCard,
+          x: mirrorX(logicalPreferredDetailsCard.x, logicalPreferredDetailsCard.width),
+        }
+      : logicalPreferredDetailsCard;
+  const detailsCardPlacement =
+    rtl && logicalDetailsCardPlacement
+      ? {
+          ...logicalDetailsCardPlacement,
+          x: mirrorX(logicalDetailsCardPlacement.x, logicalDetailsCardPlacement.width),
+        }
+      : logicalDetailsCardPlacement;
   const detailsCardMode: ThreadPanelPresentation = detailsCardPlacement ? "inline" : "popover";
   return {
     container,

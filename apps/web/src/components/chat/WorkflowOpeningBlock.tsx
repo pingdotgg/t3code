@@ -131,7 +131,7 @@ function WorkflowMemberRow(props: {
     .replace(/\s+/g, " ")
     .trim();
   const className =
-    "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left";
+    "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-start";
   return (
     <li>
       <Tooltip>
@@ -183,7 +183,7 @@ function WorkflowMemberRow(props: {
           {threadId !== null ? (
             <ChevronRightIcon
               aria-hidden
-              className="size-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover/subagent:text-foreground"
+              className="size-3.5 shrink-0 text-muted-foreground/60 transition-colors group-hover/subagent:text-foreground rtl:-scale-x-100"
             />
           ) : null}
         </TooltipTrigger>

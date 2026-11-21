@@ -3,6 +3,8 @@ import IconGitMerge from "@tabler/icons-react-native/IconGitMerge";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
 import IconGitPullRequestClosed from "@tabler/icons-react-native/IconGitPullRequestClosed";
 import IconGitPullRequestDraft from "@tabler/icons-react-native/IconGitPullRequestDraft";
+import { I18nManager, View } from "react-native";
+import { directionalSymbols } from "./directional-symbol";
 import type { SFSymbol } from "expo-symbols";
 import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconGitPullRequest from "@tabler/icons-react-native/IconGitPullRequest";
@@ -44,6 +46,17 @@ function AppSymbolView(props: AppSymbolViewProps) {
     );
   }
 
+  if (I18nManager.isRTL && directionalSymbols[name] !== undefined) {
+    return (
+      <View style={props.style}>
+        <ExpoSymbolView
+          {...props}
+          name={name as SFSymbol}
+          style={{ transform: [{ scaleX: -1 }] }}
+        />
+      </View>
+    );
+  }
   return <ExpoSymbolView {...props} name={name as SFSymbol} />;
 }
 

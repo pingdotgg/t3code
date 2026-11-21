@@ -312,7 +312,7 @@ export function DevicePanel(props: {
                   </>
                 ) : null}
                 {hostReady && grouped.length > 0 ? (
-                  <div className="w-full space-y-6 text-left">
+                  <div className="w-full space-y-6 text-start">
                     {grouped.map((group) => (
                       <section key={group.platform} className="space-y-3">
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -464,7 +464,7 @@ function DeviceDiscoveryWarning(props: {
               : gt("Device discovery on {host} reported a warning.", { host: props.label })}
         </span>
       </span>
-      <span className="ml-auto flex shrink-0 items-center gap-0.5">
+      <span className="ms-auto flex shrink-0 items-center gap-0.5">
         {platforms.length > 0 ? (
           <Button
             size="micro"

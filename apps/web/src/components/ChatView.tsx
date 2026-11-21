@@ -3498,14 +3498,14 @@ export default function ChatView(props: ChatViewProps) {
                       !inlineRightPanelOwnsTitleBar &&
                       "wco:pr-(--workspace-native-controls-inset)",
                   )
-                : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center pl-(--workspace-gutter-start) pr-(--workspace-gutter-end)",
+                : "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center ps-(--workspace-gutter-start) pe-(--workspace-gutter-end)",
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
             {isElectron && rightPanelControlsAtRoot ? (
               <span
                 aria-hidden
-                className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+                className="pointer-events-none fixed top-[var(--workspace-controls-top)] end-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
               />
             ) : null}
             {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
@@ -4148,7 +4148,7 @@ export default function ChatView(props: ChatViewProps) {
           maximized={rightPanelMaximized}
           layoutControls={
             rightPanelOpen ? (
-              <div className="mr-px flex items-center gap-1">
+              <div className="me-px flex items-center gap-1">
                 <RightPanelMaximizeControl
                   maximized={rightPanelMaximized}
                   onToggle={toggleRightPanelMaximizedStable}

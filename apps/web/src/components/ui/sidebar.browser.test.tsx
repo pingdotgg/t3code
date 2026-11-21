@@ -1,3 +1,4 @@
+import { DirectionProvider } from "@base-ui/react/direction-provider";
 import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -47,12 +48,19 @@ describe("Sidebar", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
-  it("abandons a rail drag when the sidebar collapses mid-drag", async () => {
+  it.each(["ltr", "rtl"] as const)("abandons a rail drag on collapse in %s", async (direction) => {
     await page.viewport(1280, 800);
     const onResize = vi.fn();
-    await using screen = await render(<Harness onResize={onResize} />, {
-      router: false /* no routes involved */,
-    });
+    await using screen = await render(
+      <DirectionProvider direction={direction}>
+        <div dir={direction}>
+          <Harness onResize={onResize} />
+        </div>
+      </DirectionProvider>,
+      {
+        router: false /* no routes involved */,
+      },
+    );
     const rail = screen.container.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
     const { left, top } = rail.getBoundingClientRect();
     const pointer = { bubbles: true, cancelable: true, pointerId: 1, button: 0, clientY: top + 10 };
@@ -61,15 +69,21 @@ describe("Sidebar", () => {
       rail.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX }));
     };
     // A completed drag commits, so the abandoned one below is a real drag too.
-    dragTo(left + 40);
-    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 40 }));
+    const startWidth = screen.container
+      .querySelector('[data-slot="sidebar-container"]')!
+      .getBoundingClientRect().width;
+    const growBy = direction === "rtl" ? -40 : 40;
+    dragTo(left + growBy);
+    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + growBy }));
     expect(onResize).toHaveBeenCalledTimes(1);
 
-    dragTo(left + 80);
+    expect(onResize).toHaveBeenLastCalledWith(startWidth + 40);
+
+    dragTo(left + 2 * growBy);
     await userEvent.click(
       screen.container.querySelector<HTMLElement>('[data-slot="sidebar-trigger"]')!,
     );
-    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 80 }));
+    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 2 * growBy }));
 
     expect(onResize).toHaveBeenCalledTimes(1);
   });

@@ -93,7 +93,7 @@ export function DeviceAndroidFoldControls(props: {
           >
             <DeviceDuoGlyph pose="closed" />
           </TooltipTrigger>
-          <TooltipPopup side="left">
+          <TooltipPopup side="inline-start">
             <T>Fold device</T>
           </TooltipPopup>
         </Tooltip>
@@ -112,7 +112,7 @@ export function DeviceAndroidFoldControls(props: {
           >
             <DeviceDuoGlyph pose="open" />
           </TooltipTrigger>
-          <TooltipPopup side="left">
+          <TooltipPopup side="inline-start">
             <T>Unfold device</T>
           </TooltipPopup>
         </Tooltip>
@@ -131,7 +131,7 @@ export function DeviceAndroidFoldControls(props: {
               </span>
             }
           />
-          <TooltipPopup side="left">{error}</TooltipPopup>
+          <TooltipPopup side="inline-start">{error}</TooltipPopup>
         </Tooltip>
       ) : null}
     </div>

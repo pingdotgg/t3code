@@ -9,7 +9,7 @@ import {
 } from "@expo/ui/jetpack-compose";
 import { defaultMinSize, padding, size, width } from "@expo/ui/jetpack-compose/modifiers";
 import type { MenuAction } from "@react-native-menu/menu";
-import { Pressable } from "react-native";
+import { I18nManager, Pressable } from "react-native";
 import { resolveScaledTextRole } from "../../lib/appearancePreferences";
 
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
@@ -169,7 +169,8 @@ export function MenuPopup(props: MenuPopupProps) {
       ignoreSafeAreaKeyboardInsets
       style={{
         position: "absolute",
-        left: props.anchor.x,
+        start: I18nManager.isRTL ? undefined : props.anchor.x,
+        end: I18nManager.isRTL ? props.anchor.x : undefined,
         top: props.anchor.y,
         width: props.anchor.width,
         height: props.anchor.height,

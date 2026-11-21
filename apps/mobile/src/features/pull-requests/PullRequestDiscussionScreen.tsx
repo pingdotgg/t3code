@@ -1,3 +1,4 @@
+import { LTR_TEXT_STYLE } from "../../lib/typography";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   parsePullRequestAnchor,
@@ -215,7 +216,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
             {thread ? (
               <View className="gap-2 pb-4">
                 {thread.path === null ? null : (
-                  <Text selectable className="font-mono text-xs text-foreground-muted">
+                  <Text
+                    style={LTR_TEXT_STYLE}
+                    selectable
+                    className="font-mono text-xs text-foreground-muted"
+                  >
                     {thread.path}
                     {thread.line ? `:${thread.line}` : ""}
                   </Text>

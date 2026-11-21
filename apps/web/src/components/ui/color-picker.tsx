@@ -1,3 +1,4 @@
+import { useDirection } from "@base-ui/react/direction-provider";
 import { T, useGT } from "gt-react";
 import {
   useId,
@@ -13,6 +14,10 @@ import { cn } from "../../lib/utils";
 
 function clamp(value: number) {
   return Math.min(1, Math.max(0, value));
+}
+
+function inlineFraction(clientX: number, bounds: DOMRect, rtl: boolean) {
+  return clamp((rtl ? bounds.right - clientX : clientX - bounds.left) / bounds.width);
 }
 
 function useColorDrag(
@@ -31,7 +36,7 @@ function useColorDrag(
   return {
     thumbTransition: isDragging
       ? undefined
-      : "left 80ms linear, top 80ms linear, background-color 80ms linear",
+      : "inset-inline-start 80ms linear, top 80ms linear, background-color 80ms linear",
     handlers: {
       onPointerDown(event: PointerEvent<HTMLDivElement>) {
         if (pointerId.current !== null || event.button !== 0) return;
@@ -68,6 +73,7 @@ export function ColorSaturationValuePlane({
   variant = "inset",
 }: ColorControlProps<HsvColor> & { variant?: "inset" | "edge" }) {
   const gt = useGT();
+  const rtl = useDirection() === "rtl";
   const instructionsId = useId();
   const saturationRef = useRef<HTMLInputElement>(null);
   const { handlers, thumbTransition } = useColorDrag(
@@ -76,7 +82,7 @@ export function ColorSaturationValuePlane({
       if (!bounds.width || !bounds.height) return;
       onChange({
         ...value,
-        s: clamp((event.clientX - bounds.left) / bounds.width),
+        s: inlineFraction(event.clientX, bounds, rtl),
         v: 1 - clamp((event.clientY - bounds.top) / bounds.height),
       });
     },
@@ -88,11 +94,11 @@ export function ColorSaturationValuePlane({
     const step = event.shiftKey ? 0.1 : 0.02;
     let nextValue: number;
     switch (event.key) {
-      case "ArrowRight":
+      case rtl ? "ArrowLeft" : "ArrowRight":
       case "ArrowUp":
         nextValue = clamp(value[axis] + step);
         break;
-      case "ArrowLeft":
+      case rtl ? "ArrowRight" : "ArrowLeft":
       case "ArrowDown":
         nextValue = clamp(value[axis] - step);
         break;
@@ -114,7 +120,7 @@ export function ColorSaturationValuePlane({
       aria-label={gt("{label} saturation and brightness", { label })}
       role="group"
       className={cn(
-        "relative cursor-crosshair touch-none overflow-hidden bg-[linear-gradient(to_top,#000,transparent),linear-gradient(to_right,#fff,transparent)] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-popover",
+        "relative cursor-crosshair touch-none overflow-hidden bg-[linear-gradient(to_top,#000,transparent),linear-gradient(var(--color-axis),#fff,transparent)] [--color-axis:to_right] rtl:[--color-axis:to_left] has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-popover",
         variant === "edge" ? "h-36 rounded-none" : "h-32 rounded-lg",
         className,
       )}
@@ -162,16 +168,16 @@ export function ColorSaturationValuePlane({
           />
           <span
             aria-hidden
-            className="pointer-events-none invisible absolute bottom-2 left-2 z-10 rounded bg-popover px-1.5 py-0.5 text-xs text-popover-foreground peer-focus-visible:visible"
+            className="pointer-events-none invisible absolute bottom-2 start-2 z-10 rounded bg-popover px-1.5 py-0.5 text-xs text-popover-foreground peer-focus-visible:visible"
           >
             {axisValueText}
           </span>
         </label>
       ))}
       <span
-        className="pointer-events-none absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.4)]"
+        className="pointer-events-none absolute size-3 -translate-x-1/2 rtl:translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.4)]"
         style={{
-          left: `calc(${value.s} * (100% - 0.75rem) + 0.375rem)`,
+          insetInlineStart: `calc(${value.s} * (100% - 0.75rem) + 0.375rem)`,
           top: `calc(${1 - value.v} * (100% - 0.75rem) + 0.375rem)`,
           transition: thumbTransition,
         }}
@@ -187,10 +193,11 @@ export function ColorHueSlider({
   onInteractionEnd,
   className,
 }: ColorControlProps<number>) {
+  const rtl = useDirection() === "rtl";
   const { handlers, thumbTransition } = useColorDrag((event) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     if (!bounds.width) return;
-    onChange(clamp((event.clientX - bounds.left) / bounds.width) * 360);
+    onChange(inlineFraction(event.clientX, bounds, rtl) * 360);
   }, onInteractionEnd);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -202,7 +209,8 @@ export function ColorHueSlider({
     if (!["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"].includes(event.key)) return;
     event.preventDefault();
     const step = event.shiftKey ? 10 : 1;
-    const direction = event.key === "ArrowRight" || event.key === "ArrowUp" ? 1 : -1;
+    const direction =
+      event.key === (rtl ? "ArrowLeft" : "ArrowRight") || event.key === "ArrowUp" ? 1 : -1;
     onChange((value + direction * step + 360) % 360);
   };
 
@@ -223,12 +231,12 @@ export function ColorHueSlider({
     >
       <span
         aria-hidden
-        className="h-2.5 w-full rounded-full bg-[linear-gradient(to_right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)] shadow-[inset_0_0_0_1px_rgb(0_0_0_/_12%)]"
+        className="h-2.5 w-full rounded-full bg-[linear-gradient(var(--color-axis),#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)] [--color-axis:to_right] rtl:[--color-axis:to_left] shadow-[inset_0_0_0_1px_rgb(0_0_0_/_12%)]"
       />
       <span
-        className="pointer-events-none absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.4)]"
+        className="pointer-events-none absolute top-1/2 size-4 -translate-x-1/2 rtl:translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow-[0_0_0_1px_rgb(0_0_0/0.4)]"
         style={{
-          left: `calc(${value / 360} * (100% - 1rem) + 0.5rem)`,
+          insetInlineStart: `calc(${value / 360} * (100% - 1rem) + 0.5rem)`,
           backgroundColor: `hsl(${value} 100% 50%)`,
           transition: thumbTransition,
         }}

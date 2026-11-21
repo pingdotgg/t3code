@@ -202,6 +202,7 @@ function ThemeColorPickerPanel({
                 style={{ backgroundColor: currentColor }}
               />
               <input
+                dir="ltr"
                 aria-label={gt("{label} picker hex value", { label })}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
@@ -224,6 +225,7 @@ function ThemeColorPickerPanel({
             </span>
             <span className="flex min-w-0 items-center rounded-lg border border-input bg-background px-2 focus-within:border-ring">
               <input
+                dir="ltr"
                 aria-label={gt("{label} picker RGB value", { label })}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
@@ -374,7 +376,7 @@ export const ThemeColorField = memo(function ThemeColorField({
                 selected ? gt("Hide {label} usage", { label }) : gt("Show {label} usage", { label })
               }
               aria-pressed={selected}
-              className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-start text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() => onToggleSelected?.(role)}
               type="button"
             >
@@ -388,7 +390,7 @@ export const ThemeColorField = memo(function ThemeColorField({
             : gt("Show where {label} is used", { label })}
         </TooltipPopup>
       </Tooltip>
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+      <div className="ms-auto flex shrink-0 items-center gap-2">
         <ThemeColorPicker
           label={label}
           onChange={(nextValue) => onChange(role, nextValue)}

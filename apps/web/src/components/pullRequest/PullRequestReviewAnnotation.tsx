@@ -108,7 +108,7 @@ export function PendingReviewCommentCard({
         <Button
           size="icon-xs"
           variant="ghost"
-          className="ml-auto"
+          className="ms-auto"
           aria-label={gt("Discard this comment")}
           onClick={onRemove}
         >
@@ -158,7 +158,7 @@ export function InlineReviewThreads({
                 aria-label={label}
                 aria-expanded={expanded}
                 // Sits on the commented line, which is the row above this annotation.
-                className="absolute right-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                className="absolute end-3 bottom-full flex h-[var(--diffs-line-height,20px)] cursor-pointer items-center -space-x-1 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                 contentEditable={false}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={() =>
@@ -175,7 +175,7 @@ export function InlineReviewThreads({
               />
             ))}
           </TooltipTrigger>
-          <TooltipPopup side="left">{label}</TooltipPopup>
+          <TooltipPopup side="inline-start">{label}</TooltipPopup>
         </Tooltip>
       ) : null}
       {threads.map((thread) => renderThread(thread, thread.isResolved && !shown.has(thread.id)))}
@@ -338,7 +338,7 @@ export function ReviewThreadCard({
           <Button
             size="compact"
             variant="ghost"
-            className="ml-auto"
+            className="ms-auto"
             disabled={pending || fixPending}
             onClick={onFix}
           >
@@ -350,7 +350,7 @@ export function ReviewThreadCard({
           <Button
             size="compact"
             variant="ghost"
-            className={onFix ? undefined : "ml-auto"}
+            className={onFix ? undefined : "ms-auto"}
             onClick={() => onAddToChat({ ...thread, comments })}
           >
             <MessageSquarePlusIcon className="size-3" />
@@ -361,7 +361,7 @@ export function ReviewThreadCard({
           <Button
             size="compact"
             variant="ghost"
-            className={onFix || onAddToChat ? undefined : "ml-auto"}
+            className={onFix || onAddToChat ? undefined : "ms-auto"}
             disabled={pending}
             onClick={onToggleResolved}
           >
@@ -381,7 +381,7 @@ export function ReviewThreadCard({
                     <RelativeTime timestamp={comment.createdAt} />
                   </span>
                   <PullRequestReactionBar
-                    className="ml-auto justify-end"
+                    className="ms-auto justify-end"
                     reactions={comment.reactions ?? []}
                     canReact={canReact}
                     subjectId={comment.id}

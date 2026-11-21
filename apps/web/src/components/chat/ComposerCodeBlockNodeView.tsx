@@ -44,7 +44,7 @@ export function ComposerCodeBlockNodeView({
       }
     >
       <div className="chat-markdown-shiki">
-        <pre className="max-w-full overflow-x-auto px-3 pt-1 pb-2">
+        <pre dir="ltr" className="max-w-full overflow-x-auto px-3 pt-1 pb-2">
           <NodeViewContent<"code">
             as="code"
             className="block min-h-[1lh] font-mono whitespace-pre-wrap text-inherit [overflow-wrap:anywhere]"

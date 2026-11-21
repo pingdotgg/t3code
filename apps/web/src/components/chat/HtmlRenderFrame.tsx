@@ -125,7 +125,7 @@ export function HtmlRenderFrame(props: {
               >
                 <Maximize2Icon className="size-3.5" />
               </TooltipTrigger>
-              <TooltipPopup side="left">
+              <TooltipPopup side="inline-start">
                 <T>Open full screen</T>
               </TooltipPopup>
             </Tooltip>

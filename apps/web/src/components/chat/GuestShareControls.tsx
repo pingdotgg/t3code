@@ -132,6 +132,7 @@ function GuestShareDialog({
           {state.status === "created" ? (
             <div className="flex items-center gap-2">
               <Input
+                dir="ltr"
                 readOnly
                 aria-label={gt("Guest link")}
                 value={state.url}

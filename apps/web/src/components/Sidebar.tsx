@@ -860,7 +860,7 @@ function ProjectScopeRowIcon(props: { isSelected: boolean; children: ReactNode }
     <span className="relative flex shrink-0">
       {props.children}
       {props.isSelected ? (
-        <span className="pointer-events-none absolute -right-1 -bottom-1 grid size-3 place-items-center rounded-full bg-primary ring-2 ring-popover">
+        <span className="pointer-events-none absolute -end-1 -bottom-1 grid size-3 place-items-center rounded-full bg-primary ring-2 ring-popover">
           <CheckIcon className="size-2 text-primary-foreground" strokeWidth={4} aria-hidden />
         </span>
       ) : null}
@@ -3098,7 +3098,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             className={
                               index === 0
                                 ? "flex"
-                                : "-ml-1 flex rounded-[25%] bg-sidebar ring-2 ring-sidebar"
+                                : "-ms-1 flex rounded-[25%] bg-sidebar ring-2 ring-sidebar"
                             }
                           >
                             <ProjectFavicon project={project} className="size-3.5" />
@@ -3238,7 +3238,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />
                             ) : (
                               // Keeps "All projects" as tall as the project rows.
-                              <span className="ml-auto size-7 shrink-0 sm:size-6" />
+                              <span className="ms-auto size-7 shrink-0 sm:size-6" />
                             )}
                           </ComboboxItem>
                         );
@@ -3735,7 +3735,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             olderSettledShelf.retry();
                             showMoreSettled();
                           }}
-                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground aria-disabled:cursor-default"
+                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-start text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground aria-disabled:cursor-default"
                         >
                           {/* Plus means "add", so revealing more uses a chevron. */}
                           <ChevronDownIcon aria-hidden className="size-4 shrink-0" />

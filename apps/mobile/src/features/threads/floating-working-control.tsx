@@ -2,7 +2,13 @@ import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-s
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { useGT } from "gt-react-native";
 import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
-import { type LayoutChangeEvent, Pressable, useWindowDimensions, View } from "react-native";
+import {
+  I18nManager,
+  type LayoutChangeEvent,
+  Pressable,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import Animated, {
   Easing,
   FadeIn,
@@ -121,8 +127,9 @@ export function FloatingWorkingControl(props: {
   const liftStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: -(lift?.value ?? 0) }],
   }));
+  const layoutSign = I18nManager.isRTL ? -1 : 1;
   const arrowTransformStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: -CONTROL_SEPARATION * (1 - separationProgress.value) }],
+    transform: [{ translateX: -CONTROL_SEPARATION * layoutSign * (1 - separationProgress.value) }],
   }));
   const arrowContentStyle = useAnimatedStyle(() => ({
     opacity: separationProgress.value,
@@ -150,7 +157,7 @@ export function FloatingWorkingControl(props: {
     }
   }, [capsuleWidth, hasStatus]);
   const capsuleStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: CONTROL_SEPARATION * (1 - separationProgress.value) }],
+    transform: [{ translateX: CONTROL_SEPARATION * layoutSign * (1 - separationProgress.value) }],
   }));
   const capsuleSizerStyle = useAnimatedStyle(() => ({
     width: capsuleWidth.value ?? 0,

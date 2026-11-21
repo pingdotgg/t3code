@@ -151,17 +151,17 @@ export function PullRequestDetailGhost({
       )}
     >
       <div className="@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 border-b border-border/60">
-        <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
+        <div className="ps-4 grid h-7 min-w-0 items-center overflow-hidden">
           <div className="flex min-w-0 items-center gap-1 text-sm text-muted-foreground sm:text-xs">
             {onBack ? (
               <Button
                 size="icon-micro"
                 variant="ghost-muted"
-                className="-ml-1.5"
+                className="-ms-1.5"
                 onClick={onBack}
                 aria-label={gt("Back to this thread's pull requests")}
               >
-                <ArrowLeftIcon aria-hidden className="size-3.5" />
+                <ArrowLeftIcon aria-hidden className="size-3.5 rtl:-scale-x-100" />
               </Button>
             ) : null}
             {seed ? (
@@ -192,7 +192,7 @@ export function PullRequestDetailGhost({
             )}
           </div>
         </div>
-        <div className="mr-4 flex h-7 shrink-0 items-center justify-end gap-1">
+        <div className="me-4 flex h-7 shrink-0 items-center justify-end gap-1">
           {actions ?? <GhostBar className="h-6 w-16 rounded-md" />}
           <Button
             size="icon-xs"
@@ -217,7 +217,7 @@ export function PullRequestDetailGhost({
               )}
               onClick={onClose}
             >
-              <PanelRightIcon aria-hidden className="size-3.5" />
+              <PanelRightIcon aria-hidden className="size-3.5 rtl:-scale-x-100" />
             </Button>
           ) : null}
         </div>
@@ -276,7 +276,7 @@ export function PullRequestDetailGhost({
                     }}
                     copyLabel={gt("Copy checkout command")}
                     copiedLabel={gt("Checkout command copied")}
-                    className="ml-auto font-mono"
+                    className="ms-auto font-mono"
                     tooltipSide="bottom"
                     {...(onCheckoutError ? { onError: onCheckoutError } : {})}
                   />
@@ -285,7 +285,7 @@ export function PullRequestDetailGhost({
               base={
                 <span className="inline-flex min-w-0 max-w-[40%] shrink-0 items-center gap-1">
                   {seed ? (
-                    <code className="flex min-w-0">
+                    <code dir="ltr" className="flex min-w-0">
                       <MiddleTruncate value={seed.baseBranch} />
                     </code>
                   ) : (
@@ -417,8 +417,8 @@ export function PullRequestDetailGhost({
         </section>
 
         <section>
-          <div className="sticky top-0 z-10 flex w-full items-center bg-background pr-4">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-xs font-medium text-muted-foreground">
+          <div className="sticky top-0 z-10 flex w-full items-center bg-background pe-4">
+            <div className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-start text-xs font-medium text-muted-foreground">
               <span>
                 <T>Description</T>
               </span>
@@ -469,10 +469,10 @@ export function PullRequestTimelineGhost({ rows = 6 }: { rows?: number }) {
       aria-label={gt("Loading timeline")}
       className="motion-safe:animate-skeleton px-4 py-5"
     >
-      <div className="relative ml-2 border-l border-border/70 pl-5">
+      <div className="relative ms-2 border-s border-border/70 ps-5">
         {Array.from({ length: rows }, (_, index) => (
           <div key={index} className="relative pb-5">
-            <GhostBar className="absolute -left-[1.55rem] top-1 size-2 rounded-full" />
+            <GhostBar className="absolute -start-[1.55rem] top-1 size-2 rounded-full" />
             <GhostBar className={cn("h-3.5", TITLE_WIDTHS[index % TITLE_WIDTHS.length])} />
             <GhostBar className="mt-1.5 w-16" />
           </div>

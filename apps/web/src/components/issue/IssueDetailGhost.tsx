@@ -37,7 +37,7 @@ export function IssueDetailGhost({ seed }: { seed?: IssueListEntry | null }) {
               {seed.displayKey}
             </span>
             <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-              <tracker.Icon aria-hidden className="mr-1 inline size-3 align-[-2px]" />
+              <tracker.Icon aria-hidden className="me-1 inline size-3 align-[-2px]" />
               {seed.scope}
             </span>
             <Button
@@ -50,7 +50,7 @@ export function IssueDetailGhost({ seed }: { seed?: IssueListEntry | null }) {
             </Button>
           </PullRequestDetailTitleRow>
           {/* Leaves room for the edit button, so the title wraps the same once loaded. */}
-          <h2 className="pr-7 text-base font-semibold leading-snug">{seed.title}</h2>
+          <h2 className="pe-7 text-base font-semibold leading-snug">{seed.title}</h2>
           <PullRequestMetaLine className="text-xs text-muted-foreground">
             <PullRequestActorLabel actor={seed.author} />
             <span>

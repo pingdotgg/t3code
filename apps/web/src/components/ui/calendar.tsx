@@ -1,3 +1,4 @@
+import { useDirection } from "@base-ui/react/direction-provider";
 import { DayPicker } from "@daypicker/react";
 import { ChevronLeftIcon, ChevronRightIcon, ChevronsUpDownIcon } from "lucide-react";
 import type * as React from "react";
@@ -16,23 +17,11 @@ const defaultComponents = {
     orientation?: "left" | "right" | "up" | "down";
   }): React.ReactElement => {
     if (orientation === "left") {
-      return (
-        <ChevronLeftIcon
-          className={cn(className, "rtl:rotate-180")}
-          {...props}
-          aria-hidden="true"
-        />
-      );
+      return <ChevronLeftIcon className={className} {...props} aria-hidden="true" />;
     }
 
     if (orientation === "right") {
-      return (
-        <ChevronRightIcon
-          className={cn(className, "rtl:rotate-180")}
-          {...props}
-          aria-hidden="true"
-        />
-      );
+      return <ChevronRightIcon className={className} {...props} aria-hidden="true" />;
     }
 
     return <ChevronsUpDownIcon className={className} {...props} aria-hidden="true" />;
@@ -66,13 +55,13 @@ export function Calendar({
     month_caption:
       "relative mx-(--cell-size) px-1 mb-1 flex h-(--cell-size) items-center justify-center z-2",
     months: "relative flex flex-col sm:flex-row gap-2",
-    nav: "absolute top-0 flex w-full justify-between z-1",
+    nav: "absolute top-0 flex w-full justify-between z-1 rtl:[&_svg]:rotate-180",
     outside: "text-muted-foreground data-selected:bg-accent/50 data-selected:text-muted-foreground",
     range_end: "range-end",
     range_middle: "range-middle",
     range_start: "range-start",
     today:
-      "*:after:pointer-events-none *:after:absolute *:after:bottom-1 *:after:start-1/2 *:after:z-1 *:after:size-[3px] *:after:-translate-x-1/2 *:after:rounded-full *:after:bg-primary [&[data-selected]:not(.range-middle)>*]:after:bg-background [&[data-disabled]>*]:after:bg-foreground/30",
+      "*:after:pointer-events-none *:after:absolute *:after:bottom-1 *:after:start-1/2 *:after:z-1 *:after:size-[3px] *:after:-translate-x-1/2 rtl:*:after:translate-x-1/2 *:after:rounded-full *:after:bg-primary [&[data-selected]:not(.range-middle)>*]:after:bg-background [&[data-disabled]>*]:after:bg-foreground/30",
     week_number: "size-(--cell-size) p-0 text-xs font-medium text-muted-foreground/72",
     weekday: "size-(--cell-size) p-0 text-xs font-medium text-muted-foreground/72",
   };
@@ -93,7 +82,9 @@ export function Calendar({
     ...userComponents,
   };
 
+  const direction = useDirection();
   const dayPickerProps = {
+    dir: direction,
     className: cn("w-fit [--cell-size:--spacing(10)] sm:[--cell-size:--spacing(9)]", className),
     classNames: mergedClassNames,
     components: mergedComponents,

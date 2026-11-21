@@ -240,7 +240,7 @@ function ProviderSetupActions({
           </div>
         }
         control={
-          <div className="flex w-full min-w-0 flex-col gap-2 @min-[32rem]/settings-row:w-56 @min-[32rem]/settings-row:text-right">
+          <div className="flex w-full min-w-0 flex-col gap-2 @min-[32rem]/settings-row:w-56 @min-[32rem]/settings-row:text-end">
             <p role="status" className="min-h-4 text-muted-foreground tabular-nums">
               {installationStatusMessage}
             </p>

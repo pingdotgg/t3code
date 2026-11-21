@@ -1,3 +1,4 @@
+import { isUiRtl } from "~/lib/inlineDirection";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -47,12 +48,13 @@ function readMainContentBounds(): SwipeBounds {
 function canScrollHorizontally(path: readonly EventTarget[], deltaX: number): boolean {
   for (const element of path) {
     if (!(element instanceof Element) || element.scrollWidth <= element.clientWidth) continue;
-    const { overflowX } = getComputedStyle(element);
+    const { overflowX, direction } = getComputedStyle(element);
     if (overflowX !== "auto" && overflowX !== "scroll") continue;
-    const canScroll =
-      deltaX < 0
-        ? element.scrollLeft > 0
-        : element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
+    const left =
+      direction === "rtl"
+        ? element.scrollWidth - element.clientWidth + element.scrollLeft
+        : element.scrollLeft;
+    const canScroll = deltaX < 0 ? left > 0 : left + element.clientWidth < element.scrollWidth - 1;
     if (canScroll) return true;
   }
   return false;
@@ -75,7 +77,7 @@ function lockSwipeAxis(
     return { kind: "ignored" };
   }
   if (canScrollHorizontally(path, sumX)) return { kind: "ignored" };
-  const direction = sumX < 0 ? "back" : "forward";
+  const direction = sumX < 0 !== isUiRtl() ? "back" : "forward";
   if (!canNavigateHistory(direction)) return { kind: "ignored" };
   return {
     kind: "tracking",
@@ -148,7 +150,7 @@ export function HistorySwipeNavigation() {
         gesture = lockSwipeAxis({ ...gesture, path: [...gesture.path, ...event.composedPath()] });
         if (gesture.kind === "ignored") return;
       } else {
-        const delta = gesture.direction === "back" ? -event.deltaX : event.deltaX;
+        const delta = (gesture.direction === "back") !== isUiRtl() ? -event.deltaX : event.deltaX;
         if (event.deltaX === 0 && event.deltaY === 0) return release();
         gesture.travelX += Math.abs(event.deltaX);
         gesture.travelY += Math.abs(event.deltaY);
@@ -193,18 +195,18 @@ function SwipeIndicator({ direction, progress, y, bounds, tracking }: SwipeIndic
       <div
         className={cn(
           "absolute flex size-14 items-center rounded-full bg-muted text-foreground dark:bg-black dark:text-white",
-          direction === "back" ? "left-0 justify-end pr-2" : "right-0 justify-start pl-2",
+          direction === "back" ? "start-0 justify-end pe-2" : "end-0 justify-start ps-2",
           !tracking && "transition-[opacity,transform] duration-200 ease-out",
         )}
         style={{
           top: `clamp(0px, calc(${y - bounds.top}px - 1.75rem), calc(100% - 3.5rem))`,
           opacity: tracking ? 1 : 0,
-          transform: `translateX(${direction === "back" ? -hidden : hidden}%)`,
+          transform: `translateX(${(direction === "back") !== isUiRtl() ? -hidden : hidden}%)`,
         }}
       >
         <Icon
           className={cn(
-            "size-4 transition-opacity duration-100",
+            "size-4 rtl:-scale-x-100 transition-opacity duration-100",
             armed ? "opacity-100" : "opacity-40",
           )}
         />

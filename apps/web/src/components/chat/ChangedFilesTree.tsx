@@ -330,15 +330,15 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           type="button"
           data-scroll-anchor-ignore
           aria-expanded={isExpanded}
-          className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-          style={{ paddingLeft: `${leftPadding}px` }}
+          className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pe-2 text-start transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+          style={{ paddingInlineStart: `${leftPadding}px` }}
           onClick={() => toggleDirectory(node.path)}
         >
           <ChevronRightIcon
             aria-hidden="true"
             className={cn(
               "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
-              isExpanded && "rotate-90",
+              isExpanded ? "rotate-90" : "rtl:rotate-180",
             )}
           />
           {isExpanded ? (
@@ -346,11 +346,14 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           ) : (
             <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
           )}
-          <span className="truncate font-mono text-2xs text-muted-foreground/90 group-hover:text-foreground/90">
+          <span
+            dir="ltr"
+            className="truncate font-mono text-2xs text-muted-foreground/90 group-hover:text-foreground/90"
+          >
             {node.name}
           </span>
           {hasNonZeroStat(node.stat) && (
-            <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
+            <span className="ms-auto shrink-0 font-mono text-3xs tabular-nums">
               <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
             </span>
           )}
@@ -362,8 +365,8 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       <button
         key={`file:${node.path}`}
         type="button"
-        className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-        style={{ paddingLeft: `${leftPadding}px` }}
+        className="group flex h-7 w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pe-2 text-start transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+        style={{ paddingInlineStart: `${leftPadding}px` }}
         onClick={() => onOpenTurnDiff(runId, node.path)}
         onContextMenu={
           onFileContextMenu
@@ -383,11 +386,14 @@ const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           theme={resolvedTheme}
           className="size-3.5 text-muted-foreground/70"
         />
-        <span className="flex min-w-0 font-mono text-xs text-foreground/85 group-hover:text-foreground">
-          <MiddleTruncate value={node.name} />
+        <span
+          dir="ltr"
+          className="flex min-w-0 font-mono text-xs text-foreground/85 group-hover:text-foreground"
+        >
+          <MiddleTruncate dir="ltr" value={node.name} />
         </span>
         {node.stat && (
-          <span className="ml-auto shrink-0 font-mono text-3xs tabular-nums">
+          <span className="ms-auto shrink-0 font-mono text-3xs tabular-nums">
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         )}

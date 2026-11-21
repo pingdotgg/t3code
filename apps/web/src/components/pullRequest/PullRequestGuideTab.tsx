@@ -201,7 +201,10 @@ function FailureDetails({ detail }: { detail: string }) {
       <summary className="cursor-pointer rounded-sm -outline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
         <T>Technical details</T>
       </summary>
-      <pre className="scrollbar-gutter-both mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 text-left font-mono text-xs">
+      <pre
+        dir="ltr"
+        className="scrollbar-gutter-both mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 text-start font-mono text-xs"
+      >
         {detail}
       </pre>
     </details>

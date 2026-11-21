@@ -110,7 +110,7 @@ export function DeviceToolsPanel(props: {
           size="icon-xs"
           variant="ghost-muted"
           aria-label={gt("Close tools")}
-          className="ml-auto"
+          className="ms-auto"
           onClick={props.onClose}
         >
           <X />
@@ -635,10 +635,10 @@ function EventLogSection(props: {
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="flex w-full items-center gap-1.5 border-b px-3 py-2.5 text-left text-xs font-medium text-muted-foreground">
+      <CollapsibleTrigger className="flex w-full items-center gap-1.5 border-b px-3 py-2.5 text-start text-xs font-medium text-muted-foreground">
         <T>Event log</T>
         <ChevronDown
-          className={cn("ml-auto size-3.5 transition-transform", open && "rotate-180")}
+          className={cn("ms-auto size-3.5 transition-transform", open && "rotate-180")}
         />
       </CollapsibleTrigger>
       <CollapsiblePanel>

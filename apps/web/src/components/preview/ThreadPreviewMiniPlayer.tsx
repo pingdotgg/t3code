@@ -89,12 +89,12 @@ const RESIZE_HANDLES: ReadonlyArray<{
 }> = [
   { direction: "north", className: "inset-x-0 -top-1 h-2 cursor-ns-resize" },
   { direction: "south", className: "inset-x-0 -bottom-1 h-2 cursor-ns-resize" },
-  { direction: "west", className: "inset-y-0 -left-1 w-2 cursor-ew-resize" },
-  { direction: "east", className: "inset-y-0 -right-1 w-2 cursor-ew-resize" },
-  { direction: "northwest", className: "-left-2 -top-2 size-4 cursor-nwse-resize" },
-  { direction: "northeast", className: "-right-2 -top-2 size-4 cursor-nesw-resize" },
-  { direction: "southwest", className: "-bottom-2 -left-2 size-4 cursor-nesw-resize" },
-  { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
+  { direction: "west", className: "inset-y-0 -start-1 w-2 cursor-ew-resize" },
+  { direction: "east", className: "inset-y-0 -end-1 w-2 cursor-ew-resize" },
+  { direction: "northwest", className: "-start-2 -top-2 size-4 cursor-nwse-resize" },
+  { direction: "northeast", className: "-end-2 -top-2 size-4 cursor-nesw-resize" },
+  { direction: "southwest", className: "-bottom-2 -start-2 size-4 cursor-nesw-resize" },
+  { direction: "southeast", className: "-bottom-2 -end-2 size-4 cursor-nwse-resize" },
 ];
 
 // What the stream reports about its source. It lives outside the player so the
@@ -614,7 +614,7 @@ function MiniPlayerShell({
             ref={handleRef}
             data-pill-open={pillOpen ? "" : undefined}
             className="group pointer-events-auto absolute z-[49] size-3 touch-none cursor-grab active:cursor-grabbing pointer-coarse:-m-2.5 pointer-coarse:size-8"
-            style={{ right: pillInset, top: pillInset }}
+            style={{ insetInlineEnd: pillInset, top: pillInset }}
             onPointerDown={(event) => beginGesture(event, null)}
             onPointerMove={handlePointerMove}
             onPointerUp={endGesture}
@@ -630,7 +630,7 @@ function MiniPlayerShell({
               role={recording ? "status" : undefined}
               aria-label={recording ? gt("Recording preview") : undefined}
               aria-hidden={!recording}
-              className="absolute right-0 top-0 size-2 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 group-data-pill-open:opacity-0 pointer-coarse:right-2.5 pointer-coarse:top-2.5"
+              className="absolute end-0 top-0 size-2 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 group-data-pill-open:opacity-0 pointer-coarse:end-2.5 pointer-coarse:top-2.5"
             >
               <span
                 className={cn(
@@ -641,7 +641,7 @@ function MiniPlayerShell({
                 )}
               />
             </div>
-            <div className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:right-2.5 pointer-coarse:top-2.5">
+            <div className="pointer-events-none absolute end-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-lg border border-border/80 bg-popover/92 p-0.5 opacity-0 shadow-lg/20 backdrop-blur-xl transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:end-2.5 pointer-coarse:top-2.5">
               {recording ? (
                 <span aria-hidden className="flex size-6 shrink-0 items-center justify-center">
                   <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />
@@ -659,7 +659,7 @@ function MiniPlayerShell({
                     />
                   }
                 >
-                  <PanelRightIcon />
+                  <PanelRightIcon className="rtl:-scale-x-100" />
                 </TooltipTrigger>
                 <TooltipPopup side="top">
                   <T>Open in right panel</T>
@@ -693,6 +693,7 @@ function MiniPlayerShell({
           {RESIZE_HANDLES.map(({ direction, className }) => (
             <div
               key={direction}
+              dir="ltr"
               role="presentation"
               data-preview-mini-player-resize={direction}
               className={cn("pointer-events-auto absolute z-[49] touch-none", className)}

@@ -76,7 +76,7 @@ export function SidebarUpdateReleaseNotes({
   )?.releasedAt;
 
   return (
-    <div className="flex max-h-[calc(var(--available-height)-0.5rem)] min-h-0 w-fit max-w-[min(24rem,calc(100vw-2rem))] flex-col text-left text-pretty">
+    <div className="flex max-h-[calc(var(--available-height)-0.5rem)] min-h-0 w-fit max-w-[min(24rem,calc(100vw-2rem))] flex-col text-start text-pretty">
       <div className="shrink-0 px-1">
         {state.status === "available" ? (
           <div>
@@ -135,7 +135,7 @@ export function SidebarUpdateReleaseNotes({
                   {releaseNote.intro}
                 </p>
               ) : releaseNote.items.length > 0 ? (
-                <ul className="space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
+                <ul className="space-y-1.5 ps-4 text-xs leading-5 text-popover-foreground/90">
                   {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => {
                     const highlight = /^\*\*([^*]+)\*\* (.+)$/.exec(item);
                     return (

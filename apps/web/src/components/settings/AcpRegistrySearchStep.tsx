@@ -248,7 +248,7 @@ export function AcpRegistrySearchStep({
           </div>
         ) : (
           <ScrollArea scrollFade className="max-h-64">
-            <div className="pr-2.5">
+            <div className="pe-2.5">
               {results.map((agent) => (
                 <AcpRegistryAgentRow
                   agent={agent}

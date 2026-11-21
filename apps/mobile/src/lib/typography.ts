@@ -10,6 +10,8 @@ export const MOBILE_TYPOGRAPHY = {
   display: { fontSize: 30, lineHeight: 36 },
 } as const;
 
+export const LTR_TEXT_STYLE = { direction: "ltr", writingDirection: "ltr" } as const;
+
 export const MOBILE_CODE_SURFACE = {
   rowHeight: 22,
   gutterWidth: 46,

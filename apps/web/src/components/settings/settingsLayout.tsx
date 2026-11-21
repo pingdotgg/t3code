@@ -613,7 +613,7 @@ export function SettingResetButton({
               onClick();
             }}
           >
-            <Undo2Icon className="size-3" />
+            <Undo2Icon className="size-3 rtl:-scale-x-100" />
           </Button>
         }
       />

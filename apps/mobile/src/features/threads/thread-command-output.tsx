@@ -1,3 +1,4 @@
+import { LTR_TEXT_STYLE } from "../../lib/typography";
 import { T, useGT } from "gt-react-native";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { TERMINAL_PALETTES, terminalOutputSpans } from "@t3tools/shared/terminalOutput";
@@ -77,7 +78,11 @@ export function ThreadCommandOutput(props: {
             <T>Earlier output not shown</T>
           </Text>
         ) : null}
-        <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
+        <Text
+          style={LTR_TEXT_STYLE}
+          selectable
+          className="font-mono text-2xs leading-normal text-foreground-muted"
+        >
           {spans.map((span, index) =>
             span.style === null ? (
               span.text

@@ -52,7 +52,11 @@ export function ProjectActionsList({
             ) : null}
           </span>
         }
-        description={<code className="block max-w-full truncate font-mono">{script.command}</code>}
+        description={
+          <code dir="ltr" className="block max-w-full truncate font-mono">
+            {script.command}
+          </code>
+        }
         control={
           <>
             {shortcutLabel ? (

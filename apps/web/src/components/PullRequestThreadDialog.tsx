@@ -242,6 +242,7 @@ export function PullRequestThreadDialog({
               })}
             </span>
             <Input
+              dir="ltr"
               ref={referenceInputRef}
               placeholder={gt(
                 "{term, select, mr {MR} cr {change request} other {PR}} URL, checkout command, or #42",

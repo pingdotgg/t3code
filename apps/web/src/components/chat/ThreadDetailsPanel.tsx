@@ -341,7 +341,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   }}
                 >
                   <SlidersHorizontalIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-                  <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                  <span className={cn("ms-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
                     <T>Choose what to show</T>
                   </span>
                 </ThreadDetailsControl>

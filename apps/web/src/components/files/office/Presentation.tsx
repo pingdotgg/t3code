@@ -109,7 +109,7 @@ export default function Presentation(props: {
           disabled={page === 0}
           onPress={() => select(page - 1)}
         >
-          <ChevronLeftIcon className="size-3.5" />
+          <ChevronLeftIcon className="size-3.5 rtl:-scale-x-100" />
         </FileSurfaceAction>
         <span className="flex-1 text-center text-xs tabular-nums" aria-live="polite">
           {gt("Slide {page} of {count}", {
@@ -122,7 +122,7 @@ export default function Presentation(props: {
           disabled={page + 1 === opened.slides.length}
           onPress={() => select(page + 1)}
         >
-          <ChevronRightIcon className="size-3.5" />
+          <ChevronRightIcon className="size-3.5 rtl:-scale-x-100" />
         </FileSurfaceAction>
       </div>
       <OfficePages

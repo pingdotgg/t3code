@@ -56,7 +56,7 @@ export function HostedEmptyState() {
                 <T>Open Environments</T>
               </Button>
             ) : (
-              <ol className="w-full space-y-4 text-left">
+              <ol className="w-full space-y-4 text-start">
                 {cloudEnabled ? <T3ConnectSteps /> : <PairingSteps />}
               </ol>
             )}

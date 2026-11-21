@@ -66,6 +66,8 @@ export function HighlightedCodeBlock(props: {
     // Not selectable: as in the native block, a long-press opens the copy menu instead.
     <Text
       style={{
+        direction: "ltr",
+        writingDirection: "ltr",
         color: codeStyle.color,
         fontFamily: codeStyle.fontFamily,
         fontSize: codeStyle.fontSize,
@@ -132,6 +134,7 @@ export function HighlightedCodeBlock(props: {
       ) : (
         <ScrollView
           horizontal
+          style={{ direction: "ltr" }}
           // As in the thread feed: with the keyboard open, the first long-press reaches the copy menu.
           keyboardShouldPersistTaps="always"
           contentContainerStyle={{ flexGrow: 1 }}

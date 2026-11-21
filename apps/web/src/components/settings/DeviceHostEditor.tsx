@@ -139,6 +139,7 @@ function DeviceHostEditorForm({
             <T>SSH target</T>
           </span>
           <Input
+            dir="ltr"
             required
             value={draft.target}
             disabled={busy}
@@ -216,7 +217,7 @@ function DeviceHostEditorForm({
                   aria-label={gt("{summary}. Per-machine results", { summary: checkSummary })}
                   render={<InlineButton tone="muted" />}
                 >
-                  <span role="status" className="text-left">
+                  <span role="status" className="text-start">
                     {checkSummary}
                   </span>
                   {results ? (

@@ -99,7 +99,7 @@ export function DevicePhoneViewport(props: {
       <div className="absolute inset-0">
         <div
           aria-hidden
-          className="pointer-events-none absolute bottom-[6%] left-1/2 h-5 w-2/5 -translate-x-1/2 rounded-full bg-foreground/10 blur-xl"
+          className="pointer-events-none absolute bottom-[6%] start-1/2 h-5 w-2/5 -translate-x-1/2 rtl:translate-x-1/2 rounded-full bg-foreground/10 blur-xl"
         />
         <canvas
           ref={mountViewer}

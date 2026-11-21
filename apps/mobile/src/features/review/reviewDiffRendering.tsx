@@ -81,6 +81,8 @@ export function DiffTokenText(props: {
         selectable
         className={cn("font-normal text-foreground", props.className)}
         style={{
+          direction: "ltr",
+          writingDirection: "ltr",
           fontFamily: REVIEW_MONO_FONT_FAMILY,
           fontSize,
           lineHeight,
@@ -97,6 +99,8 @@ export function DiffTokenText(props: {
       selectable
       className={cn("font-normal text-foreground", props.className)}
       style={{
+        direction: "ltr",
+        writingDirection: "ltr",
         fontFamily: REVIEW_MONO_FONT_FAMILY,
         fontSize,
         lineHeight,

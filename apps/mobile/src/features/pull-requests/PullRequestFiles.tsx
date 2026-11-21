@@ -1,3 +1,4 @@
+import { LTR_TEXT_STYLE } from "../../lib/typography";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
@@ -131,11 +132,21 @@ function FileRow(props: {
     >
       <PierreEntryIcon kind="file" path={file.path} size={20} />
       <View className="min-w-0 flex-1 gap-0.5">
-        <Text textRole="footnote" className="font-t3-medium" numberOfLines={2}>
+        <Text
+          style={LTR_TEXT_STYLE}
+          textRole="footnote"
+          className="font-t3-medium"
+          numberOfLines={2}
+        >
           {file.path.split("/").at(-1)}
         </Text>
         {props.directory ? (
-          <Text textRole="caption" className="text-foreground-muted" numberOfLines={1}>
+          <Text
+            style={LTR_TEXT_STYLE}
+            textRole="caption"
+            className="text-foreground-muted"
+            numberOfLines={1}
+          >
             {props.directory}
           </Text>
         ) : null}

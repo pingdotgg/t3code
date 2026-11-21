@@ -259,7 +259,7 @@ function ExcerptDiff({
   };
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-lg border border-border/60">
+    <div dir="ltr" className="min-w-0 overflow-hidden rounded-lg border border-border/60">
       <FileDiff<ExcerptAnnotation>
         fileDiff={slice.fileDiff}
         options={options}

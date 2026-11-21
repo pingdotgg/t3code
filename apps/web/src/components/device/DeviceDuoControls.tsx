@@ -69,7 +69,7 @@ export function DeviceDuoControls(props: {
       >
         {glyph}
       </TooltipTrigger>
-      <TooltipPopup side="left">{label}</TooltipPopup>
+      <TooltipPopup side="inline-start">{label}</TooltipPopup>
     </Tooltip>
   );
   const group =
@@ -123,7 +123,7 @@ export function DeviceDuoControls(props: {
               </span>
             }
           />
-          <TooltipPopup side="left">{props.state.error}</TooltipPopup>
+          <TooltipPopup side="inline-start">{props.state.error}</TooltipPopup>
         </Tooltip>
       ) : null}
     </div>

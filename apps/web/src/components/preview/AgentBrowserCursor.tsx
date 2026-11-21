@@ -74,6 +74,7 @@ export function AgentCursorMark(props: {
 
   return (
     <div
+      dir="ltr"
       className="pointer-events-none absolute left-0 top-0 z-40 transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none"
       style={{
         opacity: agentBrowserCursorOpacity(active, controller),

@@ -370,7 +370,7 @@ export function SettingInheritance({
                         <Button
                           variant="ghost"
                           size="sm-multiline"
-                          className="w-full justify-start text-left"
+                          className="w-full justify-start text-start"
                         />
                       }
                     >
@@ -386,7 +386,7 @@ export function SettingInheritance({
                           </span>
                           <ChevronRightIcon
                             aria-hidden
-                            className="size-3 shrink-0 text-muted-foreground [[data-panel-open]_&]:rotate-90"
+                            className="size-3 shrink-0 text-muted-foreground [[data-panel-open]_&]:rotate-90 rtl:-scale-x-100 rtl:[[data-panel-open]_&]:scale-x-100"
                           />
                         </span>
                         <span className="flex min-w-0 flex-col gap-0.5 text-xs text-muted-foreground">
@@ -432,7 +432,7 @@ export function SettingInheritance({
                         <CollapsibleTrigger render={<InlineButton tone="muted" />}>
                           <ChevronRightIcon
                             aria-hidden
-                            className="size-3 [[data-panel-open]_&]:rotate-90"
+                            className="size-3 [[data-panel-open]_&]:rotate-90 rtl:-scale-x-100 rtl:[[data-panel-open]_&]:scale-x-100"
                           />
                           <T>Overridden by</T>
                         </CollapsibleTrigger>

@@ -248,6 +248,7 @@ function PendingSecretRequestForm(props: {
               inputs.map(field)
             ) : (
               <Input
+                dir="ltr"
                 id={inputId(0)}
                 font="mono"
                 autoComplete="off"

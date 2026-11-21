@@ -733,12 +733,12 @@ function SpreadsheetGrid(props: {
         <div
           ref={spacer}
           aria-hidden="true"
-          className="pointer-events-none absolute left-0 top-0"
+          className="pointer-events-none absolute start-0 top-0"
         />
-        <div aria-hidden="true" className="sticky left-0 top-0 h-0 w-0">
-          <canvas ref={canvas} className="absolute left-0 top-0 block" />
-          <div ref={columnHeaderBand} className="absolute left-11 top-0 h-5 touch-none" />
-          <div ref={rowHeaderBand} className="absolute left-0 top-5 w-11 touch-none" />
+        <div aria-hidden="true" className="sticky start-0 top-0 h-0 w-0">
+          <canvas ref={canvas} className="absolute start-0 top-0 block" />
+          <div ref={columnHeaderBand} className="absolute start-11 top-0 h-5 touch-none" />
+          <div ref={rowHeaderBand} className="absolute start-0 top-5 w-11 touch-none" />
         </div>
         <div className="sr-only">
           {[...new Set(reader.map((cell) => cell.row))].map((row) => (

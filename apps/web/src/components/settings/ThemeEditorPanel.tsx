@@ -1,3 +1,4 @@
+import { isUiRtl } from "~/lib/inlineDirection";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   MousePointer2Icon,
@@ -1009,7 +1010,7 @@ export function ThemeEditorPanel({
             value={roleQuery}
           />
         ) : null}
-        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 text-sm font-medium">
+        <label className="ms-auto flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 text-sm font-medium">
           <span>
             <T>Advanced</T>
           </span>
@@ -1153,13 +1154,21 @@ export function ThemeEditorPanel({
   const handleResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const start = resizeStartRef.current;
     if (!start) return;
-    const maxWidth = Math.max(PANEL_MIN_WIDTH, window.innerWidth - PANEL_MARGIN - start.left);
+    const rtl = isUiRtl();
+    const right = start.left + start.width;
+    const maxWidth = Math.max(
+      PANEL_MIN_WIDTH,
+      (rtl ? right : window.innerWidth - start.left) - PANEL_MARGIN,
+    );
+    const deltaX = event.clientX - start.pointerX;
+    const width = Math.min(
+      maxWidth,
+      Math.max(PANEL_MIN_WIDTH, start.width + (rtl ? -deltaX : deltaX)),
+    );
+    if (rtl) setPosition({ x: right - width, y: start.top, width });
     const maxHeight = Math.max(PANEL_MIN_HEIGHT, window.innerHeight - PANEL_MARGIN - start.top);
     setSize({
-      width: Math.min(
-        Math.max(start.width + event.clientX - start.pointerX, PANEL_MIN_WIDTH),
-        maxWidth,
-      ),
+      width,
       height: Math.min(
         Math.max(start.height + event.clientY - start.pointerY, PANEL_MIN_HEIGHT),
         maxHeight,
@@ -1176,7 +1185,7 @@ export function ThemeEditorPanel({
       aria-label={isEditing ? gt("Edit theme") : gt("Create theme")}
       className={cn(
         "dialog-glass fixed z-[110] flex max-h-[min(42rem,calc(100dvh-6rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border text-popover-foreground",
-        position === null && "bottom-4 right-4",
+        position === null && "bottom-4 end-4",
         isMinimized && "max-h-none",
       )}
       data-theme-editor-panel
@@ -1270,7 +1279,7 @@ export function ThemeEditorPanel({
 
       {isMinimized ? null : (
         <>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 pl-3 pr-1.5">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-3 ps-3 pe-1.5">
             {renderNameField()}
             {error ? (
               <p aria-live="polite" className="text-sm text-destructive">
@@ -1289,7 +1298,7 @@ export function ThemeEditorPanel({
                 variant="ghost"
                 onClick={() => setCssOpen(!cssOpen)}
               >
-                {cssOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                {cssOpen ? <ChevronDownIcon /> : <ChevronRightIcon className="rtl:-scale-x-100" />}
                 <T>Custom CSS</T>
               </Button>
               {cssOpen ? (
@@ -1331,14 +1340,14 @@ export function ThemeEditorPanel({
           </div>
           <div
             aria-hidden
-            className="absolute bottom-0 right-0 z-10 flex size-5 cursor-se-resize touch-none select-none items-end justify-end p-1 text-muted-foreground/70"
+            className="absolute bottom-0 end-0 z-10 flex size-5 cursor-se-resize rtl:cursor-sw-resize touch-none select-none items-end justify-end p-1 text-muted-foreground/70"
             onPointerCancel={endResize}
             onPointerDown={handleResizePointerDown}
             onPointerMove={handleResizePointerMove}
             onPointerUp={endResize}
           >
             <svg
-              className="size-2.5"
+              className="size-2.5 rtl:-scale-x-100"
               fill="none"
               stroke="currentColor"
               strokeLinecap="round"

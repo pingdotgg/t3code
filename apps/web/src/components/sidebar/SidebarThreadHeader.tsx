@@ -166,7 +166,7 @@ export function SidebarHeaderIconButton({
         {children}
         <span
           aria-hidden
-          className="pointer-events-none absolute left-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
+          className="pointer-events-none absolute start-1/2 top-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden"
         />
       </TooltipTrigger>
       <TooltipPopup side="top">{tooltip}</TooltipPopup>

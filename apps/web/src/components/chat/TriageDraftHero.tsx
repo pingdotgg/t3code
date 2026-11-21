@@ -33,7 +33,7 @@ export function TriageDraftHero(props: {
           >
             {props.machineLabel ?? <T>This machine</T>}
             {props.serverVersion === null ? null : (
-              <span className="ml-1.5 font-normal text-muted-foreground">
+              <span className="ms-1.5 font-normal text-muted-foreground">
                 v{props.serverVersion}
               </span>
             )}
@@ -63,7 +63,7 @@ export function TriageDraftHero(props: {
             ) : (
               <T>
                 or run
-                <code className="ml-1 font-mono text-xs">
+                <code dir="ltr" className="ms-1 font-mono text-xs">
                   <Var>{TRIAGE_CLI_COMMAND}</Var>
                 </code>
               </T>

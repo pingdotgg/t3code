@@ -7,7 +7,7 @@ import {
   updateClientSettings,
 } from "../hooks/useSettings";
 import { initializeI18n } from "./initializeI18n";
-import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
+import { DEFAULT_LOCALE, localeDirection, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
 
 type LocaleTranslations = Awaited<ReturnType<typeof getTranslationsSnapshot>>;
@@ -49,6 +49,7 @@ function activateLocale(locale: string): void {
   snapshot = { locale, translations: { ...loadedTranslations } };
   setActiveLocale(locale);
   document.documentElement.lang = locale;
+  document.documentElement.dir = localeDirection(locale);
   for (const listener of listeners) listener();
 }
 

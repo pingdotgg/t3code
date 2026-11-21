@@ -412,13 +412,13 @@ function SegmentTriggers({
           <div className="absolute inset-0" style={paceMark?.gap}>
             <div
               aria-hidden
-              className="absolute inset-y-0 left-0 rounded-md opacity-35"
+              className="absolute inset-y-0 start-0 rounded-md opacity-35"
               style={{ width: `${remaining}%`, backgroundColor: color }}
             />
             {remaining < 100 && reset && refillPercent > 0 ? (
               <div
                 aria-hidden
-                className="absolute inset-y-0 right-0 opacity-20"
+                className="absolute inset-y-0 end-0 opacity-20"
                 style={{
                   width: `${Math.min(100 - remaining, refillPercent)}%`,
                   // A bare 45° gradient repeats every 5√2px, so some stripes rasterize thinner; a whole-pixel tile doesn't.

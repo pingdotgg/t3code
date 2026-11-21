@@ -382,7 +382,7 @@ function GitActionProgressButtonContent({
       <Spinner aria-hidden="true" className="row-start-1 -mx-0.5 shrink-0" />
       <p
         className={cn(
-          "row-start-1 min-w-0 self-baseline truncate text-left",
+          "row-start-1 min-w-0 self-baseline truncate text-start",
           THREAD_DETAILS_PANEL_LABEL_CLASS,
         )}
       >
@@ -402,7 +402,7 @@ function GitActionProgressButtonContent({
           <Tooltip>
             <TooltipTrigger
               render={
-                <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
+                <p className="truncate pt-0.5 text-start text-2xs font-normal text-muted-foreground" />
               }
             >
               {progress.output}
@@ -427,7 +427,7 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
       role="status"
     >
       <CheckIcon aria-hidden="true" className="size-3.5 shrink-0 text-success" />
-      <p className={cn("min-w-0 truncate text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+      <p className={cn("min-w-0 truncate text-start", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
         {success.title}
       </p>
       <div
@@ -440,7 +440,7 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
           <Tooltip>
             <TooltipTrigger
               render={
-                <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
+                <p className="truncate pt-0.5 text-start text-2xs font-normal text-muted-foreground" />
               }
             >
               {success.description}
@@ -667,7 +667,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   return (
                     <div
                       key={option.value}
-                      className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-64 dark:border-transparent dark:bg-white/[0.035]"
+                      className="relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-start opacity-64 dark:border-transparent dark:bg-white/[0.035]"
                     >
                       <option.Icon className="size-5 shrink-0 text-muted-foreground" aria-hidden />
                       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
@@ -705,7 +705,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     key={option.value}
                     value={option.value}
                     className={cn(
-                      "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                      "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-start outline-none transition-[background-color,border-color,box-shadow]",
                       "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                       isSelected
                         ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
@@ -731,11 +731,12 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 <T>Repository</T>
               </label>
               <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-ring">
-                <span className="flex shrink-0 items-center gap-1.5 border-r border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
+                <span className="flex shrink-0 items-center gap-1.5 border-e border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
                   <currentPublishProvider.Icon className="size-3.5" />
                   {publishHost}/
                 </span>
                 <input
+                  dir="ltr"
                   id="publish-repository-path"
                   name="publish-repository-path"
                   value={publishRepository}
@@ -795,7 +796,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       key={option.value}
                       value={option.value}
                       className={cn(
-                        "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                        "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-start outline-none transition-[background-color,border-color,box-shadow]",
                         "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                         isSelected
                           ? "border-primary bg-background shadow-sm ring-2 ring-inset ring-primary/35 dark:border-transparent dark:bg-primary/10 dark:shadow-none dark:ring-1 dark:ring-primary/30"
@@ -827,7 +828,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 <ChevronDownIcon
                   className={cn(
                     "size-3.5 transition-transform",
-                    publishAdvancedOpen ? "" : "-rotate-90",
+                    publishAdvancedOpen ? "" : "-rotate-90 rtl:rotate-90",
                   )}
                 />
                 <T context="publish dialog section of advanced options">Advanced</T>
@@ -1509,7 +1510,7 @@ function CheckoutGitActionsControl({
                   <MenuItemLabel>{item.label}</MenuItemLabel>
                 </MenuItem>
               </PopoverTrigger>
-              <PopoverPopup tooltipStyle side="left" align="center">
+              <PopoverPopup tooltipStyle side="inline-start" align="center">
                 {disabledReason}
               </PopoverPopup>
             </Popover>
@@ -1573,7 +1574,7 @@ function CheckoutGitActionsControl({
           onClick={initializeGit}
         >
           <GitBranchPlusIcon className="size-3.5" aria-hidden />
-          <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+          <span className={cn("ms-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
             {initAction.isPending ? <T>Initializing...</T> : <T>Initialize Git</T>}
           </span>
         </ThreadDetailsControl>
@@ -1629,8 +1630,8 @@ function CheckoutGitActionsControl({
                 />
                 <span
                   className={cn(
-                    "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                    cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+                    "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5",
+                    cn("not-sr-only ms-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
                   )}
                 >
                   {quickAction.label}
@@ -1662,8 +1663,8 @@ function CheckoutGitActionsControl({
                 />
                 <span
                   className={cn(
-                    "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                    cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+                    "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5",
+                    cn("not-sr-only ms-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
                   )}
                 >
                   {quickAction.label}
@@ -1751,7 +1752,10 @@ function CheckoutGitActionsControl({
                   </TooltipPopup>
                 </Tooltip>
               ) : null}
-              <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+              <span
+                dir="ltr"
+                className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums"
+              >
                 <span
                   className={
                     changesTotals.insertions
@@ -1816,7 +1820,7 @@ function CheckoutGitActionsControl({
                     {gitStatusForActions?.refName ?? gt("(detached HEAD)")}
                   </span>
                   {isDefaultRef && (
-                    <span className="text-right text-warning">
+                    <span className="text-end text-warning">
                       <T>Default branch</T>
                     </span>
                   )}
@@ -1898,7 +1902,7 @@ function CheckoutGitActionsControl({
                                 )}
                                 <button
                                   type="button"
-                                  className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left enabled:cursor-pointer"
+                                  className="flex min-w-0 flex-1 items-center justify-between gap-3 text-start enabled:cursor-pointer"
                                   disabled={!canOperateThread || workingTreeRoot === null}
                                   aria-label={gt("Open {path} in editor", { path: file.path })}
                                   onClick={() => openChangedFileInEditor(file.path)}
@@ -2018,7 +2022,7 @@ function CheckoutGitActionsControl({
           </DialogHeader>
           <DialogFooter variant="bare" className="sm:flex-wrap sm:items-center">
             <Button
-              className="w-full sm:mr-auto sm:w-auto"
+              className="w-full sm:me-auto sm:w-auto"
               variant="outline"
               size="sm"
               onClick={() => setPendingDefaultBranchAction(null)}

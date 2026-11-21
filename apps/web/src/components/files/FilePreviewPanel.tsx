@@ -1105,7 +1105,7 @@ function EditableFileSurface({
 
   return (
     <EditProvider createEditor={createFileEditor}>
-      <div ref={surfaceRef} className="flex min-h-0 flex-1">
+      <div dir="ltr" ref={surfaceRef} className="flex min-h-0 flex-1">
         <Virtualizer
           className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
           config={{
@@ -1836,7 +1836,10 @@ export default function FilePreviewPanel({
                   <p className="text-muted-foreground">
                     <T>
                       Attempted path
-                      <code className="block break-all font-mono text-foreground select-all">
+                      <code
+                        dir="ltr"
+                        className="block break-all font-mono text-foreground select-all"
+                      >
                         <Var>{attemptedPath}</Var>
                       </code>
                     </T>
@@ -1846,7 +1849,7 @@ export default function FilePreviewPanel({
                   <p className="text-muted-foreground">
                     <T>
                       Workspace folder:{" "}
-                      <code className="break-all font-mono select-all">
+                      <code dir="ltr" className="break-all font-mono select-all">
                         <Var>{file.readError?.cwd ?? cwd}</Var>
                       </code>
                       . Check the link's path or locate the file in Files.

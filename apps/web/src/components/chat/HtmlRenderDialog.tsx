@@ -54,7 +54,7 @@ export function HtmlRenderDialog(props: {
             aria-label={gt("Close")}
             size="icon-xs"
             variant="media-close"
-            className="absolute right-0 -top-10 z-20"
+            className="absolute end-0 -top-10 z-20"
             onClick={props.onClose}
           >
             <XIcon />

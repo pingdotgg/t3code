@@ -1,3 +1,4 @@
+import { isUiRtl } from "~/lib/inlineDirection";
 import {
   AuthProvidersManageScope,
   type EnvironmentId,
@@ -88,7 +89,7 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
 // the bar's rounded ends, and the polygon reaches 1px past the box so only the slot edges clip.
 function paceMarkStyles(timeLeft: number | null) {
   if (timeLeft === null) return null;
-  const at = `clamp(3px, ${timeLeft}%, calc(100% - 3px))`;
+  const at = `clamp(3px, ${isUiRtl() ? 100 - timeLeft : timeLeft}%, calc(100% - 3px))`;
   const [left, right] = [`calc(${at} - 3px)`, `calc(${at} + 3px)`];
   const [near, far] = ["-1px", "calc(100% + 1px)"];
   return {
@@ -177,7 +178,7 @@ function WindowBar({
           <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
           {remaining > 0 ? (
             <div
-              className="absolute inset-y-1.5 left-0 rounded-full"
+              className="absolute inset-y-1.5 start-0 rounded-full"
               style={{ width: `${remaining}%`, backgroundColor: color }}
             />
           ) : null}

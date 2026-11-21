@@ -730,7 +730,7 @@ function PlatformIcon(props: {
         {partial ? (
           <span
             aria-hidden
-            className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-warning ring-2 ring-background"
+            className="absolute top-0.5 end-0.5 size-1.5 rounded-full bg-warning ring-2 ring-background"
           />
         ) : null}
       </PopoverTrigger>

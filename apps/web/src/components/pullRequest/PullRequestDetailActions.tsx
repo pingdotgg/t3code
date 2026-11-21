@@ -436,7 +436,7 @@ export function PullRequestApproveWorkflowsButton({
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="ml-auto inline-flex shrink-0">
+          <span className="ms-auto inline-flex shrink-0">
             <Button
               size="xs"
               variant="warning-outline"

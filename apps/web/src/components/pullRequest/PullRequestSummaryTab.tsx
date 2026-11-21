@@ -339,7 +339,7 @@ function CollapsedComment({
           <CommentLocation comment={comment} thread={thread} />
           {!open && body ? (
             <CollapsibleTrigger
-              className="mt-2 block w-full truncate text-left text-xs text-muted-foreground hover:text-foreground"
+              className="mt-2 block w-full truncate text-start text-xs text-muted-foreground hover:text-foreground"
               onClick={() => statusTriggerRef.current?.focus({ preventScroll: true })}
             >
               {pullRequestCommentPreview(body, detail.provider)}
@@ -438,15 +438,15 @@ export function PullRequestSection({
     >
       <div
         ref={headingRef}
-        className="sticky top-0 z-10 flex w-full items-center bg-background pr-4"
+        className="sticky top-0 z-10 flex w-full items-center bg-background pe-4"
       >
-        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-xs font-medium text-muted-foreground hover:text-foreground">
+        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-start text-xs font-medium text-muted-foreground hover:text-foreground">
           <span>{title}</span>
           <ChevronRightIcon
             aria-hidden
             className={cn(
               "size-3.5 text-muted-foreground/60 transition-transform",
-              open && "rotate-90",
+              open ? "rotate-90" : "rtl:rotate-180",
             )}
           />
         </CollapsibleTrigger>
@@ -730,7 +730,7 @@ export function PullRequestSummaryTab({
 
   const reactionBarFor = (comment: PullRequestComment) => (
     <PullRequestReactionBar
-      className="ml-auto justify-end"
+      className="ms-auto justify-end"
       reactions={comment.reactions ?? []}
       canReact={canReactPullRequestComment(detail, comment)}
       subjectId={comment.id}
@@ -825,7 +825,7 @@ export function PullRequestSummaryTab({
     const thread = item.kind === "thread" ? item.thread : undefined;
     const replies =
       item.kind === "thread" && item.replies.length > 0 ? (
-        <div className="ml-4 space-y-2 border-l-2 border-border/60 pl-3">
+        <div className="ms-4 space-y-2 border-s-2 border-border/60 ps-3">
           {item.replies.map((reply) => renderCommentCard(reply, undefined, { reply: true }))}
         </div>
       ) : null;
@@ -1066,14 +1066,14 @@ export function PullRequestSummaryTab({
                 return (
                   <div
                     key={`${index}:${check.name}:${check.url ?? ""}`}
-                    className="group flex items-center gap-2 rounded-md pr-1 hover:bg-accent/60"
+                    className="group flex items-center gap-2 rounded-md pe-1 hover:bg-accent/60"
                   >
                     <button
                       type="button"
                       disabled={!check.url}
                       onClick={() => check.url && openCheck(check.url)}
                       className={cn(
-                        "flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-2 text-left text-xs leading-5 [&>svg]:mt-0.5",
+                        "flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-2 text-start text-xs leading-5 [&>svg]:mt-0.5",
                         check.url ? "cursor-pointer" : "cursor-default",
                       )}
                     >

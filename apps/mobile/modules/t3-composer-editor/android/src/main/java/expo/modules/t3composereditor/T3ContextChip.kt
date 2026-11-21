@@ -18,6 +18,7 @@ class T3ContextChip(
   fontSize: Float,
   private val color: Int,
   maximumWidth: Float,
+  private val rtl: Boolean,
   density: Float
 ) {
   /** What the chip says: its name, the size beside it, and the glyph that leads it. */
@@ -71,14 +72,16 @@ class T3ContextChip(
     canvas.translate(x, y)
     T3ChipIcons.cached(iconUri)?.let {
       val top = (height - em) / 2
-      canvas.drawBitmap(it, null, RectF(padding, top, padding + em, top + em), iconPaint)
+      val iconX = if (rtl) width - padding - em else padding
+      canvas.drawBitmap(it, null, RectF(iconX, top, iconX + em, top + em), iconPaint)
     }
     val baseline = -paint.fontMetrics.ascent
-    canvas.drawText(text, padding + iconSlot, baseline, paint)
+    val textX = if (rtl) padding else padding + iconSlot
+    canvas.drawText(text, textX, baseline, paint)
     if (detailText.isNotEmpty()) {
       canvas.drawText(
         detailText,
-        padding + iconSlot + paint.measureText(text),
+        textX + paint.measureText(text),
         baseline,
         detailPaint
       )

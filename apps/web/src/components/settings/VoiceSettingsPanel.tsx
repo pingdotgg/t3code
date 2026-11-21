@@ -242,7 +242,7 @@ function ModelCard(props: ModelCardProps) {
             <span className="text-sm font-medium leading-5">{model.name}</span>
             {props.recommendation ? (
               <ModelBadge
-                icon={<StarIcon className="mr-1 size-3" />}
+                icon={<StarIcon className="me-1 size-3" />}
                 label={
                   props.recommendation === "recommended"
                     ? gt("Recommended")
@@ -265,7 +265,7 @@ function ModelCard(props: ModelCardProps) {
             ) : null}
             {model.supportsStreaming ? (
               <ModelBadge
-                icon={<AudioLinesIcon className="mr-1 size-3" />}
+                icon={<AudioLinesIcon className="me-1 size-3" />}
                 label={gt("Live preview")}
                 tooltip={gt(
                   "Shows words in your draft as you speak, before the recording finishes.",
@@ -274,7 +274,7 @@ function ModelCard(props: ModelCardProps) {
             ) : null}
             {model.supportsTranslation ? (
               <ModelBadge
-                icon={<LanguagesIcon className="mr-1 size-3" />}
+                icon={<LanguagesIcon className="me-1 size-3" />}
                 label={gt("Translate")}
                 tooltip={gt(
                   "Can write English text from speech in another language. Turn on Translate to English to use it.",
@@ -461,7 +461,7 @@ function DictionaryEditor(props: {
           {words.map(({ term, aliases }) => (
             <li
               key={term}
-              className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 py-0.5 pl-2 pr-0.5 text-xs"
+              className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 py-0.5 ps-2 pe-0.5 text-xs"
             >
               <span className="font-medium">{term}</span>
               {aliases.length > 0 ? (
@@ -1167,6 +1167,7 @@ function SpeechModelBrowser(props: {
         >
           <div className="w-full min-w-0 flex-1">
             <Input
+              dir="ltr"
               size="compact"
               aria-label={gt("Path to a model file or folder already on this environment")}
               placeholder={gt("Already downloaded elsewhere? Paste the model file or folder path")}

@@ -73,7 +73,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
   const row = (
     <View
       className={cn("flex-row", props.highlighted && "bg-primary/10")}
-      style={{ minHeight: props.codeSurface.rowHeight }}
+      style={{ direction: "ltr", minHeight: props.codeSurface.rowHeight }}
     >
       <NativeText
         className="select-none pr-3 text-right text-foreground-tertiary"
@@ -95,6 +95,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
           fontFamily: REVIEW_MONO_FONT_FAMILY,
           fontSize: props.codeSurface.fontSize,
           lineHeight: props.codeSurface.rowHeight,
+          writingDirection: "ltr",
           minWidth: props.wordBreak ? undefined : 320,
         }}
       >
@@ -320,6 +321,8 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     <SourceText
       selectable
       style={{
+        writingDirection: "ltr",
+        textAlign: "left",
         color: foreground,
         fontFamily: REVIEW_MONO_FONT_FAMILY,
         fontSize: codeSurface.fontSize,
@@ -440,7 +443,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         codeWordBreak ? (
           list
         ) : (
-          <ScrollView horizontal bounces={false} className="flex-1">
+          <ScrollView horizontal style={{ direction: "ltr" }} bounces={false} className="flex-1">
             {list}
           </ScrollView>
         )
@@ -449,7 +452,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       ) : codeWordBreak ? (
         padded
       ) : (
-        <ScrollView horizontal bounces={false} className="flex-1">
+        <ScrollView horizontal style={{ direction: "ltr" }} bounces={false} className="flex-1">
           {padded}
         </ScrollView>
       )}

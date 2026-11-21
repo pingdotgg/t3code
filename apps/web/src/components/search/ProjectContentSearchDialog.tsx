@@ -289,7 +289,7 @@ function OpenContentSearchDialog(props: {
                         {path.directory}
                       </span>
                     ) : null}
-                    <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-3xs text-muted-foreground">
+                    <span className="ms-auto rounded-full bg-muted px-1.5 py-0.5 tabular-nums text-3xs text-muted-foreground">
                       {group.matches.length}
                     </span>
                   </div>
@@ -301,14 +301,14 @@ function OpenContentSearchDialog(props: {
                         match.resultIndex === selectedIndex ? scrollSelectedRowIntoView : undefined
                       }
                       className={cn(
-                        "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-left font-mono text-xs hover:bg-accent/60 disabled:pointer-events-none",
+                        "flex h-7 w-full min-w-0 items-center gap-3 px-3 text-start font-mono text-xs hover:bg-accent/60 disabled:pointer-events-none",
                         match.resultIndex === selectedIndex && "bg-accent text-accent-foreground",
                       )}
                       disabled={!canOpenMatches}
                       onMouseEnter={() => setSelectedIndex(match.resultIndex)}
                       onClick={() => openMatch(match)}
                     >
-                      <span className="w-10 shrink-0 text-right tabular-nums text-muted-foreground/70">
+                      <span className="w-10 shrink-0 text-end tabular-nums text-muted-foreground/70">
                         {match.lineNumber}
                       </span>
                       <span className="min-w-0 flex-1 truncate whitespace-pre">

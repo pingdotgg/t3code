@@ -318,7 +318,7 @@ export function branchMismatchBannerItem(
     <Tooltip>
       <TooltipTrigger
         render={
-          <code className="min-w-0 truncate font-medium text-foreground">
+          <code dir="ltr" className="min-w-0 truncate font-medium text-foreground">
             {mismatch.threadBranch}
           </code>
         }

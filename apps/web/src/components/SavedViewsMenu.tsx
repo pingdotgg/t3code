@@ -177,7 +177,7 @@ export function SavedViewsMenu<Preferences extends Stored, Stored, Encoded>({
                 )}
                 <MenuItemLabel>{view.name}</MenuItemLabel>
               </TooltipTrigger>
-              <TooltipPopup side="right">{view.name}</TooltipPopup>
+              <TooltipPopup side="inline-end">{view.name}</TooltipPopup>
             </Tooltip>
           ))}
           {views.length > 0 ? <MenuSeparator /> : null}

@@ -45,6 +45,15 @@ export function createMobilePreferencesState(
   );
   let nextPatchVersion = 0;
 
+  // Restarting for an optimistic language change can interrupt the storage write.
+  const savedLanguageAtom = Atom.make((get) => {
+    const confirmed = get(confirmedPreferencesAtom);
+    return AsyncResult.map(
+      get(storedPreferencesAtom),
+      (stored) => confirmed.language ?? stored.language,
+    );
+  });
+
   const preferencesAtom = Atom.make((get) => {
     const stored = get(storedPreferencesAtom);
     const confirmed = get(confirmedPreferencesAtom);
@@ -115,11 +124,12 @@ export function createMobilePreferencesState(
     execute: save,
   });
 
-  return { preferencesAtom, save, savePreferences } as const;
+  return { preferencesAtom, save, savePreferences, savedLanguageAtom } as const;
 }
 
 const mobilePreferencesRuntime = Atom.runtime(Runtime.layer);
 const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRuntime);
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
+export const savedMobileLanguageAtom = mobilePreferencesState.savedLanguageAtom;
 export const saveMobilePreferences = mobilePreferencesState.savePreferences;

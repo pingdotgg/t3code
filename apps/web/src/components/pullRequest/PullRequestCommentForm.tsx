@@ -190,7 +190,7 @@ export function PullRequestCommentForm({
           disabled={submitDisabled}
           onClick={() => submitAfterDictation("comment")}
         >
-          <SendIcon className="size-3.5" />
+          <SendIcon className="size-3.5 rtl:-scale-x-100" />
           {submitting === "comment"
             ? gt("Posting...")
             : gt("Comment", { $context: "verb, submit button" })}

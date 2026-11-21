@@ -623,7 +623,7 @@ export function UsagePriceOverrides({
                     <span
                       className={
                         result?.status === "failed"
-                          ? "text-right text-destructive"
+                          ? "text-end text-destructive"
                           : "text-muted-foreground"
                       }
                     >

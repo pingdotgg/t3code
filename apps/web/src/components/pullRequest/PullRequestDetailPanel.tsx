@@ -1575,7 +1575,7 @@ export function PullRequestDetailPanel({
           openOnHostText={openOnHostText}
           onBack={onBack}
         />
-        <div className="mr-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
+        <div className="me-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
           {detail ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
               {context === "page" ? (
@@ -1686,7 +1686,7 @@ export function PullRequestDetailPanel({
               )}
               onClick={onClose}
             >
-              <PanelRightIcon className="size-3.5" />
+              <PanelRightIcon className="size-3.5 rtl:-scale-x-100" />
             </Button>
           ) : null}
         </div>
@@ -1739,12 +1739,12 @@ export function PullRequestDetailPanel({
                         $context:
                           "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
                       })}
-                      className="size-3 shrink-0 opacity-60"
+                      className="size-3 shrink-0 opacity-60 rtl:-scale-x-100"
                     />
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <code className="flex min-w-0 flex-1">
+                          <code dir="ltr" className="flex min-w-0 flex-1">
                             <MiddleTruncate value={detail.headBranch} showTitle={false} />
                           </code>
                         }
@@ -1752,7 +1752,7 @@ export function PullRequestDetailPanel({
                       <TooltipPopup side="top">{detail.headBranch}</TooltipPopup>
                     </Tooltip>
                   </span>
-                  <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2 text-2xs">
+                  <span className="ms-auto inline-flex shrink-0 items-baseline justify-end gap-2 text-2xs">
                     <span
                       className="inline-flex items-baseline gap-1 tabular-nums"
                       aria-label={gt(
@@ -1842,7 +1842,7 @@ export function PullRequestDetailPanel({
                       }}
                       copyLabel={gt("Copy checkout command")}
                       copiedLabel={gt("Checkout command copied")}
-                      className="ml-auto font-mono"
+                      className="ms-auto font-mono"
                       tooltipSide="bottom"
                       onError={reportCheckoutCommandError}
                     />
@@ -1936,7 +1936,7 @@ export function PullRequestDetailPanel({
                 />
               )
             ) : tab === "timeline" ? (
-              <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+              <div className="ms-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                 <PullRequestMetaLine
                   className={cn(
                     "whitespace-nowrap text-2xs transition-opacity",
@@ -2210,7 +2210,7 @@ export function PullRequestDetailPanel({
       </div>
 
       {detail ? (
-        <div className="absolute right-4 bottom-3 z-20">
+        <div className="absolute end-4 bottom-3 z-20">
           <PullRequestComposer
             key={JSON.stringify([
               environmentId,

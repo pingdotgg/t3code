@@ -122,7 +122,7 @@ function StatsGrid({ children }: { children: ReactNode }) {
   return (
     <div className="relative grid grid-cols-2 sm:grid-cols-4">
       <span
-        className="pointer-events-none absolute inset-y-0 left-1/2 w-px bg-border/60"
+        className="pointer-events-none absolute inset-y-0 start-1/2 w-px bg-border/60"
         aria-hidden
       />
       <span
@@ -130,11 +130,11 @@ function StatsGrid({ children }: { children: ReactNode }) {
         aria-hidden
       />
       <span
-        className="pointer-events-none absolute inset-y-0 left-1/4 hidden w-px bg-border/60 sm:block"
+        className="pointer-events-none absolute inset-y-0 start-1/4 hidden w-px bg-border/60 sm:block"
         aria-hidden
       />
       <span
-        className="pointer-events-none absolute inset-y-0 left-3/4 hidden w-px bg-border/60 sm:block"
+        className="pointer-events-none absolute inset-y-0 start-3/4 hidden w-px bg-border/60 sm:block"
         aria-hidden
       />
       {children}
@@ -166,7 +166,7 @@ function DiagnosticsTable({
       className="w-full max-w-full"
     >
       <table
-        className={cn("w-full text-left text-xs", minTableWidth, columnWidths && "table-fixed")}
+        className={cn("w-full text-start text-xs", minTableWidth, columnWidths && "table-fixed")}
       >
         {columnWidths ? (
           <colgroup>
@@ -181,7 +181,7 @@ function DiagnosticsTable({
               <th
                 key={header}
                 className={cn(
-                  "whitespace-nowrap px-4 py-2.5 font-semibold first:sm:pl-5 last:sm:pr-5",
+                  "whitespace-nowrap px-4 py-2.5 font-semibold first:sm:ps-5 last:sm:pe-5",
                   !columnWidths && index === headers.length - 1 && "w-px",
                 )}
               >
@@ -274,7 +274,7 @@ function ProcessNameCell({
   return (
     <div
       className="grid min-w-0 grid-cols-[1.25rem_0.375rem_minmax(0,1fr)] items-center gap-2"
-      style={{ paddingLeft: `${Math.min(process.depth, 6) * 10}px` }}
+      style={{ paddingInlineStart: `${Math.min(process.depth, 6) * 10}px` }}
     >
       {hasChildren ? (
         <Button
@@ -286,7 +286,7 @@ function ProcessNameCell({
           {isExpanded ? (
             <ChevronDownIcon className="size-3.5" />
           ) : (
-            <ChevronRightIcon className="size-3.5" />
+            <ChevronRightIcon className="size-3.5 rtl:-scale-x-100" />
           )}
         </Button>
       ) : (
@@ -366,7 +366,7 @@ function ProcessDiagnosticsTable({
         hideScrollbars
         className="max-h-[min(64vh,44rem)] w-full max-w-full"
       >
-        <table className="w-full min-w-[1040px] table-fixed text-left text-xs">
+        <table className="w-full min-w-[1040px] table-fixed text-start text-xs">
           <colgroup>
             <col className="w-[24%]" />
             <col className="w-[8%]" />
@@ -378,25 +378,25 @@ function ProcessDiagnosticsTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">
+              <th className="px-4 py-2 font-semibold sm:ps-5">
                 <T>Name</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>CPU</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Memory</T>
               </th>
               <th className="px-3 py-2 font-semibold">
                 <T>Command</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>PID</T>
               </th>
               <th className="px-3 py-2 font-semibold">
                 <T>Type</T>
               </th>
-              <th className="p-2 text-right font-semibold sm:pr-4">
+              <th className="p-2 text-end font-semibold sm:pe-4">
                 <T>Kill</T>
               </th>
             </tr>
@@ -411,17 +411,17 @@ function ProcessDiagnosticsTable({
             ) : null}
             {visibleProcesses.map((process) => (
               <tr key={process.pid} className="hover:bg-muted/20">
-                <td className="px-4 py-2 align-middle sm:pl-5">
+                <td className="px-4 py-2 align-middle sm:ps-5">
                   <ProcessNameCell
                     process={process}
                     isExpanded={!collapsedPids.has(process.pid)}
                     onToggle={toggleProcess}
                   />
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {process.cpuPercent.toFixed(1)}%
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {formatBytes(process.rssBytes)}
                 </td>
                 <td className="px-3 py-2 align-middle text-muted-foreground">
@@ -434,13 +434,13 @@ function ProcessDiagnosticsTable({
                     </TooltipPopup>
                   </Tooltip>
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums text-muted-foreground">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums text-muted-foreground">
                   {process.pid}
                 </td>
                 <td className="truncate px-3 py-2 align-middle text-muted-foreground">
                   {formatProcessType(process, m)}
                 </td>
-                <td className="p-2 align-middle sm:pr-4">
+                <td className="p-2 align-middle sm:pe-4">
                   <ProcessSignalActions
                     disabled={!canMaintainEnvironment || signalingPid === process.pid}
                     onSignal={(signal) => onSignal(process.pid, signal)}
@@ -480,7 +480,7 @@ function ResourceHistoryProcessNameCell({
   return (
     <div
       className="grid min-w-0 grid-cols-[1.25rem_0.375rem_minmax(0,1fr)] items-center gap-2"
-      style={{ paddingLeft: `${Math.min(visualDepth, 6) * 10}px` }}
+      style={{ paddingInlineStart: `${Math.min(visualDepth, 6) * 10}px` }}
       aria-label={
         process.isServerRoot
           ? gt("Root process {name}", { name })
@@ -612,7 +612,7 @@ function ProcessResourceHistoryTable({
         hideScrollbars
         className="max-h-[min(64vh,44rem)] w-full max-w-full"
       >
-        <table className="w-full min-w-[980px] table-fixed text-left text-xs">
+        <table className="w-full min-w-[980px] table-fixed text-start text-xs">
           <colgroup>
             <col className="w-[24%]" />
             <col className="w-[10%]" />
@@ -625,28 +625,28 @@ function ProcessResourceHistoryTable({
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-border/60 bg-card text-2xs uppercase tracking-widest text-muted-foreground/70">
             <tr>
-              <th className="px-4 py-2 font-semibold sm:pl-5">
+              <th className="px-4 py-2 font-semibold sm:ps-5">
                 <T>Process</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>CPU Time</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Current</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Average</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Peak</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
+              <th className="px-3 py-2 text-end font-semibold">
                 <T>Max Mem</T>
               </th>
               <th className="px-3 py-2 font-semibold">
                 <T>Command</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold sm:pr-5">
+              <th className="px-3 py-2 text-end font-semibold sm:pe-5">
                 <T>PID</T>
               </th>
             </tr>
@@ -661,7 +661,7 @@ function ProcessResourceHistoryTable({
             ) : null}
             {processes.map((process) => (
               <tr key={process.processKey} className="hover:bg-muted/20">
-                <td className="px-4 py-2 align-middle sm:pl-5">
+                <td className="px-4 py-2 align-middle sm:ps-5">
                   <ResourceHistoryProcessNameCell
                     process={process}
                     visualDepth={
@@ -671,19 +671,19 @@ function ProcessResourceHistoryTable({
                     }
                   />
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {formatCpuTime(process.cpuSecondsApprox, m)}
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {process.currentCpuPercent.toFixed(1)}%
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {process.avgCpuPercent.toFixed(1)}%
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {process.maxCpuPercent.toFixed(1)}%
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums">
                   {formatBytes(process.maxRssBytes)}
                 </td>
                 <td className="px-3 py-2 align-middle text-muted-foreground">
@@ -696,7 +696,7 @@ function ProcessResourceHistoryTable({
                     </TooltipPopup>
                   </Tooltip>
                 </td>
-                <td className="px-3 py-2 text-right align-middle font-mono tabular-nums text-muted-foreground sm:pr-5">
+                <td className="px-3 py-2 text-end align-middle font-mono tabular-nums text-muted-foreground sm:pe-5">
                   {process.pid}
                 </td>
               </tr>
@@ -1247,7 +1247,7 @@ function DiagnosticsSettingsBody() {
           <DiagnosticsTable headers={[gt("Span"), gt("Cause"), gt("Duration"), gt("Ended")]}>
             {data.latestFailures.map((failure) => (
               <tr key={`${failure.traceId}:${failure.spanId}`}>
-                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
+                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:ps-5">
                   {failure.name}
                 </td>
                 <td className="max-w-[360px] px-4 py-3 align-top text-muted-foreground">
@@ -1256,7 +1256,7 @@ function DiagnosticsSettingsBody() {
                 <td className="px-4 py-3 align-top font-mono tabular-nums">
                   {formatDiagnosticsDuration(failure.durationMs)}
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground last:sm:pr-5">
+                <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground last:sm:pe-5">
                   <RelativeTimeNoWrap value={failure.endedAt} />
                 </td>
               </tr>
@@ -1277,7 +1277,7 @@ function DiagnosticsSettingsBody() {
           >
             {data.commonFailures.map((failure) => (
               <tr key={`${failure.name}:${failure.cause}`}>
-                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
+                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:ps-5">
                   {failure.name}
                 </td>
                 <td className="px-4 py-3 align-top font-mono tabular-nums">
@@ -1286,7 +1286,7 @@ function DiagnosticsSettingsBody() {
                 <td className="max-w-[360px] px-4 py-3 align-top text-muted-foreground">
                   <ExpandableText text={failure.cause} />
                 </td>
-                <td className="w-px whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground last:sm:pr-5">
+                <td className="w-px whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground last:sm:pe-5">
                   <RelativeTimeNoWrap value={failure.lastSeenAt} />
                 </td>
               </tr>
@@ -1310,7 +1310,7 @@ function DiagnosticsSettingsBody() {
           >
             {data.slowestSpans.map((span) => (
               <tr key={`${span.traceId}:${span.spanId}`}>
-                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
+                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:ps-5">
                   {span.name}
                 </td>
                 <td className="px-4 py-3 align-top font-mono tabular-nums">
@@ -1319,7 +1319,7 @@ function DiagnosticsSettingsBody() {
                 <td className="w-px whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground">
                   <RelativeTimeNoWrap value={span.endedAt} />
                 </td>
-                <td className="min-w-0 whitespace-nowrap px-4 py-3 align-top text-muted-foreground last:sm:pr-5">
+                <td className="min-w-0 whitespace-nowrap px-4 py-3 align-top text-muted-foreground last:sm:pe-5">
                   <TraceIdCell traceId={span.traceId} />
                 </td>
               </tr>
@@ -1341,7 +1341,7 @@ function DiagnosticsSettingsBody() {
             hideScrollbars
             className="w-full max-w-full"
           >
-            <table className="w-full min-w-[920px] table-fixed text-left text-xs">
+            <table className="w-full min-w-[920px] table-fixed text-start text-xs">
               <colgroup>
                 <col className="w-[11%]" />
                 <col className="w-[9%]" />
@@ -1351,7 +1351,7 @@ function DiagnosticsSettingsBody() {
               </colgroup>
               <thead className="border-b border-border/60 text-2xs uppercase tracking-widest text-muted-foreground/70">
                 <tr>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pl-5">
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:ps-5">
                     <T>Time</T>
                   </th>
                   <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
@@ -1363,7 +1363,7 @@ function DiagnosticsSettingsBody() {
                   <th className="whitespace-nowrap px-4 py-2.5 font-semibold">
                     <T>Message</T>
                   </th>
-                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pr-5">
+                  <th className="whitespace-nowrap px-4 py-2.5 font-semibold sm:pe-5">
                     <T>Trace</T>
                   </th>
                 </tr>
@@ -1374,7 +1374,7 @@ function DiagnosticsSettingsBody() {
                     key={`${event.traceId}:${event.spanId}:${DateTime.formatIso(event.seenAt)}:${event.message}`}
                     className="hover:bg-muted/15"
                   >
-                    <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground sm:pl-5">
+                    <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums text-muted-foreground sm:ps-5">
                       <RelativeTimeNoWrap value={event.seenAt} />
                     </td>
                     <td className="px-4 py-3 align-top">
@@ -1392,7 +1392,7 @@ function DiagnosticsSettingsBody() {
                         text={event.message}
                       />
                     </td>
-                    <td className="min-w-0 whitespace-nowrap px-4 py-3 align-top text-muted-foreground sm:pr-5">
+                    <td className="min-w-0 whitespace-nowrap px-4 py-3 align-top text-muted-foreground sm:pe-5">
                       <TraceIdCell traceId={event.traceId} />
                     </td>
                   </tr>
@@ -1418,7 +1418,7 @@ function DiagnosticsSettingsBody() {
           >
             {data.topSpansByCount.map((span) => (
               <tr key={span.name}>
-                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:pl-5">
+                <td className="px-4 py-3 align-top text-xs font-medium text-foreground first:sm:ps-5">
                   {span.name}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums">
@@ -1430,7 +1430,7 @@ function DiagnosticsSettingsBody() {
                 <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums">
                   {formatDiagnosticsDuration(span.averageDurationMs)}
                 </td>
-                <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums last:sm:pr-5">
+                <td className="whitespace-nowrap px-4 py-3 align-top font-mono tabular-nums last:sm:pe-5">
                   {formatDiagnosticsDuration(span.maxDurationMs)}
                 </td>
               </tr>

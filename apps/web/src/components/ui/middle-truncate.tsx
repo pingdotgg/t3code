@@ -30,6 +30,7 @@ export function MiddleTruncate({
   }, [head]);
   return (
     <span
+      dir="auto"
       {...(showTitle ? { title: value } : {})}
       className={cn(
         "inline-flex min-w-0 max-w-full overflow-hidden whitespace-nowrap",
@@ -71,7 +72,7 @@ function scheduleFit(head: HTMLElement) {
 }
 
 // An overflowing head is cut after its last whole character: clip the partial glyph
-// and slide the tail left over the slack. Neither changes layout, so the observed
+// and slide the tail over the slack. Neither changes layout, so the observed
 // size stays the true available width.
 function fitPendingHeads() {
   const heads = [...pendingFits].filter((head) => head.isConnected);
@@ -80,24 +81,29 @@ function fitPendingHeads() {
     (head) => head.scrollWidth > head.clientWidth && head.firstChild instanceof Text,
   );
   heads.forEach((head, index) => head.toggleAttribute("data-overflow", overflowing[index]));
-  const slacks = heads.map((head, index) => (overflowing[index] ? measureSlack(head) : 0));
+  const slacks = heads.map((head, index) => {
+    if (!overflowing[index]) return 0;
+    const slack = measureSlack(head);
+    return head.matches(":dir(rtl)") ? -slack : slack;
+  });
   heads.forEach((head, index) => {
     const slack = slacks[index]!;
-    head.style.clipPath = slack > 0 ? `inset(-0.25em ${slack}px -0.25em 0)` : "";
+    head.style.clipPath = slack
+      ? `inset(-0.25em ${Math.max(slack, 0)}px -0.25em ${Math.max(-slack, 0)}px)`
+      : "";
     const tail = head.nextElementSibling;
-    if (tail instanceof HTMLElement) tail.style.translate = slack > 0 ? `-${slack}px 0` : "";
+    if (tail instanceof HTMLElement) tail.style.translate = slack ? `${-slack}px 0` : "";
   });
 }
 
 function measureSlack(head: HTMLElement) {
   const text = head.firstChild as Text;
   const range = document.createRange();
-  const left = head.getBoundingClientRect().left;
   const width = head.clientWidth;
   const widthTo = (end: number) => {
     range.setStart(text, 0);
     range.setEnd(text, end);
-    return range.getBoundingClientRect().right - left;
+    return range.getBoundingClientRect().width;
   };
   let fits = 0;
   let over = text.length;

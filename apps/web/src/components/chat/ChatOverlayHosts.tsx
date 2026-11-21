@@ -163,7 +163,7 @@ export function BranchRestoreConfirmHost(props: {
           <AlertDialogTitle>
             <T>
               Switch to{" "}
-              <code className="font-medium">
+              <code dir="ltr" className="font-medium">
                 <Var>{props.threadBranch}</Var>
               </code>
               ?

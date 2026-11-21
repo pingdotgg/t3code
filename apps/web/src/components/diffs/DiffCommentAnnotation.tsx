@@ -96,7 +96,7 @@ export function DiffCommentAnnotation({
           {displayedText}
         </p>
         {onDelete ? (
-          <span className="-my-1 -mr-1 flex shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-within:opacity-100 max-sm:opacity-100">
+          <span className="-my-1 -me-1 flex shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-within:opacity-100 max-sm:opacity-100">
             <Button
               variant="ghost-muted"
               size="icon-xs"
@@ -161,7 +161,7 @@ export function DiffCommentAnnotation({
         }}
       />
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        <span className="mr-auto text-3xs text-muted-foreground/70">
+        <span className="me-auto text-3xs text-muted-foreground/70">
           <T>⌘/Ctrl Enter to send</T>
         </span>
         {speech ? <TextFieldSpeechControls speech={speech} disabled={pending} /> : null}

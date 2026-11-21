@@ -238,6 +238,7 @@ function TelemetryExportForm() {
               </div>
               <div className="flex gap-2">
                 <Input
+                  dir="ltr"
                   id={key}
                   size="sm"
                   type="url"
@@ -277,14 +278,14 @@ function TelemetryExportForm() {
                     running?.[key] ? (
                       <T>
                         Running: <Var>{running[key]}</Var> from{" "}
-                        <code className="font-mono">
+                        <code dir="ltr" className="font-mono">
                           <Var>{override.variable}</Var>
                         </code>
                       </T>
                     ) : (
                       <T>
                         Running: Disabled from{" "}
-                        <code className="font-mono">
+                        <code dir="ltr" className="font-mono">
                           <Var>{override.variable}</Var>
                         </code>
                       </T>

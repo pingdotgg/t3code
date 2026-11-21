@@ -33,7 +33,7 @@ export function CommandBlock({
       )}
     >
       <span className="min-w-0 truncate">
-        <span className="mr-2 text-muted-foreground">$</span>
+        <span className="me-2 text-muted-foreground">$</span>
         {command}
       </span>
       <Button

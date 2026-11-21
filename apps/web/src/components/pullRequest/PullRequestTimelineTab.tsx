@@ -131,7 +131,7 @@ function TimelineMarker({
   return (
     <span
       className={cn(
-        "absolute left-0 top-1/2 z-10 flex size-8 -translate-y-1/2 items-center justify-center bg-background",
+        "absolute start-0 top-1/2 z-10 flex size-8 -translate-y-1/2 items-center justify-center bg-background",
         className,
       )}
     >
@@ -225,7 +225,7 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
     <Button
       size="icon-xs"
       variant="ghost-muted"
-      className="-mr-1 shrink-0"
+      className="-me-1 shrink-0"
       aria-label={gt("Open activity on host")}
       onClick={() => onOpen(url)}
     >
@@ -340,7 +340,7 @@ function ConversationCard({
           ) : null}
           {canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
-              className="ml-auto justify-end"
+              className="ms-auto justify-end"
               reactions={event.reactions}
               canReact={canReact}
               subjectId={event.id}
@@ -416,7 +416,7 @@ function ConversationGroup({
   if (first === undefined) return null;
 
   return (
-    <div className="relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
+    <div className="relative mb-5 ps-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
         actors={actors}
         className="top-6"
@@ -427,7 +427,7 @@ function ConversationGroup({
         <div>
           <CollapsibleTrigger
             className={cn(
-              "flex w-full min-w-0 items-center gap-3 py-2 text-left transition-opacity hover:opacity-100",
+              "flex w-full min-w-0 items-center gap-3 py-2 text-start transition-opacity hover:opacity-100",
               open ? "text-foreground opacity-100" : "text-muted-foreground opacity-55",
             )}
           >
@@ -509,7 +509,7 @@ function ReviewThreadEvent({
   const replyCount = thread.replies.length + thread.moreReplies;
 
   return (
-    <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
+    <div className="group relative mb-5 ps-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
         className="top-4"
@@ -518,7 +518,7 @@ function ReviewThreadEvent({
       />
       <button
         type="button"
-        className="flex w-full min-w-0 items-center gap-2 px-2 py-2 text-left text-2xs text-muted-foreground hover:text-foreground"
+        className="flex w-full min-w-0 items-center gap-2 px-2 py-2 text-start text-2xs text-muted-foreground hover:text-foreground"
         aria-expanded={expanded}
         onClick={() => setExpanded((current) => !current)}
       >
@@ -567,7 +567,7 @@ function ReviewThreadEvent({
         )}
         <ChevronDownIcon
           aria-hidden
-          className={cn("ml-auto size-3.5 shrink-0 transition-transform", expanded && "rotate-180")}
+          className={cn("ms-auto size-3.5 shrink-0 transition-transform", expanded && "rotate-180")}
         />
       </button>
       {expanded ? (
@@ -590,7 +590,7 @@ function ReviewThreadEvent({
             }
           />
           {thread.replies.length > 0 ? (
-            <div className="ml-2 space-y-1 border-l border-border/60 pl-3">
+            <div className="ms-2 space-y-1 border-s border-border/60 ps-3">
               {thread.replies.map((reply) => (
                 <ConversationCard
                   key={reply.id}
@@ -627,7 +627,7 @@ function CommitEvent({
   return (
     <button
       type="button"
-      className="group relative mb-5 block w-full cursor-pointer rounded-sm pl-12 text-left outline-none [contain-intrinsic-block-size:48px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className="group relative mb-5 block w-full cursor-pointer rounded-sm ps-12 text-start outline-none [contain-intrinsic-block-size:48px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       aria-label={gt("View commit {sha}", { sha: event.id })}
       onClick={() => onOpen(event.id)}
     >
@@ -641,7 +641,9 @@ function CommitEvent({
             {event.body ?? gt("Untitled commit")}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-3xs text-muted-foreground">
-            <code className="font-mono">{event.id.slice(0, 7)}</code>
+            <code dir="ltr" className="font-mono">
+              {event.id.slice(0, 7)}
+            </code>
             <span>
               <RelativeTime timestamp={event.at} />
             </span>
@@ -651,7 +653,7 @@ function CommitEvent({
           <PullRequestDiffStat
             additions={event.additions}
             deletions={event.deletions}
-            className="ml-auto shrink-0 font-mono text-3xs"
+            className="ms-auto shrink-0 font-mono text-3xs"
           />
         ) : null}
       </div>
@@ -693,7 +695,7 @@ function LifecycleEvent({
           };
 
   return (
-    <div className="relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
+    <div className="relative mb-5 ps-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <IconMarker icon={presentation.icon} />
       <div className="py-1.5 text-xs">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -741,7 +743,7 @@ function ReviewVerdictEvent({
   const resolve = useMessages();
   const canReact = reactions.canReact(event);
   return (
-    <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
+    <div className="group relative mb-5 ps-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
         className="top-6"
@@ -795,7 +797,7 @@ function ReviewVerdictEvent({
         ) : null}
         {canReact || event.reactions.length > 0 ? (
           <PullRequestReactionBar
-            className="ml-auto justify-end"
+            className="ms-auto justify-end"
             reactions={event.reactions}
             canReact={canReact}
             subjectId={event.id}
@@ -1003,7 +1005,7 @@ export function PullRequestTimelineTab({
       tabIndex={-1}
       data-workspace-focus-default
       className="scrollbar-gutter-both h-full px-4 outline-none"
-      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
+      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:start-[15px] before:top-6 before:w-px before:bg-border/45"
       ListHeaderComponent={
         anchor !== null && targetIndex < 0 && revealUrl === undefined ? (
           <p role="status" className="py-4 text-xs text-muted-foreground">

@@ -30,12 +30,13 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
   const gt = useGT();
   return (
     <span
+      dir="ltr"
       role="group"
       aria-label={gt("{additions} additions, {deletions} deletions", { additions, deletions })}
       className={cn(
         layout === "inline"
           ? "inline-flex items-center gap-1 tabular-nums align-middle"
-          : "inline-grid grid-cols-[4ch_4ch] gap-2 text-right tabular-nums align-middle",
+          : "inline-grid grid-cols-[4ch_4ch] gap-2 text-end tabular-nums align-middle",
         className,
       )}
     >

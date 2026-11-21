@@ -50,7 +50,7 @@ export function DeviceControlsRail(props: {
   onPowerOff: () => void;
 }) {
   const { view, handle, controls } = props;
-  const popupSide = "left";
+  const popupSide = "inline-start";
   const settings = controls.detail?.settings;
   const inputDisabled = !handle?.inputConnected;
   const runsHostCommands = props.hostKind === "local" || props.hostKind === "ssh";
@@ -61,7 +61,7 @@ export function DeviceControlsRail(props: {
     <aside
       aria-label={gt("Device controls")}
       data-layout="rail"
-      className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-14 flex-col items-center gap-2 overflow-y-auto [justify-content:safe_center] py-3 pr-2 [scrollbar-width:none]"
+      className="pointer-events-none absolute inset-y-0 end-0 z-10 flex w-14 flex-col items-center gap-2 overflow-y-auto [justify-content:safe_center] py-3 pe-2 [scrollbar-width:none]"
     >
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-full border border-border/50 bg-background/80 p-2 shadow-sm [scrollbar-width:none]">
         <RailButton
@@ -294,7 +294,7 @@ function RailDivider() {
 }
 
 function RailButton(props: {
-  tooltipSide: "left" | "bottom";
+  tooltipSide: "inline-start" | "bottom";
   label: string;
   description?: string | undefined;
   disabled?: boolean;

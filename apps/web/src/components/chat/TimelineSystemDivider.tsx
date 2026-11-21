@@ -30,7 +30,7 @@ export function TimelineSystemDivider(props: {
         <span
           className={cn(
             "min-w-0 opacity-70",
-            props.wrapDetail ? "ml-1.5 wrap-anywhere" : "inline-flex items-center",
+            props.wrapDetail ? "ms-1.5 wrap-anywhere" : "inline-flex items-center",
             typeof props.detail === "string" &&
               (props.wrapDetail ? "whitespace-pre-wrap" : "max-w-80 truncate"),
           )}

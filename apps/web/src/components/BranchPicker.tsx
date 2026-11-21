@@ -106,27 +106,29 @@ export function BranchPicker({
     >
       {children}
       <ComboboxPopup {...popupProps}>
-        <ComboboxSearchInput
-          placeholder={gt("Search refs...")}
-          value={query}
-          onChange={(event) => {
-            onQueryChange(event.target.value);
-            void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
-          }}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
-              return;
-            const highlightedValue = highlightedValueRef.current;
-            if (highlightedValue === null || !filteredItems.includes(highlightedValue)) return;
-            (
-              event as typeof event & { preventBaseUIHandler?: () => void }
-            ).preventBaseUIHandler?.();
-            event.preventDefault();
-            event.stopPropagation();
-            highlightedValueRef.current = null;
-            onSelectItem(highlightedValue);
-          }}
-        />
+        <div dir="ltr">
+          <ComboboxSearchInput
+            placeholder={gt("Search refs...")}
+            value={query}
+            onChange={(event) => {
+              onQueryChange(event.target.value);
+              void branchListRef.current?.scrollToOffset?.({ offset: 0, animated: false });
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229)
+                return;
+              const highlightedValue = highlightedValueRef.current;
+              if (highlightedValue === null || !filteredItems.includes(highlightedValue)) return;
+              (
+                event as typeof event & { preventBaseUIHandler?: () => void }
+              ).preventBaseUIHandler?.();
+              event.preventDefault();
+              event.stopPropagation();
+              highlightedValueRef.current = null;
+              onSelectItem(highlightedValue);
+            }}
+          />
+        </div>
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <ComboboxEmpty>
             <T>No refs found.</T>
@@ -240,7 +242,7 @@ export function BranchPickerRefItem({
       onContextMenu={onContextMenu}
     >
       <div className="flex w-full min-w-0 items-center justify-between gap-2">
-        <MiddleTruncate value={itemValue} className="flex-1" />
+        <MiddleTruncate dir="ltr" value={itemValue} className="flex-1" />
         {badge && <span className="shrink-0 text-3xs text-muted-foreground/45">{badge}</span>}
       </div>
     </ComboboxItem>

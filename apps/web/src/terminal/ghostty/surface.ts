@@ -712,7 +712,7 @@ export class GhosttyTerminalSurface {
 
     const scrollbar = document.createElement("div");
     scrollbar.className =
-      "group absolute top-1 right-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
+      "group absolute top-1 end-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
     scrollbar.setAttribute("role", "scrollbar");
     scrollbar.setAttribute("aria-label", m(msg("Terminal scrollback")));
     scrollbar.setAttribute("aria-orientation", "vertical");

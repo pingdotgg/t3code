@@ -10,6 +10,7 @@ import { RowPressable } from "./RowPressable";
 
 export function ListChoiceRow(props: {
   readonly label: string;
+  readonly labelWritingDirection?: "ltr" | "rtl";
   readonly leading?: ReactNode;
   readonly description?: string;
   readonly meta?: ReactNode;
@@ -34,6 +35,7 @@ export function ListChoiceRow(props: {
     >
       <ListRowLayout
         label={props.label}
+        labelWritingDirection={props.labelWritingDirection}
         leading={props.leading}
         description={props.description}
         meta={props.meta}

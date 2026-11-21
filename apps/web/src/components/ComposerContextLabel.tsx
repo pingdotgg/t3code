@@ -16,7 +16,7 @@ export function ComposerContextLabel({
       className={cn(
         "min-w-0",
         displayMode === "panel"
-          ? "flex-1 overflow-x-clip overflow-y-visible text-left"
+          ? "flex-1 overflow-x-clip overflow-y-visible text-start"
           : "max-w-[240px] group-data-[compact]/composer-context:max-w-0",
       )}
     >

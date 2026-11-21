@@ -36,6 +36,7 @@ Size T3SourceTextShadowNode::measureContent(
       auto fragment = AttributedString::Fragment{};
       auto textAttributes = TextAttributes::defaultTextAttributes();
 
+      textAttributes.baseWritingDirection = WritingDirection::LeftToRight;
       textAttributes.allowFontScaling = baseProps.allowFontScaling;
       textAttributes.backgroundColor = props.backgroundColor;
       textAttributes.fontSize = props.fontSize * fontSizeMultiplier;

@@ -187,7 +187,7 @@ function DiffFileCollapseToggle({
         }
       >
         {collapsed ? (
-          <ChevronRightIcon className="size-4 text-muted-foreground/80" />
+          <ChevronRightIcon className="size-4 text-muted-foreground/80 rtl:-scale-x-100" />
         ) : (
           <ChevronDownIcon className="size-4 text-muted-foreground/80" />
         )}
@@ -1061,7 +1061,7 @@ export default function DiffPanel({
                               Turn <Var>{turnCount}</Var>
                             </T>
                           </span>
-                          <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+                          <span className="ms-auto text-xs tabular-nums text-muted-foreground">
                             {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                           </span>
                         </span>
@@ -1115,7 +1115,7 @@ export default function DiffPanel({
                                 </span>
                               </span>
                             </TooltipTrigger>
-                            <TooltipPopup side="right" className="max-w-80">
+                            <TooltipPopup side="inline-end" className="max-w-80">
                               {commit.subject}
                             </TooltipPopup>
                           </Tooltip>
@@ -1265,8 +1265,10 @@ export default function DiffPanel({
                   <span className="flex min-w-[min(3rem,calc(100%-2.75rem))] items-center gap-2 overflow-hidden @max-[20rem]/diff-refs:hidden" />
                 }
               >
-                <span className="min-w-0 max-w-48 truncate">{comparisonHeadRef}</span>
-                <ArrowRightIcon className="size-3.5 shrink-0 opacity-70" />
+                <span dir="ltr" className="min-w-0 max-w-48 truncate">
+                  {comparisonHeadRef}
+                </span>
+                <ArrowRightIcon className="size-3.5 shrink-0 opacity-70 rtl:-scale-x-100" />
               </TooltipTrigger>
               <TooltipPopup side="top">
                 {`${comparisonHeadRef} → ${comparisonBaseRef}`}
@@ -1296,12 +1298,14 @@ export default function DiffPanel({
             >
               <ComboboxTrigger
                 render={<Button variant="ghost-muted" size="xs" />}
-                className="min-w-9 max-w-48 shrink-0"
+                className="min-w-9 max-w-48 shrink"
                 aria-label={gt("Change comparison target. Currently {base}", {
                   base: comparisonBaseRef,
                 })}
               >
-                <span className="min-w-0 truncate">{comparisonBaseRef}</span>
+                <span dir="ltr" className="min-w-0 truncate">
+                  {comparisonBaseRef}
+                </span>
                 <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
               </ComboboxTrigger>
               <ComboboxPopup
@@ -1319,7 +1323,7 @@ export default function DiffPanel({
                     <span>
                       <T context="git branch">Branch</T>
                     </span>
-                    <span className="text-right">
+                    <span className="text-end">
                       <T context="git remote">Remote</T>
                     </span>
                   </div>
@@ -1407,7 +1411,7 @@ export default function DiffPanel({
             <DiffStatLabel
               additions={diffLineStat.additions}
               deletions={diffLineStat.deletions}
-              className="mr-1 text-2xs"
+              className="me-1 text-2xs"
               layout="inline"
             />
           </span>
@@ -1642,6 +1646,7 @@ export default function DiffPanel({
                   <div key={label} className="space-y-1">
                     <p className="text-muted-foreground">{label}</p>
                     <pre
+                      dir="ltr"
                       className={cn(
                         "overflow-auto font-mono text-2xs",
                         wordWrap && "whitespace-pre-wrap wrap-break-word",
@@ -1809,6 +1814,7 @@ export default function DiffPanel({
                     {renderablePatch?.kind === "raw" ? renderablePatch.reason : null}
                   </p>
                   <pre
+                    dir="ltr"
                     className={cn(
                       "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-2xs leading-relaxed text-muted-foreground/90",
                       wordWrap

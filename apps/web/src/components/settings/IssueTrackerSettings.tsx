@@ -148,7 +148,7 @@ function TrackerRow({
               <span
                 aria-hidden
                 className={cn(
-                  "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
+                  "pointer-events-none absolute -start-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
                   usable ? "bg-success" : "bg-muted-foreground/35",
                 )}
               />

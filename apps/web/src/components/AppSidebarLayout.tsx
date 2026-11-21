@@ -68,8 +68,6 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
 
-const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
-
 function subscribeToViewportWidth(onChange: () => void): () => void {
   window.addEventListener("resize", onChange);
   return () => window.removeEventListener("resize", onChange);
@@ -387,7 +385,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
     <div
       ref={appShellCommandsRef}
       className={cn(
-        "pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center",
+        "pointer-events-none fixed start-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ms-px flex h-[var(--workspace-topbar-height)] items-center",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-sidebar-control=""
@@ -454,21 +452,17 @@ export function AppSidebarLayout({
     subscribeToWindowFullscreen,
     readWindowFullscreen,
   );
-  const windowControlsInsetStyle = (
-    isMacosDesktop && !isWindowFullscreen
-      ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
-      : {}
-  ) as CSSProperties;
+  const hasMacosTrafficLights = isMacosDesktop && !isWindowFullscreen;
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
-    ...windowControlsInsetStyle,
   } as CSSProperties;
 
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <SidebarProvider
         className="h-dvh! min-h-0!"
+        data-macos-traffic-lights={hasMacosTrafficLights ? "true" : undefined}
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
         storageKey="chat_thread_sidebar_open"
         style={sidebarProviderStyle}
@@ -480,6 +474,7 @@ export function AppSidebarLayout({
               side="left"
               collapsible="offcanvas"
               data-app-sidebar=""
+              data-macos-traffic-lights={hasMacosTrafficLights ? "true" : undefined}
               {...sidebarArea}
               role="navigation"
               aria-label={gt("Threads")}
@@ -492,7 +487,6 @@ export function AppSidebarLayout({
                 storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
                 onResize: setSidebarWidth,
               }}
-              style={windowControlsInsetStyle}
             >
               <ThreadSidebar routeReveal={sidebarRouteReveal} />
               <SidebarRail onDoubleClick={resetSidebarWidth} />

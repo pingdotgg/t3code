@@ -178,6 +178,7 @@ export function SimlockDeviceHostEditor(props: {
                 <T>Gateway URL</T>
               </span>
               <Input
+                dir="ltr"
                 required
                 type="url"
                 placeholder="https://gateway.example.ts.net:4700"
@@ -222,18 +223,18 @@ export function SimlockDeviceHostEditor(props: {
                 {several ? (
                   <T>
                     Leases, drives, and streams devices. Create one per environment with{" "}
-                    <code>simlock --gateway token create --role agent</code>, or leave it blank to
-                    add it later. A blank token uses the machine's{" "}
-                    <code>AGENT_DEVICE_DAEMON_AUTH_TOKEN</code> when its{" "}
-                    <code>AGENT_DEVICE_DAEMON_BASE_URL</code> is this gateway.
+                    <code dir="ltr">simlock --gateway token create --role agent</code>, or leave it
+                    blank to add it later. A blank token uses the machine's{" "}
+                    <code dir="ltr">AGENT_DEVICE_DAEMON_AUTH_TOKEN</code> when its{" "}
+                    <code dir="ltr">AGENT_DEVICE_DAEMON_BASE_URL</code> is this gateway.
                   </T>
                 ) : (
                   <T>
                     Leases, drives, and streams devices. Create one with{" "}
-                    <code>simlock --gateway token create --role agent</code>, or leave it blank to
-                    add it later. A blank token uses the machine's{" "}
-                    <code>AGENT_DEVICE_DAEMON_AUTH_TOKEN</code> when its{" "}
-                    <code>AGENT_DEVICE_DAEMON_BASE_URL</code> is this gateway.
+                    <code dir="ltr">simlock --gateway token create --role agent</code>, or leave it
+                    blank to add it later. A blank token uses the machine's{" "}
+                    <code dir="ltr">AGENT_DEVICE_DAEMON_AUTH_TOKEN</code> when its{" "}
+                    <code dir="ltr">AGENT_DEVICE_DAEMON_BASE_URL</code> is this gateway.
                   </T>
                 )}
               </p>

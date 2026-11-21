@@ -45,11 +45,11 @@ export function PullRequestDetailHeaderBody({
               $context:
                 "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
             })}
-            className="size-3.5 shrink-0 opacity-60"
+            className="size-3.5 shrink-0 opacity-60 rtl:-scale-x-100"
           />
           {head}
         </span>
-        <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2">
+        <span className="ms-auto inline-flex shrink-0 items-baseline justify-end gap-2">
           <span className="inline-flex min-w-16 items-baseline justify-end gap-1.5 tabular-nums">
             <FileDiffIcon aria-hidden className="size-3.5 self-center" />
             {files}
@@ -136,7 +136,7 @@ export function PullRequestChecksStatusLine({
   return (
     <span
       className={cn(
-        "ml-auto flex h-4 min-w-0 flex-1 flex-wrap content-start items-center justify-end gap-x-1.5 overflow-hidden text-xs",
+        "ms-auto flex h-4 min-w-0 flex-1 flex-wrap content-start items-center justify-end gap-x-1.5 overflow-hidden text-xs",
         className,
       )}
       {...props}

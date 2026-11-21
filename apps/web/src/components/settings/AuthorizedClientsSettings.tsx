@@ -116,7 +116,7 @@ function AccessScopeSummary({
         </p>
         <div className="flex flex-col gap-0.5">
           {scopes.map((scope) => (
-            <code key={scope} className="font-mono text-foreground/85">
+            <code dir="ltr" key={scope} className="font-mono text-foreground/85">
               {scope}
             </code>
           ))}
@@ -429,7 +429,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                       role="radio"
                       aria-checked={isSelected}
                       className={cn(
-                        "flex w-full items-baseline gap-2 rounded-lg border px-2.5 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                        "flex w-full items-baseline gap-2 rounded-lg border px-2.5 py-1.5 text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                         isSelected
                           ? "border-foreground/60 bg-muted/30"
                           : "border-border/50 hover:bg-muted/20",
@@ -456,7 +456,10 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <code className="min-w-0 flex-1 truncate font-mono text-2xs text-muted-foreground">
+                    <code
+                      dir="ltr"
+                      className="min-w-0 flex-1 truncate font-mono text-2xs text-muted-foreground"
+                    >
                       {qrPairingUrl}
                     </code>
                   }
@@ -949,7 +952,7 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
   return (
     <div className={endpointRowClassName(isAvailable)}>
       {isDefault ? (
-        <span className="absolute inset-y-2 left-0 w-1 rounded-r-full bg-primary" aria-hidden />
+        <span className="absolute inset-y-2 start-0 w-1 rounded-e-full bg-primary" aria-hidden />
       ) : null}
       <div className="flex min-h-7 min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
         <div className="flex min-h-7 min-w-0 flex-1 items-center gap-3">
@@ -974,7 +977,7 @@ export const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow
             </span>
           ) : null}
         </div>
-        <div className="ml-auto flex min-h-7 shrink-0 items-center justify-end gap-2">
+        <div className="ms-auto flex min-h-7 shrink-0 items-center justify-end gap-2">
           {isDefault ? (
             <span className="inline-flex h-6 items-center rounded-md border border-primary/30 bg-primary/10 px-1.5 text-3xs text-primary">
               {gt("Default", { $context: "default endpoint badge" })}
@@ -1050,7 +1053,7 @@ export function NetworkAccessDescription({
       {hiddenEndpointCount > 0 ? (
         <button
           type="button"
-          className="inline-flex min-w-0 max-w-full items-baseline gap-2 border-b border-dotted border-muted-foreground/60 text-left text-muted-foreground underline-offset-4 hover:border-foreground hover:text-foreground"
+          className="inline-flex min-w-0 max-w-full items-baseline gap-2 border-b border-dotted border-muted-foreground/60 text-start text-muted-foreground underline-offset-4 hover:border-foreground hover:text-foreground"
           onClick={onToggleExpanded}
           aria-expanded={expanded}
         >

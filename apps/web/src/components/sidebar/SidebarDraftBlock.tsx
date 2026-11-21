@@ -108,7 +108,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         aria-current={accessibility.current}
         data-testid="sidebar-draft-row"
         className={cn(
-          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-start text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           props.isActive ? "bg-sidebar-row-active" : draftSurfaceClassName,
         )}
         onClick={handleActivate}
@@ -126,7 +126,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             </span>
             <span
               className={cn(
-                "ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end",
+                "ms-auto flex h-5 min-w-5 shrink-0 items-center justify-end",
                 props.jumpLabel && JUMP_HINT_SLOT_CLASS_NAME,
               )}
             >

@@ -448,7 +448,7 @@ export function UsageProviderChart({
       : formatPeriod(period);
 
   return (
-    <div className="flex flex-col gap-1">
+    <div dir="ltr" className="flex flex-col gap-1">
       <div className="flex gap-2">
         <div aria-hidden className="relative h-56 w-14 shrink-0">
           {scale.labeled

@@ -75,7 +75,7 @@ function ConfiguredT3ConnectSidebarSignIn() {
     <SidebarMenu>
       <SidebarMenuItem>
         <SidebarMenuButton onClick={openAuthPrompt}>
-          <LogInIcon />
+          <LogInIcon className="rtl:-scale-x-100" />
           <span>
             <T>Sign in to T3 Connect</T>
           </span>

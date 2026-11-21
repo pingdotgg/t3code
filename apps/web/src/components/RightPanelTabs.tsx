@@ -1,3 +1,4 @@
+import { inlineArrowKey, isUiRtl } from "~/lib/inlineDirection";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -459,12 +460,12 @@ function RightPanelEmptyState(props: {
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
     if (availableActions.length === 0) return;
-    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+    if (event.key === "ArrowDown" || event.key === inlineArrowKey("end")) {
       event.preventDefault();
       setHighlight((highlightIndex + 1) % availableActions.length);
       return;
     }
-    if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+    if (event.key === "ArrowUp" || event.key === inlineArrowKey("start")) {
       event.preventDefault();
       setHighlight(
         highlightIndex === -1
@@ -527,7 +528,7 @@ function RightPanelEmptyState(props: {
                   type="button"
                   onClick={action.onClick}
                   className={cn(
-                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm transition-colors group-hover:bg-accent/60",
+                    "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-2.5 text-start text-sm transition-colors group-hover:bg-accent/60",
                     isHighlighted(action) && "bg-accent/60",
                   )}
                 >
@@ -535,7 +536,7 @@ function RightPanelEmptyState(props: {
                   <span
                     className={cn(
                       "min-w-0 flex-1 truncate",
-                      action.label === "Browser" && props.browserProfiles.length > 1 && "pr-7",
+                      action.label === "Browser" && props.browserProfiles.length > 1 && "pe-7",
                     )}
                   >
                     {messages(action.label)}
@@ -548,7 +549,7 @@ function RightPanelEmptyState(props: {
                       render={
                         <Button
                           aria-label={gt("Open browser in a profile")}
-                          className="absolute top-1/2 right-8 -translate-y-1/2"
+                          className="absolute top-1/2 end-8 -translate-y-1/2"
                           size="icon-xs"
                           variant="ghost-muted"
                         />
@@ -577,7 +578,7 @@ function RightPanelEmptyState(props: {
                   <div
                     tabIndex={0}
                     aria-disabled="true"
-                    className="flex h-8 w-full cursor-default items-center gap-2.5 rounded-(--control-radius) px-2.5 text-left text-sm opacity-50"
+                    className="flex h-8 w-full cursor-default items-center gap-2.5 rounded-(--control-radius) px-2.5 text-start text-sm opacity-50"
                   >
                     {actionIcon(action, "size-4")}
                     <span className="min-w-0 flex-1 truncate">{messages(action.label)}</span>
@@ -766,7 +767,7 @@ function SideChatTabIcon(props: { environmentId: EnvironmentId | null; threadId:
       {state === null ? null : (
         <span
           className={cn(
-            "absolute -top-0.5 -right-0.5 size-1.5 rounded-full",
+            "absolute -top-0.5 -end-0.5 size-1.5 rounded-full",
             state === "running" ? "bg-muted-foreground" : "bg-info",
           )}
           aria-hidden
@@ -1003,7 +1004,7 @@ function RightPanelTab(
         />
         {props.pending ? (
           <span
-            className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+            className="absolute -end-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
             aria-hidden
           />
         ) : null}
@@ -1108,7 +1109,7 @@ function RightPanelTab(
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pe-2 ps-1.5 text-xs",
         props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         props.active
           ? "bg-accent text-foreground"
@@ -1176,10 +1177,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
     const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
-    const canScrollLeft = hasOverflow && viewport.scrollLeft > TAB_SCROLL_EDGE_TOLERANCE;
+    const left = isUiRtl()
+      ? viewport.scrollWidth - viewport.clientWidth + viewport.scrollLeft
+      : viewport.scrollLeft;
+    const canScrollLeft = hasOverflow && left > TAB_SCROLL_EDGE_TOLERANCE;
     const canScrollRight =
-      hasOverflow &&
-      viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - TAB_SCROLL_EDGE_TOLERANCE;
+      hasOverflow && left + viewport.clientWidth < viewport.scrollWidth - TAB_SCROLL_EDGE_TOLERANCE;
     setTabScrollState((current) => {
       if (
         current.hasOverflow === hasOverflow &&
@@ -1423,7 +1426,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     // consuming it keeps Chromium from starting the gesture scroll that swipe navigation tracks.
     const handleWheel = (event: WheelEvent) => {
       if (event.ctrlKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
-      let delta = event.deltaY;
+      let delta = isUiRtl() ? -event.deltaY : event.deltaY;
       if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) delta *= 16;
       if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) delta *= viewport.clientWidth;
 
@@ -1480,8 +1483,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     >
       <div
         className={cn(
-          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
+          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 ps-2",
+          props.mode === "inline" && !props.layoutControls ? "pe-28" : "pe-3",
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
@@ -1623,6 +1626,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         </ScrollArea>
         {tabScrollState.hasOverflow ? (
           <div
+            dir="ltr"
             className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
             role="group"
             aria-label={gt("Scroll panel tabs")}
@@ -1676,7 +1680,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         {ownsDesktopTitleBar ? (
           <span
             aria-hidden
-            className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+            className="pointer-events-none fixed top-[var(--workspace-controls-top)] end-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
           />
         ) : null}
       </div>

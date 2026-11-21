@@ -364,7 +364,7 @@ function LinkedPullRequestRow({
     </>
   );
   const className =
-    "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent";
+    "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-start hover:bg-accent";
   return onSelect ? (
     <button type="button" className={className} onClick={onSelect}>
       {body}

@@ -199,7 +199,7 @@ export function DiffFileTree({
         <span className="px-1 font-medium text-foreground">
           <T>Files</T>
         </span>
-        <span className="ml-auto tabular-nums">{entries.length}</span>
+        <span className="ms-auto tabular-nums">{entries.length}</span>
         {headerAccessory}
         {directoryPaths.length > 0 ? (
           <Tooltip>
@@ -231,6 +231,7 @@ export function DiffFileTree({
         ) : null}
       </div>
       <FileTree
+        dir="ltr"
         model={model}
         aria-label={ariaLabel}
         onClickCapture={(event) => {
