@@ -5,7 +5,15 @@ struct StderrLog;
 
 impl log::Log for StderrLog {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= log::Level::Warn
+        if metadata.level() <= log::Level::Warn {
+            return true;
+        }
+        #[cfg(feature = "hot-reload")]
+        if metadata.level() <= log::Level::Info && metadata.target().starts_with("gpui::hot_reload")
+        {
+            return true;
+        }
+        false
     }
 
     fn log(&self, record: &log::Record<'_>) {
@@ -22,6 +30,10 @@ static LOGGER: StderrLog = StderrLog;
 /// Installs the logger once at startup. A second call (or another logger) is ignored.
 pub(crate) fn install() {
     if log::set_logger(&LOGGER).is_ok() {
-        log::set_max_level(log::LevelFilter::Warn);
+        #[cfg(feature = "hot-reload")]
+        let level = log::LevelFilter::Info;
+        #[cfg(not(feature = "hot-reload"))]
+        let level = log::LevelFilter::Warn;
+        log::set_max_level(level);
     }
 }

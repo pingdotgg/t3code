@@ -20,6 +20,9 @@ conn-state.workspace = true
 conn-theme.workspace = true
 conn-web.workspace = true
 gpui-kit.workspace = true
+# Optional direct dependency solely to activate `gpui-pre`'s built-in Subsecond hot-reload feature
+# (which `gpui-kit` does not forward). Debug-only inside `gpui-pre/build.rs`.
+gpui-pre = { version = "=0.3.11", default-features = false, features = ["hot-reload"], optional = true }
 alacritty_terminal.workspace = true
 futures.workspace = true
 image.workspace = true
@@ -50,6 +53,8 @@ libc = "0.2"
 automation = ["gpui-kit/test-support"]
 # Embedded Chromium (CEF-on-demand) browser panel support via conn-web.
 cef = ["conn-web/cef"]
+# In-process Rust hot-patching via GPUI's built-in Subsecond integration (`dx serve --hot-patch`).
+hot-reload = ["dep:gpui-pre"]
 
 [lints]
 workspace = true
