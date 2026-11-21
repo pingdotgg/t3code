@@ -5,7 +5,12 @@ import {
 import { ApprovalRequestId, EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
-import { useComposerDraftStore } from "./composerDraftStore";
+import { composerTargetKey, useComposerDraftStore } from "./composerDraftStore";
+import {
+  addPreparingComposerImages,
+  cancelPreparingComposerImages,
+  getPreparingComposerImages,
+} from "./components/chat/preparingComposerImages";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
 import { threadContextReference } from "./lib/composerContextRecords";
 import {
@@ -169,9 +174,36 @@ it.each(["cancelled", "expired"] as const)(
     );
     const answer = `Purple, like ${formatInlineContextReference(threadContextReference(reference))}`;
     store.setPrompt({ environmentId, threadId }, "Earlier draft");
-    store.setThreadContexts(questionAttachmentDraftId(environmentId, threadId, request, "first"), [
-      reference,
+    const questionDraft = questionAttachmentDraftId(environmentId, threadId, request, "first");
+    store.setThreadContexts(questionDraft, [reference]);
+    store.addFiles(questionDraft, [
+      {
+        type: "file",
+        id: "notes",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+        file: new File(["notes"], "notes.txt", { type: "text/plain" }),
+      },
     ]);
+    const photo = {
+      type: "image" as const,
+      id: "photo",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 5,
+      previewUrl: "blob:photo",
+      file: new File(["photo"], "photo.png", { type: "image/png" }),
+    };
+    store.addImages(questionDraft, [photo]);
+    const savedPhoto = {
+      id: "photo",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 5,
+      dataUrl: "data:image/png;base64,cGhvdG8=",
+    };
+    void store.syncPersistedAttachments(questionDraft, [savedPhoto]);
     usePendingUserInputAnswers.setState({
       [userInputDraftKey(environmentId, threadId, request)]: {
         first: { customAnswer: answer },
@@ -185,7 +217,53 @@ it.each(["cancelled", "expired"] as const)(
     expect(store.getComposerDraft({ environmentId, threadId })).toMatchObject({
       prompt: `Earlier draft\n\n${answer}\n\nAlso this`,
       threadContexts: [reference],
+      files: [expect.objectContaining({ name: "notes.txt" })],
+      images: [expect.objectContaining({ id: "photo" })],
+      persistedAttachments: [savedPhoto],
     });
     expect(usePendingUserInputAnswers.getState()).toEqual({});
+  },
+);
+
+it.each(["cancelled", "expired"] as const)(
+  "returns preparing images to the thread draft when a question is %s",
+  (status) => {
+    const unanswered = RuntimeRequestId.make("request");
+    const answered = RuntimeRequestId.make("request-other");
+    const target = composerTargetKey({ environmentId, threadId });
+    const preparing = [
+      [threadId, unanswered, "first", "move-first"],
+      [threadId, unanswered, "second", "move-second"],
+      [threadId, answered, "first", "discard"],
+      [ThreadId.make("other-thread"), unanswered, "first", "stay"],
+    ] as const;
+    const keys = preparing.map(([thread, request, question, id]) => {
+      const key = questionAttachmentDraftId(environmentId, thread, request, question);
+      addPreparingComposerImages(key, [
+        { id, name: "screenshot.png", file: new File(["image"], "screenshot.png"), hidden: false },
+      ]);
+      changeQuestionAttachmentPreparation(key, 1);
+      return key;
+    });
+    using _cleanup = {
+      [Symbol.dispose]: () => {
+        for (const key of [...keys, target]) cancelPreparingComposerImages(key);
+      },
+    };
+
+    makeThreadRequestsResolvedAnnouncer(
+      environmentId,
+      threadId,
+    )([
+      { id: unanswered, status },
+      { id: answered, status: "resolved" },
+    ]);
+
+    expect(getPreparingComposerImages(target).map(({ id }) => id)).toEqual([
+      "move-first",
+      "move-second",
+    ]);
+    expect(keys.slice(0, 3).flatMap(getPreparingComposerImages)).toEqual([]);
+    expect(getPreparingComposerImages(keys[3]!).map(({ id }) => id)).toEqual(["stay"]);
   },
 );

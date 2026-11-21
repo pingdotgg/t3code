@@ -106,7 +106,7 @@ function resolveSpawnExecutableWithNode(
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
-    const normalizedPathEntry = stripWrappingQuotes(trimPathEntry(pathEntry, platform));
+    const normalizedPathEntry = normalizePathEntry(pathEntry, platform);
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
@@ -295,6 +295,8 @@ export function windowsEnvironmentValueCommand(name: string): string {
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
   return [
     "$ErrorActionPreference = 'Stop'",
+    // Redirected PowerShell output uses the console code page, which mangles non-ASCII paths.
+    "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}",
     ...names.flatMap((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
@@ -453,12 +455,13 @@ export const readEnvironmentFromWindowsShell = Effect.fn("shell.readEnvironmentF
   },
 );
 
-function stripWrappingQuotes(value: string): string {
-  return value.replace(/^"+|"+$/g, "");
-}
-
 function trimPathEntry(entry: string, platform: NodeJS.Platform): string {
   return platform === "win32" ? entry.trim() : entry;
+}
+
+// POSIX PATH entries are literal: whitespace and quotes are part of the directory name.
+function normalizePathEntry(entry: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? entry.trim().replace(/^"+|"+$/g, "") : entry;
 }
 
 function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
@@ -466,7 +469,7 @@ function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
 }
 
 function normalizePathEntryForComparison(entry: string, platform: NodeJS.Platform): string {
-  const normalized = stripWrappingQuotes(trimPathEntry(entry, platform));
+  const normalized = normalizePathEntry(entry, platform);
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
@@ -675,7 +678,7 @@ const findOnPath = Effect.fnUntraced(function* (
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = stripWrappingQuotes(trimPathEntry(entry, platform));
+    const pathEntry = normalizePathEntry(entry, platform);
     if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
 
     seenPathEntries.add(pathEntry);
@@ -812,6 +815,20 @@ export function preferGitForWindowsBinary(
   return executable;
 }
 
+/** Git for Windows' bash beside a git.exe from its install, never WSL's System32 bash.exe. */
+export function gitForWindowsBash(
+  gitExecutable: string,
+  isFile: (filePath: string) => boolean = isFileSync,
+): string | undefined {
+  const path = NodePath.win32;
+  if (path.basename(gitExecutable).toLowerCase() !== "git.exe") return undefined;
+  // git.exe lives in <root>\cmd, <root>\bin, or <root>\<build>\bin.
+  const launcherRoot = path.dirname(path.dirname(gitExecutable));
+  return [launcherRoot, path.dirname(launcherRoot)]
+    .map((root) => path.join(root, "bin", "bash.exe"))
+    .find(isFile);
+}
+
 // npm cmd-shim format for native executables.
 const NPM_EXECUTABLE_SHIM_PREFIX = [
   "@ECHO off",
@@ -928,6 +945,8 @@ const CONSOLE_FREE_GIT_READS = [
   "rev-parse --git-path index",
   "rev-parse --git-common-dir",
   "rev-parse --show-toplevel",
+  "rev-parse --git-common-dir --show-toplevel",
+  "rev-parse --path-format=absolute --git-path index --git-common-dir --show-toplevel",
   "rev-parse --symbolic-full-name HEAD",
   "rev-parse --abbrev-ref --symbolic-full-name @{upstream}",
   "symbolic-ref --quiet HEAD",

@@ -65,6 +65,19 @@ export function isCurrencyAmountQuery(query: string): boolean {
   return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
 }
 
+export function detectComposerPullRequestTrigger(token: string, cursor: number) {
+  if (/^[@\p{Sc}]/u.test(token)) return null;
+  const match = /(?:^|\p{Ps})#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  if (!match) return null;
+  const query = match[1] ?? "";
+  return {
+    kind: "pull-request" as const,
+    query,
+    rangeStart: cursor - query.length - 1,
+    rangeEnd: cursor,
+  };
+}
+
 export function detectComposerTrigger(
   text: string,
   cursorInput: number,
@@ -88,14 +101,8 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
-  if (pullRequestMatch)
-    return {
-      kind: "pull-request",
-      query: pullRequestMatch[1] ?? "",
-      rangeStart: tokenStart,
-      rangeEnd: cursor,
-    };
+  const pullRequestTrigger = detectComposerPullRequestTrigger(token, cursor);
+  if (pullRequestTrigger) return pullRequestTrigger;
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
     if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;
@@ -128,6 +135,14 @@ export function replaceTextRange(
   const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
   const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
   return { text: nextText, cursor: safeStart + replacement.length };
+}
+
+/** A message that only invokes a slash command, such as `/context all`, not a path like `/src/a.ts`. */
+export function isSlashCommand(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<unknown>;
+}): boolean {
+  return message.attachments.length === 0 && /^\/[\w:-]+(?:\s|$)/u.test(message.text.trim());
 }
 
 /** `/clear` as the whole message arms a fresh session instead of sending. */
