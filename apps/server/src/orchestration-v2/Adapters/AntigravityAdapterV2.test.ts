@@ -2956,4 +2956,500 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         yield* Fiber.interrupt(reader);
       }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
+
+  it.effect(
+    "settles worker approvals without root reply stalls, cancels withdrawn worker approvals, allows worker worktree writes, and ignores monitor pulses",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ag-swarm-perm-",
+        });
+        const worktree = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-swarm-wt-" });
+        const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-swarm-out-" });
+
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let onSessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        let onRequestPermission:
+          | Parameters<RuntimeService["handleRequestPermission"]>[0]
+          | undefined;
+        let onSwarmNotification:
+          | ((payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+          | undefined;
+        let onOutgoingResponse: ((requestId: string) => Effect.Effect<void>) | undefined;
+        let continuationOffers = 0;
+
+        const rootSessionId = "22222222-2222-4000-8000-000000000001";
+        const alphaSessionId = "22222222-2222-4000-8000-00000000000a";
+        const monitorSessionId = "22222222-2222-4000-8000-00000000000m";
+
+        const continuationRequests = {
+          offer: () =>
+            Effect.sync(() => {
+              continuationOffers += 1;
+              return true;
+            }),
+        } as unknown as NonNullable<
+          Parameters<typeof makeAntigravityAdapterV2>[0]["continuationRequests"]
+        >;
+
+        const instanceId = ProviderInstanceId.make("antigravity-swarm-perm");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          continuationRequests,
+          selfInvocation: yield* resolveSelfInvocation(),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+          makeRuntime: (runtimeInput) =>
+            Effect.sync(() => {
+              onOutgoingResponse = runtimeInput.onOutgoingResponse;
+              return {
+                start: () =>
+                  Effect.succeed({
+                    initializeResult: {
+                      protocolVersion: 1,
+                      agentInfo: { name: "Antigravity ACP Server", version: "1.5.14" },
+                      agentCapabilities: {
+                        loadSession: true,
+                        _meta: { antigravity: { swarm: true } },
+                      },
+                    },
+                    sessionId: rootSessionId,
+                    resumed: false,
+                    sessionSetupResult: {
+                      sessionId: rootSessionId,
+                      modes: {
+                        currentModeId: "default",
+                        availableModes: [
+                          { id: "default", name: "Default" },
+                          { id: "auto_edit", name: "Accept Edits" },
+                          { id: "yolo", name: "Full Access" },
+                        ],
+                      },
+                      models: {
+                        currentModelId: "test-model",
+                        availableModels: [{ modelId: "test-model", name: "Test Model" }],
+                      },
+                      configOptions: [],
+                    },
+                  } as unknown as AcpSessionRuntime.AcpSessionRuntimeStartResult),
+                getEvents: () => Stream.empty,
+                drainEvents: Effect.void,
+                getSessionId: Effect.succeed(rootSessionId),
+                getConfigOptions: Effect.succeed([]),
+                getModeState: Effect.succeed({
+                  currentModeId: "default",
+                  availableModes: [
+                    { id: "default", name: "Default" },
+                    { id: "auto_edit", name: "Accept Edits" },
+                    { id: "yolo", name: "Full Access" },
+                  ],
+                }),
+                getModelState: Effect.succeed({
+                  currentModelId: "test-model",
+                  availableModels: [{ modelId: "test-model", name: "Test Model" }],
+                }),
+                setConfigOption: () => Effect.succeed({ configOptions: [] }),
+                setMode: () => Effect.void,
+                setModel: () => Effect.void,
+                prompt: (
+                  _payload: Parameters<RuntimeService["prompt"]>[0],
+                  promptOptions: Parameters<RuntimeService["prompt"]>[1],
+                ) =>
+                  Effect.gen(function* () {
+                    if (promptOptions?.dispatched !== undefined) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    yield* onSwarmNotification!({
+                      sessionId: rootSessionId,
+                      head: 1,
+                      activeWorkers: 1,
+                      workingWorkers: 1,
+                      waitingWorkers: 0,
+                      members: [
+                        {
+                          name: "alpha",
+                          role: "worker",
+                          conversationId: alphaSessionId,
+                          brief: "Run checks",
+                          workspace: worktree,
+                          workspaces: [worktree],
+                          state: "working",
+                        },
+                      ],
+                    });
+                    yield* onSessionUpdate!({
+                      sessionId: rootSessionId,
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: "Started @alpha." },
+                      },
+                    });
+                    yield* onSessionUpdate!({
+                      sessionId: rootSessionId,
+                      update: { sessionUpdate: "usage_update", used: 100, size: 100_000 },
+                    });
+                    return { stopReason: "end_turn" as const };
+                  }),
+                cancel: () => Effect.void,
+                closeSession: () => Effect.void,
+                extRequest: () => Effect.die("unused"),
+                extNotification: () => Effect.void,
+                handleSessionUpdate: (
+                  handler: Parameters<RuntimeService["handleSessionUpdate"]>[0],
+                ) =>
+                  Effect.sync(() => {
+                    onSessionUpdate = handler;
+                  }),
+                handleRequestPermission: (
+                  handler: Parameters<RuntimeService["handleRequestPermission"]>[0],
+                ) =>
+                  Effect.sync(() => {
+                    onRequestPermission = handler;
+                  }),
+                handleReadTextFile: () => Effect.void,
+                handleWriteTextFile: () => Effect.void,
+                handleCreateTerminal: () => Effect.void,
+                handleTerminalOutput: () => Effect.void,
+                handleWaitForTerminalExit: () => Effect.void,
+                handleKillTerminalCommand: () => Effect.void,
+                handleReleaseTerminal: () => Effect.void,
+                handleElicitation: () => Effect.void,
+                handleElicitationComplete: () => Effect.void,
+                handleExtRequest: () => Effect.void,
+                handleExtNotification: (
+                  method: string,
+                  _schema: unknown,
+                  handler: (payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>,
+                ) =>
+                  Effect.sync(() => {
+                    if (method === "_antigravity/swarm") {
+                      onSwarmNotification = handler;
+                    }
+                  }),
+              } as unknown as RuntimeService;
+            }),
+        });
+
+        const threadId = ThreadId.make("thread-ag-swarm-perm");
+        const modelSelection = { instanceId, model: "antigravity-default" } as const;
+        const supervisedPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("ps-ag-swarm-perm"),
+          modelSelection,
+          runtimePolicy: supervisedPolicy,
+        });
+
+        const eventQueue = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const reader = yield* session.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              collected.push(event);
+            }).pipe(Effect.andThen(Queue.offer(eventQueue, event))),
+          ),
+          Effect.forkScoped,
+        );
+        const takeUntil = (predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
+          Effect.gen(function* () {
+            while (true) {
+              const event = yield* Queue.take(eventQueue);
+              if (predicate(event)) return event;
+            }
+          });
+
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: supervisedPolicy,
+        });
+
+        // Turn 1: worker asks for command permission after root prompt settled; user approves;
+        // worker parks without a coordinator wake. Turn must settle at 3 s without waiting 2 min.
+        const turn1 = makeTurnInput({
+          instanceId,
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy: supervisedPolicy,
+          now: yield* DateTime.now,
+        });
+        yield* session.startTurn(turn1);
+        yield* Effect.yieldNow;
+
+        const permOptions: ReadonlyArray<EffectAcpSchema.PermissionOption> = [
+          { optionId: "allow_once", name: "Allow", kind: "allow_once" },
+          { optionId: "allow_always", name: "Always Allow", kind: "allow_always" },
+          { optionId: "reject_once", name: "Deny", kind: "reject_once" },
+        ];
+        const childMeta = {
+          antigravity: {
+            childSessionId: alphaSessionId,
+            role: "worker",
+            workspace: worktree,
+            workspaces: [worktree],
+            swarm: {
+              workerSessionId: alphaSessionId,
+              workerName: "alpha",
+              role: "worker",
+              workspace: worktree,
+            },
+          },
+        };
+
+        const sendPermission = (
+          request: EffectAcpSchema.RequestPermissionRequest,
+          requestId: string,
+        ) =>
+          onRequestPermission!(request, { requestId, method: "session/request_permission" }).pipe(
+            Effect.tap(() => onOutgoingResponse?.(requestId) ?? Effect.void),
+          );
+
+        const firstApproval = yield* sendPermission(
+          {
+            sessionId: rootSessionId,
+            _meta: childMeta,
+            options: permOptions,
+            toolCall: {
+              toolCallId: "alpha-cmd-1",
+              kind: "execute",
+              status: "pending",
+              title: "[@alpha] pnpm test",
+              rawInput: { CommandLine: "pnpm test" },
+              _meta: childMeta,
+            },
+          },
+          "child-perm-1",
+        ).pipe(Effect.forkScoped({ startImmediately: true }));
+
+        const openApprovalEvent = yield* takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.status === "waiting",
+        );
+        if (
+          openApprovalEvent.type !== "turn_item.updated" ||
+          openApprovalEvent.turnItem.type !== "approval_request"
+        ) {
+          return assert.fail("expected an open command approval for @alpha");
+        }
+        assert.equal(openApprovalEvent.turnItem.prompt, "[@alpha] pnpm test");
+        assert.isTrue(
+          openApprovalEvent.turnItem.options?.some((opt) => opt.decision === "acceptForSession") ===
+            true,
+          "worker approval card should expose session-wide approval when allow_always is offered",
+        );
+
+        const respondFiber = yield* session
+          .respondToRuntimeRequest({
+            requestId: openApprovalEvent.turnItem.requestId,
+            decision: "accept",
+          })
+          .pipe(Effect.forkScoped);
+        assert.deepEqual(yield* Fiber.join(firstApproval), {
+          outcome: { outcome: "selected", optionId: "allow_once" },
+        });
+        yield* Fiber.join(respondFiber);
+
+        // Worker finishes quietly without triggering a root reply or usage_update.
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 1,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          coordinatorWorking: false,
+          coordinatorPendingWake: false,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+          ],
+        });
+        yield* TestClock.adjust("4 seconds");
+        yield* Effect.yieldNow;
+        assert.equal(
+          collected.filter((event) => event.type === "turn.terminal").length,
+          1,
+          "worker approval must not hold replyOpen for the 2-minute quiet fallback",
+        );
+
+        // Turn 2: an unanswered worker approval is withdrawn when the worker fails; the card
+        // cancels automatically and the turn settles promptly.
+        const workspaceWritePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "workspaceWrite" },
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        yield* session.startTurn({
+          ...turn1,
+          runId: RunId.make("run-perm-2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt-perm-2"),
+          rootNodeId: NodeId.make("root-perm-2"),
+          runtimePolicy: supervisedPolicy,
+        });
+        yield* Effect.yieldNow;
+
+        const withdrawnApproval = yield* sendPermission(
+          {
+            sessionId: rootSessionId,
+            _meta: childMeta,
+            options: permOptions,
+            toolCall: {
+              toolCallId: "alpha-cmd-2",
+              kind: "execute",
+              status: "pending",
+              title: "[@alpha] pnpm lint",
+              rawInput: { CommandLine: "pnpm lint" },
+              _meta: childMeta,
+            },
+          },
+          "child-perm-2",
+        ).pipe(Effect.forkScoped({ startImmediately: true }));
+        const withdrawnCard = yield* takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.status === "waiting",
+        );
+        assert.equal(
+          withdrawnCard.type === "turn_item.updated" &&
+            withdrawnCard.turnItem.type === "approval_request"
+            ? withdrawnCard.turnItem.prompt
+            : undefined,
+          "[@alpha] pnpm lint",
+        );
+
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 1,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 0,
+          coordinatorWorking: false,
+          coordinatorPendingWake: false,
+          members: [
+            {
+              name: "alpha",
+              role: "worker",
+              conversationId: alphaSessionId,
+              state: "failed",
+              failure: "worker aborted",
+            },
+          ],
+        });
+        assert.deepEqual(yield* Fiber.join(withdrawnApproval), {
+          outcome: { outcome: "cancelled" },
+        });
+        yield* TestClock.adjust("4 seconds");
+        yield* Effect.yieldNow;
+        assert.equal(
+          collected.filter((event) => event.type === "turn.terminal").length,
+          2,
+          "cancelling a withdrawn worker approval must allow the turn to settle",
+        );
+
+        // Turn 3 switches policy to workspaceWrite (auto-approve workspace edits), finishes, and
+        // verifies between-turn worktree edit approval + monitor daemon isolation.
+        yield* session.startTurn({
+          ...turn1,
+          runId: RunId.make("run-perm-3"),
+          runOrdinal: 3,
+          providerTurnOrdinal: 3,
+          attemptId: RunAttemptId.make("attempt-perm-3"),
+          rootNodeId: NodeId.make("root-perm-3"),
+          runtimePolicy: workspaceWritePolicy,
+        });
+        yield* Effect.yieldNow;
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 1,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          members: [
+            {
+              name: "alpha",
+              role: "worker",
+              conversationId: alphaSessionId,
+              workspace: worktree,
+              workspaces: [worktree],
+              state: "waiting",
+            },
+          ],
+        });
+        yield* TestClock.adjust("4 seconds");
+        yield* Effect.yieldNow;
+        assert.equal(collected.filter((event) => event.type === "turn.terminal").length, 3);
+        const offersBeforeIdleChecks = continuationOffers;
+
+        // Periodic @monitor daemon tick neither blocks idle eviction nor wakes a continuation run.
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 1,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+            { name: "monitor", role: "worker", conversationId: monitorSessionId, state: "working" },
+          ],
+        });
+        assert.isFalse(yield* session.hasPendingBackgroundWork ?? Effect.succeed(true));
+        assert.equal(continuationOffers, offersBeforeIdleChecks);
+
+        // Detached worktree edit is auto-allowed and outside edit is auto-denied without offering
+        // an empty parent continuation run.
+        const worktreeEdit = yield* sendPermission(
+          {
+            sessionId: rootSessionId,
+            _meta: childMeta,
+            options: permOptions,
+            toolCall: {
+              toolCallId: "alpha-edit-1",
+              kind: "edit",
+              status: "pending",
+              title: "Edit file",
+              locations: [{ path: path.join(worktree, "src", "index.ts") }],
+              _meta: childMeta,
+            },
+          },
+          "child-edit-1",
+        );
+        assert.deepEqual(worktreeEdit, {
+          outcome: { outcome: "selected", optionId: "allow_once" },
+        });
+        const outsideEdit = yield* sendPermission(
+          {
+            sessionId: rootSessionId,
+            _meta: childMeta,
+            options: permOptions,
+            toolCall: {
+              toolCallId: "alpha-edit-2",
+              kind: "edit",
+              status: "pending",
+              title: "Edit outside file",
+              locations: [{ path: path.join(outside, "escape.ts") }],
+              _meta: childMeta,
+            },
+          },
+          "child-edit-2",
+        );
+        assert.deepEqual(outsideEdit, {
+          outcome: { outcome: "selected", optionId: "reject_once" },
+        });
+        assert.equal(continuationOffers, offersBeforeIdleChecks);
+
+        yield* Fiber.interrupt(reader);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
 });

@@ -11,6 +11,10 @@
       "types": "./src/server/adapter.ts",
       "import": "./src/server/adapter.ts"
     },
+    "./server/antigravitySwarm": {
+      "types": "./src/server/antigravitySwarm.ts",
+      "import": "./src/server/antigravitySwarm.ts"
+    },
     "./server/clientPolicy": {
       "types": "./src/server/clientPolicy.ts",
       "import": "./src/server/clientPolicy.ts"
