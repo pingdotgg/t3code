@@ -14,6 +14,8 @@ export interface HostedBrowserWebviewWrapperStyle {
   readonly pointerEvents: "auto" | "none";
   readonly borderRadius?: number;
   readonly visibility?: "hidden" | "visible";
+  readonly transform?: string;
+  readonly transformOrigin?: "top left";
 }
 
 const HIDDEN_BROWSER_WEBVIEW_OFFSET = -100_000;
@@ -26,6 +28,7 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
   readonly zIndex?: number;
   readonly rect: BrowserSurfaceRect | null;
   readonly hiddenSize: HostedBrowserWebviewSize;
+  readonly windowSize: HostedBrowserWebviewSize;
 }): HostedBrowserWebviewWrapperStyle {
   const {
     active,
@@ -35,6 +38,7 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     rect,
     renderingActive,
     zIndex = 30,
+    windowSize,
   } = input;
   if (active && rect) {
     return {
@@ -49,7 +53,12 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
   }
 
   if (renderingActive) {
-    // Electron stops compositing offscreen guests; keep capture-active guests inside the viewport behind the app.
+    // Electron clips oversized native surfaces; fit the whole guest without changing its DOM viewport.
+    // A minimized window can report a zero viewport; scale(0) would stop the guest compositing.
+    const scale =
+      windowSize.width > 0 && windowSize.height > 0
+        ? Math.min(1, windowSize.width / hiddenSize.width, windowSize.height / hiddenSize.height)
+        : 1;
     return {
       left: 0,
       top: 0,
@@ -58,6 +67,7 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
       zIndex: -1,
       pointerEvents: "none",
       visibility: "visible",
+      ...(scale < 1 ? { transform: `scale(${scale})`, transformOrigin: "top left" as const } : {}),
     };
   }
 
