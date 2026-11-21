@@ -126,6 +126,8 @@ const OVERVIEW_RENDER_MIN_PX = 120;
  * holds a ChatView's DOM and memory, and every focus move re-renders them.
  */
 const RENDERED_RECENT_CHATS = 8;
+/** Surface tabs (file, diff, terminal) kept rendered, hidden, off the shown workspace. */
+const KEPT_HIDDEN_SURFACES = 4;
 /** An off-screen chat past the cap unmounts once it has stayed past it this long. */
 const UNRENDER_DELAY_MS = 1500;
 
@@ -1313,16 +1315,79 @@ export function LayoutSurfaceHost({
     const content = surfaceTabsById.get(tabId);
     return content ? [{ placed, tabId, content }] : [];
   });
+  // A surface rendered near the window stays rendered, hidden, once its
+  // workspace is left (the few most recent), as chats do: coming back reveals
+  // it instead of mounting it anew, which re-parses and re-measures a whole
+  // file. Not a browser tab: its webview follows a slot it would have to measure.
+  const placedPaneIds = new Set([...slotByTabId.values()].map(({ slot }) => slot.paneId));
+  const hiddenSurfacePaneIds = new Map(
+    shown.workspaces.flatMap((candidate) =>
+      candidate.columns.flatMap((column) =>
+        column.panes.flatMap((pane) => {
+          const content = pane.activeTabId === null ? null : surfaceTabsById.get(pane.activeTabId);
+          return pane.activeTabId !== null &&
+            content &&
+            !placedPaneIds.has(pane.id) &&
+            !content.surfaceId.startsWith("browser:")
+            ? [[pane.activeTabId, pane.id] as const]
+            : [];
+        }),
+      ),
+    ),
+  );
+  const renderedSurfaceIds = surfaceSlots.flatMap(({ tabId }) =>
+    nearTabIds.has(tabId) || focusedTab?.id === tabId ? [tabId] : [],
+  );
+  const [keptSurfaceIds, setKeptSurfaceIds] = useState<readonly string[]>([]);
+  const nextKeptSurfaceIds = [
+    ...renderedSurfaceIds,
+    ...keptSurfaceIds.filter((id) => hiddenSurfacePaneIds.has(id)).slice(0, KEPT_HIDDEN_SURFACES),
+  ];
+  if (
+    nextKeptSurfaceIds.length !== keptSurfaceIds.length ||
+    nextKeptSurfaceIds.some((id, index) => id !== keptSurfaceIds[index])
+  ) {
+    setKeptSurfaceIds(nextKeptSurfaceIds);
+  }
+  const hiddenSurfaces = nextKeptSurfaceIds.flatMap((tabId) => {
+    const paneId = hiddenSurfacePaneIds.get(tabId);
+    const content = surfaceTabsById.get(tabId);
+    return paneId !== undefined && content ? [{ tabId, paneId, content }] : [];
+  });
   const [surfaceMounts, setSurfaceMounts] = useState(NO_SURFACE_MOUNTS);
-  const nextSurfaceMounts = selectSurfaceMounts(
-    surfaceMounts,
-    surfaceSlots.map(({ tabId, placed, content }) => ({
+  const nextSurfaceMounts = selectSurfaceMounts(surfaceMounts, [
+    ...surfaceSlots.map(({ tabId, placed, content }) => ({
       tabId,
       paneId: placed.slot.paneId,
       threadKey: scopedThreadKey(content.threadRef),
     })),
-  );
+    ...hiddenSurfaces.map(({ tabId, paneId, content }) => ({
+      tabId,
+      paneId,
+      threadKey: scopedThreadKey(content.threadRef),
+    })),
+  ]);
   if (nextSurfaceMounts !== surfaceMounts) setSurfaceMounts(nextSurfaceMounts);
+  // One list in a stable order: a surface moving between shown and hidden
+  // keeps its element and its place among its siblings.
+  const surfaceElements = [
+    ...surfaceSlots.map(({ placed, tabId, content }) => ({
+      tabId,
+      content,
+      placed,
+      paneId: placed.slot.paneId,
+    })),
+    ...hiddenSurfaces.map(({ tabId, paneId, content }) => ({
+      tabId,
+      content,
+      placed: null,
+      paneId,
+    })),
+  ].toSorted((a, b) => {
+    const keyA = nextSurfaceMounts.get(a.tabId)?.key ?? a.tabId;
+    const keyB = nextSurfaceMounts.get(b.tabId)?.key ?? b.tabId;
+    return keyA < keyB ? -1 : keyA > keyB ? 1 : 0;
+  });
   const launcherSlots = [...slotByTabId].flatMap(([tabId, placed]) => {
     const content = launcherTabsById.get(tabId);
     return content ? [{ placed, tabId, content }] : [];
@@ -1333,15 +1398,6 @@ export function LayoutSurfaceHost({
   );
   const still = (paneId: string | undefined) =>
     staged || (stacked && (paneId === undefined || !focusedWorkspacePaneIds.has(paneId)));
-  // The workspace the window showed when the overview opened: its chats stay
-  // live under it (see LayoutChatSurface), whichever row the overview selects.
-  const [shownWorkspaceId, setShownWorkspaceId] = useState<string | null>(null);
-  if (staged !== (shownWorkspaceId !== null)) setShownWorkspaceId(staged ? workspace.id : null);
-  const shownPaneIds = new Set(
-    shown.workspaces
-      .find((candidate) => candidate.id === shownWorkspaceId)
-      ?.columns.flatMap((column) => column.panes.map((pane) => pane.id)) ?? [],
-  );
 
   // Panes open, close and shift with niri's window motion (motion/paneMotion.ts)
   // on the plain strip; a resize drag, a switch, the overview, filling the
@@ -1585,7 +1641,6 @@ export function LayoutSurfaceHost({
                 split={split}
                 staged={still(slotByTabId.get(tabId)?.slot.paneId)}
                 overview={staged}
-                live={shownPaneIds.has(entry.paneId)}
                 narrow={
                   split &&
                   (slotByTabId.get(tabId)?.slot.rect.width ?? 1) * stripWidth * viewportWidth <
@@ -1651,18 +1706,20 @@ export function LayoutSurfaceHost({
               />
             ) : null,
           )}
-          {surfaceSlots.map(({ placed, tabId, content }) => (
+          {surfaceElements.map(({ placed, tabId, content, paneId }) => (
             <LayoutSurfaceTabSurface
               key={nextSurfaceMounts.get(tabId)?.key ?? tabId}
               active={active}
               tabId={tabId}
               content={content}
               placed={placed}
-              near={nearTabIds.has(tabId) || focusedTab?.id === tabId}
-              focused={focusedTab?.id === tabId}
-              atWindowStart={atWindowStart(placed.slot.paneId)}
+              paneId={paneId}
+              paneStyle={paneStyleById.get(paneId)}
+              near={placed === null || nearTabIds.has(tabId) || focusedTab?.id === tabId}
+              focused={placed !== null && focusedTab?.id === tabId}
+              atWindowStart={atWindowStart(paneId)}
               split={split}
-              staged={still(placed.slot.paneId)}
+              staged={placed !== null && still(paneId)}
               overview={staged}
             />
           ))}
@@ -1749,7 +1806,6 @@ function LayoutChatSurface({
   narrow,
   closing = false,
   active = true,
-  live = false,
 }: {
   tab: LayoutTab;
   paneId: string;
@@ -1775,8 +1831,6 @@ function LayoutChatSurface({
   /** Closed: a ghost sliding away, gone once its animation ends. */
   closing?: boolean;
   active?: boolean;
-  /** Under the overview, a chat of the workspace the window showed. */
-  live?: boolean;
 }) {
   const slot = placed?.slot ?? null;
   // Focus that lands here from the keyboard (alt+cmd arrows, closing a
@@ -1821,21 +1875,21 @@ function LayoutChatSurface({
         closing && "pointer-events-none",
         // Off screen: skip its rendering but keep its layout state, so the
         // timeline's scroll position and the terminal's size survive. Moved out
-        // of the window: Electron keeps applying its stale window drag regions.
-        !visible &&
-          "pointer-events-none -translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
+        // of the window (Electron keeps its stale drag regions), so presses miss
+        // it with no inherited pointer-events, which would restyle all of it.
+        !visible && "-translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
         !visible && (paneStyle === undefined ? "inset-0" : "top-0 left-0"),
         visible && (split || staged) && "overflow-clip rounded-pane pane-surface",
         // A lone pane paints flat before its chat does, not the inset's grain behind it.
         visible && !(split || staged) && "bg-background",
       )}
       style={placed?.style ?? paneStyle}
-      // Flipping inert restyles a whole rendered chat, so it never flips
-      // mid-switch or as the overview opens: there the window's chats are
-      // aria-hidden instead (the overview owns the keyboard and the pointer)
-      // and the other workspaces' chats stay inert from when they were hidden.
-      inert={!visible || closing || (overview && !live)}
-      aria-hidden={(overview && live) || undefined}
+      // Not inert while placed or hidden: flipping inert restyles a whole
+      // rendered chat. Hidden, content-visibility keeps focus out and
+      // aria-hidden tells focus code to skip it; under the overview the
+      // overview owns the keyboard and the pointer and drops focus under it.
+      inert={closing}
+      aria-hidden={!visible || overview || undefined}
       onPointerDownCapture={claimFocus}
     >
       <LayoutChatSurfaceBody
@@ -2017,12 +2071,15 @@ const LayoutChatSurfaceBody = memo(function LayoutChatSurfaceBody({
 /**
  * A surface tab's slot: positioned like any pane, a press inside focuses it,
  * and focus that lands on it from the keyboard moves into it. It renders
- * while on screen and near the camera.
+ * while on screen and near the camera, and stays rendered, hidden, a while
+ * after its workspace is left (`placed` null).
  */
 function LayoutSurfaceTabSurface({
   tabId,
   content,
   placed,
+  paneId,
+  paneStyle,
   near,
   focused,
   atWindowStart,
@@ -2033,7 +2090,10 @@ function LayoutSurfaceTabSurface({
 }: {
   tabId: string;
   content: LayoutSurfaceContent;
-  placed: { slot: LayoutPaneSlot; style: React.CSSProperties };
+  placed: { slot: LayoutPaneSlot; style: React.CSSProperties } | null;
+  paneId: string;
+  /** Hidden, it keeps its pane's size, so coming back changes nothing inside it. */
+  paneStyle: React.CSSProperties | undefined;
   near: boolean;
   focused: boolean;
   atWindowStart: boolean | undefined;
@@ -2043,19 +2103,19 @@ function LayoutSurfaceTabSurface({
   overview: boolean;
   active: boolean;
 }) {
-  const { slot } = placed;
-  const leadingEdge = atWindowStart ?? (!slot.hasLeft && !slot.hasAbove);
-  const trailingEdge = !slot.hasRight && !slot.hasAbove;
+  const slot = placed?.slot ?? null;
+  const leadingEdge = slot ? (atWindowStart ?? (!slot.hasLeft && !slot.hasAbove)) : true;
+  const trailingEdge = slot ? !slot.hasRight && !slot.hasAbove : true;
   const paneState = {
     tabId,
-    paneId: slot.paneId,
+    paneId,
     split: split || staged,
     narrow: false,
     leadingEdge,
     trailingEdge,
     focused: focused && !staged,
     related: false,
-    visible: active,
+    visible: active && slot !== null,
   } satisfies LayoutPaneState;
   const tab = { id: tabId, content } satisfies LayoutTab;
   const slotRef = useRef<HTMLDivElement | null>(null);
@@ -2064,16 +2124,17 @@ function LayoutSurfaceTabSurface({
       ref={slotRef}
       tabIndex={-1}
       data-layout-tab-id={tabId}
-      data-layout-pane-id={slot.paneId}
+      data-layout-pane-id={slot ? paneId : undefined}
       data-layout-surface={content.surfaceId}
       data-layout-pane-focused={focused ? "true" : undefined}
       className={cn(
         "absolute flex min-h-0 min-w-0 flex-col outline-none",
         (split || staged) && "overflow-clip rounded-pane pane-surface",
+        // Hidden as a chat off screen is (see LayoutChatSurface).
+        !slot && "top-0 left-0 -translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
       )}
-      style={placed.style}
-      inert={staged && !overview}
-      aria-hidden={overview || undefined}
+      style={placed?.style ?? paneStyle}
+      aria-hidden={!slot || overview || undefined}
       onPointerDownCapture={() => claimPaneFocus(tabId)}
     >
       <LayoutPaneContext value={paneState}>
@@ -2082,13 +2143,13 @@ function LayoutSurfaceTabSurface({
         ) : overview ? (
           <PaneThumbnail
             tab={tab}
-            paneId={slot.paneId}
+            paneId={paneId}
             leadingEdge={leadingEdge}
             trailingEdge={trailingEdge}
           />
         ) : null}
       </LayoutPaneContext>
-      {split && !staged ? <PaneCuts /> : null}
+      {slot && split && !staged ? <PaneCuts /> : null}
       <SurfaceTabFocus key={tabId} slotRef={slotRef} focused={focused && !staged} />
     </div>
   );

@@ -410,6 +410,45 @@ it("keeps a pane's surface element across a switch among its tabs of one thread"
   expect(keys(moved)).toEqual({ readme: "files", files: "files#2" });
 });
 
+it("keeps a surface's element, hidden, while another workspace shows", async () => {
+  using _tabs = setup();
+  const surfaceThread = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("files"));
+  const panels = useRightPanelStore.getState();
+  using _panels = { [Symbol.dispose]: () => useRightPanelStore.setState(panels) };
+  useRightPanelStore.setState({
+    byThreadKey: {
+      [scopedThreadKey(surfaceThread)]: {
+        isOpen: false,
+        activeSurfaceId: "diff",
+        surfaces: [{ id: "diff", kind: "diff" }],
+      },
+    },
+  });
+  useLayoutStore
+    .getState()
+    .openTab(
+      { kind: "surface", threadRef: surfaceThread, surfaceId: "diff" },
+      { placement: "new-column" },
+    );
+  const surfaceTabId = focusedTabId()!;
+  await using _screen = await renderHost();
+  const surface = () =>
+    document.querySelector<HTMLElement>(`[data-layout-tab-id="${surfaceTabId}"]`);
+  await vi.waitFor(() => expect(surface()?.hasAttribute("data-layout-pane-id")).toBe(true));
+  const element = surface()!;
+
+  await act(() => useLayoutStore.getState().focusWorkspaceStep(-1));
+  await vi.waitFor(() => expect(element.hasAttribute("data-layout-pane-id")).toBe(false));
+  expect(surface()).toBe(element);
+  expect(getComputedStyle(element).contentVisibility).toBe("hidden");
+  expect(element.getAttribute("aria-hidden")).toBe("true");
+
+  await act(() => useLayoutStore.getState().focusWorkspaceStep(1));
+  await vi.waitFor(() => expect(element.hasAttribute("data-layout-pane-id")).toBe(true));
+  expect(surface()).toBe(element);
+  expect(element.hasAttribute("aria-hidden")).toBe(false);
+});
+
 it("keeps an unfocused pane's joined tab with a dim rim, and black chrome keeps the notch", async () => {
   using _tabs = setup();
   await using _screen = await renderHost({ insetSidebar: true });
