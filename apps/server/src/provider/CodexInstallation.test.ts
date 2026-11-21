@@ -51,7 +51,8 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   const localDirectory = `${baseDir}/local`;
   const localBinaryPath = `${localDirectory}/codex${input.platform === "win32" ? ".exe" : ""}`;
   const probeLog = `${baseDir}/local-probes.txt`;
-  if (input.local) {
+  // A restarted harness on the same baseDir keeps the existing binary, and with it its fingerprint.
+  if (input.local && !(yield* fs.exists(localBinaryPath))) {
     yield* fs.makeDirectory(localDirectory, { recursive: true });
     yield* fs.writeFileString(
       localBinaryPath,
@@ -213,6 +214,21 @@ const compileNative = Effect.fn("test.compileNative")(function* (
   );
   expect(yield* compiler.exitCode).toBe(0);
 }, Effect.scoped);
+
+it.effect("does not re-probe an unchanged local executable after a restart", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-install-test-" });
+    const first = yield* makeHarness({ baseDir, local: { version: "0.156.1" } });
+    expect((yield* first.installation.resolve()).source).toBe("local");
+    const restarted = yield* makeHarness({ baseDir, local: { version: "0.156.1" } });
+    expect((yield* restarted.installation.resolve()).source).toBe("local");
+    expect((yield* fs.readFileString(first.probeLog)).trim().split("\n")).toEqual([
+      "--version",
+      "app-server --help",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
 
 it.effect("rechecks compatibility after the local executable is replaced", () =>
   Effect.gen(function* () {
