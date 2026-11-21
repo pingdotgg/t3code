@@ -255,13 +255,12 @@ const make = Effect.gen(function* () {
   );
 
   // A peer pages a client's cursorless read forward; an agent's gets the newest page, as it does here.
-  const newestPageForAgents = (scope: Scope, params: unknown) => {
+  const newestPageForAgent = (scope: Scope, toolName: string, params: unknown) => {
+    if (toolName !== "t3_thread_read" || scope.thread === undefined) return undefined;
     const input = params as OrchestratorMcpThreadReadInput;
-    return scope.thread !== undefined &&
-      input.afterPosition === undefined &&
-      input.beforePosition === undefined
+    return input.afterPosition === undefined && input.beforePosition === undefined
       ? { ...input, beforePosition: Number.MAX_SAFE_INTEGER }
-      : params;
+      : undefined;
   };
 
   const call: PeerForwarding["Service"]["call"] = (scope, tool, environmentId, params) => {
@@ -269,7 +268,7 @@ const make = Effect.gen(function* () {
       args: unknown,
     ): Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure> =>
       forward(scope, tool.name, tool.parametersSchema, tool.successSchema, environmentId, args);
-    const newestRead = tool.name === "t3_thread_read" ? newestPageForAgents(scope, params) : params;
+    const newest = newestPageForAgent(scope, tool.name, params);
     const forwarded: Effect.Effect<
       Tool.Success<typeof tool>,
       OrchestratorMcpFailure
@@ -279,9 +278,9 @@ const make = Effect.gen(function* () {
           environmentId,
           params as OrchestratorMcpThreadWaitInput,
         ) as Effect.Effect<Tool.Success<typeof tool>, OrchestratorMcpFailure>)
-      : newestRead === params
+      : newest === undefined
         ? forwardTool(params)
-        : readNewestOrRetry(forwardTool, newestRead, params);
+        : readNewestOrRetry(forwardTool, newest, params);
     return Effect.andThen(requireEnabled, forwarded);
   };
 
