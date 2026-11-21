@@ -1536,6 +1536,22 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("returns attachment size only when requested", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const attachmentId = "pending-00000000-0000-4000-8000-000000000031-txt";
+      yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+      yield* fs.writeFileString(path.join(config.attachmentsDir, `${attachmentId}.txt`), "hello");
+      const resource = { _tag: "attachment" as const, attachmentId };
+      expect((yield* issueAssetUrl({ resource })).sizeBytes).toBeUndefined();
+      expect(
+        (yield* issueAssetUrl({ resource: { ...resource, includeSize: true } })).sizeBytes,
+      ).toBe(5);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("signs MCP render intent only for inline HTML attachments", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

@@ -2924,6 +2924,7 @@
   "ba4eb02aa89050b6": "Cette connexion ne peut pas envoyer de pièces jointes.",
   "8ebdc336371e5ca4": "Le fichier envoyé a expiré.",
   "ca27205ca369c740": "Le fichier envoyé a expiré. Retirez-le et joignez-le à nouveau.",
+  "ac6b8d643459ce2d": "La pièce jointe téléversée est endommagée. Retirez-la et joignez-la de nouveau.",
   "7fa2b08a65cc1799": "Le fichier envoyé n’a pas pu être vérifié. Réessayez quand le serveur sera reconnecté.",
   "5caa9a9764aab746": "Type d’image non pris en charge",
   "47ba9f2574c7d5b4": "Le fichier d’origine n’est plus disponible",

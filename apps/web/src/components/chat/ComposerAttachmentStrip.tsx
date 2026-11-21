@@ -369,64 +369,77 @@ export function ComposerAttachmentMediaRow({
           maxFileAttachmentBytes !== null &&
           file.sizeBytes <= maxFileAttachmentBytes;
         const upload = fileCanUpload ? uploadsByImageId[file.id] : undefined;
+        const needsReattach =
+          file.file === null &&
+          upload?.status === "failed" &&
+          upload.environmentId === environmentId &&
+          upload.retryMode === "reattach";
         return (
           <div
             key={file.id}
             className="relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
           >
-            <button
-              type="button"
-              className="flex h-full w-full cursor-zoom-in flex-col items-center justify-center gap-1 px-1 text-white"
-              aria-label={gt("Play {name}", { name: file.name })}
-              onClick={() => {
-                if (file.file !== null) {
-                  const preview = buildExpandedImagePreview([file], file.id);
-                  if (preview) onExpandImage(preview);
-                  return;
-                }
-                if (!file.uploadedAttachmentId) return;
-                onFileOpen({ ...file, id: file.uploadedAttachmentId });
-              }}
-            >
-              {file.file && (
-                <>
-                  <ComposerVideoThumbnail file={file.file} />
-                  <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/10" />
-                </>
-              )}
-              <PlayIcon className="relative z-10 size-4 fill-current drop-shadow-md" />
-            </button>
+            {!needsReattach && (
+              <button
+                type="button"
+                className="flex h-full w-full cursor-zoom-in flex-col items-center justify-center gap-1 px-1 text-white"
+                aria-label={gt("Play {name}", { name: file.name })}
+                onClick={() => {
+                  if (file.file !== null) {
+                    const preview = buildExpandedImagePreview([file], file.id);
+                    if (preview) onExpandImage(preview);
+                    return;
+                  }
+                  if (!file.uploadedAttachmentId) return;
+                  onFileOpen({ ...file, id: file.uploadedAttachmentId });
+                }}
+              >
+                {file.file && (
+                  <>
+                    <ComposerVideoThumbnail file={file.file} />
+                    <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-black/10" />
+                  </>
+                )}
+                <PlayIcon className="relative z-10 size-4 fill-current drop-shadow-md" />
+              </button>
+            )}
             {upload?.status === "uploading" && (
               <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-3xs text-foreground">
                 <ComposerAttachmentUploadProgress id={file.id} upload={upload} />
               </span>
             )}
-            {upload?.status === "failed" && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="overlay"
-                      size="icon-xs"
-                      className="absolute bottom-1 left-1"
-                      onClick={() =>
-                        retryAttachmentUpload({
-                          environmentId,
-                          image: file,
-                          draftTarget: attachmentDraftTarget,
-                        })
-                      }
-                      disabled={!canOperateThread}
-                      aria-label={gt("Retry upload for {name}", { name: file.name })}
-                    />
-                  }
-                >
-                  <RefreshIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  {attachmentUploadFailureText(upload, messages)}
-                </TooltipPopup>
-              </Tooltip>
+            {needsReattach ? (
+              <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-3xs text-foreground">
+                {gt("Remove to send")}
+              </span>
+            ) : (
+              upload?.status === "failed" && (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="overlay"
+                        size="icon-xs"
+                        className="absolute bottom-1 left-1"
+                        onClick={() =>
+                          retryAttachmentUpload({
+                            environmentId,
+                            image: file,
+                            draftTarget: attachmentDraftTarget,
+                          })
+                        }
+                        disabled={!canOperateThread}
+                        aria-label={gt("Retry upload for {name}", { name: file.name })}
+                      />
+                    }
+                  >
+                    <RefreshIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">
+                    {attachmentUploadFailureText(upload, messages)}
+                  </TooltipPopup>
+                </Tooltip>
+              )
             )}
             <Button
               variant="media-close"
@@ -479,8 +492,15 @@ export function ComposerAttachmentFileList({
           maxFileAttachmentBytes !== null &&
           file.sizeBytes <= maxFileAttachmentBytes;
         const upload = fileCanUpload ? uploadsByImageId[file.id] : undefined;
-        const needsReattach = composerFileNeedsReattach(file);
-        const canReattachFile = fileStagingLimit !== null && file.sizeBytes <= fileStagingLimit;
+        const isReattachMarker = composerFileNeedsReattach(file);
+        const needsReattach =
+          isReattachMarker ||
+          (file.file === null &&
+            upload?.status === "failed" &&
+            upload.environmentId === environmentId &&
+            upload.retryMode === "reattach");
+        const canReattachFile =
+          isReattachMarker && fileStagingLimit !== null && file.sizeBytes <= fileStagingLimit;
         return (
           <div
             key={file.id}

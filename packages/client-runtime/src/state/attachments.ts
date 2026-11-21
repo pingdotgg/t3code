@@ -15,8 +15,8 @@ import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
-  createEnvironmentRpcCommand,
   awaitAtomResult,
+  createEnvironmentRpcCommand,
   runAtomCommand,
   type AtomCommand,
 } from "./runtime.ts";
@@ -53,6 +53,7 @@ export function isAssetAttachmentNotFoundFailure(error: unknown): boolean {
 export type PersistedAttachmentVerification =
   | { readonly status: "verified" }
   | { readonly status: "missing" }
+  | { readonly status: "mismatched" }
   | { readonly status: "failed"; readonly error: unknown };
 
 export function verifyPersistedAttachmentUpload<A, E>(input: {
@@ -60,17 +61,28 @@ export function verifyPersistedAttachmentUpload<A, E>(input: {
   readonly createAssetUrl: (query: {
     readonly environmentId: EnvironmentId;
     readonly input: {
-      readonly resource: { readonly _tag: "attachment"; readonly attachmentId: string };
+      readonly resource: {
+        readonly _tag: "attachment";
+        readonly attachmentId: string;
+        readonly includeSize?: true;
+      };
     };
   }) => Atom.Atom<AsyncResult.AsyncResult<A, E>>;
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
+  readonly expectedSizeBytes?: number;
 }): Effect.Effect<PersistedAttachmentVerification> {
   return awaitAtomResult(
     input.registry,
     input.createAssetUrl({
       environmentId: input.environmentId,
-      input: { resource: { _tag: "attachment", attachmentId: input.attachmentId } },
+      input: {
+        resource: {
+          _tag: "attachment",
+          attachmentId: input.attachmentId,
+          ...(input.expectedSizeBytes !== undefined ? { includeSize: true } : {}),
+        },
+      },
     }),
     // `refresh` forces a server round trip: the asset URL query atom caches
     // results (SWR), so a retry right after a transient failure would
@@ -78,7 +90,19 @@ export function verifyPersistedAttachmentUpload<A, E>(input: {
     { refresh: true },
   ).pipe(
     Effect.matchCause({
-      onSuccess: (): PersistedAttachmentVerification => ({ status: "verified" }),
+      onSuccess: (value): PersistedAttachmentVerification => {
+        if (
+          input.expectedSizeBytes !== undefined &&
+          typeof value === "object" &&
+          value !== null &&
+          "sizeBytes" in value &&
+          typeof value.sizeBytes === "number" &&
+          value.sizeBytes !== input.expectedSizeBytes
+        ) {
+          return { status: "mismatched" };
+        }
+        return { status: "verified" };
+      },
       onFailure: (cause): PersistedAttachmentVerification => {
         const error = Cause.squash(cause);
         return isAssetAttachmentNotFoundFailure(error)

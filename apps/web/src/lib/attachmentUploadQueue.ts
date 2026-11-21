@@ -54,6 +54,7 @@ export const useAttachmentUploadStore = create<AttachmentUploadStore>(() => ({
 interface UploadJob {
   readonly image: ComposerImageAttachment | ComposerFileAttachment;
   readonly environmentId: EnvironmentId;
+  readonly force: boolean;
   /** Original owner; completion resolves the current owner because uploads can outlive draft moves. */
   readonly draftTarget?: ComposerThreadTarget;
   readonly previous?: ReadyAttachmentUpload;
@@ -183,29 +184,42 @@ const uploadFailureReason = (reasonMessage: string) => ({
 });
 
 /** Records the failure the composer shows, then fails the upload with it. */
-const failUpload = (job: UploadJob, reasonMessage: string, attachmentId?: string) =>
+const failUpload = (
+  job: UploadJob,
+  reasonMessage: string,
+  attachmentId?: string,
+  retryMode: "replace" | "reattach" | undefined = job.force ? "replace" : undefined,
+) =>
   Effect.sync(() =>
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
-      reason: m(reasonMessage),
-      reasonMessage,
+      ...uploadFailureReason(reasonMessage),
       ...(attachmentId ? { attachmentId } : {}),
       ...(job.previous ? { previous: job.previous } : {}),
+      ...(retryMode ? { retryMode } : {}),
     }),
   ).pipe(Effect.andThen(Effect.fail(attachmentUploadError(new Error(m(reasonMessage))))));
 
 /** Uploads one composer attachment, writing the state its composer shows as it goes. */
 const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: UploadJob) {
+  let retryMode: "replace" | "reattach" | undefined;
+  const fail = (reasonMessage: string, attachmentId?: string) =>
+    failUpload(job, reasonMessage, attachmentId, retryMode);
+
   if (!canOperate(job.environmentId)) {
-    return yield* failUpload(job, msg("This connection cannot upload attachments."));
+    return yield* fail(msg("This connection cannot upload attachments."));
   }
-  if (job.persistedAttachmentId) {
+  if (
+    job.persistedAttachmentId &&
+    (!job.image.file || readEnvironmentScope(job.environmentId, AuthOrchestrationReadScope))
+  ) {
     const verification = yield* verifyPersistedAttachmentUpload({
       registry: appAtomRegistry,
       createAssetUrl: assetEnvironment.createUrl,
       environmentId: job.environmentId,
       attachmentId: job.persistedAttachmentId,
+      expectedSizeBytes: job.image.sizeBytes,
     });
     if (verification.status === "verified") {
       setUploadState(job.image.id, {
@@ -236,13 +250,16 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
     }
     if (verification.status === "failed" || !job.image.file) {
       // Failed-state ids get deleted on retry/release; exclude persisted ids after transient verification failure.
-      return yield* failUpload(
-        job,
+      if (verification.status === "mismatched") retryMode = "reattach";
+      return yield* fail(
         verification.status === "missing"
           ? msg("Uploaded file expired. Remove it and attach it again.")
-          : msg("Uploaded file could not be verified. Retry when the server reconnects."),
+          : verification.status === "mismatched"
+            ? msg("Uploaded attachment is damaged. Remove it and attach it again.")
+            : msg("Uploaded file could not be verified. Retry when the server reconnects."),
       );
     }
+    retryMode = "replace";
   }
 
   const mimeType =
@@ -251,11 +268,11 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
       : PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
           (supportedMimeType) => supportedMimeType === job.image.mimeType.toLowerCase(),
         );
-  if (!mimeType) return yield* failUpload(job, msg("Unsupported image type"));
+  if (!mimeType) return yield* fail(msg("Unsupported image type"));
   const file = job.image.file;
-  if (!file) return yield* failUpload(job, msg("Original file is no longer available"));
+  if (!file) return yield* fail(msg("Original file is no longer available"));
   if (!canOperate(job.environmentId)) {
-    return yield* failUpload(job, msg("This connection cannot upload attachments."));
+    return yield* fail(msg("This connection cannot upload attachments."));
   }
 
   let lastStep = -1;
@@ -310,8 +327,7 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
     }
     return result.attachmentId;
   }
-  return yield* failUpload(
-    job,
+  return yield* fail(
     result.step === "mint"
       ? msg("Upload could not start")
       : result.step === "resolve-url"
@@ -396,6 +412,7 @@ export function startAttachmentUpload(input: {
   const job: UploadJob = {
     image: input.image,
     environmentId: input.environmentId,
+    force: input.force === true,
     ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
     ...(previous ? { previous } : {}),
     ...(!input.force &&
@@ -491,7 +508,8 @@ export function releasePersistedAttachmentUpload(input: {
 }): void {
   const upload = readAttachmentUpload(input.id);
   if (
-    upload?.status === "ready" &&
+    upload &&
+    upload.status !== "uploading" &&
     upload.environmentId === input.environmentId &&
     upload.attachmentId === input.attachmentId
   ) {
@@ -515,6 +533,11 @@ export function retryAttachmentUpload(input: {
 }): void {
   if (!canOperate(input.environmentId)) return;
   const previous = readAttachmentUpload(input.image.id);
+  const retryMode =
+    previous?.status === "failed" && previous.environmentId === input.environmentId
+      ? previous.retryMode
+      : undefined;
+  if (!input.image.file && retryMode === "reattach") return;
   const held = heldUploads.get(input.image.id);
   cancelAttachmentUpload(input.image.id);
   // The failed upload stays cached until dropped, and the retry must start a fresh one.
@@ -527,13 +550,14 @@ export function retryAttachmentUpload(input: {
   } else {
     clearUploadState(input.image.id);
   }
-  startAttachmentUpload(input);
+  startAttachmentUpload({ ...input, force: retryMode !== undefined });
 }
 
 /** Verifies uploads before stash restore; pending uploads expire after 24 hours. */
 export function verifyStashedAttachmentUpload(input: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
+  readonly expectedSizeBytes?: number;
 }): Promise<PersistedAttachmentVerification> {
   return Effect.runPromise(
     verifyPersistedAttachmentUpload({
@@ -541,6 +565,9 @@ export function verifyStashedAttachmentUpload(input: {
       createAssetUrl: assetEnvironment.createUrl,
       environmentId: input.environmentId,
       attachmentId: input.attachmentId,
+      ...(input.expectedSizeBytes !== undefined
+        ? { expectedSizeBytes: input.expectedSizeBytes }
+        : {}),
     }),
   );
 }
@@ -586,12 +613,26 @@ export async function refreshExpiredAttachmentUploads(input: {
       const verification = await verifyStashedAttachmentUpload({
         environmentId: input.environmentId,
         attachmentId: upload.attachmentId,
+        expectedSizeBytes: image.sizeBytes,
       }).catch((error: unknown): PersistedAttachmentVerification => ({ status: "failed", error }));
       // The user may have removed or replaced the attachment while verification was in flight.
       if (readAttachmentUpload(image.id) !== upload) return;
       if (verification.status === "verified") return;
-      if (verification.status === "missing" && image.file) {
-        clearUploadState(image.id);
+      if (
+        (verification.status === "missing" || verification.status === "mismatched") &&
+        image.file
+      ) {
+        if (!canOperate(input.environmentId)) {
+          setUploadState(image.id, {
+            status: "failed",
+            environmentId: input.environmentId,
+            retryMode: "replace",
+            ...(verification.status === "mismatched" ? { attachmentId: upload.attachmentId } : {}),
+            ...uploadFailureReason(msg("This connection cannot upload attachments.")),
+          });
+          return;
+        }
+        releaseAttachmentUpload(image.id);
         startAttachmentUpload({
           environmentId: input.environmentId,
           image,
@@ -603,11 +644,15 @@ export async function refreshExpiredAttachmentUploads(input: {
       setUploadState(image.id, {
         status: "failed",
         environmentId: input.environmentId,
-        previous: upload,
+        ...(verification.status === "mismatched"
+          ? { retryMode: "reattach" }
+          : { previous: upload }),
         ...uploadFailureReason(
           verification.status === "missing"
             ? msg("Uploaded attachment expired. Remove it and attach it again.")
-            : msg("Uploaded attachment could not be verified. Retry when the server reconnects."),
+            : verification.status === "mismatched"
+              ? msg("Uploaded attachment is damaged. Remove it and attach it again.")
+              : msg("Uploaded attachment could not be verified. Retry when the server reconnects."),
         ),
       });
     }),

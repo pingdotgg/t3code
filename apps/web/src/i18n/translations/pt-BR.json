@@ -2924,6 +2924,7 @@
   "ba4eb02aa89050b6": "Esta conexão não pode enviar anexos.",
   "8ebdc336371e5ca4": "O arquivo enviado expirou.",
   "ca27205ca369c740": "O arquivo enviado expirou. Remova-o e anexe-o novamente.",
+  "ac6b8d643459ce2d": "O anexo enviado está corrompido. Remova-o e anexe-o novamente.",
   "7fa2b08a65cc1799": "Não foi possível verificar o arquivo enviado. Tente novamente quando o servidor se reconectar.",
   "5caa9a9764aab746": "Tipo de imagem não compatível",
   "47ba9f2574c7d5b4": "O arquivo original não está mais disponível",

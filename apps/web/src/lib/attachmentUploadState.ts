@@ -23,8 +23,9 @@ export type AttachmentUploadState =
       readonly reason: string;
       /** `reason` as a `msg()`, so the composer shows it in the current language. */
       readonly reasonMessage?: string;
-      /** Retry/release deletes this id; never use a persisted draft attachment id. */
+      /** Retry or release deletes this failed transfer or confirmed damaged upload. */
       readonly attachmentId?: string;
+      readonly retryMode?: "replace" | "reattach";
       readonly previous?: ReadyAttachmentUpload;
     };
 

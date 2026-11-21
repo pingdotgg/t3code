@@ -615,6 +615,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let fileName: string;
   let sourcePath: string | undefined;
   let imageDimensions: ImageDimensions | null = null;
+  let sizeBytes: number | undefined;
   let fileRevision: string | undefined;
 
   switch (input.resource._tag) {
@@ -726,6 +727,12 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         return yield* new AssetAttachmentNotFoundError({
           resource: input.resource,
         });
+      }
+      if (input.resource.includeSize) {
+        sizeBytes = yield* fileSystem.stat(attachmentPath).pipe(
+          Effect.map((info) => Number(info.size)),
+          Effect.orElseSucceed(() => undefined),
+        );
       }
       const extension = parseAttachmentFileExtension(input.resource.attachmentId);
       const isGenericFile = extension !== null;
@@ -958,6 +965,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     expiresAt,
     ...(sourcePath !== undefined ? { sourcePath } : {}),
     ...(imageDimensions !== null ? { imageDimensions } : {}),
+    ...(sizeBytes !== undefined ? { sizeBytes } : {}),
     ...(fileRevision !== undefined ? { fileRevision } : {}),
   };
 });
