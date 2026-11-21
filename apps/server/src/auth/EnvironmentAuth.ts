@@ -634,8 +634,10 @@ export class EnvironmentAuth extends Context.Service<
     readonly issueStartupPairingUrl: (
       baseUrl: string,
     ) => Effect.Effect<string, ServerAuthInternalError>;
+    /** Renews a peer link's session as it authenticates it, unless `renewsIf` refuses the caller. */
     readonly authenticateMcpClient: (
       request: HttpServerRequest.HttpServerRequest,
+      options?: { readonly renewsIf?: (client: McpClientSession) => boolean },
     ) => Effect.Effect<McpClientSession, ServerAuthCredentialError | ServerAuthInternalError>;
     readonly issueMcpClientSession: (input: {
       readonly label: string;
@@ -1609,7 +1611,10 @@ export const make = Effect.gen(function* () {
     return current.value;
   });
 
-  const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
+  const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (
+    request,
+    options,
+  ) => {
     const token = parseBearerToken(request);
     if (token === null) return Effect.fail(new ServerAuthMissingCredentialError({}));
     return sessions.verify(token).pipe(
@@ -1632,7 +1637,13 @@ export const make = Effect.gen(function* () {
               ? {}
               : { peerEnvironmentId: session.peerEnvironmentId }),
           } satisfies McpClientSession;
-          if (session.peerLink !== true || session.expiresAt === undefined) return client;
+          if (
+            session.peerLink !== true ||
+            session.expiresAt === undefined ||
+            options?.renewsIf?.(client) === false
+          ) {
+            return client;
+          }
           return {
             ...client,
             linkExpiresAt: yield* renewPeerLinkSession(session.sessionId, session.expiresAt),

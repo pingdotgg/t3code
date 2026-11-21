@@ -3,6 +3,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthStandardClientScopes,
   CommandId,
   EventId,
   MessageId,
@@ -39,6 +40,9 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as TestClock from "effect/testing/TestClock";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
@@ -3073,6 +3077,91 @@ it.effect("only the environment that delegated a task can tell it its parent is 
           parent: { environmentId: laptop.environmentId, threadId: parentThreadId },
         },
       ]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("the parent-done route takes only a link that may settle there, and renews only it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveBox(yield* makeBoxThread);
+      const links = Context.get(
+        yield* layerLinkingEnvironment(laptop).pipe(Layer.build),
+        PeerLinks.PeerLinks,
+      );
+      yield* linkTo(links, b, "full-access");
+      const linked = (yield* links.resolve(box.environmentId)).token;
+      const ask = (bearer: string, headers: Record<string, string> = {}) =>
+        HttpClient.execute(
+          HttpClientRequest.post(`${b.url}/api/peer-link/parent-done`).pipe(
+            HttpClientRequest.setHeaders({ authorization: `Bearer ${bearer}`, ...headers }),
+            HttpClientRequest.setBody(
+              HttpBody.text(
+                JSON.stringify({ threadId: "thread:box-unknown", parentThreadId }),
+                "application/json",
+              ),
+            ),
+          ),
+        ).pipe(
+          Effect.map((response) => response.status),
+          Effect.provide(FetchHttpClient.layer),
+        );
+      const linkSession = (input: {
+        readonly access: "full-access" | "read-only";
+        readonly peerEnvironmentId?: string;
+      }) =>
+        b.auth.issueMcpClientSession({
+          label: "T3 Code · Laptop",
+          peerLink: true,
+          client: { deviceType: "bot" },
+          ...input,
+        });
+      // Paired before links named their environment, and a link lowered to read-only.
+      const prePen = yield* linkSession({ access: "full-access" });
+      const readOnly = yield* linkSession({
+        access: "read-only",
+        peerEnvironmentId: laptop.environmentId,
+      });
+      const linkedId = (yield* b.linkedSessions).find(
+        (session) => ![prePen.sessionId, readOnly.sessionId].includes(session.sessionId),
+      )!.sessionId;
+      const expiries = b.auth
+        .listSessions()
+        .pipe(
+          Effect.map((sessions) =>
+            Object.fromEntries(
+              sessions.map((session) => [
+                session.sessionId,
+                DateTime.toEpochMillis(session.expiresAt),
+              ]),
+            ),
+          ),
+        );
+      // Renewing needs a day's step, so each refusal below would show if it renewed.
+      yield* TestClock.adjust(Duration.days(2));
+      const before = yield* expiries;
+
+      expect(yield* ask(linked, { origin: "https://example.com" })).toBe(403);
+      const owner = yield* b.auth.issueSession({ scopes: AuthStandardClientScopes });
+      expect(yield* ask(owner.token)).toBe(401);
+      const agent = yield* b.auth.issueMcpClientSession({
+        label: "Outside agent",
+        access: "full-access",
+        peerLink: false,
+        client: { deviceType: "bot" },
+      });
+      expect(yield* ask(agent.token)).toBe(401);
+      expect(yield* ask(prePen.token)).toBe(401);
+      expect(yield* ask(readOnly.token)).toBe(403);
+      const refused = yield* expiries;
+      for (const id of [linkedId, prePen.sessionId, readOnly.sessionId]) {
+        expect(refused[id], id).toBe(before[id]);
+      }
+
+      expect(yield* ask(linked)).toBe(200);
+      expect((yield* expiries)[linkedId]).toBe(
+        before[linkedId]! + Duration.toMillis(Duration.days(2)),
+      );
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

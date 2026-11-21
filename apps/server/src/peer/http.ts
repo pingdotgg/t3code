@@ -16,6 +16,9 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerClientPairing from "./PeerClientPairing.ts";
 
+const parentDoneEnvironment = (client: EnvironmentAuth.McpClientSession) =>
+  client.peerLink ? client.peerEnvironmentId : undefined;
+
 // The response is a credential.
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
@@ -36,7 +39,9 @@ export const layer = HttpApiBuilder.group(
     const threads = yield* ThreadManagement.ThreadManagementService;
     const random = yield* SecureRandom.SecureRandom;
 
-    const linkCaller = Effect.gen(function* () {
+    const linkCaller = Effect.fnUntraced(function* (
+      renewsIf?: (client: EnvironmentAuth.McpClientSession) => boolean,
+    ) {
       const request = yield* HttpServerRequest.HttpServerRequest;
       // A browser never holds a link's token; refuse one before reading credentials, as `/mcp` does.
       if (request.headers.origin !== undefined) {
@@ -44,17 +49,19 @@ export const layer = HttpApiBuilder.group(
           message: "This route does not accept browser requests.",
         });
       }
-      return yield* auth.authenticateMcpClient(request).pipe(
-        Effect.mapError((error) =>
-          EnvironmentAuth.isServerAuthCredentialError(error)
-            ? new EnvironmentHttpUnauthorizedError({
-                message: "Only a linked environment's session is accepted here.",
-              })
-            : new EnvironmentHttpInternalServerError({
-                message: "The session could not be checked.",
-              }),
-        ),
-      );
+      return yield* auth
+        .authenticateMcpClient(request, renewsIf === undefined ? undefined : { renewsIf })
+        .pipe(
+          Effect.mapError((error) =>
+            EnvironmentAuth.isServerAuthCredentialError(error)
+              ? new EnvironmentHttpUnauthorizedError({
+                  message: "Only a linked environment's session is accepted here.",
+                })
+              : new EnvironmentHttpInternalServerError({
+                  message: "The session could not be checked.",
+                }),
+          ),
+        );
     });
 
     const internal = (message: string) => () => new EnvironmentHttpInternalServerError({ message });
@@ -64,7 +71,7 @@ export const layer = HttpApiBuilder.group(
         "clientPairing",
         Effect.fn("environment.peerLink.clientPairing")(function* (args) {
           yield* noStore;
-          const caller = yield* linkCaller;
+          const caller = yield* linkCaller();
           return yield* issuer.issue(caller, args.payload).pipe(
             Effect.catchTags({
               PeerClientPairingRefused: (error) =>
@@ -89,12 +96,21 @@ export const layer = HttpApiBuilder.group(
       .handle(
         "parentDone",
         Effect.fn("environment.peerLink.parentDone")(function* (args) {
-          const caller = yield* linkCaller;
+          // A refused link is not renewed, so a delegating side retrying on it never keeps it alive.
+          const caller = yield* linkCaller(
+            (client) =>
+              parentDoneEnvironment(client) !== undefined && client.access !== "read-only",
+          );
           // The environment the link was paired as, never one a request names.
-          const environmentId = caller.peerLink ? caller.peerEnvironmentId : undefined;
+          const environmentId = parentDoneEnvironment(caller);
           if (environmentId === undefined) {
             return yield* new EnvironmentHttpUnauthorizedError({
               message: "Only a link paired by this version names its environment. Link it again.",
+            });
+          }
+          if (caller.access === "read-only") {
+            return yield* new EnvironmentHttpForbiddenError({
+              message: "A read-only link cannot settle threads here.",
             });
           }
           const shell = yield* threads
