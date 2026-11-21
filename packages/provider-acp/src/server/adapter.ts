@@ -35,6 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
@@ -996,11 +997,45 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
+// A GUI-subsystem executable (packaged Windows desktop) does not hold the console, so PowerShell
+// neither waits for it nor captures its output or exit code; cmd.exe running a batch file does.
+// cmd.exe decodes batch files with the console code page, so paths come from the (UTF-16) environment.
+const ACP_MCP_CALL_LAUNCHER = [
+  "@echo off",
+  "setlocal EnableExtensions DisableDelayedExpansion",
+  'set "ELECTRON_RUN_AS_NODE=1"',
+  "if not defined T3_ACP_MCP_ENTRYPOINT goto packaged",
+  '"%T3_ACP_MCP_NODE%" "%T3_ACP_MCP_ENTRYPOINT%" acp-mcp-call %*',
+  "exit /b %errorlevel%",
+  ":packaged",
+  '"%T3_ACP_MCP_NODE%" acp-mcp-call %*',
+  "",
+].join("\r\n");
+
+const writeAcpMcpCallLauncher = Effect.fn("AcpAdapterV2.writeAcpMcpCallLauncher")(function* (
+  stateDir: string,
+) {
+  if (!(yield* HostProcess.isWindows)) return undefined;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const dir = `${stateDir}\\acp`;
+  const launcherPath = `${dir}\\acp-mcp-call.cmd`;
+  return yield* fileSystem.makeDirectory(dir, { recursive: true }).pipe(
+    Effect.andThen(fileSystem.writeFileString(launcherPath, ACP_MCP_CALL_LAUNCHER)),
+    Effect.as(launcherPath),
+    Effect.catch((error) =>
+      Effect.logWarning("Could not write the ACP terminal tool launcher.", error).pipe(
+        Effect.as(undefined),
+      ),
+    ),
+  );
+});
+
 function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
   deferMcpTools: boolean | undefined,
+  callLauncher: string | undefined,
 ): AcpMcpContext {
   if (session === undefined) {
     return { servers: [], acpServers: [], httpServers: [] };
@@ -1048,6 +1083,7 @@ function acpMcpContext(
       T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
       T3_ACP_MCP_NODE: self.command,
       ...(self.entrypoint === undefined ? {} : { T3_ACP_MCP_ENTRYPOINT: self.entrypoint }),
+      ...(callLauncher === undefined ? {} : { T3_ACP_MCP_CALL: callLauncher }),
     },
   };
 }
@@ -1981,14 +2017,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
+  const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
-      ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools))
+      ? Effect.succeed(
+          acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools, callLauncher),
+        )
       : mcpSessions
           .read(threadId)
           .pipe(
             Effect.map((session) =>
-              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.deferMcpTools),
+              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.deferMcpTools, callLauncher),
             ),
           );
   const driver = flavor.driver;
