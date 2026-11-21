@@ -1317,6 +1317,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("commands scripts setup run dev server checkout worktree t3.json import")],
   },
   {
+    id: "project-repositories",
+    title: msg("Repositories"),
+    to: "/settings/projects",
+    searchTerms: [msg("tracked folders multi repo workspace code-workspace rescan add folder")],
+  },
+  {
     id: "environment-icon",
     title: msg("Environment icon"),
     to: "/settings/access",

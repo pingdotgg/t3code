@@ -1,9 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
-import {
-  checkpointFileTotals,
-  type ThreadCheckpointSummary,
-} from "@t3tools/client-runtime/state/thread-checkpoints";
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { turnChanges, turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
@@ -14,10 +12,23 @@ import { msg } from "gt-react-native";
 import { m, type MessageResolver } from "../../i18n/messages";
 
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
+export type ReviewGitSectionKind = Exclude<ReviewSectionKind, "turn">;
+type ReviewGitSource = ReviewDiffPreviewSource & { readonly kind: ReviewGitSectionKind };
 
 const CHANGES_SECTION_ID = "git:branch-range";
-const CHANGES_TITLE = msg("Changes", { $context: "diff section: branch changes" });
+const GIT_SECTION_KINDS = ["working-tree", "branch-range"] as const;
+const GIT_PLACEHOLDER_TITLES = {
+  "working-tree": msg("Uncommitted", { $context: "diff section: working tree" }),
+  "branch-range": msg("Changes", { $context: "diff section: branch changes" }),
+} as const satisfies Record<ReviewGitSectionKind, unknown>;
 const UNCOMMITTED_SUBTITLE = msg("Staged, unstaged, and untracked files");
+
+/** A folder of a turn's patch: the thread's own (`relativePath` empty) or a tracked repository. */
+export interface ReviewRepositoryGroup {
+  readonly key: string;
+  readonly name: string;
+  readonly relativePath: string;
+}
 
 export interface ReviewSectionItem {
   readonly id: string;
@@ -28,7 +39,11 @@ export interface ReviewSectionItem {
   readonly isLoading: boolean;
   readonly files?: ReviewDiffPreviewSource["files"];
   readonly truncated?: boolean;
-  readonly source?: ReviewDiffPreviewSource;
+  readonly source?: ReviewGitSource;
+  /** Set when a turn's patch spans more than one folder. */
+  readonly repositoryGroups?: ReadonlyArray<ReviewRepositoryGroup>;
+  /** Repositories the turn changed that have nothing recorded before it to compare with. */
+  readonly unlistedRepositories?: ReadonlyArray<string>;
 }
 
 export interface ReviewRenderableHunkRow {
@@ -118,15 +133,40 @@ function checkpointTitle(checkpoint: ThreadCheckpointSummary, resolve: MessageRe
 }
 
 function checkpointSubtitle(checkpoint: ThreadCheckpointSummary, resolve: MessageResolver): string {
-  const fileCount = checkpointFileTotals(checkpoint).count;
-  if (checkpoint.status !== "ready") {
+  if (checkpoint.status !== "ready" && !turnHasChanges(checkpoint)) {
     return resolve(msg("Diff {status}", { status: checkpoint.status }));
   }
-  return resolve(
+  const { repositories, totals } = turnChanges(checkpoint);
+  const files = resolve(
     msg("{count, plural, one {{count} file changed} other {{count} files changed}}", {
-      count: fileCount,
+      count: totals.count,
     }),
   );
+  return repositories.length === 0
+    ? files
+    : `${files} · ${repositories.map((repository) => repository.name).join(", ")}`;
+}
+
+function checkpointRepositoryGroups(
+  checkpoint: ThreadCheckpointSummary,
+  rootName: string,
+): ReadonlyArray<ReviewRepositoryGroup> {
+  const { repositories, rootFiles } = turnChanges(checkpoint);
+  const groups = [
+    ...(rootFiles.length === 0 ? [] : [{ key: ".", name: rootName, relativePath: "" }]),
+    ...repositories.flatMap((repository) =>
+      repository.files.length === 0 || !repository.relativePath || repository.relativePath === "."
+        ? []
+        : [
+            {
+              key: repository.repositoryPath,
+              name: repository.name,
+              relativePath: repository.relativePath,
+            },
+          ],
+    ),
+  ];
+  return groups.length > 1 ? groups : [];
 }
 
 function compareCheckpointTurnCountDescending(
@@ -512,7 +552,8 @@ export function getReadyReviewCheckpoints(
 ): ReadonlyArray<ThreadCheckpointSummary> {
   return pipe(
     checkpoints,
-    Arr.filter((checkpoint) => checkpoint.status === "ready"),
+    // A plain folder holding repositories never has a ready checkpoint of its own.
+    Arr.filter((checkpoint) => checkpoint.status === "ready" || turnHasChanges(checkpoint)),
     Arr.sort(readyCheckpointOrder),
   );
 }
@@ -533,13 +574,19 @@ export function buildReviewSectionItems(input: {
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
-  readonly loadingGitSections: boolean;
+  readonly gitSectionStates: Readonly<Record<ReviewGitSectionKind, "loading" | "failed" | null>>;
+  /** Names the thread folder's own files beside its repositories. */
+  readonly rootName?: string;
   readonly resolve?: MessageResolver;
 }): ReadonlyArray<ReviewSectionItem> {
   const resolve = input.resolve ?? m;
   const turnItems = getReadyReviewCheckpoints(input.checkpoints).map<ReviewSectionItem>(
     (checkpoint) => {
       const id = getReviewSectionIdForCheckpoint(checkpoint);
+      const repositoryGroups = checkpointRepositoryGroups(checkpoint, input.rootName ?? "Project");
+      const unlistedRepositories = (checkpoint.repositories ?? []).flatMap((repository) =>
+        repository.baselineMissing ? [repository.name] : [],
+      );
       return {
         id,
         kind: "turn",
@@ -547,43 +594,47 @@ export function buildReviewSectionItems(input: {
         subtitle: checkpointSubtitle(checkpoint, resolve),
         diff: input.turnDiffById[id] ?? null,
         isLoading: false,
+        ...(repositoryGroups.length === 0 ? {} : { repositoryGroups }),
+        ...(unlistedRepositories.length === 0 ? {} : { unlistedRepositories }),
       };
     },
   );
 
-  const gitItems = input.gitSections
-    .filter(
-      (section): section is typeof section & { kind: ReviewSectionKind } =>
-        section.kind !== "commit",
-    )
-    .map<ReviewSectionItem>((section) => ({
-      id: `git:${section.kind}`,
-      kind: section.kind,
-      title: section.title,
-      subtitle: gitSubtitle(section, resolve),
-      diff: section.diff,
-      source: section,
-      ...(section.files ? { files: section.files } : {}),
-      truncated: section.truncated,
-      isLoading: false,
-    }));
-  const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
-  const visibleGitItems =
-    input.loadingGitSections && !hasChangesItem
-      ? [
+  const gitItems = GIT_SECTION_KINDS.flatMap<ReviewSectionItem>((kind) => {
+    const section = input.gitSections.find(
+      (candidate): candidate is ReviewGitSource => candidate.kind === kind,
+    );
+    if (section) {
+      return [
+        {
+          id: `git:${kind}`,
+          kind,
+          title: section.title,
+          subtitle: gitSubtitle(section, resolve),
+          diff: section.diff,
+          source: section,
+          ...(section.files ? { files: section.files } : {}),
+          truncated: section.truncated,
+          isLoading: false,
+        },
+      ];
+    }
+    const state = input.gitSectionStates[kind];
+    return state === null
+      ? []
+      : [
           {
-            id: CHANGES_SECTION_ID,
-            kind: "branch-range",
-            title: resolve(CHANGES_TITLE),
+            id: `git:${kind}`,
+            kind,
+            title: resolve(GIT_PLACEHOLDER_TITLES[kind]),
             subtitle: null,
             diff: null,
-            isLoading: true,
-          } satisfies ReviewSectionItem,
-          ...gitItems,
-        ]
-      : gitItems;
+            isLoading: state === "loading",
+          },
+        ];
+  });
 
-  return [...turnItems, ...visibleGitItems];
+  return [...turnItems, ...gitItems];
 }
 
 export function getDefaultReviewSectionId(
@@ -719,4 +770,32 @@ export function applyReviewDiffMetadata(
     return stat ? { ...file, additions: stat.additions, deletions: stat.deletions } : file;
   });
   return { ...previewDiff, ...totals, files, fileCount: selectedSection.files.length, notice };
+}
+
+/**
+ * The files of one folder of a turn's patch. A file belongs to the deepest folder holding it,
+ * and to the thread's own (the empty folder) when no repository does.
+ */
+export function filterReviewParsedDiffToFolder(
+  parsedDiff: ReviewParsedDiff,
+  folder: string,
+  folders: ReadonlyArray<string>,
+): ReviewParsedDiff {
+  if (parsedDiff.kind !== "files") return parsedDiff;
+  const files = parsedDiff.files.filter((file) => {
+    let owner = "";
+    for (const candidate of folders) {
+      if (candidate.length > owner.length && file.path.startsWith(`${candidate}/`)) {
+        owner = candidate;
+      }
+    }
+    return owner === folder;
+  });
+  return {
+    ...parsedDiff,
+    files,
+    fileCount: files.length,
+    additions: files.reduce((total, file) => total + file.additions, 0),
+    deletions: files.reduce((total, file) => total + file.deletions, 0),
+  };
 }
