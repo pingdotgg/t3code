@@ -104,14 +104,19 @@ window.Kit = (() => {
     );
     for (const cam of cams) cam.style.animation = "none";
     for (const a of scripted) a.cancel();
+    // Everything is measured with the camera at rest; camera moves start only afterwards.
+    measuring = true;
     try {
-      // Overlays first: fn() usually starts the camera, and they must be measured at rest.
       for (const place of overlays.splice(0)) place();
       return fn();
     } finally {
+      measuring = false;
+      for (const start of afterMeasure.splice(0)) start();
       for (const cam of cams) cam.style.animation = "";
     }
   };
+  let measuring = false;
+  const afterMeasure = [];
   // Overlays drawn on the story page over a target (so the app's own overflow cannot clip
   // them). They are measured and placed when placeCursor runs Kit.measure.
   const overlays = [];
@@ -376,7 +381,9 @@ window.Kit = (() => {
       }
       return { offset: step.t / end, transform, easing: step.ease ?? "cubic-bezier(.65,0,.35,1)" };
     });
-    cam.animate(keys, { duration: end * 1000, fill: "both" });
+    const start = () => cam.animate(keys, { duration: end * 1000, fill: "both" });
+    if (measuring) afterMeasure.push(start);
+    else start();
   };
 
   // Segments: [realSeconds, animFrom, animTo]; animFrom == animTo holds the frame.
