@@ -361,7 +361,7 @@ it.each([
     name: "an account of another driver the hub routes the model to counts",
     accounts: [
       { driver: "codex", models: ["gpt-5.6-sol"], windows: [spent("five_hour", 3)] },
-      { windows: [] },
+      { models: ["claude-sonnet-4-6"], windows: [] },
     ],
     model: "gpt-5.6-sol",
     expected: at(3),
@@ -388,7 +388,7 @@ it.each([
     name: "a hub thinking suffix routes by its base model",
     accounts: [
       { driver: "codex", models: ["gpt-5.2"], windows: [spent("five_hour", 3)] },
-      { windows: [] },
+      { models: ["claude-sonnet-4-6"], windows: [] },
     ],
     model: "gpt-5.2(high)",
     expected: at(3),
