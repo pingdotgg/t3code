@@ -669,13 +669,17 @@ const make = Effect.gen(function* () {
           const customConfig = yield* loadWritableCustomKeybindingsConfig();
           const rule = keybindingRuleFromInput(input);
           const replaceTarget = replaceTargetFromUpsertInput(input);
+          // A saved rule overrides every inherited default for its command.
           const siblingDefaults =
-            rule.when === "false" &&
-            replaceTarget &&
-            !customConfig.some(({ rule: entry }) => entry?.command === rule.command)
+            replaceTarget?.command === rule.command &&
+            !customConfig.some(({ rule: entry }) => entry?.command === rule.command) &&
+            DEFAULT_KEYBINDINGS.some((entry) => isSameKeybindingRule(entry, replaceTarget)) &&
+            decodeResolvedKeybindingFromConfigExit(rule)._tag === "Success"
               ? DEFAULT_KEYBINDINGS.filter(
                   (entry) =>
-                    entry.command === rule.command && !isSameKeybindingRule(entry, replaceTarget),
+                    entry.command === rule.command &&
+                    !isSameKeybindingRule(entry, replaceTarget) &&
+                    !isSameKeybindingRule(entry, rule),
                 ).map((entry) => ({ value: entry, rule: entry }))
               : [];
           const retainedConfig = customConfig.filter(({ rule: entry }) => {
