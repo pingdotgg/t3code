@@ -1355,8 +1355,12 @@ export const make = Effect.gen(function* () {
         };
       }),
     );
-  const withPrLookupGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
-    Effect.flatMap(takeLocalStatusGitReads(cwd), (handoff) => {
+  const openPrLookupGitReads = <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+    cwd: string,
+    handoff: Pick<SharedPrLookupGitReads, "configValues" | "remoteUrls"> | undefined,
+  ) =>
+    Effect.suspend(() => {
       const shared: SharedPrLookupGitReads = {
         open: true,
         queriedProvider: false,
@@ -1379,9 +1383,16 @@ export const make = Effect.gen(function* () {
         ),
       );
     });
+  const withPrLookupGitReads = <A, E, R>(effect: Effect.Effect<A, E, R>, cwd: string) =>
+    openPrLookupGitReads(effect, cwd, undefined);
+  // Only status lookups take the handoff: a fresh identity check (branchPullRequest) must read git.
   const withActivePrLookupGitReads = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     Effect.flatMap(prLookupGitReads, (shared) =>
-      isActivePrLookupGitReads(shared, cwd) ? effect : withPrLookupGitReads(effect, cwd),
+      isActivePrLookupGitReads(shared, cwd)
+        ? effect
+        : Effect.flatMap(takeLocalStatusGitReads(cwd), (handoff) =>
+            openPrLookupGitReads(effect, cwd, handoff),
+          ),
     );
   const prLookupCacheKey = (
     cwd: string,

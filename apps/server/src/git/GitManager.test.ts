@@ -1124,6 +1124,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(remote?.pr ?? null).toBeNull();
       expect(count("config --get branch.feature/turn-end.remote")).toBe(1);
       expect(count("config --get-all remote.origin.url")).toBe(1);
+
+      // A fresh identity check reads git itself, not what local status just read.
+      yield* manager.invalidateLocalStatus(repoDir);
+      yield* manager.localStatus({ cwd: repoDir });
+      gitCommands.length = 0;
+      yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/turn-end" },
+        { freshGitState: true },
+      );
+      expect(count("config --get-all remote.origin.url")).toBe(1);
     }),
   );
 
