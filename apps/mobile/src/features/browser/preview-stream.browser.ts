@@ -156,6 +156,8 @@ export function start(configuration: PreviewStreamConfiguration) {
   };
 
   const connect = () => {
+    // The server releases control with the old socket, and agent tabs never hand it back.
+    let retake = interactive && control?.controller === "you";
     if (client) reportStatus("connecting");
     client?.stop();
     control = null;
@@ -205,6 +207,14 @@ export function start(configuration: PreviewStreamConfiguration) {
         onControl: (nextControl) => {
           const previous = control;
           control = nextControl;
+          if (retake && nextControl.controller !== "another-viewer") {
+            retake = false;
+            if (nextControl.controller !== "you" && nextControl.canOperate) {
+              clearInput();
+              next.send({ type: "takeControl" });
+              return;
+            }
+          }
           post({ type: "control", ...nextControl });
           if (nextControl.controller === "you") agentCursor.style.opacity = "0";
           if (nextControl.controller !== "you") clearInput();
