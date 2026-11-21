@@ -1,6 +1,6 @@
 # Status
 
-**State:** Phases 1, 3, 4 and most of 5 integrated and verified live against a disposable `conn-server`. Open: the CEF browser inside the Browser panel. `scripts/check.sh` green (41 tests).
+**State:** Phases 1–5 integrated and verified live against a disposable `conn-server`, including the CEF browser in the Browser panel. `scripts/check.sh` green. Final Dark Ocean + Light captures in `.shots/final/`.
 
 Keep this file accurate. Update it whenever a milestone lands, a proof passes, or a blocker is found.
 
@@ -16,8 +16,8 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 | 3 | Chat timeline (Markdown, code blocks, tool rows, user bubbles) + composer | Done | Live `subscribeThread`; `message.dispatch` sends a prompt and the Haiku reply streams in (automation `send`); `.shots/p3-dark.png`, `p3-light.png` |
 | 4 | Right panel: Files tree/preview, Diff viewer, Terminal (`alacritty_terminal`) | Done | `projects.listEntries`/`readFile`, `getFullThreadDiff`, local zsh PTY; `.shots/p4-*.png` |
 | 5 | `Cmd+K` palette, Settings route modal, live theme switching | Done | `.shots/p5-palette-*.png`, `p5-settings-*.png`; theme switch updates the open modal |
-| 5 | `conn-web` CEF-on-demand browser spike | In progress | Crate scaffold on main behind feature `cef` (default off); finishing + panel hosting delegated |
-| 5 | Side-by-side visual parity audit against Conn Electron (Dark Ocean + Light) | In progress | Per-phase captures in `.shots/`; final audit after sidebar polish lands |
+| 5 | `conn-web` CEF-on-demand browser spike | Done | CEF 156 downloads on demand to `~/Library/Application Support/conn-gpui/cef/`; `cef_smoke` prints a local page's title; in the app the Browser panel hosts a native CEF view over its bounds and `browser-state` reports `title: "conn-gpui CEF spike"` for `http://127.0.0.1:8765/` |
+| 5 | Side-by-side visual parity audit against Conn Electron (Dark Ocean + Light) | Done (with limits below) | `.shots/final/{dark-ocean,t3-code-light}-{chat,files,diff,terminal,browser,settings,palette}.png` vs `.shots/ref/` and design-spec metrics |
 
 ## Known decisions & open notes
 
@@ -35,6 +35,16 @@ scripts/automate.py '{"cmd":"theme","id":"t3-code-light"}' '{"cmd":"screenshot",
 scripts/run-app.sh stop; scripts/dev-server.sh stop
 ```
 
+With the CEF browser:
+
+```sh
+CARGO_FLAGS="--features cef" scripts/run-app.sh
+scripts/automate.py '{"cmd":"browse","url":"http://127.0.0.1:8765/"}' '{"cmd":"browser-state"}'
+CARGO_TARGET_DIR=target-cef cargo run -p conn-web --example cef_smoke --features cef -- http://127.0.0.1:8765/
+```
+
+CEF lint check: `CARGO_TARGET_DIR=target-cef cargo clippy -p conn-web -p conn-app --all-targets --features conn-web/cef,conn-app/cef,conn-app/automation -- -D warnings`.
+
 - Auth: `conn-server auth session issue --token-only` writes a bearer to `/tmp/conn-gpui-dev/bearer`; the app reads `CONN_GPUI_SERVER` + `CONN_GPUI_TOKEN_FILE` (or `CONN_GPUI_PAIRING_URL`). Without them it shows a demo fixture.
 - Claude turns: the dev server uses a private copy of `../conn-server/helpers/sdk-host` with npm deps in `/tmp/conn-gpui-dev/sdk-host`; seed threads with `conn-server thread start <project> "<msg>" --provider claudeAgent --model haiku --wait --state-dir /tmp/conn-gpui-dev/state`.
 - Screenshots: this shell has no macOS screen-recording permission, so `screencapture` fails. Screenshots come from GPUI's `render_to_image` via the automation hook, flattened onto the theme background (no desktop blur, no native traffic lights in the capture).
@@ -50,9 +60,18 @@ scripts/run-app.sh stop; scripts/dev-server.sh stop
 
 ## Known limitations
 
-- Captures have no desktop blur and no native traffic lights (render_to_image draws only the GPUI scene).
+- Captures have no desktop blur, no native traffic lights, and no CEF page (render_to_image draws only the GPUI scene; the browser is a native child NSView). The CEF page is proven by its title and URL read back from the hosted view.
+- The CEF view is created at paint time; a window covered by other windows gets no frames until focused (automation `browse` forces one).
 - Inline code uses the body font; GPUI `HighlightStyle` cannot switch font family inside a run.
 - The thread diff for the seeded "Add greet function" thread includes `target/` files: its checkpoint predates the demo `.gitignore`.
+
+## Next
+
+- Composer: model/effort picker, attachments, BranchToolbar.
+- Approval cards: wire buttons to `runtime-request.respond`.
+- Files/Diff: resizable split; Terminal: mouse selection.
+- Browser: hide the native view while GPUI overlays (palette, Settings) cover it.
+- Reference: capture fresh Conn screenshots once screen recording is granted to the agent shell.
 
 ## Phase 2 drift (fixed)
 
