@@ -5384,5 +5384,13 @@
   "ad208e3e32c85029": "Ocultar todo",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
-  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran."
+  "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
+  "6c4b55cdbe5dd1d0": "{count, plural, one {Comprobó skills y servidores MCP {count} vez} other {Comprobó skills y servidores MCP {count} veces}}",
+  "651333a8798481cf": "{count, plural, one {Intentó comprobar skills y servidores MCP {count} vez} other {Intentó comprobar skills y servidores MCP {count} veces}}",
+  "7aae4f6df36c4e7b": "{count, plural, one {Actualizó skills y servidores MCP {count} vez} other {Actualizó skills y servidores MCP {count} veces}}",
+  "15eae995296a4525": "{count, plural, one {Intentó actualizar skills y servidores MCP {count} vez} other {Intentó actualizar skills y servidores MCP {count} veces}}",
+  "5ba9aa4175d4965c": "{count, plural, one {Instaló skills {count} vez} other {Instaló skills {count} veces}}",
+  "f5fb66293e616534": "{count, plural, one {Intentó instalar skills {count} vez} other {Intentó instalar skills {count} veces}}",
+  "c06fc69851054582": "{count, plural, one {Quitó skills {count} vez} other {Quitó skills {count} veces}}",
+  "0af78fcce5177598": "{count, plural, one {Intentó quitar skills {count} vez} other {Intentó quitar skills {count} veces}}"
 }

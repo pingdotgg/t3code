@@ -1156,6 +1156,74 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "tools-read": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Checked skills and MCP servers {count} time} other {Checked skills and MCP servers {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to check skills and MCP servers {count} time} other {Tried to check skills and MCP servers {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "tools-update": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Updated skills and MCP servers {count} time} other {Updated skills and MCP servers {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to update skills and MCP servers {count} time} other {Tried to update skills and MCP servers {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "skills-install": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Installed skills {count} time} other {Installed skills {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to install skills {count} time} other {Tried to install skills {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "skills-remove": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Removed skills {count} time} other {Removed skills {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to remove skills {count} time} other {Tried to remove skills {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "environment-links": {
       const count = selected.length;
       label = done

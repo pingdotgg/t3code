@@ -255,7 +255,7 @@ import { useManagedPolicy } from "../../state/managedPolicy";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
-import { isVideoAttachment, type SessionPhase, type Thread } from "../../types";
+import { isVideoAttachment, type SessionPhase, type Thread, type ThreadShell } from "../../types";
 import { type ComposerPromptHistoryPosition } from "./composerPromptHistory";
 import { usePendingUserInputDraft } from "./usePendingThreadRequests";
 import type { PendingApproval, PendingUserInput, TimelineEntry } from "../../session-logic";
@@ -268,6 +268,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
+import { mergeProjectDisabledSkills } from "@t3tools/shared/projectSettings";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
@@ -290,6 +291,7 @@ import {
   useSubmitAfterPreparingImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { useComposerToolPresets } from "./ComposerToolPresets";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
@@ -377,6 +379,7 @@ export interface ChatComposerProps {
 
   activeThreadId: ThreadId | null;
   activeThread: Thread | undefined;
+  activeThreadShell: ThreadShell | null;
   activeThreadRuns: ReadonlyArray<OrchestrationV2Run>;
   promptHistoryEntries: ReadonlyArray<TimelineEntry>;
   forceExpandedOnMobile: boolean;
@@ -432,6 +435,8 @@ export interface ChatComposerProps {
   getShortcutContext: (eventTarget: EventTarget | null) => ShortcutMatchContext;
   terminalOpen: boolean;
   gitCwd: string | null;
+  /** The thread's project, for its Settings → Tools skill switches. */
+  skillsProjectId: ProjectId | null;
   pullRequestProjectId: ProjectId | null;
   pullRequestRepository: string | null;
   threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
@@ -548,6 +553,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     getShortcutContext,
     terminalOpen,
     gitCwd,
+    skillsProjectId,
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
@@ -961,12 +967,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         (multipleModelSelections === null ? providerSendBlockReason : null)));
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
-  const selectedProviderSkills = selectedProviderStatus
+  // Skills switched off in Settings → Tools leave the menu; the server keeps
+  // them out of the session where the provider allows it.
+  const disabledSkillNames = new Set(
+    mergeProjectDisabledSkills(
+      settings.disabledSkills,
+      skillsProjectId === null
+        ? undefined
+        : settings.projectSettingsOverrides[skillsProjectId]?.disabledSkills,
+    ).map((name) => name.toLowerCase()),
+  );
+  const providerSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
-  const selectedProviderSlashCommands = selectedProviderStatus
+  const selectedProviderSkills =
+    disabledSkillNames.size === 0
+      ? providerSkills
+      : providerSkills.filter((skill) => !disabledSkillNames.has(skill.name.toLowerCase()));
+  const providerSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SLASH_COMMANDS;
+  // Claude also lists each skill as a slash command; a disabled one leaves both.
+  const selectedProviderSlashCommands =
+    disabledSkillNames.size === 0
+      ? providerSlashCommands
+      : providerSlashCommands.filter(
+          (command) => !disabledSkillNames.has(command.name.toLowerCase()),
+        );
   const { refresh: refreshWorkspaceSnapshotOnTyping, scanning: workspaceSkillsScanning } =
     useProviderWorkspaceSnapshotRefresh({
       environmentId,
@@ -2501,6 +2528,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : composerControlsCollapsed
       ? 0
       : expandedControlsIconOnlyBlockCount;
+  const toolPresets = useComposerToolPresets({
+    environmentId,
+    projectId: activeProjectId,
+    cwd: gitCwd,
+    routeKind,
+    routeThreadRef,
+    draftId,
+    threadShell: props.activeThreadShell,
+    running:
+      phase === "running" ||
+      (props.activeThreadShell?.hasPendingApprovals ?? false) ||
+      (props.activeThreadShell?.hasPendingUserInput ?? false),
+  });
   const composerControls = (
     <ComposerControlsBar
       environmentId={environmentId}
@@ -2548,6 +2588,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onModelPickerOpenChange={setIsComposerModelPickerOpen}
       modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
       getModelDisabledReason={getModelDisabledReason}
+      toolPresets={toolPresets}
     />
   );
   // An open question owns the space above the composer. Only a machine problem,

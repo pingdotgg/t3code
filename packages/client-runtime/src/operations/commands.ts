@@ -159,6 +159,10 @@ export interface SetThreadInteractionModeInput extends ThreadCommandInput {
   readonly interactionMode: ProviderInteractionMode;
 }
 
+export interface SetThreadToolPresetsInput extends ThreadCommandInput {
+  readonly toolPresets: import("@t3tools/contracts").ThreadToolPresets;
+}
+
 interface StartThreadBootstrap {
   readonly createThread?: {
     readonly projectId: ProjectId;
@@ -166,6 +170,7 @@ interface StartThreadBootstrap {
     readonly modelSelection: ModelSelection;
     readonly runtimeMode: RuntimeMode;
     readonly interactionMode: ProviderInteractionMode;
+    readonly toolPresets?: import("@t3tools/contracts").ThreadToolPresets;
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly createdAt: string;
@@ -748,6 +753,16 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
   },
 );
 
+export const setThreadToolPresets = Effect.fn("EnvironmentCommands.setThreadToolPresets")(
+  function* (input: SetThreadToolPresetsInput) {
+    return yield* dispatch({
+      type: "thread.tool-presets.set",
+      commandId: yield* allocateCommandId(input),
+      threadId: input.threadId,
+      toolPresets: input.toolPresets,
+    });
+  },
+);
 // Servers without native resume dispatch command.text verbatim; newer ones clear
 // it when manualContinuationOfRunId is set.
 const MANUAL_CONTINUATION_FALLBACK_TEXT = "Continue where you left off.";
@@ -805,6 +820,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       modelSelection: input.modelSelection ?? thread.modelSelection,
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
+      ...(bootstrap?.toolPresets === undefined ? {} : { toolPresets: bootstrap.toolPresets }),
       workspaceStrategy,
       initialMessage: {
         messageId: input.message.messageId,

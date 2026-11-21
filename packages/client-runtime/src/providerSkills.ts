@@ -277,7 +277,7 @@ function resolveWorkspaceSnapshotStatus(
   return isProviderWorkspaceSnapshotPending(snapshot) ? "pending" : "complete";
 }
 
-interface ProviderWorkspaceSnapshotRefreshTarget {
+export interface ProviderWorkspaceSnapshotRefreshTarget {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
   readonly cwd: string;

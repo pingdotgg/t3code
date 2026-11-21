@@ -1,3 +1,4 @@
+import { Link, useSearch } from "@tanstack/react-router";
 import { msg, useGT, useMessages } from "gt-react";
 
 import {
@@ -20,10 +21,18 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
   return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
 }
 
+/**
+ * `Settings / Section`, or `Settings / Tools / name` on a skill's or MCP
+ * server's page, where Tools leads back to the list it came from.
+ */
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
   const gt = useGT();
   const m = useMessages();
   const sectionLabel = settingsBreadcrumbLabel(pathname);
+  const skill = useSearch({ strict: false, select: (search) => search.skill });
+  const server = useSearch({ strict: false, select: (search) => search.server });
+  const onTools = pathname === "/settings/tools";
+  const page = onTools ? (skill ?? server) : undefined;
 
   return (
     <WorkspaceBreadcrumb ariaLabel={gt("Settings breadcrumb")}>
@@ -33,8 +42,24 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
           <WorkspaceBreadcrumbSeparator />
         </>
       ) : null}
+      {page !== undefined && sectionLabel ? (
+        <>
+          <WorkspaceBreadcrumbItem>
+            {/* The settings route keeps the scope on a link without search. */}
+            <Link
+              to="/settings/tools"
+              search={skill === undefined && server !== undefined ? { tab: "mcp" } : {}}
+              replace
+              className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
+              {m(sectionLabel)}
+            </Link>
+          </WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbSeparator />
+        </>
+      ) : null}
       <WorkspaceBreadcrumbItem current className="truncate">
-        {m(sectionLabel ?? SETTINGS_LABEL)}
+        {page ?? m(sectionLabel ?? SETTINGS_LABEL)}
       </WorkspaceBreadcrumbItem>
     </WorkspaceBreadcrumb>
   );

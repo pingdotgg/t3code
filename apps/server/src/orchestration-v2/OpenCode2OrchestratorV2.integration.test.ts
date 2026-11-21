@@ -60,10 +60,14 @@ const event = (type: string, data: Record<string, unknown>): ProviderReplayEntry
 });
 const labelled = (entry: ProviderReplayEntry, label: string): ProviderReplayEntry =>
   entry.type === "runtime_exit" ? entry : { ...entry, label };
-/** MCP rules are last-match-wins; allow this thread after denying all T3 servers. */
+/**
+ * MCP rules are last-match-wins; allow this thread after denying all T3 servers.
+ * No thread's Settings → Tools servers are allowed, since these threads have none.
+ */
 const mcpRules = (name: string) => [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
+  { action: "t3u-*", resource: "*", effect: "deny" },
 ];
 const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
 

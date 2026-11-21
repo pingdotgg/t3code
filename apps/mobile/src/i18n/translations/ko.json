@@ -5370,5 +5370,13 @@
   "ad208e3e32c85029": "모두 숨기기",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "채팅의 도구 호출",
-  "8d545d54c0a9e950": "에이전트가 실행하는 명령, 편집, 검색을 숨깁니다. 성공한 항목 숨기기는 실패를 남겨 둡니다. Zen은 최종 답변만 표시합니다. 승인, 질문, 오류는 항상 표시됩니다."
+  "8d545d54c0a9e950": "에이전트가 실행하는 명령, 편집, 검색을 숨깁니다. 성공한 항목 숨기기는 실패를 남겨 둡니다. Zen은 최종 답변만 표시합니다. 승인, 질문, 오류는 항상 표시됩니다.",
+  "6c4b55cdbe5dd1d0": "{count, plural, other {스킬 및 MCP 서버 {count}회 확인함}}",
+  "651333a8798481cf": "{count, plural, other {스킬 및 MCP 서버 확인 {count}회 시도함}}",
+  "7aae4f6df36c4e7b": "{count, plural, other {스킬 및 MCP 서버 {count}회 업데이트함}}",
+  "15eae995296a4525": "{count, plural, other {스킬 및 MCP 서버 업데이트 {count}회 시도함}}",
+  "5ba9aa4175d4965c": "{count, plural, other {스킬 {count}회 설치함}}",
+  "f5fb66293e616534": "{count, plural, other {스킬 설치 {count}회 시도함}}",
+  "c06fc69851054582": "{count, plural, other {스킬 {count}회 제거함}}",
+  "0af78fcce5177598": "{count, plural, other {스킬 제거 {count}회 시도함}}"
 }

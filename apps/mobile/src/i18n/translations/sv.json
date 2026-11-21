@@ -5390,5 +5390,13 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "6c4b55cdbe5dd1d0": "{count, plural, one {Kontrollerade färdigheter och MCP-servrar {count} gång} other {Kontrollerade färdigheter och MCP-servrar {count} gånger}}",
+  "651333a8798481cf": "{count, plural, one {Försökte kontrollera färdigheter och MCP-servrar {count} gång} other {Försökte kontrollera färdigheter och MCP-servrar {count} gånger}}",
+  "7aae4f6df36c4e7b": "{count, plural, one {Uppdaterade färdigheter och MCP-servrar {count} gång} other {Uppdaterade färdigheter och MCP-servrar {count} gånger}}",
+  "15eae995296a4525": "{count, plural, one {Försökte uppdatera färdigheter och MCP-servrar {count} gång} other {Försökte uppdatera färdigheter och MCP-servrar {count} gånger}}",
+  "5ba9aa4175d4965c": "{count, plural, one {Installerade färdigheter {count} gång} other {Installerade färdigheter {count} gånger}}",
+  "f5fb66293e616534": "{count, plural, one {Försökte installera färdigheter {count} gång} other {Försökte installera färdigheter {count} gånger}}",
+  "c06fc69851054582": "{count, plural, one {Tog bort färdigheter {count} gång} other {Tog bort färdigheter {count} gånger}}",
+  "0af78fcce5177598": "{count, plural, one {Försökte ta bort färdigheter {count} gång} other {Försökte ta bort färdigheter {count} gånger}}"
 }

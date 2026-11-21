@@ -747,6 +747,63 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.notEqual(rotatedKey, initialKey);
   });
 
+  it("adds the user's servers and skill switches next to t3-code, and reopens when they change", () => {
+    const threadId = ThreadId.make("thread-claude-user-tools");
+    const mcpSession: McpProviderSession.McpProviderSessionConfig = {
+      ...mcpSessionFor(threadId),
+      tools: {
+        servers: [
+          {
+            name: "supabase",
+            transport: {
+              type: "stdio",
+              command: "npx",
+              args: ["-y", "@supabase/mcp-server-supabase"],
+              env: [{ name: "SUPABASE_ACCESS_TOKEN", value: "token", sensitive: true }],
+            },
+          },
+        ],
+        disabledSkills: ["grill-me"],
+        fingerprint: "a",
+      },
+    };
+    const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+    );
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession,
+      readOnlySandbox: false,
+    });
+    assert.deepEqual(overrides, {
+      // Its tools go through the session's approval like any other tool.
+      allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD],
+      mcpServers: {
+        supabase: {
+          type: "stdio",
+          command: "npx",
+          args: ["-y", "@supabase/mcp-server-supabase"],
+          env: { SUPABASE_ACCESS_TOKEN: "token" },
+        },
+        ...T3_MCP_SERVERS,
+      },
+      sdkSettings: { skillOverrides: { "grill-me": "off" } },
+    });
+
+    const initialKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, overrides);
+    const clearedKey = ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(
+      queryPolicy,
+      ClaudeAdapterV2.claudeMcpQueryOverrides({
+        mcpSession: { ...mcpSession, tools: { servers: [], disabledSkills: [], fingerprint: "" } },
+        readOnlySandbox: false,
+      }),
+    );
+    assert.notEqual(clearedKey, initialKey);
+  });
+
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),
@@ -1621,6 +1678,121 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
           McpProviderSessions.layer,
           NodeServices.layer,
           NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 user tools", () => {
+  it.effect("opens the turn's query with the user's servers and skill switches", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-user-tools-",
+        });
+        let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          random: yield* SecureRandom.SecureRandom,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-user-tools"),
+            open: (input) =>
+              Effect.sync(() => {
+                openedOptions = input.options;
+                return {
+                  messages: Stream.never,
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
+                  reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.void,
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-user-tools-turn");
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-claude-user-tools"),
+          threadId,
+          providerSessionId: "mcp-session-claude-user-tools",
+          providerInstanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-claude-token",
+          browserToolsAvailable: true,
+          tools: {
+            servers: [
+              {
+                name: "context7",
+                transport: { type: "stdio", command: "npx", args: ["context7"], env: [] },
+              },
+            ],
+            disabledSkills: ["grill-me"],
+            fingerprint: "a",
+          },
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-user-tools"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-user-tools"),
+            text: "Hello.",
+            attachments: [],
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          }),
+        );
+
+        assert.deepInclude(openedOptions?.mcpServers ?? {}, {
+          context7: { type: "stdio", command: "npx", args: ["context7"], env: {} },
+        });
+        const settings = openedOptions?.settings;
+        assert.deepEqual(typeof settings === "object" ? settings.skillOverrides : undefined, {
+          "grill-me": "off",
+        });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),

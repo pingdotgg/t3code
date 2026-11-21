@@ -5375,5 +5375,13 @@
   "ad208e3e32c85029": "全部隐藏",
   "3328503592789bed": "专注模式",
   "856812e7e1fc445e": "聊天中的工具调用",
-  "8d545d54c0a9e950": "隐藏智能体执行的命令、编辑和搜索。“隐藏成功的调用”仍保留失败项；“专注模式”仅显示最终回答。审批、提问和错误始终显示。"
+  "8d545d54c0a9e950": "隐藏智能体执行的命令、编辑和搜索。“隐藏成功的调用”仍保留失败项；“专注模式”仅显示最终回答。审批、提问和错误始终显示。",
+  "6c4b55cdbe5dd1d0": "{count, plural, other {已检查技能和 MCP 服务器 {count} 次}}",
+  "651333a8798481cf": "{count, plural, other {尝试检查技能和 MCP 服务器 {count} 次}}",
+  "7aae4f6df36c4e7b": "{count, plural, other {已更新技能和 MCP 服务器 {count} 次}}",
+  "15eae995296a4525": "{count, plural, other {尝试更新技能和 MCP 服务器 {count} 次}}",
+  "5ba9aa4175d4965c": "{count, plural, other {已安装技能 {count} 次}}",
+  "f5fb66293e616534": "{count, plural, other {尝试安装技能 {count} 次}}",
+  "c06fc69851054582": "{count, plural, other {已移除技能 {count} 次}}",
+  "0af78fcce5177598": "{count, plural, other {尝试移除技能 {count} 次}}"
 }
