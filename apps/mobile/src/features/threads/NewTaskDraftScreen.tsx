@@ -358,13 +358,6 @@ export function NewTaskDraftScreen(props: {
   const isIncomingShareTransferPending = Boolean(
     incomingShare && shareImportPhase !== "cancelled" && !isIncomingShareAwaitingServerConfig,
   );
-  // A failed import waits in a modal alert, and a cancel finishes its undo even
-  // after the route leaves, so neither holds the route: the cancel can leave as
-  // soon as it is done.
-  const isIncomingShareHoldingRoute =
-    isIncomingShareTransferPending &&
-    shareImportPhase !== "failed" &&
-    shareImportPhase !== "cancelling";
   const contextImports = useAtomValue(composerContextImportsAtom);
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
@@ -378,8 +371,9 @@ export function NewTaskDraftScreen(props: {
   };
   const cycleEnvironmentCommands = environments.length > 1 ? (["cycleHost"] as const) : [];
   useHardwareKeyboardCommand(cycleEnvironmentCommands, cycleEnvironment);
-  const preventRemove =
-    (isIncomingShareHoldingRoute && !isProjectPickerReturnActive) || flow.submitting;
+  // Only a running import holds the route: leaving before one starts dismisses the share,
+  // and a failed or cancelling import finishes after the route leaves.
+  const preventRemove = (isImportingShare && !isProjectPickerReturnActive) || flow.submitting;
   usePreventRemove(preventRemove, () => undefined);
   const isIncomingShareReady =
     !props.incomingShareId ||

@@ -30,7 +30,6 @@ import { subscribeAppActive } from "../../lib/appState";
 import { coalescedRun } from "../../lib/coalescedRun";
 import { rootNavigationRef } from "../../lib/rootNavigation";
 import { selectWorkspaceDetail } from "../layout/workspace/workspace-detail-selection";
-import { isDraftThreadRoute } from "../threads/thread-route-state";
 import { makeIncomingShareImports } from "../threads/incomingShareImport";
 import { liveNewTaskFlowKeys } from "../threads/new-task-flow-state";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -43,6 +42,7 @@ import {
 } from "../../state/use-composer-drafts";
 import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
+  incomingShareDraftRoutes,
   transitionIncomingSharePresentation,
 } from "./incoming-share-presentation";
 import {
@@ -76,7 +76,9 @@ async function resolvedPayloadsForFiles(): Promise<ReadonlyArray<ResolvedSharePa
   }
 }
 
-async function incomingShareIdForPayloads(payloads: ReadonlyArray<SharePayload>): Promise<string> {
+async function incomingShareFingerprintForPayloads(
+  payloads: ReadonlyArray<SharePayload>,
+): Promise<string> {
   const fingerprint = JSON.stringify(
     payloads.map((payload) => ({
       shareType: payload.shareType,
@@ -195,7 +197,8 @@ const incomingShareInbox = new IncomingShareInbox({
     };
   },
   cleanupReplayedPayloads: removeReplayedPayloadFiles,
-  idForPayloads: incomingShareIdForPayloads,
+  fingerprintForPayloads: incomingShareFingerprintForPayloads,
+  createId: () => `share-${Crypto.randomUUID()}`,
   now: () => new Date().toISOString(),
   onClearError: (error) => {
     console.warn("[incoming-share] could not acknowledge native payload", error);
@@ -259,18 +262,30 @@ const refreshIncomingShares = coalescedRun(async () => {
 });
 
 /**
- * Opens the oldest pending share as a new-task draft unless the user already
- * dismissed it. Runs whenever the inbox or the root navigation state changes.
+ * Opens the newest pending share as a new-task draft, and discards a share whose
+ * draft the user dismissed. Runs whenever the inbox or the root navigation state changes.
  */
 export function presentPendingIncomingShare(): void {
   if (!rootNavigationRef.isReady()) return;
   const state = rootNavigationRef.getRootState();
   if (!state) return;
+  const drafts = incomingShareDraftRoutes(state.routes);
   const transition = transitionIncomingSharePresentation(presentation, {
-    isShareSheetPresented: isDraftThreadRoute(state.routes[state.index]),
+    isDraftPresented: drafts.isDraftPresented,
+    draftShareIds: drafts.shareIds,
     pendingShareId: snapshot.drafts[0]?.id ?? null,
   });
   presentation = transition.state;
+  const discarded = transition.shareIdToDiscard;
+  if (discarded) {
+    discardShare(discarded).catch((error: unknown) => {
+      console.warn("[incoming-share] could not discard dismissed share", error);
+      if (presentation.discardedShareId !== discarded) return;
+      // Offer the share again rather than hold it hidden in the inbox.
+      presentation = { ...presentation, discardedShareId: null };
+      presentPendingIncomingShare();
+    });
+  }
   if (!transition.shareIdToPresent) return;
   rootNavigationRef.dispatch(
     selectWorkspaceDetail({
@@ -290,6 +305,12 @@ export function startIncomingShareInbox(): () => void {
 
 async function consumeShare(shareId: string) {
   publish(await incomingShareInbox.consume(shareId));
+}
+
+async function discardShare(shareId: string) {
+  const discarded = snapshot.drafts.find((draft) => draft.id === shareId);
+  publish(await incomingShareInbox.consume(shareId));
+  if (discarded) scheduleUnusedComposerAttachmentCleanup(discarded.attachments);
 }
 
 async function reserveShare(shareId: string, destination: IncomingShareDestination) {

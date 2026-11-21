@@ -23,6 +23,7 @@ import { estimateBase64ByteSize } from "../../lib/base64";
 export interface IncomingShareDraft {
   readonly schemaVersion: 1;
   readonly id: string;
+  readonly payloadFingerprint?: string;
   readonly createdAt: string;
   readonly destination?: IncomingShareDestination;
   readonly text: string;
@@ -43,6 +44,7 @@ const IncomingShareDestinationSchema = Schema.Struct({
 export const IncomingShareDraftSchema = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   id: Schema.String,
+  payloadFingerprint: Schema.optional(Schema.String),
   createdAt: Schema.String,
   destination: Schema.optional(IncomingShareDestinationSchema),
   text: Schema.String,

@@ -237,14 +237,14 @@ describe("resolveDraftProjectSelection", () => {
     ).toEqual({ kind: "preserve" });
   });
 
-  it("keeps a share draft asking for a project when its picker closes without a choice", () => {
+  it("dismisses a share draft when its picker closes without a choice", () => {
     const scopes = [makeScope([projects[0]!]), makeScope([projects[1]!])];
     expect(
       resolveDraftProjectSelection(null, projects, scopes, {
         incomingShareId: "share",
         pickerClosed: true,
       }),
-    ).toEqual({ kind: "pick" });
+    ).toEqual({ kind: "dismiss" });
   });
 
   it("starts a share draft in the last project when Use last project is on", () => {
