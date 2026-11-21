@@ -37,6 +37,8 @@ import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
 import {
   filterPullRequestList,
+  findPullRequestProjectGroup,
+  pullRequestProjectGroups,
   pullRequestListFacets,
   pullRequestListInput,
   pullRequestListRowsAreEqual,
@@ -149,6 +151,23 @@ export function PullRequestsScreen(
     () => withoutScratchProjectScope(savedControls, allProjects),
     [allProjects, savedControls],
   );
+  const projects = useMemo(
+    () =>
+      pullRequestProjectChoices(allProjects, {
+        environmentId,
+        controls,
+        environmentLabels: new Map(
+          environments.map((item) => [item.environmentId, item.environmentLabel]),
+        ),
+        servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
+      }),
+    [allProjects, environmentId, controls, environments, configs],
+  );
+  const projectGroup = useMemo(
+    () => findPullRequestProjectGroup(pullRequestProjectGroups(projects), controls),
+    [projects, controls],
+  );
+  const projectRefs = projectGroup?.memberProjectRefs;
   const targets = useMemo(
     () =>
       environments
@@ -156,15 +175,21 @@ export function PullRequestsScreen(
           (environment) =>
             configs.get(environment.environmentId) !== undefined &&
             (environmentId === null || environment.environmentId === environmentId) &&
-            (!controls.projectEnvironmentId ||
-              environment.environmentId === controls.projectEnvironmentId),
+            (projectRefs
+              ? projectRefs.some((ref) => ref.environmentId === environment.environmentId)
+              : !controls.projectEnvironmentId ||
+                environment.environmentId === controls.projectEnvironmentId),
         )
         .sort((left, right) => left.environmentId.localeCompare(right.environmentId))
         .map((environment) => ({
           environmentId: environment.environmentId,
-          input: pullRequestListInput(controls, query),
+          input: pullRequestListInput(
+            controls,
+            query,
+            projectRefs ? { environmentId: environment.environmentId, projectRefs } : undefined,
+          ),
         })),
-    [environments, environmentId, configs, controls, query],
+    [environments, environmentId, configs, controls, query, projectRefs],
   );
   const result = usePullRequestList(targets);
   const connectedTargets = targets.filter((target) =>
@@ -191,8 +216,9 @@ export function PullRequestsScreen(
         query,
         result.data.localSearchHosts,
         new Set(connectedKey.split("\n")),
+        projectRefs,
       ),
-    [result.entries, controls, query, result.data, connectedKey],
+    [result.entries, controls, query, result.data, connectedKey, projectRefs],
   );
   const facets = pullRequestListFacets(result.entries);
   const [knownFacets, setKnownFacets] = useState({ environmentId, source: facets, ...facets });
@@ -220,14 +246,6 @@ export function PullRequestsScreen(
   }
   const labelColors =
     knownFacets.environmentId === environmentId ? knownFacets.labelColors : facets.labelColors;
-  const projects = pullRequestProjectChoices(allProjects, {
-    environmentId,
-    controls,
-    environmentLabels: new Map(
-      environments.map((item) => [item.environmentId, item.environmentLabel]),
-    ),
-    servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
-  });
   const filters = usePullRequestListFilters({
     environments: environments.map((item) => ({
       id: String(item.environmentId),
@@ -257,6 +275,7 @@ export function PullRequestsScreen(
         kind,
         environmentId,
         environmentIds: targets.map((target) => String(target.environmentId)),
+        projectRefs,
         suggestions: knownFacets.environmentId === environmentId ? knownFacets[kind] : facets[kind],
         labelColors,
       }),

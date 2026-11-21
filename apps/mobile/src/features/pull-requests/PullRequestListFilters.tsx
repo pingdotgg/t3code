@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { msg, useGT, useMessages } from "gt-react-native";
@@ -11,7 +12,12 @@ import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells } from "../../state/threads";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
 import { buildHomeProjectScopes, sortHomeProjectScopes } from "../home/homeThreadList";
-import { DEFAULT_PR_LIST_CONTROLS, type PullRequestListControls } from "./pullRequestList";
+import {
+  DEFAULT_PR_LIST_CONTROLS,
+  findPullRequestProjectGroup,
+  pullRequestProjectGroups,
+  type PullRequestListControls,
+} from "./pullRequestList";
 import type { MessageResolver } from "../../i18n/messages";
 
 const STATES = {
@@ -134,13 +140,15 @@ export function usePullRequestListFilters(props: {
   readonly labels: readonly string[];
   /** Dot colors by lowercased label name, for the labels that have one. */
   readonly labelColors: Readonly<Record<string, string>>;
-  readonly projects: readonly { id: string; title: string; environmentId: string }[];
+  readonly projects: readonly EnvironmentProject[];
   /** Opens a picker that searches the host, for a label or author no loaded row carries. */
   readonly onSearch: (kind: "labels" | "authors") => void;
 }) {
   const { value } = props;
   const m = useMessages();
-  const projects = useProjectsInSidebarOrder(props.projects);
+  const projects = pullRequestProjectGroups(useProjectsInSidebarOrder(props.projects));
+  const selectedProject = findPullRequestProjectGroup(projects, value);
+
   const selectedLabels = value.filters.labels?.flat() ?? [];
   const selectedLabelSet = new Set(selectedLabels);
   const author = value.filters.author;
@@ -180,9 +188,7 @@ export function usePullRequestListFilters(props: {
         props.onChange({ ...value, sort: next as PullRequestListControls["sort"] });
         break;
       case "project": {
-        const project = projects.find(
-          (project) => JSON.stringify([project.environmentId, project.id]) === next,
-        );
+        const project = projects.find((project) => project.key === next)?.representative;
         props.onChange({
           ...value,
           projectId: project?.id,
@@ -277,21 +283,14 @@ export function usePullRequestListFilters(props: {
     },
     {
       id: "projects",
-      title:
-        projects.find(
-          (project) =>
-            project.id === value.projectId && project.environmentId === value.projectEnvironmentId,
-        )?.title ?? m(msg("Project", { $context: "filter menu" })),
+      title: selectedProject?.label ?? m(msg("Project", { $context: "filter menu" })),
       subactions: choices(
         "project",
         Object.fromEntries([
           ["", m(msg("All projects"))],
-          ...projects.map((project) => [
-            JSON.stringify([project.environmentId, project.id]),
-            project.title,
-          ]),
+          ...projects.map((project) => [project.key, project.label]),
         ]),
-        value.projectId ? JSON.stringify([value.projectEnvironmentId, value.projectId]) : "",
+        selectedProject?.key ?? "",
       ),
     },
     {

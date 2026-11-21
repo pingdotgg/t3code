@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
   ProjectId,
@@ -11,6 +12,7 @@ import {
   DEFAULT_PR_LIST_CONTROLS,
   EMPTY_PULL_REQUEST_STATS_CACHE,
   filterPullRequestList,
+  findPullRequestProjectGroup,
   mergePullRequestListEntries,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
@@ -20,6 +22,7 @@ import {
   pullRequestLabelColors,
   pullRequestListHead,
   pullRequestListInput,
+  pullRequestProjectGroups,
   scopedPullRequestListKey,
   shownPullRequestListPages,
   pullRequestListRowsAreEqual,
@@ -69,6 +72,77 @@ function page(
     errors: [],
   };
 }
+
+describe("mobile PR project choices", () => {
+  function project(
+    id: string,
+    environmentId: string,
+    canonicalKey: string | null,
+  ): EnvironmentProject {
+    return {
+      id: ProjectId.make(id),
+      environmentId: EnvironmentId.make(environmentId),
+      title: "T3 Code",
+      workspaceRoot: `/work/${id}`,
+      repositoryIdentity: canonicalKey
+        ? {
+            canonicalKey,
+            displayName: "T3 Code",
+            locator: {
+              source: "git-remote",
+              remoteName: "origin",
+              remoteUrl: `https://${canonicalKey}.git`,
+            },
+          }
+        : null,
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-01T00:00:00Z",
+    };
+  }
+
+  it("shows one repository choice across machines and keeps a saved checkout selected", () => {
+    const projects = [
+      project("main", "laptop", "github.com/org/repo"),
+      project("worktree", "laptop", "github.com/org/repo"),
+      project("remote", "server", "github.com/org/repo"),
+    ];
+    const groups = pullRequestProjectGroups(projects);
+    expect(groups.map((group) => group.label)).toEqual(["T3 Code"]);
+    expect(groups[0]?.memberProjectRefs).toEqual(
+      projects.map((project) => ({ environmentId: project.environmentId, projectId: project.id })),
+    );
+    expect(
+      findPullRequestProjectGroup(groups, {
+        ...DEFAULT_PR_LIST_CONTROLS,
+        projectId: "worktree",
+        projectEnvironmentId: "laptop",
+      }),
+    ).toBe(groups[0]);
+    expect(findPullRequestProjectGroup(groups, DEFAULT_PR_LIST_CONTROLS)).toBeUndefined();
+    expect(
+      pullRequestProjectGroups(projects.filter((project) => project.environmentId === "server")),
+    ).toHaveLength(1);
+  });
+
+  it("keeps same-named repositories and unknown identities separate and excludes Scratch", () => {
+    const projects = [
+      project("main", "laptop", "github.com/org/repo"),
+      project("fork", "server", "github.com/other/repo"),
+      project("enterprise", "server", "git.example.com/org/repo"),
+      project("unknown", "laptop", null),
+      project("unknown", "server", null),
+    ];
+    const groups = pullRequestProjectGroups([
+      ...projects,
+      { ...project("scratch", "laptop", null), isScratch: true },
+    ]);
+    expect(groups).toHaveLength(5);
+    expect(new Set(groups.map((group) => group.label)).size).toBe(5);
+    expect(groups.map((group) => group.memberProjectRefs.length)).toEqual([1, 1, 1, 1, 1]);
+  });
+});
 
 describe("recycled PR list rows", () => {
   const scopedEntry = (patch: Partial<PullRequestListEntry> = {}) => ({
@@ -326,6 +400,40 @@ describe("mobile PR scan and filters", () => {
     expect(pick(new Set(["server"]))).toEqual(["server"]);
     expect(pick(new Set(["laptop", "server"]))).toEqual(["laptop"]);
     expect(pick(new Set())).toEqual(["laptop"]);
+    const projectRefs = [
+      { environmentId: EnvironmentId.make("laptop"), projectId: ProjectId.make("project") },
+      { environmentId: EnvironmentId.make("server"), projectId: ProjectId.make("remote") },
+      { environmentId: EnvironmentId.make("server"), projectId: ProjectId.make("worktree") },
+    ];
+    expect(
+      pullRequestListInput(
+        { ...DEFAULT_PR_LIST_CONTROLS, projectId: "project", projectEnvironmentId: "laptop" },
+        "draft:false fix",
+        { environmentId: EnvironmentId.make("server"), projectRefs },
+      ),
+    ).toEqual({
+      state: "open",
+      involvement: "all",
+      filters: { draft: "hide" },
+      limit: PR_LIST_PAGE_SIZE,
+      query: "fix",
+      projectIds: ["remote", "worktree"],
+    });
+    expect(
+      filterPullRequestList(
+        [
+          rows[0]!,
+          { ...rows[1]!, projectId: ProjectId.make("remote") },
+          { ...entry(2), environmentId: "server" },
+        ],
+        { ...DEFAULT_PR_LIST_CONTROLS, projectId: "project", projectEnvironmentId: "laptop" },
+        {},
+        "",
+        new Set(),
+        new Set(["server"]),
+        projectRefs,
+      ).map((row) => [row.environmentId, row.projectId, row.number]),
+    ).toEqual([["server", "remote", 1]]);
   });
 });
 
