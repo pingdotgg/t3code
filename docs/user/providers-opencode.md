@@ -62,8 +62,14 @@ session.
 
 ## Approvals
 
-OpenCode follows the shared [permission modes](./permission-modes.md). **Auto** has
-the same rules as **Supervised** because OpenCode has no AI approval reviewer.
+OpenCode follows the shared [permission modes](./permission-modes.md). OpenCode 2's
+**Auto** applies the selected agent's native permission rules for specific actions,
+so the `permission` (v1) or `permissions` (v2) block in `opencode.jsonc` can allow
+routine commands while other commands still ask. Without those rules, **Auto** asks
+as **Supervised** does; a catch-all `"*": "allow"` does not remove Auto's default
+approval requirements. Subagents' own rules are not applied, so their
+commands ask as in **Supervised**. OpenCode 1.x keeps its existing mode rules, where **Auto**
+has the same rules as **Supervised**.
 Environment files such as `.env` and `.env.local` need approval in restricted
 modes even though normal file reads do not; `.env.example` is allowed.
 
