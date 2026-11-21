@@ -1379,20 +1379,26 @@ const make = Effect.gen(function* () {
     reportLiveTabs();
     // A desktop page navigates on its own and can finish loading before these listeners attach.
     if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
+    const { navStatus } = snapshot;
     // Existing desktop and popup PDFs can start loading before interception attaches.
+    // A page the desktop loaded and then let go would otherwise come back blank here.
     if (
-      snapshot.navStatus._tag === "Loading" &&
-      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
+      (navStatus._tag === "Loading" && ((!adopted && !desktop) || isPdfAssetUrl(navStatus.url))) ||
+      (navStatus._tag === "Success" && !adopted && !desktop)
     ) {
       tab.loading = true;
-      const initialUrl = URL.parse(snapshot.navStatus.url);
+      const initialUrl = URL.parse(navStatus.url);
       if (initialUrl) initialUrl.hash = "";
       tab.pendingInitialRequestUrl = initialUrl?.href ?? null;
-      const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
+      const options = {
+        // A reloaded page stands in for one that had loaded, so actions wait until it has too.
+        waitUntil: navStatus._tag === "Success" ? "load" : "commit",
+        timeout: NAVIGATION_TIMEOUT_MS,
+      } as const;
       tab.initialNavigation = (
-        (desktop || adopted) && page.url() === snapshot.navStatus.url
+        (desktop || adopted) && page.url() === navStatus.url
           ? page.reload(options)
-          : page.goto(snapshot.navStatus.url, options)
+          : page.goto(navStatus.url, options)
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });
@@ -2518,6 +2524,8 @@ const make = Effect.gen(function* () {
         message: "No server preview tab is open for this thread. Call preview_open first.",
       });
     }
+    // Reads skip the control queue, so a recovered tab must finish reloading its page first.
+    await tab.initialNavigation?.catch(constVoid);
     if (!READ_OPERATIONS.has(request.operation) && !tab.control.agentMayAct(request.agentSessionId))
       throw new BrowserControlInterrupted({
         message:
@@ -2544,13 +2552,21 @@ const make = Effect.gen(function* () {
   ): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
-      case "status":
-        return statusWithTitle(
+      case "status": {
+        const tab =
           request.tabId === undefined
             ? latestThreadTab(request.threadId, request.agentSessionId)
-            : tabs.get(tabKey(request.threadId, request.tabId)),
-          request.agentSessionId,
-        );
+            : ((await runPromise(
+                findTab(request.threadId, request.tabId).pipe(
+                  Effect.catchTags({
+                    ServerBrowserTabNotFoundError: () => Effect.void,
+                  }),
+                ),
+              )) ?? undefined);
+        // A recovered tab reports its page, not the blank one its reload starts from.
+        await tab?.initialNavigation?.catch(constVoid);
+        return statusWithTitle(tab, request.agentSessionId);
+      }
       case "open": {
         if (!request.agentSessionId)
           throw new BrowserControlInterrupted({
