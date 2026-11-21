@@ -33,10 +33,10 @@ Device video streams through the environment server (works over LAN, Tailscale, 
 
 ## SSH device hosts
 
-Use simulators/emulators on another macOS or Linux machine (e.g., a Mac build host from Linux/Windows):
+Use devices on another macOS, Linux, or Windows machine. The host needs a POSIX-compatible `sh`, Node.js 22.12 or newer, and a compatible npm version on the PATH used by non-interactive SSH sessions. On Windows, add Git for Windows' `bin` directory (for example `C:\Program Files\Git\bin`) to that PATH. The Windows SSH account also needs permission to create symbolic links for device-tool installation and runtime locks. Enable Developer Mode or grant the account the symbolic-link creation privilege.
 
 1. Open **Settings → Devices → Add source → Machine over SSH** and enter an SSH alias or `user@host` (uses the environment server's SSH config/keys; no password prompts).
-2. Run **Test connection** to verify SSH, Node.js 22.12+, npm, and SDK tools (Android on SSH hosts requires full SDK tools + `ffmpeg` for emulators).
+2. Run **Test connection** to verify the SSH host and SDK tools. Android on SSH hosts requires the full SDK tools. Emulators also need `ffmpeg` for video.
 3. First listing installs pinned device helpers on the SSH host.
 
 > Note: Remote simulators cannot reach `localhost` dev servers (like Metro) on your main host without port forwarding or a reachable network address.
