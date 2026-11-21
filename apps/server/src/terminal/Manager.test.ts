@@ -51,6 +51,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as TerminalManager from "./Manager.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { makePrepareTerminalLaunch } from "../workspace/restoreMissingWorktree.ts";
+import { layerNoTaskFolders } from "../orchestration-v2/ProviderTurnStartService.testkit.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
@@ -533,6 +534,7 @@ it.layer(
               Layer.mock(ProjectService.ProjectService)({
                 getById: () => Effect.succeedSome({ workspaceRoot: baseDir } as never),
               }),
+              layerNoTaskFolders,
               Layer.mock(GitWorkflowService.GitWorkflowService)({
                 pruneWorktrees: () => Effect.void,
                 listLocalBranchNames: () => Effect.succeed(["feature"]),
@@ -1600,7 +1602,7 @@ it.layer(
     }),
   );
 
-  it.effect("strips replayable CSI and DCS traffic while preserving setters", () =>
+  it.effect("strips replayable CSI, DCS and OSC traffic while preserving setters", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
@@ -1616,7 +1618,13 @@ it.layer(
       // BEL is DCS payload, not a terminator: only ST ends the string.
       process.emitData("\u001bP$qm\u0007hidden\u001b\\\u001bP+q544e\u0007hidden\u001b\\");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      // Ghostty sets a colour beside a query, skips an LF, an empty field and a last index with no
+      // colour in an OSC, and runs an OSC that CAN ends or that the next ESC cuts short.
+      process.emitData("\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b]\n4;1;?;;2;?;3\u0018\u001b]4;3;?");
       process.emitData("\u001b]0;x\u001b\u001b[?2026$p");
+      // A long setter split across chunks is kept whole.
+      process.emitData(`\u001b[${"0".repeat(5000)}`);
+      process.emitData("31mX");
       process.emitData("done\n");
 
       yield* manager.close({ threadId: "thread-1" });
@@ -1624,7 +1632,9 @@ it.layer(
       const reopened = yield* manager.open(openInput());
       expect(
         reopened.history.startsWith(
-          'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u\u001b]0;x\u001bdone\n',
+          'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u' +
+            "\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b\\\u001b]4;3;?\u001b]0;x\u001b" +
+            `\u001b[${"0".repeat(5000)}31mXdone\n`,
         ),
       ).toBe(true);
     }),
