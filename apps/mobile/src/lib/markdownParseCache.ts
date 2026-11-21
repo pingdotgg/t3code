@@ -11,8 +11,23 @@ const linkUrlsCache = new Map<string, readonly string[]>();
 export const EMPTY_FILE_HREFS: ReadonlySet<string> = new Set<string>();
 export const EMPTY_LINK_URLS: readonly string[] = [];
 
-const LINK_CANDIDATE_RE =
-  /(?:\]\(|\]\[|\]:|https?:\/\/|www\.|mailto:|t3-|<[a-z][a-z0-9+.-]*:|[^\s@]+@[^\s@]+)/i;
+const LINK_CANDIDATE_RE = /(?:\]\(|\]\[|\]:|https?:\/\/|www\.|mailto:|t3-|<[a-z][a-z0-9+.-]*:)/i;
+
+function hasEmailCandidate(markdown: string): boolean {
+  let at = markdown.indexOf("@");
+  while (at !== -1) {
+    if (
+      at > 0 &&
+      at + 1 < markdown.length &&
+      !/[\s@]/.test(markdown[at - 1]!) &&
+      !/[\s@]/.test(markdown[at + 1]!)
+    ) {
+      return true;
+    }
+    at = markdown.indexOf("@", at + 1);
+  }
+  return false;
+}
 
 interface MdastNodeLike {
   readonly type: string;
@@ -66,7 +81,10 @@ export function getCachedMarkdownLinkUrls(
   markdown: string,
   parse: (input: string) => Root,
 ): readonly string[] {
-  if (markdown.length === 0 || !LINK_CANDIDATE_RE.test(markdown)) {
+  if (
+    markdown.length === 0 ||
+    (!LINK_CANDIDATE_RE.test(markdown) && !hasEmailCandidate(markdown))
+  ) {
     return EMPTY_LINK_URLS;
   }
   const cacheable = markdown.length <= MAX_CACHEABLE_LENGTH;

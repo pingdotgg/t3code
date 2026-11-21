@@ -66,5 +66,11 @@ describe("markdownParseCache", () => {
     const urls = getCachedMarkdownLinkUrls("Contact contact@example.com", parseMarkdownAst);
     expect(urls).toEqual(["mailto:contact@example.com"]);
     expect(getCachedMarkdownLinkUrls("Contact contact@example.com", parseMarkdownAst)).toBe(urls);
+    expect(
+      getCachedMarkdownLinkUrls("Ping @alice or contact@example.com", parseMarkdownAst),
+    ).toEqual(["mailto:contact@example.com"]);
+    const parse = vi.fn((): Root => ({ type: "root", children: [] }));
+    expect(getCachedMarkdownLinkUrls("a".repeat(20_000), parse)).toBe(EMPTY_LINK_URLS);
+    expect(parse).not.toHaveBeenCalled();
   });
 });
