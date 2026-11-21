@@ -13,6 +13,7 @@ import type {
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import {
@@ -29,6 +30,8 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+
+import { useStableCallback } from "../../hooks/useStableCallback";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -132,6 +135,7 @@ export function BotsPage() {
       : (primaryEnvironmentId ?? environments[0]?.environmentId ?? null);
   const navigate = useNavigate();
   const gt = useGT();
+  const canOperate = useAtomValue(botsCreateCommand.permissionAtom(environmentId));
 
   const listBots = useAtomCommand(botsListCommand, { reportFailure: true });
   const createBot = useAtomCommand(botsCreateCommand, { reportFailure: true });
@@ -271,16 +275,13 @@ export function BotsPage() {
     }
   };
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches initial bots and groups when primary environment connects
-  useEffect(() => {
-    if (!environmentId) return;
-    let cancelled = false;
-    void (async () => {
+  const loadEnvironmentData = useStableCallback(
+    async (envId: EnvironmentId, isCancelled: () => boolean) => {
       const [botsExit, groupsExit] = await Promise.all([
-        listBots({ environmentId, input: undefined }),
-        listGroups({ environmentId, input: undefined }),
+        listBots({ environmentId: envId, input: undefined }),
+        listGroups({ environmentId: envId, input: undefined }),
       ]);
-      if (cancelled) return;
+      if (isCancelled()) return;
       setLoadedInitial(true);
       if (botsExit._tag === "Success") {
         setBots(botsExit.value.bots);
@@ -288,12 +289,12 @@ export function BotsPage() {
         if (first) {
           setSelection((prev) => prev ?? { kind: "bot", botId: first.id });
           const [filesExit, routinesExit, itemsExit, soulExit] = await Promise.all([
-            listFiles({ environmentId, input: { botId: first.id } }),
-            listRoutines({ environmentId, input: { botId: first.id } }),
-            listItems({ environmentId, input: { botId: first.id } }),
-            readFile({ environmentId, input: { botId: first.id, relativePath: "SOUL.md" } }),
+            listFiles({ environmentId: envId, input: { botId: first.id } }),
+            listRoutines({ environmentId: envId, input: { botId: first.id } }),
+            listItems({ environmentId: envId, input: { botId: first.id } }),
+            readFile({ environmentId: envId, input: { botId: first.id, relativePath: "SOUL.md" } }),
           ]);
-          if (cancelled) return;
+          if (isCancelled()) return;
           setSettingsName(first.name);
           setSettingsAvatar(first.avatar ?? "");
           setSettingsColor(first.avatarColor);
@@ -313,11 +314,18 @@ export function BotsPage() {
       if (groupsExit._tag === "Success") {
         setGroups(groupsExit.value.groups);
       }
-    })();
+    },
+  );
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches initial bots and groups once per selected environment
+  useEffect(() => {
+    if (!environmentId) return;
+    let cancelled = false;
+    void loadEnvironmentData(environmentId, () => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [environmentId, listBots, listGroups, listFiles, listRoutines, listItems, readFile]);
+  }, [environmentId, loadEnvironmentData]);
 
   const selectedBot =
     selection?.kind === "bot" ? (bots.find((b) => b.id === selection.botId) ?? null) : null;
@@ -680,6 +688,7 @@ export function BotsPage() {
             <Button
               size="icon-sm"
               variant="ghost"
+              disabled={!canOperate}
               aria-label={gt("Import bot folder")}
               onClick={() => setSelection({ kind: "import-bot" })}
             >
@@ -688,6 +697,7 @@ export function BotsPage() {
             <Button
               size="icon-sm"
               variant="secondary"
+              disabled={!canOperate}
               aria-label={gt("New bot")}
               onClick={() => setSelection({ kind: "create-bot" })}
             >
@@ -770,6 +780,7 @@ export function BotsPage() {
             <Button
               size="icon-sm"
               variant="ghost"
+              disabled={!canOperate}
               aria-label={gt("New group chat")}
               onClick={() => setSelection({ kind: "create-group" })}
             >
@@ -865,7 +876,7 @@ export function BotsPage() {
                 </div>
               </div>
               <div className="flex gap-2 pt-2">
-                <Button onClick={() => void handleCreateBot()}>
+                <Button disabled={!canOperate} onClick={() => void handleCreateBot()}>
                   <T>Create Bot</T>
                 </Button>
                 <Button variant="ghost" onClick={() => setSelection(null)}>
@@ -904,7 +915,7 @@ export function BotsPage() {
                 />
               </div>
               <div className="flex gap-2 pt-2">
-                <Button onClick={() => void handleImportBot()}>
+                <Button disabled={!canOperate} onClick={() => void handleImportBot()}>
                   <T>Import Bot</T>
                 </Button>
                 <Button variant="ghost" onClick={() => setSelection(null)}>
@@ -955,7 +966,7 @@ export function BotsPage() {
                 </div>
               </div>
               <div className="flex gap-2 pt-2">
-                <Button onClick={() => void handleCreateGroup()}>
+                <Button disabled={!canOperate} onClick={() => void handleCreateGroup()}>
                   <T>Create Group</T>
                 </Button>
                 <Button variant="ghost" onClick={() => setSelection(null)}>
@@ -990,6 +1001,7 @@ export function BotsPage() {
                 <Button
                   size="sm"
                   variant="outline"
+                  disabled={!canOperate}
                   onClick={() => void handleTogglePaused(selectedBot)}
                 >
                   {selectedBot.paused ? (
@@ -1004,7 +1016,11 @@ export function BotsPage() {
                     </>
                   )}
                 </Button>
-                <Button size="sm" onClick={() => void handleOpenChat(selectedBot)}>
+                <Button
+                  size="sm"
+                  disabled={!canOperate}
+                  onClick={() => void handleOpenChat(selectedBot)}
+                >
                   <MessageSquareIcon className="size-3.5" />
                   <T>Open Chat</T>
                 </Button>
@@ -1056,7 +1072,7 @@ export function BotsPage() {
                       value={handoffPrompt}
                       onChange={(e) => setHandoffPrompt(e.target.value)}
                     />
-                    <Button onClick={() => void handleHandoff(selectedBot)}>
+                    <Button disabled={!canOperate} onClick={() => void handleHandoff(selectedBot)}>
                       <SendIcon className="size-3.5" />
                       <T>Send Handoff</T>
                     </Button>
@@ -1089,6 +1105,7 @@ export function BotsPage() {
                             <Button
                               size="sm"
                               variant="outline"
+                              disabled={!canOperate}
                               onClick={() => void handleRunRoutineNow(selectedBot, routine)}
                             >
                               <T>Run Now</T>
@@ -1096,6 +1113,7 @@ export function BotsPage() {
                             <Button
                               size="sm"
                               variant="ghost"
+                              disabled={!canOperate}
                               onClick={() => void handleToggleRoutine(selectedBot, routine)}
                             >
                               {routine.enabled ? gt("Pause") : gt("Enable")}
@@ -1104,6 +1122,7 @@ export function BotsPage() {
                               <Button
                                 size="icon-sm"
                                 variant="ghost"
+                                disabled={!canOperate}
                                 aria-label={gt("Delete routine")}
                                 onClick={() => void handleDeleteRoutine(selectedBot, routine)}
                               >
@@ -1187,7 +1206,10 @@ export function BotsPage() {
                       value={routinePrecheck}
                       onChange={(e) => setRoutinePrecheck(e.target.value)}
                     />
-                    <Button onClick={() => void handleAddRoutine(selectedBot)}>
+                    <Button
+                      disabled={!canOperate}
+                      onClick={() => void handleAddRoutine(selectedBot)}
+                    >
                       <PlusIcon className="size-3.5" />
                       <T>Add Routine</T>
                     </Button>
@@ -1237,6 +1259,7 @@ export function BotsPage() {
                         <div className="flex items-center gap-2">
                           <select
                             className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                            disabled={!canOperate}
                             value={item.status}
                             onChange={(e) =>
                               void handleUpdateItemStatus(
@@ -1255,6 +1278,7 @@ export function BotsPage() {
                           <Button
                             size="icon-sm"
                             variant="ghost"
+                            disabled={!canOperate}
                             aria-label={gt("Delete item")}
                             onClick={() => void handleDeleteItem(selectedBot, item)}
                           >
@@ -1280,7 +1304,11 @@ export function BotsPage() {
                       value={newItemSummary}
                       onChange={(e) => setNewItemSummary(e.target.value)}
                     />
-                    <Button size="sm" onClick={() => void handleCreateItem(selectedBot)}>
+                    <Button
+                      size="sm"
+                      disabled={!canOperate}
+                      onClick={() => void handleCreateItem(selectedBot)}
+                    >
                       <T>Add Item</T>
                     </Button>
                   </div>
@@ -1316,6 +1344,7 @@ export function BotsPage() {
                       <Button
                         size="sm"
                         variant="outline"
+                        disabled={!canOperate}
                         onClick={() => void handleCreateNewFile(selectedBot)}
                       >
                         <T>Add</T>
@@ -1327,7 +1356,7 @@ export function BotsPage() {
                       <span className="font-mono text-xs font-medium">{selectedFilePath}</span>
                       <Button
                         size="sm"
-                        disabled={savingFile}
+                        disabled={savingFile || !canOperate}
                         onClick={() => void handleSaveFile(selectedBot)}
                       >
                         <SaveIcon className="size-3.5" />
@@ -1424,11 +1453,15 @@ export function BotsPage() {
                     </select>
                   </div>
                   <div className="flex items-center justify-between pt-3">
-                    <Button onClick={() => void handleSaveSettings(selectedBot)}>
+                    <Button
+                      disabled={!canOperate}
+                      onClick={() => void handleSaveSettings(selectedBot)}
+                    >
                       <T>Save Settings</T>
                     </Button>
                     <Button
                       variant="destructive"
+                      disabled={!canOperate}
                       onClick={() => void handleDeleteBot(selectedBot, false)}
                     >
                       <T>Delete Bot</T>
@@ -1457,6 +1490,7 @@ export function BotsPage() {
               <Button
                 size="sm"
                 variant="destructive"
+                disabled={!canOperate}
                 onClick={() => void handleDeleteGroup(selectedGroup)}
               >
                 <T>Delete Group</T>
@@ -1504,7 +1538,10 @@ export function BotsPage() {
                   }
                 }}
               />
-              <Button onClick={() => void handleSendGroupMessage(selectedGroup)}>
+              <Button
+                disabled={!canOperate}
+                onClick={() => void handleSendGroupMessage(selectedGroup)}
+              >
                 <SendIcon className="size-3.5" />
                 <T>Send</T>
               </Button>
@@ -1523,11 +1560,15 @@ export function BotsPage() {
               </T>
             </p>
             <div className="flex gap-2">
-              <Button onClick={() => setSelection({ kind: "create-bot" })}>
+              <Button disabled={!canOperate} onClick={() => setSelection({ kind: "create-bot" })}>
                 <PlusIcon className="size-3.5" />
                 <T>Create Bot</T>
               </Button>
-              <Button variant="outline" onClick={() => setSelection({ kind: "import-bot" })}>
+              <Button
+                variant="outline"
+                disabled={!canOperate}
+                onClick={() => setSelection({ kind: "import-bot" })}
+              >
                 <FolderInputIcon className="size-3.5" />
                 <T>Import Bot</T>
               </Button>

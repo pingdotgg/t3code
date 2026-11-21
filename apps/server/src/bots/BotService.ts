@@ -55,6 +55,8 @@ import {
   type BotsWriteFileInput,
   type BotsWriteFileResult,
   type ModelSelection,
+  type ProviderInteractionMode,
+  type RuntimeMode,
   type ScheduledTaskSchedule,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -77,6 +79,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { runtimeModeRank } from "../mcp/delegatedTaskModes.ts";
 import { nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
 import {
   allocateUniqueSlug,
@@ -120,6 +123,10 @@ export class BotService extends Context.Service<
     ) => Effect.Effect<BotsOpenChatResult, BotOperationError>;
     readonly handoff: (
       input: BotsHandoffInput,
+      callerLimits?: {
+        readonly runtimeMode: RuntimeMode;
+        readonly interactionMode: ProviderInteractionMode;
+      },
     ) => Effect.Effect<BotsHandoffResult, BotOperationError>;
 
     readonly listFiles: (
@@ -161,6 +168,10 @@ export class BotService extends Context.Service<
     ) => Effect.Effect<BotsListGroupMessagesResult, BotOperationError>;
     readonly sendGroupMessage: (
       input: BotsSendGroupMessageInput,
+      callerLimits?: {
+        readonly runtimeMode: RuntimeMode;
+        readonly interactionMode: ProviderInteractionMode;
+      },
     ) => Effect.Effect<BotsSendGroupMessageResult, BotOperationError>;
 
     readonly listItems: (
@@ -454,6 +465,21 @@ const make = Effect.gen(function* () {
     ) {
       yield* syncTidyUpRoutine(updated);
     }
+    if (updated.paused !== existing.paused) {
+      const routines = yield* repo.listRoutinesByBot(updated.id);
+      for (const routine of routines) {
+        if (routine.isTidyUp) continue;
+        const nextRunAt = yield* computeNextRunIso(
+          routine.schedule,
+          routine.enabled && !updated.paused,
+        );
+        yield* repo.upsertRoutine({
+          ...routine,
+          nextRunAt,
+          updatedAt: timestamp,
+        });
+      }
+    }
     return updated;
   });
 
@@ -473,8 +499,21 @@ const make = Effect.gen(function* () {
     readonly bot: Bot;
     readonly title: string;
     readonly prompt?: string | undefined;
+    readonly callerLimits?:
+      | {
+          readonly runtimeMode: RuntimeMode;
+          readonly interactionMode: ProviderInteractionMode;
+        }
+      | undefined;
   }) {
     const modelSelection = yield* resolveModelSelectionForBot(input.bot);
+    const effectiveRuntimeMode =
+      input.callerLimits === undefined
+        ? input.bot.runtimeMode
+        : runtimeModeRank(input.bot.runtimeMode) <= runtimeModeRank(input.callerLimits.runtimeMode)
+          ? input.bot.runtimeMode
+          : input.callerLimits.runtimeMode;
+    const effectiveInteractionMode = input.callerLimits?.interactionMode ?? "default";
     const cmdUuid = yield* randomUuidV4;
     const msgUuid = yield* randomUuidV4;
     const result = yield* threadLaunch
@@ -483,8 +522,8 @@ const make = Effect.gen(function* () {
         projectId: input.bot.projectId,
         title: input.title,
         modelSelection,
-        runtimeMode: input.bot.runtimeMode,
-        interactionMode: "default",
+        runtimeMode: effectiveRuntimeMode,
+        interactionMode: effectiveInteractionMode,
         workspaceStrategy: { type: "root" },
         ...(input.prompt === undefined
           ? {}
@@ -566,7 +605,13 @@ const make = Effect.gen(function* () {
     return { bot: updated, threadId, projectId: updated.projectId };
   });
 
-  const handoff = Effect.fn("BotService.handoff")(function* (input: BotsHandoffInput) {
+  const handoff = Effect.fn("BotService.handoff")(function* (
+    input: BotsHandoffInput,
+    callerLimits?: {
+      readonly runtimeMode: RuntimeMode;
+      readonly interactionMode: ProviderInteractionMode;
+    },
+  ) {
     const targetBot = yield* requireBot(input.targetBotId);
     if (targetBot.paused) {
       return yield* new BotOperationError({
@@ -581,8 +626,15 @@ const make = Effect.gen(function* () {
       : "[Handoff]";
     const fullPrompt = `${header}\nTitle: ${input.title}\n\n${input.prompt}`;
 
+    const canReusePrimary =
+      input.usePrimaryChat &&
+      targetBot.chatThreadId !== null &&
+      (callerLimits === undefined ||
+        (runtimeModeRank(targetBot.runtimeMode) <= runtimeModeRank(callerLimits.runtimeMode) &&
+          callerLimits.interactionMode === "default"));
+
     let threadId: ThreadId;
-    if (input.usePrimaryChat && targetBot.chatThreadId !== null) {
+    if (canReusePrimary) {
       const opened = yield* openChat({ botId: targetBot.id, initialPrompt: fullPrompt });
       threadId = opened.threadId;
     } else {
@@ -590,6 +642,7 @@ const make = Effect.gen(function* () {
         bot: targetBot,
         title: input.title,
         prompt: fullPrompt,
+        callerLimits,
       });
     }
 
@@ -906,6 +959,10 @@ const make = Effect.gen(function* () {
 
   const sendGroupMessage = Effect.fn("BotService.sendGroupMessage")(function* (
     input: BotsSendGroupMessageInput,
+    callerLimits?: {
+      readonly runtimeMode: RuntimeMode;
+      readonly interactionMode: ProviderInteractionMode;
+    },
   ) {
     const groupOption = yield* repo.getGroup(input.groupId);
     if (Option.isNone(groupOption)) {
@@ -968,6 +1025,7 @@ const make = Effect.gen(function* () {
         bot: target,
         title: `[Group: ${group.name}] ${input.body.slice(0, 60)}`,
         prompt,
+        callerLimits,
       }).pipe(Effect.result);
 
       if (Result.isSuccess(launched)) {

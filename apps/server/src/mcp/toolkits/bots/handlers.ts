@@ -21,19 +21,27 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
       return yield* bots.get({ botId }).pipe(Effect.mapError(mapBotError));
     }),
   ),
-  bot_handoff: McpToolAccess.reads((input) =>
-    Effect.gen(function* () {
-      const bots = yield* BotService.BotService;
-      return yield* bots.handoff(input).pipe(Effect.mapError(mapBotError));
-    }),
+  bot_handoff: McpToolAccess.startsThreads(
+    () => ({}),
+    (input, modes) =>
+      Effect.gen(function* () {
+        const bots = yield* BotService.BotService;
+        return yield* bots
+          .handoff(input, {
+            runtimeMode: modes.runtimeMode,
+            interactionMode: modes.interactionMode,
+          })
+          .pipe(Effect.mapError(mapBotError));
+      }),
+    { refused: "bot handoffs run only on the local environment" },
   ),
-  bot_item_create: McpToolAccess.reads((input) =>
+  bot_item_create: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const bots = yield* BotService.BotService;
       return yield* bots.createItem(input).pipe(Effect.mapError(mapBotError));
     }),
   ),
-  bot_item_update: McpToolAccess.reads((input) =>
+  bot_item_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const bots = yield* BotService.BotService;
       return yield* bots.updateItem(input).pipe(Effect.mapError(mapBotError));
@@ -45,10 +53,18 @@ export const layer = McpToolAccess.toLayer(BotsToolkit, {
       return yield* bots.listGroups().pipe(Effect.mapError(mapBotError));
     }),
   ),
-  bot_group_send: McpToolAccess.reads((input) =>
-    Effect.gen(function* () {
-      const bots = yield* BotService.BotService;
-      return yield* bots.sendGroupMessage(input).pipe(Effect.mapError(mapBotError));
-    }),
+  bot_group_send: McpToolAccess.startsThreads(
+    () => ({}),
+    (input, modes) =>
+      Effect.gen(function* () {
+        const bots = yield* BotService.BotService;
+        return yield* bots
+          .sendGroupMessage(input, {
+            runtimeMode: modes.runtimeMode,
+            interactionMode: modes.interactionMode,
+          })
+          .pipe(Effect.mapError(mapBotError));
+      }),
+    { refused: "bot group messages run only on the local environment" },
   ),
 });

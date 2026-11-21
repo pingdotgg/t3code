@@ -37,6 +37,7 @@ interface LaunchedCall {
   readonly title: string;
   readonly prompt: string | undefined;
   readonly modelSelection: ModelSelection;
+  readonly runtimeMode: string;
 }
 
 interface SentMessageCall {
@@ -72,6 +73,7 @@ function makeTestHarness() {
           title: input.title,
           prompt: input.initialMessage?.text,
           modelSelection: input.modelSelection,
+          runtimeMode: input.runtimeMode,
         });
         return {
           threadId: decodeThreadId(`thread-${threadCounter}`),
@@ -319,6 +321,52 @@ describe("BotService", () => {
       const leadItems = yield* bots.listItems({ botId: lead.id, status: "stale" });
       expect(leadItems.items).toHaveLength(1);
       expect(leadItems.items[0]?.id).toBe(staleCandidate.id);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("reschedules ordinary routines on resume and enforces caller mode ceilings", () => {
+    const harness = makeTestHarness();
+    return Effect.gen(function* () {
+      const bots = yield* BotService.BotService;
+      const fullAccessBot = yield* bots.create({
+        name: "Release Bot",
+        runtimeMode: "full-access",
+      });
+
+      yield* bots.update({ botId: fullAccessBot.id, paused: true });
+      const createdWhilePaused = yield* bots.upsertRoutine({
+        botId: fullAccessBot.id,
+        title: "Check nightly builds",
+        prompt: "Inspect failed builds.",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 300_000 },
+      });
+      expect(createdWhilePaused.nextRunAt).toBeNull();
+
+      yield* bots.update({ botId: fullAccessBot.id, paused: false });
+      const afterResume = yield* bots.listRoutines({ botId: fullAccessBot.id });
+      const ordinary = afterResume.routines.find((r) => r.id === createdWhilePaused.id);
+      expect(ordinary?.nextRunAt).not.toBeNull();
+
+      yield* bots.handoff(
+        {
+          targetBotId: fullAccessBot.id,
+          title: "Restricted handoff",
+          prompt: "Inspect diff only.",
+        },
+        { runtimeMode: "approval-required", interactionMode: "plan" },
+      );
+      expect(harness.launched.at(-1)?.runtimeMode).toBe("approval-required");
+
+      const group = yield* bots.createGroup({
+        name: "Security",
+        memberBotIds: [fullAccessBot.id],
+      });
+      yield* bots.sendGroupMessage(
+        { groupId: group.id, body: "@release-bot check status" },
+        { runtimeMode: "auto-accept-edits", interactionMode: "default" },
+      );
+      expect(harness.launched.at(-1)?.runtimeMode).toBe("auto-accept-edits");
     }).pipe(Effect.provide(harness.layer));
   });
 });
