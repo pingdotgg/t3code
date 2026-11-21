@@ -1727,6 +1727,100 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("lists a running monitor as pending background work and stops it with the thread", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      const monitor = {
+        itemId: "monitor-1",
+        kind: "toolCall",
+        status: "completed",
+        turnId: turn.nativeId,
+        tool: "monitor",
+        background: true,
+      };
+      yield* fake.emit("item/completed", {
+        turnId: turn.nativeId,
+        item: { ...monitor, revision: 1 },
+      });
+      const listed = yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) =>
+          event.providerThread.pendingBackgroundTasks?.some(
+            (task) => task.taskId === "monitor-1",
+          ) === true,
+      );
+      assert.deepEqual(listed.providerThread.pendingBackgroundTasks, [
+        { taskId: "monitor-1", kind: "monitor", description: "monitor", awaited: true },
+      ]);
+
+      // The turn ends while Muse keeps watching; the listing keeps the thread waiting.
+      fake.queueResponse("task/list", {
+        tasks: [
+          { taskId: "monitor-1", kind: "tool.monitor", status: "inProgress", tool: "monitor" },
+        ],
+      });
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+
+      const stopped = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.strictEqual(stopped._tag, "Success");
+      assert.strictEqual((yield* fake.takeCall("task/stopAll")).method, "task/stopAll");
+      yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) === 0,
+      );
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("lists a backgrounded tool call as a command and a monitor found on attach", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      yield* fake.emit("item/updated", {
+        turnId: turn.nativeId,
+        item: {
+          itemId: "shell-1",
+          kind: "toolCall",
+          revision: 2,
+          status: "completed",
+          turnId: turn.nativeId,
+          tool: "shell",
+          background: true,
+        },
+      });
+      const listed = yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) =>
+          event.providerThread.pendingBackgroundTasks?.some((task) => task.taskId === "shell-1") ===
+          true,
+      );
+      assert.deepEqual(listed.providerThread.pendingBackgroundTasks, [
+        { taskId: "shell-1", kind: "command", description: "shell" },
+      ]);
+
+      // A monitor started before this client attached comes from `task/list` alone.
+      const resumed = yield* makeFakeMuse("resumed");
+      resumed.queueResponse("task/list", {
+        tasks: [{ taskId: "monitor-2", kind: "tool.monitor", status: "inProgress" }],
+      });
+      const attached = yield* makeHarness(resumed);
+      assert.deepEqual(attached.providerThread.pendingBackgroundTasks, [
+        { taskId: "monitor-2", kind: "monitor", description: "monitor", awaited: true },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("ends a compaction whose item names the held wake as its run", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
