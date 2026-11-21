@@ -4081,7 +4081,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("finishes a pushed commit when the final status read fails", () =>
+  it.effect("finishes a pushed commit when the index is locked after the push", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -4117,7 +4117,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const result = yield* Fiber.join(action);
 
       expect(result.push.status).toBe("pushed");
-      expect(result.toast.cta).toEqual({ kind: "none" });
+      // The toast reads only branch facts, so the lock does not hide the next step.
+      expect(result.toast.cta).toEqual({
+        kind: "run_action",
+        label: "Create PR",
+        action: { kind: "create_pr" },
+      });
       expect(events.at(-1)?.kind).toBe("action_finished");
       expect(
         (yield* runGit(remoteDir, [
