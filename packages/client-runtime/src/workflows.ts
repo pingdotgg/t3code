@@ -3,6 +3,7 @@ import type { MFunctionType } from "gt-i18n/types";
 import type {
   WorkflowQuestion,
   WorkflowRun,
+  WorkflowRunsSnapshot,
   WorkflowStep,
   WorkflowSummary,
 } from "@t3tools/contracts";
@@ -34,6 +35,18 @@ export function readWorkflowQuestion(question: WorkflowQuestion): WorkflowQuesti
       : [],
     body: typeof body === "string" && body.trim() !== "" ? body : null,
   };
+}
+
+/**
+ * What a run's detail is read again on, out of the live list: the run's last change once it has
+ * ended. Steps do not move a run's `updatedAt`, so one under way is read again on any change.
+ */
+export function workflowRunRefreshKey(
+  snapshot: WorkflowRunsSnapshot | undefined,
+  runId: string,
+): unknown {
+  const run = snapshot?.runs.find((candidate) => candidate.runId === runId);
+  return run === undefined || run.endedAt === null ? snapshot : run.updatedAt;
 }
 
 export interface WorkflowRunNode {

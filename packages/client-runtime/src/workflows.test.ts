@@ -17,6 +17,7 @@ import {
   workflowResultLines,
   workflowRunLists,
   workflowRunNow,
+  workflowRunRefreshKey,
   workflowRunState,
   workflowSaidStart,
   workflowTriggerLine,
@@ -224,6 +225,17 @@ describe("the list of runs", () => {
     expect(workflowChip("nightly-report").letters).toBe("NR");
     expect(workflowChip("issue").letters).toBe("IS");
     expect(workflowChip("issue")).toEqual(workflowChip("issue"));
+  });
+});
+
+describe("workflowRunRefreshKey", () => {
+  it("reads an ended run again only when it changes, and one under way on any change", () => {
+    const snapshot = (runs: ReadonlyArray<WorkflowRun>) => ({ workflows: [], runs, questions: [] });
+    const ended = run("old", { endedAt: at(5), updatedAt: at(5) });
+    const before = snapshot([ended, run("busy", { updatedAt: at(6) })]);
+    const after = snapshot([ended, run("busy", { updatedAt: at(7) })]);
+    expect(workflowRunRefreshKey(before, "old")).toBe(workflowRunRefreshKey(after, "old"));
+    expect(workflowRunRefreshKey(before, "busy")).not.toBe(workflowRunRefreshKey(after, "busy"));
   });
 });
 

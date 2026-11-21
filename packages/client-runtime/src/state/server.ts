@@ -53,6 +53,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
+import { workflowRunRefreshKey } from "../workflows.ts";
 import {
   currentSession,
   isRpcClientError,
@@ -1465,6 +1466,10 @@ export function createServerEnvironmentAtoms<R, E>(
     label: "environment-data:server:workflows:live",
     tag: WS_METHODS.workflowsSubscribe,
   });
+  const liveWorkflowSnapshot = (environmentId: EnvironmentId) => {
+    const live = workflowsLive({ environmentId, input: {} });
+    return (get: Atom.AtomContext) => Option.getOrUndefined(AsyncResult.value(get(live)));
+  };
   const welcome = (target: {
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -1616,17 +1621,23 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:workflows:counts",
       tag: WS_METHODS.workflowsCounts,
     }),
-    // Steps are not in the live list, so a run's detail is read again whenever that list changes.
     workflowRun: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:workflows:run",
       tag: WS_METHODS.workflowsGet,
-      refreshTrigger: ({ environmentId }) => workflowsLive({ environmentId, input: {} }),
+      refreshTrigger: ({ environmentId, input }) => {
+        const snapshot = liveWorkflowSnapshot(environmentId);
+        return Atom.make((get) => workflowRunRefreshKey(snapshot(get), input.runId));
+      },
+      isFinal: (detail) => detail.run.endedAt !== null,
     }),
-    // Read again whenever the server loads the file or finds it wrong, which the live list says.
+    // Read again whenever the server loads the files or finds them wrong, which `revision` says.
     workflowDefinition: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:workflows:definition",
       tag: WS_METHODS.workflowsGetDefinition,
-      refreshTrigger: ({ environmentId }) => workflowsLive({ environmentId, input: {} }),
+      refreshTrigger: ({ environmentId }) => {
+        const snapshot = liveWorkflowSnapshot(environmentId);
+        return Atom.make((get) => snapshot(get)?.definition?.revision);
+      },
     }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
