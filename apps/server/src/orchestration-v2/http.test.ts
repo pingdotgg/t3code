@@ -7,6 +7,7 @@ import {
   EnvironmentId,
   EventId,
   ORCHESTRATION_PROTOCOL_HEADER,
+  ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   OrchestrationV2AppThread,
   OrchestrationV2Run,
@@ -185,6 +186,16 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
   Effect.gen(function* () {
     let allowed = true;
     const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => allowed);
+    const incompatible = yield* Effect.promise(() =>
+      handler(
+        new Request(`http://localhost/api/orchestration/threads/${thread.id}/transcript`, {
+          headers: {
+            [ORCHESTRATION_PROTOCOL_HEADER]: String(ORCHESTRATION_PROTOCOL_VERSION - 1),
+          },
+        }),
+      ),
+    );
+    expect(incompatible.status).toBe(400);
     const read = (threadId: ThreadId) =>
       Effect.promise(() =>
         handler(

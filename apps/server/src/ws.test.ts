@@ -56,7 +56,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { Headers, HttpRouter, HttpServer } from "effect/http";
+import { Headers, HttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as Context from "effect/Context";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -926,13 +926,45 @@ const layerConfigSources = Layer.mergeAll(
 );
 
 it.live.each([
-  { subject: "desktop-bootstrap", extensions: "", framed: false },
-  { subject: "desktop-bootstrap", extensions: "", framed: true },
-  { subject: "one-time-token", extensions: "permessage-deflate", framed: false },
-  { subject: "cloud-connect", extensions: "permessage-deflate", framed: false },
+  {
+    subject: "desktop-bootstrap",
+    extensions: "",
+    framed: false,
+    protocol: ORCHESTRATION_PROTOCOL_VERSION,
+  },
+  {
+    subject: "desktop-bootstrap",
+    extensions: "",
+    framed: true,
+    protocol: ORCHESTRATION_PROTOCOL_VERSION,
+  },
+  {
+    subject: "one-time-token",
+    extensions: "permessage-deflate",
+    framed: false,
+    protocol: ORCHESTRATION_PROTOCOL_VERSION,
+  },
+  {
+    subject: "cloud-connect",
+    extensions: "permessage-deflate",
+    framed: false,
+    protocol: ORCHESTRATION_PROTOCOL_VERSION,
+  },
+  {
+    subject: "desktop-bootstrap",
+    extensions: "",
+    framed: false,
+    protocol: ORCHESTRATION_PROTOCOL_VERSION - 1,
+  },
+  {
+    subject: "desktop-bootstrap",
+    extensions: "",
+    framed: false,
+    protocol: ORCHESTRATION_PROTOCOL_VERSION + 1,
+  },
 ])(
-  "negotiates compression for $subject sessions (framed=$framed)",
-  ({ subject, extensions, framed }) =>
+  "negotiates protocol $protocol and compression for $subject sessions (framed=$framed)",
+  ({ subject, extensions, framed, protocol }) =>
     Effect.gen(function* () {
       const services = Layer.mergeAll(
         layerUnusedConfigRpcServices,
@@ -995,11 +1027,23 @@ it.live.each([
       );
       const server = Context.get(context, HttpServer.HttpServer);
       const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+      if (protocol !== ORCHESTRATION_PROTOCOL_VERSION) {
+        const response = yield* HttpClient.get(
+          `${origin.replace(/^ws/, "http")}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${protocol}`,
+        ).pipe(Effect.provide(FetchHttpClient.layer));
+        assert.equal(response.status, 426);
+        assert.deepEqual(yield* response.json, {
+          code: "orchestration_protocol_incompatible",
+          message: `Update this client to one that supports orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`,
+          orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+        });
+        return;
+      }
       const socket = yield* Effect.acquireRelease(
         Effect.sync(
           () =>
             new WebSocket(
-              `${origin}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${ORCHESTRATION_PROTOCOL_VERSION}${framed ? `&${SOCKET_FRAME_PARTS_QUERY_PARAM}=1` : ""}`,
+              `${origin}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${protocol}${framed ? `&${SOCKET_FRAME_PARTS_QUERY_PARAM}=1` : ""}`,
               {
                 origin: "t3code://app",
               },
