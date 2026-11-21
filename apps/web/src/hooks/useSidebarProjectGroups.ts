@@ -5,6 +5,7 @@ import {
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
+import { withoutHomeProjects } from "../components/sidebar/homeSidebar.logic";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { useEnvironmentIdentities, usePrimaryEnvironmentId } from "../state/environments";
 import { useDelegatedUnderParent, useProjects, useQuietThreadShells } from "../state/entities";
@@ -12,10 +13,10 @@ import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore"
 import { useClientSettings } from "./useSettings";
 
 export function useSidebarProjectGroups() {
-  const projects = useProjects();
   // Activity order lags a running thread's streaming ticks until its next
   // real change; reading every tick re-rendered the whole sidebar with it.
   const threads = useQuietThreadShells();
+  const projects = withoutHomeProjects(useProjects(), threads);
   const delegatedUnderParent = useDelegatedUnderParent();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const sortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);

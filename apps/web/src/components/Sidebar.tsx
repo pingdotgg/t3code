@@ -259,6 +259,8 @@ import {
 } from "./ui/combobox";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarHomeEntry } from "./sidebar/SidebarHomeEntry";
+import { withoutHomeThreads } from "./sidebar/homeSidebar.logic";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipScrollDismissArea } from "./ui/tooltip";
 import {
@@ -1128,7 +1130,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ),
           ),
         );
-  const threads = useQuietThreadShells();
+  const threads = withoutHomeThreads(useQuietThreadShells());
   const promotingDraftThreadKeys = usePromotingDraftThreadKeys();
   const listedThreads =
     promotingDraftThreadKeys.length === 0
@@ -3090,6 +3092,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         className="min-h-full"
         fixedHeader={
           <SidebarGroup className="z-[1]">
+            <SidebarHomeEntry />
             <SidebarThreadHeader
               hasProjects={projectGroups.length > 0}
               projectScope={

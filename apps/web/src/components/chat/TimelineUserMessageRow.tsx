@@ -6,6 +6,7 @@ import { T, useGT, useMessages, Var } from "gt-react";
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
+  isHomeThreadId,
   type MessageId,
   type ScheduledTaskId,
   type ServerProviderSkill,
@@ -36,6 +37,7 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   EyeIcon,
+  HouseIcon,
   type LucideIcon,
   MessagesSquareIcon,
   Redo2Icon,
@@ -500,8 +502,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const revealFoldRef = findRevealRef(() => setExpanded(true));
   const senderShell = useQuietThreadShell(folded ? senderRef : null);
   const senderTitle = senderShell?.title.trim() || row.message.linkedSender?.title.trim();
-  const senderLabel =
-    senderTitle || gt("Agent", { $context: "sender of a message from another agent" });
+  const fromHome = senderRef !== null && isHomeThreadId(senderRef.threadId);
+  const senderLabel = fromHome
+    ? gt("Home", { $context: "sender of a message from the Home agent" })
+    : senderTitle || gt("Agent", { $context: "sender of a message from another agent" });
   // Only an environment this client is connected to can open the sender's thread there.
   const linkedSenderEnvironment = useEnvironment(row.message.linkedSender?.environmentId ?? null);
   const canOpenSender =
@@ -960,9 +964,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         )}
         {folded ? (
           <FoldedMessageHeader
-            icon={MessagesSquareIcon}
+            icon={fromHome ? HouseIcon : MessagesSquareIcon}
             label={senderLabel}
-            fitLabel={!senderTitle}
+            fitLabel={fromHome || !senderTitle}
             summary={foldSummary}
             expanded={expanded}
             onToggle={() => setExpanded((value) => !value)}

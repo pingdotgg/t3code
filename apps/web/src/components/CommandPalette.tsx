@@ -72,6 +72,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  HouseIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -1798,6 +1799,18 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:home",
+    searchTerms: ["home", "coordinator", "agent", "across projects"],
+    title: gt("Open Home"),
+    icon: <HouseIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "home.open",
+    run: async () => {
+      await navigate({ to: "/home" });
+    },
+  });
 
   actionItems.push({
     kind: "action",
