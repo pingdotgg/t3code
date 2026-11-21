@@ -29,8 +29,14 @@ export async function playNativeSpeech(
   rate: number,
 ) {
   signal.throwIfAborted();
-  let interrupt: () => void = () => {};
+  let interrupted = false;
+  let interrupt: () => void = () => {
+    interrupted = true;
+  };
   const token = acquireAudioSession("playback", () => interrupt());
+  const app = AppState.addEventListener("change", (state) => {
+    if (state !== "active") interrupt();
+  });
   try {
     if (!(await activateAudioSession(token)))
       throw new Error(m(msg("Finish dictation before playing a response.")));
@@ -46,14 +52,14 @@ export async function playNativeSpeech(
     signal.throwIfAborted();
     if (AppState.currentState !== "active")
       throw new Error(m(msg("Open the app before playing a response.")));
-    if (!isAudioSessionOwner(token)) throw new Error(m(msg("Response playback was interrupted.")));
+    if (interrupted || !isAudioSessionOwner(token))
+      throw new Error(m(msg("Response playback was interrupted.")));
     await new Promise<void>((resolve, reject) => {
       let finished = false;
       const finish = (error?: unknown) => {
         if (finished) return;
         finished = true;
         signal.removeEventListener("abort", abort);
-        app.remove();
         if (error) reject(error);
         else resolve();
       };
@@ -62,9 +68,6 @@ export async function playNativeSpeech(
         finish(signal.reason ?? new Error(m(msg("Response playback was interrupted."))));
       };
       interrupt = abort;
-      const app = AppState.addEventListener("change", (state) => {
-        if (state !== "active") abort();
-      });
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) {
         abort();
@@ -81,6 +84,7 @@ export async function playNativeSpeech(
       });
     });
   } finally {
+    app.remove();
     await releaseAudioSession(token);
   }
 }

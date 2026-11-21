@@ -63,10 +63,13 @@ it("releases audio focus and settles interrupted system speech without leaving a
   expect(releaseAudioSession).toHaveBeenCalledTimes(2);
 });
 
-it.each(["cancel", "background", "play"] as const)(
+it.each(["cancel", "background", "background-return", "play"] as const)(
   "waits for Android speech initialization before handling %s with the default voice",
   async (action) => {
     vi.mocked(Speech.speak).mockReset();
+    vi.mocked(AppState.addEventListener).mockClear();
+    const removeListener = vi.fn();
+    vi.mocked(AppState.addEventListener).mockReturnValueOnce({ remove: removeListener });
     vi.mocked(Speech.stop).mockClear();
     vi.mocked(releaseAudioSession).mockClear();
     const initialized = Promise.withResolvers<Speech.Voice[]>();
@@ -96,6 +99,13 @@ it.each(["cancel", "background", "play"] as const)(
       expect(Speech.speak).not.toHaveBeenCalled();
       if (action === "cancel") signal.abort();
       if (action === "background") AppState.currentState = "background";
+      if (action === "background-return") {
+        const onStateChange = vi.mocked(AppState.addEventListener).mock.calls.at(-1)?.[1];
+        AppState.currentState = "background";
+        onStateChange?.("background");
+        AppState.currentState = "active";
+        onStateChange?.("active");
+      }
       initialized.resolve([]);
       const outcome = await result;
       if (action === "play") {
@@ -108,6 +118,7 @@ it.each(["cancel", "background", "play"] as const)(
         expect(playing).not.toHaveBeenCalled();
       }
       expect(releaseAudioSession).toHaveBeenCalledOnce();
+      expect(removeListener).toHaveBeenCalledOnce();
     } finally {
       signal.abort();
       initialized.resolve([]);
