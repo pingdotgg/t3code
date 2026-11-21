@@ -50,6 +50,7 @@ function makeModelRuntime(
     selections.push(
       `${configId}=${String(value)}${options?.allowUnlistedValue === true ? " (unlisted)" : ""}`,
     );
+    if (failure) return yield* failure;
     return { configOptions };
   });
   return {
@@ -190,24 +191,27 @@ describe("applyAntigravityAcpModelSelection", () => {
     }),
   );
 
-  it.effect.each(["gemini-removed", "Gemini saved", "gemini-saved[reasoning=high]"])(
-    "rejects unavailable or non-native model ID %s without selecting a fallback",
-    (model) =>
-      Effect.gen(function* () {
-        const { runtime, selections } = makeModelRuntime();
-        const error = yield* applyAntigravityAcpModelSelection({
-          runtime,
-          model,
-          mapError: (cause) => cause,
-        }).pipe(Effect.flip);
+  it.effect("sends an explicit model absent from cached choices to the provider", () =>
+    Effect.gen(function* () {
+      const { runtime, selections } = makeModelRuntime();
+      const model = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model: "gemini-new",
+        mapError: (cause) => cause,
+      });
+      expect(model).toBe("gemini-new");
+      expect(selections).toEqual(["model=gemini-new (unlisted)"]);
 
-        expect(error).toMatchObject({
-          _tag: "AcpRequestError",
-          code: -32602,
-          errorMessage: expect.stringContaining(`'${model}' is unavailable`),
-        });
-        expect(selections).toEqual([]);
-      }),
+      const failure = EffectAcpErrors.AcpRequestError.invalidParams("Provider rejected it.");
+      const rejecting = makeModelRuntime([modelConfig], failure);
+      const error = yield* applyAntigravityAcpModelSelection({
+        runtime: rejecting.runtime,
+        model: "gemini-removed",
+        mapError: (cause) => ({ cause }),
+      }).pipe(Effect.flip);
+      expect(error).toEqual({ cause: failure });
+      expect(rejecting.selections).toEqual(["model=gemini-removed (unlisted)"]);
+    }),
   );
 
   it.effect("accepts exact model IDs from grouped native options", () =>

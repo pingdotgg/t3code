@@ -273,27 +273,18 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
     });
     const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
     if (resolved === undefined || (!explicit && resolved === current)) return current;
-    const options = antigravityModelOptions(configOptions);
-    const legacyFamily = options.some((option) => option.value === resolved)
-      ? undefined
-      : legacyAntigravityFamily(configOptions, resolved);
-    if (legacyFamily !== undefined) {
-      yield* input.runtime
-        .setConfigOption("model", resolved, { allowUnlistedValue: true })
-        .pipe(Effect.mapError(input.mapError));
-      return legacyFamily;
+    const listed = antigravityModelOptions(configOptions).some(
+      (option) => option.value === resolved,
+    );
+    if (listed) {
+      yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
+      return resolved;
     }
-    if (!options.some((option) => option.value === resolved)) {
-      return yield* Effect.fail(
-        input.mapError(
-          EffectAcpErrors.AcpRequestError.invalidParams(
-            `Antigravity model '${resolved}' is unavailable for this Google account. Select an available model.`,
-          ),
-        ),
-      );
-    }
-    yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
-    return resolved;
+    // A live session's choices go stale when the account gains models; let the agent decide.
+    yield* input.runtime
+      .setConfigOption("model", resolved, { allowUnlistedValue: true })
+      .pipe(Effect.mapError(input.mapError));
+    return legacyAntigravityFamily(configOptions, resolved) ?? resolved;
   },
 );
 
