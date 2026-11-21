@@ -12,8 +12,8 @@ use conn_theme::Tokens;
 use gpui_kit::component::h_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Background, Bounds, BoxShadow, FontWeight, Hsla, MouseMoveEvent, PathBuilder, Pixels,
-    Point, Window, canvas, div, fill, linear_color_stop, linear_gradient, point, px, size,
+    AnyElement, App, Background, Bounds, BoxShadow, FontWeight, Hsla, MouseMoveEvent, PathBuilder,
+    Pixels, Point, Window, canvas, div, fill, linear_color_stop, linear_gradient, point, px, size,
 };
 
 /// SVG `linearGradient x1=0 x2=0 y1=0 y2=1` from `color` at `opacity` to transparent, as a
