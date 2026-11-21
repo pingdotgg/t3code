@@ -16,6 +16,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ScrollArea } from "../ui/scroll-area";
@@ -48,6 +49,10 @@ interface UpdateEverythingDialogProps {
   readonly rows: ReadonlyArray<UpdateEverythingRow>;
   readonly restarts: ReadonlyArray<RestartingMachine>;
   readonly onConfirm: () => void;
+  readonly providerUpdates?: {
+    readonly included: boolean;
+    readonly onIncludedChange: (included: boolean) => void;
+  };
   /** Overrides the "Update N machines?" title, for an update-track switch. */
   readonly title?: string;
   readonly confirmLabel?: string;
@@ -99,6 +104,7 @@ function UpdateEverythingDialogContent({
   rows,
   restarts,
   onConfirm,
+  providerUpdates,
   cancelRef,
   title,
   confirmLabel,
@@ -246,37 +252,54 @@ function UpdateEverythingDialogContent({
         </div>
       </ScrollArea>
       <AlertDialogFooter>
-        {disabledReason !== null ? (
-          <p className="self-center text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
-            {disabledReason}
-          </p>
-        ) : running > 0 ? (
-          <p className="self-center text-muted-foreground text-sm max-sm:order-1 max-sm:text-center sm:mr-auto">
-            {stopped === 0
-              ? gt(
-                  "{count, plural, one {{count} running thread will be interrupted and can resume after the restart.} other {{count} running threads will be interrupted and can resume after the restart.}}",
-                  { count: running },
-                )
-              : continuing === 0
+        <div className="flex w-full min-w-0 flex-col gap-2">
+          {disabledReason !== null ? (
+            <p className="text-sm">{disabledReason}</p>
+          ) : running > 0 ? (
+            <p className="text-muted-foreground text-sm">
+              {stopped === 0
                 ? gt(
-                    "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
+                    "{count, plural, one {{count} running thread will be interrupted and can resume after the restart.} other {{count} running threads will be interrupted and can resume after the restart.}}",
                     { count: running },
                   )
-                : `${gt(
-                    "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
-                    { count: running },
-                  )} ${gt(
-                    "{count, plural, one {{count} can resume after the restart.} other {{count} can resume after the restart.}}",
-                    { count: continuing },
-                  )}`}
-          </p>
-        ) : null}
-        <AlertDialogClose ref={cancelRef} render={<Button variant="outline" disabled={busy} />}>
-          <T>Cancel</T>
-        </AlertDialogClose>
-        <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
-          {confirmLabel ?? gt("Update", { $context: "verb, confirms the update" })}
-        </Button>
+                : continuing === 0
+                  ? gt(
+                      "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
+                      { count: running },
+                    )
+                  : `${gt(
+                      "{count, plural, one {{count} running thread will be interrupted.} other {{count} running threads will be interrupted.}}",
+                      { count: running },
+                    )} ${gt(
+                      "{count, plural, one {{count} can resume after the restart.} other {{count} can resume after the restart.}}",
+                      { count: continuing },
+                    )}`}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            {providerUpdates ? (
+              <label className="mr-auto flex min-w-0 items-center gap-2 text-sm">
+                <Checkbox
+                  checked={providerUpdates.included}
+                  onCheckedChange={providerUpdates.onIncludedChange}
+                  disabled={busy}
+                />
+                <T>Include provider updates</T>
+              </label>
+            ) : null}
+            <div className="flex gap-2">
+              <AlertDialogClose
+                ref={cancelRef}
+                render={<Button variant="outline" disabled={busy} />}
+              >
+                <T>Cancel</T>
+              </AlertDialogClose>
+              <Button disabled={disabledReason !== null || busy} onClick={onConfirm}>
+                {confirmLabel ?? gt("Update", { $context: "verb, confirms the update" })}
+              </Button>
+            </div>
+          </div>
+        </div>
       </AlertDialogFooter>
     </>
   );

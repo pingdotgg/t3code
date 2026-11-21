@@ -1,5 +1,5 @@
 import { EnvironmentId, type ServerSelfUpdateCapability } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   collectChannelSwitchTargets,
@@ -9,6 +9,7 @@ import {
   describeUpdateCapsule,
   describeUpdateEverything,
   runUpdateEverything,
+  selectProviderUpdates,
   type UpdateEverythingMachine,
 } from "./updateEverything.logic";
 
@@ -342,6 +343,68 @@ describe("collectRestartingMachines", () => {
       collectRestartingMachines(machines, servers, false).map((entry) => entry.environmentId),
     ).toEqual(["alvin", "opted-out", "old"]);
   });
+});
+
+describe("selectProviderUpdates", () => {
+  it.each([
+    { preference: undefined, local: true, remote: 0, switchTrack: false, included: true },
+    { preference: true, local: true, remote: 0, switchTrack: false, included: true },
+    { preference: false, local: true, remote: 0, switchTrack: false, included: false },
+    { preference: false, local: false, remote: 3, switchTrack: false, included: false },
+    { preference: true, local: true, remote: 3, switchTrack: false, included: true },
+    { preference: false, local: true, remote: 3, switchTrack: false, included: false },
+    { preference: false, local: false, remote: 0, switchTrack: false, included: true },
+    { preference: true, local: true, remote: 3, switchTrack: true, included: false },
+  ])(
+    "uses the same provider selection for the plan and run ($preference, local=$local, remote=$remote, switch=$switchTrack)",
+    async ({ preference, local, remote, switchTrack, included }) => {
+      const localVersion = local ? "0.0.50" : null;
+      const machines = Array.from({ length: remote }, (_, index) =>
+        machine(`remote-${index}`, "0.0.40", "boot-service"),
+      );
+      const { targets: servers } = collectServerUpdateTargets(machines, "0.0.50");
+      const providerMachines = ["local", "remote-0", "remote-1", "remote-2"].map((id) => ({
+        environmentId: EnvironmentId.make(id),
+        label: id,
+        providers: ["Claude"],
+      }));
+      const updateAll = vi.fn(async () =>
+        providerMachines.map(({ environmentId }) => environmentId),
+      );
+      const selected = selectProviderUpdates(
+        { machines: providerMachines, updateAll },
+        {
+          hasAppUpdates: local || servers.length > 0,
+          channelSwitch: switchTrack,
+          ...(preference === undefined ? {} : { includeProviderUpdates: preference }),
+        },
+      );
+      const plan = describeUpdateEverything({
+        localVersion,
+        localMachines: [],
+        servers,
+        skipped: [],
+        providerMachines: selected.machines,
+      });
+      expect(selected.canChooseProviderUpdates).toBe(!switchTrack && (local || remote > 0));
+      expect(plan.providerCount).toBe(included ? providerMachines.length : 0);
+      expect(plan.rows.flatMap(({ providers }) => providers)).toEqual(
+        included ? providerMachines.flatMap(({ providers }) => providers) : [],
+      );
+      expect(plan.rows.filter(({ app }) => app !== null)).toHaveLength(remote + Number(local));
+      expect(collectRestartingMachines(machines, servers, local)).toHaveLength(remote);
+
+      const result = await runUpdateEverything({
+        updateProviders: () => selected.updateAll({ quiet: true }),
+        updateServers: async () => servers.map(({ environmentId }) => environmentId),
+      });
+      expect(updateAll).toHaveBeenCalledTimes(included ? 1 : 0);
+      expect(result.providers).toEqual(
+        included ? providerMachines.map(({ environmentId }) => environmentId) : [],
+      );
+      expect(result.servers).toEqual(machines.map(({ environmentId }) => environmentId));
+    },
+  );
 });
 
 describe("runUpdateEverything", () => {

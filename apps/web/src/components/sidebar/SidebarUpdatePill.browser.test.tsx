@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => {
   return {
     update: null as DesktopUpdateState | null,
     hasUpdates: false,
+    hasProviderUpdates: false,
+    hasAppUpdates: false,
     rows: [] as ReadonlyArray<UpdateEverythingRow>,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -35,16 +37,46 @@ vi.mock("../../env", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../env")>()),
   isElectron: true,
 }));
-vi.mock("./useUpdateEverything", () => ({
-  useUpdateEverything: () => ({
-    hasUpdates: mocks.hasUpdates,
-    summary: "Update everything",
-    version: null,
-    providerCount: 0,
-    rows: mocks.rows,
-    restarts: [],
-  }),
-}));
+vi.mock("./useUpdateEverything", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const { selectProviderUpdates } = await import("./updateEverything.logic");
+  return {
+    useUpdateEverything: (
+      _version: string | null,
+      options?: { includeProviderUpdates: boolean },
+    ) => {
+      const hasAppUpdates = useSyncExternalStore(mocks.subscribe, () => mocks.hasAppUpdates);
+      const appUpdates = _version !== null || hasAppUpdates;
+      const selected = selectProviderUpdates(
+        { machines: mocks.hasProviderUpdates ? ["Claude"] : [], updateAll: async () => [] },
+        { hasAppUpdates: appUpdates, ...options },
+      );
+      return {
+        hasUpdates: mocks.hasUpdates,
+        hasAppUpdates: appUpdates,
+        canChooseProviderUpdates: selected.canChooseProviderUpdates,
+        summary: "Update everything",
+        version: null,
+        providerCount: selected.machines.length,
+        rows:
+          mocks.rows.length > 0
+            ? mocks.rows
+            : mocks.hasProviderUpdates
+              ? [
+                  {
+                    environmentId: null,
+                    label: "Test computer",
+                    app: appUpdates ? "this-app" : null,
+                    skipped: null,
+                    providers: selected.machines,
+                  },
+                ]
+              : [],
+        restarts: [],
+      };
+    },
+  };
+});
 
 function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
   return {
@@ -75,11 +107,20 @@ function setup(
   update: DesktopUpdateState | null,
   {
     hasUpdates = false,
+    hasProviderUpdates = false,
+    hasAppUpdates = false,
     rows = [],
-  }: { hasUpdates?: boolean; rows?: ReadonlyArray<UpdateEverythingRow> } = {},
+  }: {
+    hasUpdates?: boolean;
+    hasProviderUpdates?: boolean;
+    hasAppUpdates?: boolean;
+    rows?: ReadonlyArray<UpdateEverythingRow>;
+  } = {},
 ) {
   mocks.update = update;
   mocks.hasUpdates = hasUpdates;
+  mocks.hasProviderUpdates = hasProviderUpdates;
+  mocks.hasAppUpdates = hasAppUpdates;
   mocks.rows = rows;
 }
 
@@ -126,6 +167,96 @@ describe("SidebarUpdatePill release notes", () => {
 });
 
 describe("SidebarUpdatePill update everything", () => {
+  it.each([true, false])(
+    "requires a new confirmation if shown app-update targets disappear (present on open: %s)",
+    async (presentOnOpen) => {
+      setup(null, { hasUpdates: true, hasProviderUpdates: true, hasAppUpdates: presentOnOpen });
+      const key = "t3code:include-providers-in-app-updates";
+      const previous = localStorage.getItem(key);
+      using _storage = {
+        [Symbol.dispose]() {
+          if (previous === null) localStorage.removeItem(key);
+          else localStorage.setItem(key, previous);
+        },
+      };
+      localStorage.setItem(key, "false");
+      await using screen = await render(<SidebarUpdatePill />);
+      const button = screen.getByRole("button", { name: "Update everything" });
+      await userEvent.click(button);
+      const checkbox = page.getByRole("checkbox", { name: "Include provider updates" });
+      const provider = page.getByRole("cell", { name: "Claude", exact: true });
+      if (!presentOnOpen) {
+        await expect.element(checkbox).not.toBeInTheDocument();
+        await expect.element(provider).toBeVisible();
+        await expect.element(page.getByRole("alertdialog")).toBeVisible();
+        await act(() => {
+          mocks.hasAppUpdates = true;
+          mocks.notify();
+        });
+      }
+      await expect.element(checkbox).not.toBeChecked();
+      await expect.element(provider).not.toBeInTheDocument();
+
+      await act(() => {
+        mocks.hasAppUpdates = false;
+        mocks.notify();
+      });
+      await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+      await userEvent.click(button);
+      await expect.element(page.getByRole("alertdialog")).toBeVisible();
+      await expect.element(checkbox).not.toBeInTheDocument();
+      await expect.element(provider).toBeVisible();
+    },
+  );
+
+  it.each([false, true])(
+    "remembers the provider choice in another client (already mounted: %s)",
+    async (alreadyMounted) => {
+      setup(nightlyUpdate([]), { hasUpdates: true, hasProviderUpdates: true });
+      const key = "t3code:include-providers-in-app-updates";
+      const previous = localStorage.getItem(key);
+      using _storage = {
+        [Symbol.dispose]() {
+          if (previous === null) localStorage.removeItem(key);
+          else localStorage.setItem(key, previous);
+        },
+      };
+      localStorage.removeItem(key);
+      const renderClient = (id: string) => {
+        const container = document.createElement("div");
+        container.id = id;
+        return render(<SidebarUpdatePill />, { container });
+      };
+      await using clients = new AsyncDisposableStack();
+      const screen = clients.use(await renderClient("update-client-first"));
+      const other = alreadyMounted ? clients.use(await renderClient("update-client-second")) : null;
+      await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+      const checkbox = page.getByRole("checkbox", { name: "Include provider updates" });
+      await expect.element(checkbox).toBeChecked();
+      await userEvent.click(checkbox);
+      await expect.element(checkbox).not.toBeChecked();
+      expect(localStorage.getItem(key)).toBe("false");
+      await screen.unmount();
+
+      const restored = other ?? clients.use(await renderClient("update-client-second"));
+      await userEvent.click(restored.getByRole("button", { name: "Update everything" }));
+      await expect.element(checkbox).not.toBeChecked();
+      await act(() => {
+        localStorage.setItem(key, "true");
+        window.dispatchEvent(new StorageEvent("storage", { key, newValue: "true" }));
+      });
+      await expect.element(checkbox).not.toBeChecked();
+      await userEvent.click(page.getByRole("button", { name: "Cancel" }));
+      await userEvent.click(restored.getByRole("button", { name: "Update everything" }));
+      await expect.element(checkbox).toBeChecked();
+      await userEvent.click(checkbox);
+      expect(localStorage.getItem(key)).toBe("false");
+      await userEvent.click(checkbox);
+      await expect.element(checkbox).toBeChecked();
+      expect(localStorage.getItem(key)).toBe("true");
+    },
+  );
+
   it("does not refocus the update button after a pointer cancel", async () => {
     setup(null, { hasUpdates: true });
     await using screen = await render(<SidebarUpdatePill />);

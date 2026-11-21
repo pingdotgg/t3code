@@ -2,6 +2,7 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { managedUpdatesDenial } from "@t3tools/client-runtime/contract-labels";
 import { type DesktopBridge, type DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { type ComponentProps, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -9,6 +10,7 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import { isElectron } from "../../env";
 import { m } from "../../i18n/messages";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -49,6 +51,8 @@ import {
   useUpdateEverythingRun,
 } from "./updateEverythingRun";
 import { type ReportLocalUpdateError, useUpdateEverything } from "./useUpdateEverything";
+
+const INCLUDE_PROVIDER_UPDATES_KEY = "t3code:include-providers-in-app-updates";
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
@@ -210,6 +214,7 @@ function SidebarUpdateControl() {
   const [providerCheck, setProviderCheck] = useState<"button" | "dialog" | null>(null);
   const isCheckingProviders = providerCheck === "button";
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
+  const [hasShownAppUpdates, setHasShownAppUpdates] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
@@ -238,7 +243,22 @@ function SidebarUpdateControl() {
   const isDownloading = state?.status === "downloading";
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
-  const everything = useUpdateEverything(localUpdateVersion);
+  const [savedIncludeProviderUpdates, saveIncludeProviderUpdates] = useLocalStorage(
+    INCLUDE_PROVIDER_UPDATES_KEY,
+    true,
+    Schema.Boolean,
+  );
+  const [includeProviderUpdates, setIncludeProviderUpdates] = useState(savedIncludeProviderUpdates);
+  const everything = useUpdateEverything(localUpdateVersion, {
+    includeProviderUpdates: isConfirmingEverything
+      ? includeProviderUpdates
+      : savedIncludeProviderUpdates,
+  });
+  // App targets that disappear require a new confirmation before providers can re-enter the plan.
+  if (isConfirmingEverything) {
+    if (everything.hasAppUpdates && !hasShownAppUpdates) setHasShownAppUpdates(true);
+    else if (!everything.hasAppUpdates && hasShownAppUpdates) setIsConfirmingEverything(false);
+  }
   const checkProviderUpdates = useCheckProviderUpdates();
   const runsEverything = everything.hasUpdates && !isDownloading;
   const run = useUpdateEverythingRun();
@@ -294,6 +314,8 @@ function SidebarUpdateControl() {
     if (isInteractionDisabled) return;
 
     if (runsEverything) {
+      setIncludeProviderUpdates(savedIncludeProviderUpdates);
+      setHasShownAppUpdates(everything.hasAppUpdates);
       setIsConfirmingEverything(true);
       // Machines that still cache an older latest version add their rows while the dialog is open.
       setProviderCheck("dialog");
@@ -428,6 +450,17 @@ function SidebarUpdateControl() {
       providerCount={everything.providerCount}
       rows={everything.rows}
       restarts={everything.restarts}
+      {...(everything.canChooseProviderUpdates
+        ? {
+            providerUpdates: {
+              included: includeProviderUpdates,
+              onIncludedChange: (included: boolean) => {
+                setIncludeProviderUpdates(included);
+                saveIncludeProviderUpdates(included);
+              },
+            },
+          }
+        : {})}
       checking={providerCheck === "dialog"}
       onConfirm={() => void runEverything()}
     />

@@ -40,6 +40,29 @@ export interface RestartingMachine {
   readonly continuesThreads: boolean;
 }
 
+export function selectProviderUpdates<Machine, Result>(
+  updates: {
+    readonly machines: ReadonlyArray<Machine>;
+    readonly updateAll: (options: { readonly quiet?: boolean }) => Promise<Result[]>;
+  },
+  {
+    hasAppUpdates,
+    channelSwitch = false,
+    includeProviderUpdates = true,
+  }: {
+    readonly hasAppUpdates: boolean;
+    readonly channelSwitch?: boolean;
+    readonly includeProviderUpdates?: boolean;
+  },
+) {
+  const included = !channelSwitch && (!hasAppUpdates || includeProviderUpdates);
+  return {
+    canChooseProviderUpdates: !channelSwitch && hasAppUpdates && updates.machines.length > 0,
+    machines: included ? updates.machines : [],
+    updateAll: included ? updates.updateAll : async () => [],
+  };
+}
+
 export function collectRestartingMachines(
   machines: ReadonlyArray<UpdateEverythingMachine>,
   servers: ReadonlyArray<Pick<ServerUpdateTarget, "environmentId">>,
