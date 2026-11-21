@@ -3,7 +3,11 @@ import * as NodeAssert from "node:assert/strict";
 import { describe, it } from "vite-plus/test";
 import type * as EffectCodexSchema from "effect-codex-app-server/schema";
 
-import { describeMcpElicitation, toMcpElicitationResponse } from "./CodexMcpElicitation.ts";
+import {
+  describeMcpElicitation,
+  mcpElicitationOffersSessionApproval,
+  toMcpElicitationResponse,
+} from "./CodexMcpElicitation.ts";
 
 describe("Codex MCP elicitation approvals", () => {
   const request = {
@@ -148,6 +152,28 @@ describe("Codex MCP elicitation approvals", () => {
     NodeAssert.deepStrictEqual(toMcpElicitationResponse(inputRequest, "accept"), {
       action: "cancel",
     });
+  });
+
+  it("offers a session grant only for an approving session choice", () => {
+    const form = (values: ReadonlyArray<string>) => ({
+      mode: "form",
+      requestedSchema: {
+        type: "object",
+        properties: { approval: { type: "string", enum: values } },
+      },
+    });
+    NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["once", "session"])), true);
+    NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["allow_for_this_session"])), true);
+    NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["unblock_for_session"])), true);
+    for (const denial of [
+      "deny_for_session",
+      "denyForSession",
+      "never_allow_for_session",
+      "block_for_session",
+    ]) {
+      NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["once", denial])), false);
+    }
+    NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["once"])), false);
   });
 
   it("does not approve URL elicitations without opening their requested URL", () => {

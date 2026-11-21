@@ -36,7 +36,10 @@ import {
   type ClaudeLedgerUsage,
   type ClaudeModelLedger,
 } from "../../provider/ClaudeTurnTokenUsage.ts";
-import { toMcpElicitationResponse } from "../../provider/CodexMcpElicitation.ts";
+import {
+  mcpElicitationOffersSessionApproval,
+  toMcpElicitationResponse,
+} from "../../provider/CodexMcpElicitation.ts";
 import {
   type CanUseTool,
   type ElicitationRequest,
@@ -4583,8 +4586,8 @@ export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecisio
   return yield* Effect.raceFirst(Deferred.await(decision), cancellation);
 });
 
-// MCP servers such as Computer Use ask on every call and expect the client to
-// remember a session grant, as Codex does. The CLI drops a reply's `_meta.persist`.
+// Servers such as Computer Use ask on every call and expect the client to remember a session
+// grant. The CLI drops a reply's `_meta.persist`, so T3 holds it, and only for a form that offers one.
 const CLAUDE_MCP_ELICITATION_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "cancel", label: "Cancel" },
   { decision: "decline", label: "Decline" },
@@ -12820,8 +12823,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // request was dismissed and may be asked another way.
             return { action: "cancel" } satisfies ElicitationResult;
           }
+          const sessionGrantOffered = mcpElicitationOffersSessionApproval({
+            mode: request.mode ?? "form",
+            requestedSchema: request.requestedSchema,
+          });
           const grantKey = `${request.serverName}\u0000${request.message}`;
-          if ((yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)) {
+          if (sessionGrantOffered && (yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)) {
             return acceptance;
           }
           // The CLI waits on this answer, so a turn held for its prompt echo
@@ -12840,7 +12847,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             requestKind: "mcp-elicitation",
             prompt: request.message,
             appName: request.displayName ?? request.title ?? request.serverName,
-            options: CLAUDE_MCP_ELICITATION_OPTIONS,
+            options: CLAUDE_MCP_ELICITATION_OPTIONS.filter(
+              (option) => sessionGrantOffered || option.decision !== "acceptForSession",
+            ),
           });
           const decision = yield* Deferred.make<ClaudeApprovalResponse>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {
@@ -12860,14 +12869,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 node: artifacts.node,
               }),
               emitProviderEvent({
-                type: "runtime_request.updated",
-                driver: CLAUDE_PROVIDER,
-                runtimeRequest: artifacts.request,
-              }),
-              emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CLAUDE_PROVIDER,
                 turnItem: artifacts.turnItem,
+              }),
+              emitProviderEvent({
+                type: "runtime_request.updated",
+                driver: CLAUDE_PROVIDER,
+                runtimeRequest: artifacts.request,
               }),
             ],
             { concurrency: 1 },
@@ -12911,9 +12920,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           }
           if (resolved === "acceptForSession") {
-            yield* Ref.update(mcpElicitationSessionGrants, (current) =>
-              new Set(current).add(grantKey),
-            );
+            // The runtime doesn't check decisions against the card, so guard the grant here.
+            if (sessionGrantOffered) {
+              yield* Ref.update(mcpElicitationSessionGrants, (current) =>
+                new Set(current).add(grantKey),
+              );
+            }
             return acceptance;
           }
           // Never null: the SDK reads null as answered out of band and leaves

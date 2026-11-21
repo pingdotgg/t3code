@@ -7803,6 +7803,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       requestedSchema: { type: "object", properties: {} },
       title: "Deploy",
     };
+    const sessionOffer: ElicitationRequest = {
+      serverName: "computer-use",
+      message: "Allow Safari to click?",
+      mode: "form",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          approval: {
+            type: "string",
+            oneOf: [{ const: "session", title: "Allow for this session" }],
+          },
+        },
+      },
+      title: "Computer Use",
+    };
 
     const startElicitationTurn = Effect.fnUntraced(function* (
       options?: Parameters<typeof makeWakeHarnessWithOptions>[0],
@@ -7857,10 +7872,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           options: [
             { decision: "cancel", label: "Cancel" },
             { decision: "decline", label: "Decline" },
-            { decision: "acceptForSession", label: "Always allow this session" },
             { decision: "accept", label: "Approve" },
           ],
         });
+        // The client renders the card from its turn item, so the item must arrive before the request.
+        const cardIndex = harness.events.findIndex(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+        );
+        const requestIndex = harness.events.findIndex(
+          (event) => event.type === "runtime_request.updated",
+        );
+        assert.isBelow(cardIndex, requestIndex);
         assert.isUndefined(answer.pollUnsafe());
 
         yield* harness.runtime.respondToRuntimeRequest({
@@ -7874,6 +7897,39 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision: "decline" }),
         );
         assert.include(String(late.cause), "No pending Claude runtime request");
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+    );
+
+    it.effect("offers no session grant for a plain confirmation", () =>
+      Effect.gen(function* () {
+        const { harness, elicit, awaitCard } = yield* startElicitationTurn();
+        const answer = yield* elicit(approvalOnly);
+        const request = yield* awaitCard(1);
+        const card = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+        );
+        assert.deepInclude(card?.type === "turn_item.updated" ? card.turnItem : undefined, {
+          options: [
+            { decision: "cancel", label: "Cancel" },
+            { decision: "decline", label: "Decline" },
+            { decision: "accept", label: "Approve" },
+          ],
+        });
+        // The runtime does not check decisions against the card, so a forged session grant must not stick.
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: request.id,
+          decision: "acceptForSession",
+        });
+        assert.deepEqual(yield* Fiber.join(answer), { action: "accept", content: {} });
+        // A form that really offers the session choice, with the same server and text, must still get a card.
+        const offered = yield* elicit({
+          ...sessionOffer,
+          serverName: approvalOnly.serverName,
+          message: approvalOnly.message,
+        });
+        yield* awaitCard(2);
+        assert.isUndefined(offered.pollUnsafe());
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
@@ -7903,8 +7959,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     it.effect("answers a repeated prompt from a session grant without a card", () =>
       Effect.gen(function* () {
         const { harness, elicit, awaitCard, runtimeRequests } = yield* startElicitationTurn();
-        const first = yield* elicit(approvalOnly);
+        const first = yield* elicit(sessionOffer);
         const request = yield* awaitCard(1);
+        const card = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+        );
+        assert.deepInclude(card?.type === "turn_item.updated" ? card.turnItem : undefined, {
+          options: [
+            { decision: "cancel", label: "Cancel" },
+            { decision: "decline", label: "Decline" },
+            { decision: "acceptForSession", label: "Always allow this session" },
+            { decision: "accept", label: "Approve" },
+          ],
+        });
         yield* harness.runtime.respondToRuntimeRequest({
           requestId: request.id,
           decision: "acceptForSession",
@@ -7912,15 +7980,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const granted = { action: "accept", content: {} } satisfies ElicitationResult;
         assert.deepEqual(yield* Fiber.join(first), granted);
 
-        assert.deepEqual(yield* Fiber.join(yield* elicit(approvalOnly)), granted);
+        assert.deepEqual(yield* Fiber.join(yield* elicit(sessionOffer)), granted);
         assert.equal(runtimeRequests().length, 1);
 
-        const otherMessage = yield* elicit({ ...approvalOnly, message: "Deploy api?" });
+        const otherMessage = yield* elicit({ ...sessionOffer, message: "Allow Safari to type?" });
         yield* awaitCard(2);
-        const otherServer = yield* elicit({ ...approvalOnly, serverName: "builds" });
+        const otherServer = yield* elicit({ ...sessionOffer, serverName: "builds" });
         yield* awaitCard(3);
         assert.isUndefined(otherMessage.pollUnsafe());
         assert.isUndefined(otherServer.pollUnsafe());
+
+        // A plain confirmation with the granted server and text is a new operation the user has not seen.
+        const plain = yield* elicit({
+          ...sessionOffer,
+          requestedSchema: { type: "object", properties: {} },
+        });
+        const plainCard = yield* awaitCard(4);
+        assert.isUndefined(plain.pollUnsafe());
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: plainCard.id,
+          decision: "accept",
+        });
+        assert.deepEqual(yield* Fiber.join(plain), { action: "accept", content: {} });
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
