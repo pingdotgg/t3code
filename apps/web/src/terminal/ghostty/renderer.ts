@@ -10,6 +10,9 @@ export interface GhosttyCellMetrics {
   readonly width: number;
   readonly height: number;
   readonly baseline: number;
+  // The font's full block (U+2588) ink, which box-drawing and block glyphs are drawn against.
+  readonly blockAscent: number;
+  readonly blockHeight: number;
 }
 
 export interface GhosttyCellRange {
@@ -22,6 +25,7 @@ const POWERLINE_SOLID_RIGHT = "\ue0b0";
 const POWERLINE_SOLID_LEFT = "\ue0b2";
 const POWERLINE_ROUND_RIGHT = "\ue0b4";
 const POWERLINE_ROUND_LEFT = "\ue0b6";
+const BLOCK_SAMPLE_FONT_SIZE = 100;
 
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
@@ -79,6 +83,55 @@ function fillSolidPowerlineSeparator(
   context.lineTo(base, top + height);
   context.closePath();
   context.fill();
+}
+
+// Box drawing (U+2500-257F) and block elements (U+2580-259F) must meet the
+// glyphs in the rows above and below, as native terminals draw them.
+function isCellFillingGlyph(text: string): boolean {
+  const code = text.codePointAt(0) ?? 0;
+  return text.length === 1 && code >= 0x2500 && code <= 0x259f;
+}
+
+// Fonts draw these glyphs shorter than our rows, so stretch the full block's ink one
+// device pixel past each row edge. Returns the baseline; the caller saves, clips and restores.
+function fitGlyphRow(
+  context: CanvasRenderingContext2D,
+  text: string,
+  top: number,
+  height: number,
+  metrics: GhosttyCellMetrics,
+  seamOverlap: number,
+): number {
+  if (!isCellFillingGlyph(text)) return top + metrics.baseline;
+  context.translate(0, top - seamOverlap);
+  context.scale(1, (height + seamOverlap * 2) / metrics.blockHeight);
+  return metrics.blockAscent;
+}
+
+// measureText overstates this glyph's ink in some fonts (DejaVu Sans Mono by
+// 1.6% of the em), so draw it once and read where the ink lands, in ems.
+function measureFullBlockInk(fontFamily: string): { ascent: number; height: number } | null {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1;
+  canvas.height = BLOCK_SAMPLE_FONT_SIZE * 2;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return null;
+  context.font = `normal 400 ${BLOCK_SAMPLE_FONT_SIZE}px ${fontFamily}`;
+  const baseline = BLOCK_SAMPLE_FONT_SIZE * 1.5;
+  context.fillText("█", -context.measureText("█").width / 2, baseline);
+  const pixels = context.getImageData(0, 0, 1, canvas.height).data;
+  let first = -1;
+  let last = -1;
+  for (let y = 0; y < canvas.height; y += 1) {
+    if ((pixels[y * 4 + 3] ?? 0) < 128) continue;
+    if (first < 0) first = y;
+    last = y;
+  }
+  if (first < 0) return null;
+  return {
+    ascent: (baseline - first) / BLOCK_SAMPLE_FONT_SIZE,
+    height: (last + 1 - first) / BLOCK_SAMPLE_FONT_SIZE,
+  };
 }
 
 function ghosttyTextRunEnd(
@@ -184,10 +237,13 @@ export function measureGhosttyCell(
   const descent = verticalMeasurement.actualBoundingBoxDescent;
   const glyphHeight = ascent + descent;
   const height = Math.max(1, Math.round(fontSize * 1.35), Math.ceil(glyphHeight));
+  const block = measureFullBlockInk(fontFamily);
   return {
     width: Math.max(1, widthMeasurement.width),
     height,
     baseline: Math.round((height - glyphHeight) / 2 + ascent),
+    blockAscent: block ? block.ascent * fontSize : ascent,
+    blockHeight: block ? block.height * fontSize : glyphHeight,
   };
 }
 
@@ -239,6 +295,7 @@ export function renderGhosttySnapshot(options: {
   const rowTop = (row: number) =>
     Math.round((originY + row * metrics.height) * transform.d) / transform.d;
   const rowWidth = context.canvas.width / transform.a;
+  const devicePixel = 1 / transform.d;
   const rowsToDraw = forceFull
     ? Array.from({ length: snapshot.rows }, (_, index) => index)
     : [...snapshot.dirtyRows];
@@ -327,7 +384,12 @@ export function renderGhosttySnapshot(options: {
         runStart += 1;
         continue;
       }
-      const runEnd = ghosttyTextRunEnd(row.cells, runStart, (cell) => sameTextStyle(cell, first));
+      const fillsCell = isCellFillingGlyph(first.text);
+      const runEnd = ghosttyTextRunEnd(
+        row.cells,
+        runStart,
+        (cell) => sameTextStyle(cell, first) && isCellFillingGlyph(cell.text) === fillsCell,
+      );
       const text = row.cells
         .slice(runStart, runEnd)
         .map((cell) => cell.text)
@@ -351,7 +413,7 @@ export function renderGhosttySnapshot(options: {
           runEnd,
           text,
           padding + runStart * metrics.width,
-          top + metrics.baseline,
+          fitGlyphRow(context, first.text, top, height, metrics, devicePixel),
           metrics.width,
         );
         context.restore();
@@ -406,15 +468,19 @@ export function renderGhosttySnapshot(options: {
         if (isSolidPowerlineSeparator(cell.text)) {
           fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
         } else {
+          context.save();
+          context.beginPath();
+          context.rect(left, top, width, height);
+          context.clip();
           context.font = fontForCell(cell, fontSize, fontFamily);
           context.textAlign = wide ? "center" : "start";
           context.fillText(
             cell.text,
             wide ? left + metrics.width : left,
-            top + metrics.baseline,
+            fitGlyphRow(context, cell.text, top, height, metrics, devicePixel),
             width,
           );
-          context.textAlign = "start";
+          context.restore();
         }
       }
       if (cell && !cell.invisible) {

@@ -48,7 +48,7 @@ function scaledContext(scale: number): CanvasRenderingContext2D {
 }
 
 const layout = {
-  metrics: { width: 7.8, height: 17, baseline: 13 },
+  metrics: { width: 7.8, height: 17, baseline: 13, blockAscent: 13, blockHeight: 17 },
   fontSize: 13,
   fontFamily: "monospace",
   padding: 4,
