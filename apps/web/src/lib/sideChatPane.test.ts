@@ -4,6 +4,13 @@ import { expect, it } from "vite-plus/test";
 
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadRightPanelState } from "../rightPanelStore";
+import {
+  createLayoutState,
+  layoutTabContentKey,
+  selectFocusedTab,
+  selectFocusedWorkspace,
+} from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 import { openSideThread, resolveThreadOpenRoute } from "./sideChatPane";
 
 const environmentId = EnvironmentId.make("environment:test");
@@ -50,4 +57,47 @@ it("opens a side thread beside the thread the click was in, or in its place", ()
   expect(open({ threadRef: sideChatRef, panelRef: null, intent: "panel" })).toBe("main");
   expect(navigated).toEqual([sideChatRef, mainRef, elsewhere, sideChatRef]);
   expect(surfaces()).toHaveLength(1);
+});
+
+it("opens a side chat in the main view in place of its tab, keeping its parent's tabs", () => {
+  useRightPanelStore.setState(useRightPanelStore.getInitialState());
+  useLayoutStore.setState({ layout: createLayoutState() });
+  const store = useLayoutStore.getState();
+  store.openTab({ kind: "chat", target: { kind: "server", threadRef: mainRef } });
+  const parentTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+  store.keepTab(parentTab.id);
+  store.openTab({ kind: "surface", threadRef: mainRef, surfaceId: "diff" });
+  store.openTab(
+    { kind: "surface", threadRef: mainRef, surfaceId: "thread:side-chat" },
+    { placement: "new-column" },
+  );
+  const sideTab = selectFocusedTab(useLayoutStore.getState().layout)!;
+  store.focusTab(parentTab.id);
+  const tabsOf = (paneIndex: number) => {
+    const { columns } = selectFocusedWorkspace(useLayoutStore.getState().layout);
+    const pane = columns.flatMap((column) => column.panes)[paneIndex]!;
+    return pane.tabs.map((tab) => [tab.id, layoutTabContentKey(tab.content)]);
+  };
+  const parentPane = tabsOf(0);
+  const navigated: unknown[] = [];
+
+  expect(
+    openSideThread({
+      threadRef: sideChatRef,
+      panelRef: mainRef,
+      intent: "alternate",
+      navigate: (ref) => void navigated.push(ref),
+    }),
+  ).toBe("main");
+
+  // The focused tab's route follows on its own, as after a tab click.
+  expect(navigated).toEqual([]);
+  expect(tabsOf(0)).toEqual(parentPane);
+  expect(tabsOf(1)).toEqual([
+    [
+      sideTab.id,
+      layoutTabContentKey({ kind: "chat", target: { kind: "server", threadRef: sideChatRef } }),
+    ],
+  ]);
+  expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(sideTab.id);
 });

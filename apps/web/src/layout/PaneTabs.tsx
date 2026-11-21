@@ -34,6 +34,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
+import { showSideThreadTabAsChat } from "../lib/sideChatPane";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import {
   isThreadlessHomeRef,
@@ -1001,7 +1002,7 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
   }
 }
 
-type SurfaceTabMenuId = "rename" | "copy-path" | "toggle-mute";
+type SurfaceTabMenuId = "open-in-main-view" | "rename" | "copy-path" | "toggle-mute";
 
 /**
  * Stays disabled until desktop overlay state arrives: a server session id can
@@ -1059,6 +1060,9 @@ function surfaceTabMenu(tab: LayoutTab | undefined): {
       ? (previewState.sessions[surface.resourceId]?.tabId ?? null)
       : null;
   const overlay = previewTabId ? (previewState.desktopByTabId[previewTabId] ?? null) : null;
+  if (surface?.kind === "thread") {
+    items.push({ id: "open-in-main-view", label: m(msg("Open in main view")) });
+  }
   if (surface?.kind === "device") items.push({ id: "rename", label: m(msg("Rename")) });
   if (surface?.kind === "file" && surface.attachment === undefined) {
     items.push({ id: "copy-path", label: m(msg("Copy path")) });
@@ -1072,7 +1076,9 @@ function surfaceTabMenu(tab: LayoutTab | undefined): {
   return {
     items,
     run: (action) => {
-      if (action === "copy-path" && surface?.kind === "file" && !surface.attachment) {
+      if (action === "open-in-main-view" && surface?.kind === "thread") {
+        showSideThreadTabAsChat(scopeThreadRef(threadRef.environmentId, surface.threadId));
+      } else if (action === "copy-path" && surface?.kind === "file" && !surface.attachment) {
         copyLayoutFilePath(threadRef, surface.relativePath);
       } else if (action === "toggle-mute" && previewTabId && overlay) {
         void previewBridge

@@ -14,6 +14,8 @@ import type { LinkedThreadTarget } from "@t3tools/client-runtime/linked-thread";
 import type { useNavigate } from "@tanstack/react-router";
 
 import { getClientSettings } from "../hooks/useSettings";
+import { findLayoutTab } from "../layout/layoutModel";
+import { useLayoutStore } from "../layout/layoutStore";
 import { linkedThreadRouteParams } from "../linkedThreadSurface";
 import { rightPanelHostRef, useRightPanelStore } from "../rightPanelStore";
 
@@ -80,10 +82,31 @@ export function openSideThread(input: {
   });
   if (target === "panel" && panelRef !== null) {
     useRightPanelStore.getState().openThread(panelRef, threadRef.threadId);
-  } else {
+  } else if (!showSideThreadTabAsChat(threadRef)) {
     input.navigate(threadRef);
   }
   return target;
+}
+
+/**
+ * The main view of a side thread in panes is a chat tab: its side tab, where the layout has one,
+ * becomes that chat in place, so its parent's tabs and panes stay put. The URL follows the focus.
+ * False when it has no tab, for the caller to open its route.
+ */
+export function showSideThreadTabAsChat(threadRef: ScopedThreadRef): boolean {
+  const store = useLayoutStore.getState();
+  const surfaceId = `thread:${threadRef.threadId}`;
+  const side = findLayoutTab(
+    store.layout,
+    (tab) =>
+      tab.content.kind === "surface" &&
+      tab.content.surfaceId === surfaceId &&
+      tab.content.threadRef.environmentId === threadRef.environmentId,
+  );
+  if (!side) return false;
+  store.replaceTabContent(side.tab.id, { kind: "chat", target: { kind: "server", threadRef } });
+  store.focusTab(side.tab.id);
+  return true;
 }
 
 /**
