@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type VcsListRefsInput,
   type VcsListRefsResult,
+  type VcsRefreshStatusResult,
   type VcsStatusResult,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -294,6 +295,17 @@ export function createVcsEnvironmentAtoms<R, E>(
       cwd: target.input.cwd,
     });
 
+  const invalidateRefsIfChanged = (
+    target: { readonly environmentId: EnvironmentId; readonly input: { readonly cwd: string } },
+    registry: AtomRegistry.AtomRegistry,
+    exit: Exit.Exit<VcsRefreshStatusResult, unknown>,
+  ) =>
+    invalidateCachedVcsRefsIfChanged(
+      registry,
+      { environmentId: target.environmentId, cwd: target.input.cwd },
+      Exit.isSuccess(exit) ? exit.value.refsDigest : undefined,
+    );
+
   return {
     listRefs,
     // An uncached read for decisions that must match the repository now, not
@@ -341,19 +353,14 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsRefreshStatus,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
-      onSettled: (target, registry, exit) =>
-        invalidateCachedVcsRefsIfChanged(
-          registry,
-          { environmentId: target.environmentId, cwd: target.input.cwd },
-          Exit.isSuccess(exit) ? exit.value.refsDigest : undefined,
-        ),
+      onSettled: invalidateRefsIfChanged,
     }),
     // Outside the serial queue: it only reads status, and a checkout picked right after opening
     // the picker must not wait behind that read.
     refreshLocalStatusForPicker: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:refresh-local-status-for-picker",
       tag: WS_METHODS.vcsRefreshStatus,
-      onSettled: invalidateRefs,
+      onSettled: invalidateRefsIfChanged,
     }),
     createWorktree: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:create-worktree",
