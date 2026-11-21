@@ -131,6 +131,7 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as BotService from "./bots/BotService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as FeedbackStore from "./feedback/FeedbackStore.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
@@ -1494,6 +1495,7 @@ export const layerWsRpc = (
       const threadViewers = yield* ThreadViewers.ThreadViewers;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
+      const botService = yield* BotService.BotService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const feedbackStore = yield* FeedbackStore.FeedbackStore;
       const guestShares = yield* GuestShareService.GuestShareService;
@@ -2395,6 +2397,31 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.listWebhookDeliveries(input)),
           ),
+        [WS_METHODS.botsList]: () => botService.list(),
+        [WS_METHODS.botsGet]: (input) => botService.get(input),
+        [WS_METHODS.botsCreate]: (input) => botService.create(input),
+        [WS_METHODS.botsUpdate]: (input) => botService.update(input),
+        [WS_METHODS.botsDelete]: (input) => botService.delete(input),
+        [WS_METHODS.botsImportFolder]: (input) => botService.importFolder(input),
+        [WS_METHODS.botsOpenChat]: (input) => botService.openChat(input),
+        [WS_METHODS.botsHandoff]: (input) => botService.handoff(input),
+        [WS_METHODS.botsListFiles]: (input) => botService.listFiles(input),
+        [WS_METHODS.botsReadFile]: (input) => botService.readFile(input),
+        [WS_METHODS.botsWriteFile]: (input) => botService.writeFile(input),
+        [WS_METHODS.botsListRoutines]: (input) => botService.listRoutines(input),
+        [WS_METHODS.botsUpsertRoutine]: (input) => botService.upsertRoutine(input),
+        [WS_METHODS.botsDeleteRoutine]: (input) => botService.deleteRoutine(input),
+        [WS_METHODS.botsRunRoutineNow]: (input) => botService.runRoutineNow(input),
+        [WS_METHODS.botsListGroups]: () => botService.listGroups(),
+        [WS_METHODS.botsCreateGroup]: (input) => botService.createGroup(input),
+        [WS_METHODS.botsUpdateGroup]: (input) => botService.updateGroup(input),
+        [WS_METHODS.botsDeleteGroup]: (input) => botService.deleteGroup(input),
+        [WS_METHODS.botsListGroupMessages]: (input) => botService.listGroupMessages(input),
+        [WS_METHODS.botsSendGroupMessage]: (input) => botService.sendGroupMessage(input),
+        [WS_METHODS.botsListItems]: (input) => botService.listItems(input),
+        [WS_METHODS.botsCreateItem]: (input) => botService.createItem(input),
+        [WS_METHODS.botsUpdateItem]: (input) => botService.updateItem(input),
+        [WS_METHODS.botsDeleteItem]: (input) => botService.deleteItem(input),
         [WS_METHODS.scheduledTasksGetWebhookDelivery]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),

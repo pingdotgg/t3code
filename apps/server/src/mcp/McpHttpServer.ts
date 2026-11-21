@@ -64,6 +64,8 @@ import { FeedbackToolkit } from "./toolkits/feedback/tools.ts";
 import * as Feedback from "../feedback/FeedbackService.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
+import { BotsToolkit } from "./toolkits/bots/tools.ts";
+import * as BotsHandlers from "./toolkits/bots/handlers.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 import * as ThemeHandlers from "./toolkits/theme/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
@@ -1383,6 +1385,8 @@ export const layerPullRequestsToolkit = toolkitRegistration(
 
 const layerIssuesToolkit = toolkitRegistration(IssuesToolkit, IssuesHandlers.layer);
 
+const layerBotsToolkit = toolkitRegistration(BotsToolkit, BotsHandlers.layer);
+
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
   DeviceHandlers.layerStandard,
@@ -1508,5 +1512,5 @@ export const layerMilestoneEvents = Layer.effectDiscard(
 );
 
 export const layer = layerMcpTransport(
-  Layer.mergeAll(layerTools, layerToolSearch, layerMilestoneEvents),
+  Layer.mergeAll(layerTools, layerToolSearch, layerMilestoneEvents, layerBotsToolkit),
 );

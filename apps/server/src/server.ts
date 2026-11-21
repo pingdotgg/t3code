@@ -170,6 +170,9 @@ import * as AuthHttp from "./auth/http.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as CodexManagedTokenBroker from "./provider/CodexManagedTokenBroker.ts";
+import * as BotRepository from "./bots/BotRepository.ts";
+import * as BotScheduler from "./bots/BotScheduler.ts";
+import * as BotService from "./bots/BotService.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
@@ -877,6 +880,8 @@ const layerCommandReadiness = HttpRouter.middleware(
   { global: true },
 );
 
+const layerBotService = BotService.layer.pipe(Layer.provide(BotRepository.layer));
+
 const layerMakeRoutes = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -909,6 +914,7 @@ const layerMakeRoutes = Layer.mergeAll(
     Layer.provide(McpOAuth.layerMcpClientAuthenticator),
     Layer.provide(ProjectionStoreV2.layer),
   ),
+  Layer.effectDiscard(BotScheduler.BotScheduler).pipe(Layer.provide(BotScheduler.layer)),
   // Follows delegated tasks running in linked environments, including after a restart.
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
@@ -925,6 +931,7 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(layerPullRequestService),
   Layer.provide(layerThreadIssueService),
   Layer.provide(layerIssueService),
+  Layer.provide(layerBotService),
   // The same activity instance RunExecutionService reports to, by layer memoization.
   Layer.provide(
     ServerBrowser.layer.pipe(
@@ -1401,6 +1408,7 @@ const layerMakeServer = Layer.unwrap(
     );
 
     return layerServerApplication.pipe(
+      Layer.provide(layerBotService),
       Layer.provide(CloudLink.layer.pipe(Layer.provideMerge(ConnectReachability.layer))),
       Layer.provideMerge(layerRuntimeServices),
       Layer.provideMerge(

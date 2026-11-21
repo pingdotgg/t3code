@@ -7,6 +7,52 @@ import {
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
 import {
+  Bot,
+  BotGroup,
+  BotItem,
+  BotOperationError,
+  BotRoutine,
+  BotsCreateGroupInput,
+  BotsCreateInput,
+  BotsCreateItemInput,
+  BotsDeleteGroupInput,
+  BotsDeleteGroupResult,
+  BotsDeleteInput,
+  BotsDeleteItemInput,
+  BotsDeleteItemResult,
+  BotsDeleteResult,
+  BotsDeleteRoutineInput,
+  BotsDeleteRoutineResult,
+  BotsGetInput,
+  BotsHandoffInput,
+  BotsHandoffResult,
+  BotsImportFolderInput,
+  BotsListFilesInput,
+  BotsListFilesResult,
+  BotsListGroupMessagesInput,
+  BotsListGroupMessagesResult,
+  BotsListGroupsResult,
+  BotsListItemsInput,
+  BotsListItemsResult,
+  BotsListResult,
+  BotsListRoutinesInput,
+  BotsListRoutinesResult,
+  BotsOpenChatInput,
+  BotsOpenChatResult,
+  BotsReadFileInput,
+  BotsReadFileResult,
+  BotsRunRoutineNowInput,
+  BotsRunRoutineNowResult,
+  BotsSendGroupMessageInput,
+  BotsSendGroupMessageResult,
+  BotsUpdateGroupInput,
+  BotsUpdateInput,
+  BotsUpdateItemInput,
+  BotsUpsertRoutineInput,
+  BotsWriteFileInput,
+  BotsWriteFileResult,
+} from "./bot.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -628,6 +674,32 @@ export const WS_METHODS = {
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  botsList: "bots.list",
+  botsGet: "bots.get",
+  botsCreate: "bots.create",
+  botsUpdate: "bots.update",
+  botsDelete: "bots.delete",
+  botsImportFolder: "bots.importFolder",
+  botsOpenChat: "bots.openChat",
+  botsHandoff: "bots.handoff",
+  botsListFiles: "bots.listFiles",
+  botsReadFile: "bots.readFile",
+  botsWriteFile: "bots.writeFile",
+  botsListRoutines: "bots.listRoutines",
+  botsUpsertRoutine: "bots.upsertRoutine",
+  botsDeleteRoutine: "bots.deleteRoutine",
+  botsRunRoutineNow: "bots.runRoutineNow",
+  botsListGroups: "bots.listGroups",
+  botsCreateGroup: "bots.createGroup",
+  botsUpdateGroup: "bots.updateGroup",
+  botsDeleteGroup: "bots.deleteGroup",
+  botsListGroupMessages: "bots.listGroupMessages",
+  botsSendGroupMessage: "bots.sendGroupMessage",
+  botsListItems: "bots.listItems",
+  botsCreateItem: "bots.createItem",
+  botsUpdateItem: "bots.updateItem",
+  botsDeleteItem: "bots.deleteItem",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2326,6 +2398,154 @@ const WsScheduledTasksRotateWebhookTokenRpc = Rpc.make(
   },
 );
 
+const WsBotsListRpc = Rpc.make(WS_METHODS.botsList, {
+  success: BotsListResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsGetRpc = Rpc.make(WS_METHODS.botsGet, {
+  payload: BotsGetInput,
+  success: Bot,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsCreateRpc = Rpc.make(WS_METHODS.botsCreate, {
+  payload: BotsCreateInput,
+  success: Bot,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsUpdateRpc = Rpc.make(WS_METHODS.botsUpdate, {
+  payload: BotsUpdateInput,
+  success: Bot,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsDeleteRpc = Rpc.make(WS_METHODS.botsDelete, {
+  payload: BotsDeleteInput,
+  success: BotsDeleteResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsImportFolderRpc = Rpc.make(WS_METHODS.botsImportFolder, {
+  payload: BotsImportFolderInput,
+  success: Bot,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsOpenChatRpc = Rpc.make(WS_METHODS.botsOpenChat, {
+  payload: BotsOpenChatInput,
+  success: BotsOpenChatResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsHandoffRpc = Rpc.make(WS_METHODS.botsHandoff, {
+  payload: BotsHandoffInput,
+  success: BotsHandoffResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsListFilesRpc = Rpc.make(WS_METHODS.botsListFiles, {
+  payload: BotsListFilesInput,
+  success: BotsListFilesResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsReadFileRpc = Rpc.make(WS_METHODS.botsReadFile, {
+  payload: BotsReadFileInput,
+  success: BotsReadFileResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsWriteFileRpc = Rpc.make(WS_METHODS.botsWriteFile, {
+  payload: BotsWriteFileInput,
+  success: BotsWriteFileResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsListRoutinesRpc = Rpc.make(WS_METHODS.botsListRoutines, {
+  payload: BotsListRoutinesInput,
+  success: BotsListRoutinesResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsUpsertRoutineRpc = Rpc.make(WS_METHODS.botsUpsertRoutine, {
+  payload: BotsUpsertRoutineInput,
+  success: BotRoutine,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsDeleteRoutineRpc = Rpc.make(WS_METHODS.botsDeleteRoutine, {
+  payload: BotsDeleteRoutineInput,
+  success: BotsDeleteRoutineResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsRunRoutineNowRpc = Rpc.make(WS_METHODS.botsRunRoutineNow, {
+  payload: BotsRunRoutineNowInput,
+  success: BotsRunRoutineNowResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsListGroupsRpc = Rpc.make(WS_METHODS.botsListGroups, {
+  success: BotsListGroupsResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsCreateGroupRpc = Rpc.make(WS_METHODS.botsCreateGroup, {
+  payload: BotsCreateGroupInput,
+  success: BotGroup,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsUpdateGroupRpc = Rpc.make(WS_METHODS.botsUpdateGroup, {
+  payload: BotsUpdateGroupInput,
+  success: BotGroup,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsDeleteGroupRpc = Rpc.make(WS_METHODS.botsDeleteGroup, {
+  payload: BotsDeleteGroupInput,
+  success: BotsDeleteGroupResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsListGroupMessagesRpc = Rpc.make(WS_METHODS.botsListGroupMessages, {
+  payload: BotsListGroupMessagesInput,
+  success: BotsListGroupMessagesResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsSendGroupMessageRpc = Rpc.make(WS_METHODS.botsSendGroupMessage, {
+  payload: BotsSendGroupMessageInput,
+  success: BotsSendGroupMessageResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsListItemsRpc = Rpc.make(WS_METHODS.botsListItems, {
+  payload: BotsListItemsInput,
+  success: BotsListItemsResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsCreateItemRpc = Rpc.make(WS_METHODS.botsCreateItem, {
+  payload: BotsCreateItemInput,
+  success: BotItem,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsUpdateItemRpc = Rpc.make(WS_METHODS.botsUpdateItem, {
+  payload: BotsUpdateItemInput,
+  success: BotItem,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
+const WsBotsDeleteItemRpc = Rpc.make(WS_METHODS.botsDeleteItem, {
+  payload: BotsDeleteItemInput,
+  success: BotsDeleteItemResult,
+  error: Schema.Union([BotOperationError, EnvironmentAuthorizationError]),
+});
+
 const WsGuestShareCreateRpc = Rpc.make(WS_METHODS.guestShareCreate, {
   payload: GuestShareCreateInput,
   success: GuestShareCreateResult,
@@ -2471,6 +2691,31 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentFeedbackAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsBotsListRpc,
+  WsBotsGetRpc,
+  WsBotsCreateRpc,
+  WsBotsUpdateRpc,
+  WsBotsDeleteRpc,
+  WsBotsImportFolderRpc,
+  WsBotsOpenChatRpc,
+  WsBotsHandoffRpc,
+  WsBotsListFilesRpc,
+  WsBotsReadFileRpc,
+  WsBotsWriteFileRpc,
+  WsBotsListRoutinesRpc,
+  WsBotsUpsertRoutineRpc,
+  WsBotsDeleteRoutineRpc,
+  WsBotsRunRoutineNowRpc,
+  WsBotsListGroupsRpc,
+  WsBotsCreateGroupRpc,
+  WsBotsUpdateGroupRpc,
+  WsBotsDeleteGroupRpc,
+  WsBotsListGroupMessagesRpc,
+  WsBotsSendGroupMessageRpc,
+  WsBotsListItemsRpc,
+  WsBotsCreateItemRpc,
+  WsBotsUpdateItemRpc,
+  WsBotsDeleteItemRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
