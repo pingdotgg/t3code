@@ -4,7 +4,7 @@ import { XIcon } from "lucide-react";
 import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { getCommandPaletteOpener } from "../commandPaletteStore";
-import { useNativeTitlebarHeight } from "../lib/windowControlsOverlay";
+import { useMacosWindowFullscreen, useNativeTitlebarHeight } from "../lib/windowControlsOverlay";
 import { requestWorkspaceFocus } from "../lib/workspaceFocus";
 import { useCloseAppModal } from "./sidebar/mainAppLocation";
 import { GlobalVoiceInputIndicator } from "./chat/GlobalVoiceInputIndicator";
@@ -35,6 +35,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   // buttons). Below sm the modal fills the window and leaves that strip empty; up to lg its
   // 1.5rem inset is shorter than the strip.
   const nativeTitlebarHeight = useNativeTitlebarHeight();
+  const isWindowFullscreen = useMacosWindowFullscreen();
 
   return (
     <DialogPrimitive.Root
@@ -85,11 +86,14 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
           }}
         >
           {/* The titlebar keeps moving the window. Electron applies regions in DOM order, so
-              this follows the no-drag viewport and precedes the popup. */}
-          <div
-            aria-hidden
-            className="absolute inset-x-0 top-0 h-(--app-modal-titlebar-height) [-webkit-app-region:drag]"
-          />
+              this follows the no-drag viewport and precedes the popup. A fullscreen window
+              cannot move, so there the band stays backdrop. */}
+          {isWindowFullscreen ? null : (
+            <div
+              aria-hidden
+              className="absolute inset-x-0 top-0 h-(--app-modal-titlebar-height) [-webkit-app-region:drag]"
+            />
+          )}
           <DialogPrimitive.Popup
             ref={popupRef}
             initialFocus={popupRef}
