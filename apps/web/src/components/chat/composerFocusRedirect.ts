@@ -96,6 +96,8 @@ export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
 export function pasteTextToFocusComposer(event: ClipboardEvent): string | null {
   if (!event.clipboardData || event.clipboardData.files.length > 0) return null;
   if (!shouldRedirectInputToComposer(event)) return null;
+  // The focused device screen owns a menu Paste even when it targets text elsewhere.
+  if (document.activeElement?.closest('[role="application"]')) return null;
   const text = event.clipboardData.getData("text/plain");
   return text.length > 0 ? text : null;
 }

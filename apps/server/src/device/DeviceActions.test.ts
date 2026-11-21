@@ -47,6 +47,25 @@ const makeReady = (
 const udid = "SIM-1";
 
 describe("runDeviceAction", () => {
+  it.effect("grants an iOS app paste access", () =>
+    Effect.gen(function* () {
+      const { ready, calls } = makeReady();
+      yield* runDeviceAction(ready, "ios", {
+        type: "setPermission",
+        deviceId: udid,
+        appId: "com.example.app",
+        permission: "pasteboard",
+        decision: "grant",
+      });
+      expect(calls).toEqual([
+        {
+          command: "xcrun",
+          args: ["simctl", "privacy", udid, "grant", "pasteboard", "com.example.app"],
+        },
+      ]);
+    }),
+  );
+
   it.live.each([
     "https://example.com/callback?code=1&state=2",
     "https://example.com/it's?a=1&b=2",

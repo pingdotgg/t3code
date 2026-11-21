@@ -154,6 +154,29 @@ describe("native device stream transport", () => {
       expect(vi.getTimerCount()).toBe(0);
     },
   );
+
+  it("sends pasted text to the iOS Simulator as serve-sim paste requests", async () => {
+    const { client, opened } = setup("ios");
+    client.start();
+    const socket = await opened;
+    socket.onopen?.();
+    socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    socket.send.mockClear();
+
+    client.sendText("pässwörd 1");
+    client.sendText("");
+    client.sendText("second");
+
+    const packets = socket.send.mock.calls.map(([packet]) => ({
+      tag: packet[0],
+      body: JSON.parse(new TextDecoder().decode(packet.subarray(1))) as unknown,
+    }));
+    expect(packets).toEqual([
+      { tag: 0x12, body: { requestId: 1, text: "pässwörd 1" } },
+      { tag: 0x12, body: { requestId: 1, text: "second" } },
+    ]);
+    client.stop();
+  });
 });
 
 describe("iOS keypad protocol", () => {
