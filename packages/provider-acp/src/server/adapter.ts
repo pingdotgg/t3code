@@ -2640,7 +2640,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             readonly allowReopenFromIdle: boolean;
           }>
         >([]);
-        let externalBackgroundWorkActive = false;
+        const externalBackgroundWorkSessionIds = new Set<string>();
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
@@ -3822,6 +3822,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* writeSubagentThought(existing, true);
             existing.terminalStatusProjected = false;
             existing.assistantText = "";
+            existing.assistantMessages.clear();
+            existing.pendingAssistantMessages.clear();
           }
           const task: OrchestrationV2Subagent = {
             ...(existing?.task ?? {
@@ -4423,7 +4425,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           /Monitor\s+["']?[0-9a-f-]{8,}/i.test(text) && /ended/i.test(text);
 
         const hasDeferredBackgroundWork = (context: ActiveAcpTurn): boolean => {
-          if (externalBackgroundWorkActive) return true;
+          if (externalBackgroundWorkSessionIds.has(context.nativeThreadId)) return true;
           if (flavor.wakeOnDetachedRequest && agentRequests.size > 0) return true;
           if (flavor.toolOutlivesPrompt !== undefined) {
             // A tool that never started has nothing to report later.
@@ -7074,6 +7076,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           }
           if (acpSubagentStatusIsTerminal(update.status)) {
+            yield* Ref.update(pendingExtensionSubagents, (current) =>
+              current.filter(
+                (entry) =>
+                  entry.subagent.nativeTaskId !== update.nativeTaskId &&
+                  (update.childSessionId === null ||
+                    entry.subagent.childSessionId !== update.childSessionId),
+              ),
+            );
             if (update.childSessionId !== null) {
               const dormant = (yield* Ref.get(dormantSubagentsByChildSessionId)).get(
                 update.childSessionId,
@@ -7883,7 +7893,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.gen(function* () {
                     if (yield* Ref.get(stoppedRunQuarantine)) return;
                     if ((yield* Ref.get(activeSessionId)) !== notice.sessionId) return;
-                    externalBackgroundWorkActive = notice.active;
+                    if (notice.active) externalBackgroundWorkSessionIds.add(notice.sessionId);
+                    else externalBackgroundWorkSessionIds.delete(notice.sessionId);
                     const context = yield* Ref.get(activeTurn);
                     if (
                       context === null ||
@@ -8248,7 +8259,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(carryoverSubagents, null);
                 yield* Ref.set(dormantSubagentsByChildSessionId, new Map());
                 yield* Ref.set(pendingExtensionSubagents, []);
-                externalBackgroundWorkActive = false;
+                externalBackgroundWorkSessionIds.clear();
                 yield* Ref.set(suppressPostSettleMonitorPrompt, false);
                 yield* Ref.set(lastTurnRoute, null);
               }),
@@ -8812,7 +8823,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(carryoverSubagents, null);
               yield* Ref.set(dormantSubagentsByChildSessionId, new Map());
               yield* Ref.set(pendingExtensionSubagents, []);
-              externalBackgroundWorkActive = false;
+              externalBackgroundWorkSessionIds.clear();
               yield* Ref.set(lastTurnRoute, null);
             }),
           );
@@ -9074,7 +9085,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const promptInactivityPaused = Effect.fn("AcpAdapterV2.promptInactivityPaused")(function* (
           context: ActiveAcpTurn,
         ) {
-          if (externalBackgroundWorkActive) return true;
+          if (externalBackgroundWorkSessionIds.has(context.nativeThreadId)) return true;
           if (openAgentRequests.size > 0) return true;
           if ((yield* Ref.get(pendingRuntimeRequests)).size > 0) return true;
           for (const tool of context.tools.values()) {
@@ -10179,7 +10190,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       agentRequests.size > 0)
                   )
                     return true;
-                  if (externalBackgroundWorkActive) return true;
+                  if (rootSessionId !== null && externalBackgroundWorkSessionIds.has(rootSessionId))
+                    return true;
                   if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
                   if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
                   if (yield* Ref.get(continuationRequested)) return true;

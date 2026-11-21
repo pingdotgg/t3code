@@ -62,6 +62,9 @@ const decodeLaunchInput = Schema.decodeUnknownOption(
 );
 const decodeSwarmAddInput = Schema.decodeUnknownOption(SwarmAddInput);
 
+// The tool input is untrusted; a huge `n` must not allocate a launch per requested worker.
+const MAX_SWARM_ADD_LAUNCHES = 64;
+
 function swarmAddLaunches(input: unknown): ReadonlyArray<AntigravityChildLaunch> | undefined {
   const decoded = Option.getOrUndefined(decodeSwarmAddInput(input));
   if (decoded === undefined || decoded.action.trim().toLowerCase() !== "add") return undefined;
@@ -70,7 +73,7 @@ function swarmAddLaunches(input: unknown): ReadonlyArray<AntigravityChildLaunch>
   const tasks = decoded.tasks ?? [];
   const requestedCount =
     decoded.n !== undefined && Number.isFinite(decoded.n) ? Math.trunc(decoded.n) : 0;
-  const count = Math.max(tasks.length, requestedCount, 1);
+  const count = Math.min(Math.max(tasks.length, requestedCount, 1), MAX_SWARM_ADD_LAUNCHES);
   const roleSuffix =
     decoded.role !== undefined && decoded.role.trim().length > 0 && decoded.role !== "worker"
       ? ` (${decoded.role.trim()})`

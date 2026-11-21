@@ -642,6 +642,8 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         ]);
         expect(batchChildren[0]?.steps?.[0]?.text).toBe("shard-1 finished");
 
+        expect(antigravitySubagentLaunches({ action: "add", name: "w", n: 1e9 })).toHaveLength(64);
+
         const direct = yield* read(profile, `swarm:${workerOne}`);
         expect(direct).toHaveLength(1);
         expect(direct[0]?.role).toBe("@shard-1");
