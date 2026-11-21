@@ -791,7 +791,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
   );
 
   const makeClaudeCacheFixture = Effect.fnUntraced(function* (
-    state: "ready" | "signed-out" | "usage-failed",
+    state: "ready" | "signed-out" | "usage-failed" | "usage-null",
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -819,6 +819,9 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
                     sensitive: false,
                   },
                 ]),
+            ...(state === "usage-null"
+              ? [{ name: "T3_CLAUDE_USAGE_FAILS_AS_NULL", value: "1", sensitive: false }]
+              : []),
           ],
           config: makeClaudeConfig({
             enabled: true,
@@ -837,11 +840,11 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     };
   });
 
-  for (const state of ["signed-out", "usage-failed"] as const) {
+  for (const state of ["signed-out", "usage-failed", "usage-null"] as const) {
     it.effect.skipIf(windowsHost)(
       state === "signed-out"
         ? "shows Claude usage on the first refresh after signing back in"
-        : "retries Claude usage on the first refresh after a failed usage read",
+        : `retries Claude usage on the first refresh after a ${state === "usage-null" ? "missing" : "failed"} usage read`,
       () =>
         Effect.gen(function* () {
           const fixture = yield* makeClaudeCacheFixture(state);
