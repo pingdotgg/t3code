@@ -78,6 +78,7 @@ function layerTestFor(state: {
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
+  remoteStatusReusedDetails?: Array<boolean>;
   localStatusBranchChanges?: Array<boolean>;
   refSnapshot?: string | null;
   remoteStatusError?: GitManagerError;
@@ -144,15 +145,29 @@ function layerTestFor(state: {
         readRefSnapshot: () =>
           Effect.sync(() => (state.refSnapshot === undefined ? "refs" : state.refSnapshot)),
         upstreamDivergence: () =>
-          Effect.sync(() =>
-            state.currentRemoteStatus?.hasUpstream && state.currentLocalStatus.refName !== null
-              ? {
-                  refName: state.currentLocalStatus.refName,
-                  aheadCount: (state.currentDivergence ?? state.currentRemoteStatus).aheadCount,
-                  behindCount: (state.currentDivergence ?? state.currentRemoteStatus).behindCount,
-                }
-              : null,
-          ),
+          Effect.sync(() => {
+            const refName = state.currentLocalStatus.refName;
+            if (!state.currentRemoteStatus?.hasUpstream || refName === null) return null;
+            const { aheadCount, behindCount } =
+              state.currentDivergence ?? state.currentRemoteStatus;
+            return {
+              refName,
+              aheadCount,
+              behindCount,
+              details: {
+                isRepo: true,
+                hasPrimaryRemote: true,
+                defaultBranch: "main",
+                isDefaultBranch: false,
+                branch: refName,
+                upstreamRef: `origin/${refName}`,
+                hasUpstream: true,
+                aheadCount,
+                behindCount,
+                aheadOfDefaultCount: aheadCount,
+              },
+            };
+          }),
         remoteStatus: (_input, options) =>
           Effect.suspend(() => {
             return (state.beforeRemoteStatus ?? Effect.void).pipe(
@@ -160,6 +175,7 @@ function layerTestFor(state: {
                 Effect.sync(() => {
                   state.remoteStatusCalls += 1;
                   state.remoteStatusRefreshUpstreamValues?.push(options?.refreshUpstream);
+                  state.remoteStatusReusedDetails?.push(options?.statusDetails !== undefined);
                   return state.currentRemoteStatus;
                 }),
               ),
@@ -717,7 +733,10 @@ describe("VcsStatusBroadcaster", () => {
       return Effect.gen(function* () {
         const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
         const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
-        const refreshed = yield* broadcaster.refreshStatus("/repo", { localOnly: true });
+        const { refsDigest, ...refreshed } = yield* broadcaster.refreshStatus("/repo", {
+          localOnly: true,
+        });
+        assert.isString(refsDigest);
         assert.deepStrictEqual(refreshed, initial);
         assert.deepStrictEqual(yield* broadcaster.getStatus({ cwd: "/repo" }), refreshed);
         assert.equal(state.localInvalidationCalls, 1);
@@ -790,6 +809,27 @@ describe("VcsStatusBroadcaster", () => {
       }).pipe(Effect.provide(layerTestFor(state)));
     },
   );
+
+  it.effect("the turn-end PR lookup reuses the upstream read it follows, once", () => {
+    const state: Parameters<typeof layerTestFor>[0] = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: remoteStatusWithPr,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      remoteStatusReusedDetails: [],
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      yield* broadcaster.refreshLocalStatus("/repo");
+      yield* broadcaster.refreshPullRequestStatus("/repo");
+      yield* broadcaster.refreshPullRequestStatus("/repo");
+      assert.deepStrictEqual(state.remoteStatusReusedDetails, [false, true, false]);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
 
   it.effect.each([0, 2])(
     "refreshes merge divergence while a lookup ends with %s commits behind",
