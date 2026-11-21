@@ -24,6 +24,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import { type IgnoreDecision, parseIgnoreFile } from "./IgnorePatterns.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
 
@@ -288,12 +289,38 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
         .pipe(Effect.orElseSucceed(() => "")),
     )?.ignoreRepositories ?? []
   ).map((entry) => path.resolve(root, entry));
+  // Reading the root file is cheaper than `git check-ignore` on every project read. Folders a
+  // workspace file lists were chosen on purpose, so only auto-discovered ones defer to git.
+  const gitignore = scan.value.isGitRepository
+    ? parseIgnoreFile(
+        yield* fileSystem
+          .readFileString(path.join(root, ".gitignore"))
+          .pipe(Effect.orElseSucceed(() => "")),
+      )
+    : null;
+  const gitIgnored = (folderPath: string) => {
+    if (gitignore === null) return false;
+    const relative = path.relative(root, folderPath).split(path.sep).join("/");
+    if (relative === "" || relative === ".." || relative.startsWith("../")) return false;
+    const segments = relative.split("/");
+    // A `vendor/` pattern matches the folder, not `vendor/pkg`, so each parent decides too. Git
+    // cannot re-include anything below an excluded folder, so one ignored parent settles it.
+    for (let index = 1; index <= segments.length; index += 1) {
+      const decision: IgnoreDecision | undefined = gitignore.decide(
+        segments.slice(0, index).join("/"),
+        true,
+      );
+      if (decision === "ignored") return true;
+    }
+    return false;
+  };
   const inside = yield* Effect.filter(
-    scan.value.folders.filter(
-      (folder) =>
-        folder.isGitRepository &&
-        !ignored.some((entry) => folder.path === entry || isWithinRoot(path, folder.path, entry)),
-    ),
+    scan.value.folders.filter((folder) => {
+      if (!folder.isGitRepository) return false;
+      if (ignored.some((entry) => folder.path === entry || isWithinRoot(path, folder.path, entry)))
+        return false;
+      return folder.source === "code-workspace" || !gitIgnored(folder.path);
+    }),
     // A link to a repository elsewhere is not inside the project, whatever its name says, and a
     // worktree a workspace file lists follows another repository.
     (folder) =>

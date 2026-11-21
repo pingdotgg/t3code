@@ -193,6 +193,38 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
     }),
   );
 
+  it.effect("leaves out auto-discovered repositories the project's git ignores", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* makeTempDir;
+      const workspaceRoot = path.join(tmp, "wrapper");
+      for (const folder of [".git", "api/.git", "vendor/big/.git", "vendor/nested/deep/.git"]) {
+        yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
+      }
+      yield* fileSystem.writeFileString(path.join(workspaceRoot, ".gitignore"), "vendor/\n");
+      const explicitlyAdded = { path: path.join(workspaceRoot, "vendor", "big"), name: "big" };
+      const listed = Effect.gen(function* () {
+        const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
+        return yield* Effect.map(workspaceFolders.list({ projectId }), ({ folders }) =>
+          folders.map((folder) => [folder.name, folder.path]),
+        );
+      });
+
+      yield* Effect.gen(function* () {
+        assert.deepEqual(yield* listed, [["api", path.join(workspaceRoot, "api")]]);
+      }).pipe(Effect.provide(layerFor({ workspaceRoot, trackedFolders: [] })));
+
+      // Someone who adds an ignored checkout still gets it.
+      yield* Effect.gen(function* () {
+        assert.deepEqual(yield* listed, [
+          ["api", path.join(workspaceRoot, "api")],
+          ["big", explicitlyAdded.path],
+        ]);
+      }).pipe(Effect.provide(layerFor({ workspaceRoot, trackedFolders: [explicitlyAdded] })));
+    }),
+  );
+
   it.effect("keeps the folders someone added when a project holds more than fit", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

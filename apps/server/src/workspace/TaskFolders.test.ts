@@ -15,6 +15,7 @@ import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as TaskFolders from "./TaskFolders.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
+import * as WorkspaceFolders from "./WorkspaceFolders.ts";
 import {
   layerTaskFoldersWithGit,
   taskFoldersTestProjectId as projectId,
@@ -343,6 +344,51 @@ it.live("puts a clone the project ignores inside the project's worktree", () =>
         "feature",
       );
       assert.equal(yield* run(taskFolder.root, "status", "--porcelain"), "");
+    }),
+  ),
+);
+
+it.live("starts a thread when a checkout hook links a gitignored vendored repository", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, run, repository, isLink, worktreeCount } = yield* fixture;
+      const project = yield* repository("app");
+      const api = yield* repository("app/services/api");
+      // A setup script clones these; the project itself does not version them.
+      const vendored = yield* repository("app/vendor/lib");
+      yield* fileSystem.writeFileString(path.join(project, ".gitignore"), "vendor/\n");
+      yield* run(project, "add", ".gitignore");
+      yield* run(project, "commit", "-m", "ignore the vendored checkout");
+      // Like a project whose hook links its vendored checkouts into every new worktree.
+      const hooks = path.join(project, "hooks");
+      yield* fileSystem.makeDirectory(hooks);
+      yield* fileSystem.writeFileString(
+        path.join(hooks, "post-checkout"),
+        `#!/bin/sh
+if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
+  mkdir -p vendor
+  ln -s "${vendored}" vendor/lib
+fi
+`,
+      );
+      yield* fileSystem.chmod(path.join(hooks, "post-checkout"), 0o755);
+      yield* run(project, "config", "core.hooksPath", hooks);
+
+      state.workspaceRoot = project;
+      state.trackedFolders = yield* WorkspaceFolders.discoverFolders(project);
+
+      // Only the repository the project versions is laid out; the hook links the vendored one.
+      assert.deepEqual(
+        state.trackedFolders.map((folder) => folder.path),
+        [api],
+      );
+      const { taskFolder } = yield* create("feature");
+      assert.deepEqual(
+        taskFolder.repositories.map(({ repositoryPath }) => repositoryPath),
+        [api],
+      );
+      assert.isTrue(yield* isLink(path.join(taskFolder.root, "vendor", "lib")));
+      assert.equal(yield* worktreeCount(vendored), 1);
     }),
   ),
 );
