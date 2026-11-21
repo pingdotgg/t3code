@@ -1854,7 +1854,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !canOperateThread ||
     environmentUnavailable !== null ||
     projectSelectionRequired ||
-    isComposerApprovalState ||
     activePendingIsResponding ||
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const speechInput = useEnvironmentSpeechInput({
