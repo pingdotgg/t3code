@@ -156,7 +156,13 @@ export const readAntigravityRunningCommands = Effect.fn("readAntigravityRunningC
     readonly sessionId: string;
     readonly tools: ReadonlyArray<AcpToolCallState>;
   }) {
-    if (input.tools.length === 0) return [] as ReadonlyArray<string>;
+    const nonExecuteIds: Array<string> = [];
+    const executeTools: Array<AcpToolCallState> = [];
+    for (const tool of input.tools) {
+      if (tool.kind === "execute") executeTools.push(tool);
+      else nonExecuteIds.push(tool.toolCallId);
+    }
+    if (executeTools.length === 0) return nonExecuteIds as ReadonlyArray<string>;
     if (!NATIVE_SESSION_ID.test(input.sessionId)) return undefined;
     const read = async (): Promise<ReadonlyArray<string> | undefined> => {
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
@@ -190,7 +196,7 @@ export const readAntigravityRunningCommands = Effect.fn("readAntigravityRunningC
             database
               .prepare("SELECT 1 FROM steps WHERE step_type = ? LIMIT 1")
               .get(RUN_COMMAND_STEP_TYPE) !== undefined;
-          return hasAnyCommand ? [] : undefined;
+          return hasAnyCommand ? nonExecuteIds : undefined;
         }
         const active: Array<ActiveNativeCommand> = [];
         for (const row of rows) {
@@ -205,15 +211,15 @@ export const readAntigravityRunningCommands = Effect.fn("readAntigravityRunningC
           if (decoded.callId === undefined && decoded.command === undefined) return undefined;
           active.push(decoded);
         }
-        if (active.length === 0) return [];
+        if (active.length === 0) return nonExecuteIds;
         const remainingActive = [...active];
-        const stillRunning: Array<string> = [];
+        const stillRunning: Array<string> = [...nonExecuteIds];
         const unmatchedTools: Array<{
           readonly tool: AcpToolCallState;
           readonly identity: ReturnType<typeof toolCommandIdentity>;
         }> = [];
         // Pass 1: exact callId matches are unambiguous even when command text is absent.
-        for (const tool of input.tools) {
+        for (const tool of executeTools) {
           const exactIndex = remainingActive.findIndex(
             (entry) => entry.callId !== undefined && entry.callId === tool.toolCallId,
           );

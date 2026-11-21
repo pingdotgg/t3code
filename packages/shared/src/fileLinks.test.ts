@@ -184,7 +184,16 @@ describe("fileLinkLabel", () => {
   it.each([
     [{ path: "/repo/src/http.ts", line: 42, column: 7 }, "http.ts · L42:C7"],
     [{ path: "/repo/src/http.ts", line: 42, endLine: 64 }, "http.ts · L42–64"],
+    // macOS file names can be NFD (decomposed Hangul jamo); the label shows composed syllables.
+    [{ path: "/repo/\u1109\u1175\u110b\u1161\u11ab" }, "\uc2dc\uc548"],
   ])("labels %o", (file, label) => {
     expect(fileLinkLabel(file, new Map())).toBe(label);
+  });
+
+  it("composes an NFD parent-folder suffix", () => {
+    const path = "/repo/\u1109\u1175\u110b\u1161\u11ab/a.txt";
+    expect(
+      fileLinkLabel({ path }, buildFileLinkParentSuffixByPath([path, "/repo/other/a.txt"])),
+    ).toBe("a.txt · repo/\uc2dc\uc548");
   });
 });

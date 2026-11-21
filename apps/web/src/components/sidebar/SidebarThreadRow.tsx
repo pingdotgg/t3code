@@ -78,7 +78,7 @@ import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
-import { useLinkedIssueDetail } from "../../state/issues";
+import { useSidebarLinkedIssueState } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { formatRelativeTime, parseTimestampDate } from "../../timestampFormat";
@@ -163,7 +163,7 @@ function RelativeTimeLabel(props: { timestamp: string | null }) {
     : compactSidebarTimeLabel(props.timestamp, Date.parse(`${nowMinute}:00.000Z`), m);
 }
 
-function JumpHintBadge(props: { label: string }) {
+export function JumpHintBadge(props: { label: string }) {
   return (
     <Kbd aria-hidden data-jump-hint>
       {props.label}
@@ -171,7 +171,7 @@ function JumpHintBadge(props: { label: string }) {
   );
 }
 
-const JUMP_HINT_SLOT_CLASS_NAME =
+export const JUMP_HINT_SLOT_CLASS_NAME =
   "[&>:not([data-jump-hint])]:invisible [&>:not([data-jump-hint])]:absolute";
 
 function WorkingDuration(props: { environmentId: EnvironmentId; startedAt: string | null }) {
@@ -1134,12 +1134,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ) : null;
   const firstIssue = thread.issues?.[0];
   const issueCount = thread.issues?.length ?? 0;
-  const issueDetail = useLinkedIssueDetail(
+  const issueState = useSidebarLinkedIssueState(
     thread.environmentId,
-    leaseLiveStatus && issueCount === 1 ? firstIssue : undefined,
-    "sidebar",
+    leaseLiveStatus ? thread.issues : undefined,
   );
-  const issueStatus = issueDetail === null ? null : issueStatePresentation(issueDetail.state);
+  const issueStatus = issueState === null ? null : issueStatePresentation(issueState);
   const IssueIcon = issueStatus?.Icon ?? IssueGlyph.issue;
   const issueLabel =
     issueCount === 1 && firstIssue

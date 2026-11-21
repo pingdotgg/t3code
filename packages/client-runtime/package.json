@@ -103,9 +103,21 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
+    "./link-batch": {
+      "types": "./src/linkBatch.ts",
+      "default": "./src/linkBatch.ts"
+    },
     "./link-request": {
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"
+    },
+    "./linked-thread": {
+      "types": "./src/linkedThread.ts",
+      "default": "./src/linkedThread.ts"
+    },
+    "./side-thread": {
+      "types": "./src/sideThread.ts",
+      "default": "./src/sideThread.ts"
     },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
@@ -258,6 +270,10 @@
     "./state/orchestration": {
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
+    },
+    "./state/thread-stream": {
+      "types": "./src/state/threadStream.ts",
+      "default": "./src/state/threadStream.ts"
     },
     "./state/thread-history-merge": {
       "types": "./src/state/threadHistoryMerge.ts",

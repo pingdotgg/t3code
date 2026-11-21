@@ -481,4 +481,48 @@ describe("readAntigravityRunningCommands", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect(
+    "preserves non-execute outliving tools such as schedule alongside canceled commands",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const profileDirectory = yield* fs.makeTempDirectoryScoped();
+        yield* writeSessionDb({
+          profileDirectory,
+          rows: [
+            {
+              idx: 14,
+              stepType: RUN_COMMAND_STEP_TYPE,
+              status: STATUS_CANCELED,
+              metadata: commandStepMetadata({
+                callId: "call_canceled",
+                args: { CommandLine: "pytest -q tests/", Cwd: "/repo" },
+              }),
+              payload: null,
+            },
+          ],
+        });
+        const scheduleTool: AcpToolCallState = {
+          toolCallId: `${SESSION_ID}:20`,
+          kind: "other",
+          title: "Running schedule",
+          status: "inProgress",
+          data: { rawInput: { DurationSeconds: 300, Prompt: "Check status" } },
+        };
+        const result = yield* readAntigravityRunningCommands({
+          profileDirectory,
+          sessionId: SESSION_ID,
+          tools: [
+            makeToolCall({
+              toolCallId: `${SESSION_ID}:13`,
+              commandLine: "pytest -q tests/",
+              cwd: "/repo",
+            }),
+            scheduleTool,
+          ],
+        });
+        assert.deepEqual(result, [scheduleTool.toolCallId]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
