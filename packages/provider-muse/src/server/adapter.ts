@@ -2454,8 +2454,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 // and keeps the listing for the caller to retry.
                 yield* request("task/stopAll", {});
                 // A monitor that already woke the session left a turn this call must end too.
-                if (wake)
-                  yield* request("turn/interrupt", { turnId: wake.nativeId }).pipe(Effect.ignore);
+                // Keep the wake and the listing if that fails, so a retry can finish the job.
+                if (wake) yield* request("turn/interrupt", { turnId: wake.nativeId });
                 yield* settleObservedChildren("interrupted");
                 wake = undefined;
                 return;

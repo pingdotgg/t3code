@@ -1891,6 +1891,74 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("keeps a woken turn on a failed Stop so a retry can end it", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      // `turn/started` sets the held wake before it offers the continuation.
+      const woken = yield* Deferred.make<void>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: () => Deferred.succeed(woken, undefined) } },
+      );
+      const turn = yield* startConversation(harness, fake);
+      yield* fake.emit("item/completed", {
+        turnId: turn.nativeId,
+        item: {
+          itemId: "monitor-1",
+          kind: "toolCall",
+          status: "completed",
+          turnId: turn.nativeId,
+          tool: "monitor",
+          background: true,
+          revision: 1,
+        },
+      });
+      yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+      );
+      fake.queueResponse("task/list", {
+        tasks: [
+          { taskId: "monitor-1", kind: "tool.monitor", status: "inProgress", tool: "monitor" },
+        ],
+      });
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+
+      // The monitor's report already woke a new Muse turn.
+      yield* fake.emit("turn/started", { turnId: "wake-1" });
+      yield* Deferred.await(woken);
+
+      fake.queueResponse("turn/interrupt", new Error("interrupt rejected"));
+      const failed = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.strictEqual(failed._tag, "Failure");
+      assert.strictEqual((yield* fake.takeCall("task/stopAll")).method, "task/stopAll");
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+
+      const retried = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.strictEqual(retried._tag, "Success");
+      assert.strictEqual((yield* fake.takeCall("turn/interrupt")).params.turnId, "wake-1");
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("clears a stopped monitor when the turn ends before Stop's reply", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
