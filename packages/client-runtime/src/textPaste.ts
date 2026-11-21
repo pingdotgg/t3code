@@ -1,4 +1,6 @@
 export const PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES = 32 * 1024;
+/** Smaller pastes (a URL, a word) stay inline even when the prompt is already large. */
+const PASTED_TEXT_CUMULATIVE_MIN_BYTES = 2 * 1024;
 
 const textEncoder = new TextEncoder();
 
@@ -26,22 +28,34 @@ export function isPasteAsTextShortcut(
 
 /**
  * The threshold is byte-based: character counts substantially understate the
- * context cost of some Unicode-heavy clipboard contents.
+ * context cost of some Unicode-heavy clipboard contents. It also applies to the
+ * prompt the paste would produce, so several smaller pastes cannot stack up inline.
  */
 export function pastedTextDisposition(input: {
   readonly text: string;
   readonly canAttach: boolean;
   readonly bypassAutoAttachment?: boolean;
   readonly wouldExceedInputLimit?: boolean;
+  /** The prompt and its replaced selection; omit to judge the paste on its own. */
+  readonly prompt?: {
+    readonly value: string;
+    readonly selection: { readonly start: number; readonly end: number };
+  };
 }): PastedTextDisposition {
   if (input.bypassAutoAttachment || !input.canAttach || input.text.length === 0) {
     return "inline";
   }
-  return input.wouldExceedInputLimit ||
-    input.text.length >= PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES ||
-    textEncoder.encode(input.text).byteLength >= PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES
-    ? "attachment"
-    : "inline";
+  if (input.wouldExceedInputLimit || input.text.length >= PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES) {
+    return "attachment";
+  }
+  const textBytes = textEncoder.encode(input.text).byteLength;
+  if (textBytes >= PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES) return "attachment";
+  if (!input.prompt || textBytes < PASTED_TEXT_CUMULATIVE_MIN_BYTES) return "inline";
+  const { value, selection } = input.prompt;
+  const start = Math.max(0, Math.min(value.length, selection.start));
+  const end = Math.max(start, Math.min(value.length, selection.end));
+  const keptBytes = textEncoder.encode(value.slice(0, start) + value.slice(end)).byteLength;
+  return keptBytes + textBytes >= PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES ? "attachment" : "inline";
 }
 
 export function nextPastedTextFileName(existingNames: ReadonlyArray<string>): string {
