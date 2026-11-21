@@ -105,6 +105,24 @@ interface StatusLabel {
   readonly iconTintClassName: string;
 }
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
+  connecting: {
+    label: msg("Connecting", { $context: "connection status" }),
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
+  reconnecting: {
+    label: msg("Reconnecting", { $context: "connection status" }),
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
+  offline: {
+    label: msg("Offline", { $context: "connection status" }),
+    icon: "wifi.slash",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
   approval: {
     label: msg("Approval", { $context: "thread status, waiting for approval" }),
     icon: "exclamationmark.shield",
