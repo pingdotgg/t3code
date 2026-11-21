@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest of the ref snapshot already in memory.
+import * as NodeCrypto from "node:crypto";
+
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -20,6 +23,7 @@ import type {
   VcsBranchStatus,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
+  VcsRefreshStatusResult,
   VcsStatusResult,
   VcsStatusStreamEvent,
   VcsStatusSubscriptionInput,
@@ -236,7 +240,7 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshStatus: (
       cwd: string,
       options?: { readonly localOnly?: boolean },
-    ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    ) => Effect.Effect<VcsRefreshStatusResult, GitManagerServiceError>;
     readonly refreshPullRequestStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
@@ -563,20 +567,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  // A fetch, ours or not, can move the base used for local Changes totals. Without a baseline
-  // snapshot there is nothing to compare, so the read always happens.
-  const refreshLocalStatusUnlessRefsUnchanged = Effect.fn(
-    "VcsStatusBroadcaster.refreshLocalStatusUnlessRefsUnchanged",
-  )(function* (cwd: string, refsBeforeLocalRead: string | null, localRequestedAt?: number) {
-    if (
-      refsBeforeLocalRead !== null &&
-      (yield* workflow.readRefSnapshot(cwd)) === refsBeforeLocalRead
-    ) {
-      return;
-    }
-    yield* refreshLocalStatusCore(cwd, localRequestedAt);
-  });
-
   const refreshLocalStatus: VcsStatusBroadcaster["Service"]["refreshLocalStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshLocalStatus",
   )(function* (rawCwd) {
@@ -697,8 +687,8 @@ export const make = Effect.gen(function* () {
     options?: {
       readonly refreshUpstream?: boolean;
       readonly policyCwds?: ReadonlyArray<string>;
-      /** Refs before a local read the caller just made, which a read of unmoved refs would repeat. */
-      readonly refsBeforeLocalRead?: string | null;
+      /** Refs seen by this caller's last local read; skips the re-read while they hold. */
+      readonly refsAtLocalRead?: Ref.Ref<string | null>;
       readonly localRequestedAt?: number;
     },
   ) {
@@ -712,11 +702,17 @@ export const make = Effect.gen(function* () {
             : yield* maybeAutoPull(cwd, remoteRead, options?.policyCwds ?? [cwd]);
         if (pulled !== null) return pulled.remote;
         // Base refs and merge bases can move without changing divergence counts.
-        yield* refreshLocalStatusUnlessRefsUnchanged(
-          cwd,
-          options?.refsBeforeLocalRead ?? null,
-          options?.localRequestedAt,
-        );
+        const refsAtLocalRead = options?.refsAtLocalRead;
+        if (refsAtLocalRead === undefined) {
+          yield* refreshLocalStatusCore(cwd, options?.localRequestedAt);
+        } else {
+          const refs = yield* workflow.readRefSnapshot(cwd);
+          if (refs === null || refs !== (yield* Ref.get(refsAtLocalRead))) {
+            yield* Ref.set(refsAtLocalRead, null);
+            yield* refreshLocalStatusCore(cwd, options?.localRequestedAt);
+            yield* Ref.set(refsAtLocalRead, refs);
+          }
+        }
         return yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
       }),
     );
@@ -735,11 +731,17 @@ export const make = Effect.gen(function* () {
           const pulled = refreshUpstream
             ? yield* maybeAutoPull(cwd, remoteRead, [policyCwd])
             : null;
-          if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
+          if (pulled !== null) {
+            return { status: mergeGitStatusParts(pulled.local, pulled.remote), refs: null };
+          }
           yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
-          yield* refreshLocalStatusUnlessRefsUnchanged(cwd, refsBeforeLocalRead);
+          // A fetch, ours or not, can move the base used for local Changes totals.
+          const refs = refsBeforeLocalRead === null ? null : yield* workflow.readRefSnapshot(cwd);
+          if (refs === null || refs !== refsBeforeLocalRead) {
+            yield* refreshLocalStatusCore(cwd);
+          }
           const parts = yield* getStatusParts(cwd);
-          return mergeGitStatusParts(parts.local, parts.remote);
+          return { status: mergeGitStatusParts(parts.local, parts.remote), refs };
         }),
       );
     },
@@ -757,7 +759,14 @@ export const make = Effect.gen(function* () {
       const parts = yield* getStatusParts(cwd);
       return mergeGitStatusParts(parts.local, parts.remote);
     }
-    return yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
+    const { status, refs } = yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
+    // Lets the client keep its cached branch list when no ref moved since its last refresh.
+    return refs === null
+      ? status
+      : {
+          ...status,
+          refsDigest: NodeCrypto.createHash("sha256").update(refs).digest("hex").slice(0, 32),
+        };
   }, Effect.scoped);
 
   const refreshAfterCheckout: VcsStatusBroadcaster["Service"]["refreshAfterCheckout"] = Effect.fn(
@@ -803,6 +812,7 @@ export const make = Effect.gen(function* () {
   ) {
     const consecutiveFailuresRef = yield* Ref.make(0);
     const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
+    const refsAtLocalReadRef = yield* Ref.make<string | null>(null);
     const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
       const configuredInterval = yield* automaticFetchInterval;
       const activeInterval = Duration.isZero(configuredInterval)
@@ -829,19 +839,22 @@ export const make = Effect.gen(function* () {
         return activeInterval;
       }
 
-      // Only the first attempt follows the read made with this subscription; a retry reads again.
-      const refsBeforeLocalRead = initialRefs.refs;
+      // The read made with this subscription vouches for the first attempt only; a failed
+      // attempt drops it, so the retry reads again.
+      const subscriptionRefs = initialRefs.refs;
       initialRefs.refs = null;
+      if (subscriptionRefs !== null) yield* Ref.set(refsAtLocalReadRef, subscriptionRefs);
       const exit = yield* refreshRemoteStatus(cwd, {
         refreshUpstream: !Duration.isZero(configuredInterval),
         policyCwds: [...demandCwds.keys()],
-        refsBeforeLocalRead,
+        refsAtLocalRead: refsAtLocalReadRef,
       }).pipe(Effect.exit);
       if (Exit.isSuccess(exit)) {
         yield* Ref.set(needsInitialRefreshRef, false);
         yield* Ref.set(consecutiveFailuresRef, 0);
         return activeInterval;
       }
+      if (subscriptionRefs !== null) yield* Ref.set(refsAtLocalReadRef, null);
 
       const interruptionReasons = exit.cause.reasons.filter(Cause.isInterruptReason);
       if (interruptionReasons.length > 0) {
@@ -970,7 +983,7 @@ export const make = Effect.gen(function* () {
   // A request made during a refresh needs a read that starts after it, so overlapping requests
   // share one follow-up. Keyed by raw cwd because auto-pull policy depends on it.
   // Missing means idle; null means running with no follow-up queued.
-  type SharedRefresh = Deferred.Deferred<VcsStatusResult, GitManagerServiceError>;
+  type SharedRefresh = Deferred.Deferred<VcsRefreshStatusResult, GitManagerServiceError>;
   const queuedRefreshesRef = yield* Ref.make(new Map<string, SharedRefresh | null>());
 
   const runQueuedRefreshes = Effect.fn("VcsStatusBroadcaster.runQueuedRefreshes")(function* (
@@ -997,7 +1010,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.shareQueuedRefreshStatus",
   )(function* (rawCwd, options) {
     if (options?.localOnly) return yield* refreshStatus(rawCwd, options);
-    const requested = yield* Deferred.make<VcsStatusResult, GitManagerServiceError>();
+    const requested = yield* Deferred.make<VcsRefreshStatusResult, GitManagerServiceError>();
     // Registering and forking together keeps an interrupt from leaving an entry with no worker.
     const shared = yield* Effect.uninterruptible(
       Effect.gen(function* () {

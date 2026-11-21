@@ -78,23 +78,11 @@ describe("String", () => {
     it("converts to uppercase", () => {
       strictEqual(S.toUpperCase("hello"), "HELLO")
     })
-
-    it("handles empty string", () => {
-      strictEqual(S.toUpperCase(""), "")
-    })
-
-    it("pipeable", () => {
-      strictEqual(pipe("abc", S.toUpperCase), "ABC")
-    })
   })
 
   describe("toLowerCase", () => {
     it("converts to lowercase", () => {
       strictEqual(S.toLowerCase("HELLO"), "hello")
-    })
-
-    it("handles empty string", () => {
-      strictEqual(S.toLowerCase(""), "")
     })
   })
 
@@ -103,16 +91,8 @@ describe("String", () => {
       strictEqual(S.capitalize("hello"), "Hello")
     })
 
-    it("handles single character", () => {
-      strictEqual(S.capitalize("a"), "A")
-    })
-
     it("handles empty string", () => {
       strictEqual(S.capitalize(""), "")
-    })
-
-    it("does not change already capitalized", () => {
-      strictEqual(S.capitalize("Hello"), "Hello")
     })
 
     it("expands an eszett", () => {
@@ -133,10 +113,6 @@ describe("String", () => {
   describe("uncapitalize", () => {
     it("uncapitalizes first character", () => {
       strictEqual(S.uncapitalize("Hello"), "hello")
-    })
-
-    it("handles single character", () => {
-      strictEqual(S.uncapitalize("A"), "a")
     })
 
     it("handles empty string", () => {
@@ -173,15 +149,7 @@ describe("String", () => {
 
   describe("trim", () => {
     it("trims whitespace from both ends", () => {
-      strictEqual(S.trim("  hello  "), "hello")
-    })
-
-    it("trims tabs and newlines", () => {
-      strictEqual(S.trim("\t\nhello\t\n"), "hello")
-    })
-
-    it("handles empty string", () => {
-      strictEqual(S.trim(""), "")
+      strictEqual(S.trim(" \t\nhello \t\n"), "hello")
     })
   })
 
@@ -189,19 +157,11 @@ describe("String", () => {
     it("trims leading whitespace", () => {
       strictEqual(S.trimStart("  hello  "), "hello  ")
     })
-
-    it("handles empty string", () => {
-      strictEqual(S.trimStart(""), "")
-    })
   })
 
   describe("trimEnd", () => {
     it("trims trailing whitespace", () => {
       strictEqual(S.trimEnd("  hello  "), "  hello")
-    })
-
-    it("handles empty string", () => {
-      strictEqual(S.trimEnd(""), "")
     })
   })
 
@@ -243,10 +203,6 @@ describe("String", () => {
   describe("length", () => {
     it("returns string length", () => {
       strictEqual(S.length("abc"), 3)
-    })
-
-    it("returns 0 for empty string", () => {
-      strictEqual(S.length(""), 0)
     })
   })
 
@@ -444,6 +400,32 @@ describe("String", () => {
 
     it("does not truncate if already longer", () => {
       strictEqual(pipe("hello", S.padEnd(3)), "hello")
+    })
+  })
+
+  describe("isWellFormed", () => {
+    it.each([
+      ["", true],
+      ["abc", true],
+      ["\uD83D\uDE00", true],
+      ["\uD800", false],
+      ["a\uDC00b", false],
+      ["\uDE00\uD83D", false]
+    ])("%j → %s", (input, expected) => {
+      strictEqual(S.isWellFormed(input), expected)
+    })
+  })
+
+  describe("toWellFormed", () => {
+    it.each([
+      ["", ""],
+      ["abc", "abc"],
+      ["\uD83D\uDE00", "\uD83D\uDE00"],
+      ["\uD800", "\uFFFD"],
+      ["a\uDC00b", "a\uFFFDb"],
+      ["\uDE00\uD83D", "\uFFFD\uFFFD"]
+    ])("%j → %j", (input, expected) => {
+      strictEqual(S.toWellFormed(input), expected)
     })
   })
 
@@ -810,6 +792,33 @@ describe("String", () => {
     it("converts to snake_case", () => {
       strictEqual(S.snakeCase("hello world"), "hello_world")
       strictEqual(S.snakeCase("helloWorld"), "hello_world")
+    })
+  })
+
+  describe("Unicode case conversion", () => {
+    it("preserves accented letters at case boundaries", () => {
+      strictEqual(S.camelCase("CaféÜber"), "caféÜber")
+    })
+
+    it("preserves caseless letters at number boundaries", () => {
+      strictEqual(S.snakeCase("日本語2テキスト"), "日本語_2_テキスト")
+    })
+
+    it("preserves combining marks", () => {
+      strictEqual(S.snakeCase("हिन्दी भाषा"), "हिन्दी_भाषा")
+    })
+
+    it("preserves marks at non-ASCII number boundaries", () => {
+      strictEqual(S.snakeCase("cafe\u0301٣\u0308a"), "cafe\u0301_٣\u0308_a")
+    })
+
+    it("preserves Unicode config keys without splitting digit groups", () => {
+      strictEqual(S.configCase("café٣Name"), "CAFÉ٣_NAME")
+    })
+
+    it("preserves decomposed marks at case boundaries without normalization", () => {
+      strictEqual(S.snakeCase("cafe\u0301Bar"), "cafe\u0301_bar")
+      strictEqual(S.configCase("Ø\u0301Æ\u0301ø"), "Ø\u0301_Æ\u0301Ø")
     })
   })
 

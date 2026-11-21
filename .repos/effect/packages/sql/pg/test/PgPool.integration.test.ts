@@ -1,6 +1,6 @@
-import { PgConnection, PgPool, PgTypes } from "@effect/sql-pg"
+import { PgConnection, PgPool } from "@effect/sql-pg"
 import { assert, it } from "@effect/vitest"
-import { Effect, Exit, Fiber, Latch, Queue, Redacted, Result, Scope, Stream } from "effect"
+import { Effect, Exit, Fiber, Latch, Queue, Redacted, Scope, Stream } from "effect"
 import * as Net from "node:net"
 import { Duplex } from "node:stream"
 import { PgContainer, realSleep, waitUntilActive, waitUntilAdvisoryLock } from "./utils.ts"
@@ -654,17 +654,14 @@ it.layer(PgContainer.layer, { timeout: "30 seconds", concurrent: false })("PgPoo
 
   it.effect("replaces a fatal session before the next pool.use query", () =>
     Effect.gen(function*() {
-      const failure = Result.fail(new PgTypes.CodecError({ message: "Intentional decode failure" }))
-      const types = PgTypes.makeRegistry()
-      types.register(PgTypes.OID.interval, { encode: () => failure, decode: () => failure })
-      const pool = yield* PgPool.make({ ...(yield* poolConfig), maxConnections: 1, types })
+      const pool = yield* PgPool.make({ ...(yield* poolConfig), maxConnections: 1, maxMessageSize: 1024 })
       const first = yield* pool.use((connection) => Effect.succeed(connection.processId))
 
-      // The failing codec errors fatally in the connection's data handler.
+      // A row over maxMessageSize fails to frame in the connection's data handler.
       // The next borrow must not see the dead session, even in the same fiber.
-      const error = yield* Effect.flip(pool.use((connection) => connection.query("SELECT interval '-1 day' AS v")))
+      const error = yield* Effect.flip(pool.use((connection) => connection.query("SELECT repeat('x', 2048) AS v")))
       assert.strictEqual(error._tag, "SqlError")
-      assert.strictEqual(error.reason.message, "PgConnection: Failed to decode row")
+      assert.strictEqual(error.reason.message, "PgConnection: Failed to parse server messages")
       const next = yield* pool.use((connection) =>
         Effect.map(connection.query("SELECT 1::int4 AS one"), (result) => ({
           pid: connection.processId,
