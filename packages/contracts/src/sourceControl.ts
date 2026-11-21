@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
+import { msg } from "gt-i18n";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { errorMessage } from "./errorMessage.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
 /** Accept unknown hosts so clients can fall back to generic presentation. */
@@ -180,7 +182,13 @@ export class SourceControlProviderError extends Schema.TaggedError<SourceControl
   },
 ) {
   override get message(): string {
-    return `Source control provider ${this.provider} failed in ${this.operation}: ${this.detail}`;
+    return errorMessage(
+      msg("Source control provider {provider} failed in {operation}: {detail}", {
+        provider: this.provider,
+        operation: this.operation,
+        detail: this.detail,
+      }),
+    );
   }
 }
 
@@ -258,6 +266,12 @@ export class SourceControlRepositoryError extends Schema.TaggedError<SourceContr
   },
 ) {
   override get message(): string {
-    return `Source control repository operation ${this.operation} failed for ${this.provider}: ${this.detail}`;
+    return errorMessage(
+      msg("Source control repository operation {operation} failed for {provider}: {detail}", {
+        operation: this.operation,
+        provider: this.provider,
+        detail: this.detail,
+      }),
+    );
   }
 }

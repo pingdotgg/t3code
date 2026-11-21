@@ -1,4 +1,6 @@
 import * as Context from "effect/Context";
+import { msg } from "gt-i18n";
+import { errorMessage } from "./errorMessage.ts";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
@@ -433,7 +435,7 @@ export class RelayAuthInvalidError extends Schema.TaggedError<RelayAuthInvalidEr
   { httpApiStatus: 401 },
 ) {
   override get message(): string {
-    return `Relay authentication failed: ${this.reason}`;
+    return errorMessage(msg("Relay authentication failed: {reason}", { reason: this.reason }));
   }
 }
 
@@ -446,7 +448,7 @@ export class RelayEnvironmentLinkProofExpiredError extends Schema.TaggedError<Re
   { httpApiStatus: 401 },
 ) {
   override get message(): string {
-    return "Relay environment link proof expired";
+    return errorMessage(msg("Relay environment link proof expired"));
   }
 }
 
@@ -460,7 +462,9 @@ export class RelayEnvironmentLinkProofInvalidError extends Schema.TaggedError<Re
   { httpApiStatus: 400 },
 ) {
   override get message(): string {
-    return `Relay environment link proof is invalid: ${this.reason}`;
+    return errorMessage(
+      msg("Relay environment link proof is invalid: {reason}", { reason: this.reason }),
+    );
   }
 }
 
@@ -488,8 +492,10 @@ export class RelayEnvironmentConnectNotAuthorizedError extends Schema.TaggedErro
 ) {
   override get message(): string {
     return this.reason
-      ? `Relay environment connection is not authorized: ${this.reason}`
-      : "Relay environment connection is not authorized";
+      ? errorMessage(
+          msg("Relay environment connection is not authorized: {reason}", { reason: this.reason }),
+        )
+      : errorMessage(msg("Relay environment connection is not authorized"));
   }
 }
 
@@ -505,7 +511,9 @@ export class RelayEnvironmentEndpointUnavailableError extends Schema.TaggedError
   { httpApiStatus: 502 },
 ) {
   override get message(): string {
-    return `Relay environment endpoint is unavailable: ${this.reason}`;
+    return errorMessage(
+      msg("Relay environment endpoint is unavailable: {reason}", { reason: this.reason }),
+    );
   }
 }
 
@@ -518,7 +526,7 @@ export class RelayEnvironmentEndpointTimedOutError extends Schema.TaggedError<Re
   { httpApiStatus: 504 },
 ) {
   override get message(): string {
-    return "Relay environment endpoint request timed out";
+    return errorMessage(msg("Relay environment endpoint request timed out"));
   }
 }
 
@@ -532,7 +540,7 @@ export class RelayEnvironmentLinkFailedError extends Schema.TaggedError<RelayEnv
   { httpApiStatus: 500 },
 ) {
   override get message(): string {
-    return `Relay environment link failed: ${this.reason}`;
+    return errorMessage(msg("Relay environment link failed: {reason}", { reason: this.reason }));
   }
 }
 
@@ -547,7 +555,9 @@ export class RelayEnvironmentLinkUnavailableError extends Schema.TaggedError<Rel
   { httpApiStatus: 503 },
 ) {
   override get message(): string {
-    return `Relay environment link is unavailable: ${this.reason}`;
+    return errorMessage(
+      msg("Relay environment link is unavailable: {reason}", { reason: this.reason }),
+    );
   }
 }
 
@@ -561,7 +571,11 @@ export class RelayEnvironmentLinkLimitExceededError extends Schema.TaggedError<R
   { httpApiStatus: 403 },
 ) {
   override get message(): string {
-    return `Relay managed tunnel limit reached: this account allows at most ${this.maxTunnels} tunnels`;
+    return errorMessage(
+      msg("Relay managed tunnel limit reached: this account allows at most {maxTunnels} tunnels", {
+        maxTunnels: this.maxTunnels,
+      }),
+    );
   }
 }
 
@@ -574,7 +588,7 @@ export class RelayAgentActivityPublishProofExpiredError extends Schema.TaggedErr
   { httpApiStatus: 401 },
 ) {
   override get message(): string {
-    return "Relay agent activity publish proof expired";
+    return errorMessage(msg("Relay agent activity publish proof expired"));
   }
 }
 
@@ -588,7 +602,9 @@ export class RelayAgentActivityPublishProofInvalidError extends Schema.TaggedErr
   { httpApiStatus: 401 },
 ) {
   override get message(): string {
-    return `Relay agent activity publish proof is invalid: ${this.reason}`;
+    return errorMessage(
+      msg("Relay agent activity publish proof is invalid: {reason}", { reason: this.reason }),
+    );
   }
 }
 
@@ -602,7 +618,7 @@ export class RelayInternalError extends Schema.TaggedError<RelayInternalError>()
   { httpApiStatus: 500 },
 ) {
   override get message(): string {
-    return `Relay internal error: ${this.reason}`;
+    return errorMessage(msg("Relay internal error: {reason}", { reason: this.reason }));
   }
 }
 

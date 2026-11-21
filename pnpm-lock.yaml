@@ -1607,6 +1607,9 @@ importers:
       effect:
         specifier: 4.1.3
         version: 4.1.3
+      gt-i18n:
+        specifier: 1.0.40
+        version: 1.0.40
     devDependencies:
       '@effect/vitest':
         specifier: 4.1.2

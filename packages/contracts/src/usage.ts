@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { errorMessage } from "./errorMessage.ts";
 import * as Schema from "effect/Schema";
 
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -169,6 +171,8 @@ export class UsageReadError extends Schema.TaggedError<UsageReadError>()("UsageR
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return `Usage read failed (${this.reason}): ${this.detail}`;
+    return errorMessage(
+      msg("Usage read failed ({reason}): {detail}", { reason: this.reason, detail: this.detail }),
+    );
   }
 }

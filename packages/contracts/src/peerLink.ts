@@ -1,7 +1,9 @@
 import * as Schema from "effect/Schema";
+import { msg } from "gt-i18n";
 
 import { AuthMcpClientAccess } from "./auth.ts";
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
+import { errorMessage } from "./errorMessage.ts";
 
 /**
  * A link from this environment to another one (the peer). This environment
@@ -101,10 +103,10 @@ export const PeerLinkRequestAnswerInput = Schema.Struct({
 export type PeerLinkRequestAnswerInput = typeof PeerLinkRequestAnswerInput.Type;
 
 const PEER_LINK_REQUEST_FAILURE_MESSAGES = {
-  load_failed: "Could not load the link request.",
-  not_found: "This link request no longer exists.",
-  already_answered: "This link request was already answered.",
-  record_failed: "Could not update the link request.",
+  load_failed: msg("Could not load the link request."),
+  not_found: msg("This link request no longer exists."),
+  already_answered: msg("This link request was already answered."),
+  record_failed: msg("Could not update the link request."),
 } as const;
 
 export const PeerLinkRequestFailureReason = Schema.Literals(
@@ -126,6 +128,6 @@ export class PeerLinkRequestError extends Schema.TaggedError<PeerLinkRequestErro
   },
 ) {
   override get message(): string {
-    return PEER_LINK_REQUEST_FAILURE_MESSAGES[this.reason];
+    return errorMessage(PEER_LINK_REQUEST_FAILURE_MESSAGES[this.reason]);
   }
 }

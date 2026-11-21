@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { errorMessage } from "./errorMessage.ts";
 import * as Schema from "effect/Schema";
 import { ForwardCompatibleArray, TrimmedString } from "./baseSchemas.ts";
 
@@ -227,6 +229,11 @@ export class KeybindingsConfigError extends Schema.TaggedError<KeybindingsConfig
   },
 ) {
   override get message(): string {
-    return `Unable to parse keybindings config at ${this.configPath}: ${this.detail}`;
+    return errorMessage(
+      msg("Unable to parse keybindings config at {configPath}: {detail}", {
+        configPath: this.configPath,
+        detail: this.detail,
+      }),
+    );
   }
 }

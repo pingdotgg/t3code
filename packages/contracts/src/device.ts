@@ -1,4 +1,6 @@
 import * as Effect from "effect/Effect";
+import { msg } from "gt-i18n";
+import { errorMessage } from "./errorMessage.ts";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -16,7 +18,7 @@ export const LOCAL_DEVICE_HOST_LABEL = "This machine";
 
 const ConfiguredDeviceHostId = DeviceHostId.check(
   Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),
-  Schema.makeFilter((id) => id !== "local" || "The local host id is reserved."),
+  Schema.makeFilter((id) => id !== "local" || errorMessage(msg("The local host id is reserved."))),
 );
 
 export const SshDeviceHostConfig = Schema.Struct({
@@ -64,7 +66,7 @@ export const EasDeviceHostConfig = Schema.Struct({
   Schema.makeFilter(
     (host: { readonly idleMinutes: number; readonly maxSessionMinutes: number }) =>
       host.idleMinutes < host.maxSessionMinutes ||
-      "Idle minutes must be smaller than session minutes.",
+      errorMessage(msg("Idle minutes must be smaller than session minutes.")),
   ),
 );
 export type EasDeviceHostConfig = typeof EasDeviceHostConfig.Type;
@@ -102,7 +104,7 @@ export type DeviceHostConfig = SshDeviceHostConfig | EasDeviceHostConfig | Simlo
 const uniqueHostIds = Schema.makeFilter(
   (hosts: ReadonlyArray<{ readonly id: string }>) =>
     new Set(hosts.map((host) => host.id)).size === hosts.length ||
-    "Device host ids must be unique.",
+    errorMessage(msg("Device host ids must be unique.")),
 );
 
 export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(uniqueHostIds);
@@ -529,7 +531,19 @@ export class DeviceHostUnavailableError extends Schema.TaggedError<DeviceHostUna
   },
 ) {
   override get message(): string {
-    return `${this.hostLabel ?? `Device host ${this.hostId}`} is unavailable: ${this.reason}`;
+    return this.hostLabel === undefined
+      ? errorMessage(
+          msg("Device host {hostId} is unavailable: {reason}", {
+            hostId: this.hostId,
+            reason: this.reason,
+          }),
+        )
+      : errorMessage(
+          msg("{hostLabel} is unavailable: {reason}", {
+            hostLabel: this.hostLabel,
+            reason: this.reason,
+          }),
+        );
   }
 }
 
@@ -542,7 +556,13 @@ export class DevicePlatformUnavailableError extends Schema.TaggedError<DevicePla
   },
 ) {
   override get message(): string {
-    return `${this.platform} devices are unavailable on host ${this.hostId}: ${this.reason}`;
+    return errorMessage(
+      msg("{platform} devices are unavailable on host {hostId}: {reason}", {
+        platform: this.platform,
+        hostId: this.hostId,
+        reason: this.reason,
+      }),
+    );
   }
 }
 
@@ -554,7 +574,12 @@ export class DeviceNotFoundError extends Schema.TaggedError<DeviceNotFoundError>
   },
 ) {
   override get message(): string {
-    return `Device ${this.deviceId} was not found on host ${this.hostId}.`;
+    return errorMessage(
+      msg("Device {deviceId} was not found on host {hostId}.", {
+        deviceId: this.deviceId,
+        hostId: this.hostId,
+      }),
+    );
   }
 }
 
@@ -566,15 +591,50 @@ export class DeviceBootError extends Schema.TaggedError<DeviceBootError>()("Devi
   cause: Schema.Defect(),
 }) {
   override get message(): string {
-    const explanation = {
-      disk_space: "There is not enough free disk space on its device host.",
-      timeout: "The device did not become ready in time.",
-      launch_failed: "The simulator or emulator could not start.",
-    }[this.reason];
-    const summary = `Device ${this.deviceId} failed to boot: ${explanation}`;
-    return this.diagnostics
-      ? `${summary}\n\n${this.diagnostics}`
-      : `${summary} The device host sent no details. Try again or open another device; if it keeps failing, check the device on that host.`;
+    switch (this.reason) {
+      case "disk_space":
+        return this.diagnostics
+          ? errorMessage(
+              msg(
+                "Device {deviceId} failed to boot: There is not enough free disk space on its device host.\n\n{diagnostics}",
+                { deviceId: this.deviceId, diagnostics: this.diagnostics },
+              ),
+            )
+          : errorMessage(
+              msg(
+                "Device {deviceId} failed to boot: There is not enough free disk space on its device host. The device host sent no details. Try again or open another device; if it keeps failing, check the device on that host.",
+                { deviceId: this.deviceId },
+              ),
+            );
+      case "timeout":
+        return this.diagnostics
+          ? errorMessage(
+              msg(
+                "Device {deviceId} failed to boot: The device did not become ready in time.\n\n{diagnostics}",
+                { deviceId: this.deviceId, diagnostics: this.diagnostics },
+              ),
+            )
+          : errorMessage(
+              msg(
+                "Device {deviceId} failed to boot: The device did not become ready in time. The device host sent no details. Try again or open another device; if it keeps failing, check the device on that host.",
+                { deviceId: this.deviceId },
+              ),
+            );
+      case "launch_failed":
+        return this.diagnostics
+          ? errorMessage(
+              msg(
+                "Device {deviceId} failed to boot: The simulator or emulator could not start.\n\n{diagnostics}",
+                { deviceId: this.deviceId, diagnostics: this.diagnostics },
+              ),
+            )
+          : errorMessage(
+              msg(
+                "Device {deviceId} failed to boot: The simulator or emulator could not start. The device host sent no details. Try again or open another device; if it keeps failing, check the device on that host.",
+                { deviceId: this.deviceId },
+              ),
+            );
+    }
   }
 }
 
@@ -595,16 +655,53 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
   },
 ) {
   override get message(): string {
-    const explanation = {
-      command_failed: `The device command failed${this.exitCode === undefined ? "" : ` (exit code ${this.exitCode})`}.`,
-      request_failed: "Could not communicate with device support. Try refreshing devices.",
-      invalid_payload: "The device request could not be encoded.",
-      settings_failed: "Could not read or save device settings.",
-      hub_rejected: "The device hub could not complete the request.",
-      package_manager_missing:
-        "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
-    }[this.reason];
-    return `Device ${this.operation} failed: ${explanation}`;
+    switch (this.reason) {
+      case "command_failed":
+        return this.exitCode === undefined
+          ? errorMessage(
+              msg("Device {operation} failed: The device command failed.", {
+                operation: this.operation,
+              }),
+            )
+          : errorMessage(
+              msg("Device {operation} failed: The device command failed (exit code {exitCode}).", {
+                operation: this.operation,
+                exitCode: this.exitCode,
+              }),
+            );
+      case "request_failed":
+        return errorMessage(
+          msg(
+            "Device {operation} failed: Could not communicate with device support. Try refreshing devices.",
+            { operation: this.operation },
+          ),
+        );
+      case "invalid_payload":
+        return errorMessage(
+          msg("Device {operation} failed: The device request could not be encoded.", {
+            operation: this.operation,
+          }),
+        );
+      case "settings_failed":
+        return errorMessage(
+          msg("Device {operation} failed: Could not read or save device settings.", {
+            operation: this.operation,
+          }),
+        );
+      case "hub_rejected":
+        return errorMessage(
+          msg("Device {operation} failed: The device hub could not complete the request.", {
+            operation: this.operation,
+          }),
+        );
+      case "package_manager_missing":
+        return errorMessage(
+          msg(
+            "Device {operation} failed: Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
+            { operation: this.operation },
+          ),
+        );
+    }
   }
 }
 
@@ -618,8 +715,18 @@ export class DeviceActionUnavailableError extends Schema.TaggedError<DeviceActio
 ) {
   override get message(): string {
     return this.reason === "helper_missing"
-      ? `Device ${this.operation} requires a helper missing from this install. Set up device support again.`
-      : `Device ${this.operation} is not supported on ${this.platform}.`;
+      ? errorMessage(
+          msg(
+            "Device {operation} requires a helper missing from this install. Set up device support again.",
+            { operation: this.operation },
+          ),
+        )
+      : errorMessage(
+          msg("Device {operation} is not supported on {platform}.", {
+            operation: this.operation,
+            platform: this.platform,
+          }),
+        );
   }
 }
 

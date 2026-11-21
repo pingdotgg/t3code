@@ -1,4 +1,6 @@
 import * as Context from "effect/Context";
+import { msg } from "gt-i18n";
+import { errorMessage } from "./errorMessage.ts";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/http-api/HttpApi";
@@ -170,7 +172,9 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
   }
 
   override get message(): string {
-    return `The environment rejected the request (${this.reason}).`;
+    return errorMessage(
+      msg("The environment rejected the request ({reason}).", { reason: this.reason }),
+    );
   }
 }
 
@@ -189,7 +193,11 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
   }
 
   override get message(): string {
-    return `The environment rejected this client's credentials (${this.reason}).`;
+    return errorMessage(
+      msg("The environment rejected this client's credentials ({reason}).", {
+        reason: this.reason,
+      }),
+    );
   }
 }
 
@@ -208,7 +216,11 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedError<Environmen
   }
 
   override get message(): string {
-    return `This request needs the ${this.requiredPermission ?? this.requiredScope} scope, which this client does not have.`;
+    return errorMessage(
+      msg("This request needs the {scope} scope, which this client does not have.", {
+        scope: this.requiredPermission ?? this.requiredScope,
+      }),
+    );
   }
 }
 
@@ -228,7 +240,7 @@ export class EnvironmentConnectApprovalPendingError extends Schema.TaggedError<E
   }
 
   override get message(): string {
-    return "This device is waiting for approval on the host.";
+    return errorMessage(msg("This device is waiting for approval on the host."));
   }
 }
 
@@ -246,7 +258,9 @@ export class EnvironmentOperationForbiddenError extends Schema.TaggedError<Envir
   }
 
   override get message(): string {
-    return `The environment refused this operation (${this.reason}).`;
+    return errorMessage(
+      msg("The environment refused this operation ({reason}).", { reason: this.reason }),
+    );
   }
 }
 
@@ -264,7 +278,9 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   }
 
   override get message(): string {
-    return `The environment failed to answer this request (${this.reason}).`;
+    return errorMessage(
+      msg("The environment failed to answer this request ({reason}).", { reason: this.reason }),
+    );
   }
 }
 
@@ -285,7 +301,11 @@ export class EnvironmentResourceNotFoundError extends Schema.TaggedError<Environ
   }
 
   override get message(): string {
-    return `The environment could not find what this request named (${this.reason}).`;
+    return errorMessage(
+      msg("The environment could not find what this request named ({reason}).", {
+        reason: this.reason,
+      }),
+    );
   }
 }
 

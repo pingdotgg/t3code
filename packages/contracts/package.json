@@ -25,7 +25,8 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "gt-i18n": "1.0.40"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

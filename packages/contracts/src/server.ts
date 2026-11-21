@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { errorMessage } from "./errorMessage.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { AcpRegistryUrlAuthAction } from "./acpRegistry.ts";
@@ -413,7 +415,7 @@ export class ServerPrepareTriageError extends Schema.TaggedError<ServerPrepareTr
   { cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
-    return "Could not write the triage session files.";
+    return errorMessage(msg("Could not write the triage session files."));
   }
 }
 
@@ -988,7 +990,12 @@ export class ServerProviderUpdateError extends Schema.TaggedError<ServerProvider
   },
 ) {
   override get message(): string {
-    return `Provider update failed for ${this.provider}: ${this.reason}`;
+    return errorMessage(
+      msg("Provider update failed for {provider}: {reason}", {
+        provider: this.provider,
+        reason: this.reason,
+      }),
+    );
   }
 }
 
@@ -1011,7 +1018,9 @@ export class ServerNpmReleaseError extends Schema.TaggedError<ServerNpmReleaseEr
   { reason: Schema.String },
 ) {
   override get message(): string {
-    return `Could not check the configured npm registry: ${this.reason}`;
+    return errorMessage(
+      msg("Could not check the configured npm registry: {reason}", { reason: this.reason }),
+    );
   }
 }
 
@@ -1062,6 +1071,6 @@ export class ServerSelfUpdateError extends Schema.TaggedError<ServerSelfUpdateEr
   },
 ) {
   override get message(): string {
-    return `Server update failed: ${this.reason}`;
+    return errorMessage(msg("Server update failed: {reason}", { reason: this.reason }));
   }
 }

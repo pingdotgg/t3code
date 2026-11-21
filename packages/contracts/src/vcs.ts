@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
+import { msg } from "gt-i18n";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { errorMessage } from "./errorMessage.ts";
 
 export const VcsDriverKind = Schema.Literals(["git", "jj", "unknown"]);
 export type VcsDriverKind = typeof VcsDriverKind.Type;
@@ -98,7 +100,13 @@ export class VcsProcessSpawnError extends Schema.TaggedError<VcsProcessSpawnErro
   },
 ) {
   override get message(): string {
-    return `VCS process failed to spawn in ${this.operation}: ${this.command} (${this.cwd})`;
+    return errorMessage(
+      msg("VCS process failed to spawn in {operation}: {command} ({cwd})", {
+        operation: this.operation,
+        command: this.command,
+        cwd: this.cwd,
+      }),
+    );
   }
 
   static fromProcessSpawnError(context: VcsProcessErrorContext, error: VcsProcessSpawnFailure) {
@@ -125,7 +133,18 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
   },
 ) {
   override get message(): string {
-    return `VCS process failed in ${this.operation}: ${this.command} (${this.cwd}) exited with ${this.exitCode} - ${this.detail}`;
+    return errorMessage(
+      msg(
+        "VCS process failed in {operation}: {command} ({cwd}) exited with {exitCode} - {detail}",
+        {
+          operation: this.operation,
+          command: this.command,
+          cwd: this.cwd,
+          exitCode: this.exitCode,
+          detail: this.detail,
+        },
+      ),
+    );
   }
 
   static fromProcessExit(
@@ -136,12 +155,12 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
   ) {
     const detail =
       failureKind === "authentication"
-        ? "Authentication failed."
+        ? errorMessage(msg("Authentication failed."))
         : failureKind === "rate-limited"
-          ? "API rate limit exceeded."
+          ? errorMessage(msg("API rate limit exceeded."))
           : failureKind === "not-found"
-            ? (options?.notFoundDetail ?? "VCS resource not found.")
-            : "Process exited with a non-zero status.";
+            ? (options?.notFoundDetail ?? errorMessage(msg("VCS resource not found.")))
+            : errorMessage(msg("Process exited with a non-zero status."));
 
     return new VcsProcessExitError({
       ...context,
@@ -166,7 +185,14 @@ export class VcsProcessTimeoutError extends Schema.TaggedError<VcsProcessTimeout
   },
 ) {
   override get message(): string {
-    return `VCS process timed out in ${this.operation}: ${this.command} (${this.cwd}) after ${this.timeoutMs}ms`;
+    return errorMessage(
+      msg("VCS process timed out in {operation}: {command} ({cwd}) after {timeoutMs}ms", {
+        operation: this.operation,
+        command: this.command,
+        cwd: this.cwd,
+        timeoutMs: this.timeoutMs,
+      }),
+    );
   }
 
   static fromProcessTimeoutError(context: VcsProcessErrorContext, error: VcsProcessTimeoutFailure) {
@@ -193,7 +219,17 @@ export class VcsProcessStdinWriteError extends Schema.TaggedError<VcsProcessStdi
   },
 ) {
   override get message(): string {
-    return `VCS process failed to write ${this.stdinBytes} bytes to stdin in ${this.operation}: ${this.command} (${this.cwd})`;
+    return errorMessage(
+      msg(
+        "VCS process failed to write {stdinBytes} bytes to stdin in {operation}: {command} ({cwd})",
+        {
+          stdinBytes: this.stdinBytes,
+          operation: this.operation,
+          command: this.command,
+          cwd: this.cwd,
+        },
+      ),
+    );
   }
 }
 
@@ -206,7 +242,14 @@ export class VcsProcessOutputReadError extends Schema.TaggedError<VcsProcessOutp
   },
 ) {
   override get message(): string {
-    return `VCS process failed to read ${this.stream} in ${this.operation}: ${this.command} (${this.cwd})`;
+    return errorMessage(
+      msg("VCS process failed to read {stream} in {operation}: {command} ({cwd})", {
+        stream: this.stream,
+        operation: this.operation,
+        command: this.command,
+        cwd: this.cwd,
+      }),
+    );
   }
 }
 
@@ -220,7 +263,19 @@ export class VcsProcessOutputLimitError extends Schema.TaggedError<VcsProcessOut
   },
 ) {
   override get message(): string {
-    return `VCS process ${this.stream} produced ${this.observedBytes} bytes in ${this.operation}: ${this.command} (${this.cwd}), exceeding the ${this.maxBytes} byte limit`;
+    return errorMessage(
+      msg(
+        "VCS process {stream} produced {observedBytes} bytes in {operation}: {command} ({cwd}), exceeding the {maxBytes} byte limit",
+        {
+          stream: this.stream,
+          observedBytes: this.observedBytes,
+          operation: this.operation,
+          command: this.command,
+          cwd: this.cwd,
+          maxBytes: this.maxBytes,
+        },
+      ),
+    );
   }
 }
 
@@ -229,7 +284,13 @@ export class VcsProcessMissingExitCodeError extends Schema.TaggedError<VcsProces
   VcsProcessBoundaryErrorFields,
 ) {
   override get message(): string {
-    return `VCS process completed without an exit code in ${this.operation}: ${this.command} (${this.cwd})`;
+    return errorMessage(
+      msg("VCS process completed without an exit code in {operation}: {command} ({cwd})", {
+        operation: this.operation,
+        command: this.command,
+        cwd: this.cwd,
+      }),
+    );
   }
 }
 
@@ -243,7 +304,13 @@ export class VcsRepositoryDetectionError extends Schema.TaggedError<VcsRepositor
   },
 ) {
   override get message(): string {
-    return `VCS repository detection failed in ${this.operation}: ${this.cwd} - ${this.detail}`;
+    return errorMessage(
+      msg("VCS repository detection failed in {operation}: {cwd} - {detail}", {
+        operation: this.operation,
+        cwd: this.cwd,
+        detail: this.detail,
+      }),
+    );
   }
 }
 
@@ -256,7 +323,13 @@ export class VcsUnsupportedOperationError extends Schema.TaggedError<VcsUnsuppor
   },
 ) {
   override get message(): string {
-    return `VCS operation is unsupported for ${this.kind} in ${this.operation}: ${this.detail}`;
+    return errorMessage(
+      msg("VCS operation is unsupported for {kind} in {operation}: {detail}", {
+        kind: this.kind,
+        operation: this.operation,
+        detail: this.detail,
+      }),
+    );
   }
 }
 
@@ -270,7 +343,9 @@ export class VcsCheckpointStorageError extends Schema.TaggedError<VcsCheckpointS
   },
 ) {
   override get message(): string {
-    return `Could not ${this.stage} checkpoint objects.`;
+    return this.stage === "isolate"
+      ? errorMessage(msg("Could not isolate checkpoint objects."))
+      : errorMessage(msg("Could not publish checkpoint objects."));
   }
 }
 

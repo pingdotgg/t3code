@@ -1,4 +1,6 @@
 import * as Schema from "effect/Schema";
+import { msg } from "gt-i18n";
+import { errorMessage } from "./errorMessage.ts";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
@@ -267,7 +269,7 @@ export class ExternalLauncherUnknownEditorError extends Schema.TaggedError<Exter
   },
 ) {
   override get message(): string {
-    return `Unknown editor: ${this.editor}`;
+    return errorMessage(msg("Unknown editor: {editor}", { editor: this.editor }));
   }
 }
 
@@ -278,7 +280,7 @@ export class ExternalLauncherUnsupportedEditorError extends Schema.TaggedError<E
   },
 ) {
   override get message(): string {
-    return `Unsupported editor: ${this.editor}`;
+    return errorMessage(msg("Unsupported editor: {editor}", { editor: this.editor }));
   }
 }
 
@@ -290,7 +292,7 @@ export class ExternalLauncherCommandNotFoundError extends Schema.TaggedError<Ext
   },
 ) {
   override get message(): string {
-    return `Editor command not found: ${this.command}`;
+    return errorMessage(msg("Editor command not found: {command}", { command: this.command }));
   }
 }
 
@@ -301,7 +303,11 @@ export class ExternalLauncherUnsupportedTargetError extends Schema.TaggedError<E
   },
 ) {
   override get message(): string {
-    return `${this.editor} cannot open a path containing line breaks or double quotes`;
+    return errorMessage(
+      msg("{editor} cannot open a path containing line breaks or double quotes", {
+        editor: this.editor,
+      }),
+    );
   }
 }
 
@@ -319,7 +325,12 @@ export class ExternalLauncherBrowserSpawnError extends Schema.TaggedError<Extern
   },
 ) {
   override get message(): string {
-    return `Failed to launch browser target '${this.target}' with '${[this.command, ...this.args].join(" ")}'`;
+    return errorMessage(
+      msg("Failed to launch browser target ''{target}'' with ''{command}''", {
+        target: this.target,
+        command: [this.command, ...this.args].join(" "),
+      }),
+    );
   }
 }
 
@@ -332,7 +343,13 @@ export class ExternalLauncherEditorSpawnError extends Schema.TaggedError<Externa
   },
 ) {
   override get message(): string {
-    return `Failed to launch '${this.target}' in ${this.editor} with '${[this.command, ...this.args].join(" ")}'`;
+    return errorMessage(
+      msg("Failed to launch ''{target}'' in {editor} with ''{command}''", {
+        target: this.target,
+        editor: this.editor,
+        command: [this.command, ...this.args].join(" "),
+      }),
+    );
   }
 }
 

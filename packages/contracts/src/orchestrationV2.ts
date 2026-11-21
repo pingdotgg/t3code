@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { errorMessage } from "./errorMessage.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -1529,7 +1531,12 @@ export class OrchestrationV2CheckpointUnavailableError extends Schema.TaggedErro
   },
 ) {
   override get message(): string {
-    return `Rollback target ${this.target} is unavailable for thread ${this.threadId}.`;
+    return errorMessage(
+      msg("Rollback target {target} is unavailable for thread {threadId}.", {
+        target: this.target,
+        threadId: this.threadId,
+      }),
+    );
   }
 }
 
@@ -4274,13 +4281,13 @@ export class OrchestrationV2StopWorkflowError extends Schema.TaggedError<Orchest
   override get message(): string {
     switch (this.reason) {
       case "not-running":
-        return "This workflow is no longer running.";
+        return errorMessage(msg("This workflow is no longer running."));
       case "unsupported":
-        return "This provider cannot stop a workflow.";
+        return errorMessage(msg("This provider cannot stop a workflow."));
       case "unavailable":
-        return "This workflow has no live provider task.";
+        return errorMessage(msg("This workflow has no live provider task."));
       case "stop-failed":
-        return "Failed to stop the workflow.";
+        return errorMessage(msg("Failed to stop the workflow."));
     }
   }
 }
@@ -4315,8 +4322,8 @@ export class OrchestrationV2ForceStopThreadError extends Schema.TaggedError<Orch
 ) {
   override get message(): string {
     return this.reason === "superseded"
-      ? "A new turn started, so nothing was force stopped."
-      : "Failed to force stop the agent.";
+      ? errorMessage(msg("A new turn started, so nothing was force stopped."))
+      : errorMessage(msg("Failed to force stop the agent."));
   }
 }
 
@@ -4378,19 +4385,19 @@ export class OrchestrationV2GetNativeChildWorkError extends Schema.TaggedError<O
   },
 ) {
   override get message(): string {
-    return "Failed to read the subagent's work.";
+    return errorMessage(msg("Failed to read the subagent's work."));
   }
 }
 
 const WORKFLOW_FILE_ERROR_MESSAGES = {
-  "invalid-path": "Workflow files must be absolute paths with the expected extension.",
-  "root-unavailable": "Workflow file root unavailable.",
-  "not-found": "Workflow file not found.",
-  "outside-root": "Path is outside the workflow files root.",
-  "wrong-extension": "Resolved file has the wrong extension.",
-  "not-regular-file": "Workflow file is not a regular file.",
-  "changed-during-read": "Workflow file changed between resolution and open.",
-  "read-failed": "Workflow file read failed.",
+  "invalid-path": msg("Workflow files must be absolute paths with the expected extension."),
+  "root-unavailable": msg("Workflow file root unavailable."),
+  "not-found": msg("Workflow file not found."),
+  "outside-root": msg("Path is outside the workflow files root."),
+  "wrong-extension": msg("Resolved file has the wrong extension."),
+  "not-regular-file": msg("Workflow file is not a regular file."),
+  "changed-during-read": msg("Workflow file changed between resolution and open."),
+  "read-failed": msg("Workflow file read failed."),
 } as const;
 
 export class OrchestrationWorkflowFileError extends Schema.TaggedError<OrchestrationWorkflowFileError>()(
@@ -4411,7 +4418,7 @@ export class OrchestrationWorkflowFileError extends Schema.TaggedError<Orchestra
   },
 ) {
   override get message(): string {
-    return WORKFLOW_FILE_ERROR_MESSAGES[this.reason];
+    return errorMessage(WORKFLOW_FILE_ERROR_MESSAGES[this.reason]);
   }
 }
 
@@ -4428,14 +4435,14 @@ export const OrchestrationV2GetTurnItemResult = Schema.Struct({
 export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
 
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
-  "invalid-path": "Workflow scripts must be absolute .js paths.",
-  "root-unavailable": "Script root unavailable.",
-  "not-found": "Script not found.",
-  "outside-root": "Script path is outside the workflow scripts root.",
-  "not-js": "Resolved script is not a .js file.",
-  "not-regular-file": "Script is not a regular file.",
-  "changed-during-read": "Script changed between resolution and open.",
-  "read-failed": "Script read failed.",
+  "invalid-path": msg("Workflow scripts must be absolute .js paths."),
+  "root-unavailable": msg("Script root unavailable."),
+  "not-found": msg("Script not found."),
+  "outside-root": msg("Script path is outside the workflow scripts root."),
+  "not-js": msg("Resolved script is not a .js file."),
+  "not-regular-file": msg("Script is not a regular file."),
+  "changed-during-read": msg("Script changed between resolution and open."),
+  "read-failed": msg("Script read failed."),
 } as const;
 
 export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<OrchestrationGetWorkflowScriptError>()(
@@ -4456,7 +4463,7 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<Orch
   },
 ) {
   override get message(): string {
-    return WORKFLOW_SCRIPT_ERROR_MESSAGES[this.reason];
+    return errorMessage(WORKFLOW_SCRIPT_ERROR_MESSAGES[this.reason]);
   }
 }
 
@@ -4508,7 +4515,7 @@ export class OrchestrationV2SearchThreadError extends Schema.TaggedError<Orchest
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Could not search this thread. Please retry.";
+    return errorMessage(msg("Could not search this thread. Please retry."));
   }
 }
 

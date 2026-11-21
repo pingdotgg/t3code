@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { msg } from "gt-i18n";
 
 import {
   IsoDateTime,
@@ -9,6 +10,7 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { errorMessage } from "./errorMessage.ts";
 import {
   PullRequestActor,
   PullRequestLabel,
@@ -456,11 +458,13 @@ export class IssueUnavailableError extends Schema.TaggedError<IssueUnavailableEr
   override get message(): string {
     switch (this.reason) {
       case "tool-missing":
-        return "The tool this tracker is read through is not installed or set up.";
+        return errorMessage(
+          msg("The tool this tracker is read through is not installed or set up."),
+        );
       case "unauthenticated":
-        return "This tracker has no working credentials.";
+        return errorMessage(msg("This tracker has no working credentials."));
       case "tracker-unsupported":
-        return "Issues cannot be browsed for this project yet.";
+        return errorMessage(msg("Issues cannot be browsed for this project yet."));
     }
   }
 }
@@ -481,7 +485,12 @@ export class IssueOperationError extends Schema.TaggedError<IssueOperationError>
   }
 
   override get message(): string {
-    return `Issue operation ${this.operation} failed: ${this.detail}`;
+    return errorMessage(
+      msg("Issue operation {operation} failed: {detail}", {
+        operation: this.operation,
+        detail: this.detail,
+      }),
+    );
   }
 }
 
@@ -619,6 +628,8 @@ export class IssueTrackerConnectionError extends Schema.TaggedError<IssueTracker
   }
 
   override get message(): string {
-    return `${this.tracker} connection failed: ${this.detail}`;
+    return errorMessage(
+      msg("{tracker} connection failed: {detail}", { tracker: this.tracker, detail: this.detail }),
+    );
   }
 }

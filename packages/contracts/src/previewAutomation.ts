@@ -1,4 +1,6 @@
 import { Schema } from "effect";
+import { msg } from "gt-i18n";
+import { errorMessage } from "./errorMessage.ts";
 
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
@@ -175,7 +177,7 @@ export const PreviewAutomationOpenInput = Schema.Struct({
   Schema.makeFilter(
     (input) =>
       !(input.tabId !== undefined && input.reuseExistingTab === false) ||
-      "tabId cannot be combined with reuseExistingTab=false.",
+      errorMessage(msg("tabId cannot be combined with reuseExistingTab=false.")),
   ),
 );
 export type PreviewAutomationOpenInput = typeof PreviewAutomationOpenInput.Type;
@@ -220,7 +222,7 @@ export const PreviewAutomationNavigateInput = Schema.Struct({
   Schema.makeFilter(
     (input) =>
       Number(input.url !== undefined) + Number(input.target !== undefined) === 1 ||
-      "Provide exactly one of url or target.",
+      errorMessage(msg("Provide exactly one of url or target.")),
   ),
 );
 export type PreviewAutomationNavigateInput = typeof PreviewAutomationNavigateInput.Type;
@@ -238,21 +240,32 @@ export const PreviewAutomationResizeInput = Schema.Struct({
     const hasPreset = input.preset !== undefined;
     const hasWidth = input.width !== undefined;
     const hasHeight = input.height !== undefined;
-    if (hasWidth !== hasHeight) return "Custom dimensions require both width and height.";
+    if (hasWidth !== hasHeight)
+      return errorMessage(msg("Custom dimensions require both width and height."));
     if (input.mode === "fill") {
       return !hasPreset && !hasWidth && input.orientation === undefined
         ? true
-        : "Fill mode does not accept a preset, dimensions, or orientation.";
+        : errorMessage(msg("Fill mode does not accept a preset, dimensions, or orientation."));
     }
     if (input.mode === "freeform") {
       if (!hasWidth || !hasHeight || hasPreset || input.orientation !== undefined) {
-        return "Freeform mode requires width and height and does not accept a preset or orientation.";
+        return errorMessage(
+          msg(
+            "Freeform mode requires width and height and does not accept a preset or orientation.",
+          ),
+        );
       }
     } else if (!hasPreset || hasWidth || hasHeight) {
-      return "Preset mode requires a preset and does not accept custom dimensions.";
+      return errorMessage(
+        msg("Preset mode requires a preset and does not accept custom dimensions."),
+      );
     }
     if (hasWidth && hasHeight && input.width! * input.height! > PREVIEW_VIEWPORT_MAX_AREA) {
-      return `Custom viewport area must not exceed ${PREVIEW_VIEWPORT_MAX_AREA} pixels.`;
+      return errorMessage(
+        msg("Custom viewport area must not exceed {maximumArea} pixels.", {
+          maximumArea: PREVIEW_VIEWPORT_MAX_AREA,
+        }),
+      );
     }
     return true;
   }),
@@ -308,9 +321,11 @@ const singlePointerTarget = Schema.makeFilter(
       Number(input.selector !== undefined) + Number(input.locator !== undefined);
     const hasX = input.x !== undefined;
     const hasY = input.y !== undefined;
-    if (hasX !== hasY) return "Coordinates require both x and y.";
+    if (hasX !== hasY) return errorMessage(msg("Coordinates require both x and y."));
     const coordinateModes = hasX && hasY ? 1 : 0;
-    return selectorModes + coordinateModes === 1 || "Provide exactly one target.";
+    return (
+      selectorModes + coordinateModes === 1 || errorMessage(msg("Provide exactly one target."))
+    );
   },
 );
 
@@ -345,7 +360,7 @@ export const PreviewAutomationSelectInput = Schema.Struct({
   Schema.makeFilter(
     (input) =>
       Number(input.selector !== undefined) + Number(input.locator !== undefined) === 1 ||
-      "Provide exactly one of selector or locator.",
+      errorMessage(msg("Provide exactly one of selector or locator.")),
   ),
 );
 export type PreviewAutomationSelectInput = typeof PreviewAutomationSelectInput.Type;
@@ -377,7 +392,7 @@ export const PreviewAutomationUploadInput = Schema.Struct({
   Schema.makeFilter(
     (input) =>
       !(input.selector !== undefined && input.locator !== undefined) ||
-      "Provide at most one of selector or locator.",
+      errorMessage(msg("Provide at most one of selector or locator.")),
   ),
 );
 export type PreviewAutomationUploadInput = typeof PreviewAutomationUploadInput.Type;
@@ -397,7 +412,7 @@ export const PreviewAutomationTypeInput = Schema.Struct({
   Schema.makeFilter(
     (input) =>
       !(input.selector !== undefined && input.locator !== undefined) ||
-      "Provide at most one of selector or locator.",
+      errorMessage(msg("Provide at most one of selector or locator.")),
   ),
 );
 export type PreviewAutomationTypeInput = typeof PreviewAutomationTypeInput.Type;
@@ -418,9 +433,13 @@ export const PreviewAutomationScrollInput = Schema.Struct({
 }).check(
   Schema.makeFilter((input) => {
     if (input.selector !== undefined && input.locator !== undefined) {
-      return "Provide at most one of selector or locator.";
+      return errorMessage(msg("Provide at most one of selector or locator."));
     }
-    return input.deltaX !== undefined || input.deltaY !== undefined || "Provide deltaX or deltaY.";
+    return (
+      input.deltaX !== undefined ||
+      input.deltaY !== undefined ||
+      errorMessage(msg("Provide deltaX or deltaY."))
+    );
   }),
 );
 export type PreviewAutomationScrollInput = typeof PreviewAutomationScrollInput.Type;
@@ -492,14 +511,14 @@ export const PreviewAutomationWaitForInput = Schema.Struct({
 }).check(
   Schema.makeFilter((input) => {
     if (input.selector !== undefined && input.locator !== undefined) {
-      return "Provide at most one of selector or locator.";
+      return errorMessage(msg("Provide at most one of selector or locator."));
     }
     return (
       input.selector !== undefined ||
       input.locator !== undefined ||
       input.text !== undefined ||
       input.urlIncludes !== undefined ||
-      "Provide at least one wait condition."
+      errorMessage(msg("Provide at least one wait condition."))
     );
   }),
 );
@@ -692,7 +711,12 @@ export class PreviewAutomationUnavailableError extends Schema.TaggedError<Previe
   },
 ) {
   override get message(): string {
-    return `MCP credential does not grant the ${this.capability} capability: browser preview tools are off for this thread. Do not retry them. To check a page, use a headless browser from the shell, such as Playwright, or curl. The user can turn on "Agent browser access" in Settings; it applies when the agent session next starts.`;
+    return errorMessage(
+      msg(
+        'MCP credential does not grant the {capability} capability: browser preview tools are off for this thread. Do not retry them. To check a page, use a headless browser from the shell, such as Playwright, or curl. The user can turn on "Agent browser access" in Settings; it applies when the agent session next starts.',
+        { capability: this.capability },
+      ),
+    );
   }
 }
 
@@ -704,7 +728,11 @@ export class McpCapabilityUnavailableError extends Schema.TaggedError<McpCapabil
   },
 ) {
   override get message(): string {
-    return `MCP credential does not grant the ${this.capability} capability.`;
+    return errorMessage(
+      msg("MCP credential does not grant the {capability} capability.", {
+        capability: this.capability,
+      }),
+    );
   }
 }
 
@@ -758,7 +786,12 @@ export class PreviewAutomationNoAvailableHostError extends Schema.TaggedError<Pr
   },
 ) {
   override get message(): string {
-    return `No preview automation host is available for ${this.operation} in environment ${this.environmentId}. The server-owned browser may be starting or reconnecting. Retry preview_status, then call preview_open if no tab is available. If it remains unavailable, report the browser connection failure.`;
+    return errorMessage(
+      msg(
+        "No preview automation host is available for {operation} in environment {environmentId}. The server-owned browser may be starting or reconnecting. Retry preview_status, then call preview_open if no tab is available. If it remains unavailable, report the browser connection failure.",
+        { operation: this.operation, environmentId: this.environmentId },
+      ),
+    );
   }
 }
 
@@ -770,7 +803,12 @@ export class PreviewAutomationUnsupportedClientError extends Schema.TaggedError<
   },
 ) {
   override get message(): string {
-    return `Preview automation client ${this.clientId} does not support ${this.operation}.`;
+    return errorMessage(
+      msg("Preview automation client {clientId} does not support {operation}.", {
+        clientId: this.clientId,
+        operation: this.operation,
+      }),
+    );
   }
 }
 
@@ -783,8 +821,17 @@ export class PreviewAutomationTabNotFoundError extends Schema.TaggedError<Previe
 ) {
   override get message(): string {
     return this.tabId
-      ? `Preview tab ${this.tabId} was not found for ${this.operation}. Omit tabId to use the current tab, or call preview_open.`
-      : `No active preview tab was found for ${this.operation}. Call preview_open first.`;
+      ? errorMessage(
+          msg(
+            "Preview tab {tabId} was not found for {operation}. Omit tabId to use the current tab, or call preview_open.",
+            { tabId: this.tabId, operation: this.operation },
+          ),
+        )
+      : errorMessage(
+          msg("No active preview tab was found for {operation}. Call preview_open first.", {
+            operation: this.operation,
+          }),
+        );
   }
 }
 
@@ -811,12 +858,44 @@ export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAut
   },
 ) {
   override get message(): string {
-    const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
-    const stages = this.pendingStages?.length
-      ? ` Waiting for: ${this.pendingStages.join(", ")}.`
-      : "";
-    const reason = this.reason === undefined ? "" : ` ${this.reason}`;
-    return `${summary}${stages}${reason}`;
+    if (this.pendingStages?.length) {
+      return this.reason === undefined
+        ? errorMessage(
+            msg(
+              "Preview automation {operation} timed out after {timeoutMs}ms. Waiting for: {pendingStages}.",
+              {
+                operation: this.operation,
+                timeoutMs: this.timeoutMs,
+                pendingStages: this.pendingStages.join(", "),
+              },
+            ),
+          )
+        : errorMessage(
+            msg(
+              "Preview automation {operation} timed out after {timeoutMs}ms. Waiting for: {pendingStages}. {reason}",
+              {
+                operation: this.operation,
+                timeoutMs: this.timeoutMs,
+                pendingStages: this.pendingStages.join(", "),
+                reason: this.reason,
+              },
+            ),
+          );
+    }
+    return this.reason === undefined
+      ? errorMessage(
+          msg("Preview automation {operation} timed out after {timeoutMs}ms.", {
+            operation: this.operation,
+            timeoutMs: this.timeoutMs,
+          }),
+        )
+      : errorMessage(
+          msg("Preview automation {operation} timed out after {timeoutMs}ms. {reason}", {
+            operation: this.operation,
+            timeoutMs: this.timeoutMs,
+            reason: this.reason,
+          }),
+        );
   }
 }
 
@@ -842,21 +921,45 @@ export class PreviewAutomationControlInterruptedError extends Schema.TaggedError
 ) {
   override get message(): string {
     if (this.reason === "agentMismatch")
-      return "This browser tab belongs to another agent session or a human. Open your own tab.";
+      return errorMessage(
+        msg("This browser tab belongs to another agent session or a human. Open your own tab."),
+      );
     if (this.reason === "unclaimedTab")
-      return "This tab has no agent owner. Ask the user to close it in the browser panel.";
+      return errorMessage(
+        msg("This tab has no agent owner. Ask the user to close it in the browser panel."),
+      );
     if (this.reason === "humanControl")
-      return "A human controls this browser tab. Wait until they release control.";
+      return errorMessage(
+        msg("A human controls this browser tab. Wait until they release control."),
+      );
     if (this.reason === "tabRequired")
-      return "Multiple browser tabs belong to this session. Pass a tabId from preview_open or from the tabs listed by preview_status.";
+      return errorMessage(
+        msg(
+          "Multiple browser tabs belong to this session. Pass a tabId from preview_open or from the tabs listed by preview_status.",
+        ),
+      );
     if (this.reason === "dialogPending")
-      return "A browser dialog is pending. Read preview_status and resolve it with preview_dialog.";
+      return errorMessage(
+        msg("A browser dialog is pending. Read preview_status and resolve it with preview_dialog."),
+      );
     if (this.reason === "tabLimit")
-      return "Too many server browser tabs are open. Close one with t3_preview_close, or reuse a tabId from preview_status tabs.";
-    if (this.reason === "closed") return "This browser tab is closed. Call preview_open.";
+      return errorMessage(
+        msg(
+          "Too many server browser tabs are open. Close one with t3_preview_close, or reuse a tabId from preview_status tabs.",
+        ),
+      );
+    if (this.reason === "closed")
+      return errorMessage(msg("This browser tab is closed. Call preview_open."));
     if (this.reason === "interrupted")
-      return "Browser control changed. Take a fresh snapshot before trying again.";
-    return `Preview automation ${this.operation} was interrupted on client ${this.clientId}.`;
+      return errorMessage(
+        msg("Browser control changed. Take a fresh snapshot before trying again."),
+      );
+    return errorMessage(
+      msg("Preview automation {operation} was interrupted on client {clientId}.", {
+        operation: this.operation,
+        clientId: this.clientId,
+      }),
+    );
   }
 }
 
@@ -870,8 +973,18 @@ export class PreviewAutomationExecutionError extends Schema.TaggedError<PreviewA
 ) {
   override get message(): string {
     return this.reason === undefined
-      ? `Preview automation ${this.operation} failed on client ${this.clientId}.`
-      : `Preview automation ${this.operation} failed: ${this.reason}`;
+      ? errorMessage(
+          msg("Preview automation {operation} failed on client {clientId}.", {
+            operation: this.operation,
+            clientId: this.clientId,
+          }),
+        )
+      : errorMessage(
+          msg("Preview automation {operation} failed: {reason}", {
+            operation: this.operation,
+            reason: this.reason,
+          }),
+        );
   }
 }
 
@@ -887,15 +1000,41 @@ export class PreviewAutomationInvalidSelectorError extends Schema.TaggedError<Pr
 ) {
   override get message(): string {
     if (this.staleRef)
-      return "This element ref is stale. Navigation, dialogs, and new snapshots replace refs; take a fresh snapshot and use its refs.";
+      return errorMessage(
+        msg(
+          "This element ref is stale. Navigation, dialogs, and new snapshots replace refs; take a fresh snapshot and use its refs.",
+        ),
+      );
     if (this.selectorKind !== undefined && this.selectorLength !== undefined) {
-      const guidance =
-        this.selectorKind === "locator"
-          ? "Use aria-ref=<ref> from the latest snapshot or a Playwright role/text selector; put CSS in selector."
-          : "selector takes CSS; use locator for aria-ref=<ref>, role, or text targets.";
-      return `Preview automation ${this.operation} received an invalid ${this.selectorKind} (${this.selectorLength} characters). ${guidance}`;
+      return this.selectorKind === "locator"
+        ? errorMessage(
+            msg(
+              "Preview automation {operation} received an invalid {selectorKind} ({selectorLength} characters). Use {locatorExample} from the latest snapshot or a Playwright role/text selector; put CSS in selector.",
+              {
+                locatorExample: "aria-ref=<ref>",
+                operation: this.operation,
+                selectorKind: this.selectorKind,
+                selectorLength: this.selectorLength,
+              },
+            ),
+          )
+        : errorMessage(
+            msg(
+              "Preview automation {operation} received an invalid {selectorKind} ({selectorLength} characters). selector takes CSS; use locator for {locatorExample}, role, or text targets.",
+              {
+                locatorExample: "aria-ref=<ref>",
+                operation: this.operation,
+                selectorKind: this.selectorKind,
+                selectorLength: this.selectorLength,
+              },
+            ),
+          );
     }
-    return `Preview automation ${this.operation} received an invalid selector.`;
+    return errorMessage(
+      msg("Preview automation {operation} received an invalid selector.", {
+        operation: this.operation,
+      }),
+    );
   }
 }
 
@@ -910,12 +1049,29 @@ export class PreviewAutomationTargetNotEditableError extends Schema.TaggedError<
 ) {
   override get message(): string {
     if (this.selectorKind === "focused-element") {
-      return `Preview automation ${this.operation} requires an editable focused element.`;
+      return errorMessage(
+        msg("Preview automation {operation} requires an editable focused element.", {
+          operation: this.operation,
+        }),
+      );
     }
     if (this.selectorKind !== undefined && this.selectorLength !== undefined) {
-      return `Preview automation ${this.operation} requires an editable ${this.selectorKind} (${this.selectorLength} characters).`;
+      return errorMessage(
+        msg(
+          "Preview automation {operation} requires an editable {selectorKind} ({selectorLength} characters).",
+          {
+            operation: this.operation,
+            selectorKind: this.selectorKind,
+            selectorLength: this.selectorLength,
+          },
+        ),
+      );
     }
-    return `Preview automation ${this.operation} requires an editable target.`;
+    return errorMessage(
+      msg("Preview automation {operation} requires an editable target.", {
+        operation: this.operation,
+      }),
+    );
   }
 }
 
@@ -928,11 +1084,18 @@ export class PreviewAutomationResultTooLargeError extends Schema.TaggedError<Pre
   },
 ) {
   override get message(): string {
-    const summary =
-      this.maximumBytes === undefined
-        ? `Preview automation ${this.operation} produced a result that is too large.`
-        : `Preview automation ${this.operation} produced a result larger than ${this.maximumBytes} bytes.`;
-    return summary;
+    return this.maximumBytes === undefined
+      ? errorMessage(
+          msg("Preview automation {operation} produced a result that is too large.", {
+            operation: this.operation,
+          }),
+        )
+      : errorMessage(
+          msg(
+            "Preview automation {operation} produced a result larger than {maximumBytes} bytes.",
+            { operation: this.operation, maximumBytes: this.maximumBytes },
+          ),
+        );
   }
 }
 
@@ -941,7 +1104,12 @@ export class PreviewAutomationClientDisconnectedError extends Schema.TaggedError
   PreviewAutomationRequestErrorFields,
 ) {
   override get message(): string {
-    return `Preview automation client ${this.clientId} disconnected during ${this.operation}.`;
+    return errorMessage(
+      msg("Preview automation client {clientId} disconnected during {operation}.", {
+        clientId: this.clientId,
+        operation: this.operation,
+      }),
+    );
   }
 }
 
@@ -950,7 +1118,12 @@ export class PreviewAutomationRequestQueueClosedError extends Schema.TaggedError
   PreviewAutomationRequestErrorFields,
 ) {
   override get message(): string {
-    return `Preview automation client ${this.clientId} stopped accepting ${this.operation} requests.`;
+    return errorMessage(
+      msg("Preview automation client {clientId} stopped accepting {operation} requests.", {
+        clientId: this.clientId,
+        operation: this.operation,
+      }),
+    );
   }
 }
 
@@ -962,7 +1135,12 @@ export class PreviewAutomationRemoteUnavailableError extends Schema.TaggedError<
   },
 ) {
   override get message(): string {
-    return `Preview automation ${this.operation} is unavailable on client ${this.clientId}.`;
+    return errorMessage(
+      msg("Preview automation {operation} is unavailable on client {clientId}.", {
+        operation: this.operation,
+        clientId: this.clientId,
+      }),
+    );
   }
 }
 
@@ -971,7 +1149,12 @@ export class PreviewAutomationMalformedResponseError extends Schema.TaggedError<
   PreviewAutomationRequestErrorFields,
 ) {
   override get message(): string {
-    return `Preview automation client ${this.clientId} returned a malformed response for ${this.operation}.`;
+    return errorMessage(
+      msg("Preview automation client {clientId} returned a malformed response for {operation}.", {
+        clientId: this.clientId,
+        operation: this.operation,
+      }),
+    );
   }
 }
 
@@ -983,7 +1166,7 @@ export class PreviewAutomationRecordingTransferError extends Schema.TaggedError<
   },
 ) {
   override get message(): string {
-    return "Preview recording could not be saved to the agent environment.";
+    return errorMessage(msg("Preview recording could not be saved to the agent environment."));
   }
 }
 
@@ -992,7 +1175,9 @@ export class PreviewAutomationRecordingDesktopUpdateRequiredError extends Schema
   { threadId: ThreadId, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
-    return "Update the desktop app to transfer recordings. The recording remains on the desktop.";
+    return errorMessage(
+      msg("Update the desktop app to transfer recordings. The recording remains on the desktop."),
+    );
   }
 }
 
@@ -1001,7 +1186,7 @@ export class PreviewAutomationRecordingTooLargeError extends Schema.TaggedError<
   { threadId: ThreadId, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
-    return "The recording exceeds 50 MiB. Make a shorter recording.";
+    return errorMessage(msg("The recording exceeds 50 MiB. Make a shorter recording."));
   }
 }
 
@@ -1010,7 +1195,7 @@ export class PreviewAutomationRecordingDeadlineExpiredError extends Schema.Tagge
   { threadId: ThreadId, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
-    return "The recording transfer deadline expired.";
+    return errorMessage(msg("The recording transfer deadline expired."));
   }
 }
 

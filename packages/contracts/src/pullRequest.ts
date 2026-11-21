@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { msg } from "gt-i18n";
 
 import {
   ForwardCompatibleArray,
@@ -12,6 +13,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { errorMessage } from "./errorMessage.ts";
 import { SourceControlProviderKind } from "./sourceControl.ts";
 
 export const PullRequestInvolvement = Schema.Literals(["all", "reviewing", "authored"]);
@@ -1024,16 +1026,35 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
   override get message(): string {
     switch (this.reason) {
       case "cli-missing":
-        return this.requirement ?? "The tool this host is read through is not installed or set up.";
+        return (
+          this.requirement ??
+          errorMessage(msg("The tool this host is read through is not installed or set up."))
+        );
       case "cli-unauthenticated":
-        return this.requirement ?? "This host has no working credentials.";
+        return this.requirement ?? errorMessage(msg("This host has no working credentials."));
       case "provider-unsupported":
-        return "Change requests cannot be browsed for this project's host yet.";
+        return errorMessage(msg("Change requests cannot be browsed for this project's host yet."));
       case "repository-without-project":
         if (this.host !== undefined) {
-          return `No project in T3 Code is on ${this.host}. Add any ${this.host} project to read its change requests.`;
+          return errorMessage(
+            msg(
+              "No project in T3 Code is on {host}. Add any {host} project to read its change requests.",
+              { host: this.host },
+            ),
+          );
         }
-        return `${this.repository ?? "This repository"} is not a project in T3 Code. Add it as a project to read its change requests.`;
+        return this.repository === undefined
+          ? errorMessage(
+              msg(
+                "This repository is not a project in T3 Code. Add it as a project to read its change requests.",
+              ),
+            )
+          : errorMessage(
+              msg(
+                "{repository} is not a project in T3 Code. Add it as a project to read its change requests.",
+                { repository: this.repository },
+              ),
+            );
     }
   }
 }
@@ -1054,6 +1075,11 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
   }
 
   override get message(): string {
-    return `Pull request operation ${this.operation} failed: ${this.detail}`;
+    return errorMessage(
+      msg("Pull request operation {operation} failed: {detail}", {
+        operation: this.operation,
+        detail: this.detail,
+      }),
+    );
   }
 }
