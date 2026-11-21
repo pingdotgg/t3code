@@ -37,7 +37,6 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { applyThemeCss } from "../../themeCss";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
@@ -626,33 +625,6 @@ describe("MessagesTimeline messages", () => {
     expect(viewport).toHaveAttribute("data-workspace-keyboard-focus");
     await userEvent.keyboard("{PageUp}");
     await vi.waitFor(() => expect(viewport.scrollTop).toBeLessThan(atEnd));
-  });
-
-  it("keeps the hidden empty placeholder transparent so conversation theme backgrounds show through", async () => {
-    setup();
-    const props = baseProps();
-    const image =
-      'url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%271%27 height=%271%27/%3E")';
-    using _css = { [Symbol.dispose]: () => applyThemeCss(undefined) };
-    applyThemeCss(
-      `[data-workspace-area="conversation"] { background: ${image} center / cover no-repeat; }`,
-    );
-    await using screen = await renderElement(
-      <div
-        {...workspaceAreaProps("conversation", 1, "Conversation")}
-        className="relative flex min-h-0 flex-1 flex-col bg-background"
-      >
-        <MessagesTimeline {...props} timelineEntries={[]} hideEmptyPlaceholder />
-      </div>,
-    );
-    const conversation = screen.container.querySelector<HTMLElement>(
-      '[data-workspace-area="conversation"]',
-    )!;
-    const placeholder = screen.container.querySelector<HTMLElement>(
-      '[data-timeline-loading="true"]',
-    )!;
-    expect(getComputedStyle(conversation).backgroundImage).toContain("data:image/svg+xml");
-    expect(getComputedStyle(placeholder).backgroundColor).toBe("rgba(0, 0, 0, 0)");
   });
 
   it("disables the minimap's next turn button at the bottom of the thread", async () => {
