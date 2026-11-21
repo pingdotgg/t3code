@@ -9,6 +9,7 @@ import { definition } from "../shared/definition.ts";
 
 import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
+import * as GitCafeIssueTracker from "./GitCafeIssueTracker.ts";
 import * as GitCafePullRequestProvider from "./GitCafePullRequestProvider.ts";
 import * as GitCafeSourceControlProvider from "./GitCafeSourceControlProvider.ts";
 
@@ -18,6 +19,7 @@ const makeInstance = Effect.all({
   sourceControl: GitCafeSourceControlProvider.make,
   discovery: GitCafeSourceControlProvider.makeDiscovery,
   pullRequests: GitCafePullRequestProvider.make,
+  issues: GitCafeIssueTracker.make,
 });
 
 export const driver = defineSourceControlDriver({

@@ -219,7 +219,7 @@ const make = Effect.gen(function* () {
             body: comment.body,
             createdAt: comment.createdAt,
           })),
-          commentsTruncated: detail.commentsCursor !== null,
+          commentsTruncated: detail.commentsCursor !== null || detail.commentsUnavailable === true,
           linkedPullRequests: detail.linkedPullRequests.map((pullRequest) => ({
             url: pullRequest.url,
             title: pullRequest.title,
