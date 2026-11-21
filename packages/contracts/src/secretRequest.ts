@@ -22,6 +22,11 @@ export const SecretRequestAnswerInput = Schema.Struct({
   turnItemId: TurnItemId,
   answer: Schema.Union([
     Schema.Struct({ type: Schema.Literal("save"), secret: TrimmedNonEmptyString }),
+    /** A request with `fields`: one value per field name. */
+    Schema.Struct({
+      type: Schema.Literal("save"),
+      values: Schema.Record(Schema.String, TrimmedNonEmptyString),
+    }),
     Schema.Struct({ type: Schema.Literal("decline") }),
     /** Read once through a configured secret provider; only servers advertising `secretRequestReferences` accept it. */
     Schema.Struct({ type: Schema.Literal("reference"), reference: SecretReference }),
@@ -43,6 +48,7 @@ const SECRET_REQUEST_FAILURE_MESSAGES = {
   load_failed: msg("Could not load the secret request."),
   not_found: msg("This secret request no longer exists."),
   already_answered: msg("This secret request was already answered."),
+  fields_mismatch: msg("This request asks for different values. Update the app and try again."),
   agent_stopped: msg("The agent that asked has stopped, so this secret can't be used."),
   store_failed: msg("Could not store the secret."),
   reference_unreadable: msg("Could not read the secret from the secret provider."),
