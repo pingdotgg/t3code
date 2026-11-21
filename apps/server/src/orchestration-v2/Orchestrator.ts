@@ -16394,7 +16394,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       cascade.legacyPath !== undefined &&
       legacyLatest?.status === "accepted" &&
       legacyLatest.commandType === command.type &&
-      (legacyLatest.commandId !== command.commandId || cascade.legacyPath.verified === true) &&
+      (legacyLatest.commandId !== command.commandId ||
+        (command.type === "thread.archive" && cascade.legacyPath.verified === true)) &&
       legacyLatest.resultSequence > cascade.source.cutoff &&
       cascadeThread.deletedAt === null &&
       (command.type === "thread.archive"

@@ -15313,6 +15313,82 @@ describe("subagent lifecycle cascade", () => {
     }).pipe(Effect.provide(Layer.merge(layerTest, SqlitePersistence.layerMemory))),
   );
 
+  it.effect("replays an exact committed leaf during a recovered legacy restore", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.run("archive", app);
+      yield* f.run("unarchive", grandchild);
+      const finished = ThreadId.make("restore-a");
+      const unfinished = ThreadId.make("restore-b");
+      for (const leaf of [finished, unfinished]) {
+        yield* f.set(leaf, {
+          lineage: {
+            rootThreadId: parent,
+            parentThreadId: grandchild,
+            relationshipToParent: "subagent",
+          },
+        });
+        yield* f.threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`rename:${leaf}`),
+          threadId: leaf,
+          title: leaf,
+        });
+      }
+      yield* f.run("archive");
+      yield* f.drain;
+      yield* f.commit("unarchive");
+      const effectId = "effect:unarchive:parent:subagent-threads.cascade";
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        UPDATE orchestration_v2_effect_outbox
+        SET payload_json = json_remove(payload_json, '$.stableSkipPrefix')
+        WHERE effect_id = ${effectId}
+      `;
+
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const dispatch = orchestrator.dispatch;
+      let interrupt = true;
+      using _interrupt = vi.spyOn(orchestrator, "dispatch").mockImplementation((command) => {
+        if (command.type === "thread.unarchive" && command.threadId === unfinished && interrupt) {
+          interrupt = false;
+          return Effect.fail(
+            new Orchestrator.OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Restore delivery interrupted.",
+            }),
+          );
+        }
+        return dispatch(command);
+      });
+      using _lostRetry = vi
+        .spyOn(f.outbox, "retry")
+        .mockImplementationOnce(() => Effect.succeed(true));
+      yield* f.drain;
+      assert.equal(yield* f.archived(app, grandchild, finished, unfinished), "1001");
+
+      const skippedId = CommandId.make("unarchive:parent:subagent:app");
+      const completedId = `${skippedId}:subagent:${grandchild}:subagent:${finished}`;
+      const completed = Option.getOrThrow(yield* receipt(completedId));
+      const created = Option.getOrThrow(yield* receipt("create:parent"));
+      const receipts = yield* Receipts.CommandReceiptStoreV2;
+      yield* receipts.upsert({
+        ...created,
+        commandId: skippedId,
+        threadId: app,
+        commandType: "thread.unarchive",
+        status: "rejected",
+        error: "Rejected after the partial delivery.",
+      });
+      assert.equal((yield* f.outbox.reconcileAfterProcessLoss).requeued, 1);
+      yield* f.drain;
+      assert.equal(Option.getOrThrow(yield* f.outbox.get(effectId)).status, "succeeded");
+      assert.equal(yield* f.archived(app, grandchild, finished, unfinished), "1000");
+      assert.deepEqual(Option.getOrThrow(yield* receipt(completedId)), completed);
+    }).pipe(Effect.provide(Layer.merge(layerTest, SqlitePersistence.layerMemory))),
+  );
+
   it.effect.each([31, 32])("bounds child retries at 32 IDs with %i rejected", (count) =>
     Effect.gen(function* () {
       const f = yield* fixture;
