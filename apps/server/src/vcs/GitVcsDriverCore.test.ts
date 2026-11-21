@@ -501,34 +501,19 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each([
-  { hookExitCode: 0, commonDirFailure: "none" },
-  { hookExitCode: 1, commonDirFailure: "none" },
-  { hookExitCode: 0, commonDirFailure: "error" },
-  { hookExitCode: 1, commonDirFailure: "error" },
-  { hookExitCode: 0, commonDirFailure: "non-repository" },
-  { hookExitCode: 1, commonDirFailure: "non-repository" },
-])(
-  "invalidates sibling worktree refs and status after checkout hook exit $hookExitCode with common-dir failure $commonDirFailure",
-  ({ hookExitCode, commonDirFailure }) =>
+it.effect.each([{ hookExitCode: 0 }, { hookExitCode: 1 }])(
+  "invalidates sibling worktree refs and status after checkout hook exit $hookExitCode",
+  ({ hookExitCode }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const spawnedArgs: Array<ReadonlyArray<string>> = [];
-        let invalidationFailure = "none";
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
             if (!ChildProcess.isStandardCommand(command)) {
               return yield* Effect.die("expected a standard Git command");
             }
             spawnedArgs.push(command.args.map(String));
-            if (invalidationFailure !== "none" && command.args.includes("--git-common-dir")) {
-              if (invalidationFailure === "non-repository") return makeNonRepositoryHandle();
-              return ChildProcessSpawner.makeHandle({
-                ...makeNonRepositoryHandle(),
-                stderr: Stream.encodeText(Stream.make("fatal: could not read repository metadata")),
-              });
-            }
             return yield* delegate.spawn(command);
           }),
         );
@@ -561,7 +546,6 @@ it.effect.each([
         yield* fs.chmod(path.join(cwd, ".git/hooks/post-checkout"), 0o755);
         const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "created");
         spawnedArgs.length = 0;
-        invalidationFailure = commonDirFailure;
 
         const created = yield* driver
           .createWorktree({
@@ -578,13 +562,8 @@ it.effect.each([
           assert.equal(created.failure.detail, "git worktree add failed");
           assert.equal(created.failure.exitCode, hookExitCode);
         }
-        const metadataQueries = spawnedArgs.filter((args) => args.includes("--git-common-dir"));
-        assert.deepStrictEqual(
-          metadataQueries,
-          Array.from({ length: 2 }, () => ["rev-parse", "--git-common-dir"]),
-        );
+        assert.isFalse(spawnedArgs.some((args) => args.includes("--git-common-dir")));
         assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
-        invalidationFailure = "none";
 
         spawnedArgs.length = 0;
         const creatorStatus = yield* driver.statusDetailsLocal(cwd);
@@ -645,7 +624,7 @@ it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"
           newRefName: "feature/cold",
         });
 
-        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 2);
+        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
         assert.isFalse(spawnedArgs.some((args) => args.includes("--show-toplevel")));
         assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
         spawnedArgs.length = 0;
@@ -664,6 +643,14 @@ it.effect.each(["branch", "detached", "nested", "aliased-root", "aliased-nested"
           yield* git(worktreePath, ["rev-parse", "HEAD"]),
           yield* git(cwd, ["rev-parse", "HEAD"]),
         );
+        spawnedArgs.length = 0;
+        yield* driver.createWorktree({
+          cwd: creationCwd,
+          path: path.join(yield* makeTmpDir("git-worktrees-"), "second"),
+          refName: initialBranch,
+          newRefName: "feature/second",
+        });
+        assert.isFalse(spawnedArgs.some((args) => args[0] === "worktree" && args[2] === "-h"));
       }),
     ).pipe(Effect.provide(layerTest)),
 );
@@ -707,10 +694,7 @@ it.effect.each(["bare", "unborn"] as const)(
           assert.equal(result.failure.operation, "GitVcsDriver.createWorktree.createBranch");
           assert.equal(result.failure.detail, "git branch failed");
         }
-        assert.equal(
-          spawnedArgs.filter((args) => args.includes("--git-common-dir")).length,
-          state === "bare" ? 2 : 1,
-        );
+        assert.equal(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 1);
         assert.isFalse(spawnedArgs.some((args) => args[0] === "symbolic-ref"));
         spawnedArgs.length = 0;
         const refs = yield* driver.listRefs({ cwd });
@@ -1059,7 +1043,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 );
 
 it.effect(
-  "reads fresh metadata when another mutation completes during common-directory discovery",
+  "reads fresh metadata when another mutation completes while the new worktree is unlocked",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1076,7 +1060,8 @@ it.effect(
             if (
               !holdDiscovery ||
               !ChildProcess.isStandardCommand(command) ||
-              !command.args.includes("--git-common-dir")
+              command.args[0] !== "worktree" ||
+              command.args[1] !== "unlock"
             )
               return handle;
             holdDiscovery = false;
@@ -1134,7 +1119,8 @@ it.effect("invalidates cached metadata after interrupted worktree creation", () 
           if (
             !holdDiscovery ||
             !ChildProcess.isStandardCommand(command) ||
-            !command.args.includes("--git-common-dir")
+            command.args[0] !== "worktree" ||
+            command.args[1] !== "unlock"
           )
             return handle;
           holdDiscovery = false;

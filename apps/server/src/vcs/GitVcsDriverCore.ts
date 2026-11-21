@@ -1210,14 +1210,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const sharedConfigLocks = new Map<string, Semaphore.Semaphore>();
   const withSharedConfigLock = <A, E>(cwd: string, effect: Effect.Effect<A, E>) =>
-    resolveRepositoryPaths(cwd).pipe(
+    resolveGitCommonDirCached(cwd).pipe(
       Effect.orElseSucceed(() => null),
-      Effect.flatMap((repositoryPaths) => {
-        if (repositoryPaths === null) return effect;
-        let lock = sharedConfigLocks.get(repositoryPaths.gitCommonDir);
+      Effect.flatMap((gitCommonDir) => {
+        if (gitCommonDir === null) return effect;
+        let lock = sharedConfigLocks.get(gitCommonDir);
         if (lock === undefined) {
           lock = Semaphore.makeUnsafe(1);
-          sharedConfigLocks.set(repositoryPaths.gitCommonDir, lock);
+          sharedConfigLocks.set(gitCommonDir, lock);
         }
         return lock.withPermit(effect);
       }),
@@ -1731,7 +1731,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
   ) {
-    const gitCommonDir = yield* readGitCommonDir(cwd);
+    const gitCommonDir = yield* Cache.get(gitCommonDirCache, cwd);
     if (gitCommonDir === null) return null;
     const [worktreeRoot, currentBranch] = yield* Effect.all(
       [
@@ -1757,6 +1757,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     } satisfies GitRepositoryPaths;
   });
 
+  // Shared with repositoryPathsCache and invalidated with it; callers that only need the
+  // common dir skip the worktree-root and branch reads.
+  const gitCommonDirCache = yield* Cache.makeWith((cwd: string) => readGitCommonDir(cwd), {
+    capacity: REPOSITORY_PATHS_CACHE_CAPACITY,
+    timeToLive: Exit.match({
+      onSuccess: (gitCommonDir) =>
+        gitCommonDir === null ? NON_REPOSITORY_PATHS_CACHE_TTL : REPOSITORY_PATHS_CACHE_TTL,
+      onFailure: () => Duration.zero,
+    }),
+  });
   const repositoryPathsCache = yield* Cache.makeWith(
     (cwd: string) => resolveRepositoryPathsUncached(cwd),
     {
@@ -1770,7 +1780,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   );
   const repositoryPathsRefreshCache = yield* Cache.makeWith(
     (cwd: string) =>
-      Cache.invalidate(repositoryPathsCache, cwd).pipe(
+      Cache.invalidate(gitCommonDirCache, cwd).pipe(
+        Effect.andThen(Cache.invalidate(repositoryPathsCache, cwd)),
         Effect.andThen(Cache.get(repositoryPathsCache, cwd)),
       ),
     {
@@ -1789,6 +1800,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
     return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
   };
+  const resolveGitCommonDirCached = (cwd: string) =>
+    Cache.get(gitCommonDirCache, normalizeRepositoryPathsCacheKey(cwd));
 
   const resolveReviewRepository = Effect.fn("resolveReviewRepository")(function* (
     cwd: string,
@@ -5247,6 +5260,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     );
     yield* Cache.invalidate(repositoryPathsRefreshCache, repositoryPathsCacheKey);
+    yield* Cache.invalidate(gitCommonDirCache, repositoryPathsCacheKey);
     yield* Cache.invalidate(repositoryPathsCache, repositoryPathsCacheKey);
   });
 
@@ -5439,7 +5453,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     reason: string,
     remove: boolean,
   ) {
-    const commonDir = yield* readGitCommonDir(cwd);
+    const commonDir = yield* resolveGitCommonDirCached(cwd);
     if (commonDir === null) return;
     const registrations = path.join(commonDir, "worktrees");
     const entries = yield* fileSystem.readDirectory(registrations).pipe(
@@ -5467,6 +5481,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
   });
 
+  // Older Git still creates worktrees normally, but cannot prove ownership for cancellation.
+  let worktreeAddReasonSupported: boolean | undefined;
+  const supportsWorktreeAddReason = Effect.fn("GitVcsDriver.supportsWorktreeAddReason")(function* (
+    cwd: string,
+  ) {
+    if (worktreeAddReasonSupported !== undefined) return worktreeAddReasonSupported;
+    const addHelp = yield* executeGit(
+      "GitVcsDriver.createWorktree.capabilities",
+      cwd,
+      ["worktree", "add", "-h"],
+      { allowNonZeroExit: true },
+    );
+    worktreeAddReasonSupported = `${addHelp.stdout}\n${addHelp.stderr}`.includes("--reason");
+    return worktreeAddReasonSupported;
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
@@ -5491,7 +5521,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
         });
       }
-      const identity = `${yield* readGitCommonDir(input.cwd)}\0${targetBranch}`;
+      const identity = `${yield* resolveGitCommonDirCached(input.cwd)}\0${targetBranch}`;
       const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(identity));
       // UTF-8 bytes bound UTF-16 length too, leaving room for files on Windows.
       let prefix = "";
@@ -5515,17 +5545,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // Read before the branch exists, so a missing pattern file leaves nothing behind.
     const sparsePatterns = yield* readWorktreeSparsePatterns(input.cwd, input.refName);
     const newRefName = input.newRefName;
-    // Older Git still creates worktrees normally, but cannot prove ownership for cancellation.
-    const addHelp = newRefName
-      ? yield* executeGit(
-          "GitVcsDriver.createWorktree.capabilities",
-          input.cwd,
-          ["worktree", "add", "-h"],
-          { allowNonZeroExit: true },
-        )
-      : null;
     const lockReason =
-      addHelp && `${addHelp.stdout}\n${addHelp.stderr}`.includes("--reason")
+      newRefName && (yield* supportsWorktreeAddReason(input.cwd))
         ? `t3-create-${yield* random.uuidV4()}`
         : undefined;
 
@@ -6605,7 +6626,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const invalidateWorktreeCreationCaches = Effect.fn(
     "GitVcsDriverCore.invalidateWorktreeCreationCaches",
   )(function* (cwd: string) {
-    let gitCommonDir = yield* readGitCommonDir(cwd).pipe(
+    let gitCommonDir = yield* resolveGitCommonDirCached(cwd).pipe(
       Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
     );
     if (gitCommonDir === null) {
@@ -6630,6 +6651,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.gen(function* () {
           const cacheKey = normalizeRepositoryPathsCacheKey(input.cwd);
           yield* Cache.invalidate(repositoryPathsRefreshCache, cacheKey);
+          yield* Cache.invalidate(gitCommonDirCache, cacheKey);
           yield* Cache.invalidate(repositoryPathsCache, cacheKey);
           yield* invalidateListRefsSnapshot(input.cwd).pipe(Effect.ignore);
         }),
@@ -6737,6 +6759,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // First, so a cached "not a repository" cannot end the ref invalidation early.
       const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
       yield* Cache.invalidate(repositoryPathsRefreshCache, cacheKey);
+      yield* Cache.invalidate(gitCommonDirCache, cacheKey);
       yield* Cache.invalidate(repositoryPathsCache, cacheKey);
       return yield* withListRefsInvalidation(cwd, Effect.void);
     }),
