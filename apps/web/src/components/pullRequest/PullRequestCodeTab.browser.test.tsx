@@ -8,14 +8,14 @@ import {
   type PullRequestDiffResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { setAppearanceMode } from "../../hooks/useTheme";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, testFileDiffAtom, pagedDiffAtom, mixedDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string, addition = "after()") =>
     [
@@ -59,6 +59,15 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
+    mixedDiffAtom: Atom.family((cursor: string) =>
+      Atom.make(() =>
+        AsyncResult.success<PullRequestDiffResult>(
+          cursor === "first"
+            ? { ...firstPage, nextCursor: "raw-page" }
+            : { patch: "The host omitted this patch.", truncated: false, nextCursor: null },
+        ),
+      ),
+    ),
     testFileDiffAtom: Atom.make(() =>
       AsyncResult.success({
         patch:
@@ -76,6 +85,7 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
 
 const mocks = vi.hoisted(() => ({
   paged: false,
+  raw: false,
   shortPages: false,
   withTestFile: false,
   refreshed: false,
@@ -127,6 +137,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
+        if (mocks.raw) return mixedDiffAtom(input.cursor ?? "first");
         if (mocks.paged) return pagedDiffAtom(mocks.shortPages)(input.cursor ?? "first");
         return mocks.withTestFile ? testFileDiffAtom : diffAtom;
       }) as never,
@@ -137,6 +148,8 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import { createWorkspaceFocusController, workspaceAreaProps } from "~/lib/workspaceFocus";
 import { render, stubGlobal } from "../../../test/render";
+import { setLocalStorageItem } from "~/hooks/useLocalStorage";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 
 const detail: PullRequestDetailView = {
@@ -191,10 +204,11 @@ const detail: PullRequestDetailView = {
   },
 };
 
-function setup({ paged }: { paged: boolean }) {
+function setup({ paged, raw = false }: { paged: boolean; raw?: boolean }) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
+  mocks.raw = raw;
   mocks.shortPages = false;
   mocks.withTestFile = false;
   mocks.refreshed = false;
@@ -208,12 +222,13 @@ const tab = (
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
   revealUrl?: string,
   onRevealSettled?: (url: string) => void,
+  details: PullRequestDetailView = detail,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
     reference={detail}
-    detail={detail}
+    detail={details}
     selectedCommitOid={null}
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
@@ -237,6 +252,101 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+function hideFiles(patterns: string, hidden = true) {
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffHideFilePatterns: patterns });
+  setLocalStorageItem("t3code.diffHideTestFiles", hidden, Schema.Boolean);
+}
+
+it.each([false, true])(
+  "keeps conversations when all files are hidden (raw fallback: %s)",
+  async (raw) => {
+    setup({ paged: false, raw });
+    hideFiles("^a\\.ts$");
+    const container = document.createElement("div");
+    container.className = "h-[700px] w-[900px]";
+    const details: PullRequestDetailView = {
+      ...detail,
+      reviewThreads: [
+        {
+          id: "thread-1",
+          path: "a.ts",
+          line: 1,
+          side: "right",
+          isResolved: false,
+          isOutdated: false,
+          comments: [
+            {
+              id: "comment-1",
+              author: detail.author,
+              body: "Keep this review conversation",
+              createdAt: detail.createdAt,
+              url: null,
+            },
+          ],
+        },
+      ],
+    };
+    await using screen = await render(tab(0, null, undefined, undefined, details), { container });
+
+    await expect.element(screen.getByText("All matching files are hidden.")).toBeVisible();
+    await screen.getByRole("button", { name: /Conversations not on the current diff/ }).click();
+    await expect.element(screen.getByText("Keep this review conversation")).toBeVisible();
+    if (raw) await expect.element(screen.getByText("The host omitted this patch.")).toBeVisible();
+    await expect
+      .element(screen.getByText("This pull request has no file changes."))
+      .not.toBeInTheDocument();
+
+    await screen.getByRole("button", { name: "1 matching file hidden" }).click();
+
+    await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+    await expect.element(screen.getByText("a.ts", { exact: true }).first()).toBeVisible();
+    await expect
+      .element(screen.getByText("All matching files are hidden."))
+      .not.toBeInTheDocument();
+  },
+);
+
+it("keeps an unsaved comment draft visible until it is cancelled", async () => {
+  setup({ paged: false });
+  hideFiles("^a\\.ts$", false);
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const details: PullRequestDetailView = {
+    ...detail,
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, inlineComment: true },
+    },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+  };
+  await using screen = await render(tab(0, null, undefined, undefined, details), { container });
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  await screen.getByRole("button", { name: "Expand all files" }).click();
+  const line = screen.getByText("1", { exact: true }).last();
+  await expect.element(line).toBeVisible();
+  for (const type of ["pointerdown", "pointerup"]) {
+    line.element().dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        composed: true,
+        pointerType: "mouse",
+        pointerId: 1,
+        button: 0,
+      }),
+    );
+  }
+  const draft = screen.getByRole("textbox", { name: "Comment on lines a.ts:1" });
+  await draft.fill("Keep my unsaved comment");
+
+  await screen.getByRole("button", { name: "Hide matching files" }).click();
+
+  await expect.element(draft).toBeVisible();
+  await expect.element(draft).toHaveValue("Keep my unsaved comment");
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  await screen.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.element(screen.getByText("All matching files are hidden.")).toBeVisible();
 });
 
 it("restores saved Viewed folds, follows cleared marks, and allows explicit expansion", async () => {

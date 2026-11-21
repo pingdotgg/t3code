@@ -662,6 +662,7 @@
     "micromark-util-character": "catalog:",
     "micromark-util-decode-string": "catalog:",
     "property-information": "^7.2.0",
+    "re2js": "2.9.1",
     "rehype-raw": "catalog:",
     "rehype-sanitize": "catalog:",
     "remark-breaks": "catalog:",
