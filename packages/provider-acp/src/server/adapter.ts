@@ -2381,16 +2381,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           generation: number,
           effect: Effect.Effect<A, E, R>,
         ) =>
-          runtimeCallbackPermit.withPermit(
-            Effect.gen(function* () {
-              if ((yield* Ref.get(runtimeTeardownState))._tag !== "Idle") {
-                return Option.none<A>();
-              }
-              if ((yield* Ref.get(runtimeCallbackGeneration)) !== generation) {
-                return Option.none<A>();
-              }
-              return Option.some(yield* effect);
-            }),
+          // Generations are strictly monotonic: once retired, a callback can never
+          // become current again, so skip taking runtimeCallbackPermit (which a
+          // replacement closing the retired runtime scope may currently hold).
+          Ref.get(runtimeCallbackGeneration).pipe(
+            Effect.flatMap((currentGeneration) =>
+              currentGeneration > generation
+                ? Effect.succeed(Option.none<A>())
+                : runtimeCallbackPermit.withPermit(
+                    Effect.gen(function* () {
+                      if ((yield* Ref.get(runtimeTeardownState))._tag !== "Idle") {
+                        return Option.none<A>();
+                      }
+                      if ((yield* Ref.get(runtimeCallbackGeneration)) !== generation) {
+                        return Option.none<A>();
+                      }
+                      return Option.some(yield* effect);
+                    }),
+                  ),
+            ),
           );
         const registerNativeResponseAcknowledgement =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -7485,9 +7494,60 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               holdingAgentRequest(handlerGeneration),
             ),
           );
-          yield* targetRuntime.handleElicitation((params, requestContext) =>
-            Effect.gen(function* () {
-              const transportRequestId = requestContext.requestId;
+          yield* targetRuntime.handleElicitation((params, requestContext) => {
+            const transportRequestId = requestContext.requestId;
+            if (
+              params.mode === "url" &&
+              "url" in params &&
+              typeof params.url === "string" &&
+              "elicitationId" in params &&
+              typeof params.elicitationId === "string"
+            ) {
+              const { elicitationId, url } = params;
+              return Effect.gen(function* () {
+                const admitted = yield* runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.void,
+                );
+                if (Option.isNone(admitted)) return yield* Effect.never;
+                const outcome = yield* Effect.exit(
+                  Effect.suspend(
+                    () =>
+                      flavor.onUrlElicitation?.({
+                        elicitationId,
+                        url,
+                        message: params.message,
+                      }) ?? Effect.succeed(false),
+                  ),
+                ).pipe(holdingAgentRequest(handlerGeneration));
+                if (Exit.isFailure(outcome) && Cause.hasInterruptsOnly(outcome.cause)) {
+                  return yield* Effect.failCause(outcome.cause);
+                }
+                const checked = yield* runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    const nativeResponseAcknowledgement = yield* Deferred.make<
+                      void,
+                      EffectAcpErrors.AcpError
+                    >();
+                    yield* registerNativeResponseAcknowledgement(
+                      handlerGeneration,
+                      transportRequestId,
+                      nativeResponseAcknowledgement,
+                    );
+                    return outcome;
+                  }),
+                );
+                if (Option.isNone(checked)) return yield* Effect.never;
+                if (Exit.isFailure(checked.value)) {
+                  return yield* Effect.failCause(checked.value.cause);
+                }
+                return checked.value.value
+                  ? ({ action: "accept" } as const)
+                  : ({ action: "decline" } as const);
+              });
+            }
+            return Effect.gen(function* () {
               if (
                 params.mode === "form" &&
                 (unknownRecord(params._meta)?.codex_approval_kind === "mcp_tool_call" ||
@@ -7521,41 +7581,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (mcpApprovalDisposition.value === "allow") {
                   return { action: "accept", content: {} } as const;
                 }
-              }
-              if (
-                params.mode === "url" &&
-                "url" in params &&
-                typeof params.url === "string" &&
-                "elicitationId" in params &&
-                typeof params.elicitationId === "string"
-              ) {
-                const { elicitationId, url } = params;
-                const admitted = yield* runRuntimeCallbackAtGeneration(
-                  handlerGeneration,
-                  Effect.gen(function* () {
-                    const nativeResponseAcknowledgement = yield* Deferred.make<
-                      void,
-                      EffectAcpErrors.AcpError
-                    >();
-                    yield* registerNativeResponseAcknowledgement(
-                      handlerGeneration,
-                      transportRequestId,
-                      nativeResponseAcknowledgement,
-                    );
-                    const accepted = yield* (
-                      flavor.onUrlElicitation?.({
-                        elicitationId,
-                        url,
-                        message: params.message,
-                      }) ?? Effect.succeed(false)
-                    );
-                    return accepted
-                      ? ({ action: "accept" } as const)
-                      : ({ action: "decline" } as const);
-                  }),
-                );
-                if (Option.isNone(admitted)) return yield* Effect.never;
-                return admitted.value;
               }
               if (params.mode !== "form" || !("requestedSchema" in params)) {
                 return { action: "decline" } as const;
@@ -7608,8 +7633,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   : form.respond(userInput.answers);
               yield* userInput.acknowledgeNativeResponse;
               return response;
-            }).pipe(holdingAgentRequest(handlerGeneration)),
-          );
+            }).pipe(holdingAgentRequest(handlerGeneration));
+          });
           if (flavor.registerExtensions !== undefined) {
             yield* flavor.registerExtensions({
               runtime: targetRuntime,
