@@ -7,6 +7,7 @@ export const LOCALES = [
   { code: "zh-Hans", path: "zh", name: "简体中文" },
   { code: "pt-BR", path: "pt-br", name: "Português (Brasil)" },
   { code: "fr", path: "fr", name: "Français" },
+  { code: "it", path: "it", name: "Italiano" },
   { code: "de", path: "de", name: "Deutsch" },
   { code: "ja", path: "ja", name: "日本語" },
   { code: "ko", path: "ko", name: "한국어" },
