@@ -1555,6 +1555,10 @@ function presentationRestart(
     const firstEntry = runId === null ? undefined : previous.firstEntryByRun.get(runId);
     if (firstEntry !== undefined && firstEntry < restart.entry) return null;
   }
+  // The reused rows hold the live run's fold, which a rebuilt tail would add again.
+  const liveRunId = unsettledRunId(latestRun);
+  const liveRunStart = liveRunId === null ? undefined : previous.firstEntryByRun.get(liveRunId);
+  if (liveRunStart !== undefined && liveRunStart < restart.entry) return null;
   return { ...restart, index };
 }
 
