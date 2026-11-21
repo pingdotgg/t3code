@@ -295,6 +295,8 @@ export function windowsEnvironmentValueCommand(name: string): string {
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
   return [
     "$ErrorActionPreference = 'Stop'",
+    // Redirected PowerShell output uses the console code page, which mangles non-ASCII paths.
+    "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}",
     ...names.flatMap((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
@@ -811,6 +813,20 @@ export function preferGitForWindowsBinary(
     if (isFile(candidate)) return candidate;
   }
   return executable;
+}
+
+/** Git for Windows' bash beside a git.exe from its install, never WSL's System32 bash.exe. */
+export function gitForWindowsBash(
+  gitExecutable: string,
+  isFile: (filePath: string) => boolean = isFileSync,
+): string | undefined {
+  const path = NodePath.win32;
+  if (path.basename(gitExecutable).toLowerCase() !== "git.exe") return undefined;
+  // git.exe lives in <root>\cmd, <root>\bin, or <root>\<build>\bin.
+  const launcherRoot = path.dirname(path.dirname(gitExecutable));
+  return [launcherRoot, path.dirname(launcherRoot)]
+    .map((root) => path.join(root, "bin", "bash.exe"))
+    .find(isFile);
 }
 
 // npm cmd-shim format for native executables.
