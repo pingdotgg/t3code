@@ -23,9 +23,10 @@ pub use conn_contract::{
 };
 
 pub use crate::annotations::{
-    AnnotationPinPoint, AnnotationQueueCounts, AnnotationQueueState, annotation_state,
-    build_annotation_prompt, build_browser_annotation_capture, build_device_annotation_capture,
-    count_annotations, waiting_ids_to_send,
+    AnnotationPinPoint, AnnotationQueueCounts, AnnotationQueueState, DetectedDomElement,
+    DetectedPoint, DetectedRect, annotation_state, build_annotation_prompt,
+    build_browser_annotation_capture, build_device_annotation_capture, count_annotations,
+    waiting_ids_to_send,
 };
 
 pub use crate::layout::{

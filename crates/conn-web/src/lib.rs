@@ -554,6 +554,29 @@ impl BrowserView {
         let _ = callback;
     }
 
+    /// Registers a callback invoked for page console messages. Returning `true` suppresses the
+    /// default console logging (used by Conn's injected element detector bridge).
+    pub fn on_console_message(&self, callback: impl Fn(&str) -> bool + Send + Sync + 'static) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner.on_console_message(callback);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = callback;
+    }
+
+    /// Evaluates JavaScript in the main frame's V8 context.
+    pub fn execute_javascript(&self, code: &str) {
+        #[cfg(all(feature = "cef", target_os = "macos"))]
+        self.inner.execute_javascript(code);
+        #[cfg(not(all(feature = "cef", target_os = "macos")))]
+        let _ = code;
+    }
+
+    /// Returns a copy of the latest rendered BGRA frame, if at least one frame has painted.
+    #[must_use]
+    pub fn latest_frame(&self) -> Option<FrameSnapshot> {
+        self.frame_if_newer(0)
+    }
+
     /// Tells CEF whether the view is hidden so it pauses offscreen painting and mutes audio.
     pub fn set_hidden(&self, hidden: bool) {
         #[cfg(all(feature = "cef", target_os = "macos"))]

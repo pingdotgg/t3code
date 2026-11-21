@@ -10,6 +10,7 @@ use conn_contract::support::JsNumber;
 use conn_contract::{
     AnnotationCapture, AnnotationRecord, AnnotationRecordSource, AnnotationRect, AnnotationStatus,
 };
+use serde::Deserialize;
 
 /// The user-facing state shown on a pin and in the annotation queue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -124,54 +125,138 @@ pub struct AnnotationPinPoint {
     pub viewport_h: f64,
 }
 
-/// Builds an [`AnnotationCapture`] for a pin dropped on the Browser panel.
+/// CSS viewport rectangle reported by the injected DOM element detector.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+pub struct DetectedRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Page scroll position reported by the injected DOM element detector.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+pub struct DetectedPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// DOM element metadata captured by the injected Browser element detector script.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetectedDomElement {
+    pub element: String,
+    #[serde(default)]
+    pub element_path: Option<String>,
+    pub bounding_box: DetectedRect,
+    #[serde(default)]
+    pub is_fixed: bool,
+    #[serde(default)]
+    pub component: Option<String>,
+    #[serde(default)]
+    pub components: Vec<String>,
+    #[serde(default)]
+    pub controller: Option<String>,
+    #[serde(default)]
+    pub route: Option<String>,
+    #[serde(default)]
+    pub screen_size: Option<String>,
+    #[serde(default)]
+    pub scroll_position: Option<DetectedPoint>,
+    #[serde(default)]
+    pub breakpoint: Option<String>,
+    #[serde(default)]
+    pub nearby_text: Option<String>,
+}
+
+/// Builds an [`AnnotationCapture`] for a pin dropped on the Browser panel, enriching it with
+/// detected DOM element metadata and optional cropped PNG screenshot when available.
 #[must_use]
 pub fn build_browser_annotation_capture(
     id: String,
     comment: String,
     url: String,
     point: AnnotationPinPoint,
+    detected: Option<&DetectedDomElement>,
+    screenshot: Option<String>,
 ) -> AnnotationCapture {
     let pathname = url_pathname(&url);
     let now_ms = now_epoch_ms();
     let px_x = (point.x_pct / 100.0) * point.viewport_w;
     let px_y = (point.y_pct / 100.0) * point.viewport_h;
+    let bounding_box = detected.map_or(
+        AnnotationRect {
+            x: JsNumber(px_x),
+            y: JsNumber(px_y),
+            width: JsNumber(24.0),
+            height: JsNumber(24.0),
+        },
+        |d| AnnotationRect {
+            x: JsNumber(d.bounding_box.x),
+            y: JsNumber(d.bounding_box.y),
+            width: JsNumber(d.bounding_box.width),
+            height: JsNumber(d.bounding_box.height),
+        },
+    );
+    let element = detected
+        .map(|d| d.element.clone())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "Browser viewport".to_owned());
+    let components = detected.and_then(|d| {
+        if d.components.is_empty() {
+            None
+        } else {
+            Some(
+                d.components
+                    .iter()
+                    .map(|name| conn_contract::AnnotationComponentFrame {
+                        name: name.clone(),
+                        file: None,
+                        line: None,
+                    })
+                    .collect(),
+            )
+        }
+    });
+    let scroll_position = detected
+        .and_then(|d| d.scroll_position)
+        .map(|p| format!("{},{}", p.x.round() as i64, p.y.round() as i64));
+    let screen_size = detected
+        .and_then(|d| d.screen_size.clone())
+        .unwrap_or_else(|| {
+            format!(
+                "{}x{}",
+                point.viewport_w.round() as i64,
+                point.viewport_h.round() as i64
+            )
+        });
     AnnotationCapture {
         id,
         comment,
         source: Some(AnnotationRecordSource::Browser),
         url: Some(url),
         pathname,
-        element: Some("Browser viewport".to_owned()),
-        element_path: None,
+        element: Some(element),
+        element_path: detected.and_then(|d| d.element_path.clone()),
         x: Some(JsNumber(point.x_pct)),
         y: Some(JsNumber(point.y_pct)),
         width: Some(JsNumber(point.viewport_w)),
         height: Some(JsNumber(point.viewport_h)),
-        bounding_box: Some(AnnotationRect {
-            x: JsNumber(px_x),
-            y: JsNumber(px_y),
-            width: JsNumber(24.0),
-            height: JsNumber(24.0),
-        }),
-        is_fixed: Some(false),
+        bounding_box: Some(bounding_box),
+        is_fixed: Some(detected.is_some_and(|d| d.is_fixed)),
         timestamp: Some(JsNumber(now_ms as f64)),
-        component: None,
-        components: None,
-        controller: None,
-        route: None,
+        component: detected.and_then(|d| d.component.clone()),
+        components,
+        controller: detected.and_then(|d| d.controller.clone()),
+        route: detected.and_then(|d| d.route.clone()),
         react: None,
-        screen_size: Some(format!(
-            "{}x{}",
-            point.viewport_w.round() as i64,
-            point.viewport_h.round() as i64
-        )),
-        scroll_position: None,
-        breakpoint: None,
+        screen_size: Some(screen_size),
+        scroll_position,
+        breakpoint: detected.and_then(|d| d.breakpoint.clone()),
         appearance: None,
         change: None,
         metadata: None,
-        screenshot: None,
+        screenshot,
     }
 }
 
@@ -346,5 +431,58 @@ mod tests {
         assert!(prompt.starts_with("2 annotations are waiting (#3, #7)."));
         assert!(prompt.contains("annotations_claim"));
         assert!(prompt.contains("annotations_complete"));
+    }
+
+    #[test]
+    fn browser_capture_uses_detected_dom_element_and_screenshot() {
+        let detected = DetectedDomElement {
+            element: "link \"Debian Linux 13.8\"".to_owned(),
+            element_path: Some(".headline > a".to_owned()),
+            bounding_box: DetectedRect {
+                x: 40.0,
+                y: 220.0,
+                width: 310.0,
+                height: 28.0,
+            },
+            is_fixed: false,
+            component: Some("NewsRow.tsx:42".to_owned()),
+            components: vec!["NewsRow".to_owned(), "NewsList".to_owned()],
+            controller: None,
+            route: None,
+            screen_size: Some("720x820".to_owned()),
+            scroll_position: Some(DetectedPoint { x: 0.0, y: 120.0 }),
+            breakpoint: Some("md".to_owned()),
+            nearby_text: None,
+        };
+        let capture = build_browser_annotation_capture(
+            "ann-1".to_owned(),
+            "Tighten spacing".to_owned(),
+            "https://tweakers.net/nieuws".to_owned(),
+            AnnotationPinPoint {
+                x_pct: 25.0,
+                y_pct: 30.0,
+                viewport_w: 720.0,
+                viewport_h: 820.0,
+            },
+            Some(&detected),
+            Some("data:image/png;base64,AAAA".to_owned()),
+        );
+        assert_eq!(
+            capture.element.as_deref(),
+            Some("link \"Debian Linux 13.8\"")
+        );
+        assert_eq!(capture.element_path.as_deref(), Some(".headline > a"));
+        assert_eq!(capture.pathname.as_deref(), Some("/nieuws"));
+        assert_eq!(capture.component.as_deref(), Some("NewsRow.tsx:42"));
+        assert_eq!(capture.components.as_ref().map(Vec::len), Some(2));
+        assert_eq!(capture.scroll_position.as_deref(), Some("0,120"));
+        assert_eq!(capture.breakpoint.as_deref(), Some("md"));
+        assert_eq!(
+            capture.screenshot.as_deref(),
+            Some("data:image/png;base64,AAAA")
+        );
+        let bbox = capture.bounding_box.expect("bounding box present");
+        assert_eq!(bbox.width.0, 310.0);
+        assert_eq!(bbox.height.0, 28.0);
     }
 }

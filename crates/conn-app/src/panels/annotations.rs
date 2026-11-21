@@ -10,7 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use conn_desktop::operator::{DictationStart, DictationWait, OperatorClient};
 use conn_state::{
     AnnotationCapture, AnnotationPinPoint, AnnotationQueueCounts, AnnotationQueueState,
-    AnnotationRecord, AnnotationRecordSource, annotation_state, count_annotations,
+    AnnotationRecord, AnnotationRecordSource, DetectedDomElement, annotation_state,
+    count_annotations,
 };
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -77,13 +78,15 @@ impl AnnotationSubject {
     }
 }
 
-/// Coordinates of an annotation currently being authored on the viewport.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Coordinates (and optional detected DOM element) of an annotation currently being authored.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PendingPinDraft {
     pub(crate) point: AnnotationPinPoint,
     /// Local pixel offset inside the viewport container (for placing the composer card).
     pub(crate) local_x: f32,
     pub(crate) local_y: f32,
+    /// Exact DOM element detected under the cursor by the injected Browser detector script.
+    pub(crate) detected: Option<DetectedDomElement>,
 }
 
 /// Operator voice dictation phase inside the inline annotation composer.
@@ -119,6 +122,7 @@ pub(crate) struct AnnotationUiState {
     pub(crate) queue_open: bool,
     pub(crate) confirming_remove: bool,
     pub(crate) pending_pin: Option<PendingPinDraft>,
+    pub(crate) hovered_element: Option<DetectedDomElement>,
     pub(crate) comment_input: Entity<InputState>,
     pub(crate) dictation: AnnotationDictation,
     pub(crate) dictation_error: Option<String>,
@@ -154,6 +158,7 @@ impl AnnotationUiState {
             queue_open: false,
             confirming_remove: false,
             pending_pin: None,
+            hovered_element: None,
             comment_input,
             dictation: AnnotationDictation::Idle,
             dictation_error: None,
@@ -174,6 +179,7 @@ impl AnnotationUiState {
         if !project_ready {
             self.annotating = false;
             self.pending_pin = None;
+            self.hovered_element = None;
             self.confirming_remove = false;
         }
     }
@@ -192,6 +198,7 @@ impl AnnotationUiState {
             self.queue_open = false;
             self.confirming_remove = false;
         } else {
+            self.hovered_element = None;
             self.cancel_pin();
         }
     }
@@ -1060,6 +1067,88 @@ pub(crate) fn render_pins_overlay(
         .overflow_hidden();
 
     if state.annotating {
+        let active_hit = state
+            .pending_pin
+            .as_ref()
+            .and_then(|d| d.detected.as_ref())
+            .or(state.hovered_element.as_ref());
+
+        if let (Some(hit), Some((vw, vh))) = (active_hit, viewport_size)
+            && vw > 1.0
+            && vh > 1.0
+        {
+            let bx = (hit.bounding_box.x as f32).clamp(0.0, (vw - 2.0).max(0.0));
+            let by = (hit.bounding_box.y as f32).clamp(0.0, (vh - 2.0).max(0.0));
+            let bw = (hit.bounding_box.width as f32).clamp(4.0, (vw - bx).max(4.0));
+            let bh = (hit.bounding_box.height as f32).clamp(4.0, (vh - by).max(4.0));
+
+            let mut label_text = hit.element.clone();
+            if let Some(comp) = hit.components.first() {
+                label_text = format!("<{comp}> · {label_text}");
+            }
+            let dims = format!(
+                "{}×{}",
+                hit.bounding_box.width.round() as i64,
+                hit.bounding_box.height.round() as i64
+            );
+            let label_top = if by >= 28.0 {
+                by - 26.0
+            } else {
+                (by + bh + 4.0).min((vh - 26.0).max(4.0))
+            };
+            let label_left = bx.clamp(6.0, (vw - 220.0).max(6.0));
+
+            layer = layer
+                .child(
+                    div()
+                        .id("annotations-element-highlight")
+                        .a11y_group(
+                            "annotations.hovered-element",
+                            format!("{label_text} ({dims})"),
+                        )
+                        .absolute()
+                        .left(px(bx))
+                        .top(px(by))
+                        .w(px(bw))
+                        .h(px(bh))
+                        .rounded(px(4.0))
+                        .border_2()
+                        .border_color(primary)
+                        .bg(chrome::alpha(tokens.primary, 0.12)),
+                )
+                .child(
+                    h_flex()
+                        .absolute()
+                        .left(px(label_left))
+                        .top(px(label_top))
+                        .max_w(px(320.0))
+                        .items_center()
+                        .gap(px(6.0))
+                        .rounded(px(6.0))
+                        .bg(popover_bg)
+                        .border_1()
+                        .border_color(chrome::alpha(tokens.primary, 0.7))
+                        .px(px(7.0))
+                        .py(px(2.0))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(11.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(popover_fg)
+                                .child(label_text),
+                        )
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_size(px(10.0))
+                                .text_color(to_hsla(tokens.muted_foreground))
+                                .child(dims),
+                        ),
+                );
+        }
+
         layer = layer
             .border_2()
             .border_color(chrome::alpha(tokens.primary, 0.72))
@@ -1083,7 +1172,7 @@ pub(crate) fn render_pins_overlay(
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(popover_fg)
                             .child(format!(
-                                "Annotating {} · click anywhere to drop a pin",
+                                "Annotating {} · hover & click an element",
                                 state.subject.noun()
                             )),
                     ),
@@ -1144,7 +1233,7 @@ pub(crate) fn render_pins_overlay(
             layer = layer.child(pin);
         }
 
-        if let Some(draft) = state.pending_pin {
+        if let Some(draft) = state.pending_pin.as_ref() {
             let px_x =
                 (draft.local_x - PIN_SIZE_PX * 0.5).clamp(2.0, (vw - PIN_SIZE_PX - 2.0).max(2.0));
             let px_y =
@@ -1187,10 +1276,10 @@ pub(crate) fn render_pin_composer(
     viewport_size: Option<(f32, f32)>,
     callbacks: PinComposerCallbacks,
 ) -> Option<AnyElement> {
-    let draft = state.pending_pin?;
+    let draft = state.pending_pin.as_ref()?;
     let (vw, vh) = viewport_size.unwrap_or((480.0, 480.0));
     let left = (draft.local_x + 14.0).clamp(8.0, (vw - COMPOSER_WIDTH_PX - 8.0).max(8.0));
-    let top = (draft.local_y + 14.0).clamp(8.0, (vh - 156.0).max(8.0));
+    let top = (draft.local_y + 14.0).clamp(8.0, (vh - 176.0).max(8.0));
 
     let popover_bg = to_hsla(tokens.popover);
     let fg = to_hsla(tokens.popover_foreground);
@@ -1250,22 +1339,56 @@ pub(crate) fn render_pin_composer(
         })
         .child(
             h_flex()
-                .items_center()
+                .items_start()
                 .justify_between()
+                .gap(px(6.0))
                 .child(
-                    div()
-                        .text_size(px(SM_TEXT_PX))
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(format!(
-                            "New annotation ({:.0}%, {:.0}%)",
-                            draft.point.x_pct, draft.point.y_pct
-                        )),
+                    v_flex()
+                        .min_w_0()
+                        .flex_1()
+                        .child(
+                            div()
+                                .text_size(px(SM_TEXT_PX))
+                                .font_weight(FontWeight::MEDIUM)
+                                .truncate()
+                                .child(
+                                    draft
+                                        .detected
+                                        .as_ref()
+                                        .map(|d| d.element.clone())
+                                        .unwrap_or_else(|| {
+                                            format!(
+                                                "New annotation ({:.0}%, {:.0}%)",
+                                                draft.point.x_pct, draft.point.y_pct
+                                            )
+                                        }),
+                                ),
+                        )
+                        .when_some(
+                            draft.detected.as_ref().and_then(|d| {
+                                d.component
+                                    .as_deref()
+                                    .or(d.element_path.as_deref())
+                                    .map(str::to_owned)
+                            }),
+                            |el, sub| {
+                                el.child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .line_height(px(14.0))
+                                        .text_color(muted)
+                                        .truncate()
+                                        .child(sub),
+                                )
+                            },
+                        ),
                 )
                 .child(
                     div()
                         .id("ann-composer-close")
                         .a11y_button("annotations.composer.close", "Cancel annotation")
                         .size(px(22.0))
+                        .flex_shrink_0()
                         .rounded(px(6.0))
                         .flex()
                         .items_center()

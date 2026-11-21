@@ -19,6 +19,7 @@ const MAX_FRAME_RATE_FPS: i32 = 60;
 
 type FrameCallback = Arc<dyn Fn() + Send + Sync>;
 type LoadEndCallback = Arc<dyn Fn(&str, i32) + Send + Sync>;
+type ConsoleMessageCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 struct FrameBuffer {
     generation: u64,
@@ -41,6 +42,7 @@ struct Shared {
     load_count: AtomicU32,
     on_frame: Mutex<Option<FrameCallback>>,
     on_load_end: Mutex<Option<LoadEndCallback>>,
+    on_console_message: Mutex<Option<ConsoleMessageCallback>>,
 }
 
 impl Shared {
@@ -109,6 +111,7 @@ impl MacBrowserView {
             load_count: AtomicU32::new(0),
             on_frame: Mutex::new(None),
             on_load_end: Mutex::new(None),
+            on_console_message: Mutex::new(None),
         });
 
         let window_info = WindowInfo {
@@ -298,6 +301,28 @@ impl MacBrowserView {
         }
     }
 
+    pub(crate) fn on_console_message(
+        &self,
+        callback: impl Fn(&str) -> bool + Send + Sync + 'static,
+    ) {
+        if let Ok(mut slot) = self.shared.on_console_message.lock() {
+            *slot = Some(Arc::new(callback));
+        }
+    }
+
+    pub(crate) fn execute_javascript(&self, code: &str) {
+        if self.closed.get() {
+            return;
+        }
+        if let Some(frame) = self.browser.main_frame() {
+            frame.execute_java_script(
+                Some(&CefString::from(code)),
+                Some(&CefString::from("conn://annotations")),
+                0,
+            );
+        }
+    }
+
     pub(crate) fn set_hidden(&self, hidden: bool) {
         trace(&format!("set_hidden {hidden}"));
         if self.closed.get() || self.hidden.get() == hidden {
@@ -467,6 +492,9 @@ impl MacBrowserView {
             slot.take();
         }
         if let Ok(mut slot) = self.shared.on_load_end.lock() {
+            slot.take();
+        }
+        if let Ok(mut slot) = self.shared.on_console_message.lock() {
             slot.take();
         }
         if let Some(host) = self.browser.host() {
@@ -834,6 +862,31 @@ wrap_display_handler! {
                 self.shared.notify_frame();
             }
             1
+        }
+
+        fn on_console_message(
+            &self,
+            _browser: Option<&mut Browser>,
+            _level: LogSeverity,
+            message: Option<&CefString>,
+            _source: Option<&CefString>,
+            _line: c_int,
+        ) -> c_int {
+            let Some(msg) = message.map(|m| m.to_string()) else {
+                return 0;
+            };
+            let cb = self
+                .shared
+                .on_console_message
+                .lock()
+                .ok()
+                .and_then(|slot| slot.clone());
+            if let Some(callback) = cb
+                && callback(&msg)
+            {
+                return 1;
+            }
+            0
         }
     }
 }

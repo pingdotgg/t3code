@@ -130,7 +130,8 @@ impl RightPanel {
         .detach();
         let diff = cx.new(|_| DiffPanel::new(tokens.clone(), connection.clone()));
         let terminal = cx.new(|cx| TerminalPanel::new(tokens.clone(), cx));
-        let browser = cx.new(|cx| BrowserPanel::new(tokens.clone(), window, cx));
+        let browser =
+            cx.new(|cx| BrowserPanel::new(tokens.clone(), connection.clone(), window, cx));
         cx.subscribe(
             &browser,
             |_, _, action: &annotations::AnnotationAction, cx| {
@@ -295,6 +296,8 @@ impl RightPanel {
         self.pull_request
             .update(cx, |p, cx| p.set_connection(connection.clone(), cx));
         self.linked_items
+            .update(cx, |p, cx| p.set_connection(connection.clone(), cx));
+        self.browser
             .update(cx, |p, cx| p.set_connection(connection.clone(), cx));
         self.device
             .update(cx, |p, cx| p.set_connection(connection, cx));
@@ -670,6 +673,9 @@ fn for_each_project_panel(
         p.set_project(project_key.clone(), workspace_root.clone(), cx);
     });
     panel.tasks.update(cx, |p, cx| {
-        p.set_project(project_key, workspace_root, cx);
+        p.set_project(project_key.clone(), workspace_root, cx);
+    });
+    panel.browser.update(cx, |p, cx| {
+        p.set_project(project_key, cx);
     });
 }

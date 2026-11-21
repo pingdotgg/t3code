@@ -11,9 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::a11y::ConnA11yExt as _;
-#[cfg(feature = "cef")]
-use conn_state::AnnotationPinPoint;
-use conn_state::{AnnotationRecord, build_browser_annotation_capture};
+use conn_client::Connection;
+use conn_state::AnnotationRecord;
 use conn_theme::Tokens;
 #[cfg(feature = "cef")]
 use conn_web::{
@@ -41,11 +40,6 @@ use super::annotations::{
     AnnotationAction, AnnotationSubject, AnnotationUiState, QueuePopoverAnchor,
     QueuePopoverCallbacks, render_queue_popover,
 };
-#[cfg(feature = "cef")]
-use super::annotations::{
-    PendingPinDraft, PinComposerCallbacks, render_pin_composer, render_pins_overlay,
-    toggle_annotation_dictation,
-};
 use super::chrome::{self, ConnTooltipExt as _};
 use super::color::to_hsla;
 use super::header::superhero_icon;
@@ -63,6 +57,39 @@ const DEFAULT_URL_ENV: &str = "CONN_GPUI_BROWSER_URL";
 const DEFAULT_FALLBACK_URL: &str = "about:blank";
 #[cfg(feature = "cef")]
 const SCROLL_LINE_PX: f32 = 40.0;
+#[cfg(feature = "cef")]
+const OVERLAY_RPC_PREFIX: &str = "__CONN_OVERLAY_RPC__:";
+#[cfg(feature = "cef")]
+const BROWSER_OVERLAY_BRIDGE_JS: &str = include_str!("browser_overlay_bridge.js");
+#[cfg(feature = "cef")]
+const CONN_ANNOTATION_OVERLAY_JS: &str = include_str!("../../assets/annotation-overlay/inject.js");
+
+#[cfg(feature = "cef")]
+#[derive(serde::Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum OverlayBridgeMessage {
+    Rpc {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        op: String,
+        #[serde(default)]
+        payload: serde_json::Value,
+    },
+    Mode {
+        active: bool,
+    },
+}
+
+#[cfg(feature = "cef")]
+enum BrowserOverlayEvent {
+    Rpc {
+        request_id: String,
+        op: String,
+        payload: serde_json::Value,
+    },
+    Mode(bool),
+    LoadEnd,
+}
 
 #[cfg(feature = "cef")]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,6 +111,8 @@ enum InstallUpdate {
 /// optional on-demand CEF offscreen-rendered view (when compiled with feature `cef`).
 pub(crate) struct BrowserPanel {
     tokens: Tokens,
+    connection: Option<Connection>,
+    project_id: Option<String>,
     url_input: Entity<InputState>,
     url: String,
     /// The URL last written into the address field, so it follows navigation.
@@ -99,6 +128,10 @@ pub(crate) struct BrowserPanel {
     rendered_frame: Option<(u64, Arc<RenderImage>)>,
     #[cfg(feature = "cef")]
     wake_task: Option<Task<()>>,
+    #[cfg(feature = "cef")]
+    overlay_task: Option<Task<()>>,
+    #[cfg(feature = "cef")]
+    overlay_injected_load_count: Cell<Option<u32>>,
     #[cfg(feature = "cef")]
     last_bounds: Rc<Cell<Option<WebRect>>>,
     #[cfg(feature = "cef")]
@@ -130,7 +163,12 @@ impl fmt::Debug for BrowserPanel {
 }
 
 impl BrowserPanel {
-    pub(crate) fn new(tokens: Tokens, window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
+    pub(crate) fn new(
+        tokens: Tokens,
+        connection: Option<Connection>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Self {
         let initial_url = default_browser_url();
         let url_input = cx.new(|cx| {
             let mut input = InputState::new(window, cx).placeholder("Enter URL...");
@@ -171,13 +209,12 @@ impl BrowserPanel {
             }));
         }
 
-        let annotations =
-            AnnotationUiState::new(AnnotationSubject::Page, window, cx, |this, window, cx| {
-                this.submit_pending_annotation(window, cx);
-            });
+        let annotations = AnnotationUiState::new(AnnotationSubject::Page, window, cx, |_, _, _| {});
 
         Self {
             tokens,
+            connection,
+            project_id: None,
             url_input,
             shown_url: initial_url.clone(),
             url: initial_url,
@@ -192,6 +229,10 @@ impl BrowserPanel {
             rendered_frame: None,
             #[cfg(feature = "cef")]
             wake_task: None,
+            #[cfg(feature = "cef")]
+            overlay_task: None,
+            #[cfg(feature = "cef")]
+            overlay_injected_load_count: Cell::new(None),
             #[cfg(feature = "cef")]
             last_bounds: Rc::new(Cell::new(None)),
             #[cfg(feature = "cef")]
@@ -208,6 +249,24 @@ impl BrowserPanel {
         }
     }
 
+    pub(crate) fn set_connection(
+        &mut self,
+        connection: Option<Connection>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.connection = connection;
+        cx.notify();
+    }
+
+    pub(crate) fn set_project(&mut self, project_id: Option<String>, cx: &mut Context<'_, Self>) {
+        if self.project_id != project_id {
+            self.project_id = project_id;
+            #[cfg(feature = "cef")]
+            self.notify_overlay_annotations_changed();
+            cx.notify();
+        }
+    }
+
     pub(crate) fn sync_annotations(
         &mut self,
         annotations: Vec<AnnotationRecord>,
@@ -216,48 +275,349 @@ impl BrowserPanel {
         cx: &mut Context<'_, Self>,
     ) {
         self.annotations.sync(annotations, watching, project_ready);
-        cx.notify();
-    }
-
-    fn current_url(&self) -> String {
         #[cfg(feature = "cef")]
         {
-            self.view
-                .borrow()
-                .as_ref()
-                .map(BrowserView::url)
-                .filter(|u| !u.is_empty())
-                .unwrap_or_else(|| self.url.clone())
+            self.notify_overlay_annotations_changed();
+            self.maybe_show_existing_pins();
+        }
+        cx.notify();
+    }
+
+    #[cfg(feature = "cef")]
+    fn current_url(&self) -> String {
+        self.view
+            .borrow()
+            .as_ref()
+            .map(BrowserView::url)
+            .filter(|u| !u.is_empty())
+            .unwrap_or_else(|| self.url.clone())
+    }
+
+    #[cfg(feature = "cef")]
+    fn current_origin(&self) -> Option<String> {
+        page_origin(&self.current_url())
+    }
+
+    fn toggle_annotating_mode(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if !self.annotations.project_ready {
+            return;
+        }
+        let next = !self.annotations.annotating;
+        self.annotations.annotating = next;
+        self.annotations.queue_open = false;
+        self.annotations.confirming_remove = false;
+        #[cfg(feature = "cef")]
+        {
+            if next {
+                window.focus(&self.focus_handle, cx);
+                if let Some(view) = self.view.borrow().as_ref() {
+                    view.set_focus(true);
+                }
+                self.ensure_overlay_injected(false);
+            }
+            if let Some(view) = self.view.borrow().as_ref() {
+                view.execute_javascript(&format!(
+                    "window.__CONN_GPUI_OVERLAY_BRIDGE__?.setMode({next});"
+                ));
+            }
         }
         #[cfg(not(feature = "cef"))]
-        {
-            self.url.clone()
+        let _ = window;
+        cx.notify();
+    }
+
+    #[cfg(feature = "cef")]
+    fn ensure_overlay_injected(&self, force: bool) {
+        let guard = self.view.borrow();
+        let Some(view) = guard.as_ref() else {
+            return;
+        };
+        let load_count = view.load_count();
+        if !force && self.overlay_injected_load_count.get() == Some(load_count) {
+            return;
+        }
+        view.execute_javascript(BROWSER_OVERLAY_BRIDGE_JS);
+        view.execute_javascript(
+            r#"window.__CONN_GPUI_OVERLAY_BRIDGE__?.configure({ floatingControl: false, dictation: { provider: "host", autoStart: true, stopOnNextElement: true } });"#,
+        );
+        view.execute_javascript(CONN_ANNOTATION_OVERLAY_JS);
+        view.execute_javascript("window.__CONN_GPUI_OVERLAY_BRIDGE__?.attachModeSync();");
+        self.overlay_injected_load_count.set(Some(load_count));
+    }
+
+    #[cfg(feature = "cef")]
+    fn notify_overlay_annotations_changed(&self) {
+        if let Some(view) = self.view.borrow().as_ref() {
+            view.execute_javascript("window.__connAnnotationsChanged?.();");
         }
     }
 
-    fn submit_pending_annotation(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(draft) = self.annotations.pending_pin else {
+    #[cfg(feature = "cef")]
+    fn maybe_show_existing_pins(&self) {
+        let Some(origin) = self.current_origin() else {
             return;
         };
-        let comment = self
+        let has_pins = self
             .annotations
-            .comment_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_owned();
-        if comment.is_empty() {
-            return;
+            .annotations
+            .iter()
+            .any(|record| annotation_belongs_to_origin(record, &origin));
+        if has_pins {
+            self.ensure_overlay_injected(false);
         }
-        let id = self.annotations.next_annotation_id();
-        let url = self.current_url();
-        let capture = build_browser_annotation_capture(id, comment, url, draft.point);
-        self.annotations.cancel_pin();
-        self.annotations.comment_input.update(cx, |input, cx| {
-            input.set_value("", window, cx);
-        });
-        cx.emit(AnnotationAction::Create(capture));
-        cx.notify();
+    }
+
+    #[cfg(feature = "cef")]
+    fn reply_overlay_rpc(&self, request_id: &str, result: Result<serde_json::Value, String>) {
+        let guard = self.view.borrow();
+        let Some(view) = guard.as_ref() else {
+            return;
+        };
+        let id_json = serde_json::to_string(request_id).unwrap_or_else(|_| "\"\"".to_owned());
+        let script = match result {
+            Ok(value) => {
+                let val_json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_owned());
+                format!("window.__CONN_OVERLAY_REPLY__?.({id_json}, true, {val_json});")
+            }
+            Err(err) => {
+                let err_json =
+                    serde_json::to_string(&err).unwrap_or_else(|_| "\"Error\"".to_owned());
+                format!("window.__CONN_OVERLAY_REPLY__?.({id_json}, false, {err_json});")
+            }
+        };
+        view.execute_javascript(&script);
+    }
+
+    #[cfg(feature = "cef")]
+    fn handle_overlay_rpc(
+        &mut self,
+        request_id: String,
+        op: String,
+        payload: serde_json::Value,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match op.as_str() {
+            "list" => {
+                let origin = self.current_origin();
+                let visible: Vec<&AnnotationRecord> = match origin.as_deref() {
+                    Some(origin) => self
+                        .annotations
+                        .annotations
+                        .iter()
+                        .filter(|r| annotation_belongs_to_origin(r, origin))
+                        .collect(),
+                    None => Vec::new(),
+                };
+                let value = serde_json::to_value(visible).unwrap_or_else(|_| serde_json::json!([]));
+                self.reply_overlay_rpc(&request_id, Ok(value));
+            }
+            "capture" => {
+                let rect = (
+                    payload.get("x").and_then(serde_json::Value::as_f64),
+                    payload.get("y").and_then(serde_json::Value::as_f64),
+                    payload.get("width").and_then(serde_json::Value::as_f64),
+                    payload.get("height").and_then(serde_json::Value::as_f64),
+                );
+                let result = match rect {
+                    (Some(x), Some(y), Some(w), Some(h)) => {
+                        let frame = self
+                            .view
+                            .borrow()
+                            .as_ref()
+                            .and_then(BrowserView::latest_frame);
+                        let scale = self.last_scale.get().max(1.0);
+                        frame
+                            .and_then(|f| encode_bgra_crop_png_data_url(&f, scale, x, y, w, h, 0.0))
+                            .map(serde_json::Value::String)
+                            .ok_or_else(|| "Could not capture browser frame.".to_owned())
+                    }
+                    _ => Err("Invalid capture rectangle.".to_owned()),
+                };
+                self.reply_overlay_rpc(&request_id, result);
+            }
+            "submit" => {
+                let (Some(conn), Some(project_id)) =
+                    (self.connection.clone(), self.project_id.clone())
+                else {
+                    self.reply_overlay_rpc(
+                        &request_id,
+                        Err("Select a thread to save annotations.".to_owned()),
+                    );
+                    return;
+                };
+                let capture: conn_contract::AnnotationCapture =
+                    match serde_json::from_value(payload) {
+                        Ok(c) => c,
+                        Err(err) => {
+                            self.reply_overlay_rpc(
+                                &request_id,
+                                Err(format!("Invalid annotation payload: {err}")),
+                            );
+                            return;
+                        }
+                    };
+                let input = conn_contract::AnnotationCreateInput {
+                    project_id,
+                    annotation: capture,
+                };
+                cx.spawn(async move |this, cx| {
+                    let outcome = crate::live::RT
+                        .spawn(async move {
+                            conn.call::<conn_contract::AnnotationCreateInput, conn_contract::AnnotationCreateResult>(
+                                "annotations.create",
+                                &input,
+                            )
+                            .await
+                            .map_err(|e| e.to_string())
+                            .and_then(|res| {
+                                serde_json::to_value(&res.annotation).map_err(|e| e.to_string())
+                            })
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()));
+                    let _ = this.update(cx, |panel, _| {
+                        panel.reply_overlay_rpc(&request_id, outcome);
+                    });
+                })
+                .detach();
+            }
+            "remove" => {
+                let (Some(conn), Some(project_id)) =
+                    (self.connection.clone(), self.project_id.clone())
+                else {
+                    self.reply_overlay_rpc(
+                        &request_id,
+                        Err("Select a thread to remove annotations.".to_owned()),
+                    );
+                    return;
+                };
+                let ids: Vec<String> = payload
+                    .get("ids")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(ToOwned::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if ids.is_empty() {
+                    self.reply_overlay_rpc(&request_id, Ok(serde_json::Value::Null));
+                    return;
+                }
+                let input = conn_contract::AnnotationRemoveInput {
+                    project_id,
+                    ids: Some(ids),
+                    scope: None,
+                };
+                cx.spawn(async move |this, cx| {
+                    let outcome = crate::live::RT
+                        .spawn(async move {
+                            conn.call::<conn_contract::AnnotationRemoveInput, conn_contract::AnnotationRemoveResult>(
+                                "annotations.remove",
+                                &input,
+                            )
+                            .await
+                            .map(|_| serde_json::Value::Null)
+                            .map_err(|e| e.to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()));
+                    let _ = this.update(cx, |panel, _| {
+                        panel.reply_overlay_rpc(&request_id, outcome);
+                    });
+                })
+                .detach();
+            }
+            "dictation" => {
+                let origin = self.current_origin();
+                cx.spawn(async move |this, cx| {
+                    let ok = crate::live::RT
+                        .spawn(async move {
+                            let Ok(mut client) =
+                                conn_desktop::operator::OperatorClient::from_config()
+                            else {
+                                return false;
+                            };
+                            if let Some(origin) = origin {
+                                client = client.with_origin(origin);
+                            }
+                            client.legacy_toggle().await.is_ok()
+                        })
+                        .await
+                        .unwrap_or(false);
+                    let _ = this.update(cx, |panel, _| {
+                        panel.reply_overlay_rpc(&request_id, Ok(serde_json::Value::Bool(ok)));
+                    });
+                })
+                .detach();
+            }
+            "dictationSession" => {
+                let action = payload
+                    .get("action")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let session = payload
+                    .get("session")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let origin = self.current_origin();
+                cx.spawn(async move |this, cx| {
+                    let value = crate::live::RT
+                        .spawn(async move {
+                            use conn_desktop::operator::{
+                                DictationStart, DictationWait, OperatorClient,
+                            };
+                            let Ok(mut client) = OperatorClient::from_config() else {
+                                return serde_json::json!(false);
+                            };
+                            if let Some(origin) = origin {
+                                client = client.with_origin(origin);
+                            }
+                            match action.as_str() {
+                                "start" => match client.start(&session).await {
+                                    Ok(DictationStart::Started) => serde_json::json!(true),
+                                    Ok(DictationStart::Unsupported) => {
+                                        serde_json::json!({ "unsupported": true })
+                                    }
+                                    Err(_) => serde_json::json!(false),
+                                },
+                                "stop" => match client.stop(&session).await {
+                                    Ok(text) => serde_json::json!({ "text": text }),
+                                    Err(_) => serde_json::json!(false),
+                                },
+                                "wait" => match client.wait(&session).await {
+                                    Ok(DictationWait::Transcript(text)) => {
+                                        serde_json::json!({ "text": text })
+                                    }
+                                    Ok(DictationWait::StillWaiting) => {
+                                        serde_json::json!({ "waiting": true })
+                                    }
+                                    Ok(DictationWait::Unsupported) => {
+                                        serde_json::json!({ "unsupported": true })
+                                    }
+                                    Err(_) => serde_json::json!(false),
+                                },
+                                "cancel" => {
+                                    serde_json::json!(client.cancel(&session).await.is_ok())
+                                }
+                                _ => serde_json::json!(false),
+                            }
+                        })
+                        .await
+                        .unwrap_or_else(|_| serde_json::json!(false));
+                    let _ = this.update(cx, |panel, _| {
+                        panel.reply_overlay_rpc(&request_id, Ok(value));
+                    });
+                })
+                .detach();
+            }
+            _ => {
+                self.reply_overlay_rpc(&request_id, Err(format!("Unknown overlay op: {op}")));
+            }
+        }
     }
 
     /// Shows or hides the browser panel. When hidden, CEF stops painting; when
@@ -312,6 +672,8 @@ impl BrowserPanel {
                 "visible": self.visible.get(),
                 "frameGeneration": view.as_ref().map(BrowserView::frame_generation),
                 "bounds": self.last_bounds.get().map(|b| [b.x, b.y, b.width, b.height]),
+                "annotating": self.annotations.annotating,
+                "overlayInjected": self.overlay_injected_load_count.get().is_some(),
             })
         }
         #[cfg(not(feature = "cef"))]
@@ -581,6 +943,39 @@ impl BrowserPanel {
                     };
                     browser_view.on_frame(wake_cb);
 
+                    // Console + load-end bridge for Conn's `@t3tools/annotation-overlay`.
+                    let (overlay_tx, mut overlay_rx) =
+                        tokio::sync::mpsc::unbounded_channel::<BrowserOverlayEvent>();
+                    {
+                        let overlay_tx = overlay_tx.clone();
+                        browser_view.on_console_message(move |msg| {
+                            let Some(json) = msg.strip_prefix(OVERLAY_RPC_PREFIX) else {
+                                return false;
+                            };
+                            if let Ok(parsed) = serde_json::from_str::<OverlayBridgeMessage>(json) {
+                                let ev = match parsed {
+                                    OverlayBridgeMessage::Rpc {
+                                        request_id,
+                                        op,
+                                        payload,
+                                    } => BrowserOverlayEvent::Rpc {
+                                        request_id,
+                                        op,
+                                        payload,
+                                    },
+                                    OverlayBridgeMessage::Mode { active } => {
+                                        BrowserOverlayEvent::Mode(active)
+                                    }
+                                };
+                                let _ = overlay_tx.send(ev);
+                            }
+                            true
+                        });
+                    }
+                    browser_view.on_load_end(move |_url, _status| {
+                        let _ = overlay_tx.send(BrowserOverlayEvent::LoadEnd);
+                    });
+
                     let hidden = !visible.get();
                     browser_view.set_hidden(hidden);
                     applied_hidden.set(Some(hidden));
@@ -592,6 +987,34 @@ impl BrowserPanel {
                             panel.wake_task = Some(cx.spawn(async move |this, cx| {
                                 while wake_rx.recv().await.is_some() {
                                     if this.update(cx, |_panel, cx| cx.notify()).is_err() {
+                                        break;
+                                    }
+                                }
+                            }));
+                            panel.overlay_task = Some(cx.spawn(async move |this, cx| {
+                                while let Some(ev) = overlay_rx.recv().await {
+                                    let alive = this.update(cx, |panel, cx| match ev {
+                                        BrowserOverlayEvent::Rpc {
+                                            request_id,
+                                            op,
+                                            payload,
+                                        } => {
+                                            panel.handle_overlay_rpc(request_id, op, payload, cx);
+                                        }
+                                        BrowserOverlayEvent::Mode(active) => {
+                                            if panel.annotations.annotating != active {
+                                                panel.annotations.annotating = active;
+                                                cx.notify();
+                                            }
+                                        }
+                                        BrowserOverlayEvent::LoadEnd => {
+                                            panel.overlay_injected_load_count.set(None);
+                                            panel.annotations.annotating = false;
+                                            panel.maybe_show_existing_pins();
+                                            cx.notify();
+                                        }
+                                    });
+                                    if alive.is_err() {
                                         break;
                                     }
                                 }
@@ -666,35 +1089,6 @@ impl BrowserPanel {
             self.annotations.queue_open = false;
             self.annotations.confirming_remove = false;
             cx.notify();
-        }
-        if self.annotations.annotating && event.button == MouseButton::Left {
-            if let Some(bounds) = self.last_bounds.get()
-                && bounds.width > 1.0
-                && bounds.height > 1.0
-            {
-                let local_x = (f32::from(event.position.x) - bounds.x).clamp(0.0, bounds.width);
-                let local_y = (f32::from(event.position.y) - bounds.y).clamp(0.0, bounds.height);
-                let x_pct =
-                    (f64::from(local_x) / f64::from(bounds.width) * 100.0).clamp(0.0, 100.0);
-                let y_pct =
-                    (f64::from(local_y) / f64::from(bounds.height) * 100.0).clamp(0.0, 100.0);
-                self.annotations.begin_pin(
-                    PendingPinDraft {
-                        point: AnnotationPinPoint {
-                            x_pct,
-                            y_pct,
-                            viewport_w: f64::from(bounds.width),
-                            viewport_h: f64::from(bounds.height),
-                        },
-                        local_x,
-                        local_y,
-                    },
-                    window,
-                    cx,
-                );
-                cx.notify();
-            }
-            return;
         }
         window.focus(&self.focus_handle, cx);
         let Some((x, y)) = self.local_coords(event.position) else {
@@ -780,20 +1174,6 @@ impl BrowserPanel {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if event.keystroke.key == "escape" {
-            if self.annotations.pending_pin.is_some() {
-                self.annotations.cancel_pin();
-                cx.notify();
-                cx.stop_propagation();
-                return;
-            }
-            if self.annotations.annotating {
-                self.annotations.toggle_annotating();
-                cx.notify();
-                cx.stop_propagation();
-                return;
-            }
-        }
         if !self.focus_handle.is_focused(window) {
             return;
         }
@@ -1021,9 +1401,8 @@ impl BrowserPanel {
             .when(project_ready, |el| {
                 el.cursor_pointer()
                     .hover(move |s| s.bg(hover_bg))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.annotations.toggle_annotating();
-                        cx.notify();
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_annotating_mode(window, cx);
                     }))
             })
             .when(!project_ready, |el| el.opacity(0.45))
@@ -1116,10 +1495,9 @@ impl BrowserPanel {
             let callbacks = QueuePopoverCallbacks {
                 on_toggle_annotating: {
                     let entity = entity.clone();
-                    Rc::new(move |_, cx| {
+                    Rc::new(move |window, cx| {
                         entity.update(cx, |this, cx| {
-                            this.annotations.toggle_annotating();
-                            cx.notify();
+                            this.toggle_annotating_mode(window, cx);
                         });
                     })
                 },
@@ -1215,14 +1593,11 @@ impl Render for BrowserPanel {
             }
 
             let has_view = self.view.borrow().is_some();
-            let cursor_style = if self.annotations.annotating {
-                CursorStyle::Crosshair
-            } else {
-                self.view
-                    .borrow()
-                    .as_ref()
-                    .map_or(CursorStyle::Arrow, |v| map_cursor_style(v.cursor()))
-            };
+            let cursor_style = self
+                .view
+                .borrow()
+                .as_ref()
+                .map_or(CursorStyle::Arrow, |v| map_cursor_style(v.cursor()));
             let current_image = self.rendered_frame.as_ref().map(|(_, img)| img.clone());
 
             let status_message = match &self.phase {
@@ -1388,48 +1763,6 @@ impl Render for BrowserPanel {
                                 .child(message),
                         ),
                 );
-            }
-            let viewport_size = self.last_bounds.get().map(|b| (b.width, b.height));
-            if let Some(overlay) =
-                render_pins_overlay(&self.annotations, &self.tokens, viewport_size)
-            {
-                container = container.child(overlay);
-            }
-            if let Some(composer) = {
-                let entity = cx.entity();
-                render_pin_composer(
-                    &self.annotations,
-                    &self.tokens,
-                    viewport_size,
-                    PinComposerCallbacks {
-                        on_submit: {
-                            let entity = entity.clone();
-                            Rc::new(move |window, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.submit_pending_annotation(window, cx);
-                                });
-                            })
-                        },
-                        on_cancel: {
-                            let entity = entity.clone();
-                            Rc::new(move |_, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.annotations.cancel_pin();
-                                    cx.notify();
-                                });
-                            })
-                        },
-                        on_toggle_dictation: Rc::new(move |window, cx| {
-                            entity.update(cx, |_, cx| {
-                                toggle_annotation_dictation(window, cx, |this: &mut Self| {
-                                    &mut this.annotations
-                                });
-                            });
-                        }),
-                    },
-                )
-            } {
-                container = container.child(composer);
             }
             container
         };
@@ -1669,4 +2002,103 @@ fn gpui_key_to_windows_vk(key: &str) -> i32 {
             }
         }
     }
+}
+
+/// Returns `http(s)://host[:port]` for HTTP/HTTPS URLs, matching Conn's `pageOrigin`.
+#[cfg(feature = "cef")]
+fn page_origin(raw: &str) -> Option<String> {
+    let parsed = url::Url::parse(raw.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    Some(parsed.origin().ascii_serialization())
+}
+
+/// Only browser annotations belonging to `origin` are visible inside that site's overlay.
+#[cfg(feature = "cef")]
+fn annotation_belongs_to_origin(record: &AnnotationRecord, origin: &str) -> bool {
+    if record.source == Some(conn_state::AnnotationRecordSource::Device) {
+        return false;
+    }
+    record
+        .url
+        .as_deref()
+        .and_then(page_origin)
+        .is_some_and(|rec_origin| rec_origin == origin)
+}
+
+/// Crops a region around `(x, y, w, h)` (CSS viewport points) out of CEF's BGRA frame
+/// snapshot and encodes it as a `data:image/png;base64,...` string for `@t3tools/annotation-overlay`.
+#[cfg(feature = "cef")]
+fn encode_bgra_crop_png_data_url(
+    frame: &conn_web::FrameSnapshot,
+    scale: f32,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    pad: f64,
+) -> Option<String> {
+    use image::ImageEncoder as _;
+
+    if frame.width == 0 || frame.height == 0 {
+        return None;
+    }
+    let s = f64::from(scale.max(1.0));
+    let x0 = (((x - pad).max(0.0) * s).floor() as u32).min(frame.width.saturating_sub(1));
+    let y0 = (((y - pad).max(0.0) * s).floor() as u32).min(frame.height.saturating_sub(1));
+    let x1 = (((x + w + pad) * s).ceil() as u32).clamp(x0 + 1, frame.width);
+    let y1 = (((y + h + pad) * s).ceil() as u32).clamp(y0 + 1, frame.height);
+    let crop_w = x1.saturating_sub(x0);
+    let crop_h = y1.saturating_sub(y0);
+    if crop_w == 0 || crop_h == 0 {
+        return None;
+    }
+
+    let mut rgba = Vec::with_capacity((crop_w as usize) * (crop_h as usize) * 4);
+    let stride = (frame.width as usize) * 4;
+    for row in y0..y1 {
+        let row_start = (row as usize) * stride + (x0 as usize) * 4;
+        let row_end = row_start + (crop_w as usize) * 4;
+        let slice = frame.bgra.get(row_start..row_end)?;
+        for px in slice.as_chunks::<4>().0 {
+            // Convert BGRA -> RGBA.
+            rgba.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+        }
+    }
+
+    let mut png_bytes = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+    encoder
+        .write_image(&rgba, crop_w, crop_h, image::ExtendedColorType::Rgba8)
+        .ok()?;
+    Some(format!(
+        "data:image/png;base64,{}",
+        encode_base64(&png_bytes)
+    ))
+}
+
+#[cfg(feature = "cef")]
+fn encode_base64(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = chunk.get(1).copied().map_or(0, u32::from);
+        let b2 = chunk.get(2).copied().map_or(0, u32::from);
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((triple >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(triple & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }

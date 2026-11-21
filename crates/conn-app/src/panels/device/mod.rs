@@ -286,7 +286,7 @@ impl DevicePanel {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        let Some(draft) = self.annotations.pending_pin else {
+        let Some(point) = self.annotations.pending_pin.as_ref().map(|d| d.point) else {
             return;
         };
         let comment = self
@@ -307,13 +307,8 @@ impl DevicePanel {
             .map(str::to_owned)
             .unwrap_or_else(|| device_label.clone());
         let id = self.annotations.next_annotation_id();
-        let capture = build_device_annotation_capture(
-            id,
-            comment,
-            device_label,
-            device_pathname,
-            draft.point,
-        );
+        let capture =
+            build_device_annotation_capture(id, comment, device_label, device_pathname, point);
         self.annotations.cancel_pin();
         self.annotations.comment_input.update(cx, |input, cx| {
             input.set_value("", window, cx);
@@ -616,6 +611,7 @@ impl DevicePanel {
                             },
                             local_x,
                             local_y,
+                            detected: None,
                         },
                         window,
                         cx,
