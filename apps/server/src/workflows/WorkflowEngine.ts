@@ -763,6 +763,15 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       }
     },
   );
+  const answer: Workflows["Service"]["answer"] = Effect.fn("Workflows.answer")(
+    function* (runId, name, value) {
+      const wait = yield* store.waitAt({ runId, wait: name });
+      // Answered already, or never asked: kept, it would answer whatever asks there next.
+      if (wait === undefined || wait.request_json === null) return;
+      // Named by this asking of the question, so every answer to it is one signal.
+      yield* signal({ runId, wait: name }, value, { id: `answer:${wait.token}` });
+    },
+  );
   const signalAll = Effect.fn("WorkflowEngine.signalAll")(function* (
     address: { readonly channel: string; readonly workflow?: string | undefined },
     value: Schema.Json,
@@ -880,6 +889,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     ),
     deliver,
     signal,
+    answer,
     resume,
     cancel,
     get: Effect.fn("Workflows.get")(function* (runId) {

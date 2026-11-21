@@ -504,6 +504,9 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     signal: Effect.fn("Workflows.signal")(function* (...input) {
       return yield* (yield* current).signal(...input);
     }),
+    answer: Effect.fn("Workflows.answer")(function* (...input) {
+      return yield* (yield* current).answer(...input);
+    }),
     resume: Effect.fn("Workflows.resume")(function* (...input) {
       return yield* (yield* current).resume(...input);
     }),
