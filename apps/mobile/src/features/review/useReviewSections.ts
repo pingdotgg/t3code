@@ -18,6 +18,7 @@ import {
   buildReviewSectionItems,
   getReadyReviewCheckpoints,
   getReviewSectionIdForCheckpoint,
+  LATEST_TURN_SECTION_ID,
   resolveReviewSelectedSectionId,
   reviewTurnDiffsBySectionId,
   type ReviewGitSectionKind,
@@ -189,6 +190,8 @@ export function useReviewSections(input: {
         : (selectedGitPreview?.isPending ?? false),
     reviewSections,
     selectedSection,
+    followsLatestTurn:
+      reviewCache.selectedSectionId === LATEST_TURN_SECTION_ID && selectedSection?.kind === "turn",
     refreshSelectedSection,
     selectSection,
   };

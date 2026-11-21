@@ -18,7 +18,8 @@ export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
   | { kind: "commit"; sha: string; baseRef: string | null }
-  | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
+  // A null turnId follows the newest turn as turns complete.
+  | { kind: "turn"; turnId: RunId | null; filePath: string | null; revealRequestId: number };
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
@@ -28,7 +29,7 @@ interface DiffPanelStoreState {
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
-  selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
+  selectTurn: (ref: ScopedThreadRef, turnId: RunId | null, filePath?: string) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
@@ -130,6 +131,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
           const latestTurnId = availableTurnIds[0];
           if (
             previous?.kind !== "turn" ||
+            previous.turnId === null ||
             latestTurnId === undefined ||
             availableTurnIds.includes(previous.turnId)
           ) {

@@ -323,6 +323,8 @@ export default function DiffPanel({
     );
   }, [diffSelection, orderedTurnDiffSummaries, routeThreadRef]);
 
+  const isTurnSelection = diffSelection.kind === "turn";
+  const followsLatestTurn = diffSelection.kind === "turn" && diffSelection.turnId === null;
   const selectedRunId = diffSelection.kind === "turn" ? diffSelection.turnId : null;
   const selectedGitScope =
     diffSelection.kind === "unstaged" || diffSelection.kind === "commit"
@@ -336,13 +338,11 @@ export default function DiffPanel({
   const selectedFilePath = diffSelection.kind === "turn" ? (diffSelection.filePath ?? null) : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
-  const selectedTurn =
-    selectedRunId === null
-      ? undefined
-      : (orderedTurnDiffSummaries.find((summary) => summary.runId === selectedRunId) ??
-        orderedTurnDiffSummaries[0]);
+  const selectedTurn = !isTurnSelection
+    ? undefined
+    : (orderedTurnDiffSummaries.find((summary) => summary.runId === selectedRunId) ??
+      orderedTurnDiffSummaries[0]);
   const selectedCheckpointTurnCount = selectedTurn?.checkpointTurnCount;
-  const latestTurn = orderedTurnDiffSummaries[0];
   const reviewSectionId = toolCallSelection
     ? `tool-call:${toolCallSelection.threadId}:${toolCallSelection.itemId}`
     : selectedTurn
@@ -450,11 +450,11 @@ export default function DiffPanel({
   const selectedTurnLabel = gt("Turn {count}", { count: selectedCheckpointTurnCount ?? "?" });
   const selectedScopeLabel = toolCallSelection
     ? gt("Tool call")
-    : selectedRunId === null
+    : !isTurnSelection
       ? selectedCommitSha !== null
         ? (selectedCommitSubject ?? gt("Commit", { $context: "a git commit" }))
         : selectedGitScopeLabel
-      : selectedTurn?.runId === latestTurn?.runId
+      : followsLatestTurn
         ? gt("Latest turn")
         : selectedTurnLabel;
   const reviewSectionTitle = toolCallSelection
@@ -462,7 +462,7 @@ export default function DiffPanel({
     : selectedTurn
       ? selectedTurnLabel
       : selectedGitScopeLabel;
-  const headerCommitSha = selectedRunId === null ? selectedCommitSha : null;
+  const headerCommitSha = !isTurnSelection ? selectedCommitSha : null;
   const selectedCommitUrl =
     headerCommitSha !== null
       ? projectCommitUrl(activeProject?.repositoryIdentity, headerCommitSha)
@@ -810,7 +810,7 @@ export default function DiffPanel({
     updateCollapsedDiffFiles((current) => toggleAllDiffFiles(shownFileKeys, current));
   };
 
-  const selectTurn = (runId: RunId) => {
+  const selectTurn = (runId: RunId | null) => {
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectTurn(routeThreadRef, runId);
   };
@@ -826,9 +826,9 @@ export default function DiffPanel({
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
   const selectedScopeValue = toolCallSelection
     ? ""
-    : selectedRunId === null
+    : !isTurnSelection
       ? selectedCommitValue || selectedGitScope
-      : selectedTurn?.runId === latestTurn?.runId
+      : followsLatestTurn
         ? "latest"
         : selectedTurnValue;
   const selectScopeValue = (value: string) => {
@@ -841,7 +841,7 @@ export default function DiffPanel({
         useDiffPanelStore.getState().selectCommit(routeThreadRef, value.slice("commit:".length));
       }
     } else if (value === "latest") {
-      if (latestTurn) selectTurn(latestTurn.runId);
+      selectTurn(null);
     } else {
       const turn = orderedTurnDiffSummaries.find((summary) => `turn:${summary.runId}` === value);
       if (turn) selectTurn(turn.runId);
@@ -1370,7 +1370,7 @@ export default function DiffPanel({
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           <T>Turn diffs are unavailable because this project is not a git repository.</T>
         </div>
-      ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
+      ) : isTurnSelection && orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           <T>No completed turns yet.</T>
         </div>
