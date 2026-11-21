@@ -12395,5 +12395,7 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "167b1fd5d7b7f836": "An T3 Code gesendet",
+  "f9b458c54b170d88": "Wenn T3 Code den Link geöffnet hat, kannst du diesen Tab schließen. Wenn nichts passiert ist, versuche es erneut oder lade T3 Code herunter."
 }
