@@ -8778,28 +8778,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* scheduleDeferredFinalize(context);
               return;
             }
-            yield* runRuntimeCallbackAtGeneration(
-              callbackGeneration,
-              Effect.gen(function* () {
-                if (!stillCurrent()) return;
-                const status = context.promptSettledStatus ?? "completed";
-                const hiddenFailure =
-                  status === "completed" && context.checkPromptOutcome !== undefined
-                    ? yield* context.checkPromptOutcome({ stopReason: "end_turn" })
-                    : undefined;
-                if (!stillCurrent()) return;
-                if (hiddenFailure !== undefined) {
-                  yield* Ref.set(runtimeRestartRequired, true);
-                  yield* terminalizeOpenForegroundTools(context, "failed");
-                  yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
-                    childTurnsContinue: hasSurvivingBackgroundWork(context),
-                    threadDisposition: hiddenFailure.threadDisposition,
-                  });
-                  return;
-                }
-                yield* finalizeTurn(context, status);
-              }),
-            );
+            const isCurrent = Effect.gen(function* () {
+              if (!stillCurrent()) return false;
+              if ((yield* Ref.get(runtimeTeardownState))._tag !== "Idle") return false;
+              return (yield* Ref.get(runtimeCallbackGeneration)) === callbackGeneration;
+            });
+            if (!(yield* isCurrent)) return;
+            const status = context.promptSettledStatus ?? "completed";
+            const hiddenFailure =
+              status === "completed" && context.checkPromptOutcome !== undefined
+                ? yield* context.checkPromptOutcome({ stopReason: "end_turn" })
+                : undefined;
+            if (!(yield* isCurrent)) return;
+            if (hiddenFailure !== undefined) {
+              yield* Ref.set(runtimeRestartRequired, true);
+              yield* terminalizeOpenForegroundTools(context, "failed");
+              yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
+                childTurnsContinue: hasSurvivingBackgroundWork(context),
+                threadDisposition: hiddenFailure.threadDisposition,
+              });
+              return;
+            }
+            yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
