@@ -124,6 +124,7 @@ const PROPER_NOUNS = [
   "Grok",
   "Grok Build",
   "OpenCode",
+  "Kilo",
   "Antigravity",
   "Kiro",
   "Pi",
