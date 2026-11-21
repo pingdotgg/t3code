@@ -189,6 +189,53 @@ describe("Antigravity permissions and questions", () => {
     expect(extractAntigravityUserInputQuestion(permissionRequest)).toBeUndefined();
   });
 
+  it("routes a mode switch to approval even under a native-question id", () => {
+    const modeSwitch = {
+      ...questionRequest,
+      toolCall: { ...questionRequest.toolCall, kind: "switch_mode" as const },
+      options: [
+        { optionId: "switch-to-build", name: "Yes", kind: "allow_once" as const },
+        { optionId: "stay-in-plan", name: "No", kind: "reject_once" as const },
+      ],
+    };
+    expect(isAntigravityUserInputRequest(modeSwitch)).toBe(false);
+    expect(extractAntigravityUserInputQuestion(modeSwitch)).toBeUndefined();
+    expect(
+      makeAntigravityUserInputResponse(modeSwitch, { interaction_9960062f: "switch-to-build" }),
+    ).toBeUndefined();
+    expect(antigravityApprovalOptions(modeSwitch)).toEqual([
+      { decision: "accept", label: "Allow once" },
+      { decision: "decline", label: "Deny" },
+      { decision: "cancel", label: "Cancel" },
+    ]);
+  });
+
+  it("keeps a mode switch as a question when approvals cannot carry every choice", () => {
+    for (const options of [
+      [
+        { optionId: "proceed", name: "Yes", kind: "other" as const },
+        { optionId: "stay", name: "No", kind: "other" as const },
+      ],
+      [
+        { optionId: " switch-to-build ", name: "Yes", kind: "allow_once" as const },
+        { optionId: "stay-in-plan", name: "No", kind: "reject_once" as const },
+      ],
+      questionRequest.options,
+    ]) {
+      const modeSwitch = {
+        ...questionRequest,
+        toolCall: { ...questionRequest.toolCall, kind: "switch_mode" as const },
+        options,
+      };
+      expect(isAntigravityUserInputRequest(modeSwitch)).toBe(true);
+      for (const option of options) {
+        expect(
+          makeAntigravityUserInputResponse(modeSwitch, { interaction_9960062f: option.optionId }),
+        ).toEqual({ outcome: { outcome: "selected", optionId: option.optionId } });
+      }
+    }
+  });
+
   it("returns exact opaque IDs and accepts a unique label from an older client", () => {
     for (const answer of ["1", ["1"], "Verified"]) {
       expect(
