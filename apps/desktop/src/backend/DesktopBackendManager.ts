@@ -80,6 +80,8 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly bootstrap: DesktopBackendBootstrapValue;
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
+  /** Probed with `httpBaseUrl`; readiness publishes whichever answers, preferring `httpBaseUrl`. */
+  readonly fallbackHttpBaseUrl?: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
   readonly runningDistro?: string;
@@ -207,7 +209,7 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly outputDrainTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onExitObserved?: () => Effect.Effect<void>;
-  readonly onReady?: (pid: number) => Effect.Effect<void>;
+  readonly onReady?: (httpBaseUrl: URL, pid: number) => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
   readonly onOutput?: (
     streamName: BackendProcessOutputStream,
@@ -591,20 +593,33 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       ).pipe(Effect.forkScoped),
     );
   }
+  const probeRoute = (httpBaseUrl: URL) =>
+    waitForHttpReady({
+      executablePath: options.executablePath,
+      entryPath: options.entryPath,
+      cwd: options.cwd,
+      httpBaseUrl,
+      timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+    }).pipe(Effect.as(httpBaseUrl));
+  const fallbackHttpBaseUrl = options.fallbackHttpBaseUrl;
+  const probeRoutes =
+    fallbackHttpBaseUrl === undefined
+      ? probeRoute(options.httpBaseUrl)
+      : Effect.race(
+          probeRoute(options.httpBaseUrl),
+          // A fallback that answers first waits one probe so a slower preferred route still wins.
+          probeRoute(fallbackHttpBaseUrl).pipe(
+            Effect.tap(() => Effect.sleep(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT)),
+          ),
+        );
   // Cold WSL boots across /mnt/c can exceed one probe budget; retry while the backend is alive.
   // HTTP polling stays as the fallback for backends without the control fd, such as WSL.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
     Effect.raceFirst(
-      waitForHttpReady({
-        executablePath: options.executablePath,
-        entryPath: options.entryPath,
-        cwd: options.cwd,
-        httpBaseUrl: options.httpBaseUrl,
-        timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-      }),
-      Deferred.await(serverReady),
+      probeRoutes,
+      Deferred.await(serverReady).pipe(Effect.as(options.httpBaseUrl)),
     ).pipe(
-      Effect.flatMap(() => options.onReady?.(handle.pid) ?? Effect.void),
+      Effect.flatMap((readyUrl) => options.onReady?.(readyUrl, handle.pid) ?? Effect.void),
       Effect.as(true),
       Effect.catchTags({
         BackendReadinessTimeoutError: (error) =>
@@ -769,13 +784,23 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const resetFatalPreflightCounter =
           !current.desiredRunning && current.preflightFailureAttempt > 0;
         yield* cancelRestart;
-        yield* SubscriptionRef.update(state, (latest) => ({
-          ...latest,
-          desiredRunning: true,
-          ready: false,
-          config: Option.some(config.value),
-          preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
-        }));
+        yield* SubscriptionRef.update(state, (latest) => {
+          // Until this run is ready, keep publishing the fallback route the last run answered on.
+          const published = Option.getOrUndefined(latest.config)?.httpBaseUrl;
+          const keepsFallback =
+            published !== undefined && published.href === config.value.fallbackHttpBaseUrl?.href;
+          return {
+            ...latest,
+            desiredRunning: true,
+            ready: false,
+            config: Option.some(
+              keepsFallback ? { ...config.value, httpBaseUrl: published } : config.value,
+            ),
+            preflightFailureAttempt: resetFatalPreflightCounter
+              ? 0
+              : latest.preflightFailureAttempt,
+          };
+        });
 
         const preflightFailure = config.value.preflightFailure;
         if (Option.isSome(preflightFailure)) {
@@ -965,7 +990,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ...run,
               exitObserved: true,
             })),
-          onReady: Effect.fn("desktop.backendInstance.onReady")(function* (pid) {
+          onReady: Effect.fn("desktop.backendInstance.onReady")(function* (readyUrl, pid) {
             const isCurrentRun = yield* SubscriptionRef.modify(state, (latest) => {
               const activeRun = Option.getOrUndefined(latest.active);
               if (activeRun?.id !== runId) {
@@ -978,6 +1003,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                   ...latest,
                   restartAttempt: 0,
                   ready: true,
+                  config: Option.map(latest.config, (current) => ({
+                    ...current,
+                    httpBaseUrl: readyUrl,
+                  })),
                 },
               ] as const;
             });
@@ -985,7 +1014,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               return;
             }
 
-            yield* spec.onReady?.(config.value.httpBaseUrl, pid) ?? Effect.void;
+            if (readyUrl.href !== config.value.httpBaseUrl.href) {
+              yield* logInstanceWarning("backend answered only on its fallback route", {
+                httpBaseUrl: config.value.httpBaseUrl.href,
+                fallbackHttpBaseUrl: readyUrl.href,
+              });
+            }
+            yield* spec.onReady?.(readyUrl, pid) ?? Effect.void;
             if (
               config.value.runningDistro !== undefined &&
               config.value.wslRuntimeId !== undefined
