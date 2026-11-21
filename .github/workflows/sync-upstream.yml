@@ -1,0 +1,59 @@
+name: Sync upstream main
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  rebase:
+    if: github.repository == 'femiagbabiaka/t3code'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Rebase onto pingdotgg/t3code main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Already up to date with upstream/main ($(git rev-parse --short upstream/main))." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if ! git rebase upstream/main; then
+            {
+              echo "### Rebase conflict against upstream/main"
+              echo ""
+              echo "Upstream tip: \`$(git rev-parse --short upstream/main)\`"
+              echo ""
+              echo "Conflicting files:"
+              git diff --name-only --diff-filter=U | sed 's/^/- `/' | sed 's/$/`/'
+              echo ""
+              echo "Resolve locally:"
+              echo '```sh'
+              echo "git fetch upstream main && git rebase upstream/main && git push --force-with-lease origin main"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            git rebase --abort
+            exit 1
+          fi
+
+          git push --force-with-lease origin HEAD:refs/heads/main
+          echo "Rebased main onto upstream/main ($(git rev-parse --short upstream/main))." | tee -a "$GITHUB_STEP_SUMMARY"
