@@ -6,12 +6,18 @@ import { createPortal } from "react-dom";
 
 import { ArtifactsProvider } from "../artifacts/ArtifactsContext";
 import { useBoardArtifacts } from "../artifacts/useBoardArtifacts";
-import { chatSlotAtom, checksSlotAtom } from "../browser/panel";
+import {
+  chatSlotAtom,
+  checksSlotAtom,
+  chooseTicket,
+  ticketChoiceAtom,
+  ticketSlotAtom,
+} from "../browser/panel";
 import { OrchestratorPanel } from "../chat/OrchestratorPanel";
 import { ChecksPanel } from "../checks/ChecksPanel";
 import { MainTabs } from "../files/MainTabs";
 import { mergeTicketKey } from "../domain/readiness";
-import { frameOrderAtom, peekAtom } from "../state/boardUi";
+import { frameOrderAtom } from "../state/boardUi";
 import { useThreadFamily } from "../state/family";
 import { PrProvider } from "../state/prStatus";
 import { focusedCardAtom, useBoardForYou } from "../state/forYou";
@@ -22,12 +28,12 @@ import { ForYouLane } from "./ForYouLane";
 import { Lanes } from "./Lanes";
 import { forYouHeight, layoutBoard } from "./layout";
 import { OrchestratorCard } from "./OrchestratorCard";
-import { PeekDrawer } from "./PeekDrawer";
+import { TicketPanel } from "./TicketPanel";
 import { Viewport } from "./Viewport";
 
 const NO_ORDER = {};
 
-/** A board's orchestrator card and lanes on the canvas, the peek drawer over it, and the orchestrator's chat, which draws in the side panel's first tab. Open files are tabs over the canvas. */
+/** A board's orchestrator card and lanes on the canvas, the ticket tab and the orchestrator's chat, which draw in the side panel. Open files are tabs over the canvas. */
 export function BoardScreen({
   project,
   listed,
@@ -68,7 +74,8 @@ export function BoardScreen({
   }, [project, board.orchestratorThreadId, family, tickets, forYou.views]);
   const chatSlot = useAtomValue(chatSlotAtom);
   const checksSlot = useAtomValue(checksSlotAtom);
-  const peek = useAtomValue(peekAtom);
+  const ticketSlot = useAtomValue(ticketSlotAtom);
+  const choice = useAtomValue(ticketChoiceAtom);
   const focused = useAtomValue(focusedCardAtom);
   const focusedId =
     focused?.boardId === board.id && forYou.views.some((view) => view.card.id === focused.cardId)
@@ -103,8 +110,8 @@ export function BoardScreen({
                     focusedId={focusedId}
                   />
                 }
-                peek={peek}
-                onPeek={(next) => registry.set(peekAtom, next)}
+                choice={choice}
+                onChoose={(next) => chooseTicket(registry, next)}
               />
             </Viewport>
             <div className="absolute bottom-3.5 left-3.5 z-10 flex max-w-[60%] flex-col gap-2">
@@ -156,15 +163,14 @@ export function BoardScreen({
                 </div>
               )}
             </div>
-            <PeekDrawer
-              environmentId={project.environmentId}
-              model={model}
-              peek={peek}
-              onClose={() => registry.set(peekAtom, null)}
-            />
           </MainTabs>
           {chatSlot !== null &&
             createPortal(<OrchestratorPanel project={project} listed={listed} />, chatSlot)}
+          {ticketSlot !== null &&
+            createPortal(
+              <TicketPanel environmentId={project.environmentId} model={model} />,
+              ticketSlot,
+            )}
           {checksSlot !== null && createPortal(<ChecksPanel />, checksSlot)}
         </div>
       </PrProvider>

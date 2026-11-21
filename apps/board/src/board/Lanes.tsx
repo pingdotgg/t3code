@@ -3,7 +3,8 @@ import { type ReactNode, useContext, useState } from "react";
 
 import { STAGE_LABEL } from "../domain/ticket";
 import type { BoardModel } from "../state/boardModel";
-import { type Peek, saveFrameOrder } from "../state/boardUi";
+import type { TicketChoice } from "../browser/panel";
+import { saveFrameOrder } from "../state/boardUi";
 import { AgentCard } from "./AgentCard";
 import {
   clampDrag,
@@ -47,16 +48,16 @@ export function Lanes({
   boardId,
   forYouOpen,
   forYouLane,
-  peek,
-  onPeek,
+  choice,
+  onChoose,
 }: {
   layout: Layout;
   model: BoardModel;
   boardId: string;
   forYouOpen: number;
   forYouLane: ReactNode;
-  peek: Peek | null;
-  onPeek: (peek: Peek) => void;
+  choice: TicketChoice | null;
+  onChoose: (choice: TicketChoice) => void;
 }) {
   const registry = useContext(RegistryContext);
   const [drag, setDrag] = useState<{ key: string; dy: number } | null>(null);
@@ -163,8 +164,8 @@ export function Lanes({
                     <AgentCard
                       key={agent.threadId}
                       agent={agent}
-                      selected={agent.threadId === peek?.threadId}
-                      onOpen={() => onPeek({ threadId: agent.threadId, ticketKey: null })}
+                      selected={agent.threadId === choice?.threadId}
+                      onOpen={() => onChoose({ threadId: agent.threadId, ticketKey: null })}
                     />
                   ))}
                 </div>
@@ -179,10 +180,10 @@ export function Lanes({
               view={view}
               box={box}
               offset={drag?.key === box.key ? drag.dy : 0}
-              selectedThreadId={peek?.threadId ?? null}
+              selectedThreadId={choice?.threadId ?? null}
               onDrag={(dy) => setDrag({ key: box.key, dy: clampDrag(lane, box, dy) })}
               onDrop={() => drop(lane)}
-              onOpen={(threadId) => onPeek({ threadId, ticketKey: box.key })}
+              onOpen={(threadId) => onChoose({ threadId, ticketKey: box.key })}
             />
           );
         }),

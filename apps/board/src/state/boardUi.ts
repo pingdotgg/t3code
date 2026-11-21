@@ -26,14 +26,3 @@ export function saveFrameOrder(
   registry.set(frameOrderAtom, change(registry.get(frameOrderAtom)));
   return localState.update((state) => ({ ...state, frameOrder: change(state.frameOrder) }));
 }
-
-/** The agent the peek drawer reads, with the ticket whose frame it opened from. */
-export interface Peek {
-  readonly threadId: string | null;
-  readonly ticketKey: string | null;
-}
-
-export const peekAtom = Atom.make<Peek | null>(null).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("board-peek"),
-);

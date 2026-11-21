@@ -1,5 +1,5 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { Files, GitBranch, ListChecks, type LucideIcon, MessageSquare } from "lucide-react";
+import { Files, GitBranch, ListChecks, type LucideIcon, MessageSquare, Ticket } from "lucide-react";
 import { useContext } from "react";
 
 import { CiDot } from "../checks/CiDot";
@@ -9,6 +9,7 @@ import { type PanelTab, panelAtom, setPanelTab } from "./panel";
 
 const TABS = [
   { id: "chat", label: "Orchestrator", hint: "Orchestrator", icon: MessageSquare },
+  { id: "ticket", label: "Ticket", hint: "Ticket", icon: Ticket },
   { id: "explorer", label: "Explorer", hint: "Explorer (Ctrl+⇧+E)", icon: Files },
   { id: "changes", label: "Source Control", hint: "Source Control (Ctrl+⇧+G)", icon: GitBranch },
   { id: "checks", label: "Checks", hint: "Checks", icon: ListChecks },

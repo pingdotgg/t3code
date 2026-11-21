@@ -46,55 +46,6 @@ The private repo `13kparkin/pstack-t3` holds Lauren Tan's pstack skills ported t
 
 Every orchestrator starts with poteto-mode and the `pstack-t3` adapter ahead of its rules in the instance's appended system prompt. `pstack/poteto-mode.md` and `pstack/pstack-t3.md` are copies of those two skills without their front matter. After a change in `pstack-t3`, run `node apps/board/scripts/vendor-pstack.mjs <pstack-t3 checkout>` and `vp fmt apps/board/pstack`, and commit the result. Every other skill the orchestrator reads on demand from the checkout.
 
-## The engine stays upstream
-
-This fork tracks `pingdotgg/t3code`. Board code lives only in `apps/board/`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`, so merging upstream never conflicts. The check below enforces that and runs in CI on every pull request.
-
-```sh
-git remote add upstream https://github.com/pingdotgg/t3code.git  # once
-git fetch upstream main
-node apps/board/scripts/check-engine-untouched.mjs
-```
-
-It exits 0 when nothing outside those paths changed since the merge base with `upstream/main`, 1 with the offending paths otherwise, and 2 when the `upstream` remote is missing.
-
-## Run
-
-```sh
-vp run --filter @agent-board/app dev      # Electron window on the Vite dev server
-vp run --filter @agent-board/app dev:web  # the renderer alone, in a browser, at http://127.0.0.1:5190
-vp run --filter @agent-board/app build    # renderer to dist/, Electron main to dist-electron/
-vp run --filter @agent-board/app start    # production build, loaded from agentboard://app
-```
-
-On a Windows machine, run the same commands from WSL with `dev:windows` and `start:windows` (after `build`) to get Windows' own window frame. They download Electron for `win32-x64` once into `%LOCALAPPDATA%\agent-board\` and copy the bundle there, so Electron never runs from a `\\wsl.localhost` path. This needs WSL mirrored networking, so the Windows app can reach the dev server on `127.0.0.1`.
-
-`PORT` moves the dev server. `AGENT_BOARD_CDP_PORT` turns on Electron's remote debugging port. Electron prints `board:first-paint <ms>` once the renderer has painted, measured from the main process start.
-
-## omp rules for Claude Code
-
-The `omp-kit` plugin in `plugins/` gives every Claude Code session the rules in `~/.omp/agent/rules`, the sticky `~/.omp/agent/RULES.md`, a TypeScript language server for the `LSP` tool, and `vp` on the Bash path. Rules are read at hook time, so editing a rule file takes effect in the next session. `OMP_KIT_RULES_DIR` points the engine at another rules folder, and `RULES.md` is read from that folder's parent.
-
-```sh
-node apps/board/scripts/install-omp-kit.mjs                      # user scope, ~/.claude
-node apps/board/scripts/install-omp-kit.mjs --config-dir /tmp/x  # an isolated Claude config
-```
-
-A rule with `approval: ask` in its frontmatter makes the plugin answer a matching MCP tool call with Claude Code's `ask` decision, so the operator approves in place with the rule's text, on every call. omp ignores the field. MCP calls match by tool name only, never by their arguments, and a scope token may spell the tool the omp way (`tool:mcp__linear_save_issue`) or the Claude way (`tool:mcp__t3-code__set_issue_state`). Other tools, Bash included, keep the draft-first deny.
-
-The plugin loads in place from this checkout, so install from a checkout that stays. The language server needs `typescript` installed in the project it opens.
-
-## pstack skills
-
-The private repo `13kparkin/pstack-t3` holds Lauren Tan's pstack skills ported to T3, with an `upstream` branch that tracks cursor/plugins. `scripts/install-skills.mjs` adds it as a Claude Code marketplace, installs `pstack-t3@pstack-t3` at user scope, links each skill folder into the Codex skills folder, and turns on Codex memories (`[features] memories = true` and `[memories] disable_on_external_context = false`) without touching any other key. A step that is already done is skipped, and a Codex skill link that points elsewhere is reported and left alone.
-
-```sh
-node apps/board/scripts/install-skills.mjs                                      # ~/.claude and ~/.codex
-node apps/board/scripts/install-skills.mjs --config-dir /tmp/c --codex-home /tmp/x  # isolated homes
-```
-
-Every orchestrator starts with poteto-mode and the `pstack-t3` adapter ahead of its rules in the instance's appended system prompt. `pstack/poteto-mode.md` and `pstack/pstack-t3.md` are copies of those two skills without their front matter. After a change in `pstack-t3`, run `node apps/board/scripts/vendor-pstack.mjs <pstack-t3 checkout>` and `vp fmt apps/board/pstack`, and commit the result. Every other skill loads on demand from the installed plugin or the Codex skills folder.
-
 ## The engine
 
 The app uses T3's own engine, the background service in WSL that `t3 service install` sets up and `t3 update` keeps current. It never runs an engine of its own and never stops one. It finds the engine in this order and shows each step in the sidebar footer.
@@ -141,7 +92,7 @@ On create, the app does this in order:
 
 A board with no orchestrator offers the same picker in its panel.
 
-The orchestrator tab of the right sidebar streams the orchestrator thread and sends follow-ups with `startThreadTurn`. **Stop** interrupts the turn. A reload reattaches to the running thread. The first message, the brief, folds into a disclosure. The orchestrator card on the canvas reads `tickets.json`, `foryou.jsonl`, and `decisions.tsv` from the board folder every few seconds and shows tickets by stage, open For-you items, builders against the cap, and the latest decision.
+The orchestrator tab of the right sidebar streams the orchestrator thread and sends follow-ups with `startThreadTurn`. **Stop** interrupts the turn. A reload reattaches to the running thread. The first message, the brief, folds into a disclosure. The **Ticket** tab follows the orchestrator tab. Pressing a ticket frame or an agent card opens the sidebar on it, with the ticket's summary and why, its check rows, its merge-ready conditions, and the log of the chosen agent. An agent that no ticket claims shows as **Unassigned**. With nothing chosen the tab reads "Select a ticket or agent card". Switching tabs keeps the choice, and opening another board clears it. The orchestrator card on the canvas reads `tickets.json`, `foryou.jsonl`, and `decisions.tsv` from the board folder every few seconds and shows tickets by stage, open For-you items, builders against the cap, and the latest decision.
 
 ### Roles
 
@@ -175,7 +126,7 @@ Each listing marks `board:artifacts-listed` with the file count and the millisec
 
 ## Files
 
-The right sidebar's **Explorer** tab, the second tab of the sidebar the top bar's button toggles, lists the open board's project and each ticket's worktree as roots, taken from `tickets.json`, and draws the chosen root's tree. Choosing a file, a file link in the orchestrator's chat, or an artifact card opens the file as a tab beside **Board** in a strip over the canvas, the way Orca opens a file in its main area. The active file covers the canvas, which stays mounted and sized, so it keeps its pan and zoom. Closing the tab, or choosing **Board**, shows the canvas again. `src/state/filesView.ts` holds the explorer's root, the open tabs, and the active one. The board never edits a file.
+The right sidebar's **Explorer** tab, the third tab of the sidebar the top bar's button toggles, lists the open board's project and each ticket's worktree as roots, taken from `tickets.json`, and draws the chosen root's tree. Choosing a file, a file link in the orchestrator's chat, or an artifact card opens the file as a tab beside **Board** in a strip over the canvas, the way Orca opens a file in its main area. The active file covers the canvas, which stays mounted and sized, so it keeps its pan and zoom. Closing the tab, or choosing **Board**, shows the canvas again. `src/state/filesView.ts` holds the explorer's root, the open tabs, and the active one. The board never edits a file.
 
 `src/files/FileTree.tsx` draws the root with `@pierre/trees`, as T3's file browser does, and lists a folder with `projects.listEntries` only when it opens. Every listing is relative to the root's `cwd`, because the engine lists only inside the `cwd` it is given, so a worktree is listed with the worktree as the `cwd`. Open folders are remembered per root in `localStorage["board.files.expanded"]`.
 
@@ -187,7 +138,7 @@ Expanding a folder marks `board:tree-expand` and, two frames after its rows are 
 
 ## Source control
 
-The right sidebar's **Source Control** tab, third after the orchestrator and **Explorer**, works on the same roots and is laid out like Orca's source control view: the pull request with search and more, the branch with the root picker, the base with its ahead and behind counts, a commit message box with a **Commit** button and a menu, the changed files, and a collapsible **Commits** section. **Changes** reads T3's `review.getDiffPreview` with `sourceKind: "working-tree"`, and **Branch vs <base>** reads it with `branch-range` against the ticket's `base` from `tickets.json`, or the default branch. Commits come from `review.getBranchCommits`, and a commit opens to its files. The box commits through T3's `git.runStackedAction` as `commit`, `commit_push`, or `commit_push_pr`, with T3's own message when the box is empty, and after a commit in a ticket worktree it offers **Tell the orchestrator**. A file, a commit, or **View all** opens as a diff tab beside **Board**, the way Orca opens a diff in its main area. `src/changes/DiffView.tsx` shows unified or split, ignores whitespace on request, and expands the unchanged lines from `review.getDiffFileContents`. T3 caps a whole diff's patch at 120 KB, so `useFilePatches.ts` reads each file's patch on its own. A file's name or a line number in a diff opens F1's file view at that line, marked. A ticket frame's branch line, its agent cards, and its PR chip each have a button that opens the ticket's branch diff. `src/changes/changeSet.ts` turns a preview into the file tree and the totals.
+The right sidebar's **Source Control** tab, fourth after the orchestrator, **Ticket**, and **Explorer**, works on the same roots and is laid out like Orca's source control view: the pull request with search and more, the branch with the root picker, the base with its ahead and behind counts, a commit message box with a **Commit** button and a menu, the changed files, and a collapsible **Commits** section. **Changes** reads T3's `review.getDiffPreview` with `sourceKind: "working-tree"`, and **Branch vs <base>** reads it with `branch-range` against the ticket's `base` from `tickets.json`, or the default branch. Commits come from `review.getBranchCommits`, and a commit opens to its files. The box commits through T3's `git.runStackedAction` as `commit`, `commit_push`, or `commit_push_pr`, with T3's own message when the box is empty, and after a commit in a ticket worktree it offers **Tell the orchestrator**. A file, a commit, or **View all** opens as a diff tab beside **Board**, the way Orca opens a diff in its main area. `src/changes/DiffView.tsx` shows unified or split, ignores whitespace on request, and expands the unchanged lines from `review.getDiffFileContents`. T3 caps a whole diff's patch at 120 KB, so `useFilePatches.ts` reads each file's patch on its own. A file's name or a line number in a diff opens F1's file view at that line, marked. A ticket frame's branch line, its agent cards, and its PR chip each have a button that opens the ticket's branch diff. `src/changes/changeSet.ts` turns a preview into the file tree and the totals.
 
 ## Pull requests and merge readiness
 
@@ -197,7 +148,7 @@ The state comes from three reads that the board merges, newest first. The engine
 
 The host reports no start time for a check, so the board records when it first saw each check running, in local storage, and flags a check that has run longer than 20 minutes as **Stuck**. A check already running when the board first opened looks shorter than it is.
 
-The peek drawer lists each check with its result and the six merge-ready conditions the XEO workflow sets, computed live by `domain/readiness.ts`:
+The Ticket tab lists each check with its result and the six merge-ready conditions the XEO workflow sets, computed live by `domain/readiness.ts`:
 
 | Condition                                      | Holds when                                                                                                                                                                 |
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -214,11 +165,11 @@ A merge approval card shows the same six, each with the orchestrator's claim fro
 
 The chip marks `board:pr-event` when a pull request's live state changes and `board:pr-painted` after the commit that shows a new reading.
 
-The right sidebar's **Checks** tab is fourth, after **Source Control**. It shows one ticket's pull request, laid out like Orca's checks view. It follows the root chosen in the explorer. The ticket picker over it names another ticket, and choosing a root again clears that pick. A pick belongs to the board it was made on.
+The right sidebar's **Checks** tab is fifth, after **Source Control**. It shows one ticket's pull request, laid out like Orca's checks view. It follows the root chosen in the explorer. The ticket picker over it names another ticket, and choosing a root again clears that pick. A pick belongs to the board it was made on.
 
 The header holds the number, which opens the pull request, the state badge, the title, the update time, **Refresh**, and a menu with **Open pull request** and **Copy link**. Under it a split button runs `pullRequests.runAction`. The button is **Mark ready for review** or **Update branch**, whichever T3 allows first. **Convert to draft** is in the dropdown. Each action shows the reason when it is off, such as `Checking mergeability` or `Base comparison unknown`. A merge is not offered, because it goes through the For-you approval.
 
-The checks group is headed by a count per kind, such as `3 failing`, `1 running`, `8 passing`, and it folds. Each row has the status icon, the name, a **Required** badge, GitHub's description, and a link that opens the run in the browser tab. A pending check also shows `Running for` the time the board has watched it. T3 reports no start time, duration, or steps, so opening a row shows only the description and the link. The peek drawer and the merge approval card draw their checks with the same rows. The tab's icon has a dot that is green, red, or amber with the checks.
+The checks group is headed by a count per kind, such as `3 failing`, `1 running`, `8 passing`, and it folds. Each row has the status icon, the name, a **Required** badge, GitHub's description, and a link that opens the run in the browser tab. A pending check also shows `Running for` the time the board has watched it. T3 reports no start time, duration, or steps, so opening a row shows only the description and the link. The Ticket tab and the merge approval card draw their checks with the same rows. The tab's icon has a dot that is green, red, or amber with the checks.
 
 The comments section reads `pullRequests.activity` and lists comments and review threads as cards, with a bot badge, reactions, and **All**, **Humans**, and **Bots** filters. Comment bodies are other people's text, so their images show only their alt text.
 
@@ -226,7 +177,7 @@ The header and comments are read when the tab is first shown. `board:checks-open
 
 ## Browser
 
-The sidebar's **Browser** row shows the browser as a tab of the main view, beside **Board** and the file tabs, the way Orca opens its browser in its main area. Each page is a tab with a globe, a close button, and the page's title, and the plus at the end of the strip opens a blank one. The tab strip is `src/files/MainTabStrip.tsx`, and `MainTabs.tsx` covers the canvas with the active tab. Which tab shows is `filesViewAtom`'s `active` file or its `surface`, never both. The right sidebar, `src/browser/PanelHost.tsx`, is the app's one right-side host, which the top bar's button shows and hides. Its tab strip, `PanelTabs.tsx`, draws icon tabs with an underline under the active one, the way Orca's right sidebar does. It holds the orchestrator's chat first, which opens when a board does, and **Explorer** after it. Every tab stays mounted behind the others, so the chat keeps its scroll, draft, and stream while another tab shows. `BoardScreen` draws the chat into the sidebar's slot with a portal, because the chat needs the board's artifacts and pull request context. A drag handle or the arrow keys on the sidebar's left edge set its width.
+The sidebar's **Browser** row shows the browser as a tab of the main view, beside **Board** and the file tabs, the way Orca opens its browser in its main area. Each page is a tab with a globe, a close button, and the page's title, and the plus at the end of the strip opens a blank one. The tab strip is `src/files/MainTabStrip.tsx`, and `MainTabs.tsx` covers the canvas with the active tab. Which tab shows is `filesViewAtom`'s `active` file or its `surface`, never both. The right sidebar, `src/browser/PanelHost.tsx`, is the app's one right-side host, which the top bar's button shows and hides. Its tab strip, `PanelTabs.tsx`, draws icon tabs with an underline under the active one, the way Orca's right sidebar does. It holds the orchestrator's chat first, which opens when a board does, then **Ticket**, then **Explorer**. Every tab stays mounted behind the others, so the chat keeps its scroll, draft, and stream while another tab shows. `BoardScreen` draws the chat into the sidebar's slot with a portal, because the chat needs the board's artifacts and pull request context. A drag handle or the arrow keys on the sidebar's left edge set its width.
 
 Inside Electron a page is a native tab. `electron/browserView.ts` gives each tab its own `WebContentsView` in a persistent `persist:agent-board-browser` session, shows only the active one, and places it over the rectangle the renderer reports with `board:browser-bounds`, which is the main view's page area while a page tab shows and nothing otherwise. The pages and their sessions stay alive while a file or the board shows. Every message is decoded with a schema before it is used, a page can only navigate to http(s) URLs, and the session denies every permission request. `src/browser/tabs.ts` keeps the tab list in a reducer, and `openInBrowser(url)` in `src/browser/browserTabs.ts` is the one entry point that opens a link: it shows the tab that already holds the URL, and opens a new tab otherwise. A ticket's pull request chip, the links an orchestrator names as evidence on a merge approval card, and a link in a markdown document, such as an artifact or a local preview URL, all go through it. Without Electron, as in `dev:web`, it opens the system browser instead.
 
