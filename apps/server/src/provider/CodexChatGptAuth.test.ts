@@ -736,7 +736,8 @@ it.effect(
         yield* h.phase("succeeded");
         assert.strictEqual(Option.getOrThrow(yield* h.auth.read).subject, "user-test");
         assert.strictEqual(h.exchanges[0]?.get("client_id"), "oaiapp_test");
-        yield* h.seedExpired;
+        // 75 s left on the one-hour token: inside the renewal margin Codex's 60 s token cache needs.
+        yield* TestClock.adjust("3525 seconds");
         const records = yield* Effect.all([h.auth.access, h.auth.access], {
           concurrency: "unbounded",
         });

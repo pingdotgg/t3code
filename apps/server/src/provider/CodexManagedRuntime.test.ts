@@ -21,6 +21,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
 import { makeCodexManagedRuntime } from "./CodexManagedRuntime.ts";
+import { TOKEN_RENEWAL_MARGIN_MS } from "./CodexManagedTokenProtocol.ts";
 import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import { codexAppServerArgs } from "./codexLaunchArgs.ts";
 
@@ -147,7 +148,9 @@ it.live.each(
           assert.include(provider, 'base_url="https://api.openai.com/v1"');
           assert.include(provider, 'model_catalog_url="https://api.openai.com/v1/models"');
           assert.notInclude(provider, "env_key");
-          assert.include(provider, "refresh_interval_ms=0");
+          const refreshIntervalMs = Number(/refresh_interval_ms=(\d+)/u.exec(provider)?.[1]);
+          // regression: #33701 0 makes Codex reuse the launch token forever for catalog requests.
+          assert.isTrue(refreshIntervalMs > 0 && refreshIntervalMs < TOKEN_RENEWAL_MARGIN_MS);
           // regression: #16132 Codex fetches each token through this helper, so a running
           // session picks up renewals instead of keeping the token it launched with.
           if (source === "managed" && account === "primary") {
