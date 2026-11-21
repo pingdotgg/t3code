@@ -1974,9 +1974,20 @@ export const layer: Layer.Layer<
           yield* trackChildLifecycle(event, deliveredEvent !== null);
           yield* scheduleIdleFlush;
         });
+        // A shared provider session hands every run every thread's events. Routing them as they
+        // arrive drops, before the commit queue, those this run would reject without a routing
+        // change; past the root turn every event still rechecks whether ingestion can stop.
+        let routedAhead = yield* Ref.get(eventRouting);
         const providerEventFiber = yield* eventSink
           .consumeProviderEvents(
             eventSubscription.events.pipe(
+              Stream.filter((event) => {
+                if (routedAhead.rootTurnEnded) return true;
+                const [accepted, routing] = routeProviderEvent(event, routeIdentity, routedAhead);
+                const keep = accepted || routing !== routedAhead;
+                routedAhead = routing;
+                return keep;
+              }),
               Stream.merge(Stream.fromQueue(idleFlushTicks), { haltStrategy: "left" }),
             ),
             (event) =>
