@@ -61,24 +61,36 @@ describe("optimistic user messages", () => {
     expect(state.handoff).toEqual({});
   });
 
-  it("releases the previous thread's messages when the thread changes", () => {
+  it("a send the server has not acknowledged is still shown after leaving and returning to its thread", () => {
     let state = applyOptimisticUserMessagesAction(emptyOptimisticUserMessages(threadA), threadA, [
       message("a1"),
     ]);
     state = reconcileOptimisticUserMessages(state, threadB, ids());
     state = reconcileOptimisticUserMessages(state, threadA, ids());
-    expect(state).toEqual(emptyOptimisticUserMessages(threadA));
+    expect(state.messages.map((m) => m.id)).toEqual([MessageId.make("a1")]);
   });
 
-  it("drops a late update for a thread the view has left", () => {
-    const state = reconcileOptimisticUserMessages(
+  it("a late update for a thread the view has left applies to that thread's pending sends", () => {
+    let state = reconcileOptimisticUserMessages(
       applyOptimisticUserMessagesAction(emptyOptimisticUserMessages(threadA), threadA, [
         message("a1"),
       ]),
       threadB,
       ids(),
     );
-    expect(applyOptimisticUserMessagesAction(state, threadA, [message("a2")])).toBe(state);
+    state = applyOptimisticUserMessagesAction(state, threadA, (existing) => [
+      ...existing,
+      message("a2", "blob:a2"),
+    ]);
+    // A failed send leaves, even while its thread is not shown.
+    state = applyOptimisticUserMessagesAction(state, threadA, (existing) =>
+      existing.filter((m) => m.id !== MessageId.make("a1")),
+    );
+    expect(state.messages).toEqual([]);
+    state = reconcileOptimisticUserMessages(state, threadA, ids());
+    expect(state.messages.map((m) => m.id)).toEqual([MessageId.make("a2")]);
+    // Leaving the thread revoked its blob previews.
+    expect(state.messages[0]?.attachments?.[0]).not.toHaveProperty("previewUrl");
   });
 
   it("revokes a thread's blob previews once, when their use ends or the thread is left", () => {
