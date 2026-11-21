@@ -798,6 +798,14 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+function usesCodexFullAccessDefaults(policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) {
+  return (
+    policy.runtimeMode === "full-access" &&
+    policy.approvalPolicy === undefined &&
+    policy.sandboxPolicy === undefined
+  );
+}
+
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
 function codexCyberAccess(
@@ -5986,6 +5994,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for approval turn ${payload.turnId}.`,
                 payload,
               );
+            }
+            // Under the granular policy Codex still asks before commands it judges dangerous.
+            if (usesCodexFullAccessDefaults(context.input.runtimePolicy)) {
+              return {
+                decision: "accept",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
             }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("command")) {
