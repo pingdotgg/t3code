@@ -237,6 +237,8 @@ const startHost = (
     readonly confirmStops?: boolean;
     /** Runs before a control is answered, so a test can hold a control in flight. */
     readonly beforeControlReply?: Effect.Effect<void>;
+    /** The host refuses every task with this error. */
+    readonly startError?: string;
     /** Told whether the server took each control's reply. */
     readonly controlReplied?: Deferred.Deferred<boolean>;
   } = {},
@@ -278,7 +280,9 @@ const startHost = (
             owner,
             reply: {
               requestId: frame.requestId,
-              ok: true,
+              ...(frame.kind === "start" && options.startError !== undefined
+                ? { ok: false, error: options.startError }
+                : { ok: true }),
               ...(frame.kind === "control" ? { done: "Done." } : {}),
               ...(frame.kind === "look" ? { look: CALCULATOR } : {}),
             },
@@ -1881,4 +1885,157 @@ it.effect(
         JSON.stringify(counts),
       );
     }).pipe(Effect.provide(layerTest())),
+);
+
+const SECRET = `Sk-Live-${"Ab".repeat(40)}`;
+const PAD = "p".repeat(68);
+/** A piece from the middle of the secret, which no cut of a leak can avoid. */
+const leaks = (value: unknown) =>
+  JSON.stringify(value).toLowerCase().includes(SECRET.slice(10, 30).toLowerCase());
+
+it.effect("a long, prefixed, mixed-case secret reaches no surface but its own type step", () => {
+  const sent: Array<{ readonly state: unknown; readonly questions: unknown }> = [];
+  return Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const audit = yield* ComputerAudit.ComputerAudit;
+    const host = yield* startHost();
+    const task = yield* startUse({ goal: "store {text} in the vault", text: SECRET });
+    const reader = yield* service.subscribe({ revealTypedText: false });
+    const approver = yield* service.subscribe({ revealTypedText: true });
+
+    yield* host.decide({
+      taskId: task.taskId,
+      state: {
+        screen: {
+          app: "Vault",
+          title: `${PAD} ${SECRET}`,
+          visibleText: `${PAD} ${SECRET.toUpperCase()}`,
+        },
+      },
+      questions: {
+        [`type ${SECRET}`]: {
+          type: "choice",
+          instructions: `Put ${SECRET.toLowerCase()} in`,
+          criteria: {
+            c0: `Click the textbox “Token” containing “Bearer ${SECRET.slice(0, 50)}…”`,
+            [SECRET]: "Type it",
+          },
+        },
+      },
+    });
+    const say = (event: Parameters<typeof service.hostEvent>[0]["event"]) =>
+      service.hostEvent({ hostId: host.hostId, owner: host.owner, taskId: task.taskId, event });
+    yield* say({ type: "step", text: `${PAD} ${SECRET}` });
+    yield* say({ type: "acted", kind: "type", mode: "background", how: `${PAD} ${SECRET}` });
+    yield* host.authorize({
+      taskId: task.taskId,
+      step: 1,
+      action: { kind: "scroll", direction: "down", ref: SECRET, role: SECRET, what: SECRET },
+    });
+    const tap = yield* service
+      .hostAuthorize({
+        hostId: host.hostId,
+        owner: host.owner,
+        taskId: task.taskId,
+        step: 2,
+        observation: {
+          app: `${PAD} ${SECRET}`,
+          title: `${"t".repeat(380)} ${SECRET}`,
+          url: `https://x.test/${PAD}?k=${SECRET}`,
+        },
+        action: click(`${PAD} ${SECRET}`),
+      })
+      .pipe(Effect.forkScoped);
+    const approval = yield* waitForApproval(task.taskId);
+    const readerSnapshot = yield* Stream.runHead(reader);
+    assert.isFalse(leaks(readerSnapshot), "reader snapshot");
+    yield* service.respondToApproval({ approvalId: approval.id, approve: true, decidedBy: "web" });
+    yield* Fiber.join(tap);
+    yield* say({
+      type: "finished",
+      status: "done",
+      reason: `${PAD} ${SECRET}`,
+      steps: [],
+      surface: `${PAD} ${SECRET}`,
+    });
+
+    assert.isFalse(leaks(sent), "decider");
+    assert.isFalse(leaks(yield* service.status(null)), "status the MCP tools read");
+    const approverTasks = yield* Stream.runHead(approver);
+    assert.isFalse(
+      leaks(approverTasks._tag === "Some" ? approverTasks.value.tasks : []),
+      "approver tasks",
+    );
+    assert.isFalse(leaks(yield* audit.tail(200)), "audit");
+  }).pipe(Effect.provide(layerTest({ decider: asking(sent) })));
+});
+
+it.effect("a host's refusal never repeats the typed text", () =>
+  Effect.gen(function* () {
+    const audit = yield* ComputerAudit.ComputerAudit;
+    yield* startHost({}, { startError: `could not type ${PAD} ${SECRET}` });
+    const error = yield* startUse({ goal: "store {text}", text: SECRET }).pipe(Effect.flip);
+    assert.isFalse(leaks(error.detail), "error");
+    const service = yield* ComputerService.ComputerService;
+    assert.isFalse(leaks(yield* service.status(null)), "status");
+    assert.isFalse(leaks(yield* audit.tail(50)), "audit");
+  }).pipe(Effect.provide(layerTest())),
+);
+
+it.effect("a quoted label exempts short text only when {text} stands outside the quotes", () =>
+  Effect.gen(function* () {
+    yield* startHost();
+    for (const [goal, text] of [
+      ['click "{text} OK" then send', "ok"],
+      [`click “OK, then type this into the box and press send”, then {text}`, "ok"],
+      ['press “OK" then {text}', "ok"],
+      ["say a. now", "a."],
+      ["dial 1 4 now", " 4"],
+      ["shout hi!1 loudly", "!1"],
+    ] as const) {
+      assert.strictEqual(
+        (yield* startUse({ goal, text }).pipe(Effect.flip)).reason,
+        "refused",
+        goal,
+      );
+    }
+    const allowed = yield* startUse({ goal: "click “OK”, then type {text}", text: "ok" });
+    assert.strictEqual(allowed.status, "running");
+  }).pipe(Effect.provide(layerTest())),
+);
+
+it.effect(
+  "a decision waits while a type step's tap is in flight, and redacts once it is granted",
+  () => {
+    const sent: Array<{ readonly state: unknown; readonly questions: unknown }> = [];
+    return Effect.gen(function* () {
+      const service = yield* ComputerService.ComputerService;
+      const host = yield* startHost();
+      const task = yield* startUse({ goal: "put {text} in Reply", text: "ok" });
+      const typing = yield* host
+        .authorize({
+          taskId: task.taskId,
+          step: 1,
+          action: { kind: "type", ref: "r1", role: "textbox", label: "Reply", text: "ok" },
+        })
+        .pipe(Effect.forkScoped);
+      const approval = yield* waitForApproval(task.taskId);
+      const look = host.decide({
+        taskId: task.taskId,
+        state: { screen: { app: "Messages", title: "Dana", visibleText: "Reply: ok" } },
+        questions: { done: { type: "noul", instructions: "Done?" } },
+      });
+      assert.strictEqual((yield* look.pipe(Effect.flip)).reason, "refused");
+
+      yield* service.respondToApproval({
+        approvalId: approval.id,
+        approve: true,
+        decidedBy: "web",
+      });
+      assert.deepStrictEqual(yield* Fiber.join(typing), { ok: true, grant: "approved" });
+      yield* look;
+      const state = sent.at(-1)?.state as { screen: { visibleText: string } };
+      assert.strictEqual(state.screen.visibleText, "");
+    }).pipe(Effect.provide(layerTest({ decider: asking(sent) })));
+  },
 );

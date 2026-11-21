@@ -369,8 +369,16 @@ const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\
 /** An echoed value that holds the text, or the start of it cut short with "…" as the helper clips values. */
 function echoes(echoed: string, typed: string): boolean {
   if (holds(echoed, typed)) return true;
-  const cut = echoed.endsWith("…") ? echoed.slice(0, -1) : "";
-  return cut !== "" && typed.toLowerCase().startsWith(cut.toLowerCase());
+  if (!echoed.endsWith("…")) return false;
+  // A cut value can end partway into the text after other words ("Bearer sk-…"): any tail of it that starts
+  // the typed text is an echo.
+  const cut = echoed.slice(0, -1).toLowerCase();
+  const start = typed.toLowerCase();
+  const least = Math.min(MIN_HIDDEN, start.length);
+  for (let from = 0; from <= cut.length - least; from += 1) {
+    if (start.startsWith(cut.slice(from))) return true;
+  }
+  return false;
 }
 
 /**
@@ -401,11 +409,16 @@ function hideEchoed(value: string, typed: string | null, alreadyTyped: boolean):
 /** How a goal refers to the task's `text` without writing it. */
 const TEXT_REFERENCE = "{text}";
 /** A quoted span in a goal: a control label as the agent copied it. */
-const QUOTED = /“[^”]*”|"[^"]*"/g;
+const QUOTED = /“[^“”"]{1,40}”|"[^“”"]{1,40}"/g;
 
 /** Short text standing alone, not inside a longer word. */
-const standsAlone = (value: string, typed: string) =>
-  new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(typed)}(?![\\p{L}\\p{N}])`, "iu").test(value);
+function standsAlone(value: string, typed: string): boolean {
+  // A word boundary only means something beside a letter or digit: "a." or " 4" matches wherever it is.
+  const alnum = /[\p{L}\p{N}]/u;
+  const before = alnum.test(typed.at(0) ?? "") ? "(?<![\\p{L}\\p{N}])" : "";
+  const after = alnum.test(typed.at(-1) ?? "") ? "(?![\\p{L}\\p{N}])" : "";
+  return new RegExp(`${before}${escapeRegExp(typed)}${after}`, "iu").test(value);
+}
 
 /**
  * Why a goal cannot carry this text, or null. Short text cannot be told apart from ordinary words, so it may
@@ -418,7 +431,8 @@ function goalRefusal(goal: string, typed: string | undefined): string | null {
       : null;
   }
   if (typed.length >= MIN_HIDDEN) return null;
-  const outside = goal.includes(TEXT_REFERENCE) ? goal.replace(QUOTED, "") : goal;
+  const unquoted = goal.replace(QUOTED, "");
+  const outside = unquoted.includes(TEXT_REFERENCE) ? unquoted : goal;
   return standsAlone(outside, typed)
     ? `Write ${TEXT_REFERENCE} where the goal needs the text to type, and quote a control label that matches it.`
     : null;
@@ -434,6 +448,14 @@ function shownGoal(goal: string, typed: string | null): string {
 }
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength;
+
+/**
+ * The typed text hidden, then the cut. Every cut of a string that can hold the text goes through one of these:
+ * cutting first can split the text, and redaction then misses the part that is left.
+ */
+const redactThenClip = (value: string, typed: string | null) => clip(hideTyped(value, typed));
+const redactThenCap = (value: string, typed: string | null, max: number) =>
+  capBytes(hideTyped(value, typed), max);
 
 /** At most `max` UTF-8 bytes, cut on a character. */
 function capBytes(value: string, max: number): string {
@@ -582,29 +604,25 @@ function readerBinding(
   typed: string | null,
   alreadyTyped: boolean,
 ): ComputerApprovalBinding {
-  const { text: _text, ...action } = binding.action;
-  const hidden = (field: "label" | "name" | "fieldLabel" | "why" | "url" | "path") => {
-    const value = action[field];
-    if (value === undefined) return {};
-    return {
-      [field]: field === "url" ? hideEchoed(value, typed, alreadyTyped) : hideTyped(value, typed),
-    };
-  };
+  const { text: _text, kind, ...rest } = binding.action;
+  // Every field the screen supplied, whatever it is called, so a new one cannot slip past.
+  const action = Object.fromEntries(
+    Object.entries(rest).map(([field, value]) => [
+      field,
+      typeof value !== "string"
+        ? value
+        : field === "url"
+          ? hideEchoed(value, typed, alreadyTyped)
+          : hideTyped(value, typed),
+    ]),
+  );
   return {
     ...binding,
-    app: hideTyped(binding.app, typed),
-    title: hideEchoed(binding.title, typed, alreadyTyped),
-    url: hideEchoed(binding.url, typed, alreadyTyped),
+    app: redactThenCap(binding.app, typed, MAX_BINDING_FIELD_BYTES),
+    title: capBytes(hideEchoed(binding.title, typed, alreadyTyped), MAX_BINDING_FIELD_BYTES),
+    url: capBytes(hideEchoed(binding.url, typed, alreadyTyped), MAX_BINDING_URL_BYTES),
     why: hideTyped(binding.why, typed),
-    action: {
-      ...action,
-      ...hidden("label"),
-      ...hidden("name"),
-      ...hidden("fieldLabel"),
-      ...hidden("why"),
-      ...hidden("url"),
-      ...hidden("path"),
-    },
+    action: { kind, ...action },
   };
 }
 
@@ -702,7 +720,7 @@ function describeAct(act: ComputerAct, typed: string | null): string {
   switch (act.action) {
     case "click":
       return act.label
-        ? `click “${clip(act.label)}”`
+        ? `click “${redactThenClip(act.label, typed)}”`
         : act.ref
           ? `click ${act.ref}`
           : `click at ${act.x ?? 0},${act.y ?? 0}`;
@@ -713,11 +731,11 @@ function describeAct(act: ComputerAct, typed: string | null): string {
     case "scroll":
       return `scroll ${act.direction ?? "down"}`;
     case "menu":
-      return `open the menu of ${act.label ? `“${clip(act.label)}”` : (act.ref ?? "a control")}`;
+      return `open the menu of ${act.label ? `“${redactThenClip(act.label, typed)}”` : (act.ref ?? "a control")}`;
     case "open_url":
-      return `open ${clip(act.url ?? "a page")}`;
+      return `open ${redactThenClip(act.url ?? "a page", typed)}`;
     case "choose_file":
-      return `choose the file ${clip(act.path ?? "")}`;
+      return `choose the file ${redactThenClip(act.path ?? "", typed)}`;
   }
 }
 
@@ -1061,8 +1079,11 @@ const make = Effect.gen(function* () {
       const finished: Task = {
         ...waitEnded(task, nowMs),
         status: input.status,
-        reason: clip(input.reason).slice(0, 600),
-        surface: input.surface == null ? task.surface : clip(input.surface),
+        reason: redactThenClip(input.reason, task.text).slice(0, 600),
+        surface:
+          input.surface == null
+            ? task.surface
+            : clip(hideEchoed(input.surface, task.text, task.typed)),
         endedAtMs: nowMs,
         approvalId: null,
         decision: null,
@@ -1349,9 +1370,13 @@ const make = Effect.gen(function* () {
   });
 
   const waitForTap = Effect.fn("ComputerService.waitForTap")(
-    function* (task: Task, binding: ComputerApprovalBinding) {
+    function* (
+      task: Task,
+      binding: ComputerApprovalBinding,
+      full: ComputerApprovalBinding = binding,
+    ) {
       const approval = yield* approvals
-        .create({ binding, readerBinding: readerBinding(binding, task.text, task.typed) })
+        .create({ binding, readerBinding: readerBinding(full, task.text, task.typed) })
         .pipe(
           Effect.mapError((cause) =>
             failure(
@@ -1386,7 +1411,7 @@ const make = Effect.gen(function* () {
       }
       yield* record(APPROVAL_REQUEST_AUDIT_EVENT, {
         approvalId: approval.id,
-        ...auditBinding(binding, task),
+        ...auditBinding(full, task),
       });
       const woken = yield* Deferred.await(wake).pipe(
         Effect.timeoutOrElse({
@@ -1570,7 +1595,10 @@ const make = Effect.gen(function* () {
       return yield* started.failure;
     }
     if (!started.success.ok) {
-      const reason = started.success.error ?? "The computer refused the task.";
+      const reason = hideTyped(
+        started.success.error ?? "The computer refused the task.",
+        task.text,
+      );
       // The host refused it, so it never ran there.
       yield* finishTask({ taskId: task.id, status: "failed", reason, confirmed: true });
       return yield* failure("refused", reason, { taskId: task.id });
@@ -1923,24 +1951,31 @@ const make = Effect.gen(function* () {
     if (decision.verdict === "refused") return yield* deny(task.id, decision.why);
     if (decision.verdict === "auto") return yield* grant(task, input, "allow", {});
     const mode = yield* refreshApprovalsMode(task);
-    const binding: ComputerApprovalBinding = {
+    // Redaction reads the whole observation; only the approver's copy is cut to size here.
+    const full: ComputerApprovalBinding = {
       hostId: host.id,
       taskId: task.id,
       step: input.step,
-      app: capBytes(input.observation.app, MAX_BINDING_FIELD_BYTES),
-      title: capBytes(input.observation.title, MAX_BINDING_FIELD_BYTES),
-      url: capBytes(input.observation.url ?? "", MAX_BINDING_URL_BYTES),
+      app: input.observation.app,
+      title: input.observation.title,
+      url: input.observation.url ?? "",
       action: input.action,
       why: decision.why,
       goal: shownGoal(task.goal, task.text),
       requester: task.requester,
     };
+    const binding: ComputerApprovalBinding = {
+      ...full,
+      app: capBytes(full.app, MAX_BINDING_FIELD_BYTES),
+      title: capBytes(full.title, MAX_BINDING_FIELD_BYTES),
+      url: capBytes(full.url, MAX_BINDING_URL_BYTES),
+    };
     // The real pointer is the person's to lend, whatever the approvals setting.
     if (mode === "skip" && input.action.kind !== "pointer") {
-      yield* record(APPROVAL_SKIPPED_AUDIT_EVENT, auditBinding(binding, task));
+      yield* record(APPROVAL_SKIPPED_AUDIT_EVENT, auditBinding(full, task));
       return yield* grant(task, input, "approved", { approved: true, skipped: true });
     }
-    const outcome = yield* waitForTap(task, binding);
+    const outcome = yield* waitForTap(task, binding, full);
     if (outcome._tag === "approved") {
       return yield* grant(task, input, "approved", { approved: true });
     }
@@ -2010,13 +2045,13 @@ const make = Effect.gen(function* () {
           taskId: task.id,
           kind: input.event.kind,
           mode: input.event.mode,
-          how: hideTyped(clip(input.event.how), task.text),
+          how: redactThenClip(input.event.how, task.text),
         });
         return;
       }
       if (input.event.type === "step") {
         if (task.status !== "running") return;
-        const text = clip(input.event.text).slice(0, MAX_STEP_TEXT);
+        const text = redactThenClip(input.event.text, task.text).slice(0, MAX_STEP_TEXT);
         yield* mutate(
           (current) =>
             [
@@ -2027,7 +2062,7 @@ const make = Effect.gen(function* () {
               })),
             ] as const,
         );
-        yield* record("task.progress", { taskId: task.id, step: hideTyped(text, task.text) });
+        yield* record("task.progress", { taskId: task.id, step: text });
         return;
       }
       yield* finishTask({

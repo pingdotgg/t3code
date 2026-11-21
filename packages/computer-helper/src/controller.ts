@@ -150,16 +150,20 @@ export type RunOptions = {
 const STATE_NOTE = "`goal` is what the user wants done on screen.";
 const VISUAL_NOTE =
   "A screenshot, because the app would not show its window through accessibility: only its text is listed (clicking a text clicks where it is), not icons such as a play button.";
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
-const host = (url: string) => {
+/** At most `max` characters of a line the server reads, the typed text hidden first so no cut can split it. */
+const clip = (text: string, max: number, secret: string | null) => {
+  const shown = without(text, secret);
+  return shown.length > max ? `${shown.slice(0, max)}…` : shown;
+};
+const host = (url: string, secret: string | null) => {
   try {
     return new URL(url).host;
   } catch {
-    return url.slice(0, 60);
+    return clip(url, 60, secret);
   }
 };
-const describeControl = (control: ScreenControl) =>
-  `${control.role} “${clip(control.label || "(no label)", 90)}”${control.value ? ` containing “${clip(control.value, 60)}”` : ""}${control.focused ? " (focused)" : ""}${control.window ? ` in the ${control.window}` : ""}`;
+const describeControl = (control: ScreenControl, secret: string | null) =>
+  `${control.role} “${clip(control.label || "(no label)", 90, secret)}”${control.value ? ` containing “${clip(control.value, 60, secret)}”` : ""}${control.focused ? " (focused)" : ""}${control.window ? ` in the ${control.window}` : ""}`;
 const summary = (screen: Observation): ObservationSummary => ({
   app: screen.app,
   title: screen.title,
@@ -319,7 +323,7 @@ export class ComputerUse {
         const key = screenKey(screen);
         const avoid = avoidBy.get(key) ?? new Map<string, string>();
         avoidBy.set(key, avoid);
-        surface = `${screen.app}: ${clip(screen.title, 60)}`;
+        surface = `${screen.app}: ${clip(screen.title, 60, run.secret)}`;
         // Only going to an address: done once the page on screen is on that host, rather than leaving it to the decider.
         if (pureNavigation(task.goal) && navigationReached(task.goal, screen))
           return end("done", "");
@@ -345,7 +349,7 @@ export class ComputerUse {
             backend,
             screen,
             { kind: "click", ref: direct.ref },
-            `clicked the ${describeControl(direct)}`,
+            `clicked the ${describeControl(direct, run.secret)}`,
           );
           clicked.add(match);
           if (quoted.every((name) => clicked.has(name)) && plainClickGoal(task))
@@ -440,7 +444,10 @@ export class ComputerUse {
         if (existing) {
           browser = existing.browser;
           await existing.press();
-          this.record(run, `reused existing tab: “${clip(existing.tab.title, 60)}” in ${browser}`);
+          this.record(
+            run,
+            `reused existing tab: “${clip(existing.tab.title, 60, run.secret)}” in ${browser}`,
+          );
         } else {
           browser = await this.deps.urls.open(url);
           this.record(run, `opened new tab: ${url} in ${browser}`);
@@ -466,7 +473,7 @@ export class ComputerUse {
           null,
         );
       const seen = await backend.observe(this.where(run));
-      surface = `${seen.app}: ${clip(seen.title, 60)}`;
+      surface = `${seen.app}: ${clip(seen.title, 60, run.secret)}`;
       const screen = await this.reopenPopup(run, backend, seen, act);
       const chosen = actOn(screen, this.resolveRef(screen, act), task.text);
       if ("stop" in chosen) return end("stuck", chosen.stop);
@@ -484,7 +491,7 @@ export class ComputerUse {
         if (after.popup)
           after = await settled(backend, this.where(run), this.clock, () => true, POPUP_SETTLE_MS);
         if (this.deps.popupSeen) this.deps.popupSeen.text = after.popup ?? "";
-        if (after.popup) this.record(run, `popup open now: ${clip(after.popup, 400)}`);
+        if (after.popup) this.record(run, `popup open now: ${clip(after.popup, 400, run.secret)}`);
       }
       return end("done", "");
     } catch (error) {
@@ -524,7 +531,11 @@ export class ComputerUse {
     const asked = this.now();
     let answers: Answers;
     try {
-      answers = await this.deps.decider.ask(state, questions);
+      // Every question goes out through here, so none can carry the typed text.
+      answers = await this.deps.decider.ask(
+        without(state, run.secret),
+        without(questions, run.secret),
+      );
     } catch (error) {
       throw new Halt("stuck", `The server could not decide the next step: ${messageOf(error)}`);
     } finally {
@@ -883,7 +894,7 @@ export class ComputerUse {
                 ...Object.fromEntries(
                   tabs.map((tab, index) => [
                     `t${index}`,
-                    `${clip(tab.title || "(untitled)", 80)} (${host(tab.url)})`,
+                    `${clip(tab.title || "(untitled)", 80, run.secret)} (${host(tab.url, run.secret)})`,
                   ]),
                 ),
                 none: "None of these tabs, or it is not clear which.",
@@ -921,11 +932,11 @@ export class ComputerUse {
       if (tab) {
         // Clicks the tab in the browser's tab strip with the cursor, like a person would.
         await this.surfaceChange(run, desktop, "tab", tab.title, () => browser.activate(tab));
-        const switched = `${browser.browser}: ${clip(tab.title, 60)}`;
+        const switched = `${browser.browser}: ${clip(tab.title, 60, run.secret)}`;
         // Names that refer to the tab were what the tab was chosen by, so they are not looked for on screen afterwards.
         return {
           backend: desktop,
-          step: `clicked the “${clip(tab.title, 60)}” tab (${host(tab.url)}) in ${browser.browser}${named ? ` (it matched “${named.name}” by ${named.via})` : ""}`,
+          step: `clicked the “${clip(tab.title, 60, run.secret)}” tab (${host(tab.url, run.secret)}) in ${browser.browser}${named ? ` (it matched “${named.name}” by ${named.via})` : ""}`,
           clicked: [...(named ? [named.name] : []), ...tabNames(task.goal)],
           switchedTab: switched,
         };
@@ -944,9 +955,9 @@ export class ComputerUse {
         if (found)
           return {
             backend: desktop,
-            step: `switched to the “${clip(found, 60)}” tab with ${browser.browser}’s tab search`,
+            step: `switched to the “${clip(found, 60, run.secret)}” tab with ${browser.browser}’s tab search`,
             clicked: [wanted, ...tabNames(task.goal)],
-            switchedTab: `${browser.browser}: ${clip(found, 60)}`,
+            switchedTab: `${browser.browser}: ${clip(found, 60, run.secret)}`,
           };
         if (tabName)
           return {
@@ -1000,7 +1011,7 @@ export class ComputerUse {
         app: screen.app,
         title: screen.title,
         ...(screen.url ? { url: screen.url } : {}),
-        visibleText: clip(screen.text ?? "", 1_500),
+        visibleText: clip(screen.text ?? "", 1_500, run.secret),
         ...(screen.popup ? { popup: screen.popup } : {}),
         ...(screen.visual ? { readFrom: VISUAL_NOTE } : {}),
       },
@@ -1022,7 +1033,8 @@ export class ComputerUse {
           ...Object.fromEntries(
             controls
               .map(
-                (control, index) => [`c${index}`, `Click the ${describeControl(control)}`] as const,
+                (control, index) =>
+                  [`c${index}`, `Click the ${describeControl(control, run.secret)}`] as const,
               )
               .filter(([key]) => {
                 const control = controls[Number(key.slice(1))];
@@ -1066,7 +1078,10 @@ export class ComputerUse {
               instructions: `If typing now, which text box should the prepared text go into? ${STATE_NOTE}`,
               criteria: {
                 ...Object.fromEntries(
-                  textboxes.map(({ control, index }) => [`c${index}`, describeControl(control)]),
+                  textboxes.map(({ control, index }) => [
+                    `c${index}`,
+                    describeControl(control, run.secret),
+                  ]),
                 ),
                 none: "None of these.",
               },
@@ -1074,11 +1089,7 @@ export class ComputerUse {
           }
         : {}),
     };
-    const answers = await this.ask(
-      run,
-      { ...without({ ...state, goal: "" }, run.secret), goal: task.goal },
-      without(questions, run.secret),
-    );
+    const answers = await this.ask(run, { ...state, goal: task.goal }, questions);
     const next = this.confident(answers, "next");
     if (!next || next === "stuck")
       return { stop: "stuck", reason: `It could not tell what to do next on ${screen.app}.` };
@@ -1101,7 +1112,7 @@ export class ComputerUse {
       if (!box) return { stop: "stuck", reason: "It could not tell which text box to type into." };
       return {
         action: { kind: "type", ref: box.ref, text: task.text },
-        step: `typed the text into the ${describeControl(box)}`,
+        step: `typed the text into the ${describeControl(box, run.secret)}`,
       };
     }
     const control = /^c\d+$/.test(next) ? controls[Number(next.slice(1))] : undefined;
@@ -1110,12 +1121,12 @@ export class ComputerUse {
     if (control.role === "textbox" && control.focused && canType && task.text) {
       return {
         action: { kind: "type", ref: control.ref, text: task.text },
-        step: `typed the text into the ${describeControl(control)}`,
+        step: `typed the text into the ${describeControl(control, run.secret)}`,
       };
     }
     return {
       action: { kind: "click", ref: control.ref },
-      step: `clicked the ${describeControl(control)}`,
+      step: `clicked the ${describeControl(control, run.secret)}`,
     };
   }
 }
@@ -1161,10 +1172,12 @@ function actOn(
         return {
           screen,
           action: { kind: "pick", label: act.label },
-          said: `picked “${clip(act.label, 60)}” from the menu`,
+          said: `picked “${clip(act.label, 60, text)}” from the menu`,
         };
       if (act.label !== undefined && !byRef && !named)
-        return { stop: `No single control “${clip(act.label, 60)}” is on screen; look again.` };
+        return {
+          stop: `No single control “${clip(act.label, 60, text)}” is on screen; look again.`,
+        };
       const at =
         act.x !== undefined && act.y !== undefined
           ? { x: Math.round(act.x), y: Math.round(act.y) }
@@ -1174,7 +1187,7 @@ function actOn(
         return {
           screen,
           action: { kind: "click", ref: target.ref },
-          said: `clicked the ${describeControl(target)}`,
+          said: `clicked the ${describeControl(target, text)}`,
         };
       if (!at) return { stop: "Name the control to click: its ref, its label, or x and y." };
       const spot: ScreenControl = {
@@ -1195,7 +1208,7 @@ function actOn(
       return {
         screen,
         action: { kind: "menu", ref: target.ref },
-        said: `opened the menu of the ${describeControl(target)}`,
+        said: `opened the menu of the ${describeControl(target, text)}`,
       };
     }
     case "type": {
@@ -1205,7 +1218,7 @@ function actOn(
       return {
         screen,
         action: { kind: "type", ref: box.ref, text },
-        said: `typed the text into the ${describeControl(box)}`,
+        said: `typed the text into the ${describeControl(box, text)}`,
       };
     }
     case "key": {
@@ -1234,7 +1247,7 @@ function actOn(
       return {
         screen,
         action: { kind: "choose_file", path: act.path },
-        said: `chose the file “${clip(act.path, 120)}”`,
+        said: `chose the file “${clip(act.path, 120, text)}”`,
       };
     case "open_url":
       return { stop: "Opening a web address is not a step on the screen." };

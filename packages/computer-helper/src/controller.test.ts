@@ -274,6 +274,33 @@ describe("ComputerUse", () => {
     expect(JSON.stringify(asked.at(-1)!.state)).toContain("[typed text]");
   });
 
+  it("hides a long, prefixed typed text before any cut, in tab titles, labels, values and page text", async () => {
+    const secret = `Sk-Live-${"Ab".repeat(40)}`;
+    const pad = "p".repeat(20);
+    const parts = skool();
+    const observe = parts.page.observe;
+    parts.page.observe = async () => {
+      const screen = await observe();
+      return {
+        ...screen,
+        title: `${pad} ${secret}`,
+        text: `${pad} ${secret.toUpperCase()}`,
+        controls: screen.controls.map((each) =>
+          each.value === undefined ? each : { ...each, value: `${pad} ${secret}` },
+        ),
+      };
+    };
+    const tabs = parts.tabs;
+    tabs.list = async () => TABS.map((tab) => ({ ...tab, title: `${pad} ${tab.title} ${secret}` }));
+    const steps: string[] = [];
+    const { computer, asked } = computerWith(SKOOL_REPLIES(), parts, allowAll().authorize, {
+      onStep: (step) => void steps.push(step),
+    });
+    const outcome = await computer.run({ ...TASK, text: secret });
+    const piece = secret.slice(10, 30).toLowerCase();
+    expect(JSON.stringify([asked, steps, outcome]).toLowerCase()).not.toContain(piece);
+  });
+
   it("stops before sending when the server denies the Enter that sends, and says why", async () => {
     const parts = skool();
     const requests: AuthorizeRequest[] = [];
