@@ -153,6 +153,7 @@ export interface EnvironmentThreadShell {
   readonly title: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly modelSelection: OrchestrationV2ThreadShell["modelSelection"];
+  readonly modelUnreported?: boolean;
   readonly runtimeMode: OrchestrationV2ThreadShell["runtimeMode"];
   readonly interactionMode: OrchestrationV2ThreadShell["interactionMode"];
   readonly branch: string | null;
@@ -302,6 +303,7 @@ export function presentThreadShell(
         : thread.title,
     providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
+    ...(thread.modelUnreported === undefined ? {} : { modelUnreported: thread.modelUnreported }),
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,
