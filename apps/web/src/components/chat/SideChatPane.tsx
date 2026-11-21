@@ -130,7 +130,7 @@ export default function SideChatPane(props: {
 
   return (
     <div data-side-chat-pane={threadId} className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pe-1 ps-3">
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {shell?.title ?? gt("Side chat")}
         </span>

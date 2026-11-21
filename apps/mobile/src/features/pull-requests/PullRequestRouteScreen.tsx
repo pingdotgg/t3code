@@ -1,3 +1,4 @@
+import { LTR_TEXT_STYLE } from "../../lib/typography";
 import {
   isFileDiffCollapsed,
   withFileDiffFold,
@@ -254,7 +255,9 @@ function PullRequestIdentity(props: {
           className="min-w-0 shrink active:opacity-70"
           hitSlop={8}
         >
-          <Text className="font-mono text-2xs text-foreground-muted">{pr.baseBranch}</Text>
+          <Text style={LTR_TEXT_STYLE} className="font-mono text-2xs text-foreground-muted">
+            {pr.baseBranch}
+          </Text>
         </Pressable>
         <View className="pt-0.5">
           <SymbolView name="arrow.left" size={11} tintColorClassName="accent-icon-muted" />
@@ -266,7 +269,9 @@ function PullRequestIdentity(props: {
           className="min-w-0 shrink active:opacity-70"
           hitSlop={8}
         >
-          <Text className="font-mono text-2xs text-foreground-muted">{pr.headBranch}</Text>
+          <Text style={LTR_TEXT_STYLE} className="font-mono text-2xs text-foreground-muted">
+            {pr.headBranch}
+          </Text>
         </Pressable>
       </View>
     </View>

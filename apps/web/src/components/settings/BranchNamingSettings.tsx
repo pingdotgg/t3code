@@ -107,6 +107,7 @@ export function BranchNamingSettings() {
           }
           control={
             <Input
+              dir="ltr"
               key={`${scopeKey}:${prefixMixed}:${settings.branchNamePrefix}`}
               aria-label={gt("Branch prefix")}
               autoCapitalize="none"

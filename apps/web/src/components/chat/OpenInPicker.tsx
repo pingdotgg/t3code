@@ -428,8 +428,8 @@ export const OpenInPicker = memo(function OpenInPicker({
         className={cn(
           compact
             ? "sr-only"
-            : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-          isPanel && cn("not-sr-only ml-0 min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+            : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ms-0.5",
+          isPanel && cn("not-sr-only ms-0 min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
         )}
       >
         {primaryLabel}

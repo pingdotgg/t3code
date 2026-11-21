@@ -306,7 +306,7 @@ export function SavedBackendListRow({
               aria-hidden
               className={cn(
                 "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                routesOpen && "rotate-90",
+                routesOpen ? "rotate-90" : "rtl:rotate-180",
               )}
             />
           </button>
@@ -325,7 +325,7 @@ export function SavedBackendListRow({
               aria-hidden
               className={cn(
                 "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                permissionsOpen && "rotate-90",
+                permissionsOpen ? "rotate-90" : "rtl:rotate-180",
               )}
             />
           </button>

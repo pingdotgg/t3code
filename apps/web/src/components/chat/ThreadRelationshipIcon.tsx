@@ -92,7 +92,7 @@ export function ThreadRelationshipIcon({
       )}
       <span
         className={cn(
-          "absolute -right-1 size-2 rounded-full border-2 border-card",
+          "absolute -end-1 size-2 rounded-full border-2 border-card",
           anyInstanceBadge ? "-top-1" : "-bottom-1",
           status === "running" ||
             status === "in_progress" ||

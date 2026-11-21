@@ -317,14 +317,14 @@ export function ThreadDetailsPrRow({
         align="start"
         sideOffset={4}
         variant="glass"
-        className="max-w-80 text-left whitespace-normal"
+        className="max-w-80 text-start whitespace-normal"
       >
         <div className="flex min-w-0 max-w-80 flex-col gap-2 px-1 py-2">
           <div className="flex min-w-0 items-baseline gap-1.5 text-xs leading-none">
             <span className="min-w-0 truncate font-medium text-foreground">{detail.title}</span>
             <span className="shrink-0 text-muted-foreground">#{detail.number}</span>
           </div>
-          <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
+          <div className="grid gap-1.5 ps-0.5 text-xs text-muted-foreground">
             <div className="flex min-w-0 items-center gap-2">
               <statePresentation.Icon
                 aria-hidden
@@ -378,7 +378,7 @@ export function ThreadDetailsPrRow({
               <PullRequestChangeBreakdownRows
                 environmentId={environmentId}
                 reference={reference}
-                className="pl-5 text-foreground/75"
+                className="ps-5 text-foreground/75"
               />
             ) : null}
           </div>
@@ -511,7 +511,7 @@ export function ThreadDetailsPrRow({
         {icon}
         <span
           className={cn(
-            "min-w-0 flex-1 text-left",
+            "min-w-0 flex-1 text-start",
             wrap
               ? "line-clamp-2 whitespace-normal leading-4.5"
               : cn("truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),

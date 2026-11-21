@@ -39,7 +39,7 @@ export function UsageShareBar({
             <TooltipTrigger
               render={
                 <div
-                  className="h-full min-w-1 rounded-xs first:rounded-l-full last:rounded-r-full"
+                  className="h-full min-w-1 rounded-xs first:rounded-s-full last:rounded-e-full"
                   style={{ flex: `${segment.value} 1 0`, backgroundColor: segment.color }}
                 />
               }

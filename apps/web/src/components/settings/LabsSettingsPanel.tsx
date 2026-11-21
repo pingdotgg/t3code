@@ -52,7 +52,7 @@ function BoringSidebarRow() {
       }
     >
       {settings.boringSidebarEnabled ? (
-        <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
+        <div className="mt-2 mb-2 border-s-2 border-border/60 ps-3">
           <BoringSidebarMultilineRow />
         </div>
       ) : null}

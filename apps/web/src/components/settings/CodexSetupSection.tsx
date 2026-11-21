@@ -753,6 +753,7 @@ function ManagedCodexSetup({
         >
           <div className="min-w-0 flex-1">
             <Input
+              dir="ltr"
               aria-label={gt("ChatGPT sign-in redirect URL")}
               type="password"
               autoComplete="off"
@@ -1146,6 +1147,7 @@ export function CodexManagedRuntimeFields({
         control={
           <div className="w-full sm:w-80">
             <Input
+              dir="ltr"
               aria-label={gt("Codex binary path")}
               value={executablePath}
               title={executablePath}
@@ -1216,14 +1218,17 @@ function CodexSignInDescription({
   return (
     <button
       type="button"
-      className="inline-flex items-center gap-1.5 rounded-sm text-left leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      className="inline-flex items-center gap-1.5 rounded-sm text-start leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       aria-label={gt("Having trouble signing in?")}
       aria-expanded={expanded}
       aria-controls={controls}
       onClick={onToggle}
     >
       {label}
-      <ChevronRightIcon aria-hidden className={`size-3 shrink-0 ${expanded ? "rotate-90" : ""}`} />
+      <ChevronRightIcon
+        aria-hidden
+        className={`size-3 shrink-0 ${expanded ? "rotate-90" : "rtl:rotate-180"}`}
+      />
     </button>
   );
 }
@@ -1258,7 +1263,7 @@ function CodexWelcomeCard({
         ) : null}
       </div>
       {footer.length > 0 ? (
-        <div className="ml-8 mt-2 flex flex-wrap items-center gap-2">{footer}</div>
+        <div className="ms-8 mt-2 flex flex-wrap items-center gap-2">{footer}</div>
       ) : null}
     </div>
   );

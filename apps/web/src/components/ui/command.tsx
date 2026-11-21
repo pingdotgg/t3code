@@ -118,7 +118,7 @@ function CommandInput({
         )}
         placeholder={placeholder}
         size="lg"
-        startAddon={<SearchIcon className="translate-x-0.5 text-icon-muted" />}
+        startAddon={<SearchIcon className="translate-x-0.5 text-icon-muted rtl:-translate-x-0.5" />}
         {...props}
       />
     </div>

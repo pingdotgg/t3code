@@ -370,7 +370,7 @@ export function ProviderAuthenticationSection({
             <p className="py-2 text-sm text-muted-foreground">
               <T>
                 Enter code{" "}
-                <code className="select-all font-mono text-foreground">
+                <code dir="ltr" className="select-all font-mono text-foreground">
                   <Var>{interaction.userCode}</Var>
                 </code>{" "}
                 in your browser.
@@ -487,6 +487,7 @@ export function ProviderAuthenticationSection({
               <label className="grid gap-1">
                 <T>If the final localhost page does not load, paste its full URL here.</T>
                 <Input
+                  dir="ltr"
                   size="sm"
                   id={`provider-callback-${instanceId}`}
                   type="url"

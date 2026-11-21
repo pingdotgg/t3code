@@ -1,3 +1,4 @@
+import { inlineArrowKey } from "~/lib/inlineDirection";
 import { T, useGT, useLocale, useMessages } from "gt-react";
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import {
@@ -282,7 +283,7 @@ function ModelPickerList({
   return (
     <div
       className={cn(
-        "relative min-h-0 overflow-hidden pr-px",
+        "relative min-h-0 overflow-hidden pe-px",
         itemKeys.length > 0 ? "flex-1" : "h-0",
       )}
     >
@@ -296,7 +297,7 @@ function ModelPickerList({
           estimatedItemSize={MODEL_LIST_ESTIMATED_ITEM_SIZE}
           drawDistance={480}
           recycleItems
-          contentContainerClassName="pl-2 pr-px"
+          contentContainerClassName="ps-2 pe-px"
           ItemSeparatorComponent={ModelListSeparator}
           onLayout={updateScrollFades}
           onScroll={updateScrollFades}
@@ -938,7 +939,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           <div
             className={cn(
               "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
-              showSidebar && "border-l border-border/70",
+              showSidebar && "border-s border-border/70",
             )}
           >
             <ComboboxSearchInput
@@ -960,7 +961,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                   !e.altKey &&
                   !e.ctrlKey &&
                   !e.metaKey &&
-                  ((e.key === "ArrowLeft" && !e.shiftKey && searchQuery.length === 0) ||
+                  ((e.key === inlineArrowKey("start") && !e.shiftKey && searchQuery.length === 0) ||
                     (e.key === "Tab" && e.shiftKey))
                 ) {
                   const sidebar = e.currentTarget
@@ -985,7 +986,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 }
                 if (
                   props.onFocusEffort &&
-                  e.key === "ArrowRight" &&
+                  e.key === inlineArrowKey("end") &&
                   !e.altKey &&
                   !e.ctrlKey &&
                   !e.metaKey &&

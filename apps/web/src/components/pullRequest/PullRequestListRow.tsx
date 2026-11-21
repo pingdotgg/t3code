@@ -17,7 +17,7 @@ import {
 } from "./pullRequestPresentation";
 
 export const PULL_REQUEST_ROW_CLASS =
-  "group/pr-row flex w-full items-center gap-2 rounded-md py-1 pr-1 text-left";
+  "group/pr-row flex w-full items-center gap-2 rounded-md py-1 pe-1 text-start";
 
 export const PULL_REQUEST_ROW_NUMBER_CLASS =
   "shrink-0 font-mono text-xs tabular-nums text-muted-foreground";
@@ -42,7 +42,7 @@ export function PullRequestRowGlyph({
       <span className="relative inline-flex">
         <PullRequestStateGlyph state={state} isDraft={isDraft} />
         {/* Offset the wrapper to keep the badge-sized tooltip trigger anchored. */}
-        <span className="absolute -right-1 -bottom-1 inline-flex">
+        <span className="absolute -end-1 -bottom-1 inline-flex">
           <PullRequestConflictGlyph
             state={state}
             isDraft={isDraft}
@@ -83,7 +83,7 @@ export function PullRequestRowLines({
           <span className="flex shrink-0 items-center gap-1 text-2xs">{signals}</span>
         ) : null}
         {status ? (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-2xs">{status}</span>
+          <span className="ms-auto flex shrink-0 items-center gap-1.5 text-2xs">{status}</span>
         ) : null}
       </span>
       <span
@@ -94,7 +94,7 @@ export function PullRequestRowLines({
       >
         {meta}
         {updatedAt ? (
-          <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums">
+          <span className="ms-auto shrink-0 whitespace-nowrap tabular-nums">
             <RelativeTime timestamp={updatedAt} />
           </span>
         ) : null}

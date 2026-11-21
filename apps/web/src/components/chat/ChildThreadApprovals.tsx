@@ -31,7 +31,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           Approval needed from <Var>{entry.title}</Var>
         </T>
       </p>
-      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
+      <pre dir="ltr" className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
         {approval.detail || approval.requestKind}
       </pre>
       {approval.appName ? <p className="mt-2 text-muted-foreground">{approval.appName}</p> : null}

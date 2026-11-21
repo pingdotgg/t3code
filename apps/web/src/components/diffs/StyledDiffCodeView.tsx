@@ -239,6 +239,7 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
     <DiffWorkerPoolProvider>
       <CodeView<LAnnotation>
         {...props}
+        style={{ ...props.style, direction: "ltr" }}
         {...(viewerRef ? { ref: viewerRef } : {})}
         className={
           className

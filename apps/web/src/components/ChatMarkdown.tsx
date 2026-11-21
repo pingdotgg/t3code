@@ -1502,13 +1502,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
         );
       }
       return (
-        <code {...props} className={className}>
+        <code dir="ltr" {...props} className={className}>
           {children}
         </code>
       );
     }
     return (
-      <code {...props} className={className}>
+      <code dir="ltr" {...props} className={className}>
         {children}
       </code>
     );
@@ -1732,7 +1732,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const text = use(ChatMarkdownTextContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
-      return <pre {...props}>{children}</pre>;
+      return (
+        <pre dir="ltr" {...props}>
+          {children}
+        </pre>
+      );
     }
 
     const language = extractFenceLanguage(codeBlock.className);
@@ -1749,11 +1753,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const highlightedCode = (
       <RenderErrorBoundary
         resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
-        fallback={<pre {...props}>{children}</pre>}
+        fallback={
+          <pre dir="ltr" {...props}>
+            {children}
+          </pre>
+        }
       >
         <Suspense
           fallback={
-            <pre {...props} className="invisible" aria-hidden>
+            <pre dir="ltr" {...props} className="invisible" aria-hidden>
               {children}
             </pre>
           }

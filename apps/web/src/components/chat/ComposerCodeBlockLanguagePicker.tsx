@@ -55,7 +55,7 @@ export function ComposerCodeBlockLanguagePicker(props: {
   const selected = items.find((entry) => entry.id === current) ?? null;
 
   return (
-    <span className="-ml-1.5 flex min-w-0">
+    <span className="-ms-1.5 flex min-w-0">
       <Combobox
         items={items}
         filteredItems={filteredItems}
@@ -102,7 +102,7 @@ export function ComposerCodeBlockLanguagePicker(props: {
               <ComboboxItem key={entry.id || "plain"} value={entry}>
                 <LanguageIcon language={entry.id} theme={props.theme} />
                 <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-                {entry.id === current ? <CheckIcon className="ml-auto" /> : null}
+                {entry.id === current ? <CheckIcon className="ms-auto" /> : null}
               </ComboboxItem>
             )}
           </ComboboxList>

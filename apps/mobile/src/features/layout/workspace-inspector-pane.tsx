@@ -1,3 +1,4 @@
+import { I18nManager } from "react-native";
 import { useGT } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import Animated, {
@@ -65,10 +66,11 @@ export function WorkspaceInspectorPane(props: {
     resizing,
   ]);
 
+  const slideDistance = I18nManager.isRTL ? -24 : 24;
   const inspectorStyle = useAnimatedStyle(
     () => ({
       opacity: inspectorProgress.value,
-      transform: [{ translateX: (1 - inspectorProgress.value) * 24 }],
+      transform: [{ translateX: (1 - inspectorProgress.value) * slideDistance }],
       width: renderedInspectorWidth.value,
     }),
     [],

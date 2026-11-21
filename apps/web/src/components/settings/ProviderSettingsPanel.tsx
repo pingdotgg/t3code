@@ -315,7 +315,7 @@ function EnvironmentUnavailablePlaceholder({
         <ExpandableText
           key={environment.environmentId}
           text={error}
-          className="w-full text-left font-mono text-xs leading-relaxed text-muted-foreground"
+          className="w-full text-start font-mono text-xs leading-relaxed text-muted-foreground"
         />
       ) : null}
     </ProviderSettingsPlaceholder>
@@ -1104,7 +1104,7 @@ export function EnvironmentProviderSettings({
             "overflow-hidden @min-[48rem]/providers:grid @min-[48rem]/providers:grid-cols-[17rem_minmax(0,1fr)]",
           )}
         >
-          <div className="border-b border-border/60 bg-muted/10 @min-[48rem]/providers:flex @min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-col @min-[48rem]/providers:border-r @min-[48rem]/providers:border-b-0">
+          <div className="border-b border-border/60 bg-muted/10 @min-[48rem]/providers:flex @min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-col @min-[48rem]/providers:border-e @min-[48rem]/providers:border-b-0">
             <ScrollArea
               scrollFade
               chainVerticalScroll
@@ -1115,7 +1115,7 @@ export function EnvironmentProviderSettings({
                 {canAddProvider ? (
                   <button
                     type="button"
-                    className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-left text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
+                    className="flex w-full cursor-pointer items-center gap-3 px-3 py-3 text-start text-sm text-muted-foreground transition-colors outline-none hover:bg-muted/25 hover:text-foreground focus-visible:bg-muted/25 focus-visible:text-foreground sm:px-4"
                     onClick={() => setIsAddInstanceDialogOpen(true)}
                   >
                     <PlusIcon className="size-4 shrink-0" />

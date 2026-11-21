@@ -385,7 +385,7 @@ export function ProviderModelsSection({
             size="xs"
             variant="ghost-muted"
             // The ghost padding would inset the label from the column edge the toggles align to.
-            className="-me-2 ml-auto"
+            className="-me-2 ms-auto"
             onClick={() => setIsAdding(true)}
           >
             <PlusIcon className="size-3" />
@@ -567,7 +567,7 @@ const ProviderModelRow = memo(function ProviderModelRow({
           >
             <span className={cn(nameClassName, "max-w-full shrink-0 truncate")}>{model.name}</span>
             {model.name !== model.slug ? (
-              <code className="truncate font-mono text-2xs text-muted-foreground/70">
+              <code dir="ltr" className="truncate font-mono text-2xs text-muted-foreground/70">
                 {model.slug}
               </code>
             ) : null}
@@ -575,7 +575,9 @@ const ProviderModelRow = memo(function ProviderModelRow({
           <TooltipPopup side="top" align="start">
             <div>{model.name}</div>
             {model.name !== model.slug ? (
-              <code className="font-mono text-2xs text-muted-foreground">{model.slug}</code>
+              <code dir="ltr" className="font-mono text-2xs text-muted-foreground">
+                {model.slug}
+              </code>
             ) : null}
           </TooltipPopup>
         </Tooltip>

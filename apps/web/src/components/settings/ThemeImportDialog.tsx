@@ -115,14 +115,16 @@ function ThemeJsonEditor({
     <div className="relative overflow-hidden rounded-xl border border-input bg-background shadow-xs/5 focus-within:border-ring focus-within:ring-3 focus-within:ring-inset focus-within:ring-ring/24">
       {isPlainText ? null : (
         <pre
+          dir="ltr"
           ref={highlightRef}
           aria-hidden
           className="pointer-events-none absolute inset-0 m-0 overflow-hidden whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-foreground"
         >
-          <code dangerouslySetInnerHTML={{ __html: highlightedJson }} />
+          <code dir="ltr" dangerouslySetInnerHTML={{ __html: highlightedJson }} />
         </pre>
       )}
       <textarea
+        dir="ltr"
         aria-label={gt("Theme JSON")}
         className={cn(
           "relative z-10 block min-h-44 w-full resize-y overflow-auto bg-transparent p-3 font-mono text-xs leading-5 caret-foreground outline-none placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground",

@@ -195,6 +195,7 @@ function PendingSecretRequestForm(props: {
         <div className="min-w-0 flex-1">
           {source === null ? (
             <Input
+              dir="ltr"
               id={inputId}
               // A CSS-masked text field still exposes its value to screen readers.
               type="password"
@@ -214,6 +215,7 @@ function PendingSecretRequestForm(props: {
             />
           ) : (
             <Input
+              dir="ltr"
               id={inputId}
               font="mono"
               autoComplete="off"

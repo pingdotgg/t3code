@@ -3,6 +3,7 @@ import type {
   NativeStackHeaderItemMenu,
   NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
+import { directionalSymbols } from "../components/ui/directional-symbol";
 import { useGT } from "gt-react-native";
 import { isValidElement, useEffect, useRef } from "react";
 import { StyleSheet } from "react-native";
@@ -58,7 +59,8 @@ function convertIcon(
     return icon.tinted === false
       ? { type: "imageSource" as const, imageSource: icon.source }
       : { type: "templateSource" as const, templateSource: icon.source };
-  return icon;
+  const directional = icon.type === "sfSymbol" ? directionalSymbols[icon.name] : undefined;
+  return directional ? { ...icon, name: directional } : icon;
 }
 
 function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {

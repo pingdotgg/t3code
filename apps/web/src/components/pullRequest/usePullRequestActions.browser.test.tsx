@@ -145,7 +145,7 @@ it("stops a pull request handoff when its loading toast is dismissed", async () 
     prepared.resolve({
       _tag: "Success",
       value: {
-        branch: "pr-1",
+        branch: "pe-1",
         worktreePath: "/repo-worktrees/pr-1",
         isOnPullRequestHead: true,
         pullRequest: { url: "https://github.com/owner/repo/pull/1" },

@@ -1,3 +1,4 @@
+import { LTR_TEXT_STYLE } from "../../lib/typography";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
@@ -108,8 +109,10 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
       }
     >
       <View className="gap-2 rounded-[20px] bg-grouped-card p-4">
-        <Text className="font-mono text-xs text-foreground-muted">{params.path}</Text>
-        <Text selectable className="font-mono text-xs">
+        <Text style={LTR_TEXT_STYLE} className="font-mono text-xs text-foreground-muted">
+          {params.path}
+        </Text>
+        <Text style={LTR_TEXT_STYLE} selectable className="font-mono text-xs">
           {params.code}
         </Text>
       </View>

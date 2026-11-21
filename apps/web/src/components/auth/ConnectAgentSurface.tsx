@@ -338,6 +338,7 @@ export function McpConsent({
               <T>Sign-in code</T>
             </label>
             <Input
+              dir="ltr"
               id="connect-agent-pairing-code"
               autoCapitalize="none"
               autoComplete="one-time-code"
@@ -352,7 +353,7 @@ export function McpConsent({
             <p className="text-xs text-muted-foreground">
               <T>
                 Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or{" "}
-                <code>t3 auth pairing create</code> on this machine.
+                <code dir="ltr">t3 auth pairing create</code> on this machine.
               </T>
             </p>
           </div>
@@ -471,7 +472,7 @@ export function AccessOption({
       value={access}
       disabled={disabledReason !== undefined}
       className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
+        "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-start outline-none transition-[background-color,border-color,box-shadow]",
         "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         selected
           ? "border-primary bg-background ring-2 ring-inset ring-primary/25 dark:border-transparent dark:bg-primary/10 dark:ring-1 dark:ring-primary/30"

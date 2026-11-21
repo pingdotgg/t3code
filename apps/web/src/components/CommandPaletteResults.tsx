@@ -307,13 +307,13 @@ function CommandPaletteResultRow(props: {
         />
       ) : null}
       {props.item.timestamp ? (
-        <span className="min-w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground/70">
+        <span className="min-w-12 shrink-0 text-end text-xs tabular-nums text-muted-foreground/70">
           {props.item.timestamp}
         </span>
       ) : null}
       {shortcutLabel ? <CommandShortcut>{shortcutLabel}</CommandShortcut> : null}
       {props.item.kind === "submenu" ? (
-        <ChevronRightIcon className="-me-0.5 ms-auto size-4 shrink-0 text-muted-foreground/70" />
+        <ChevronRightIcon className="-me-0.5 ms-auto size-4 shrink-0 text-muted-foreground/70 rtl:-scale-x-100" />
       ) : null}
     </CommandItem>
   );

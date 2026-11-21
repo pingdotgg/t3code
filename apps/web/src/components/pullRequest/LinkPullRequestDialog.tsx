@@ -139,6 +139,7 @@ function LinkPullRequestDialog({
         </DialogHeader>
         <DialogPanel>
           <Input
+            dir="ltr"
             ref={inputRef}
             placeholder={gt("Pull request URL or #42")}
             value={reference}

@@ -114,7 +114,11 @@ export function DatabaseStorageNotice({
               amount: formatGiB(status.reclaimableBytes),
               environment: label,
             })}
-            description={<code className="select-text break-all">{status.compactCommand}</code>}
+            description={
+              <code dir="ltr" className="select-text break-all">
+                {status.compactCommand}
+              </code>
+            }
             control={
               <div className="flex flex-wrap items-center gap-1.5">
                 <Button

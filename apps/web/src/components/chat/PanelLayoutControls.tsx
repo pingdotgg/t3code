@@ -131,7 +131,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               size="sm"
               disabled={!rightPanelAvailable}
             >
-              <PanelRightIcon className="size-4" />
+              <PanelRightIcon className="size-4 rtl:-scale-x-100" />
             </Toggle>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
@@ -233,7 +233,7 @@ export function WorkspaceTitlebarControls(props: {
     <div
       ref={controlsRef}
       className={cn(
-        "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        "pointer-events-none fixed top-[var(--workspace-controls-top)] end-[var(--workspace-controls-right)] z-50 me-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-workspace-titlebar-controls
@@ -249,7 +249,7 @@ export function WorkspaceTitlebarControls(props: {
               "motion-safe:transition-opacity motion-safe:duration-(--panel-animation-duration) motion-safe:ease-out",
             props.rightPanelOpen
               ? "pointer-events-auto opacity-100"
-              : "pointer-events-none absolute right-full mr-1 opacity-0",
+              : "pointer-events-none absolute end-full me-1 opacity-0",
           )}
           inert={!props.rightPanelOpen}
         >

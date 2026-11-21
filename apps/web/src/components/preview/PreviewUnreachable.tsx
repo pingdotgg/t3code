@@ -85,7 +85,7 @@ export function PreviewUnreachable({ url, code, description, onReload, move }: P
             <p className="mb-2 font-medium text-foreground">
               <T>Try:</T>
             </p>
-            <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+            <ul className="list-disc space-y-1 ps-5 text-muted-foreground">
               <li>
                 <T>Checking your connection</T>
               </li>

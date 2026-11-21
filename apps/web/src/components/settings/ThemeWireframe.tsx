@@ -25,42 +25,42 @@ function ThemeWireframePane({
     >
       <span className="absolute inset-0" style={{ backgroundColor: colors.canvas }} />
       <span
-        className="absolute inset-y-0 left-0 w-[22%]"
+        className="absolute inset-y-0 start-0 w-[22%]"
         style={{ backgroundColor: colors.sidebar, boxShadow: `inset -1px 0 0 ${line}` }}
       />
 
       <span
-        className="absolute left-[3%] top-[8%] h-[8%] w-[16%] rounded-md"
+        className="absolute start-[3%] top-[8%] h-[8%] w-[16%] rounded-md"
         style={{ backgroundColor: colors.surface, boxShadow: `inset 0 0 0 1px ${line}` }}
       />
       <span
-        className="absolute left-[3%] top-[22%] h-[7%] w-[16%] rounded-md"
+        className="absolute start-[3%] top-[22%] h-[7%] w-[16%] rounded-md"
         style={{ backgroundColor: colors.accentSurface }}
       />
       <span
-        className="absolute left-[3%] top-[32%] h-[7%] w-[16%] rounded-md"
+        className="absolute start-[3%] top-[32%] h-[7%] w-[16%] rounded-md"
         style={{ backgroundColor: colors.messageSurface, opacity: 0.7 }}
       />
       <span
-        className="absolute left-[3%] top-[42%] h-[7%] w-[16%] rounded-md"
+        className="absolute start-[3%] top-[42%] h-[7%] w-[16%] rounded-md"
         style={{ backgroundColor: colors.messageSurface, opacity: 0.5 }}
       />
 
       <span
-        className="absolute right-[28%] top-[11%] h-[9%] w-[24%] rounded-lg"
+        className="absolute end-[28%] top-[11%] h-[9%] w-[24%] rounded-lg"
         style={{ backgroundColor: colors.messageSurface }}
       />
       <span
-        className="absolute left-[27%] top-[28%] h-[5%] w-[34%] rounded-sm"
+        className="absolute start-[27%] top-[28%] h-[5%] w-[34%] rounded-sm"
         style={{ backgroundColor: line }}
       />
       <span
-        className="absolute left-[27%] top-[38%] h-[5%] w-[26%] rounded-sm"
+        className="absolute start-[27%] top-[38%] h-[5%] w-[26%] rounded-sm"
         style={{ backgroundColor: line }}
       />
 
       <span
-        className="absolute bottom-[8%] left-[26%] right-[6%] flex h-[15%] items-center justify-between rounded-md px-1"
+        className="absolute bottom-[8%] start-[26%] end-[6%] flex h-[15%] items-center justify-between rounded-md px-1"
         style={{
           backgroundColor: colors.surface,
           boxShadow: `inset 0 0 0 1px ${line}`,
@@ -77,7 +77,7 @@ function ThemeWireframePane({
       </span>
 
       <span
-        className="absolute right-[5%] top-[8%] h-[46%] w-[20%] rounded-lg"
+        className="absolute end-[5%] top-[8%] h-[46%] w-[20%] rounded-lg"
         style={{
           backgroundColor: colors.surface,
           boxShadow: `inset 0 0 0 1px ${line}, 0 2px 5px rgb(0 0 0 / 0.14)`,
@@ -85,7 +85,7 @@ function ThemeWireframePane({
       >
         {[0, 1, 2].map((row) => (
           <span
-            className="absolute left-[11%] right-[11%] flex items-center gap-1"
+            className="absolute start-[11%] end-[11%] flex items-center gap-1"
             key={row}
             style={{ top: `${10 + row * 30}%`, height: "20%" }}
           >

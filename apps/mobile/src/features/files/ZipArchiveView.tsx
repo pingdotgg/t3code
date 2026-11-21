@@ -1,3 +1,4 @@
+import { LTR_TEXT_STYLE } from "../../lib/typography";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
@@ -283,7 +284,11 @@ function ZipTreeRowView(props: {
       <View className="w-5 items-center">
         <PierreEntryIcon path={node.path} kind={entry ? "file" : "directory"} size={17} />
       </View>
-      <Text className="min-w-0 flex-1 text-[15px] text-foreground" numberOfLines={1}>
+      <Text
+        style={LTR_TEXT_STYLE}
+        className="min-w-0 flex-1 text-[15px] text-foreground"
+        numberOfLines={1}
+      >
         {folder ? (
           <>
             <Text className="text-[15px] text-foreground-muted">{folder.prefix}</Text>

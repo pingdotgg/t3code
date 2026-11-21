@@ -327,7 +327,7 @@ function BackgroundActivityAdvancedDialog({
               {BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES.map(({ key, label }) => (
                 <label
                   key={key}
-                  className="flex items-center justify-between gap-3 border-b px-4 py-3 last:border-b-0 sm:border-r sm:even:border-r-0"
+                  className="flex items-center justify-between gap-3 border-b px-4 py-3 last:border-b-0 sm:border-e sm:even:border-e-0"
                 >
                   <span className="text-sm font-medium">{m(label)}</span>
                   <Switch

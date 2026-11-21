@@ -316,6 +316,7 @@ function DiagramError({
         ) : null}
       </div>
       <pre
+        dir="ltr"
         data-thread-find-ignore
         className="mt-2 mb-0 overflow-auto font-mono text-xs whitespace-pre-wrap"
       >

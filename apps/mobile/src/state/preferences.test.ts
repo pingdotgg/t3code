@@ -100,6 +100,28 @@ describe("mobile preferences state", () => {
     }),
   );
 
+  it.effect("exposes the language for a reload only after it is saved", () =>
+    Effect.gen(function* () {
+      const write = deferred<MobilePreferences.Preferences>();
+      const state = makePreferencesState({
+        load: Effect.succeed({ language: "en" }),
+        savePatch: () => Effect.promise(() => write.promise),
+      });
+      const registry = AtomRegistry.make();
+      const unmount = registry.mount(state.savedLanguageAtom);
+      expect(yield* AtomRegistry.getResult(registry, state.savedLanguageAtom)).toBe("en");
+      registry.set(state.updatePreferencesAtom, { language: "ar" });
+      expect(yield* AtomRegistry.getResult(registry, state.savedLanguageAtom)).toBe("en");
+      write.resolve({ language: "ar" });
+      yield* AtomRegistry.getResult(registry, state.updatePreferencesAtom, {
+        suspendOnWaiting: true,
+      });
+      expect(yield* AtomRegistry.getResult(registry, state.savedLanguageAtom)).toBe("ar");
+      unmount();
+      registry.dispose();
+    }),
+  );
+
   it.effect("keeps both favorites when the React setter sends updates before a render", () =>
     Effect.gen(function* () {
       let persisted: MobilePreferences.Preferences = { modelFavorites: [] };

@@ -10,7 +10,7 @@ import { cn } from "~/lib/utils";
 const Select = SelectPrimitive.Root;
 
 const selectTriggerVariants = cva(
-  "relative inline-flex cursor-pointer select-none items-center justify-between gap-2 border rounded-lg text-left text-base outline-none transition-[color,box-shadow,background-color] data-disabled:pointer-events-none data-disabled:opacity-64 sm:text-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
+  "relative inline-flex cursor-pointer select-none items-center justify-between gap-2 border rounded-lg text-start text-base outline-none transition-[color,box-shadow,background-color] data-disabled:pointer-events-none data-disabled:opacity-64 sm:text-sm [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
   {
     defaultVariants: {
       size: "default",
@@ -76,7 +76,7 @@ function SelectButton({
       ...mergeProps<"button">(defaultProps, props),
       children: (
         <>
-          <span className="min-w-0 flex-1 truncate text-left">{children}</span>
+          <span className="min-w-0 flex-1 truncate text-start">{children}</span>
           <ChevronDownIcon aria-hidden className="-me-1 size-3.5 shrink-0 opacity-70" />
         </>
       ),

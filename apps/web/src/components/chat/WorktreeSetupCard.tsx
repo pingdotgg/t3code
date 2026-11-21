@@ -152,7 +152,7 @@ function SetupHeaderRow({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
           <span className="block truncate">{text}</span>
           {running ? <ShimmerOverlay>{text}</ShimmerOverlay> : null}
         </span>
-        <span className="ml-auto shrink-0 text-xs text-muted-foreground empty:hidden">
+        <span className="ms-auto shrink-0 text-xs text-muted-foreground empty:hidden">
           <Elapsed startedAt={snapshot.startedAt} endedAt={snapshot.endedAt} live={running} />
         </span>
       </div>
@@ -235,8 +235,9 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
   }));
   return (
     <pre
+      dir="ltr"
       className={cn(
-        "mb-1 ml-8 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
+        "mb-1 ms-8 overflow-hidden rounded-md border px-2.5 py-1.5 font-mono text-2xs leading-relaxed select-text",
         failed
           ? "border-destructive/20 bg-error-surface text-destructive-foreground"
           : "border-border bg-code text-muted-foreground",
@@ -253,7 +254,7 @@ function OutputTail({ lines, failed }: { lines: ReadonlyArray<string>; failed: b
 
 function SetupDetails({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
   return (
-    <dl className="mt-1 mb-1.5 ml-8 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+    <dl className="mt-1 mb-1.5 ms-8 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
       {snapshot.branch ? (
         <>
           <dt className="text-foreground/80">
@@ -369,10 +370,10 @@ export function WorktreeSetupCard({
       )}
 
       {snapshot.phase === "failed" && snapshot.error ? (
-        <p className="mt-1 ml-8 text-xs text-muted-foreground">{snapshot.error}</p>
+        <p className="mt-1 ms-8 text-xs text-muted-foreground">{snapshot.error}</p>
       ) : null}
 
-      <div className="mt-0.5 ml-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex flex-wrap items-center gap-0.5">
+      <div className="mt-0.5 ms-[calc(--spacing(6)+2px-(--spacing(2)-1px))] flex flex-wrap items-center gap-0.5">
         <Button
           type="button"
           size="xs"
@@ -380,7 +381,11 @@ export function WorktreeSetupCard({
           aria-expanded={detailsOpen}
           onClick={() => setDetailsOpen((open) => !open)}
         >
-          {detailsOpen ? <ChevronDownIcon aria-hidden /> : <ChevronRightIcon aria-hidden />}
+          {detailsOpen ? (
+            <ChevronDownIcon aria-hidden />
+          ) : (
+            <ChevronRightIcon aria-hidden className="rtl:-scale-x-100" />
+          )}
           <T>Details</T>
         </Button>
         {showTerminal ? (

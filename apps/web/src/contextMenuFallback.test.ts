@@ -149,6 +149,7 @@ class FakeBody extends FakeElement {
 }
 
 class FakeDocument {
+  documentElement = { dir: "ltr" };
   body = new FakeBody();
   activeElement: FakeElement | null = null;
   private readonly listeners = new Map<string, FakeListener[]>();
@@ -240,12 +241,14 @@ describe("showContextMenuFallback", () => {
 
   it.each([
     // Flips left of the parent menu instead of being clamped over it.
-    { innerWidth: 400, triggerLeft: 200, submenuLeft: 16 },
+    { dir: "ltr", innerWidth: 400, triggerLeft: 200, submenuLeft: 16 },
     // Neither side fits; the right has more room, so it stays there, clamped.
-    { innerWidth: 300, triggerLeft: 4, submenuLeft: 116 },
+    { dir: "ltr", innerWidth: 300, triggerLeft: 4, submenuLeft: 116 },
+    { dir: "rtl", innerWidth: 800, triggerLeft: 200, submenuLeft: 16 },
   ])(
-    "places an overflowing submenu on the side with more room ($innerWidth)",
-    ({ innerWidth, triggerLeft, submenuLeft }) => {
+    "places submenus on the preferred side with available room ($dir, $innerWidth)",
+    ({ dir, innerWidth, triggerLeft, submenuLeft }) => {
+      document.documentElement.dir = dir;
       vi.stubGlobal("window", { ...window, innerWidth });
 
       void showContextMenuFallback(

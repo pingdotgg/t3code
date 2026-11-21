@@ -230,7 +230,7 @@ export default function BinaryViewer(props: {
               else setFolder(folder.replace(/(?:[^/]+)?\/$/, ""));
             }}
           >
-            <ChevronLeftIcon className="size-3.5" />
+            <ChevronLeftIcon className="size-3.5 rtl:-scale-x-100" />
           </FileSurfaceAction>
           <span className="min-w-0 flex-1 truncate">
             {selectedPath ?? (folder || gt("Archive contents"))}
@@ -275,7 +275,7 @@ export default function BinaryViewer(props: {
               disabled={busy || page === 0}
               onPress={() => selectPage(page - 1)}
             >
-              <ChevronLeftIcon className="size-3.5" />
+              <ChevronLeftIcon className="size-3.5 rtl:-scale-x-100" />
             </FileSurfaceAction>
             <span className="shrink-0 tabular-nums" aria-live="polite">
               {table.count === 0
@@ -291,7 +291,7 @@ export default function BinaryViewer(props: {
               disabled={busy || (page + 1) * SQLITE_PAGE_SIZE >= table.count}
               onPress={() => selectPage(page + 1)}
             >
-              <ChevronRightIcon className="size-3.5" />
+              <ChevronRightIcon className="size-3.5 rtl:-scale-x-100" />
             </FileSurfaceAction>
           </div>
           <div
@@ -328,13 +328,13 @@ export default function BinaryViewer(props: {
           >
             <thead className="sticky top-0 bg-background text-muted-foreground">
               <tr>
-                <th scope="col" className="px-3 py-2 text-left font-normal">
+                <th scope="col" className="px-3 py-2 text-start font-normal">
                   <T $context="column header, file name">Name</T>
                 </th>
-                <th scope="col" className="px-3 py-2 text-right font-normal">
+                <th scope="col" className="px-3 py-2 text-end font-normal">
                   <T $context="column header, file size">Size</T>
                 </th>
-                <th scope="col" className="px-3 py-2 text-right font-normal">
+                <th scope="col" className="px-3 py-2 text-end font-normal">
                   <T $context="column header, last modified date">Modified</T>
                 </th>
               </tr>
@@ -353,7 +353,7 @@ export default function BinaryViewer(props: {
                     <td className="max-w-0 border-b border-border/60">
                       <button
                         type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:text-primary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-start hover:text-primary focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                         onClick={() => {
                           if (item.directory) setFolder(`${item.path}/`);
                           else {
@@ -371,10 +371,10 @@ export default function BinaryViewer(props: {
                         <span className="truncate">{item.path.slice(folder.length)}</span>
                       </button>
                     </td>
-                    <td className="w-20 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground tabular-nums">
+                    <td className="w-20 border-b border-border/60 px-3 py-2 text-end whitespace-nowrap text-muted-foreground tabular-nums">
                       {formatAttachmentSize(item.size, messages)}
                     </td>
-                    <td className="w-28 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground">
+                    <td className="w-28 border-b border-border/60 px-3 py-2 text-end whitespace-nowrap text-muted-foreground">
                       {item.modified ? new Date(item.modified).toLocaleDateString() : "-"}
                     </td>
                   </tr>
@@ -399,7 +399,7 @@ export default function BinaryViewer(props: {
                   <th
                     key={name}
                     scope="col"
-                    className="border-r border-b border-border/60 px-3 py-2 text-left font-medium whitespace-nowrap"
+                    className="border-e border-b border-border/60 px-3 py-2 text-start font-medium whitespace-nowrap"
                   >
                     {name}
                   </th>
@@ -412,7 +412,7 @@ export default function BinaryViewer(props: {
                   {row.map((cell, column) => (
                     <td
                       key={column}
-                      className="max-w-80 min-w-32 border-r border-b border-border/60 px-3 py-1.5 align-top whitespace-pre-wrap break-words tabular-nums"
+                      className="max-w-80 min-w-32 border-e border-b border-border/60 px-3 py-1.5 align-top whitespace-pre-wrap break-words tabular-nums"
                     >
                       {cell}
                     </td>

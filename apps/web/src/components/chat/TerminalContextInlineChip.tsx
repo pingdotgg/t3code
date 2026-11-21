@@ -32,13 +32,14 @@ export function TerminalContextInlineChip(props: TerminalContextInlineChipProps)
             <span className="min-w-0 truncate text-sm font-medium text-foreground">
               {terminalLabel}
             </span>
-            <span className="ml-auto shrink-0 text-secondary-label text-xs">
+            <span className="ms-auto shrink-0 text-secondary-label text-xs">
               {lineStart === lineEnd
                 ? gt("Line {lineStart}", { lineStart })
                 : gt("Lines {lineStart}–{lineEnd}", { lineStart, lineEnd })}
             </span>
           </div>
           <pre
+            dir="ltr"
             className="max-h-80 overflow-auto whitespace-pre bg-muted p-3 font-mono text-foreground text-xs leading-relaxed outline-none [tab-size:4] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             aria-label={gt("Captured terminal output")}
             tabIndex={0}

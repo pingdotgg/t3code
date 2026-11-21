@@ -57,7 +57,7 @@ export function SidebarThreadUndoNotice() {
           {/* The icon's negative margin cancels its width, so beside the label it sits in
               clipped space; once the label is too wide it wraps away and the icon shows. */}
           <span className="flex h-6 min-w-0 flex-wrap justify-end overflow-hidden">
-            <Undo2Icon className="-ml-4 h-6 w-4 @max-[1rem]:invisible" />
+            <Undo2Icon className="-ms-4 h-6 w-4 @max-[1rem]:invisible rtl:-scale-x-100" />
             <span>{threadUndoLabel(keybindings, m)}</span>
           </span>
         </InlineButton>

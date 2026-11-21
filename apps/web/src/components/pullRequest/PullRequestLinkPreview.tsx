@@ -238,7 +238,9 @@ function LinkedCommit({
         {commit.messageHeadline}
       </p>
       <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-        <code className="shrink-0 font-mono">{commit.oid.slice(0, 7)}</code>
+        <code dir="ltr" className="shrink-0 font-mono">
+          {commit.oid.slice(0, 7)}
+        </code>
         {author === undefined ? null : (
           <>
             <span aria-hidden>·</span>

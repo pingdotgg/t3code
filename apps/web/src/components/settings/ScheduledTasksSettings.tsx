@@ -257,6 +257,7 @@ function WebhookFiltersField({
           <div className="flex items-center gap-2">
             <div className="grid min-w-0 flex-1 grid-cols-1">
               <Input
+                dir="ltr"
                 aria-label={gt("Filter {number} path", { number: index + 1 })}
                 placeholder="body.action"
                 value={filter.path}
@@ -1074,7 +1075,7 @@ function WebhookDeliveriesDialog({
                 <li key={delivery.id}>
                   <button
                     type="button"
-                    className="flex w-full flex-wrap items-center gap-2 py-2 text-left text-sm hover:bg-accent/40"
+                    className="flex w-full flex-wrap items-center gap-2 py-2 text-start text-sm hover:bg-accent/40"
                     onClick={() => setSelectedId(delivery.id)}
                   >
                     <Badge
@@ -1133,7 +1134,10 @@ function DeliveryBlock({ title, children }: { title: string; children: ReactNode
   return (
     <div className="space-y-1">
       <Label>{title}</Label>
-      <pre className="max-h-64 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap break-all">
+      <pre
+        dir="ltr"
+        className="max-h-64 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap break-all"
+      >
         {children}
       </pre>
     </div>
@@ -1199,6 +1203,7 @@ function WebhookEndpointField({
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
         <Input
+          dir="ltr"
           readOnly
           aria-label={gt("Webhook URL")}
           value={url}
@@ -1410,7 +1415,7 @@ function ScheduledTaskDestination({
             className="w-full justify-between"
           >
             <MessageSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate text-left">{currentLabel}</span>
+            <span className="min-w-0 flex-1 truncate text-start">{currentLabel}</span>
             <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
           </ComboboxTrigger>
           <ComboboxPopup align="start" side="bottom" className="w-80">
@@ -1894,6 +1899,7 @@ function ScheduledTaskEditorForm({
           {draft.workspaceMode === "existing_worktree" ? (
             <Field label={gt("Checkout path")} htmlFor="scheduled-task-checkout">
               <Input
+                dir="ltr"
                 id="scheduled-task-checkout"
                 value={draft.existingWorktreePath}
                 placeholder="/path/to/checkout"
@@ -2070,6 +2076,7 @@ function ScheduledTaskEditorForm({
                   htmlFor="scheduled-task-replay-key"
                 >
                   <Input
+                    dir="ltr"
                     id="scheduled-task-replay-key"
                     placeholder="{{headers.delivery-id}}"
                     value={draft.replayKey}
@@ -2087,6 +2094,7 @@ function ScheduledTaskEditorForm({
                   htmlFor="scheduled-task-coalesce-key"
                 >
                   <Input
+                    dir="ltr"
                     id="scheduled-task-coalesce-key"
                     placeholder="{{body.id}}"
                     value={draft.coalesceKey}
@@ -2187,6 +2195,7 @@ function ScheduledTaskEditorForm({
                     </Field>
                     <Field label={gt("Secret")} htmlFor="scheduled-task-signature-secret">
                       <Input
+                        dir="ltr"
                         id="scheduled-task-signature-secret"
                         type="password"
                         autoComplete="off"

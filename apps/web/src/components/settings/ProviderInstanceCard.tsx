@@ -469,7 +469,7 @@ export function ProviderEnvironmentSection(props: {
             if (props.managed?.names.has(variable.name)) {
               return (
                 <div key={variable.id} className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <code className="min-w-0 truncate text-xs sm:w-44 sm:shrink-0">
+                  <code dir="ltr" className="min-w-0 truncate text-xs sm:w-44 sm:shrink-0">
                     {variable.name}
                   </code>
                   <span className="text-xs text-muted-foreground">{props.managed.reason}</span>
@@ -1001,7 +1001,7 @@ export function ProviderInstanceCard({
       showBadge={Boolean(accentColor)}
       className="size-5"
       iconClassName="size-4 text-foreground/80"
-      badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
+      badgeClassName="end-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
     />
   );
 
@@ -1010,7 +1010,9 @@ export function ProviderInstanceCard({
   ) : null;
 
   const versionCodeNode = versionLabel ? (
-    <code className="text-xs text-muted-foreground">{versionLabel}</code>
+    <code dir="ltr" className="text-xs text-muted-foreground">
+      {versionLabel}
+    </code>
   ) : null;
 
   const statusDotNode =
@@ -1140,8 +1142,11 @@ export function ProviderInstanceCard({
             </div>
           ) : null}
           {updateCommand ? (
-            <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
-              <code className="min-w-0 flex-1 truncate font-mono text-2xs text-foreground">
+            <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pe-0.5 ps-2">
+              <code
+                dir="ltr"
+                className="min-w-0 flex-1 truncate font-mono text-2xs text-foreground"
+              >
                 {updateCommand}
               </code>
               <Tooltip>
@@ -1181,7 +1186,7 @@ export function ProviderInstanceCard({
       >
         <div
           className={cn(
-            "pointer-events-none flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
+            "pointer-events-none flex min-w-0 flex-1 items-start gap-3 rounded-md text-start transition-opacity",
             !enabled && !selected && "opacity-60 group-hover:opacity-100",
           )}
         >
@@ -1197,7 +1202,10 @@ export function ProviderInstanceCard({
             <span className="flex min-w-0 items-center gap-2">
               <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
               {versionLabel ? (
-                <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
+                <code
+                  dir="ltr"
+                  className="max-w-24 shrink-0 truncate text-xs text-muted-foreground"
+                >
                   {versionLabel}
                 </code>
               ) : null}
@@ -1306,7 +1314,9 @@ export function ProviderInstanceCard({
       {urlAuthAction && onAcceptUrlAuth ? (
         <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
           <p>{urlAuthAction.message}</p>
-          <code className="break-all text-2xs">{urlAuthAction.url}</code>
+          <code dir="ltr" className="break-all text-2xs">
+            {urlAuthAction.url}
+          </code>
           <Button
             render={
               <a
@@ -1346,7 +1356,7 @@ export function ProviderInstanceCard({
         <span>
           <T>
             This instance uses{" "}
-            <code className="text-foreground">
+            <code dir="ltr" className="text-foreground">
               <Var>{String(instance.driver)}</Var>
             </code>
             , which is not available in this build. Its configuration is preserved.

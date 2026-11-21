@@ -55,29 +55,36 @@ describe("sidebar keyboard navigation", () => {
     expect([first.tabIndex, second.tabIndex, last.tabIndex]).toEqual([0, 0, 0]);
   });
 
-  it("expands a group before entering its first child and returns to the parent", () => {
-    using tree = setup();
-    const group = tree.row("project");
-    group.setAttribute("aria-expanded", "false");
-    group.addEventListener("click", () => {
-      const expanded = group.getAttribute("aria-expanded") === "true";
-      group.setAttribute("aria-expanded", String(!expanded));
-      if (expanded) tree.root.querySelector('[data-sidebar-row="thread"]')?.remove();
-      else tree.row("thread", "project");
-    });
-    tree.install();
-    group.focus();
-    press(group, "ArrowRight");
-    expect(group.getAttribute("aria-expanded")).toBe("true");
-    expect(document.activeElement).toBe(group);
-    press(group, "ArrowRight");
-    const child = document.activeElement as HTMLElement;
-    expect(child.dataset.sidebarRow).toBe("thread");
-    press(child, "ArrowLeft");
-    expect(document.activeElement).toBe(group);
-    press(group, "ArrowLeft");
-    expect(group.getAttribute("aria-expanded")).toBe("false");
-  });
+  it.each([
+    { dir: "ltr", expand: "ArrowRight", collapse: "ArrowLeft" },
+    { dir: "rtl", expand: "ArrowLeft", collapse: "ArrowRight" },
+  ])(
+    "expands a group before entering its first child and returns to the parent in $dir",
+    ({ dir, expand, collapse }) => {
+      using tree = setup();
+      using _direction = vi.spyOn(document.documentElement, "dir", "get").mockReturnValue(dir);
+      const group = tree.row("project");
+      group.setAttribute("aria-expanded", "false");
+      group.addEventListener("click", () => {
+        const expanded = group.getAttribute("aria-expanded") === "true";
+        group.setAttribute("aria-expanded", String(!expanded));
+        if (expanded) tree.root.querySelector('[data-sidebar-row="thread"]')?.remove();
+        else tree.row("thread", "project");
+      });
+      tree.install();
+      group.focus();
+      press(group, expand);
+      expect(group.getAttribute("aria-expanded")).toBe("true");
+      expect(document.activeElement).toBe(group);
+      press(group, expand);
+      const child = document.activeElement as HTMLElement;
+      expect(child.dataset.sidebarRow).toBe("thread");
+      press(child, collapse);
+      expect(document.activeElement).toBe(group);
+      press(group, collapse);
+      expect(group.getAttribute("aria-expanded")).toBe("false");
+    },
+  );
 
   it("opens the row menu on Shift+F10 release without moving focus", () => {
     using tree = setup();

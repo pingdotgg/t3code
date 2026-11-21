@@ -87,6 +87,7 @@ export function WorktreesDirectoryRow() {
       }
       control={
         <Input
+          dir="ltr"
           key={`${scopeKey}:${mixed}:${settings.worktreesDirectory}`}
           aria-label={gt("Worktree location")}
           autoCapitalize="none"
@@ -214,7 +215,7 @@ function RetentionControl({
               aria-label={gt("{label} in days", { label })}
               autoFocus={value === null}
               size={5}
-              className="w-auto grow-0 text-right"
+              className="w-auto grow-0 text-end"
               // Any typed or pasted edit replaces a held age: NumberField commits it on blur itself,
               // and text it cannot parse yet must not leave the held age to be saved.
               onChange={() => setHeld(false)}
@@ -239,7 +240,7 @@ function RetentionControl({
                 }
               }}
             />
-            <span aria-hidden="true" className="self-center pr-2 text-xs">
+            <span aria-hidden="true" className="self-center pe-2 text-xs">
               days
             </span>
             <NumberFieldIncrement aria-label={gt("Increase {label}", { label })} />
@@ -314,7 +315,7 @@ function CleanupResults({
                 <span className={`block ${entry.outcome === "failed" ? "text-destructive" : ""}`}>
                   {entry.reason}
                 </span>
-                <span className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-l border-border/60 pl-3">
+                <span className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-s border-border/60 ps-3">
                   <span>
                     <T>Machine</T>
                   </span>
@@ -324,7 +325,9 @@ function CleanupResults({
                       <span>
                         <T>Project</T>
                       </span>
-                      <code className="text-foreground/80">{entry.projectPath}</code>
+                      <code dir="ltr" className="text-foreground/80">
+                        {entry.projectPath}
+                      </code>
                     </>
                   )}
                   {entry.path && (
@@ -332,7 +335,9 @@ function CleanupResults({
                       <span>
                         <T>Folder</T>
                       </span>
-                      <code className="text-foreground/80">{entry.path}</code>
+                      <code dir="ltr" className="text-foreground/80">
+                        {entry.path}
+                      </code>
                     </>
                   )}
                   {entry.threadTitle && (

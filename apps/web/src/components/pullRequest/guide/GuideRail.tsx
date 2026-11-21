@@ -76,7 +76,7 @@ function RailRow({
       aria-current={active ? "step" : undefined}
       onClick={onClick}
       className={cn(
-        "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+        "flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-start outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
         active ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
       )}
     >

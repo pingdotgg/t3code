@@ -1,3 +1,4 @@
+import { LTR_TEXT_STYLE } from "../../lib/typography";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -189,7 +190,11 @@ function WorkflowScript(props: { readonly script: string }) {
   return (
     <View className="gap-1">
       <View className="rounded-lg bg-subtle px-3 py-2.5">
-        <Text selectable className="font-mono text-2xs leading-normal text-foreground">
+        <Text
+          style={LTR_TEXT_STYLE}
+          selectable
+          className="font-mono text-2xs leading-normal text-foreground"
+        >
           {highlighted ?? script.split("\n").slice(0, shownLines).join("\n")}
         </Text>
       </View>

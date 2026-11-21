@@ -1,3 +1,4 @@
+import { isUiRtl } from "~/lib/inlineDirection";
 import { readHtmlRenderContentHeight } from "@t3tools/shared/htmlRender";
 
 import { isInSideChatPane } from "../../lib/sideChatPane";
@@ -96,7 +97,9 @@ export function attachTimelineViewport(
       source: "pointer",
       onScrollbar:
         event.target === scrollNode &&
-        scrollNode.getBoundingClientRect().right - event.clientX <=
+        (isUiRtl()
+          ? event.clientX - scrollNode.getBoundingClientRect().left
+          : scrollNode.getBoundingClientRect().right - event.clientX) <=
           Math.max(SCROLLBAR_HIT_PX, scrollNode.offsetWidth - scrollNode.clientWidth),
     });
   // Clicking message text can leave DOM focus on body, and keyboard scrolling

@@ -232,7 +232,7 @@ function ExtendedOfficeViewer(props: {
             disabled={page === 0}
             onPress={() => selectPage(page - 1)}
           >
-            <ChevronLeftIcon className="size-3.5" />
+            <ChevronLeftIcon className="size-3.5 rtl:-scale-x-100" />
           </FileSurfaceAction>
           {workbook ? (
             <div className="min-w-0 flex-1">
@@ -292,7 +292,7 @@ function ExtendedOfficeViewer(props: {
             disabled={page + 1 === count}
             onPress={() => selectPage(page + 1)}
           >
-            <ChevronRightIcon className="size-3.5" />
+            <ChevronRightIcon className="size-3.5 rtl:-scale-x-100" />
           </FileSurfaceAction>
         </div>
       ) : null}

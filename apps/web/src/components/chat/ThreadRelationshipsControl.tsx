@@ -194,7 +194,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
             className={cn(
               THREAD_DETAILS_PANEL_CHEVRON_CLASS,
               "transition-transform",
-              !expanded && "-rotate-90",
+              !expanded && "-rotate-90 rtl:rotate-90",
             )}
           />
         </ThreadDetailsControl>
@@ -330,7 +330,7 @@ function RemoteSubagentRow(props: {
             status={status}
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+            <span className="block truncate text-start text-sm font-medium leading-4 text-foreground/85">
               {title}
             </span>
           </span>
@@ -345,7 +345,7 @@ function RemoteSubagentRow(props: {
             <span className="shrink-0">· {threadRelationshipStatusLabel(status, m)}</span>
           </span>
         </TooltipTrigger>
-        <TooltipPopup side="left">
+        <TooltipPopup side="inline-start">
           <LineageTooltipContent
             title={title}
             hint={
@@ -434,7 +434,7 @@ function DelegatedFromRow(props: {
             status={null}
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+            <span className="block truncate text-start text-sm font-medium leading-4 text-foreground/85">
               {title}
             </span>
           </span>
@@ -446,7 +446,7 @@ function DelegatedFromRow(props: {
             </span>
           ) : null}
         </TooltipTrigger>
-        <TooltipPopup side="left">
+        <TooltipPopup side="inline-start">
           <LineageTooltipContent
             title={title}
             hint={
@@ -869,12 +869,12 @@ export function ThreadRelationshipsPanel(props: {
           status={rowStatus}
         />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+          <span className="block truncate text-start text-sm font-medium leading-4 text-foreground/85">
             {threadTitle}
           </span>
         </span>
         {agent ? null : (
-          <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+          <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 rtl:-scale-x-100" />
         )}
         {agent && !failed && (deriveSubagentElapsedMs(agent, 0) !== null || canStopWorkflow) ? (
           <span
@@ -910,7 +910,7 @@ export function ThreadRelationshipsPanel(props: {
         >
           {relationshipContent}
         </TooltipTrigger>
-        <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
+        <RelationshipPopup side="inline-start">{relationshipTooltip}</RelationshipPopup>
       </Tooltip>
     );
     if (workflowGroup && agent) {
@@ -950,7 +950,7 @@ export function ThreadRelationshipsPanel(props: {
               >
                 {relationshipContent}
               </TooltipTrigger>
-              <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
+              <RelationshipPopup side="inline-start">{relationshipTooltip}</RelationshipPopup>
             </Tooltip>
             <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
             <Tooltip>
@@ -976,7 +976,7 @@ export function ThreadRelationshipsPanel(props: {
                   </ThreadDetailsControl>
                 }
               />
-              <TooltipPopup side="left">
+              <TooltipPopup side="inline-start">
                 {latestMergeBackRun === null
                   ? gt("Complete a run in this fork before merging it back")
                   : parentTitle
@@ -992,7 +992,7 @@ export function ThreadRelationshipsPanel(props: {
           relationshipLink
         )}
         {canStop && agent ? (
-          <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+          <div className="pointer-events-none absolute end-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1013,7 +1013,7 @@ export function ThreadRelationshipsPanel(props: {
                   <SquareIcon aria-hidden className="size-3 fill-current" />
                 )}
               </TooltipTrigger>
-              <TooltipPopup side="left">
+              <TooltipPopup side="inline-start">
                 <T>Stop subagent</T>
               </TooltipPopup>
             </Tooltip>

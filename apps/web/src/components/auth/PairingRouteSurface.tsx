@@ -100,6 +100,7 @@ export function PairingRouteSurface({
             <T>Pairing token</T>
           </label>
           <Input
+            dir="ltr"
             id="pairing-token"
             autoCapitalize="none"
             autoComplete="off"

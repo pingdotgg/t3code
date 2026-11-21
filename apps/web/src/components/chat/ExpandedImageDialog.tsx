@@ -1,3 +1,4 @@
+import { inlineArrowKey } from "~/lib/inlineDirection";
 import { memo, useRef, useState, type ReactNode, type KeyboardEvent } from "react";
 import { flushSync } from "react-dom";
 import { T, useGT } from "gt-react";
@@ -140,13 +141,13 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       return;
     }
     if (preview.images.length <= 1) return;
-    if (event.key === "ArrowLeft") {
+    if (event.key === inlineArrowKey("start")) {
       event.preventDefault();
       event.stopPropagation();
       navigateImage(-1);
       return;
     }
-    if (event.key !== "ArrowRight") return;
+    if (event.key !== inlineArrowKey("end")) return;
     event.preventDefault();
     event.stopPropagation();
     navigateImage(1);
@@ -202,11 +203,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           ref={closeButtonRef}
           size="sm"
           variant="media-close"
-          className="absolute left-0 top-0 z-20 max-[8rem]:left-1/2 max-[8rem]:-translate-x-1/2"
+          className="absolute start-0 top-0 z-20 max-[8rem]:start-1/2 max-[8rem]:-translate-x-1/2 rtl:max-[8rem]:translate-x-1/2"
           onClick={close}
           aria-label={isVideo ? gt("Back, close video preview") : gt("Back, close image preview")}
         >
-          <ArrowLeftIcon aria-hidden="true" />
+          <ArrowLeftIcon aria-hidden="true" className="rtl:-scale-x-100" />
           <T>Back</T>
         </Button>
         {preview.images.length > 1 && (
@@ -214,11 +215,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             type="button"
             size="icon"
             variant="media-navigation"
-            className="left-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+            className="start-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
             aria-label={gt("Previous media")}
             onClick={() => navigateImage(-1)}
           >
-            <ChevronLeftIcon className="size-5" />
+            <ChevronLeftIcon className="size-5 rtl:-scale-x-100" />
           </Button>
         )}
         <MediaActions source={actionsSource} showTooltip={false}>
@@ -295,11 +296,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             type="button"
             size="icon"
             variant="media-navigation"
-            className="right-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
+            className="end-0 top-auto bottom-0 translate-y-0 sm:top-1/2 sm:bottom-auto sm:-translate-y-1/2"
             aria-label={gt("Next media")}
             onClick={() => navigateImage(1)}
           >
-            <ChevronRightIcon className="size-5" />
+            <ChevronRightIcon className="size-5 rtl:-scale-x-100" />
           </Button>
         )}
       </DialogPopup>

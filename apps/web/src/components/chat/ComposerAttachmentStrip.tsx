@@ -277,7 +277,7 @@ export function ComposerAttachmentMediaRow({
                       <span
                         role="img"
                         aria-label={gt("Draft attachment may not persist")}
-                        className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-warning-foreground"
+                        className="absolute start-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-warning-foreground"
                       >
                         <CircleAlertIcon className="size-3" />
                       </span>
@@ -308,7 +308,7 @@ export function ComposerAttachmentMediaRow({
                       <Button
                         variant="overlay"
                         size="icon-xs"
-                        className="absolute bottom-1 left-1"
+                        className="absolute bottom-1 start-1"
                         onClick={() =>
                           retryAttachmentUpload({
                             environmentId,
@@ -330,7 +330,7 @@ export function ComposerAttachmentMediaRow({
               )}
               <span
                 className={cn(
-                  "absolute right-1 top-1 flex",
+                  "absolute end-1 top-1 flex",
                   source?.kind === "snap-shot" &&
                     "opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100",
                 )}
@@ -408,7 +408,7 @@ export function ComposerAttachmentMediaRow({
                     <Button
                       variant="overlay"
                       size="icon-xs"
-                      className="absolute bottom-1 left-1"
+                      className="absolute bottom-1 start-1"
                       onClick={() =>
                         retryAttachmentUpload({
                           environmentId,
@@ -431,7 +431,7 @@ export function ComposerAttachmentMediaRow({
             <Button
               variant="media-close"
               size="icon-xs"
-              className="absolute right-1 top-1"
+              className="absolute end-1 top-1"
               onClick={() => onRemoveFile(file.id)}
               aria-label={gt("Remove {name}", { name: file.name })}
             >
@@ -490,7 +490,7 @@ export function ComposerAttachmentFileList({
             <button
               type="button"
               disabled={needsReattach}
-              className="min-w-0 flex-1 truncate text-left hover:underline focus-visible:outline-2"
+              className="min-w-0 flex-1 truncate text-start hover:underline focus-visible:outline-2"
               onClick={() => onPreviewFile(file.id)}
             >
               {file.name}
@@ -719,7 +719,7 @@ export function ComposerQueuedAttachmentRow({
           <Button
             variant="media-close"
             size="icon-xs"
-            className="absolute right-1 top-1"
+            className="absolute end-1 top-1"
             onClick={() => onRemove(attachment.id)}
             aria-label={gt("Remove {name}", { name: attachment.name })}
           >

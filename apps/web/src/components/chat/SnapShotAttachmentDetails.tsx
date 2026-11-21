@@ -44,6 +44,7 @@ export function SnapShotAccessibilityData({
 
   return (
     <pre
+      dir="ltr"
       className={cn(
         "overflow-auto whitespace-pre-wrap break-words font-mono focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
         className,

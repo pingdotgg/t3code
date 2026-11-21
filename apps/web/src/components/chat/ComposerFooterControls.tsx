@@ -1,3 +1,4 @@
+import { inlineArrowKey } from "~/lib/inlineDirection";
 import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { T, useGT, useMessages } from "gt-react";
@@ -132,12 +133,12 @@ export function ComposerPermissionsSection(props: {
         className="flex rounded-lg bg-input/40 p-0.5"
         // Menus navigate with Up/Down only; the row reads horizontally, so Left/Right move too.
         onKeyDown={(event) => {
-          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+          if (event.key !== inlineArrowKey("start") && event.key !== inlineArrowKey("end")) return;
           const items = Array.from(
             event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitemradio"]'),
           );
           const index = items.findIndex((item) => item === document.activeElement);
-          const next = items[index + (event.key === "ArrowRight" ? 1 : -1)];
+          const next = items[index + (event.key === inlineArrowKey("end") ? 1 : -1)];
           if (index < 0 || !next) return;
           event.preventDefault();
           event.stopPropagation();
@@ -159,7 +160,7 @@ export function ComposerPermissionsSection(props: {
               onPointerLeave={() => setPreviewMode(null)}
               onFocus={() => setPreviewMode(option.mode)}
               onBlur={() => setPreviewMode(null)}
-              className="flex h-6 flex-1 cursor-pointer items-center justify-center text-muted-foreground outline-none first:rounded-l-md last:rounded-r-md data-disabled:cursor-not-allowed data-disabled:opacity-40 data-checked:bg-input/72 data-checked:text-foreground data-highlighted:text-foreground not-data-checked:data-highlighted:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+              className="flex h-6 flex-1 cursor-pointer items-center justify-center text-muted-foreground outline-none first:rounded-s-md last:rounded-e-md data-disabled:cursor-not-allowed data-disabled:opacity-40 data-checked:bg-input/72 data-checked:text-foreground data-highlighted:text-foreground not-data-checked:data-highlighted:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             >
               <OptionIcon aria-hidden="true" className="size-3.5" />
             </MenuPrimitive.RadioItem>

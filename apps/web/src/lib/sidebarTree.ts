@@ -1,3 +1,4 @@
+import { inlineArrowKey } from "~/lib/inlineDirection";
 const ROW = "[data-sidebar-row]";
 
 /** Ref callback for a sidebar list; installs its keyboard navigation and returns its cleanup. */
@@ -122,14 +123,14 @@ export function installSidebarTree(root: HTMLElement) {
       case "End":
         target = rows.at(-1);
         break;
-      case "ArrowRight":
+      case inlineArrowKey("end"):
         if (row.getAttribute("aria-expanded") === "false") row.click();
         else
           target = rows.find(
             (candidate) => candidate.dataset.sidebarParent === row.dataset.sidebarRow,
           );
         break;
-      case "ArrowLeft":
+      case inlineArrowKey("start"):
         if (row.getAttribute("aria-expanded") === "true") row.click();
         else
           target = rows.find(

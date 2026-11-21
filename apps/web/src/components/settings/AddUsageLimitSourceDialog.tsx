@@ -103,6 +103,7 @@ export function AddUsageLimitSourceDialog({
                 <T>Hub URL</T>
               </Label>
               <Input
+                dir="ltr"
                 id="usage-source-url"
                 placeholder="https://hub.example.ts.net:8318"
                 value={url}

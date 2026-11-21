@@ -121,11 +121,11 @@ function AudioChip(props: AudioPreviewProps) {
     >
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 -z-10 bg-(--context-chip-accent)/17"
+        className="pointer-events-none absolute inset-y-0 start-0 -z-10 bg-(--context-chip-accent)/17"
         style={{ width: `${duration > 0 ? Math.min(100, (elapsed / duration) * 100) : 0}%` }}
       />
       <ContextChipAction
-        className="ml-0 [&_svg]:size-[1em]"
+        className="ms-0 [&_svg]:size-[1em]"
         aria-label={actionLabel}
         disabled={loading}
         onClick={() => {
@@ -149,7 +149,7 @@ function AudioChip(props: AudioPreviewProps) {
         {open ? (
           <button
             type="button"
-            className="block max-w-full cursor-pointer truncate rounded-sm text-left focus-visible:outline-2 focus-visible:outline-foreground"
+            className="block max-w-full cursor-pointer truncate rounded-sm text-start focus-visible:outline-2 focus-visible:outline-foreground"
             onClick={open}
             aria-label={
               props.failed && !props.onOpen

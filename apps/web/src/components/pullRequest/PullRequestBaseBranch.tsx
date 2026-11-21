@@ -115,8 +115,8 @@ export function PullRequestBaseBranch({
           className="size-3 shrink-0"
         />
       ) : null}
-      <code className="flex min-w-0">
-        <MiddleTruncate value={baseBranch} showTitle={false} />
+      <code dir="ltr" className="flex min-w-0">
+        <MiddleTruncate dir="ltr" value={baseBranch} showTitle={false} />
       </code>
     </>
   );

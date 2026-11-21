@@ -27,7 +27,7 @@ export function PreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Pro
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full items-center gap-3 px-3 py-3 pr-10 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex w-full items-center gap-3 px-3 py-3 pe-10 text-start hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <PreviewFaviconIcon threadRef={threadRef} url={entry.url} />
         <div className="flex min-w-0 flex-1 flex-col">
@@ -44,7 +44,7 @@ export function PreviewRecentUrlCard({ threadRef, entry, onOpen, onRemove }: Pro
         type="button"
         aria-label={gt("Remove {url} from history", { url: label })}
         onClick={onRemove}
-        className="absolute right-3 rounded p-1 text-muted-foreground opacity-0 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100"
+        className="absolute end-3 rounded p-1 text-muted-foreground opacity-0 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring group-hover:opacity-100"
       >
         <X className="size-3.5" />
       </button>

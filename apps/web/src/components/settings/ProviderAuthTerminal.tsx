@@ -68,6 +68,7 @@ export default function ProviderAuthTerminal({
   return (
     <>
       <div
+        dir="ltr"
         ref={mountSurface}
         aria-label={gt("Provider sign-in terminal")}
         className="relative h-64 overflow-hidden rounded-md border border-border"

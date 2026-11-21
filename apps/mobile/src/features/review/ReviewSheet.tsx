@@ -1,3 +1,4 @@
+import { LTR_TEXT_STYLE } from "../../lib/typography";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -245,6 +246,7 @@ const ReviewFileNavigatorRow = function ReviewFileNavigatorRow(props: {
   return (
     <PaneListItem selected={selected} onPress={handlePress}>
       <Text
+        style={LTR_TEXT_STYLE}
         className={
           selected
             ? "text-xs font-t3-bold text-foreground"

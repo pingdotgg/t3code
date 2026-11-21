@@ -1,3 +1,4 @@
+import { inlineArrowKey } from "~/lib/inlineDirection";
 import {
   buildTraitsTriggerDisplay,
   getDescriptorStringValue,
@@ -185,7 +186,7 @@ export function describeComposerEffort(
 }
 
 const COLUMN_ROW =
-  "flex h-8 w-full shrink-0 cursor-pointer items-center gap-2 rounded-sm px-2 text-left text-sm text-foreground outline-none hover:bg-foreground/[0.09] focus-visible:bg-foreground/[0.09] disabled:cursor-not-allowed disabled:opacity-64";
+  "flex h-8 w-full shrink-0 cursor-pointer items-center gap-2 rounded-sm px-2 text-start text-sm text-foreground outline-none hover:bg-foreground/[0.09] focus-visible:bg-foreground/[0.09] disabled:cursor-not-allowed disabled:opacity-64";
 const COLUMN_LABEL = "px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs";
 
 function ColumnRow(props: {
@@ -236,7 +237,7 @@ function ColumnRow(props: {
   return (
     <Tooltip>
       <TooltipTrigger render={<button {...rowProps} />}>{content}</TooltipTrigger>
-      <TooltipPopup side="right" className="max-w-56">
+      <TooltipPopup side="inline-end" className="max-w-56">
         {props.description}
       </TooltipPopup>
     </Tooltip>
@@ -420,7 +421,7 @@ function OptionMenuRow(props: {
             aria-label={`${descriptor.label}: ${current}`}
             className={cn(OPTION_ROW, "data-popup-open:bg-foreground/[0.09]")}
             onKeyDown={(event) => {
-              if (event.key !== "ArrowRight") return;
+              if (event.key !== inlineArrowKey("end")) return;
               event.preventDefault();
               event.stopPropagation();
               setOpen(true);
@@ -431,12 +432,12 @@ function OptionMenuRow(props: {
         <OptionRowText label={descriptor.label} value={current} />
         <ChevronRightIcon
           aria-hidden="true"
-          className="-me-1 size-3.5 shrink-0 text-muted-foreground"
+          className="-me-1 size-3.5 shrink-0 text-muted-foreground rtl:-scale-x-100"
         />
       </MenuTrigger>
       <MenuPopup
         ref={popupRef}
-        side="right"
+        side="inline-end"
         align="start"
         sideOffset={6}
         // A full-width column on phones leaves no room beside it, so fall below or above.
@@ -445,7 +446,7 @@ function OptionMenuRow(props: {
         data-model-picker-option-menu
         {...composerFloatingLayerProps}
         onKeyDown={(event) => {
-          if (event.key !== "ArrowLeft") return;
+          if (event.key !== inlineArrowKey("start")) return;
           event.preventDefault();
           event.stopPropagation();
           setOpen(false);
@@ -562,7 +563,7 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
 }
 
 const FOOTER_SEGMENT =
-  "flex h-6 cursor-pointer items-center justify-center gap-1 px-2 text-muted-foreground text-xs outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
+  "flex h-6 cursor-pointer items-center justify-center gap-1 px-2 text-muted-foreground text-xs outline-none first:rounded-s-md last:rounded-e-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
 
 function SpeedSegment(props: {
   checked: boolean;

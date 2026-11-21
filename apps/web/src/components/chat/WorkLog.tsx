@@ -86,7 +86,7 @@ const interactionClassName =
 function useRowClassName(interactive: boolean) {
   const grouped = use(GroupedRows);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors",
+    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-start transition-colors",
     grouped ? "py-0" : "py-0.5",
     interactive && interactionClassName,
   );

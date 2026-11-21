@@ -296,7 +296,7 @@ function SavePlanToWorkspaceForm({
           {workspaceRoot !== undefined ? (
             <T>
               Enter a path relative to{" "}
-              <code>
+              <code dir="ltr">
                 <Var>{workspaceRoot}</Var>
               </code>
               .
@@ -314,6 +314,7 @@ function SavePlanToWorkspaceForm({
             <T>Workspace path</T>
           </span>
           <Input
+            dir="ltr"
             id={savePathInputId}
             value={savePath}
             onChange={(event) => setSavePath(event.target.value)}

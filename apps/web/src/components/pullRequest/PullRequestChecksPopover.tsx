@@ -199,7 +199,7 @@ export function PullRequestChecksPopover({
           <>
             {checks !== undefined && incompleteCount > 0 ? (
               // Clip the second line so "checks" disappears whole when the count must shrink.
-              <span className="h-lh min-w-0 overflow-hidden text-left whitespace-normal tabular-nums">
+              <span className="h-lh min-w-0 overflow-hidden text-start whitespace-normal tabular-nums">
                 <T>
                   <span className="whitespace-nowrap">
                     <Var>{checks.length - incompleteCount}</Var>/<Var>{checks.length}</Var>

@@ -210,9 +210,9 @@ function ThemeLibraryCard({
                                     })
                             }
                             aria-pressed={isActive}
-                            className="absolute left-1/2 top-2 z-20 flex size-14 items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60"
+                            className="absolute start-1/2 -translate-x-1/2 rtl:translate-x-1/2 top-2 z-20 flex size-14 items-center justify-center rounded-full outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60"
                             style={{
-                              transform: `translateX(calc(-50% + ${rootOffsetX}px))`,
+                              marginInlineStart: rootOffsetX,
                             }}
                             type="button"
                             onClick={(event) => {
@@ -233,7 +233,7 @@ function ThemeLibraryCard({
                               />
                             ) : null}
                             {isActive ? (
-                              <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full border border-border/70 bg-background text-foreground shadow-sm">
+                              <span className="pointer-events-none absolute -bottom-0.5 -end-0.5 flex size-4 items-center justify-center rounded-full border border-border/70 bg-background text-foreground shadow-sm">
                                 {mode === "light" ? (
                                   <SunIcon className="size-2.5" />
                                 ) : (
@@ -244,8 +244,8 @@ function ThemeLibraryCard({
                           </button>
                         </ThemeVariantTooltip>
                         <span
-                          className="pointer-events-none absolute bottom-0 left-1/2 inline-flex max-w-24 -translate-x-1/2 items-center gap-1 text-2xs font-medium text-foreground"
-                          style={{ marginLeft: rootOffsetX }}
+                          className="pointer-events-none absolute bottom-0 start-1/2 inline-flex max-w-24 -translate-x-1/2 rtl:translate-x-1/2 items-center gap-1 text-2xs font-medium text-foreground"
+                          style={{ marginInlineStart: rootOffsetX }}
                         >
                           <span className="truncate">{selected.option.label}</span>
                           {options.length > 1 ? (
@@ -287,7 +287,7 @@ function ThemeLibraryCard({
                                     }
                                     aria-pressed={optionIsActive}
                                     className={cn(
-                                      "absolute left-1/2 top-1 z-30 flex size-7 items-center justify-center rounded-full bg-background shadow-sm outline-none transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                                      "absolute start-1/2 -translate-x-1/2 rtl:translate-x-1/2 [--inline-sign:1] rtl:[--inline-sign:-1] top-1 z-30 flex size-7 items-center justify-center rounded-full bg-background shadow-sm outline-none transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                                       optionIsActive
                                         ? "ring-2 ring-inset ring-ring"
                                         : "ring-1 ring-border/70",
@@ -295,7 +295,7 @@ function ThemeLibraryCard({
                                     style={{
                                       opacity: isOpen ? 1 : 0,
                                       pointerEvents: isOpen ? "auto" : "none",
-                                      transform: `translate(calc(-50% + ${isOpen ? childOffsetX : rootOffsetX}px), ${isOpen ? childOffsetY : 28}px) scale(${isOpen ? 1 : 0.55})`,
+                                      transform: `translate(calc(var(--inline-sign) * ${isOpen ? childOffsetX : rootOffsetX}px), ${isOpen ? childOffsetY : 28}px) scale(${isOpen ? 1 : 0.55})`,
                                       transitionDelay: isOpen ? `${optionIndex * 35}ms` : "0ms",
                                     }}
                                     type="button"
@@ -350,7 +350,7 @@ function ThemeLibraryCard({
                           : gt("Use {label} theme", { label: theme.label })
                     }
                     aria-pressed={isActive}
-                    className="min-w-0 cursor-pointer truncate rounded-sm text-left text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+                    className="min-w-0 cursor-pointer truncate rounded-sm text-start text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -1004,7 +1004,7 @@ export function ThemeLibrary({
                     htmlFor={checkboxId}
                     key={customTheme.id}
                   >
-                    <span className="absolute right-2 top-2 inline-grid size-5 grid-cols-1 sm:size-4">
+                    <span className="absolute end-2 top-2 inline-grid size-5 grid-cols-1 sm:size-4">
                       <input
                         checked={checked}
                         className="col-start-1 row-start-1 size-full appearance-none rounded-sm border border-input bg-background outline-none checked:border-primary checked:bg-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring checked:focus-visible:inset-ring-3 checked:focus-visible:inset-ring-background dark:not-checked:bg-input/32 forced-colors:appearance-auto"

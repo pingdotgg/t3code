@@ -919,18 +919,18 @@ function UsageOverview({
         {breakdown === "model" ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-right text-xs text-muted-foreground">
-                <th className="py-2 pr-3 pl-2 text-left font-normal">#</th>
-                <th className="w-full py-2 text-left font-normal">
+              <tr className="border-b border-border text-end text-xs text-muted-foreground">
+                <th className="py-2 pe-3 ps-2 text-start font-normal">#</th>
+                <th className="w-full py-2 text-start font-normal">
                   <T>Model</T>
                 </th>
-                <th className="py-2 pl-6 font-normal">
+                <th className="py-2 ps-6 font-normal">
                   <T>Cost</T>
                 </th>
-                <th className="hidden py-2 pl-6 font-normal sm:table-cell">
+                <th className="hidden py-2 ps-6 font-normal sm:table-cell">
                   <T context="column heading, percentage share">Share</T>
                 </th>
-                <th className="py-2 pr-2 pl-6 font-normal">
+                <th className="py-2 pe-2 ps-6 font-normal">
                   <T>Tokens</T>
                 </th>
               </tr>
@@ -952,15 +952,15 @@ function UsageOverview({
                   return (
                     <tr
                       key={key}
-                      className="relative border-b border-border/50 text-right whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50 has-focus-visible:bg-muted/50"
+                      className="relative border-b border-border/50 text-end whitespace-nowrap text-muted-foreground tabular-nums transition-colors hover:bg-muted/50 has-focus-visible:bg-muted/50"
                     >
-                      <td className="py-2.5 pr-3 pl-2 text-left text-xs">{index + 1}</td>
-                      <td className="py-2.5 text-left whitespace-normal">
+                      <td className="py-2.5 pe-3 ps-2 text-start text-xs">{index + 1}</td>
+                      <td className="py-2.5 text-start whitespace-normal">
                         <button
                           type="button"
                           onClick={() => onSelectModel(key)}
                           className={cn(
-                            "flex items-center gap-2 text-left text-foreground outline-none after:absolute after:inset-0",
+                            "flex items-center gap-2 text-start text-foreground outline-none after:absolute after:inset-0",
                             !hasBar && "py-1",
                           )}
                         >
@@ -979,7 +979,7 @@ function UsageOverview({
                           </div>
                         ) : null}
                       </td>
-                      <td className={cn("py-2.5 pl-6 text-foreground", rowFigures)}>
+                      <td className={cn("py-2.5 ps-6 text-foreground", rowFigures)}>
                         {isModelCostUnknown(model) ? (
                           <span className="text-muted-foreground">
                             <T>Unpriced</T>
@@ -988,10 +988,10 @@ function UsageOverview({
                           formatUsd(model.costUsd, locale)
                         )}
                       </td>
-                      <td className={cn("hidden py-2.5 pl-6 sm:table-cell", rowFigures)}>
+                      <td className={cn("hidden py-2.5 ps-6 sm:table-cell", rowFigures)}>
                         {share === null ? "" : formatPercent(share)}
                       </td>
-                      <td className={cn("py-2.5 pr-2 pl-6", rowFigures)}>
+                      <td className={cn("py-2.5 pe-2 ps-6", rowFigures)}>
                         {formatTokens(model.totalTokens)}
                       </td>
                     </tr>
@@ -1012,17 +1012,17 @@ function UsageOverview({
                 <col className="w-2/5" />
               </colgroup>
               <thead>
-                <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="py-2 pl-2 font-normal">{shownHourly ? gt("Hour") : gt("Day")}</th>
+                <tr className="border-b border-border text-start text-xs text-muted-foreground">
+                  <th className="py-2 ps-2 font-normal">{shownHourly ? gt("Hour") : gt("Day")}</th>
                   {activeProviders.map((provider) => (
-                    <th key={provider} className="py-2 pl-4 text-right font-normal">
+                    <th key={provider} className="py-2 ps-4 text-end font-normal">
                       {PROVIDER_PRESENTATION[provider].label}
                     </th>
                   ))}
-                  <th className="py-2 pl-4 text-right font-normal">
+                  <th className="py-2 ps-4 text-end font-normal">
                     <T>Total</T>
                   </th>
-                  <th className="py-2 pr-2 pl-4 text-right font-normal">
+                  <th className="py-2 pe-2 ps-4 text-end font-normal">
                     <T>Tokens</T>
                   </th>
                 </tr>
@@ -1043,7 +1043,7 @@ function UsageOverview({
                       key={"hourStart" in period ? period.hourStart : period.day}
                       className="border-b border-border/50 transition-colors hover:bg-muted/50"
                     >
-                      <td className="py-2 pl-2 text-foreground">
+                      <td className="py-2 ps-2 text-foreground">
                         {"hourStart" in period
                           ? formatHourShort(period.hourStart, shownWindow.timeZone, hour12, locale)
                           : formatDayShort(period.day, locale)}
@@ -1052,7 +1052,7 @@ function UsageOverview({
                         <td
                           key={provider}
                           className={cn(
-                            "py-2 pl-4 text-right text-muted-foreground tabular-nums",
+                            "py-2 ps-4 text-end text-muted-foreground tabular-nums",
                             figureClass(loadingProviders.has(provider)),
                           )}
                         >
@@ -1061,7 +1061,7 @@ function UsageOverview({
                       ))}
                       <td
                         className={cn(
-                          "py-2 pl-4 text-right text-foreground tabular-nums",
+                          "py-2 ps-4 text-end text-foreground tabular-nums",
                           figureClass(loadingPartial),
                         )}
                       >
@@ -1069,7 +1069,7 @@ function UsageOverview({
                       </td>
                       <td
                         className={cn(
-                          "py-2 pr-2 pl-4 text-right text-muted-foreground tabular-nums",
+                          "py-2 pe-2 ps-4 text-end text-muted-foreground tabular-nums",
                           figureClass(loadingPartial),
                         )}
                       >
@@ -1410,8 +1410,8 @@ function UsageSkeleton() {
         <div className="flex flex-col gap-3">
           <Skeleton className="h-5 w-24" />
           <div className="flex flex-col gap-1">
-            <Skeleton className="ml-16 h-56" />
-            <Skeleton className="ml-16 h-4" />
+            <Skeleton className="ms-16 h-56" />
+            <Skeleton className="ms-16 h-4" />
           </div>
         </div>
       </section>

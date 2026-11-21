@@ -1,6 +1,13 @@
 import { useGT } from "gt-react-native";
 import { useEffectEvent, useState } from "react";
-import { Platform, Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
+import {
+  I18nManager,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+  type AccessibilityActionEvent,
+} from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
 import { cn } from "../../lib/cn";
@@ -24,7 +31,7 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
     props.onResizeStart?.();
   });
   const handleResize = useEffectEvent((translationX: number) => {
-    props.onResizeBy(translationX * props.resizeDirection);
+    props.onResizeBy(translationX * props.resizeDirection * (I18nManager.isRTL ? -1 : 1));
   });
   const handleResizeEnd = useEffectEvent(() => {
     setDragging(false);

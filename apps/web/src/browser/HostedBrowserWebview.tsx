@@ -412,7 +412,7 @@ export function HostedBrowserWebview(props: {
             }
             aria-hidden={active ? undefined : true}
             className={cn(
-              "absolute top-0 left-0 flex overflow-hidden bg-white",
+              "absolute top-0 start-0 flex overflow-hidden bg-white",
               active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
             )}
             style={{

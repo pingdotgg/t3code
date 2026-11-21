@@ -193,7 +193,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       ])
       .join(" "),
   );
-  const questionTextAlign = promptDirection === "rtl" ? "text-right" : "text-left";
+  const questionTextAlign = promptDirection === "rtl" ? "text-end" : "text-start";
 
   return (
     <Collapsible

@@ -1,3 +1,4 @@
+import { LTR_TEXT_STYLE } from "../../lib/typography";
 import {
   parsePullRequestAnchor,
   pullRequestAnchorMatchesUrl,
@@ -138,7 +139,11 @@ function TimelineComment({
         </Text>
       </View>
       {comment.path ? (
-        <Text className="font-mono text-2xs text-foreground-muted" numberOfLines={2}>
+        <Text
+          style={LTR_TEXT_STYLE}
+          className="font-mono text-2xs text-foreground-muted"
+          numberOfLines={2}
+        >
           {comment.path}
         </Text>
       ) : null}
@@ -315,7 +320,11 @@ export function pullRequestTimelineRows(
               ) : (
                 <>
                   <SymbolView name="doc.text" size={14} tintColorClassName="accent-icon-muted" />
-                  <Text className="flex-1 font-mono text-xs" numberOfLines={2}>
+                  <Text
+                    style={LTR_TEXT_STYLE}
+                    className="flex-1 font-mono text-xs"
+                    numberOfLines={2}
+                  >
                     {thread.path}
                     {thread.line ? `:${thread.line}` : ""}
                   </Text>
@@ -361,7 +370,7 @@ export function pullRequestTimelineRows(
             <Text className="min-w-0 flex-1 text-sm" numberOfLines={1}>
               {commit.messageHeadline}
             </Text>
-            <Text className="font-mono text-2xs text-foreground-muted">
+            <Text style={LTR_TEXT_STYLE} className="font-mono text-2xs text-foreground-muted">
               {commit.oid.slice(0, 7)}
             </Text>
           </Pressable>

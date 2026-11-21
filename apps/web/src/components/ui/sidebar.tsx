@@ -1,3 +1,4 @@
+import { useDirection } from "@base-ui/react/direction-provider";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
@@ -362,7 +363,7 @@ function Sidebar({
               className={cn(
                 "flex h-full w-full flex-col pb-safe pt-safe",
                 SIDEBAR_TITLEBAR_CONTROL_SIZE,
-                side === "left" ? "pl-safe" : "pr-safe",
+                side === "left" ? "ltr:pl-safe rtl:pr-safe" : "ltr:pr-safe rtl:pl-safe",
               )}
               {...props}
             >
@@ -401,13 +402,13 @@ function Sidebar({
         <div
           className={cn(
             "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) md:flex",
-            "[[data-panel-animations=true]_&]:transition-[left,right,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
+            "[[data-panel-animations=true]_&]:transition-[inset-inline-start,inset-inline-end,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
             side === "left"
-              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
-              : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
+              ? "start-0 group-data-[collapsible=offcanvas]:start-[calc(var(--sidebar-width)*-1)]"
+              : "end-0 group-data-[collapsible=offcanvas]:end-[calc(var(--sidebar-width)*-1)]",
             variant === "floating" || variant === "inset"
               ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
-              : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+              : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-e group-data-[side=right]:border-s",
             className,
           )}
           data-slot="sidebar-container"
@@ -447,7 +448,11 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       variant="ghost"
       {...props}
     >
-      {isOpen ? <PanelLeftCloseIcon className="size-4" /> : <PanelLeftIcon className="size-4" />}
+      {isOpen ? (
+        <PanelLeftCloseIcon className="size-4 rtl:-scale-x-100" />
+      ) : (
+        <PanelLeftIcon className="size-4 rtl:-scale-x-100" />
+      )}
       <span className="sr-only">
         <T>Toggle Sidebar</T>
       </span>
@@ -472,6 +477,9 @@ function SidebarRail({
   const { open, toggleSidebar, onCollapse } = useSidebar();
   const gt = useGT();
   const sidebarInstance = React.use(SidebarInstanceContext);
+  const direction = useDirection();
+  const atStart = sidebarInstance?.side !== "right";
+  const onLeft = direction === "ltr" ? atStart : !atStart;
   const suppressClickRef = React.useRef(false);
   const resolvedResizable = sidebarInstance?.resizable ?? null;
   const canResize = resolvedResizable !== null && open;
@@ -488,7 +496,6 @@ function SidebarRail({
     );
     if (!wrapper || !sidebarRoot || !sidebarContainer) return null;
 
-    const side = sidebarInstance?.side ?? "left";
     let width = clampSidebarWidth(sidebarContainer.getBoundingClientRect().width, options);
     // Write width only to gap/container during drag; inherited --sidebar-width restyles the whole app, so
     // update it at commit.
@@ -508,7 +515,7 @@ function SidebarRail({
 
     return {
       width,
-      edge: side === "left" ? "right" : "left",
+      edge: onLeft ? "right" : "left",
       bounds: { min: options.minWidth, max: options.maxWidth },
       resize(nextWidth) {
         const accepted =
@@ -516,7 +523,7 @@ function SidebarRail({
             currentWidth: width,
             nextWidth,
             rail,
-            side,
+            side: onLeft ? "left" : "right",
             sidebarRoot,
             wrapper,
           }) ?? true;
@@ -584,15 +591,17 @@ function SidebarRail({
             aria-label={railLabel}
             className={cn(
               /* A collapsed offcanvas rail overlaps the native scrollbar on Windows and Linux. */
-              "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+              "-translate-x-1/2 rtl:translate-x-1/2 group-data-[side=left]:-end-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:start-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
               "[[data-panel-animations=true]_&]:transition-all [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
               "touch-none",
               canResize
                 ? "cursor-col-resize"
-                : "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize [[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
-              "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
-              "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
-              "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
+                : onLeft === open
+                  ? "cursor-w-resize"
+                  : "cursor-e-resize",
+              "group-data-[collapsible=offcanvas]:translate-x-0 rtl:group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:start-full",
+              "[[data-side=left][data-collapsible=offcanvas]_&]:-end-2",
+              "[[data-side=right][data-collapsible=offcanvas]_&]:-start-2",
               className,
             )}
             data-sidebar="rail"
@@ -625,7 +634,7 @@ function SidebarRail({
           />
         }
       />
-      <TooltipPopup side="right">{railTitle}</TooltipPopup>
+      <TooltipPopup side={atStart ? "inline-end" : "inline-start"}>{railTitle}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -753,7 +762,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<"li">) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  "peer/menu-button flex w-full cursor-pointer items-center gap-[var(--sidebar-control-gap)] overflow-hidden text-left outline-hidden ring-ring transition-[width,height,padding] hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset active:bg-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-64 aria-disabled:pointer-events-none aria-disabled:opacity-64 data-[active=true]:bg-sidebar-row-selected data-[active=true]:font-medium data-[active=true]:text-sidebar-foreground data-[state=open]:hover:bg-sidebar-row-hover data-[state=open]:hover:text-sidebar-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-[var(--sidebar-content-inset)]! [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-[var(--sidebar-icon-color)] hover:[&>svg]:text-sidebar-foreground active:[&>svg]:text-sidebar-foreground data-[active=true]:[&>svg]:text-sidebar-foreground",
+  "peer/menu-button flex w-full cursor-pointer items-center gap-[var(--sidebar-control-gap)] overflow-hidden text-start outline-hidden ring-ring transition-[width,height,padding] hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset active:bg-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-64 aria-disabled:pointer-events-none aria-disabled:opacity-64 data-[active=true]:bg-sidebar-row-selected data-[active=true]:font-medium data-[active=true]:text-sidebar-foreground data-[state=open]:hover:bg-sidebar-row-hover data-[state=open]:hover:text-sidebar-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-[var(--sidebar-content-inset)]! [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-[var(--sidebar-icon-color)] hover:[&>svg]:text-sidebar-foreground active:[&>svg]:text-sidebar-foreground data-[active=true]:[&>svg]:text-sidebar-foreground",
   {
     defaultVariants: {
       size: "default",
@@ -788,6 +797,7 @@ function SidebarMenuButton({
   tooltip?: string | React.ComponentProps<typeof TooltipPopup>;
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
   const { isMobile, state } = useSidebar();
+  const sidebarInstance = React.use(SidebarInstanceContext);
 
   const defaultProps = {
     className: cn(sidebarMenuButtonVariants({ size, variant }), className),
@@ -821,7 +831,7 @@ function SidebarMenuButton({
       <TooltipPopup
         align="center"
         hidden={state !== "collapsed" || isMobile}
-        side="right"
+        side={sidebarInstance?.side === "right" ? "inline-start" : "inline-end"}
         {...tooltip}
       />
     </Tooltip>
@@ -832,7 +842,7 @@ function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
   return (
     <ul
       className={cn(
-        "mx-3.5 flex min-w-0 translate-x-px flex-col gap-1 border-sidebar-border border-l px-2.5 py-0.5",
+        "mx-3.5 flex min-w-0 translate-x-px rtl:-translate-x-px flex-col gap-1 border-sidebar-border border-s px-2.5 py-0.5",
         "group-data-[collapsible=icon]:hidden",
         className,
       )}
@@ -866,7 +876,7 @@ function SidebarMenuSubButton({
 }) {
   const defaultProps = {
     className: cn(
-      "-translate-x-px flex h-7 min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-lg px-2 text-sidebar-foreground outline-hidden ring-ring hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset active:bg-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-64 aria-disabled:pointer-events-none aria-disabled:opacity-64 [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-muted-foreground",
+      "-translate-x-px rtl:translate-x-px flex h-7 min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-lg px-2 text-sidebar-foreground outline-hidden ring-ring hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset active:bg-sidebar-row-active active:text-sidebar-foreground disabled:pointer-events-none disabled:opacity-64 aria-disabled:pointer-events-none aria-disabled:opacity-64 [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-muted-foreground",
       "data-[active=true]:bg-sidebar-row-selected data-[active=true]:text-sidebar-foreground",
       size === "sm" && "text-xs",
       size === "md" && "text-sm",

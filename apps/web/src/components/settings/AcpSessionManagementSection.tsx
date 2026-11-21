@@ -482,7 +482,7 @@ function InstanceSessionManagement(
                       <p className="truncate text-xs text-foreground">
                         {session.title ?? session.sessionId}
                       </p>
-                      <code className="block truncate text-3xs text-muted-foreground">
+                      <code dir="ltr" className="block truncate text-3xs text-muted-foreground">
                         {session.sessionId}
                       </code>
                     </div>
@@ -683,6 +683,7 @@ function InstanceSessionManagement(
                         </SelectPopup>
                       </Select>
                       <Input
+                        dir="ltr"
                         size="sm"
                         type="url"
                         aria-label={gt("{provider} base URL", { provider: provider.providerId })}
@@ -693,6 +694,7 @@ function InstanceSessionManagement(
                       />
                     </div>
                     <Input
+                      dir="ltr"
                       size="sm"
                       type="password"
                       aria-label={gt("{provider} write-only headers JSON", {

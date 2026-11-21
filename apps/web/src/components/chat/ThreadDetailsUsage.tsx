@@ -231,7 +231,7 @@ function UsageRow({
             {fill > 0 ? (
               <span
                 className={cn(
-                  "absolute inset-y-0 left-0 rounded-full",
+                  "absolute inset-y-0 start-0 rounded-full",
                   tone === "error"
                     ? "bg-error"
                     : tone === "warning"
@@ -246,8 +246,8 @@ function UsageRow({
             {tick !== null ? (
               <span
                 aria-hidden
-                className="absolute -top-[3px] h-[9px] w-px -translate-x-1/2 bg-foreground/60"
-                style={{ left: `${tick}%` }}
+                className="absolute -top-[3px] h-[9px] w-px -translate-x-1/2 rtl:translate-x-1/2 bg-foreground/60"
+                style={{ insetInlineStart: `${tick}%` }}
               />
             ) : null}
           </span>
@@ -270,7 +270,7 @@ function UsageRow({
         </span>
       </TooltipTrigger>
       {/* Rows sit 8px inside the card; clear its edge instead of overlapping it. */}
-      <TooltipPopup side="left" sideOffset={16}>
+      <TooltipPopup side="inline-start" sideOffset={16}>
         <div className="flex flex-col gap-0.5">{tooltip}</div>
       </TooltipPopup>
     </Tooltip>

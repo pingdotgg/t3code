@@ -316,7 +316,7 @@ function AssistantReplyButton({ message, itemId }: { message: ChatMessage; itemI
           />
         }
       >
-        <ReplyIcon className="size-3" />
+        <ReplyIcon className="size-3 rtl:-scale-x-100" />
       </TooltipTrigger>
       <TooltipPopup side="top">
         <T>Reply to this response</T>

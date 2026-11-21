@@ -26,9 +26,9 @@ function Switch({
     >
       <SwitchPrimitive.Thumb
         className={cn(
-          "pointer-events-none block size-[calc(var(--thumb-size)-2px)] shrink-0 origin-left in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:not-data-disabled:scale-x-110 in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:rounded-[var(--thumb-size)/calc(var(--thumb-size)*1.1)] rounded-(--thumb-size) bg-background shadow-sm/5 dark:data-unchecked:bg-muted-foreground [transition:translate_.15s,border-radius_.15s,scale_.1s_.1s,transform-origin_.15s] data-checked:origin-right data-checked:translate-x-[calc(var(--thumb-size)-4px)]",
+          "pointer-events-none block size-[calc(var(--thumb-size)-2px)] shrink-0 origin-left rtl:origin-right in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:not-data-disabled:scale-x-110 in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:rounded-[var(--thumb-size)/calc(var(--thumb-size)*1.1)] rounded-(--thumb-size) bg-background shadow-sm/5 dark:data-unchecked:bg-muted-foreground [transition:translate_.15s,border-radius_.15s,scale_.1s_.1s,transform-origin_.15s] data-checked:origin-right rtl:data-checked:origin-left data-checked:translate-x-(--thumb-travel) [--thumb-travel:calc(var(--thumb-size)-4px)] rtl:[--thumb-travel:calc(4px-var(--thumb-size))]",
           mixed &&
-            "translate-x-[calc((var(--thumb-size)-4px)/2)] opacity-70 data-checked:translate-x-[calc((var(--thumb-size)-4px)/2)]",
+            "translate-x-[calc(var(--thumb-travel)/2)] opacity-70 data-checked:translate-x-[calc(var(--thumb-travel)/2)]",
         )}
         data-slot="switch-thumb"
       />

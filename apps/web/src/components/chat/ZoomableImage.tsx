@@ -159,6 +159,7 @@ export function ZoomableImage({
   return (
     <div className="min-w-0">
       <div
+        dir="ltr"
         ref={attachViewport}
         role="region"
         aria-label={gt("{name}, zoomable image", { name })}

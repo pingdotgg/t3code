@@ -50,6 +50,10 @@ export interface ProviderSettingsFieldModel {
   readonly options?: ReadonlyArray<ProviderSettingsFormOption> | undefined;
 }
 
+function providerFieldDirection(field: ProviderSettingsFieldModel) {
+  return field.secret || /(?:path|url|args)$/i.test(field.key) ? "ltr" : "auto";
+}
+
 function titleizeFieldKey(key: string): string {
   return key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -425,12 +429,13 @@ function ProviderCommandArguments({
         <div className="mt-3 min-w-0 space-y-2 pb-2">
           {rows.map((argument, index) =>
             managedReason !== undefined ? (
-              <code key={argument.id} className="block min-w-0 truncate text-xs">
+              <code dir="ltr" key={argument.id} className="block min-w-0 truncate text-xs">
                 {argument.value}
               </code>
             ) : (
               <div key={argument.id} className="flex min-w-0 items-center gap-1.5">
                 <DraftInput
+                  dir="ltr"
                   size="sm"
                   font="mono"
                   value={argument.value}
@@ -633,6 +638,7 @@ function ProviderSettingsTextInput({
   return (
     <div className="flex w-full min-w-0 flex-col gap-1 @min-[32rem]/settings-row:w-56">
       <DraftInput
+        dir={providerFieldDirection(field)}
         id={inputId}
         aria-describedby={descriptionId}
         size="sm"
@@ -727,6 +733,7 @@ function ProviderSettingsFieldRow({
         />
       ) : field.control === "textarea" ? (
         <Textarea
+          dir={providerFieldDirection(field)}
           id={inputId}
           aria-describedby={descriptionId}
           className="w-full max-w-full @min-[32rem]/settings-row:w-[min(24rem,50cqw)]"
@@ -749,6 +756,7 @@ function ProviderSettingsFieldRow({
       ) : field.secret ? (
         <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
           <SecretInput
+            dir={providerFieldDirection(field)}
             id={inputId}
             aria-describedby={descriptionId}
             size="sm"
@@ -838,6 +846,7 @@ function ProviderSettingsFieldRow({
         <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
           {label}
           <Textarea
+            dir={providerFieldDirection(field)}
             id={inputId}
             className={cn(variant === "card" && "mt-1.5")}
             value={readProviderConfigString(value, field.key)}
@@ -862,6 +871,7 @@ function ProviderSettingsFieldRow({
         {label}
         {variant === "card" ? (
           <BufferedInput
+            dir={providerFieldDirection(field)}
             id={inputId}
             size="sm"
             className="mt-1.5"
@@ -874,6 +884,7 @@ function ProviderSettingsFieldRow({
           />
         ) : (
           <ControlledInput
+            dir={providerFieldDirection(field)}
             id={inputId}
             type={field.secret ? undefined : type}
             autoComplete={!field.secret && field.control === "password" ? "off" : undefined}

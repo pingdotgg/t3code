@@ -7,6 +7,7 @@ import android.text.Layout
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.StaticLayout
+import android.text.TextDirectionHeuristics
 import android.text.TextPaint
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
@@ -79,6 +80,7 @@ internal fun createCodeLines(text: CharSequence, paint: TextPaint, width: Int): 
     )
   }
   val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, max(1, width))
+    .setTextDirection(TextDirectionHeuristics.LTR)
     .setAlignment(Layout.Alignment.ALIGN_NORMAL)
     .setIncludePad(false)
     .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)

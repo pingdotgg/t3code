@@ -1070,6 +1070,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     font: UIFont
   ) -> UIImage {
     let paragraph = NSMutableParagraphStyle()
+    paragraph.baseWritingDirection = .leftToRight
     paragraph.alignment = .left
     paragraph.lineBreakMode = .byTruncatingMiddle
     let attributedLabel = NSMutableAttributedString(
@@ -1106,16 +1107,17 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     let format = UIGraphicsImageRendererFormat.preferred()
     format.opaque = false
     let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
+    let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
     return renderer.image { _ in
       if let icon {
         icon.draw(
-          in: CGRect(x: padding, y: (height - iconSide) / 2, width: iconSide, height: iconSide)
+          in: CGRect(x: rtl ? width - padding - iconSide : padding, y: (height - iconSide) / 2, width: iconSide, height: iconSide)
         )
       }
       // Exactly the measured width: a spare pixel here would let a capped label draw past
       // the cap instead of truncating inside it.
       attributedLabel.draw(
-        in: CGRect(x: padding + iconSlot, y: 0, width: labelWidth, height: height)
+        in: CGRect(x: rtl ? padding : padding + iconSlot, y: 0, width: labelWidth, height: height)
       )
     }
   }

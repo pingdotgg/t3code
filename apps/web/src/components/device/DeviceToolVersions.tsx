@@ -70,17 +70,17 @@ export function DeviceToolVersions({
                     <dt className="text-muted-foreground">
                       <T context="running tool version">Running</T>
                     </dt>
-                    <dd className="text-right font-mono">
+                    <dd className="text-end font-mono">
                       {tool.runningVersion ?? gt("Not running")}
                     </dd>
                     <dt className="text-muted-foreground">
                       <T context="required tool version">Required</T>
                     </dt>
-                    <dd className="text-right font-mono">{tool.requiredVersion}</dd>
+                    <dd className="text-end font-mono">{tool.requiredVersion}</dd>
                     <dt className="text-muted-foreground">
                       <T context="installed tool versions">Installed</T>
                     </dt>
-                    <dd className="text-right font-mono break-words">
+                    <dd className="text-end font-mono break-words">
                       {tool.installedVersions.join(", ") || gt("None", { $context: "no versions" })}
                     </dd>
                   </dl>

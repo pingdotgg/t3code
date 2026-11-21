@@ -43,10 +43,10 @@ function BackButton({ onBack, focusable }: { onBack: () => void; focusable: bool
             variant="ghost-muted"
             {...(focusable ? {} : { tabIndex: -1 })}
             onClick={onBack}
-            className="-ml-1.5"
+            className="-ms-1.5"
             aria-label={gt("Back to this thread's pull requests")}
           >
-            <ArrowLeftIcon aria-hidden className="size-3.5" />
+            <ArrowLeftIcon aria-hidden className="size-3.5 rtl:-scale-x-100" />
           </Button>
         }
       />
@@ -127,7 +127,7 @@ export function PullRequestDetailCrumbs({
   const gt = useGT();
   const ready = detail !== null && toneClassName !== null;
   return (
-    <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
+    <div className="ps-4 grid h-7 min-w-0 items-center overflow-hidden">
       <div
         aria-hidden={condensed}
         inert={condensed}
@@ -148,7 +148,7 @@ export function PullRequestDetailCrumbs({
                     <button
                       type="button"
                       onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
-                      className="min-w-0 cursor-pointer truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      className="min-w-0 cursor-pointer truncate text-start font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                     >
                       {detail.repository}
                     </button>

@@ -381,6 +381,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   <T>Pairing code</T>
                 </span>
                 <Input
+                  dir="ltr"
                   value={pairingCode}
                   onChange={(event) => setPairingCode(event.target.value)}
                   placeholder={

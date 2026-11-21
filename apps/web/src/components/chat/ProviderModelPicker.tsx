@@ -1,3 +1,4 @@
+import { inlineArrowKey } from "~/lib/inlineDirection";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -426,7 +427,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 iconClassName={cn("size-4", props.activeProviderIconClassName)}
                 indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
                 badgeClassName={cn(
-                  "right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
+                  "end-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs",
                   size === "xs" && "shadow-none",
                 )}
               />
@@ -478,9 +479,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 {picker}
                 <div
                   data-model-picker-effort
-                  className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
+                  className="flex min-h-0 w-48 flex-col sm:shrink-0 border-s border-border/70 bg-muted/40 max-sm:h-64 max-sm:w-full max-sm:border-t max-sm:border-s-0"
                   onKeyDown={(event) => {
-                    if (event.key !== "ArrowLeft" || event.altKey || event.ctrlKey || event.metaKey)
+                    if (
+                      event.key !== inlineArrowKey("start") ||
+                      event.altKey ||
+                      event.ctrlKey ||
+                      event.metaKey
+                    )
                       return;
                     event.preventDefault();
                     event.stopPropagation();

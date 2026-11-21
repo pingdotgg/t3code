@@ -168,7 +168,10 @@ export default function NotebookPreview(props: {
                       className="max-h-96 max-w-full p-4 object-contain"
                     />
                   ) : (
-                    <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
+                    <pre
+                      dir="ltr"
+                      className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words"
+                    >
                       {output.text}
                     </pre>
                   )}

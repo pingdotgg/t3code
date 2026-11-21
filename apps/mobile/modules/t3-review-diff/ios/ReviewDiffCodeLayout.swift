@@ -157,6 +157,7 @@ private final class ReviewDiffTextLayout {
 
   func configure(text: String, font: UIFont, width: CGFloat, characterWidth: CGFloat) {
     let paragraph = NSMutableParagraphStyle()
+    paragraph.baseWritingDirection = .leftToRight
     paragraph.lineBreakMode = .byCharWrapping
     paragraph.tabStops = []
     paragraph.defaultTabInterval = characterWidth * 4

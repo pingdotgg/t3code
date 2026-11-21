@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
-import { View, type ViewInstance } from "react-native";
+import { I18nManager, View, type ViewInstance } from "react-native";
 
 import { useComposerPopoverHost } from "./ComposerPopoverHost";
 
@@ -36,7 +36,12 @@ export function ComposerPopoverAnchor(props: { readonly children: ReactNode }) {
         <View
           pointerEvents="box-none"
           className="absolute top-0 justify-end"
-          style={{ left: frame.x, width: frame.width, height: frame.y - COMPOSER_GAP }}
+          style={{
+            start: I18nManager.isRTL ? undefined : frame.x,
+            end: I18nManager.isRTL ? frame.x : undefined,
+            width: frame.width,
+            height: frame.y - COMPOSER_GAP,
+          }}
         >
           <View
             onLayout={(event) => {

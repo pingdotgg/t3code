@@ -217,15 +217,18 @@ function UserMessagePreviewAnnotationDetails(props: {
                   className="min-w-0"
                 >
                   <div className="flex min-w-0 items-center gap-2 text-xs">
-                    <code className="truncate text-message-foreground">
+                    <code dir="ltr" className="truncate text-message-foreground">
                       {element.selector || `<${element.tagName}>`}
                     </code>
                     {sourceLabel ? (
-                      <span className="ml-auto shrink-0 text-secondary-label">{sourceLabel}</span>
+                      <span className="ms-auto shrink-0 text-secondary-label">{sourceLabel}</span>
                     ) : null}
                   </div>
                   {element.htmlPreview?.trim() ? (
-                    <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-muted/60 px-2 py-1.5 text-3xs leading-relaxed">
+                    <pre
+                      dir="ltr"
+                      className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-muted/60 px-2 py-1.5 text-3xs leading-relaxed"
+                    >
                       {element.htmlPreview.trim()}
                     </pre>
                   ) : null}
@@ -257,11 +260,11 @@ function UserMessageElementDetails({
       </div>
       <div className="space-y-2 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2 text-xs">
-          <code className="truncate text-message-foreground">
+          <code dir="ltr" className="truncate text-message-foreground">
             {record.selector || `<${record.tagName}>`}
           </code>
           {sourceLabel ? (
-            <span className="ml-auto shrink-0 text-secondary-label">{sourceLabel}</span>
+            <span className="ms-auto shrink-0 text-secondary-label">{sourceLabel}</span>
           ) : null}
         </div>
         {record.htmlPreview?.trim() ? (
@@ -648,7 +651,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         </DiffWorkerPoolProvider>
       )}
       {renderablePatch?.kind === "raw" && (
-        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-xs">
+        <pre dir="ltr" className="overflow-x-auto rounded-md bg-muted/40 p-2 text-xs">
           {renderablePatch.text}
         </pre>
       )}

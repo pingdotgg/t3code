@@ -147,7 +147,7 @@ function SourceControlItemMark({
       {icon}
       <span
         className={cn(
-          "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
+          "pointer-events-none absolute -start-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
           dotClassName,
         )}
         aria-hidden
@@ -240,7 +240,7 @@ function itemSummary({
           <T>
             <Var>{item.label}</Var> is not authenticated on this server. Sign in or configure
             credentials using the{" "}
-            <code className="rounded bg-muted px-1 py-px text-2xs">
+            <code dir="ltr" className="rounded bg-muted px-1 py-px text-2xs">
               <Var>{item.executable}</Var>
             </code>{" "}
             tool on the server host to enable change request features.
@@ -308,7 +308,11 @@ function DiscoveryItemRow({
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <SourceControlItemMark item={item} />
               <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
-              {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
+              {version ? (
+                <code dir="ltr" className="text-xs text-muted-foreground">
+                  {version}
+                </code>
+              ) : null}
               {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
                   <T>Coming Soon</T>
@@ -396,7 +400,7 @@ function SourceControlSectionSkeleton({
                   <Skeleton className="size-4.5" />
                   <Skeleton
                     shape="pill"
-                    className="pointer-events-none absolute -left-0.5 -top-0.5 size-2"
+                    className="pointer-events-none absolute -start-0.5 -top-0.5 size-2"
                     aria-hidden
                   />
                 </span>

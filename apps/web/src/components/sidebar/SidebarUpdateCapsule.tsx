@@ -121,7 +121,7 @@ export function SidebarUpdateCapsule({
         />
         {/* w-0 keeps the label out of the capsule's minimum width, so a shared footer row
             can squeeze the label but never push the action past the sidebar edge. */}
-        <span className="pointer-events-none relative w-0 min-w-0 flex-1 truncate pl-3 text-xs">
+        <span className="pointer-events-none relative w-0 min-w-0 flex-1 truncate ps-3 text-xs">
           <span className={cn(view.tone === "failed" && "text-destructive")}>{view.label}</span>
           {view.slow ? (
             <span className="text-warning tabular-nums"> {view.slow.elapsed}</span>
@@ -130,7 +130,7 @@ export function SidebarUpdateCapsule({
         {view.action !== null ? (
           <button
             type="button"
-            className="relative shrink-0 cursor-pointer pr-3 pl-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
+            className="relative shrink-0 cursor-pointer pe-3 ps-1.5 text-xs underline decoration-muted-foreground/60 underline-offset-3 hover:decoration-current"
             onClick={runAction}
           >
             {actionLabel}

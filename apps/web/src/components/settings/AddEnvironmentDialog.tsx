@@ -381,7 +381,7 @@ export function AddEnvironmentDialog({
         type="button"
         aria-pressed={selected}
         className={cn(
-          "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-left",
+          "group flex min-h-24 items-start gap-3 rounded-lg border p-4 text-start",
           selected ? "border-primary/50 bg-primary/5" : "border-border/60 hover:bg-muted/40",
         )}
         disabled={isAddingSavedBackend}
@@ -420,6 +420,7 @@ export function AddEnvironmentDialog({
             <T>Host</T>
           </span>
           <Input
+            dir="ltr"
             value={savedBackendHost}
             onChange={(event) => handleSavedBackendHostChange(event.target.value)}
             placeholder="backend.example.com"
@@ -432,6 +433,7 @@ export function AddEnvironmentDialog({
             <T>Pairing code</T>
           </span>
           <Input
+            dir="ltr"
             value={savedBackendPairingCode}
             onChange={(event) => setSavedBackendPairingCode(event.target.value)}
             placeholder={gt("PAIRCODE")}
@@ -612,6 +614,7 @@ export function AddEnvironmentDialog({
               <T>Username</T>
             </span>
             <Input
+              dir="ltr"
               value={savedBackendSshUsername}
               onChange={(event) => setSavedBackendSshUsername(event.target.value)}
               onKeyDown={handleSavedBackendSshFieldKeyDown}
@@ -625,6 +628,7 @@ export function AddEnvironmentDialog({
               <T>Port</T>
             </span>
             <Input
+              dir="ltr"
               value={savedBackendSshPort}
               onChange={(event) => setSavedBackendSshPort(event.target.value)}
               onKeyDown={handleSavedBackendSshFieldKeyDown}
