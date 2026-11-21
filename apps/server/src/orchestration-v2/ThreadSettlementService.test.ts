@@ -689,6 +689,15 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       listShells: () => Ref.get(snapshots).pipe(Effect.map((snapshot) => snapshot.projects)),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getThreadsWithPullRequests: () =>
+        Ref.get(snapshots).pipe(
+          Effect.map((snapshot) =>
+            snapshot.threads.map((thread) => ({
+              ...thread,
+              pullRequests: thread.pullRequests ?? [],
+            })),
+          ),
+        ),
       ...options.projections,
       getSettlementCandidates: (threadId) =>
         Ref.update(candidateReads, (reads) => [...reads, threadId]).pipe(
@@ -2127,8 +2136,19 @@ describe("ThreadSettlementServiceV2 worker", () => {
         createdAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
         latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
       });
+      const cachedSibling = makeThread("cached-sibling", {
+        branch: "feature",
+        createdAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        branchPullRequest: {
+          projectId: PROJECT_ID,
+          repository: "owner/repository",
+          number: 42,
+          url: "https://example.test/owner/repository/pull/42",
+        },
+      });
       const fixture = yield* makeHarness({
-        snapshot: makeSnapshot([owner, sibling]),
+        snapshot: makeSnapshot([owner, sibling, cachedSibling]),
         settings: {
           ...DEFAULT_SERVER_SETTINGS,
           sidebarAutoSettleOnMerge: true,
