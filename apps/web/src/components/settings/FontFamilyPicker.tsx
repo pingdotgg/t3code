@@ -51,15 +51,19 @@ function readEnumerationState(): FontEnumerationState {
 
 let enumerationLoad: Promise<void> | null = null;
 
-/** Query installed fonts; call from a user gesture (the permission prompt needs one). */
+/**
+ * Query installed fonts; call from a user gesture (the permission prompt needs one).
+ * A denied query stays unknown: access can be granted later, so the next gesture asks again.
+ */
 export function discoverInstalledFonts(): void {
   if (enumerationState.status !== "unknown" || enumerationLoad !== null) return;
   enumerationLoad = queryInstalledFontFamilies().then((result) => {
+    enumerationLoad = null;
+    if (result.status === "denied") return;
     enumerationState =
       result.status === "granted"
         ? { status: "granted", families: result.families }
         : { status: "unavailable" };
-    enumerationLoad = null;
     for (const listener of enumerationListeners) listener();
   });
 }
