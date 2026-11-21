@@ -28,7 +28,9 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
         quoted = true;
       } else if (char === "\\" && quote === '"') {
         const next = input[index + 1];
-        if (next !== undefined && ['"', "\\", "$", "`"].includes(next)) {
+        if (next === "\n") {
+          index++;
+        } else if (next !== undefined && ['"', "\\", "$", "`"].includes(next)) {
           current += next;
           index++;
         } else {
@@ -51,7 +53,13 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
       }
     } else if (char === "\\") {
       const next = input[index + 1];
-      if (next !== undefined && /[\s'"]/.test(next)) {
+      if (next === "\n") {
+        index++;
+      } else if (next === "\\" && input[index + 2] === "\n") {
+        // An escaped backslash can't start a continuation; keep both, as for other literal backslashes.
+        current += "\\\\";
+        index++;
+      } else if (next !== undefined && /[\s'"]/.test(next)) {
         current += next;
         index++;
       } else {
