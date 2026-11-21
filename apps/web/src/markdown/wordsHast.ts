@@ -286,7 +286,12 @@ const isElement = (node: unknown, tagName?: string): node is Element =>
 
 const isElementNode = (node: ElementContent): node is Element => node.type === "element";
 
-const isMarkdownImage = (node: unknown) => isElement(node, "img") && node.position !== undefined;
+const isMarkdownImage = (node: unknown): boolean =>
+  (isElement(node, "img") && node.position !== undefined) ||
+  (isElement(node, "a") &&
+    node.position !== undefined &&
+    node.children.length === 1 &&
+    isMarkdownImage(node.children[0]));
 
 const BREAK: ElementContent = { type: "element", tagName: "br", properties: {}, children: [] };
 
@@ -314,7 +319,7 @@ const MATH_PROPERTIES = new Set([
   "strokeWidth",
   "textAnchor",
 ]);
-const MATH_STYLE = /^(?:display|vertical-align|overflow|margin)$/;
+const MATH_STYLE = /^(?:display|vertical-align|overflow|margin|white-space)$/;
 
 function sanitizeMath(node: Element): Element | null {
   if (!MATH_ELEMENTS.has(node.tagName)) return null;
@@ -651,13 +656,24 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
       props.dataInlineCode = "";
     } else if (tagName === "ol" && walk.options.extensions.userMessage) {
       keepListNumbers(child, walk.source);
-    } else if (tagName === "li" && isElement(child.children.find(isElementNode), "pre")) {
-      if (recoverIndentedCode(child, node, walk, inLink, inCode)) continue;
-    } else if (tagName === "li" && isElement(child.children[0], "input")) {
-      props.className = ["task-list-item"];
-      const { checked } = child.children[0].properties;
-      child.children[0].properties = { type: "checkbox", checked, disabled: true };
-      if (node.type === "element") node.properties.className = ["contains-task-list"];
+    } else if (tagName === "li") {
+      const firstBlock = child.children.find(isElementNode);
+      if (isElement(firstBlock, "pre") && recoverIndentedCode(child, node, walk, inLink, inCode)) {
+        continue;
+      }
+      // Tight items put the checkbox directly in `<li>`, loose ones inside its first `<p>`.
+      const checkbox = isElement(child.children[0], "input")
+        ? child.children[0]
+        : isElement(firstBlock, "p") && isElement(firstBlock.children[0], "input")
+          ? firstBlock.children[0]
+          : undefined;
+      if (checkbox) {
+        props.className = ["task-list-item"];
+        const { checked } = checkbox.properties;
+        checkbox.properties = { type: "checkbox", checked, disabled: true };
+        if (node.type === "element") node.properties.className = ["contains-task-list"];
+      }
+      breakLines(child, walk.options.breaks);
     } else if (tagName === "p") {
       breakLines(child, walk.options.breaks);
     } else if (tagName === "blockquote") {
@@ -712,22 +728,40 @@ function imageOwnsLine(items: ElementContent[], at: number): boolean {
   return startsLine && endsLine;
 }
 
+const isBlockElement = (node: ElementContent | undefined) =>
+  node?.type === "element" && CLOSES_PARAGRAPH.has(node.tagName);
+
 function breakLines(paragraph: Element, breaks: boolean) {
   const items = paragraph.children;
   for (let at = 0; at < items.length; at++) {
     const item = items[at]!;
-    if (item.type === "element" && breaks && item.tagName !== "code") breakLines(item, breaks);
+    if (
+      item.type === "element" &&
+      breaks &&
+      item.tagName !== "code" &&
+      !CLOSES_PARAGRAPH.has(item.tagName)
+    ) {
+      breakLines(item, breaks);
+    }
     if (item.type !== "text" || !item.value.includes("\n")) continue;
     const afterImage = imageOwnsLine(items, at - 1);
     const beforeImage = imageOwnsLine(items, at + 1);
+    const afterBlock = isBlockElement(items[at - 1]) || (at === 0 && paragraph.tagName === "li");
+    const beforeBlock =
+      isBlockElement(items[at + 1]) || (at === items.length - 1 && paragraph.tagName === "li");
     const lines = item.value.split("\n");
     const parts: ElementContent[] = [];
     lines.forEach((line, index) => {
-      // A hard break's own line ending follows its <br>, and adds no second one.
+      // A hard break's own line ending follows its <br>, and adds no second one;
+      // structural line endings around a list item's block children stay breaks between blocks.
       const afterHardBreak = index === 1 && isElement(items[at - 1], "br");
+      const blockBoundary =
+        (index === 1 && lines[0] === "" && afterBlock) ||
+        (index === lines.length - 1 && line === "" && beforeBlock);
       const breaksHere =
         index > 0 &&
         !afterHardBreak &&
+        !blockBoundary &&
         (breaks || (index === 1 && afterImage) || (index === lines.length - 1 && beforeImage));
       if (index > 0) {
         if (breaksHere) {

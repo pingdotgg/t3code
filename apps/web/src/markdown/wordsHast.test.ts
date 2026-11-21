@@ -36,6 +36,10 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
     '<ul class="contains-task-list" dir="ltr">\n<li class="task-list-item"><input type="checkbox" disabled> open</li>\n<li class="task-list-item"><input type="checkbox" checked disabled> done</li>\n<li class="task-list-item"><input type="checkbox" checked disabled>   spaced</li>\n</ul>',
   ],
   [
+    "- [ ] open\n\n- [x] done",
+    '<ul class="contains-task-list" dir="ltr">\n<li class="task-list-item">\n<p><input type="checkbox" disabled> open</p>\n</li>\n<li class="task-list-item">\n<p><input type="checkbox" checked disabled> done</p>\n</li>\n</ul>',
+  ],
+  [
     "See www.example.com/a_(b), https://x.dev/path?q=1. and me@example.com!",
     '<p dir="ltr">See <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="http://www.example.com/a_(b)">www.example.com/a_(b)</a>,</span> <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="https://x.dev/path?q=1">https://x.dev/path?q=1</a>.</span> and <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="mailto:me@example.com">me@example.com</a>!</span></p>',
   ],
@@ -156,9 +160,9 @@ describe("wordsHast", () => {
   });
 
   it("breaks soft lines as remark-breaks did", () => {
-    const markdown = "one\ntwo **three\nfour**\n\n```\nkept\nlines\n```";
+    const markdown = "one\ntwo **three\nfour**\n\n- item\n  next\n  - sub\n\n```\nkept\nlines\n```";
     expect(wordsHtml(markdown, { breaks: true })).toBe(
-      '<p dir="ltr">one<br>\ntwo <strong>three<br>\nfour</strong></p>\n<pre><code>kept\nlines\n</code></pre>',
+      '<p dir="ltr">one<br>\ntwo <strong>three<br>\nfour</strong></p>\n<ul dir="ltr">\n<li>item<br>\nnext\n<ul>\n<li>sub</li>\n</ul>\n</li>\n</ul>\n<pre><code>kept\nlines\n</code></pre>',
     );
   });
 
@@ -272,14 +276,15 @@ describe("wordsHast", () => {
 
   it("renders math as SVG, and keeps money as text", () => {
     const html = toHtml(
-      wordsHast("Costs $34.58 and $15.00, and $x^2$ is math.\n\n$$\na\n$$", {
+      wordsHast("Costs $34.58 and $15.00, and $x^2 \\text{ for } n$ is math.\n\n$$\na\n$$", {
         ...ASSISTANT,
         math: true,
       }),
     );
     expect(html).toContain("Costs $34.58 and $15.00, and ");
     expect(html.match(/<svg /g)).toHaveLength(2);
-    expect(html).toContain('aria-label="x^2"');
+    expect(html).toContain('aria-label="x^2 \\text{ for } n"');
+    expect(html).toContain('style="white-space:pre"> for </text>');
   });
 
   it.each([
@@ -287,6 +292,11 @@ describe("wordsHast", () => {
       "Status ![badge](https://x.dev/b.png)\ncontinues",
       '<p dir="ltr">Status <img src="https://x.dev/b.png" alt="badge">\ncontinues</p>',
       '<p dir="ltr">Status <img src="https://x.dev/b.png" alt="badge"><br>\ncontinues</p>',
+    ],
+    [
+      "**Label**\n[![shot](https://x.dev/b.png)](https://x.dev)\ncontinues",
+      '<p dir="ltr"><strong>Label</strong><br>\n<a href="https://x.dev"><img src="https://x.dev/b.png" alt="shot"></a><br>\ncontinues</p>',
+      '<p dir="ltr"><strong>Label</strong><br>\n<a href="https://x.dev"><img src="https://x.dev/b.png" alt="shot"></a><br>\ncontinues</p>',
     ],
     [
       'Status\n<img src="https://x.dev/b.png" />\ncontinues',
