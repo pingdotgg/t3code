@@ -685,7 +685,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         if (!Number.isSafeInteger(arg) || arg < 0 || arg > source.length - i)
           throw new PreviewError({ code: "rtf-binary-data" });
         i += arg;
-      } else if (word === "ansicpg") {
+      } else if (word === "mac") state.decoder = new TextDecoder("macintosh");
+      else if (word === "ansicpg") {
         const label =
           (
             {
@@ -695,6 +696,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
               949: "euc-kr",
               950: "big5",
               874: "windows-874",
+              10000: "macintosh",
             } as Record<number, string>
           )[arg] ?? `windows-${arg}`;
         try {

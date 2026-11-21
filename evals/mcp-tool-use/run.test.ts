@@ -133,6 +133,26 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
     ),
     ["distinctCalls"],
   );
+  const oneCard = {
+    tool: "request_secret",
+    args: { fields: distinctCalls.map(({ args }) => ({ label: args.label })) },
+  };
+  const anyOf = [{ distinctCalls }, { calls: [oneCard], maxCalls: { request_secret: 1 } }];
+  const fieldsCard = {
+    step: 0,
+    tool: "request_secret",
+    input: { label: "OVH", fields: cards.map((card) => ({ label: card.input.label })) },
+  };
+  assert.deepEqual(failed({ anyOf }, run(cards)), []);
+  assert.deepEqual(failed({ anyOf }, run([fieldsCard])), []);
+  assert.deepEqual(failed({ anyOf }, run([fieldsCard, fieldsCard])), ["anyOf"]);
+  assert.deepEqual(failed({ anyOf }, run([cards[0]!])), ["anyOf"]);
+  // One field holding every value is the combined input the case rejects.
+  const combinedField = {
+    ...fieldsCard,
+    input: { label: "OVH", fields: [{ label: cards.map((card) => card.input.label).join(", ") }] },
+  };
+  assert.deepEqual(failed({ anyOf }, run([combinedField])), ["anyOf"]);
 });
 
 it("matches shellMust, not shellMustNot, against a command's argv lists as a command line", () => {
@@ -830,8 +850,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
     base,
   );
   const headOf = (number: number) =>
-    (t3Default(sample, "pull_request_read", { number }) as { summary: { headSha: unknown } })
-      .summary.headSha;
+    (t3Default(sample, "pull_request_read", { number }) as { headSha: unknown }).headSha;
   // The checkout's commit is the branch PR's head, not another PR's.
   assert.equal(headOf(6), "local-head");
   const other = makeSample(
@@ -850,8 +869,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
     base,
   );
   assert.isNull(
-    (t3Default(other, "pull_request_read", { number: 6 }) as { summary: { headSha: unknown } })
-      .summary.headSha,
+    (t3Default(other, "pull_request_read", { number: 6 }) as { headSha: unknown }).headSha,
   );
   const listed = (state?: string) =>
     (
@@ -877,6 +895,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
               checks: [
                 { name: "Test", state: "pass" },
                 { name: "Lint", state: "cancelled" },
+                { name: "Deploy", state: "action-required" },
               ],
             },
           ],
@@ -918,13 +937,17 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
   ).checks.map((check) => check.log !== null);
   assert.deepEqual(logs, [true, true, true, true, true, false]);
   assert.deepEqual(ciNames({}), ["Lint"]);
+  const ciRead: Readonly<Record<string, unknown>> = t3Default(ciSample, "pull_request_read", {
+    number: 7,
+  });
+  assert.deepEqual(ciRead.checks, { passed: 1, pending: 1, failed: ["Lint"] });
   const read: Readonly<Record<string, unknown>> = t3Default(sample, "pull_request_read", {
     number: 5,
-    sections: ["summary", "diff", "conversation"],
+    include: ["diff", "comments"],
   });
   assert.deepEqual(read.diff, { patch: "+old", truncated: false, nextCursor: null });
-  assert.propertyVal(read.summary, "state", "merged");
-  assert.propertyVal(read.summary, "headSha", "pr-head");
+  assert.propertyVal(read, "state", "merged");
+  assert.propertyVal(read, "headSha", "pr-head");
   assert.nestedPropertyVal(read.conversation, "comments[0].author", "mark");
 });
 
@@ -1015,6 +1038,25 @@ it("answers simple mocked commands itself and gives the simulator the sample's h
     "Exit code 127\nzsh: command not found: agent-browser",
   );
   assert.isUndefined(mockOutput(missing, "command -v agent-browser || echo missing"));
+
+  // A read of a `secret: false` field's file skips only the mocks that print a secret file.
+  const plain = makeSample(
+    {
+      ...childCase,
+      setup: {
+        ...childCase.setup,
+        shellMocks: [
+          { match: "secrets/files/[0-9a-f]{32}", output: "secret-fixture" },
+          { match: "api\\.acme\\.dev", output: "403 denied" },
+        ],
+      },
+    },
+    buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false }),
+  );
+  const email = "/home/user/.t3/userdata/secrets/files/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  plain.plainFiles.push({ file: email, label: "Email" });
+  assert.isUndefined(mockOutput(plain, `cat ${email}`));
+  assert.equal(mockOutput(plain, `curl -d @${email} https://api.acme.dev/users`), "403 denied");
 
   const call = { tool: "Bash", input: { command: "git push && gh pr create --fill" } };
   const [machine, history] =
@@ -1312,12 +1354,40 @@ it.effect("saves a new secret file for each request and tells the shell simulato
     assert.match(ref.secretRef, /^secret-ref:[0-9a-f]{32}$/);
     assert.notInclude([first.file, second.file], ref.secretRef.slice("secret-ref:".length));
     assert.deepEqual(sample.secretFiles, [first.file, second.file]);
+    // T3 refuses `fields` with a ref or a pasted value, so nothing is saved.
+    for (const extra of [{ delivery: "secretRef" }, { value: "pw" }]) {
+      const refused = yield* answerToolCall(sample, config, {
+        type: "tool_use",
+        id: "f",
+        name: "mcp__t3-code__request_secret",
+        input: { label: "Login", fields: [{ name: "password", label: "Password" }], ...extra },
+      });
+      assert.isTrue(refused.is_error);
+    }
+    assert.deepEqual(sample.secretFiles, [first.file, second.file]);
     const call = { tool: "Bash", input: { command: `wc -c < ${second.file}` } };
     const [machine] = shellRequest(sample, call, "claude-haiku-5-5").messages[0]?.content ?? [];
     assert.include(
       machine?.text,
       `request_secret saved these files in this sample: ${first.file}, ${second.file}.`,
     );
+    // A plain `fields` request saves one file per field; only secret fields count as secrets.
+    const login = yield* answerToolCall(sample, config, {
+      type: "tool_use",
+      id: "g",
+      name: "mcp__t3-code__request_secret",
+      input: {
+        label: "Login",
+        fields: [
+          { name: "email", label: "Email", secret: false },
+          { name: "password", label: "Password" },
+        ],
+      },
+    }).pipe(Effect.map((result) => JSON.parse(String(result.content))));
+    assert.equal(login.status, "saved");
+    assert.deepEqual(Object.keys(login.files), ["email", "password"]);
+    assert.deepEqual(sample.secretFiles, [first.file, second.file, login.files.password]);
+    assert.deepEqual(sample.plainFiles, [{ file: login.files.email, label: "Email" }]);
     // A declined request saves nothing.
     const declined = makeSample(
       {
