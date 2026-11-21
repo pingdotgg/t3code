@@ -499,6 +499,24 @@ mod tests {
     }
 
     #[test]
+    fn golden_t3_code_dark_tokens() {
+        let Some(theme) = theme_by_id("t3-code-dark") else {
+            panic!("t3-code-dark theme must exist");
+        };
+        let t = Tokens::derive(&theme);
+        assert_eq!(t.appearance, Appearance::Dark, "t3-code-dark appearance");
+        assert_rgba_near(t.sidebar, "#111111", 1.0, "t3-code-dark.sidebar");
+        assert_rgba_near(t.shell_card, "#111111", 1.0, "t3-code-dark.shell_card");
+        assert_rgba_near(t.shell_fill, "#202020", 0.60, "t3-code-dark.shell_fill");
+        assert_rgba_near(
+            t.shell_inner_fill,
+            "#111111",
+            0.76,
+            "t3-code-dark.shell_inner_fill",
+        );
+    }
+
+    #[test]
     fn golden_t3_code_light_tokens() {
         // Expected hex+alpha values computed independently in Python using the CSS Color 4/5
         // formulas applied to `T3_CODE_LIGHT_THEME_COLORS` and `index.css` (`html.electron-macos`).

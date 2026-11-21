@@ -811,7 +811,8 @@ impl Composer {
             .items_center()
             .gap(px(8.0))
             .min_w_0()
-            .flex_1();
+            .flex_1()
+            .overflow_hidden();
 
         let env_icon = if self.worktree_active {
             "superhero/folder-git.svg"

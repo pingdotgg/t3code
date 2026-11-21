@@ -1168,7 +1168,12 @@ impl ConnApp {
             right: self.layout.right_panel_open,
         };
 
-        let chat_card = inset_card(&self.tokens, &self.geometry, join).child(self.chat.clone());
+        // Matches real Conn (`ChatView.tsx`): the chat card re-roots `--background` to opaque
+        // `--shell-card` (`bg-background`), keeping the chat surface deeper than the glossy outer
+        // shell and slightly deeper than the translucent sidebar card.
+        let chat_card = inset_card(&self.tokens, &self.geometry, join)
+            .bg(hsla(self.tokens.shell_card))
+            .child(self.chat.clone());
 
         div()
             .flex()
@@ -1295,6 +1300,9 @@ impl ConnApp {
             },
         );
 
+        // Matches real Conn (`RightPanelTabs.tsx`): right-panel cards paint opaque `--shell-card`
+        // (`[--background:var(--shell-card)]`), preserving crisp contrast against the lighter
+        // glossy outer shell.
         let card = inset_card(
             &self.tokens,
             &self.geometry,
@@ -1303,6 +1311,7 @@ impl ConnApp {
                 right: false,
             },
         )
+        .bg(hsla(self.tokens.shell_card))
         .child(self.right_panel.clone());
 
         let column = div().flex().flex_col().h_full();

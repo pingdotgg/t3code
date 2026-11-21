@@ -113,7 +113,10 @@ pub(crate) const T3_CODE_DARK_ROLES: &[(&str, &str)] = &[
     ("messageActionHover", "#3061d9"),
     ("codeBackground", "#111111"),
     ("codeForeground", "#f5f5f5"),
-    ("sidebar", "#000000"),
+    // Desktop `:root.dark` (`index.css:1240,1265`) derives `--sidebar: var(--card)` where
+    // `--card` is `color-mix(in srgb, neutral-950 97%, white)` (`#111111`), which keeps the
+    // macOS glossy `--shell-fill` visibly lighter than the inset panels.
+    ("sidebar", "#111111"),
     ("sidebarForeground", "#f1f3f7"),
     ("sidebarMutedForeground", "#a3a3a3"),
     ("sidebarControlSurface", "#0a0a0a"),
