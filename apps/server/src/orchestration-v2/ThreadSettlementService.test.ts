@@ -689,13 +689,14 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       listShells: () => Ref.get(snapshots).pipe(Effect.map((snapshot) => snapshot.projects)),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
-      getThreadsWithPullRequests: () =>
+      getThreadsWithPullRequests: (_threadId, readOptions) =>
         Ref.get(snapshots).pipe(
           Effect.map((snapshot) =>
-            snapshot.threads.map((thread) => ({
-              ...thread,
-              pullRequests: thread.pullRequests ?? [],
-            })),
+            snapshot.threads
+              .filter(
+                (thread) => readOptions?.includeArchived === true || thread.archivedAt === null,
+              )
+              .map((thread) => ({ ...thread, pullRequests: thread.pullRequests ?? [] })),
           ),
         ),
       ...options.projections,
@@ -2175,6 +2176,43 @@ describe("ThreadSettlementServiceV2 worker", () => {
             ...new Set((yield* Ref.get(fixture.commands)).map((command) => command.threadId)),
           ].toSorted(),
         ).toEqual([legacyOwner.id, owner.id].toSorted());
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+  it.effect("an archived thread's pull request does not settle a local thread on its branch", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const link = persistedLink("open", DateTime.makeUnsafe("2026-08-20T00:00:00.000Z"));
+      const owner = makeThread("archived-owner", {
+        branch: "feature",
+        archivedAt: DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
+        pullRequests: [
+          { ...link, snapshot: { ...link.snapshot!, state: "merged", mergedAt: NOW } },
+        ],
+      });
+      const sibling = makeThread("local-sibling", {
+        branch: "feature",
+        createdAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+        latestUserMessageAt: DateTime.makeUnsafe("2026-08-27T00:00:00.000Z"),
+      });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([owner, sibling]),
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sidebarAutoSettleOnMerge: true,
+          sidebarAutoSettleAfterDays: null,
+        },
+        branchPullRequest: () => Effect.succeed(makeBranchPullRequest("merged")),
+      });
+
+      yield* Effect.gen(function* () {
+        const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+        yield* fixture.publishMerge;
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+
+        expect(yield* Ref.get(fixture.commands)).toEqual([]);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );

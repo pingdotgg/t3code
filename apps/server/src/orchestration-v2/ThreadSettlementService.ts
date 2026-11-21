@@ -514,11 +514,14 @@ export const make = Effect.gen(function* () {
       );
     };
     const groups = Map.groupBy(lookupCandidates, lookupKey);
-    // A thread with no link of its own does not settle from a pull request another thread links.
+    // A thread with no link of its own does not settle from a pull request another thread links,
+    // archived threads included.
     const explicitlyLinked = new Set(
       groups.size === 0
         ? []
-        : (yield* projections.getThreadsWithPullRequests()).flatMap((thread) =>
+        : (yield* projections.getThreadsWithPullRequests(undefined, {
+            includeArchived: true,
+          })).flatMap((thread) =>
             visibleThreadPullRequests(thread.pullRequests ?? []).map(threadPullRequestKeyOf),
           ),
     );
