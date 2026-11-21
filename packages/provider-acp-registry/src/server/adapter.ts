@@ -283,7 +283,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
         : isOpenCode
           ? { extractElicitationForm: extractOpenCodeElicitationForm }
           : {}),
-    // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
+    // glm-acp-agent is the one agent whose per-turn usage a live probe has verified. Z.ai Usage
+    // counts every recorded ACP Registry turn usage as GLM's, so keep this flag GLM-only.
     ...(isGlm ? { reportsPerTurnPromptUsage: true } : {}),
     ...(watchKimiPromptOutcome === undefined
       ? {}

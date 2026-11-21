@@ -7,6 +7,7 @@ import { AcpRegistrySettings } from "../settings.ts";
 import * as Deferred from "effect/Deferred";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -63,6 +64,7 @@ const makeHarness = (
   settings = decodeSettings({ agentId: "test-agent" }),
   providerInstanceId = instanceId,
   authenticateError?: AcpRequestError,
+  agent = resolved,
 ) =>
   Effect.gen(function* () {
     const verify = yield* Deferred.make<void>();
@@ -151,6 +153,7 @@ const makeHarness = (
     }).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
         ...catalog,
+        resolve: () => Effect.succeed(agent),
         inspect: () =>
           Effect.sync(() => ({
             status: "ready" as const,
@@ -425,6 +428,57 @@ it.effect(
       );
       assert.deepEqual(h.changed, []);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("signs in to GLM Agent only when it can find a Z.ai API key", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const configHome = yield* fileSystem.makeTempDirectoryScoped();
+    const harness = (env: NodeJS.ProcessEnv) =>
+      makeHarness(
+        { id: "z-ai-api-key", name: "Z.AI API key" },
+        false,
+        decodeSettings({ agentId: "glm-acp-agent" }),
+        instanceId,
+        undefined,
+        {
+          ...resolved,
+          agent: { ...resolved.agent!, id: "glm-acp-agent" },
+          spawn: { ...resolved.spawn, env: { XDG_CONFIG_HOME: configHome, ...env } },
+        },
+      );
+    const signIn = (env: NodeJS.ProcessEnv) =>
+      Effect.gen(function* () {
+        const h = yield* harness(env);
+        const flow = yield* h.controller.start("owner", Effect.void, "z-ai-api-key");
+        yield* h.phase("waiting");
+        yield* h.controller.respond!("owner", {
+          instanceId,
+          flowId: flow.flowId!,
+          interactionId: "consent",
+          response: { type: "browser", action: "accept" },
+        });
+        yield* Deferred.succeed(h.verify, undefined);
+        yield* h.phase("succeeded");
+        return h.changed;
+      });
+
+    const keyless = yield* harness({});
+    yield* keyless.controller.start("owner", Effect.void, "z-ai-api-key");
+    const failed = yield* keyless.phase("failed");
+    assert.strictEqual(
+      failed.message,
+      "GLM Agent found no Z.ai API key. Set Z_AI_API_KEY in this provider's environment, or run `glm-acp-agent --setup`, then sign in again.",
+    );
+    assert.deepEqual(keyless.authenticated, []);
+    assert.deepEqual(keyless.started, []);
+    assert.deepEqual(keyless.changed, []);
+
+    assert.deepEqual(yield* signIn({ Z_AI_API_KEY: "set" }), [true]);
+    yield* fileSystem.makeDirectory(`${configHome}/glm-acp-agent`);
+    yield* fileSystem.writeFileString(`${configHome}/glm-acp-agent/credentials.json`, "{}");
+    assert.deepEqual(yield* signIn({}), [true]);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it("formatFailureDetail handles all cause types and formatting edge cases cleanly", () => {

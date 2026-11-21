@@ -24,6 +24,7 @@ import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlo
 import { normalizeAcpRegistryAuthMethods, normalizeAcpRegistryWebUrl } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
+import { GLM_ACP_AGENT_ID, makeGlmApiKeyCheck } from "./glmAcp.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
@@ -81,6 +82,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const random = yield* SecureRandom.SecureRandom;
   const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
+  const hasGlmApiKey = yield* makeGlmApiKeyCheck();
   const coordinator = yield* Effect.serviceOption(
     AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
   );
@@ -349,6 +351,14 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
               ),
             );
         } else {
+          if (
+            resolved.agent?.id === GLM_ACP_AGENT_ID &&
+            !(yield* hasGlmApiKey(resolved.spawn.env ?? options.environment))
+          )
+            return yield* failure(
+              "start",
+              "GLM Agent found no Z.ai API key. Set Z_AI_API_KEY in this provider's environment, or run `glm-acp-agent --setup`, then sign in again.",
+            );
           if (method.type === undefined || method.type === "agent") {
             if (!runtime.authenticate)
               return yield* failure("start", "This runtime does not support explicit ACP sign-in.");
