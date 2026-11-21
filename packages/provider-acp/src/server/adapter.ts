@@ -787,6 +787,7 @@ export interface AcpAdapterV2Options {
   };
   readonly testHooks?: {
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
+    readonly afterDeferredFinalize?: () => Effect.Effect<void>;
     /** `cancelAfterPromptStarts`: Stop is holding `session/cancel` until the prompt starts. */
     readonly onCancelHeld?: () => Effect.Effect<void>;
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
@@ -1726,6 +1727,9 @@ interface ActiveAcpTurn {
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
   readonly promptStarted: Deferred.Deferred<void, never>;
   promptUsage: EffectAcpSchema.Usage | undefined;
+  checkPromptOutcome:
+    | Effect.Success<ReturnType<NonNullable<AcpAdapterV2Flavor["watchPromptOutcome"]>>>
+    | undefined;
   backgroundFinalizeGeneration: number;
   /** `replyEndsWithUsageUpdate`: output arrived and its closing `usage_update` has not. */
   replyOpen: boolean;
@@ -8733,6 +8737,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (hasDeferredBackgroundWork(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
+          const runtimeGeneration = yield* Ref.get(runtimeCallbackGeneration);
           const replyOpen = context.replyOpen;
           const debounce = replyOpen ? ACP_OPEN_REPLY_QUIET_LIMIT : ACP_DEFERRED_FINALIZE_DEBOUNCE;
           yield* Effect.gen(function* () {
@@ -8754,7 +8759,47 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return;
             }
             const status = context.promptSettledStatus ?? "completed";
-            yield* finalizeTurn(context, status);
+            const checkPromptOutcome =
+              status === "completed" ? context.checkPromptOutcome : undefined;
+            if (checkPromptOutcome === undefined) {
+              yield* finalizeTurn(context, status);
+              yield* options.testHooks?.afterDeferredFinalize?.() ?? Effect.void;
+              return;
+            }
+            if (
+              (yield* Ref.get(runtimeTeardownState))._tag !== "Idle" ||
+              (yield* Ref.get(runtimeCallbackGeneration)) !== runtimeGeneration
+            ) {
+              return;
+            }
+            // A completed status implies end_turn. Deferred finalization reports hidden failures
+            // directly rather than re-running followPrompt's resumeWith retry loop.
+            const hiddenFailure = yield* Effect.suspend(() =>
+              checkPromptOutcome({ stopReason: "end_turn" }),
+            ).pipe(
+              Effect.catchDefect(() =>
+                Effect.logWarning("Could not check deferred ACP prompt outcome.").pipe(
+                  Effect.as(undefined),
+                ),
+              ),
+            );
+            yield* runRuntimeCallbackAtGeneration(
+              runtimeGeneration,
+              Effect.gen(function* () {
+                if (!stillCurrent()) return;
+                if (hiddenFailure !== undefined) {
+                  yield* Ref.set(runtimeRestartRequired, true);
+                  yield* terminalizeOpenForegroundTools(context, "failed");
+                  yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
+                    childTurnsContinue: hasSurvivingBackgroundWork(context),
+                    threadDisposition: hiddenFailure.threadDisposition,
+                  });
+                  return;
+                }
+                yield* finalizeTurn(context, status);
+              }),
+            );
+            yield* options.testHooks?.afterDeferredFinalize?.() ?? Effect.void;
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
@@ -9445,6 +9490,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
+              checkPromptOutcome: undefined,
               backgroundFinalizeGeneration: 0,
               replyOpen: false,
               nativePromptId: undefined,
@@ -9601,6 +9647,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               flavor.watchPromptOutcome === undefined
                 ? undefined
                 : yield* flavor.watchPromptOutcome(requestedSessionId);
+            context.checkPromptOutcome = checkPromptOutcome;
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             const promptOptions = {
               dispatched: context.promptDispatched,
@@ -9702,6 +9749,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   context.promptSettled = false;
                   context.promptSettledStatus = null;
                   context.backgroundFinalizeGeneration += 1;
+                  context.checkPromptOutcome = checkPromptOutcome;
                   context.promptSentAt = yield* Clock.currentTimeMillis;
                   context.lastProgressAt = context.promptSentAt;
                   const watchdog = context.inactivityWatchdog;
