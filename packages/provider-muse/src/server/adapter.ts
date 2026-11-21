@@ -399,6 +399,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const seenTerminals = new Set<string>();
       const observedChildren = new Map<string, ActiveTurn>();
       const liveTasks = new Map<string, LiveBackgroundTask>();
+      // Stop invalidates a `task/list` read already in flight; its rows predate the stop.
+      let taskListGeneration = 0;
       const childrenByItemId = new Map<string, ChildContext>();
       const agentTitles = new Map<string, string>();
       const finishedBackground: Array<BackgroundWorkReport> = [];
@@ -807,12 +809,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       // The item stream says a tool was backgrounded; only `task/list` says whether it still runs.
       const refreshBackgroundTasks = Effect.fnUntraced(function* () {
+        const generation = taskListGeneration;
         const listed = yield* request("task/list", {}, false).pipe(
           Effect.flatMap((value) => decode(MuseTaskList, value)),
           // Never hold the event stream long on a host that will not answer.
           Effect.timeoutOption(5_000),
           Effect.option,
         );
+        // Stop cleared the work while this read was in flight; the rows are already stale.
+        if (generation !== taskListGeneration) return;
         // A host that cannot list tasks keeps what the items told us.
         if (Option.isNone(listed) || Option.isNone(listed.value)) return;
         liveTasks.clear();
@@ -1049,7 +1054,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         observedChildren.clear();
         // The process owns its background work, so stopping or losing the turn ends it too.
-        liveTasks.clear();
+        if (liveTasks.size > 0) {
+          // Discard a `task/list` read that started before these rows were dropped.
+          taskListGeneration++;
+          liveTasks.clear();
+        }
         if (thread?.pendingBackgroundTasks?.length) yield* syncBackground();
         for (const entry of pending.values()) yield* resolvePending(entry, "cancelled");
       });
@@ -1642,7 +1651,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               result.error?.quota,
             );
             // Background work outlives the turn that started it; re-read what Muse still runs.
-            yield* refreshBackgroundTasks();
+            // Stop already cleared the listing, and a read now can predate `task/stopAll`.
+            if (status !== "interrupted") yield* refreshBackgroundTasks();
             break;
           }
           case "approval/requested":
@@ -2440,7 +2450,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 if (observedChildren.size === 0 && wake === undefined) return;
               } else {
                 // A monitor outlives its turn, so Stop must reach Muse's own task registry.
-                // A failed stop keeps the listing, so the thread still shows work to stop.
+                // Without a live turn this is the only stop attempt, so a failed stop surfaces
+                // and keeps the listing for the caller to retry.
                 yield* request("task/stopAll", {});
                 // A monitor that already woke the session left a turn this call must end too.
                 if (wake)
@@ -2481,7 +2492,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               yield* request("turn/interrupt", { turnId: joined }).pipe(Effect.ignore);
             yield* request("turn/interrupt", { turnId: turn.nativeId });
             // Monitors and backgrounded tools are Muse-side work; the turn ending does not stop them.
-            yield* request("task/stopAll", {}).pipe(Effect.ignore);
+            // Keep the rows if the stop fails: those tasks can still be running.
+            const stopped = yield* request("task/stopAll", {}).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            );
+            if (stopped) {
+              // A `task/list` read started before this stop must not put the rows back.
+              taskListGeneration++;
+              liveTasks.clear();
+              yield* syncBackground();
+            }
             yield* Deferred.await(turn.done).pipe(
               Effect.timeout(options.requestTimeoutMs ?? 30_000),
               Effect.mapError((cause) => protocolError("Muse did not confirm interruption", cause)),

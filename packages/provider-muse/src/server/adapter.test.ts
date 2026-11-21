@@ -1826,6 +1826,119 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("drops a task list read that predates Stop", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      // A notification the adapter handles only after the held refresh returns.
+      const drained = yield* Deferred.make<void>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { onUsageLimits: () => Deferred.succeed(drained, undefined).pipe(Effect.asVoid) },
+      );
+      const turn = yield* startConversation(harness, fake);
+      yield* fake.emit("item/completed", {
+        turnId: turn.nativeId,
+        item: {
+          itemId: "monitor-1",
+          kind: "toolCall",
+          status: "completed",
+          turnId: turn.nativeId,
+          tool: "monitor",
+          background: true,
+          revision: 1,
+        },
+      });
+      yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+      );
+
+      // The refresh that follows the terminal event is held open while Stop runs.
+      const gate = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("task/list", gate.promise);
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      yield* fake.takeCall("task/list");
+
+      const stopped = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.strictEqual(stopped._tag, "Success");
+      yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) === 0,
+      );
+
+      // The held read predates the stop, so its rows must not come back.
+      gate.resolve({
+        tasks: [
+          { taskId: "monitor-1", kind: "tool.monitor", status: "inProgress", tool: "monitor" },
+        ],
+      });
+      // The adapter handles this only after the held refresh has returned.
+      yield* fake.emitHostWide("usage/changed", SUBSCRIPTION_USAGE);
+      yield* Deferred.await(drained);
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("clears a stopped monitor when the turn ends before Stop's reply", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      yield* fake.emit("item/completed", {
+        turnId: turn.nativeId,
+        item: {
+          itemId: "monitor-1",
+          kind: "toolCall",
+          status: "completed",
+          turnId: turn.nativeId,
+          tool: "monitor",
+          background: true,
+          revision: 1,
+        },
+      });
+      yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+      );
+
+      // Muse reports the turn as ended before it answers the interrupt.
+      const gate = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("turn/interrupt", gate.promise);
+      const stopping = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* fake.takeCall("turn/interrupt");
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "cancelled" });
+      yield* harness.takeEvent("turn.terminal");
+      gate.resolve({});
+
+      const stopped = yield* Fiber.join(stopping);
+      assert.strictEqual(stopped._tag, "Success");
+      // The clear happens inside Stop, so it is settled as soon as the call returns.
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      yield* harness.takeEvent(
+        "provider_thread.updated",
+        (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) === 0,
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("ends a compaction whose item names the held wake as its run", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
