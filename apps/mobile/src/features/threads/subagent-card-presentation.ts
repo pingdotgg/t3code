@@ -1,6 +1,6 @@
 import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { OrchestrationV2Subagent } from "@t3tools/contracts";
-import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { formatDuration, formatLiveDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import * as DateTime from "effect/DateTime";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -20,5 +20,6 @@ export function subagentCardElapsed(
     agent.completedAt ? [DateTime.toEpochMillis(agent.completedAt)] : [],
   );
   const duration = (live ? nowMs : Math.max(...ends)) - Math.min(...starts);
+  if (live) return formatLiveDuration(duration, resolve);
   return duration > 0 ? formatDuration(duration, resolve) : null;
 }

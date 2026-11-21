@@ -9,7 +9,7 @@ import {
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
-import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { formatDuration, formatLiveDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -28,7 +28,10 @@ export interface WorktreeSetupCardProps {
 
 function elapsed(start: string | null, end: string | null, now: number, resolve: MessageResolver) {
   const duration = (end ? Date.parse(end) : now) - (start ? Date.parse(start) : NaN);
-  return Number.isFinite(duration) ? formatDuration(Math.max(0, duration), resolve) : null;
+  if (!Number.isFinite(duration)) return null;
+  return end === null
+    ? formatLiveDuration(duration, resolve)
+    : formatDuration(Math.max(0, duration), resolve);
 }
 
 const statusLabels = {

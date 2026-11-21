@@ -13,7 +13,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-execution";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { commandDisplayText } from "@t3tools/client-runtime/work-log/command-label";
-import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { formatLiveDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import * as DateTime from "effect/DateTime";
 import { msg, T, Var } from "gt-react";
 import {
@@ -178,10 +178,7 @@ export function runStopNowItem(input: {
     actions: (
       <>
         <span
-          ref={tickTextContent(
-            (nowMs) => formatDuration(Math.max(1_000, nowMs - requestedAtMs), m),
-            true,
-          )}
+          ref={tickTextContent((nowMs) => formatLiveDuration(nowMs - requestedAtMs, m), true)}
           className="tabular-nums"
         />
         {unresponsive && input.canForceStop ? (
@@ -279,10 +276,7 @@ export function backgroundWorkNowItem(
       <>
         {startedAtMs === null ? null : (
           <span
-            ref={tickTextContent(
-              (nowMs) => formatDuration(Math.max(1_000, nowMs - startedAtMs), m),
-              true,
-            )}
+            ref={tickTextContent((nowMs) => formatLiveDuration(nowMs - startedAtMs, m), true)}
             className="tabular-nums"
           />
         )}

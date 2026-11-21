@@ -24,3 +24,10 @@ export function formatDuration(durationMs: number, resolve: MFunctionType = mFal
     ? resolve(msg("{hours}h {seconds}s", { hours, seconds }))
     : resolve(msg("{hours}h", { hours }));
 }
+
+export function formatLiveDuration(durationMs: number, resolve: MFunctionType = mFallback): string {
+  const seconds = Number.isFinite(durationMs) ? Math.max(0, Math.floor(durationMs / 1_000)) : 0;
+  return seconds === 0
+    ? resolve(msg("{seconds}s", { seconds: 0 }))
+    : formatDuration(seconds * 1_000, resolve);
+}
