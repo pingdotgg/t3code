@@ -11,7 +11,11 @@ import {
   rememberModelOptions,
   withRememberedModelOptions,
 } from "../../state/use-model-option-memory";
-import { canCommitPendingModel, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  canCommitPendingModel,
+  pendingModelAfterPress,
+  providerSectionIsCollapsed,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -156,6 +160,40 @@ describe("thread settings sheet state", () => {
           models: [{ ...pending, isUnavailable: true }],
         },
       ]),
+    ).toBe(false);
+  });
+
+  it("reopens provider sections the way the user last left them", () => {
+    expect(
+      providerSectionIsCollapsed({
+        defaultExpanded: true,
+        savedCollapsed: undefined,
+        isNarrowed: false,
+      }),
+    ).toBe(false);
+    expect(
+      providerSectionIsCollapsed({
+        defaultExpanded: false,
+        savedCollapsed: undefined,
+        isNarrowed: false,
+      }),
+    ).toBe(true);
+    expect(
+      providerSectionIsCollapsed({
+        defaultExpanded: true,
+        savedCollapsed: true,
+        isNarrowed: false,
+      }),
+    ).toBe(true);
+    expect(
+      providerSectionIsCollapsed({
+        defaultExpanded: false,
+        savedCollapsed: false,
+        isNarrowed: false,
+      }),
+    ).toBe(false);
+    expect(
+      providerSectionIsCollapsed({ defaultExpanded: true, savedCollapsed: true, isNarrowed: true }),
     ).toBe(false);
   });
 });

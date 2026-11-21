@@ -98,7 +98,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { providerWorkspaceSnapshotRefresh } from "../../state/provider-workspace-snapshot-refresh";
 import { threadAllowsProviderSwitch } from "../../state/thread-provider-switching";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { ScreenContent } from "../../components/ui/ScreenContent";
@@ -143,6 +143,7 @@ const THREAD_SETTINGS_CATALOG_EXIT_TRANSITION = FadeOut.duration(120);
 const THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION = LinearTransition.duration(180);
 const THREAD_SETTINGS_OPTION_ENTER_TRANSITION = FadeIn.duration(140);
 const THREAD_SETTINGS_OPTION_EXIT_TRANSITION = FadeOut.duration(100);
+const EMPTY_PROVIDER_SECTIONS_COLLAPSED: Readonly<Record<string, boolean>> = {};
 const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
   readonly provider: ProviderInstanceId;
   readonly model: string;
@@ -331,7 +332,7 @@ type ThreadSettingsSessionValue = {
   readonly promptTraits: ReturnType<typeof getPromptControlledTraits>;
   readonly displayedModelSelection: ModelSelection | null;
   readonly reportedModelSelection: ModelSelection | null;
-  readonly providerExpansionOverrides: ReadonlySet<string>;
+  readonly providerSectionsCollapsed: Readonly<Record<string, boolean>>;
   readonly hasLegacyModels: boolean;
   readonly pendingModel: ModelOption | null;
   readonly providerFilter: string | null;
@@ -345,7 +346,7 @@ type ThreadSettingsSessionValue = {
   readonly setProviderFilter: (providerKey: string | null) => void;
   readonly setSearchQuery: (query: string) => void;
   readonly setShowLegacy: (showLegacy: boolean) => void;
-  readonly toggleProvider: (providerKey: string) => void;
+  readonly toggleProvider: (sectionKey: string, collapsed: boolean) => void;
   /** The provider whose catalog for this folder the picker keeps fresh. */
   readonly workspaceScan: { readonly instanceId: ProviderInstanceId; readonly cwd: string } | null;
 };
@@ -510,9 +511,10 @@ function ThreadSettingsSessionProvider(
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const providerSectionsCollapsed = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.modelProviderSectionsCollapsed ?? EMPTY_PROVIDER_SECTIONS_COLLAPSED)
+    : EMPTY_PROVIDER_SECTIONS_COLLAPSED;
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const displayedPrompt = pendingModel ? (pendingPrompt ?? props.prompt) : props.prompt;
@@ -603,13 +605,15 @@ function ThreadSettingsSessionProvider(
     }
   };
 
-  const toggleProvider = (providerKey: string) => {
-    setProviderExpansionOverrides((current) => {
-      const next = new Set(current);
-      if (!next.delete(providerKey)) {
-        next.add(providerKey);
-      }
-      return next;
+  // Transforms read optimistic state, so quick toggles of different sections all persist.
+  const toggleProvider = (sectionKey: string, collapsed: boolean) => {
+    void savePreferences({
+      transform: (current) => ({
+        modelProviderSectionsCollapsed: {
+          ...current.modelProviderSectionsCollapsed,
+          [sectionKey]: !collapsed,
+        },
+      }),
     });
   };
 
@@ -654,7 +658,7 @@ function ThreadSettingsSessionProvider(
     reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
-    providerExpansionOverrides,
+    providerSectionsCollapsed,
     hasLegacyModels,
     pendingModel,
     providerFilter,
@@ -785,7 +789,7 @@ function ThreadSettingsProviderListHeader(props: {
   readonly provider: ThreadSettingsProviderCatalog;
 }) {
   const session = useThreadSettingsSession();
-  const onToggle = () => session.toggleProvider(props.provider.key);
+  const onToggle = () => session.toggleProvider(props.provider.key, props.provider.collapsed);
 
   return (
     <ProviderHeader
@@ -804,7 +808,7 @@ function ThreadSettingsSubProviderListHeader(props: {
   readonly item: Extract<ThreadSettingsCatalogItem, { kind: "subProvider" }>;
 }) {
   const session = useThreadSettingsSession();
-  const onToggle = () => session.toggleProvider(props.item.expansionKey);
+  const onToggle = () => session.toggleProvider(props.item.expansionKey, props.item.collapsed);
 
   return (
     <ProviderHeader
@@ -860,7 +864,7 @@ function subProviderCatalogItems(
         subProvider.unavailableReason !== undefined ||
         providerSectionIsCollapsed({
           defaultExpanded: backendModels.some(session.isApplied),
-          hasExpansionOverride: session.providerExpansionOverrides.has(expansionKey),
+          savedCollapsed: session.providerSectionsCollapsed[expansionKey],
           isNarrowed: false,
         });
       return [
@@ -936,7 +940,7 @@ function buildThreadSettingsCatalogItems(
     const collapsible = !isNarrowed;
     const collapsed = providerSectionIsCollapsed({
       defaultExpanded: isPrimary || containsAppliedSelection,
-      hasExpansionOverride: session.providerExpansionOverrides.has(group.providerKey),
+      savedCollapsed: session.providerSectionsCollapsed[group.providerKey],
       isNarrowed,
     });
     const provider: ThreadSettingsProviderCatalog = {

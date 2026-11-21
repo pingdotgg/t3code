@@ -65,11 +65,12 @@ export function canCommitPendingModel(
 
 export function providerSectionIsCollapsed(input: {
   readonly defaultExpanded: boolean;
-  readonly hasExpansionOverride: boolean;
+  /** The state the user last chose for this section, if any; it outlives the sheet. */
+  readonly savedCollapsed: boolean | undefined;
   readonly isNarrowed: boolean;
 }): boolean {
   if (input.isNarrowed) {
     return false;
   }
-  return input.defaultExpanded ? input.hasExpansionOverride : !input.hasExpansionOverride;
+  return input.savedCollapsed ?? !input.defaultExpanded;
 }
