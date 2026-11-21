@@ -22,6 +22,8 @@ describe("resolveT3McpToolPresentation", () => {
         "t3_code/",
         "t3code:",
         "mcp_t3-code_",
+        "Run mcp_t3-code_",
+        "Running ",
         "T3 Code ",
         "t3-code · ",
       ]) {
@@ -29,8 +31,12 @@ describe("resolveT3McpToolPresentation", () => {
           presentation,
         );
       }
+      expect(resolveT3McpToolPresentation(`Run mcp_t3-code_${tool}?`), tool).toEqual(presentation);
       expect(resolveT3McpToolPresentation(`mcp__another-server__${tool}`), tool).toBeNull();
+      expect(resolveT3McpToolPresentation(`Run mcp__another-server__${tool}`), tool).toBeNull();
+      expect(resolveT3McpToolPresentation(`Run mcp_another_${tool}`), tool).toBeNull();
     }
+    expect(resolveT3McpToolPresentation("Run manage_task")).toBeNull();
   });
 
   it("matches OpenCode 2's per-thread server names, whose thread ids hold underscores", () => {

@@ -41,9 +41,11 @@ import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import {
+  SEND_TO_USER_TOOL_NAME,
   compactDynamicToolOutput,
   htmlRenderFromToolItem,
   mcpToolResultOutput,
+  sentMessageFromToolItem,
 } from "@t3tools/shared/toolOutput";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
@@ -1672,6 +1674,8 @@ interface ActiveAcpTurn {
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
   /** Tools the agent failed after Stop; later updates keep them interrupted. */
   readonly stoppedToolCallIds: Set<string>;
+  /** Per-call send_to_user outcome once settled, so replays never consume a sibling record. */
+  readonly claimedSentMessages: Map<string, string | null>;
   readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
@@ -4715,7 +4719,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
             let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
-            const isHtmlRender = resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME;
+            const t3ToolId = resolveT3McpToolId(toolName);
+            const isHtmlRender = t3ToolId === HTML_RENDER_TOOL_NAME;
+            const isSendToUser = t3ToolId === SEND_TO_USER_TOOL_NAME;
             const isError =
               compactDynamicToolOutput(output)?.isError === true ||
               compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
@@ -4749,6 +4755,82 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ...toolCall,
                   data: { ...toolCall.data, rawOutput: output },
                 });
+              }
+            }
+            if (isSendToUser) {
+              const sendToUserInputMessage = (
+                candidateTool: AcpToolCallState,
+                candidateIdentity = extractMcpToolCallIdentity(candidateTool, {
+                  embeddedTerminalCommands: embeddedTerminalCommands(
+                    context.nativeThreadId,
+                    candidateTool.toolCallId,
+                  ),
+                }),
+              ): string | undefined => {
+                if (
+                  candidateIdentity === undefined ||
+                  resolveT3McpToolId(`${candidateIdentity.server}.${candidateIdentity.tool}`) !==
+                    SEND_TO_USER_TOOL_NAME
+                ) {
+                  return undefined;
+                }
+                const candidateRawInput = unknownRecord(candidateTool.data.rawInput);
+                const candidateInput =
+                  candidateIdentity.input ??
+                  unknownRecord(candidateRawInput?.arguments) ??
+                  candidateRawInput;
+                return typeof candidateInput?.message === "string"
+                  ? candidateInput.message
+                  : undefined;
+              };
+              const inputMessage = sendToUserInputMessage(toolCall, mcpIdentity);
+              const reportedMessage = sentMessageFromToolItem({ toolName, output });
+              const alreadyClaimed = context.claimedSentMessages.has(toolCall.toolCallId);
+              if (!alreadyClaimed) {
+                if (status === "failed" || (status === "completed" && isError)) {
+                  context.claimedSentMessages.set(toolCall.toolCallId, null);
+                  const candidate = reportedMessage ?? inputMessage;
+                  if (candidate !== undefined) {
+                    // Never drain a record that may belong to an unsettled sibling call with identical text.
+                    let unsettledPeers = 0;
+                    for (const [peerId, peer] of context.tools) {
+                      if (peerId === toolCall.toolCallId || context.claimedSentMessages.has(peerId))
+                        continue;
+                      if (peer.status === "failed" || peer.status === "completed") continue;
+                      if (sendToUserInputMessage(peer) === candidate) unsettledPeers += 1;
+                    }
+                    yield* mcpSessions.takeSentMessage(context.input.threadId, candidate, {
+                      minRemaining: unsettledPeers,
+                    });
+                  }
+                } else if (status === "completed") {
+                  if (reportedMessage !== undefined) {
+                    yield* mcpSessions.takeSentMessage(context.input.threadId, reportedMessage);
+                    context.claimedSentMessages.set(toolCall.toolCallId, reportedMessage);
+                  } else if (projectedStatus === undefined && inputMessage !== undefined) {
+                    // Only a provider-reported completion may claim an unverified session record;
+                    // synthesized turn-end completions must not adopt a failed sibling's record.
+                    const sentMessage = yield* mcpSessions.takeSentMessage(
+                      context.input.threadId,
+                      inputMessage,
+                    );
+                    context.claimedSentMessages.set(toolCall.toolCallId, sentMessage ?? null);
+                    if (sentMessage !== undefined) {
+                      output = { sentMessage };
+                    }
+                  } else {
+                    context.claimedSentMessages.set(toolCall.toolCallId, null);
+                  }
+                }
+              } else if (status === "completed" && !isError && reportedMessage === undefined) {
+                const claimed = context.claimedSentMessages.get(toolCall.toolCallId);
+                if (typeof claimed === "string") {
+                  output = { sentMessage: claimed };
+                }
+              }
+              if (status === "completed" && isError && reportedMessage !== undefined) {
+                // Keep the error visible to clients when acpMcpToolCallOutput unwrapped result.structuredContent.
+                output = { isError: true };
               }
             }
             turnItem = {
@@ -8582,6 +8664,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               terminalizeSubagents: directStopQuarantine,
             });
           }
+          // Scope unclaimed send_to_user records to the turn so failed/interrupted sends cannot leak.
+          yield* mcpSessions.clearSentMessages(context.input.threadId);
           yield* closeTextStreams(context);
           // Ingestion may stop at turn.terminal, before a delayed flush would run.
           yield* textEmissionPermit.withPermit(
@@ -9438,6 +9522,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
               stoppedToolCallIds: new Set(),
+              claimedSentMessages: new Map(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
               subagents: new Map(),

@@ -464,9 +464,13 @@ function resolveT3McpToolName(value: string): string | null {
   return name;
 }
 
+// Antigravity titles calls "Running <tool>" or, from agy 1.5.8, "Run mcp_<server>_<tool>"; prompts end in "?".
+export const ANTIGRAVITY_TOOL_TITLE = /^Run(?:ning)? (?<name>[^\s?]+)\??$/;
+
 // ACP tool prefixes vary; match loosely but require a known display-name entry.
 function parseT3McpToolName(value: string): string | null {
-  const label = normalizeT3McpToolLabel(value);
+  const normalized = normalizeT3McpToolLabel(value);
+  const label = ANTIGRAVITY_TOOL_TITLE.exec(normalized)?.groups?.name ?? normalized;
   const mcpMatch = /^mcp__(?<server>.+?)__(?<tool>.+)$/i.exec(label);
   if (mcpMatch?.groups) {
     const { server, tool } = mcpMatch.groups;

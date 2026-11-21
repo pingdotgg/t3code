@@ -13,7 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -690,8 +690,8 @@ describe("AntigravityAdapterV2 workspace changes", () => {
   );
 });
 
-describe("AntigravityAdapterV2 html_render pages", () => {
-  it.effect("shows the page html_render published when the agent reports only a summary", () =>
+describe("AntigravityAdapterV2 html_render and send_to_user outputs", () => {
+  it.effect("recovers html_render and send_to_user outputs when omitted or summarized", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -850,6 +850,227 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "agy-1.5.8",
                     status: "completed",
                   });
+                  // send_to_user loses its MCP output on Antigravity too; recover recorded messages.
+                  const draft = "Draft:\n\n> Ships Thursday.";
+                  const failedDraft = "Failed draft";
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-summary",
+                    title: "Running send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: draft },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-unsent",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: "Never executed", toolSummary: "Send message" },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-failed",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: failedDraft, toolSummary: "Send message" },
+                  });
+                  yield* mcpSessions.recordSentMessage(threadId, draft);
+                  yield* mcpSessions.recordSentMessage(threadId, failedDraft);
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-unsent",
+                    status: "completed",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-failed",
+                    status: "failed",
+                    rawOutput: "Summary of failed send",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-summary",
+                    status: "completed",
+                    rawOutput: "Summary of sent-summary",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-summary",
+                    status: "completed",
+                    rawOutput: "Repeated summary of sent-summary",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-agy-1.5.8",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: "Full mid-turn update", toolSummary: "Send update" },
+                  });
+                  yield* mcpSessions.recordSentMessage(threadId, "Full mid-turn update");
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-agy-1.5.8",
+                    status: "completed",
+                  });
+                  // Repeated structured completions (even with an interleaved in_progress replay)
+                  // must not steal a sibling call's record.
+                  const repeatedText = "Identical update";
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-dup-1",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: repeatedText, toolSummary: "Send update" },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-dup-2",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: repeatedText, toolSummary: "Send update" },
+                  });
+                  yield* mcpSessions.recordSentMessage(threadId, repeatedText);
+                  yield* mcpSessions.recordSentMessage(threadId, repeatedText);
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-dup-1",
+                    status: "completed",
+                    rawOutput: { sentMessage: repeatedText },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-dup-1",
+                    status: "in_progress",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-dup-1",
+                    status: "completed",
+                    rawOutput: { sentMessage: repeatedText },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-dup-2",
+                    status: "completed",
+                  });
+                  // A failed call that never ran must not steal a live sibling's sole record.
+                  const siblingText = "Shared sibling text";
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-sibling-fail",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: siblingText, toolSummary: "Send sibling" },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-sibling-ok",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: siblingText, toolSummary: "Send sibling" },
+                  });
+                  yield* mcpSessions.recordSentMessage(threadId, siblingText);
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-sibling-fail",
+                    status: "failed",
+                    rawOutput: "Permission denied",
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-sibling-ok",
+                    status: "completed",
+                  });
+                  // Completed MCP errors never render as sent messages, even with structuredContent.
+                  const erroredEmptyText = "Errored empty send";
+                  const erroredStructuredText = "Errored structured send";
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-error-empty",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: erroredEmptyText, toolSummary: "Send error" },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-error-structured",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: erroredStructuredText, toolSummary: "Send error" },
+                  });
+                  yield* mcpSessions.recordSentMessage(threadId, erroredEmptyText);
+                  yield* mcpSessions.recordSentMessage(threadId, erroredStructuredText);
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-error-empty",
+                    status: "completed",
+                    rawOutput: { result: { isError: true, content: [] } },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-error-structured",
+                    status: "completed",
+                    rawOutput: {
+                      result: {
+                        isError: true,
+                        structuredContent: { sentMessage: erroredStructuredText },
+                        content: [],
+                      },
+                    },
+                  });
+                  // Verbatim Markdown starting with "data:image/" prose survives sanitization.
+                  const proseText = "data:image/png is the prefix to look for";
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-prose-data-prefix",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: proseText, toolSummary: "Send prose" },
+                  });
+                  yield* mcpSessions.recordSentMessage(threadId, proseText);
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-prose-data-prefix",
+                    status: "completed",
+                  });
+                  // Inverse sibling case: if call A records and fails while identical call B never
+                  // completes, turn-end projected completion must not let B claim A's record, and
+                  // turn finalization clears the leftover record.
+                  const inverseSiblingText = "Inverse sibling text";
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-inv-fail",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: inverseSiblingText, toolSummary: "Send inverse" },
+                  });
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "sent-inv-projected",
+                    title: "Run mcp_t3-code_send_to_user",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { message: inverseSiblingText, toolSummary: "Send inverse" },
+                  });
+                  yield* mcpSessions.recordSentMessage(threadId, inverseSiblingText);
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "sent-inv-fail",
+                    status: "failed",
+                    rawOutput: "Transport lost",
+                  });
                   return { stopReason: "end_turn" as const };
                 }),
             })),
@@ -936,6 +1157,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
           status: item.status,
           toolName: item.toolName,
           page: htmlRenderFromToolItem(item),
+          sentMessage: sentMessageFromToolItem(item),
           output: item.output,
         };
       };
@@ -944,24 +1166,28 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         status: "completed",
         toolName: "t3-code.html_render",
         page: page("replacement"),
+        sentMessage: undefined,
         output: { htmlRender: page("replacement") },
       });
       assert.deepEqual(tool("unpublished"), {
         status: "completed",
         toolName: "t3-code.html_render",
         page: undefined,
+        sentMessage: undefined,
         output: "Summary of unpublished",
       });
       assert.deepEqual(tool("failed"), {
         status: "failed",
         toolName: "t3-code.html_render",
         page: undefined,
+        sentMessage: undefined,
         output: "Summary of failed",
       });
       assert.deepEqual(tool("error"), {
         status: "completed",
         toolName: "t3-code.html_render",
         page: undefined,
+        sentMessage: undefined,
         output: [],
       });
       assert.deepEqual(
@@ -980,13 +1206,113 @@ describe("AntigravityAdapterV2 html_render pages", () => {
           status: "completed",
           toolName: "t3-code.html_render",
           page: page(name),
+          sentMessage: undefined,
           output: { htmlRender: page(name) },
         });
       }
+      assert.deepEqual(tool("sent-summary"), {
+        status: "completed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: "Draft:\n\n> Ships Thursday.",
+        output: { sentMessage: "Draft:\n\n> Ships Thursday." },
+      });
+      assert.deepEqual(tool("sent-agy-1.5.8"), {
+        status: "completed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: "Full mid-turn update",
+        output: { sentMessage: "Full mid-turn update" },
+      });
+      assert.deepEqual(tool("sent-unsent"), {
+        status: "completed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: undefined,
+        output: undefined,
+      });
+      assert.deepEqual(tool("sent-failed"), {
+        status: "failed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: undefined,
+        output: "Summary of failed send",
+      });
+      for (const name of ["sent-dup-1", "sent-dup-2"]) {
+        assert.deepEqual(tool(name), {
+          status: "completed",
+          toolName: "t3-code.send_to_user",
+          page: undefined,
+          sentMessage: "Identical update",
+          output: { sentMessage: "Identical update" },
+        });
+      }
+      assert.deepEqual(tool("sent-sibling-fail"), {
+        status: "failed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: undefined,
+        output: "Permission denied",
+      });
+      assert.deepEqual(tool("sent-sibling-ok"), {
+        status: "completed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: "Shared sibling text",
+        output: { sentMessage: "Shared sibling text" },
+      });
+      assert.deepEqual(tool("sent-error-empty"), {
+        status: "completed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: undefined,
+        output: [],
+      });
+      assert.deepEqual(tool("sent-error-structured"), {
+        status: "completed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: undefined,
+        output: { isError: true },
+      });
+      assert.deepEqual(tool("sent-prose-data-prefix"), {
+        status: "completed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: "data:image/png is the prefix to look for",
+        output: { sentMessage: "data:image/png is the prefix to look for" },
+      });
+      assert.deepEqual(tool("sent-inv-fail"), {
+        status: "failed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: undefined,
+        output: "Transport lost",
+      });
+      assert.deepEqual(tool("sent-inv-projected"), {
+        status: "completed",
+        toolName: "t3-code.send_to_user",
+        page: undefined,
+        sentMessage: undefined,
+        output: undefined,
+      });
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, report), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, failed), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, errored), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, telemetry), undefined);
+      for (const message of [
+        "Draft:\n\n> Ships Thursday.",
+        "Failed draft",
+        "Full mid-turn update",
+        "Identical update",
+        "Shared sibling text",
+        "Errored empty send",
+        "Errored structured send",
+        "data:image/png is the prefix to look for",
+        "Inverse sibling text",
+      ]) {
+        assert.strictEqual(yield* mcpSessions.takeSentMessage(threadId, message), undefined);
+      }
     }).pipe(Effect.provide(layerSession)),
   );
 });
