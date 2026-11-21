@@ -492,4 +492,21 @@ describe("BrowserDocumentFrame", () => {
     await screen.rerender(frame("2"));
     expect(shown(), "a new revision showed the previous revision's frame").not.toBe(first);
   });
+
+  // Without moveBefore (Safari) a native frame would reload at the top after every remount.
+  it("uses the in-app PDF viewer where a loaded frame cannot be moved", async () => {
+    using _viewer = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(true);
+    const moveBefore = Object.getOwnPropertyDescriptor(Element.prototype, "moveBefore")!;
+    Reflect.deleteProperty(Element.prototype, "moveBefore");
+    using _moveBefore = {
+      [Symbol.dispose]: () => Object.defineProperty(Element.prototype, "moveBefore", moveBefore),
+    };
+    await using screen = await render(
+      <div className="flex h-75 w-100 flex-col">
+        <BrowserDocumentFrame src="/paper.pdf" title="Paper" pdf documentKey="moved-paper:1" />
+      </div>,
+    );
+    await expect.element(screen.getByRole("region", { name: "Paper" })).toBeInTheDocument();
+    expect(screen.container.querySelector("iframe")).toBeNull();
+  });
 });

@@ -104,12 +104,14 @@ function PdfDocument(props: {
 
 const MAX_PARKED_PDF_FRAMES = 3;
 const parkedPdfFrames = new Map<string, HTMLIFrameElement>();
-type MovableParent = HTMLElement & { moveBefore?: (node: Node, child: Node | null) => void };
+type MovableParent = HTMLElement & { moveBefore: (node: Node, child: Node | null) => void };
+/** Only `moveBefore` moves a frame without reloading it. */
+const canMoveFrames = (): boolean => "moveBefore" in Element.prototype;
 
 function pdfFrameParkingLot(): MovableParent {
-  const existing = document.querySelector<HTMLElement>("[data-parked-pdf-frames]");
+  const existing = document.querySelector<MovableParent>("[data-parked-pdf-frames]");
   if (existing) return existing;
-  const lot = document.createElement("div");
+  const lot = document.createElement("div") as MovableParent;
   lot.dataset.parkedPdfFrames = "";
   lot.inert = true;
   lot.style.cssText =
@@ -121,19 +123,19 @@ function pdfFrameParkingLot(): MovableParent {
 /**
  * The native viewer exposes no reading position, so the loaded frame itself is kept: unmounting
  * (a thread switch) parks it off screen and the next mount of the same revision takes it back.
- * Only `moveBefore` moves a frame without reloading it; without it every mount loads afresh.
+ * Rendered only where `canMoveFrames` holds.
  */
 function NativePdfFrame(props: { src: string; title: string; positionKey: string }) {
-  const hostRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<MovableParent & HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns an iframe that outlives this component, which React cannot express
   useLayoutEffect(() => {
-    const host: MovableParent | null = hostRef.current;
+    const host = hostRef.current;
     if (!host) return;
     const { positionKey } = props;
     const parked = parkedPdfFrames.get(positionKey);
     parkedPdfFrames.delete(positionKey);
     let frame = parked;
-    if (parked?.isConnected && host.moveBefore) {
+    if (parked?.isConnected) {
       host.moveBefore(parked, null);
       parked.style.width = "";
       parked.style.height = "";
@@ -147,11 +149,8 @@ function NativePdfFrame(props: { src: string; title: string; positionKey: string
       host.append(frame);
     }
     return () => {
+      if (!frame?.isConnected) return;
       const lot = pdfFrameParkingLot();
-      if (!frame?.isConnected || !lot.moveBefore) {
-        frame?.remove();
-        return;
-      }
       // A parked frame keeps its size, so the viewer does not lay the document out again.
       frame.style.width = `${frame.offsetWidth}px`;
       frame.style.height = `${frame.offsetHeight}px`;
@@ -181,9 +180,12 @@ function PdfDocumentRevision(props: {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
+  // A browser that cannot move a loaded frame would lose the reading position on a thread
+  // switch, so it gets the in-app viewer, which remembers its own.
   const native =
     !isElectron &&
     navigator.pdfViewerEnabled &&
+    canMoveFrames() &&
     !/iPad|iPhone|iPod/.test(navigator.userAgent) &&
     !(navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   return native ? (
