@@ -3298,6 +3298,9 @@ const make = Effect.gen(function* () {
                     : {
                         ...request.target,
                         providerInstanceId: committedThread.modelSelection.instanceId,
+                        ...(request.target?.model === undefined
+                          ? {}
+                          : { model: committedThread.modelSelection.model }),
                       },
                 providers,
                 cwd,
