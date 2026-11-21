@@ -853,24 +853,30 @@ export const layer: Layer.Layer<
       });
       const { isCurrentAttemptInStatus } = runControls;
 
-      const resolvedPolicy = yield* runtimePolicy
-        .resolve({
-          thread: projection.thread,
-          modelSelection: run.modelSelection,
-        })
-        .pipe(Effect.result);
-      if (resolvedPolicy._tag === "Failure") {
-        const error = resolvedPolicy.failure;
-        if (error._tag !== "RuntimePolicyAboveCeilingError") return yield* error;
-        yield* settleStartFailure({
-          signal: "runtime-mode-above-ceiling",
-          title: "Thread mode is above the policy limit",
-          error,
-          message: error.message,
-        });
-        return;
-      }
-      const resolvedRuntimePolicy = resolvedPolicy.success;
+      const resolveTurnRuntimePolicy = Effect.fn(
+        "ProviderTurnStartService.resolveTurnRuntimePolicy",
+      )(function* () {
+        const resolvedPolicy = yield* runtimePolicy
+          .resolve({
+            thread: projection.thread,
+            modelSelection: run.modelSelection,
+          })
+          .pipe(Effect.result);
+        if (resolvedPolicy._tag === "Failure") {
+          const error = resolvedPolicy.failure;
+          if (error._tag !== "RuntimePolicyAboveCeilingError") return yield* error;
+          yield* settleStartFailure({
+            signal: "runtime-mode-above-ceiling",
+            title: "Thread mode is above the policy limit",
+            error,
+            message: error.message,
+          });
+          return undefined;
+        }
+        return resolvedPolicy.success;
+      });
+      const initialRuntimePolicy = yield* resolveTurnRuntimePolicy();
+      if (initialRuntimePolicy === undefined) return;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
@@ -944,7 +950,7 @@ export const layer: Layer.Layer<
           threadId: projection.thread.id,
           providerSessionId,
           modelSelection: run.modelSelection,
-          runtimePolicy: resolvedRuntimePolicy,
+          runtimePolicy: initialRuntimePolicy,
           ...(existingSessionProjection === undefined
             ? {}
             : { resumeFromSession: existingSessionProjection }),
@@ -974,6 +980,11 @@ export const layer: Layer.Layer<
         return;
       }
       const session = sessionResult.success;
+      if (!(yield* isCurrentAttemptInStatus("starting"))) return;
+      // Opening a session can discover account-specific modes (such as Antigravity's Auto),
+      // so re-resolve before starting the turn instead of keeping a cold pre-session fallback.
+      const resolvedRuntimePolicy = yield* resolveTurnRuntimePolicy();
+      if (resolvedRuntimePolicy === undefined) return;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,

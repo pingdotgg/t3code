@@ -3049,6 +3049,48 @@ effectIt.effect.each([
   }),
 );
 
+effectIt.effect(
+  "re-resolves runtime policy after opening a session that discovers Auto support",
+  () =>
+    Effect.gen(function* () {
+      let sessionOpened = false;
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        failReadsAfterRunning: true,
+      });
+      harness.resolveRuntimePolicy.mockImplementation(({ thread }) =>
+        Effect.succeed({
+          cwd: thread.worktreePath ?? "/tmp/native-account-command",
+          runtimeMode: sessionOpened ? "auto" : "approval-required",
+          interactionMode: thread.interactionMode,
+        } as never),
+      );
+      const open = harness.open.getMockImplementation()!;
+      harness.open.mockImplementation(() =>
+        open().pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              sessionOpened = true;
+            }),
+          ),
+        ),
+      );
+
+      yield* harness.start;
+
+      expect(harness.open).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runtimePolicy: expect.objectContaining({ runtimeMode: "approval-required" }),
+        }),
+      );
+      expect(harness.startRootRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runtimePolicy: expect.objectContaining({ runtimeMode: "auto" }),
+        }),
+      );
+    }),
+);
+
 effectIt.effect("starts another provider in the same checkout while a turn is pending", () =>
   Effect.gen(function* () {
     const worktreePath = "/tmp/provider-start-shared-checkout";
