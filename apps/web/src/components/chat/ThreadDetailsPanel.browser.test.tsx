@@ -42,6 +42,8 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
           branch: null,
           pullRequests: state.pullRequests,
         }) as never,
+  useEnvironmentServerConfigLoaded: (id: EnvironmentId | null) =>
+    state.configLoaded && id === EnvironmentId.make("environment"),
   useServerConfigs: (() =>
     new Map(
       state.configLoaded

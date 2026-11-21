@@ -1,4 +1,5 @@
 import appCss from "../index.css?inline";
+import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
@@ -6,12 +7,15 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
+  IssueTrackerKind,
   type LocalApi,
   ProjectId,
   ThreadId,
   type ScopedThreadRef,
+  type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -21,8 +25,10 @@ import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
+import { useSupportsMultiplePullRequests } from "../hooks/useSupportsMultiplePullRequests";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
+import { issueEnvironment, useSidebarLinkedIssueState } from "../state/issues";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -33,6 +39,23 @@ import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
 import { SidebarProvider } from "./ui/sidebar";
 
+const serverConfigsAtomOverride = vi.hoisted(() => ({
+  atom: null as unknown as Atom.Writable<ReadonlyMap<EnvironmentId, EnvironmentServerConfig>>,
+}));
+vi.mock(import("../state/presentation"), async (original) => {
+  const { Atom: ReactivityAtom } = await import("effect/reactivity");
+  const actual = await original();
+  serverConfigsAtomOverride.atom = ReactivityAtom.make<
+    ReadonlyMap<EnvironmentId, EnvironmentServerConfig>
+  >(new Map());
+  return {
+    ...actual,
+    environmentPresentations: {
+      ...actual.environmentPresentations,
+      serverConfigsAtom: serverConfigsAtomOverride.atom,
+    },
+  };
+});
 vi.mock(import("../state/olderSettledShelf"), async (original) => {
   const actual = await original();
   return { ...actual, useOlderSettledShelf: vi.fn(actual.useOlderSettledShelf) };
@@ -208,6 +231,125 @@ describe("sidebar render isolation", () => {
     await userEvent.keyboard(`{/${modifier}}`);
     expect(rowRenders()).toBeGreaterThan(beforeRelease);
     expect(jumpLabelsSince(beforeRelease)).toEqual([]);
+  });
+
+  // regression: #39934 unrelated server-config Map updates re-rendered every sidebar row
+  it("keeps sidebar row server-config hooks quiet on unrelated config updates and reacts to real changes", async () => {
+    using stack = new DisposableStack();
+    const envA = EnvironmentId.make("env-a");
+    const envB = EnvironmentId.make("env-b");
+    const configWith = (cwd: string, issues: boolean) =>
+      ({
+        cwd,
+        environment: { capabilities: { issues } },
+      }) as unknown as EnvironmentServerConfig;
+    const issueLink: ThreadIssueLink = {
+      projectId: ProjectId.make("proj-1"),
+      tracker: IssueTrackerKind.make("github"),
+      host: "github.com",
+      scope: "acme/app",
+      key: "42",
+      displayKey: "#42",
+      title: "Fix lag",
+      url: "https://github.com/acme/app/issues/42",
+      source: "manual",
+      linkedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const openState = { category: "open" as const, name: "open" };
+    const detailAtom = Atom.make(AsyncResult.success({ state: openState }));
+    const detailSpy = vi
+      .spyOn(issueEnvironment, "detail")
+      .mockReturnValue(detailAtom as unknown as ReturnType<typeof issueEnvironment.detail>);
+    stack.defer(() => detailSpy.mockRestore());
+
+    const registry = AtomRegistry.make();
+    stack.defer(() => registry.dispose());
+    registry.set(serverConfigsAtomOverride.atom, new Map([[envA, configWith("/a", false)]]));
+
+    const onPrRender = vi.fn<(supported: boolean) => void>();
+    const onIssueRender = vi.fn<(state: unknown) => void>();
+    const onNoLinkIssueRender = vi.fn<(state: unknown) => void>();
+    function PrProbe() {
+      const supported = useSupportsMultiplePullRequests(envA);
+      onPrRender(supported);
+      return <span>{String(supported)}</span>;
+    }
+    function IssueProbe() {
+      const state = useSidebarLinkedIssueState(envA, [issueLink]);
+      onIssueRender(state);
+      return <span>{state?.name ?? "none"}</span>;
+    }
+    function NoLinkIssueProbe() {
+      const state = useSidebarLinkedIssueState(envA, undefined);
+      onNoLinkIssueRender(state);
+      return <span>{state?.name ?? "none"}</span>;
+    }
+
+    await using _screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <PrProbe />
+        <IssueProbe />
+        <NoLinkIssueProbe />
+      </RegistryContext.Provider>,
+    );
+
+    expect(onPrRender).toHaveBeenCalledExactlyOnceWith(true);
+    expect(onIssueRender).toHaveBeenCalledExactlyOnceWith(null);
+    expect(onNoLinkIssueRender).toHaveBeenCalledExactlyOnceWith(null);
+    expect(detailSpy).not.toHaveBeenCalled();
+
+    // Unrelated config update for envA and an update for envB must not re-render either hook.
+    await act(() => {
+      registry.set(
+        serverConfigsAtomOverride.atom,
+        new Map([
+          [envA, configWith("/a-updated", false)],
+          [envB, configWith("/b", true)],
+        ]),
+      );
+    });
+    expect(onPrRender).toHaveBeenCalledTimes(1);
+    expect(onIssueRender).toHaveBeenCalledTimes(1);
+    expect(onNoLinkIssueRender).toHaveBeenCalledTimes(1);
+
+    // Turning issues capability on wakes only the row with linked issues.
+    await act(() => {
+      registry.set(
+        serverConfigsAtomOverride.atom,
+        new Map([
+          [envA, configWith("/a-updated", true)],
+          [envB, configWith("/b", true)],
+        ]),
+      );
+    });
+    expect(onPrRender).toHaveBeenCalledTimes(1);
+    expect(onIssueRender).toHaveBeenCalledTimes(2);
+    expect(onIssueRender).toHaveBeenLastCalledWith(openState);
+    expect(onNoLinkIssueRender).toHaveBeenCalledTimes(1);
+
+    // Another unrelated config update while issues stay enabled stays quiet.
+    await act(() => {
+      registry.set(
+        serverConfigsAtomOverride.atom,
+        new Map([
+          [envA, configWith("/a-updated-2", true)],
+          [envB, configWith("/b-2", false)],
+        ]),
+      );
+    });
+    expect(onPrRender).toHaveBeenCalledTimes(1);
+    expect(onIssueRender).toHaveBeenCalledTimes(2);
+    expect(onNoLinkIssueRender).toHaveBeenCalledTimes(1);
+
+    // Losing envA's server config updates both config-presence and linked-issue hooks.
+    await act(() => {
+      registry.set(serverConfigsAtomOverride.atom, new Map([[envB, configWith("/b-2", false)]]));
+    });
+    expect(onPrRender).toHaveBeenCalledTimes(2);
+    expect(onPrRender).toHaveBeenLastCalledWith(false);
+    expect(onIssueRender).toHaveBeenCalledTimes(3);
+    expect(onIssueRender).toHaveBeenLastCalledWith(null);
+    expect(onNoLinkIssueRender).toHaveBeenCalledTimes(1);
   });
 });
 

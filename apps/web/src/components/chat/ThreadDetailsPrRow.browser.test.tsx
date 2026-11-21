@@ -38,6 +38,8 @@ vi.mock(import("~/state/use-atom-command"), () => ({
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   // Rows render a pull request only with a project, so this does not reach tests that pass none.
+  useEnvironmentServerConfigLoaded: (id: EnvironmentId | null) =>
+    id === EnvironmentId.make("environment"),
   useServerConfigs: (() =>
     new Map([
       [

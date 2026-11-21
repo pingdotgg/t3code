@@ -13,7 +13,7 @@ import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { useServerConfigs } from "./entities";
+import { useEnvironmentSupportsIssues, useServerConfigs } from "./entities";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 
 export type { IssueListTarget };
@@ -47,9 +47,9 @@ export function useSidebarLinkedIssueState(
   environmentId: EnvironmentId,
   links: ReadonlyArray<ThreadIssueLink> | undefined,
 ) {
-  const configs = useServerConfigs();
+  const supportsIssues = useEnvironmentSupportsIssues(links?.length ? environmentId : null);
   const aggregate =
-    links?.length && configs.get(environmentId)?.environment.capabilities.issues === true
+    links?.length && supportsIssues
       ? Atom.make((get): IssueState | null => {
           const states = links.map(
             (link) =>
