@@ -713,6 +713,7 @@ it.effect.skipIf(windowsHost)(
             platform: "linux",
             env: {
               PATH: binDir,
+              DISPLAY: ":0",
               WSL_DISTRO_NAME: "Ubuntu-24.04",
               WSL_INTEROP: "/run/WSL/1_interop",
             },
