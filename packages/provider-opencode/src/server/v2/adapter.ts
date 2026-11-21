@@ -294,6 +294,10 @@ interface SubagentCall {
   agent: string | undefined;
   model: string | null;
   background: boolean;
+  /** Names an existing child session, so its row waits to learn whether it joined a running one. */
+  followUp: boolean;
+  /** Steers a running child: the row of the call that launched that run stands for both. */
+  joined: boolean;
   /** The child's turn this call prompted or steered; unset until that turn starts. */
   run: number | undefined;
   /** That turn's last text once it ended, which OpenCode sends as the run's report. */
@@ -1678,6 +1682,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const emitSubagent = Effect.fnUntraced(function* (call: SubagentCall) {
+      if (call.joined) return yield* syncRosterAncestors(call.state);
       const updatedAt = yield* DateTime.now;
       const { turn, state } = call;
       const nodeId = idAllocator.derive.nodeFromProviderItem({
@@ -1768,16 +1773,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const syncRoster = Effect.fnUntraced(function* (state: ThreadState) {
       const roster: Array<import("@t3tools/contracts").OrchestrationV2PendingBackgroundTask> =
-        runningCalls(state)
-          .filter((call) => call.background)
-          .map((call) => ({
-            taskId: call.nativeId,
-            kind: "subagent" as const,
-            ...(call.title?.trim() ? { description: call.title.trim() } : {}),
-            ...(call.child?.subagent === undefined
-              ? {}
-              : { childThreadId: call.child.subagent.appThread.id }),
-          }));
+        // A joined call is its child's launching call to the user, so it lists as that one.
+        [
+          ...new Set(
+            runningCalls(state)
+              .filter((call) => call.background)
+              .map((call) => (call.joined ? (call.child?.subagent?.call ?? call) : call)),
+          ),
+        ].map((call) => ({
+          taskId: call.nativeId,
+          kind: "subagent" as const,
+          ...(call.title?.trim() ? { description: call.title.trim() } : {}),
+          ...(call.child?.subagent === undefined
+            ? {}
+            : { childThreadId: call.child.subagent.appThread.id }),
+        }));
       for (const [taskId, shell] of shells) {
         if (shell.running && sessionsOf(state).includes(shell.state)) {
           roster.push({
@@ -2101,6 +2111,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (call.child !== undefined) return;
       const info = announced.get(childId);
       announced.delete(childId);
+      const previous = threads.get(childId);
+      const launch = previous?.subagent?.call;
+      if (
+        call.followUp &&
+        previous?.active !== undefined &&
+        launch?.state === call.state &&
+        isOrchestrationV2WorkActive(launch.status)
+      ) {
+        // OpenCode reports a run once for all its calls, and the child keeps its launch's identity.
+        call.joined = true;
+        call.child = previous;
+        call.run = previous.subagent?.turns;
+        yield* syncRosterAncestors(call.state);
+        return yield* writeRules(previous, rootOf(call.state).policy).pipe(
+          Effect.timeout(REQUEST_REPLY_TIMEOUT),
+          Effect.ignore({ log: true }),
+        );
+      }
       const now = yield* DateTime.now;
       const nodeId = idAllocator.derive.nodeFromProviderItem({
         driver,
@@ -2116,7 +2144,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         nativeThreadId: childId,
         providerInstanceId: instanceId,
       });
-      if (info?.model !== undefined) call.model = `${info.model.providerID}/${info.model.id}`;
+      // Only a child's creation announces its model; a later call to it has the child's own.
+      const model = info?.model ?? (call.model === null ? previous?.model : undefined);
+      if (model !== undefined) call.model = `${model.providerID}/${model.id}`;
       call.title = call.title ?? info?.title ?? null;
       const parentThread = call.turn.input.appThread;
       const appThread = makeSubagentChildThread({
@@ -2156,7 +2186,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         createdAt: now,
         updatedAt: now,
       };
-      const previous = threads.get(childId);
       // A call to a running child steers that run; OpenCode reports it once for all its calls.
       if (previous?.active !== undefined) call.run = previous.subagent?.turns;
       const subagent = {
@@ -2807,6 +2836,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         agent: undefined,
         model: null,
         background: false,
+        followUp: false,
+        joined: false,
         run: undefined,
         answer: undefined,
         child: undefined,
@@ -2815,8 +2846,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         completedAt: null,
       };
       turn.usedSubagents = true;
+      // No row yet: one cannot be withdrawn, and only the input says whether this call joins a child.
       state.calls.set(toolId, call);
-      yield* emitSubagent(call);
     });
 
     const onTurnEvent = Effect.fnUntraced(function* (
@@ -2863,6 +2894,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             call.agent = stringField(input, "agent");
             call.model = stringField(input, "model") ?? call.model;
             call.background = input["background"] === true;
+            call.followUp = stringField(input, "sessionID") !== undefined;
+            // A follow-up's row waits for its child, which decides whether the call gets one.
+            if (call.followUp) return;
             return yield* emitSubagent(call);
           }
           const tool = turn.tools.get(event.data.id);

@@ -1772,6 +1772,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const calls = new Map<string, { status: string; result: string | null }>();
       const callsById = new Map<string, { status: string; result: string | null }>();
+      const models = new Map<string, string | null>();
       const childTurns = new Map<string, string>();
       const callsAtChildTurnStart = new Map<
         string,
@@ -1783,6 +1784,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Stream.tap((event) =>
           Effect.gen(function* () {
             if (event.type === "subagent.updated") {
+              models.set(event.subagent.nativeTaskRef?.nativeId ?? "", event.subagent.model);
               callsById.set(event.subagent.nativeTaskRef?.nativeId ?? "", {
                 status: event.subagent.status,
                 result: event.subagent.result,
@@ -1826,7 +1828,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             yield* until(check);
           });
         });
-      return { calls, callsById, callsAtChildTurnStart, childTurns, state, until };
+      return { calls, callsById, models, callsAtChildTurnStart, childTurns, state, until };
     });
   const launchedAndRunning = [
     ...backgroundLaunch(CHILD),
@@ -1981,10 +1983,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const watch = yield* watchCalls(runtime, thread);
       yield* runtime.startTurn(withLineage(thread));
       yield* watch.until(
-        () =>
-          watch.calls.get("Sleep")?.status === "failed" &&
-          watch.calls.get("Again")?.status === "failed" &&
-          watch.state.roster?.length === 0,
+        () => watch.calls.get("Sleep")?.status === "failed" && watch.state.roster?.length === 0,
       );
       assert.deepEqual(watch.state.roster, []);
       assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
@@ -2003,14 +2002,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const watch = yield* watchCalls(runtime, thread);
       yield* runtime.startTurn(withLineage(thread));
       yield* watch.until(
-        () =>
-          watch.calls.get("Again")?.status === "completed" &&
-          watch.calls.get("Sleep")?.status === "completed" &&
-          watch.state.roster?.length === 0,
+        () => watch.calls.get("Sleep")?.status === "completed" && watch.state.roster?.length === 0,
       );
       assert.deepEqual(Object.fromEntries(watch.calls), {
         Sleep: { status: "completed", result: "CHILD_OK" },
-        Again: { status: "completed", result: "CHILD_OK" },
       });
     }),
   );
@@ -2087,6 +2082,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       yield* watch.until(() => watch.calls.get("Again")?.status === "completed");
       assert.deepEqual(watch.calls.get("Again"), { status: "completed", result: "SECOND_OK" });
+      assert.strictEqual(watch.models.get("call-again"), "opencode/big-pickle");
     }),
   );
 
@@ -2115,7 +2111,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       ],
       expected: {
         "call-background": { status: "completed", result: "FIRST_OK" },
-        "call-again": { status: "completed", result: "FIRST_OK" },
         "call-later": { status: "completed", result: "SECOND_OK" },
       },
     },
@@ -2186,7 +2181,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       ],
       expected: {
         "call-background": { status: "completed", result: "FIRST_OK" },
-        "call-again": { status: "completed", result: "CHILD_OK" },
       },
     },
   ])("settles a resumed subagent's calls when $name", ({ replay, expected }) =>
@@ -4288,21 +4282,32 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         event("form.created", { form }),
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
-      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
-      const ended = yield* runtime.events.pipe(
-        Stream.filter(
+      // One reader: the runtime's events are a queue, which hands each event to a single reader.
+      let endings = 0;
+      const seen = yield* runtime.events.pipe(
+        Stream.takeUntil(
           (event) =>
-            event.type === "turn.terminal" ||
-            (event.type === "provider_turn.updated" && event.providerTurn.status === "completed"),
+            (event.type === "turn.terminal" ||
+              (event.type === "provider_turn.updated" &&
+                event.providerTurn.status === "completed")) &&
+            ++endings === 2,
         ),
-        Stream.take(2),
         Stream.runCollect,
         Effect.forkScoped,
       );
       yield* runtime.startTurn(withLineage(thread));
-      const request = yield* Fiber.join(requested);
+      const events = yield* Fiber.join(seen);
+      const request = events.find(
+        (event) => event.type === "runtime_request.updated",
+      )?.runtimeRequest;
       assert.equal(request?.nativeRequestRef?.nativeId, form.id);
-      for (const terminal of yield* Fiber.join(ended)) {
+      const ended = events.filter(
+        (event) =>
+          event.type === "turn.terminal" ||
+          (event.type === "provider_turn.updated" && event.providerTurn.status === "completed"),
+      );
+      assert.lengthOf(ended, 2);
+      for (const terminal of ended) {
         assert.deepEqual(
           "retainedRuntimeRequestIds" in terminal ? terminal.retainedRuntimeRequestIds : undefined,
           [request!.id],
