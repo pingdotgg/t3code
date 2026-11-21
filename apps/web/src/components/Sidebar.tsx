@@ -3493,9 +3493,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           ? folderRowsMultiline
                             ? "folder-multiline"
                             : "folder"
-                          : isCard
-                            ? "card"
-                            : "slim";
+                          : shelfRow === SIDEBAR_RUNNING_SHELF_ROW
+                            ? "running"
+                            : isCard
+                              ? "card"
+                              : "slim";
                         // The shelf copy repeats a folder row, so it must not register a second drag target.
                         const ThreadRow = shelfRow ? StaticThreadRow : SortableThreadRow;
                         return (

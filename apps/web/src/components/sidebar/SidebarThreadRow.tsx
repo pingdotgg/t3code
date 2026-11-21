@@ -583,8 +583,9 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
-  // "folder-multiline" adds the card's branch and PR line under it.
-  variant: "card" | "slim" | "folder" | "folder-multiline";
+  // "folder-multiline" adds the card's branch and PR line under it;
+  // "running" is a one-line Running shelf row that keeps its project icon.
+  variant: "card" | "slim" | "folder" | "folder-multiline" | "running";
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -1334,6 +1335,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
     const inFolder = variant === "folder" || multiline;
+    // Rows without a status line show their status in the time slot.
+    const statusInTimeSlot = inFolder || variant === "running";
     return (
       <li
         data-thread-item={threadKey}
@@ -1356,7 +1359,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
-                data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
+                data-testid={`sidebar-row-${inFolder ? "folder" : variant}`}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(
                   rowSurfaceClassName,
@@ -1421,7 +1424,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         <AlarmClockIcon aria-hidden className="size-3" />
                         {props.snoozeWakeLabelText}
                       </span>
-                    ) : (inFolder ? isWokeStatus : isWoke) ? (
+                    ) : (statusInTimeSlot ? isWokeStatus : isWoke) ? (
                       <Tooltip>
                         <TooltipTrigger
                           render={
@@ -1442,8 +1445,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           <T>Dismiss Woke notification</T>
                         </TooltipPopup>
                       </Tooltip>
-                    ) : inFolder && topStatus ? (
-                      // Folder rows have no status line, so the status takes the time slot.
+                    ) : statusInTimeSlot && topStatus ? (
                       <span
                         className={cn(
                           "inline-flex items-center gap-1 text-xs font-medium",
