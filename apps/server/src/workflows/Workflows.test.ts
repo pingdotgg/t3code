@@ -21,7 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
 import { cancel, runs, signal, signalAll, start, store } from "./stepServices.ts";
-import { invoke, skip, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
+import { type InRun, invoke, skip, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import Migration0100 from "../persistence/Migrations/106_Workflows.ts";
 import Migration0101 from "../persistence/Migrations/107_WorkflowTriggers.ts";
@@ -195,17 +195,38 @@ const definitions = (
     ),
     workflow(
       "broken",
-      { version: 1, payload: Schema.Struct({ how: Schema.Literals(["dies", "unstorable"]) }) },
-      (payload) =>
-        payload.how === "dies"
-          ? step(
-              "dies",
-              { returns: Schema.Void, ...once },
-              Effect.die(new Error("null dereference")),
-            )
-          : Effect.asVoid(
-              step("unstorable", { returns: Schema.Int, ...once }, Effect.succeed(1.5)),
-            ),
+      {
+        version: 1,
+        payload: Schema.Struct({
+          how: Schema.Literals(["dies", "unstorable", "undefined", "nested"]),
+        }),
+      },
+      (payload): Effect.Effect<unknown, never, InRun> => {
+        if (payload.how === "dies") {
+          return step(
+            "dies",
+            { returns: Schema.Void, ...once },
+            Effect.die(new Error("null dereference")),
+          );
+        }
+        if (payload.how === "undefined") {
+          // No `returns`: read as JSON reads it, without the undefined fields.
+          return Effect.map(
+            step.try("void", { returns: Schema.Void, ...once }, Effect.void),
+            (r) => ({ r, id: undefined, list: [undefined] }),
+          );
+        }
+        if (payload.how === "nested") {
+          return step(
+            "nested",
+            { returns: Schema.Json, ...once },
+            Effect.succeed({ deep: [{ id: undefined }] } as unknown as Schema.Json),
+          );
+        }
+        return Effect.asVoid(
+          step("unstorable", { returns: Schema.Int, ...once }, Effect.succeed(1.5)),
+        );
+      },
     ),
     workflow("twice", { version: 1, payload: Schema.Struct({}) }, () =>
       Effect.gen(function* () {
@@ -1325,6 +1346,24 @@ it.effect(
           assert.equal((yield* workflows.get(unstorable.runId)).steps[0]?.status, "failed");
           // Never marked done on the way, so each try counts as one more pause.
           yield* workflows.waitFor(unstorable.runId, (run) => run.pauses >= 2);
+
+          const loose = yield* workflows.start(
+            "broken",
+            { how: "undefined" },
+            { idempotencyKey: "b3" },
+          );
+          const done = yield* workflows.waitFor(loose.runId, status("completed", "paused"));
+          assert.deepStrictEqual(
+            [done.status, done.result],
+            ["completed", { r: { outcome: "done" }, list: [null] }],
+          );
+          const nested = yield* workflows.start(
+            "broken",
+            { how: "nested" },
+            { idempotencyKey: "b4" },
+          );
+          const where = yield* workflows.waitFor(nested.runId, status("paused"));
+          assert.include(where.detail ?? "", "the result.deep[0].id is undefined");
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
