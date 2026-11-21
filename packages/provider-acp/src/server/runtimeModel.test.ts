@@ -1521,6 +1521,42 @@ describe("extractMcpToolCallIdentity", () => {
     }
   });
 
+  it("recovers non-T3 server and tool identity from Antigravity single-underscore MCP titles", () => {
+    for (const [title, expected] of [
+      ["Run mcp_codemode_codemode", { server: "codemode", tool: "codemode" }],
+      ["Run mcp_codemode_codemode?", { server: "codemode", tool: "codemode" }],
+      [
+        "Running mcp_codemode_codemode_background",
+        { server: "codemode", tool: "codemode_background" },
+      ],
+      ["mcp_codemode_codemode", { server: "codemode", tool: "codemode" }],
+      [
+        "Run mcp_chrome-devtools_navigate_page",
+        { server: "chrome-devtools", tool: "navigate_page" },
+      ],
+    ] as const) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "agy-mcp-1",
+        kind: "other",
+        title,
+        status: "pending",
+      });
+      expect(extractMcpToolCallIdentity(toolCall), title).toEqual(expected);
+    }
+
+    for (const title of ["Run mcp_t3-code_unknown_tool", "Run mcp_t3_code_unknown_tool"]) {
+      const toolCall = toolCallFromUpdate({
+        sessionUpdate: "tool_call",
+        toolCallId: "agy-mcp-2",
+        kind: "other",
+        title,
+        status: "pending",
+      });
+      expect(extractMcpToolCallIdentity(toolCall), title).toBeUndefined();
+    }
+  });
+
   it("recovers T3 identity from Hermes editor-renamed MCP tool titles", () => {
     const identityFor = (title: string) =>
       extractMcpToolCallIdentity(
