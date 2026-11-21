@@ -2754,17 +2754,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
               if (!followsAgentWorkState) {
-                // An open prompt fails with its transport. A turn held open for a running tool
-                // has no prompt, so nothing else ends it.
+                // An open prompt fails with its transport. A turn held open after the prompt
+                // settled (running tool, pending request, or open reply) has no prompt to fail it.
                 const held = yield* Ref.get(activeTurn);
                 if (
                   flavor.toolOutlivesPrompt === undefined ||
                   held === null ||
                   !held.promptSettled ||
                   held.finalized ||
-                  !hasDeferredBackgroundWork(held)
+                  (!hasDeferredBackgroundWork(held) && !held.replyOpen)
                 )
                   return;
+                agentRequests.clear();
+                yield* Ref.set(wakeBuffer, []);
+                yield* Ref.set(continuationRequested, false);
+                yield* cancelPendingRuntimeRequests();
                 for (const tool of held.tools.values()) {
                   const status = toolStatus(tool.status);
                   if (status === "pending" || status === "running" || status === "waiting") {
