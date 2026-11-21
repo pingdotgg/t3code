@@ -410,8 +410,9 @@ const joinEntryPath = (directory: string, name: string) =>
  * fff skips symlinks, and `followSymlinks` drops file links, dedupes folder links, and walks out
  * of the workspace. So links are read from the folders fff already indexed (ignore rules applied),
  * without descending into them, and kept only when they resolve inside the workspace.
+ * Untraced: it runs once per indexed folder, and a span each cost more than the folder read.
  */
-const scanDirectory = Effect.fn("WorkspaceSearchIndex.scanDirectory")(function* (
+const scanDirectory = Effect.fnUntraced(function* (
   fileSystem: FileSystem.FileSystem,
   path: Path.Path,
   cwd: string,
@@ -688,26 +689,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
     return ignored;
   });
-  let ignoredPaths = yield* loadIgnoredPaths();
-  if (variant === "paths") {
-    yield* waitForIndexReady(
-      cwd,
-      finder,
-      ({ reason, cause }) =>
-        new WorkspaceSearchIndexCreateFailed({
-          cwd,
-          reason,
-          cause,
-        }),
-    ).pipe(
-      Effect.catchTags({
-        WorkspaceSearchIndexScanTimedOut: () =>
-          Effect.sync(() => {
-            initialScanTimedOut = true;
-          }),
-      }),
-    );
-  }
+  let ignoredPaths: ReadonlySet<string> = new Set();
 
   // fff's isScanning takes the picker lock too, so progress is read off the JS thread.
   const isScanning = Effect.promise(async () => {
@@ -1142,6 +1124,34 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       linkPaths: result.linkPaths,
     };
   });
+
+  // The symlink scan applies Git's ignored paths only when it is read, so it starts without them.
+  [ignoredPaths] = yield* Effect.all(
+    [
+      loadIgnoredPaths(),
+      variant === "paths"
+        ? waitForIndexReady(
+            cwd,
+            finder,
+            ({ reason, cause }) =>
+              new WorkspaceSearchIndexCreateFailed({
+                cwd,
+                reason,
+                cause,
+              }),
+          ).pipe(
+            Effect.catchTags({
+              WorkspaceSearchIndexScanTimedOut: () =>
+                Effect.sync(() => {
+                  initialScanTimedOut = true;
+                }),
+            }),
+            Effect.andThen(startSymlinkScan()),
+          )
+        : Effect.void,
+    ],
+    { concurrency: "unbounded" },
+  );
 
   // Grows the first page until hidden entries can no longer crowd visible ones out of it.
   const searchVisible = Effect.fn("WorkspaceSearchIndex.searchVisible")(function* <I, Metadata>(
