@@ -372,6 +372,8 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
   const sibling = repository("shared", "/work/shared", [1, 2]);
   // Nothing before the range's end, so there is no patch to make.
   const nested = repository("ui", "/work/app/packages/ui", [2]);
+  // Became a repository after the range, so the thread's own patch still covers its folder.
+  const later = repository("later", "/work/app/packages/later", [3]);
   const diffCheckpoints = vi.fn((input: CheckpointStore.DiffCheckpointsInput) =>
     Effect.succeed(input.format === "numstat" ? "1\t0\tfile.ts\0" : `patch of ${input.cwd}`),
   );
@@ -382,8 +384,14 @@ it.effect("adds a patch for each tracked repository that changed in the range", 
         ...projection.checkpointScopes.map((scope) => ({ ...scope, cwd: "/work/app" })),
         sibling.scope,
         nested.scope,
+        later.scope,
       ],
-      checkpoints: [...projection.checkpoints, ...sibling.checkpoints, ...nested.checkpoints],
+      checkpoints: [
+        ...projection.checkpoints,
+        ...sibling.checkpoints,
+        ...nested.checkpoints,
+        ...later.checkpoints,
+      ],
     }),
     diffCheckpoints,
   });

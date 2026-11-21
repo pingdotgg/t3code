@@ -33,7 +33,7 @@ import { projectMutationOperation } from "../project/ProjectMutation.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
-import { discoverFolders } from "../workspace/WorkspaceFolders.ts";
+import { discoverFolders, mergeProjectFolders } from "../workspace/WorkspaceFolders.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as RunningServer from "./runningServer.ts";
@@ -139,6 +139,19 @@ export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlready
   }
 }
 
+export class ProjectTooManyTrackedFoldersError extends Schema.TaggedError<ProjectTooManyTrackedFoldersError>()(
+  "ProjectTooManyTrackedFoldersError",
+  {
+    operation: Schema.Literal("addProject"),
+    count: Schema.Number,
+    max: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `--track names ${this.count} folders, but a project tracks at most ${this.max}.`;
+  }
+}
+
 export const ProjectCommandError = Schema.Union([
   ProjectCommandIdGenerationError,
   ProjectLiveServerDeclaredResponseError,
@@ -147,6 +160,7 @@ export const ProjectCommandError = Schema.Union([
   ProjectIdentifierEmptyError,
   ProjectNotFoundError,
   ProjectAlreadyExistsError,
+  ProjectTooManyTrackedFoldersError,
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
 
@@ -406,15 +420,25 @@ const projectAddCommand = Command.make("add", {
         const path = yield* Path.Path;
         // Found here, not by a running server: this command runs on the server's machine.
         const found = yield* discoverFolders(workspaceRoot);
-        const named = flags.track.map((folder) => {
-          const resolved = path.resolve(folder);
-          return { path: resolved, name: path.basename(resolved) || resolved };
-        });
-        const trackedFolders = [...found, ...named]
+        const named = flags.track
+          .map((folder) => {
+            const resolved = path.resolve(folder);
+            return {
+              path: resolved,
+              name: (path.basename(resolved) || resolved).slice(0, 128).trim(),
+            };
+          })
           .filter(
             (folder, index, all) => all.findIndex((other) => other.path === folder.path) === index,
-          )
-          .slice(0, PROJECT_TRACKED_FOLDERS_MAX);
+          );
+        if (named.length > PROJECT_TRACKED_FOLDERS_MAX) {
+          return yield* new ProjectTooManyTrackedFoldersError({
+            operation: "addProject",
+            count: named.length,
+            max: PROJECT_TRACKED_FOLDERS_MAX,
+          });
+        }
+        const trackedFolders = mergeProjectFolders(found, named);
         const projectId = ProjectId.make(yield* projectCommandUuid);
         yield* dispatch({
           type: "project.create",

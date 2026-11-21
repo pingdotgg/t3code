@@ -1936,6 +1936,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     captureHeadCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureHeadCheckpoint")(
       function* (input) {
         const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+        // Where HEAD's reflog stood when the folder was seen: the next capture needs the mark to
+        // tell a branch switch. Later moves in that same second count only if they end on `head`.
+        const seenAt = input.seenAt;
+        const headMoves = (yield* readHeadMoves(input.cwd)).filter(
+          (move) => seenAt === undefined || Number(move.at) <= seenAt,
+        );
+        const lastMove = headMoves.at(0);
+        const headMark =
+          lastMove !== undefined && lastMove.to === input.head
+            ? `${lastMove.at} ${headMoves.filter((move) => move.at === lastMove.at).length}`
+            : undefined;
         const commit = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1946,7 +1957,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             "-p",
             input.head,
             "-m",
-            `t3 checkpoint ref=${input.checkpointRef}`,
+            `t3 checkpoint ref=${input.checkpointRef}${
+              headMark === undefined ? "" : `\n\n${HEAD_MARK_TRAILER}: ${headMark}`
+            }`,
           ],
           env:
             input.seenAt === undefined

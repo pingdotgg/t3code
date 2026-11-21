@@ -75,6 +75,9 @@ export class WorkspaceFolders extends Context.Service<
 >()("t3/workspace/WorkspaceFolders") {}
 
 const DETECTION_CONCURRENCY = 8;
+// What `ProjectTrackedFolder.name` allows.
+const FOLDER_NAME_MAX = 128;
+const boundedName = (name: string) => name.slice(0, FOLDER_NAME_MAX).trim();
 const CODE_WORKSPACE_EXTENSION = ".code-workspace";
 
 const decodeCodeWorkspace = Schema.decodeUnknownEffect(
@@ -157,7 +160,12 @@ const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFo
     const folderPath = folder.path?.trim();
     if (folderPath === undefined || folderPath === "") return [];
     const resolved = path.resolve(root, folderPath);
-    return [{ path: resolved, name: folder.name?.trim() || path.basename(resolved) }];
+    return [
+      {
+        path: resolved,
+        name: boundedName(folder.name?.trim() ?? "") || boundedName(path.basename(resolved)),
+      },
+    ];
   });
 });
 
@@ -166,6 +174,7 @@ const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFo
  */
 const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   input: WorkspaceScanFoldersInput,
+  limit: number = PROJECT_TRACKED_FOLDERS_MAX,
 ): Effect.fn.Return<
   WorkspaceScanFoldersResult,
   WorkspaceFoldersError,
@@ -195,14 +204,14 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
     (name) => {
       const folderPath = path.join(root, name);
       return Effect.gen(function* () {
-        if (yield* ownsHistory(folderPath)) return [{ path: folderPath, name }];
+        if (yield* ownsHistory(folderPath)) return [{ path: folderPath, name: boundedName(name) }];
         if (yield* exists(path.join(folderPath, ".git"))) return [];
         const nested = yield* Effect.filter(yield* childFolders(folderPath), ownsHistory, {
           concurrency: DETECTION_CONCURRENCY,
         });
         return nested.map((nestedPath) => ({
           path: nestedPath,
-          name: path.basename(nestedPath),
+          name: boundedName(path.basename(nestedPath)),
         }));
       });
     },
@@ -234,8 +243,9 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
       ? []
       : [folder];
   });
+  // Capped after the missing ones are dropped: dead entries must not hide the folders that exist.
   const folders = yield* Effect.forEach(
-    candidates.slice(0, PROJECT_TRACKED_FOLDERS_MAX),
+    candidates,
     (folder) =>
       classify(folder).pipe(
         Effect.map((classified) =>
@@ -251,7 +261,7 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
     isGitRepository: yield* exists(path.join(root, ".git")),
     codeWorkspaceFile:
       listed === null || codeWorkspaceFile === null ? null : path.join(root, codeWorkspaceFile),
-    folders: folders.flat(),
+    folders: folders.flat().slice(0, limit),
   };
 });
 
@@ -266,7 +276,8 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { realPath } = yield* folderProbes;
-  const scan = yield* scanFolders({ workspaceRoot }).pipe(Effect.option);
+  // Uncapped: the folders outside the project are dropped below, and must not use up the room.
+  const scan = yield* scanFolders({ workspaceRoot }, Number.POSITIVE_INFINITY).pipe(Effect.option);
   if (Option.isNone(scan)) return [];
   const root = scan.value.workspaceRoot;
   const realRoot = yield* realPath(root);
@@ -294,6 +305,21 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
 });
 
 /**
+ * The found repositories, then the folders someone added. Someone chose the added ones, so the
+ * found ones give way when both do not fit.
+ */
+export const mergeProjectFolders = (
+  discovered: ReadonlyArray<ProjectTrackedFolder>,
+  trackedFolders: ReadonlyArray<ProjectTrackedFolder>,
+): ReadonlyArray<ProjectTrackedFolder> => {
+  const found = new Set(discovered.map((folder) => folder.path));
+  const added = trackedFolders
+    .filter((folder) => folder.discovered !== true && !found.has(folder.path))
+    .slice(0, PROJECT_TRACKED_FOLDERS_MAX);
+  return [...discovered.slice(0, PROJECT_TRACKED_FOLDERS_MAX - added.length), ...added];
+};
+
+/**
  * Every folder a project works in besides its own: the repositories found inside it now, then
  * the folders someone added. Read from disk each time, so a clone or a removal shows at once.
  */
@@ -305,14 +331,7 @@ export const projectFolders = Effect.fn("WorkspaceFolders.projectFolders")(funct
   never,
   FileSystem.FileSystem | Path.Path
 > {
-  const discovered = yield* discoverFolders(project.workspaceRoot);
-  const found = new Set(discovered.map((folder) => folder.path));
-  return [
-    ...discovered,
-    ...project.trackedFolders.filter(
-      (folder) => folder.discovered !== true && !found.has(folder.path),
-    ),
-  ].slice(0, PROJECT_TRACKED_FOLDERS_MAX);
+  return mergeProjectFolders(yield* discoverFolders(project.workspaceRoot), project.trackedFolders);
 });
 
 /** Whether two tracked lists name the same folders in the same order. */
@@ -367,41 +386,37 @@ const make = Effect.gen(function* () {
     );
 
   // `identity` is `root` in the checkout the thread's was made from: it names the same submodule
-  // in every worktree.
-  const submodulesBelow = (root: {
-    readonly path: string;
-    readonly identity: string;
-  }): Effect.Effect<ReadonlyArray<ThreadFolder>> =>
+  // in every worktree. `budget` is shared by one listing: a `.gitmodules` file is untrusted, and
+  // one that repeats a path or links back to its parent would otherwise be walked without end.
+  const submodulesBelow = (
+    root: { readonly path: string; readonly identity: string },
+    budget: { left: number; readonly visited: Set<string> },
+  ): Effect.Effect<ReadonlyArray<ThreadFolder>> =>
     fileSystem.readFileString(path.join(root.path, ".gitmodules")).pipe(
       Effect.orElseSucceed(() => ""),
       Effect.flatMap((text) =>
         Effect.forEach(
-          parseGitmodulesPaths(text),
-          (relative) => {
+          [...new Set(parseGitmodulesPaths(text))],
+          Effect.fnUntraced(function* (relative) {
             const folder = path.resolve(root.path, relative);
             const identity = path.resolve(root.identity, relative);
-            if (folder === root.path || !isWithinRoot(path, folder, root.path)) {
-              return Effect.succeed([]);
-            }
+            if (folder === root.path || !isWithinRoot(path, folder, root.path)) return [];
             // One that was never initialized is an empty folder.
-            return exists(path.join(folder, ".git")).pipe(
-              Effect.flatMap((present) =>
-                present
-                  ? submodulesBelow({ path: folder, identity }).pipe(
-                      Effect.map((nested) => [
-                        {
-                          name: path.basename(folder),
-                          path: folder,
-                          isGitRepository: true,
-                          ...(identity === folder ? {} : { repositoryPath: identity }),
-                        },
-                        ...nested,
-                      ]),
-                    )
-                  : Effect.succeed([]),
-              ),
-            );
-          },
+            if (budget.left <= 0 || !(yield* exists(path.join(folder, ".git")))) return [];
+            const real = yield* realPath(folder);
+            if (budget.left <= 0 || budget.visited.has(real)) return [];
+            budget.visited.add(real);
+            budget.left -= 1;
+            return [
+              {
+                name: path.basename(folder),
+                path: folder,
+                isGitRepository: true,
+                ...(identity === folder ? {} : { repositoryPath: identity }),
+              },
+              ...(yield* submodulesBelow({ path: folder, identity }, budget)),
+            ];
+          }),
           { concurrency: DETECTION_CONCURRENCY },
         ),
       ),
@@ -411,14 +426,19 @@ const make = Effect.gen(function* () {
   const submodulesOf = Effect.fnUntraced(function* (
     roots: ReadonlyArray<{ readonly path: string; readonly identity: string }>,
   ) {
-    const found = yield* Effect.forEach(roots, submodulesBelow, {
+    const budget = {
+      left: THREAD_SUBMODULES_MAX,
+      visited: new Set(
+        yield* Effect.forEach(roots, (root) => realPath(root.path), {
+          concurrency: DETECTION_CONCURRENCY,
+        }),
+      ),
+    };
+    const found = yield* Effect.forEach(roots, (root) => submodulesBelow(root, budget), {
       concurrency: DETECTION_CONCURRENCY,
     });
     const taken = new Set(roots.map((root) => root.path));
-    return found
-      .flat()
-      .filter((folder) => !taken.has(folder.path))
-      .slice(0, THREAD_SUBMODULES_MAX);
+    return found.flat().filter((folder) => !taken.has(folder.path));
   });
 
   // A task folder's worktrees stand in for the tracked folders: the thread is told about, granted

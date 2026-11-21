@@ -5099,8 +5099,15 @@ describe("OpenCodeAdapterV2", () => {
     // A multi-folder thread reaches its other folders, and edits there still ask.
     const multiFolder = openCodePermissionRules(
       runtimePolicy("approval-required", {
-        workspace: { folders: [], extraRoots: ["/repos/api/"] },
+        workspace: { folders: [], extraRoots: ["/repos/api/", "/repos/api?", "/repos/a*"] },
       }),
+    );
+    // A root with a glob character would also match its siblings, so it keeps asking.
+    assert.deepEqual(
+      multiFolder
+        .filter((rule) => rule.permission === "external_directory" && rule.action === "allow")
+        .map((rule) => rule.pattern),
+      ["/repos/api/*"],
     );
     assert.deepInclude(multiFolder, {
       permission: "external_directory",

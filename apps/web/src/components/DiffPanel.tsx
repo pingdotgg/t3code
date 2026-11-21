@@ -121,6 +121,7 @@ import { DiffFileStatus } from "./diffs/DiffFileStatus";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
 import { projectCommitUrl } from "@t3tools/client-runtime/change-request-links";
 import {
+  isRelativePathInsideFolder,
   repositorySectionForPath,
   threadChangedRepositories,
   threadGitRepositories,
@@ -530,10 +531,10 @@ export default function DiffPanel({
       ? selectedTurnLabel
       : selectedGitScopeLabel;
   const headerCommitSha = selectedRunId === null ? selectedCommitSha : null;
+  // The project's remote is the thread folder's; another repository's commits are not on it.
+  const commitLinkIdentity = gitRepository === null ? activeProject?.repositoryIdentity : null;
   const selectedCommitUrl =
-    headerCommitSha !== null
-      ? projectCommitUrl(activeProject?.repositoryIdentity, headerCommitSha)
-      : null;
+    headerCommitSha !== null ? projectCommitUrl(commitLinkIdentity, headerCommitSha) : null;
   const openLink = useOpenLink(routeThreadRef);
   // A SHA link goes to the code host; it must not route back into this pane's commit selection.
   const openCommitUrl = (event: MouseEvent<HTMLElement>, url: string) => {
@@ -853,7 +854,7 @@ export default function DiffPanel({
     if (match === null) return null;
     return {
       path: match.path,
-      insideThreadFolder: !match.section.relativePath.startsWith(".."),
+      insideThreadFolder: isRelativePathInsideFolder(match.section.relativePath),
       cwd: selectedTurn?.repositories?.find(
         (repository) => repository.repositoryPath === match.section.repositoryPath,
       )?.cwd,
@@ -926,6 +927,15 @@ export default function DiffPanel({
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
+  };
+  const selectGitRepository = (value: string) => {
+    const nextPath = value === THREAD_FOLDER ? null : value;
+    if (nextPath === (gitRepository?.repositoryPath ?? null)) return;
+    setGitRepositoryPath(nextPath);
+    // A commit or base ref of the repository being left means nothing in the next one.
+    if (selectedCommitSha === null && rememberedBaseRef === null) return;
+    selectBranchBaseRef(null);
+    if (selectedGitScope === "unstaged") selectGitScope("unstaged");
   };
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedCommitValue = selectedCommitSha !== null ? `commit:${selectedCommitSha}` : "";
@@ -1077,10 +1087,7 @@ export default function DiffPanel({
                     onValueChange={selectScopeValue}
                   >
                     {branchCommits?.commits.map((commit) => {
-                      const commitUrl = projectCommitUrl(
-                        activeProject?.repositoryIdentity,
-                        commit.sha,
-                      );
+                      const commitUrl = projectCommitUrl(commitLinkIdentity, commit.sha);
                       return (
                         <div
                           key={commit.sha}
@@ -1182,9 +1189,7 @@ export default function DiffPanel({
             <DropdownMenuContent align="start" className="max-h-80 max-w-72">
               <DropdownMenuRadioGroup
                 value={gitRepository?.repositoryPath ?? THREAD_FOLDER}
-                onValueChange={(value) =>
-                  setGitRepositoryPath(value === THREAD_FOLDER ? null : value)
-                }
+                onValueChange={selectGitRepository}
               >
                 {threadFolderIsRepo ? (
                   <DropdownMenuRadioItem value={THREAD_FOLDER} closeOnClick>

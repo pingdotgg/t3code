@@ -33,7 +33,8 @@ export function resolveTrackedFolderInput(input: {
         : null);
   if (rawPath === null) return null;
   const path = normalizeProjectPathForDispatch(rawPath);
-  const name = fileBasename(path).trim();
+  // `ProjectTrackedFolder.name` takes at most 128 characters.
+  const name = fileBasename(path).slice(0, 128).trim();
   if (path.length === 0 || name.length === 0) return null;
   return { path, name };
 }

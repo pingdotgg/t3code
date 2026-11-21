@@ -339,8 +339,15 @@ export const make = Effect.gen(function* () {
       const nested = hasRepositories
         ? yield* nestedScopePaths([
             toScope,
+            // A folder that became a repository after the range still belongs to the thread's patch.
             ...projection.checkpointScopes.filter(
-              (scope) => typeof scope.repositoryPath === "string",
+              (scope) =>
+                typeof scope.repositoryPath === "string" &&
+                projection.checkpoints.some(
+                  (checkpoint) =>
+                    checkpoint.scopeId === scope.id &&
+                    checkpoint.ordinalWithinScope <= input.toTurnCount,
+                ),
             ),
           ]).pipe(
             Effect.provideService(FileSystem.FileSystem, fileSystem),

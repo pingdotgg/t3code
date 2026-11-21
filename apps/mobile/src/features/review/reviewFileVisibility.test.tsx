@@ -4,7 +4,10 @@ import { expect, it, vi } from "vite-plus/test";
 import { buildReviewParsedDiff, type ReviewRenderableFile } from "./reviewModel";
 import { useReviewFileVisibility } from "./reviewFileVisibility";
 
-const stored = vi.hoisted(() => ({ expanded: undefined as ReadonlyArray<string> | undefined }));
+const stored = vi.hoisted(() => ({
+  expanded: undefined as ReadonlyArray<string> | undefined,
+  viewed: undefined as ReadonlyArray<string> | undefined,
+}));
 vi.mock("./reviewState", () => ({
   updateReviewExpandedFileIds: (
     _threadKey: string,
@@ -13,7 +16,13 @@ vi.mock("./reviewState", () => ({
   ) => {
     stored.expanded = update(stored.expanded);
   },
-  updateReviewViewedFileIds: () => {},
+  updateReviewViewedFileIds: (
+    _threadKey: string,
+    _sectionId: string,
+    update: (current: ReadonlyArray<string> | undefined) => ReadonlyArray<string> | undefined,
+  ) => {
+    stored.viewed = update(stored.viewed);
+  },
 }));
 
 function patch(path: string, line: string) {
@@ -35,7 +44,7 @@ function visibility(current: ReadonlyArray<ReviewRenderableFile>) {
         sectionId: "turn:3",
         files: current,
         cachedExpandedFileIds: stored.expanded,
-        cachedViewedFileIds: undefined,
+        cachedViewedFileIds: stored.viewed,
       }),
     );
     return null;
@@ -66,4 +75,23 @@ it("folds only the selected entry when a file becomes a symlink", () => {
   expect(current).toHaveLength(2);
   visibility(current).toggleExpandedFile(current[0]!.id);
   expect(visibility(current).collapsedFileIds).toEqual([current[0]!.id]);
+});
+
+it("keeps the marks of files a repository filter hides", () => {
+  stored.expanded = undefined;
+  stored.viewed = undefined;
+  const all = files(
+    patch("web/a.ts", "one") + patch("api/b.ts", "two") + patch("api/c.ts", "three"),
+  );
+  const [webFile, apiFile, otherApiFile] = all;
+  visibility(all).toggleViewedFile(webFile!.id);
+
+  const apiOnly = all.slice(1);
+  visibility(apiOnly).toggleViewedFile(apiFile!.id);
+  visibility(apiOnly).toggleExpandedFile(otherApiFile!.id);
+
+  expect(visibility(all).viewedFileIds).toEqual([webFile!.id, apiFile!.id]);
+  expect(visibility(all).collapsedFileIds).toEqual(all.map((file) => file.id));
+  visibility(apiOnly).toggleViewedFile(apiFile!.id);
+  expect(visibility(all).viewedFileIds).toEqual([webFile!.id]);
 });

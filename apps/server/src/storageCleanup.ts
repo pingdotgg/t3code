@@ -1149,9 +1149,10 @@ const make = Effect.gen(function* () {
         const reason =
           (yield* worktreePathReason(checkoutPath)) ??
           ((yield* branchChanged(checkoutPath, branch)) ? "repository or branch changed" : null) ??
-          (yield* localChangesReason(checkoutPath, rules)) ??
-          (yield* measureWorktree(checkoutPath, true)).reason;
-        if (reason !== null) return { keep: reason, force: false };
+          (yield* localChangesReason(checkoutPath, rules));
+        if (reason !== null) return { keep: reason, force: false, bytes: null };
+        const { bytes, reason: measureReason } = yield* measureWorktree(checkoutPath, true);
+        if (measureReason !== null) return { keep: measureReason, force: false, bytes };
         if (rules.worktreeKeepWhen === "tracked-changes")
           yield* cleanupGit(checkoutPath, ["clean", "-ffdx"], "git clean");
         const submodules = yield* submoduleRemoval(checkoutPath, rules);
@@ -1160,9 +1161,12 @@ const make = Effect.gen(function* () {
             submodules.reason ??
             (submodules.force ? yield* localChangesReason(checkoutPath, rules) : null),
           force: submodules.force,
+          bytes,
         };
       },
-      Effect.catch((error) => Effect.succeed({ keep: cleanupFailureReason(error), force: false })),
+      Effect.catch((error) =>
+        Effect.succeed({ keep: cleanupFailureReason(error), force: false, bytes: null }),
+      ),
     );
     const deletedRows = yield* sql<{ payload_json: string; workspaceRoot: string }>`
           SELECT t.payload_json, p.workspace_root AS "workspaceRoot"
@@ -1514,6 +1518,8 @@ const make = Effect.gen(function* () {
             Effect.gen(function* () {
               const blockedSinceLease = yield* blockedSinceCheck();
               if (blockedSinceLease !== null) return keep(blockedSinceLease);
+              if (yield* settingsChangedSinceCheck) return keep("settings changed since check");
+              const checkoutBytes = new Map<string, number | null>();
               // Each checkout passes the checks a single worktree does, or it stays.
               const result = yield* taskFolders.remove({
                 root: taskFolder.root,
@@ -1521,6 +1527,9 @@ const make = Effect.gen(function* () {
                 forget: deleted,
                 inspect: (checkout) =>
                   inspectCheckout(checkout.worktreePath, thread.branch, settings).pipe(
+                    Effect.tap(({ bytes }) =>
+                      Effect.sync(() => checkoutBytes.set(checkout.worktreePath, bytes)),
+                    ),
                     Effect.provideService(FileSystem.FileSystem, fs),
                     Effect.provideService(Path.Path, path),
                   ),
@@ -1531,6 +1540,7 @@ const make = Effect.gen(function* () {
                   path: removedPath,
                   outcome: "removed",
                   reason: sentence(removalReason),
+                  bytes: checkoutBytes.get(removedPath) ?? null,
                 });
               for (const keptCheckout of result.kept)
                 entries.push({

@@ -40,8 +40,9 @@ export function useWorktreeRepositoryChoices(
   );
   if (project === null || !tracksFolders) return NO_TRACKED_FOLDERS;
   if (folders.data === null) {
-    // Until the folders arrive the tracked list stands in, as the checkout's Git state does.
-    return { choices: null, tracksGitRepositories: folders.error === null };
+    // Unknown, whether loading or unreadable: the server decides, so a worktree send it cannot
+    // serve fails there and never runs in the original checkouts.
+    return { choices: null, tracksGitRepositories: true };
   }
   const choices = worktreeRepositoryChoices({
     folders: folders.data.folders,

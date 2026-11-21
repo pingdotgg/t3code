@@ -358,6 +358,7 @@ it.layer(layerTest)("ProjectService", (it) => {
         ["own-folder", [folder("/work/tracked/app/")]],
         ["parent", [folder("/work/tracked")]],
         ["duplicate", [folder("/work/tracked/api"), folder("/work/tracked/api/")]],
+        ["too-many", Array.from({ length: 129 }, (_, index) => folder(`/work/other/${index}`))],
       ] as const;
       const create = (key: string, trackedFolders: ReadonlyArray<ProjectTrackedFolder>) =>
         service.create({
@@ -994,6 +995,60 @@ it.effect("serializes two projects claiming the same workspace root", () =>
     yield* Deferred.succeed(releaseFirst, undefined);
     assert.equal((yield* Fiber.join(first)).id, "project:race:first");
     assert.equal((yield* Fiber.join(second))._tag, "ProjectConflictError");
+  }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+it.effect("keeps a folder added while a scan of the project folder waited to commit", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-folder-sync-" }),
+    );
+    const eventSink = yield* EventSink.EventSinkV2;
+    const updateReachedCommit = yield* Deferred.make<void>();
+    const releaseUpdate = yield* Deferred.make<void>();
+    const synced = yield* Deferred.make<void>();
+    const trackCommandId = CommandId.make("command:folder-sync:track");
+    const gatedSink = EventSink.EventSinkV2.of({
+      ...eventSink,
+      commitProjectCommand: (input) =>
+        input.commandId === trackCommandId
+          ? Deferred.succeed(updateReachedCommit, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseUpdate)),
+              Effect.andThen(eventSink.commitProjectCommand(input)),
+            )
+          : input.commandId.startsWith("project-folders:")
+            ? eventSink
+                .commitProjectCommand(input)
+                .pipe(Effect.ensuring(Deferred.succeed(synced, undefined)))
+            : eventSink.commitProjectCommand(input),
+    });
+    const service = yield* ProjectService.make.pipe(
+      Effect.provideService(EventSink.EventSinkV2, gatedSink),
+    );
+    const projectId = ProjectId.make("project:folder-sync");
+    yield* service.create({
+      commandId: CommandId.make("command:folder-sync:create"),
+      projectId,
+      title: "Folder sync",
+      workspaceRoot: root,
+    });
+    const added = { path: "/work/elsewhere", name: "Elsewhere" };
+    const update = yield* service
+      .update({ commandId: trackCommandId, projectId, trackedFolders: [added] })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(updateReachedCommit);
+    // The scan starts from a row that does not hold the added folder yet.
+    yield* fileSystem.makeDirectory(`${root}/api/.git`, { recursive: true });
+    yield* TestClock.adjust("31 seconds");
+    yield* service.getById(projectId);
+    yield* Deferred.succeed(releaseUpdate, undefined);
+    yield* Fiber.join(update);
+    yield* Deferred.await(synced);
+    assert.deepEqual(Option.getOrThrow(yield* service.getById(projectId)).trackedFolders, [
+      { path: `${root}/api`, name: "api", discovered: true },
+      added,
+    ]);
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
 );
 

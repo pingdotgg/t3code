@@ -16,6 +16,7 @@ import type {
   VcsStatusResult,
   WorkspaceFolder,
 } from "@t3tools/contracts";
+import { isAbsolutePath } from "@t3tools/shared/path";
 
 type ChangedFiles = OrchestrationV2Checkpoint["files"];
 
@@ -148,6 +149,11 @@ function relativeFolderPath(from: string, to: string): string | undefined {
   return [...source.segments.slice(shared).map(() => ".."), ...target.segments.slice(shared)].join(
     "/",
   );
+}
+
+/** Whether a `/`-separated path from a folder stays inside that folder. */
+export function isRelativePathInsideFolder(relativePath: string): boolean {
+  return relativePath !== ".." && !relativePath.startsWith("../") && !isAbsolutePath(relativePath);
 }
 
 function repositoryScope(
@@ -418,8 +424,13 @@ export function threadChangedRepositories(
   const scopes = threadRepositoryScopes(projection);
   if (scopes.length < 2) return scopes;
   const lastChange = new Map<CheckpointScopeId, number>();
-  for (const [index, checkpoint] of projection.checkpoints.entries()) {
-    if (checkpoint.runId !== null) lastChange.set(checkpoint.scopeId, index);
+  // A repository scope's ordinal is the run's; a loaded snapshot is not in capture order.
+  for (const checkpoint of projection.checkpoints) {
+    if (checkpoint.runId === null) continue;
+    const latest = lastChange.get(checkpoint.scopeId) ?? -1;
+    if (checkpoint.ordinalWithinScope > latest) {
+      lastChange.set(checkpoint.scopeId, checkpoint.ordinalWithinScope);
+    }
   }
   // `scopes` is by name already, and the sort is stable.
   return [...scopes].sort(
@@ -454,9 +465,15 @@ export function threadGitRepositories(input: {
             : [],
         );
   if (reached.length === 0) return input.changed;
+  // A checkpoint scope keeps the folder it was captured in, which a moved thread has left.
+  const reachedByPath = new Map(
+    reached.map((repository) => [repository.repositoryPath, repository]),
+  );
   const listed = new Set(input.changed.map((repository) => repository.repositoryPath));
   return [
-    ...input.changed,
+    ...input.changed.map(
+      (repository) => reachedByPath.get(repository.repositoryPath) ?? repository,
+    ),
     ...reached.filter((repository) => !listed.has(repository.repositoryPath)),
   ];
 }
@@ -488,7 +505,9 @@ function taskFolderSections(
   });
   const inside = changed.flatMap((scope) => {
     const relative = relativeFolderPath(taskFolder.root, scope.cwd);
-    return byPath.has(scope.repositoryPath) || relative === undefined || relative.startsWith("..")
+    return byPath.has(scope.repositoryPath) ||
+      relative === undefined ||
+      !isRelativePathInsideFolder(relative)
       ? []
       : [
           {
@@ -620,7 +639,9 @@ export function worktreeRepositoryChoices(input: {
       {
         repositoryPath: folder.path,
         name: folder.name,
-        ...(relativePath === undefined || relativePath === "" || relativePath.startsWith("..")
+        ...(relativePath === undefined ||
+        relativePath === "" ||
+        !isRelativePathInsideFolder(relativePath)
           ? {}
           : { relativePath }),
       },

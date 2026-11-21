@@ -1613,10 +1613,19 @@ export function repositoryRewindCheckpoint<
     if (first === undefined || checkpoint.ordinalWithinScope < first.ordinalWithinScope)
       first = checkpoint;
   }
+  if (first === undefined) return null;
   // A later run's own checkpoint holds that run's changes, not the state before them.
-  return first !== undefined && (first.ordinalWithinScope === targetOrdinal || first.runId === null)
-    ? first
-    : null;
+  if (first.ordinalWithinScope !== targetOrdinal && first.runId !== null) return null;
+  // A run whose snapshot failed in between may have changed the repository unrecorded.
+  const end = first.ordinalWithinScope;
+  const unrecorded = checkpoints.some(
+    (checkpoint) =>
+      checkpoint.runId !== null &&
+      (checkpoint.status === "error" || checkpoint.status === "missing") &&
+      checkpoint.ordinalWithinScope > targetOrdinal &&
+      checkpoint.ordinalWithinScope < end,
+  );
+  return unrecorded ? null : first;
 }
 
 export const OrchestrationV2CheckpointRollbackRequest = Schema.Struct({

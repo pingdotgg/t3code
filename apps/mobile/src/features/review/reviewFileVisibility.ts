@@ -55,6 +55,18 @@ function removeReviewFileId(fileIds: ReadonlyArray<string>, fileId: string): Rea
   return fileIds.includes(fileId) ? fileIds.filter((id) => id !== fileId) : fileIds;
 }
 
+// A repository filter shows part of a section; what is stored for the rest of it stays.
+function withStoredOutsideView(
+  inView: ReadonlyArray<string>,
+  stored: ReadonlyArray<string> | undefined,
+  next: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  if (stored === undefined) return next;
+  const visible = new Set(inView);
+  const outside = stored.filter((entry) => !visible.has(entry));
+  return outside.length === 0 ? next : [...outside, ...next];
+}
+
 export function useReviewFileVisibility(input: {
   readonly threadKey: string | null;
   readonly sectionId: string | null;
@@ -96,7 +108,11 @@ export function useReviewFileVisibility(input: {
         return;
       }
       updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-        toggleReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
+        withStoredOutsideView(
+          expansionKeys,
+          existing,
+          toggleReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
+        ),
       );
     },
     [expansionKeys, files, sectionId, threadKey],
@@ -110,13 +126,21 @@ export function useReviewFileVisibility(input: {
 
       const shouldCollapse = !viewedFileIds.includes(fileId);
       updateReviewViewedFileIds(threadKey, sectionId, (existing) =>
-        toggleReviewFileId(getValidExplicitReviewFileIds(files, existing), fileId),
+        withStoredOutsideView(
+          files.map((file) => file.id),
+          existing,
+          toggleReviewFileId(getValidExplicitReviewFileIds(files, existing), fileId),
+        ),
       );
 
       const key = expansionKeys[files.findIndex((file) => file.id === fileId)];
       if (shouldCollapse && key !== undefined) {
         updateReviewExpandedFileIds(threadKey, sectionId, (existing) =>
-          removeReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
+          withStoredOutsideView(
+            expansionKeys,
+            existing,
+            removeReviewFileId(getExpandedReviewFileKeys(expansionKeys, existing), key),
+          ),
         );
       }
     },

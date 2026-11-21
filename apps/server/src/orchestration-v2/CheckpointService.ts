@@ -785,6 +785,8 @@ export const layer: Layer.Layer<
         }
         const nested = yield* resolveNestedScopePaths(input.scopes);
         const snapshots: Array<Omit<CheckpointStore.RestoreCheckpointInput, "fallbackToHead">> = [];
+        // A snapshot that could not be put back is the only copy of the folder's pre-rewind state.
+        const unrecovered = new Set<string>();
         yield* Effect.forEach(
           input.targets,
           (target) =>
@@ -821,12 +823,14 @@ export const layer: Layer.Layer<
               snapshots.toReversed(),
               (snapshot) =>
                 withWorkspaceLock(snapshot.cwd, checkpointStore.restoreCheckpoint(snapshot)).pipe(
-                  Effect.catchCause((cause) =>
-                    Effect.logWarning("A failed rewind left a folder partly restored", {
+                  Effect.catchCause((cause) => {
+                    unrecovered.add(snapshot.checkpointRef);
+                    return Effect.logWarning("A failed rewind left a folder partly restored", {
                       cwd: snapshot.cwd,
+                      preRewindRef: snapshot.checkpointRef,
                       cause,
-                    }),
-                  ),
+                    });
+                  }),
                 ),
               { discard: true },
             ),
@@ -834,7 +838,7 @@ export const layer: Layer.Layer<
           Effect.ensuring(
             Effect.suspend(() =>
               Effect.forEach(
-                snapshots,
+                snapshots.filter((snapshot) => !unrecovered.has(snapshot.checkpointRef)),
                 (snapshot) =>
                   checkpointStore
                     .deleteCheckpointRefs({

@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointRef,
   CheckpointScopeId,
   NodeId,
   ProjectId,
@@ -523,3 +524,54 @@ it.effect("backs off only baseline retries after repeated workspace capture time
     }).pipe(Effect.provide(layerTest));
   }),
 );
+
+it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not put back", () => {
+  const targets = ["first", "second"].map((name) => ({
+    scope: { id: CheckpointScopeId.make(`checkpoint-scope:rewind:${name}`), cwd: `/repo/${name}` },
+    checkpoint: {
+      ordinalWithinScope: 1,
+      ref: CheckpointRef.make(`refs/t3/test/rewind/${name}`),
+      status: "ready" as const,
+    },
+  }));
+  const failure = new VcsProcessTimeoutError({
+    operation: "test.restore",
+    command: "git",
+    cwd: "/repo",
+    timeoutMs: 30000,
+  });
+  const preRewindRefs = new Map<string, string>();
+  const deleted: Array<{ readonly cwd: string; readonly ref: string }> = [];
+  const layerTest = CheckpointService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        layerNoTrackedFolders,
+        Layer.mock(CheckpointStore.CheckpointStore)({
+          hasCheckpointRef: () => Effect.succeed(true),
+          captureCheckpoint: (input) =>
+            Effect.sync(() => void preRewindRefs.set(input.cwd, input.checkpointRef)),
+          // The second folder's rewind fails, and then so does putting the first one back.
+          restoreCheckpoint: (input) =>
+            input.checkpointRef === targets[1]!.checkpoint.ref ||
+            input.checkpointRef === preRewindRefs.get("/repo/first")
+              ? Effect.fail(failure)
+              : Effect.succeed(true),
+          deleteCheckpointRefs: (input) =>
+            Effect.sync(() => {
+              for (const ref of input.checkpointRefs) deleted.push({ cwd: input.cwd, ref });
+            }),
+        }),
+      ),
+    ),
+    Layer.provideMerge(NodeCrypto.layer),
+  );
+  return Effect.gen(function* () {
+    const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+    const result = yield* Effect.result(
+      checkpoints.restore({ targets, scopes: targets.map((target) => target.scope) }),
+    );
+    assert.strictEqual(result._tag, "Failure");
+    assert.deepEqual(deleted, [{ cwd: "/repo/second", ref: preRewindRefs.get("/repo/second")! }]);
+  }).pipe(Effect.provide(layerTest));
+});

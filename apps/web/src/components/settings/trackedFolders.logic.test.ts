@@ -35,6 +35,15 @@ describe("resolveTrackedFolderInput", () => {
       },
       { path: "/home/me/code/tools", name: "tools" },
     ],
+    [
+      "a directory name longer than a folder name may be",
+      {
+        query: `/srv/${"n".repeat(127)} ${"x".repeat(40)}`,
+        listedDirectoryPath: null,
+        exactEntryPath: null,
+      },
+      { path: `/srv/${"n".repeat(127)} ${"x".repeat(40)}`, name: "n".repeat(127) },
+    ],
   ])("resolves %s", (_label, input, expected) => {
     expect(resolveTrackedFolderInput(input)).toEqual(expected);
   });

@@ -184,6 +184,20 @@ const failureDetail = (cause: unknown) =>
       ? cause.message
       : String(cause);
 
+/** The deepest folder that holds every one of `folders`, or null when they share none. */
+export const commonAncestor = (path: Path.Path, folders: ReadonlyArray<string>) => {
+  let ancestor = folders[0]!;
+  for (const folder of folders.slice(1)) {
+    while (!isWithinRoot(path, folder, ancestor)) {
+      const parent = path.dirname(ancestor);
+      // Two Windows drives meet nowhere, and a drive root is its own parent.
+      if (parent === ancestor) return null;
+      ancestor = parent;
+    }
+  }
+  return ancestor;
+};
+
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -299,13 +313,6 @@ const make = Effect.gen(function* () {
       : `${checkout.worktreePath} is not on the branch ${branch}`;
   });
 
-  const commonAncestor = (folders: ReadonlyArray<string>) => {
-    let ancestor = folders[0]!;
-    for (const folder of folders.slice(1)) {
-      while (!isWithinRoot(path, folder, ancestor)) ancestor = path.dirname(ancestor);
-    }
-    return ancestor;
-  };
   const mapped = (taskFolder: Pick<TaskFolder, "root" | "anchor">, source: string) =>
     path.join(taskFolder.root, path.relative(taskFolder.anchor, source));
   const depth = (target: string) => path.resolve(target).split(path.sep).length;
@@ -377,11 +384,22 @@ const make = Effect.gen(function* () {
       }
       repositories = [...selected.values()];
     }
+    let anchor = projectRoot;
+    for (const folder of tracked) {
+      const shared = commonAncestor(path, [anchor, folder.path]);
+      if (shared === null) {
+        return yield* new TaskFolderError({
+          operation: "plan",
+          detail: `"${folder.path}" shares no common root with the project folder ${projectRoot}, so the two cannot be laid out in one worktree folder.`,
+        });
+      }
+      anchor = shared;
+    }
     return {
       projectId: project.projectId,
       projectRoot,
       projectIsRepository: yield* isRepository(projectRoot),
-      anchor: commonAncestor([projectRoot, ...tracked.map((folder) => folder.path)]),
+      anchor,
       repositories: repositories.map(({ name, path: folderPath }) => ({ name, path: folderPath })),
       trackedRepositories: tracked.map((folder) => folder.path),
     };
@@ -553,9 +571,23 @@ const make = Effect.gen(function* () {
       path.basename(taskPlan.anchor) || "workspace",
       `${prefix}-${Hex.encode(hash).slice(0, 16)}`,
     );
-    let root = base;
-    for (let suffix = 2; yield* exists(root); suffix++) root = `${base}-${suffix}`;
-    return root;
+    const allocateFailed = fail("create", "Could not create the worktree folder");
+    yield* fileSystem
+      .makeDirectory(path.dirname(base), { recursive: true })
+      .pipe(Effect.mapError(allocateFailed));
+    // Made here, not just found free: two creations on one branch must not share a folder.
+    for (let suffix = 1; ; suffix++) {
+      const root = suffix === 1 ? base : `${base}-${suffix}`;
+      const claimed = yield* fileSystem.makeDirectory(root).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (cause) => cause.reason._tag === "AlreadyExists",
+          () => Effect.succeed(false),
+        ),
+        Effect.mapError(allocateFailed),
+      );
+      if (claimed) return root;
+    }
   });
 
   const removeCheckout = Effect.fnUntraced(function* (
@@ -687,8 +719,16 @@ const make = Effect.gen(function* () {
         kept.push({ path: projectPath, reason: "has files that exist only in this folder" });
     }
     if (kept.length === 0) {
-      yield* removeLinks(taskFolder.root).pipe(Effect.ignore);
-      if (input.forget) yield* store.remove(taskFolder.root);
+      let rootGone = yield* removeLinks(taskFolder.root).pipe(Effect.orElseSucceed(() => false));
+      if (!rootGone && input.force && input.inspect === undefined) {
+        rootGone = yield* fileSystem.remove(taskFolder.root, { recursive: true, force: true }).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+      }
+      if (!rootGone) {
+        kept.push({ path: taskFolder.root, reason: "has files that exist only in this folder" });
+      } else if (input.forget) yield* store.remove(taskFolder.root);
     }
     return { removed, kept } satisfies TaskFolderRemoval;
   });
@@ -927,6 +967,7 @@ const make = Effect.gen(function* () {
       plan: taskPlan,
       branch: input.newRefName,
       projectStart: { refName: input.refName, baseRefName: input.baseRefName ?? input.refName },
+      baseBranch: input.baseRefName ?? input.refName,
       startFromOrigin: yield* startsFromOrigin("create", projectId),
     });
     return { worktree: { path: taskFolder.projectPath, refName: branch } };

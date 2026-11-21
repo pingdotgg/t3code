@@ -1,8 +1,10 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { type ProjectTrackedFolder, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -195,6 +197,60 @@ it.live("keeps a Git project and its sibling repository side by side", () =>
       );
       assert.equal(yield* worktreeCount(ctx), 2);
       assert.equal(yield* worktreeCount(lib), 1);
+
+      // A file the thread left beside its checkouts keeps the folder, and the record of it.
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      const { root } = taskFolder;
+      yield* fileSystem.writeFileString(path.join(root, "notes.md"), "mine\n");
+      const first = yield* taskFolders.remove({ root, force: false, forget: true });
+      assert.deepEqual(
+        first.kept.map((entry) => entry.path),
+        [root],
+      );
+      assert.isNotNull(yield* taskFolders.find(root));
+      const second = yield* taskFolders.remove({ root, force: true, forget: true });
+      assert.deepEqual(second.kept, []);
+      assert.isFalse(yield* fileSystem.exists(root));
+      assert.isNull(yield* taskFolders.find(root));
+    }),
+  ),
+);
+
+it.effect("finds no common folder for two Windows drives instead of climbing forever", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    assert.equal(
+      TaskFolders.commonAncestor(path, ["C:\\work\\shop", "C:\\work\\libs\\api"]),
+      "C:\\work",
+    );
+    assert.isNull(TaskFolders.commonAncestor(path, ["C:\\work\\shop", "D:\\api"]));
+  }).pipe(Effect.provide(NodePath.layerWin32)),
+);
+
+it.live("gives two creations on one branch a folder each", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, repository } = yield* fixture;
+      const api = yield* repository("shop/api");
+      state.workspaceRoot = path.join(tmp, "shop");
+      state.trackedFolders = tracked(api);
+
+      // Git gives the branch to one of them; the other's rollback must leave that one's folder.
+      const exits = yield* Effect.all(
+        [Effect.exit(create("feature")), Effect.exit(create("feature"))],
+        {
+          concurrency: 2,
+        },
+      );
+
+      const created = exits.flatMap((exit) =>
+        Exit.isSuccess(exit) ? [exit.value.taskFolder] : [],
+      );
+      assert.isAtLeast(created.length, 1);
+      assert.equal(new Set(created.map((taskFolder) => taskFolder.root)).size, created.length);
+      for (const taskFolder of created) {
+        assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "api", "README.md")));
+      }
     }),
   ),
 );
@@ -459,6 +515,17 @@ it.live("starts each repository from the base branch where it has one", () =>
       assert.equal(
         yield* head(path.join(taskFolder.root, "web"), "HEAD"),
         yield* head(web, "main"),
+      );
+      // A worktree an existing thread asks for starts its repositories from the chosen base too.
+      const requested = yield* (yield* TaskFolders.TaskFolders).createForProjectFolder({
+        cwd: state.workspaceRoot,
+        refName: "release",
+        newRefName: "later",
+        path: null,
+      });
+      assert.equal(
+        yield* head(path.join(requested!.worktree.path, "api"), "HEAD"),
+        yield* head(api, "release"),
       );
     }),
   ),

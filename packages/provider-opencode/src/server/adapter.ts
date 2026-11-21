@@ -741,6 +741,8 @@ export function openCodePermissionRules(
 
   // The thread's other folders count as workspace; `edit` still decides whether writes ask.
   for (const root of runtimePolicy.workspace?.extraRoots ?? []) {
+    // A glob character in the path would allow sibling folders, so such a root keeps asking.
+    if (/[*?]/.test(root)) continue;
     rules.push({
       permission: "external_directory",
       pattern: `${root.replace(/\/$/, "")}/*`,

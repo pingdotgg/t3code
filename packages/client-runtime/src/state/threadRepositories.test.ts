@@ -23,6 +23,7 @@ import {
   resolveWorktreeRepositorySelection,
   rewindFileRestore,
   THREAD_REPOSITORY_SECTIONS_VISIBLE,
+  isRelativePathInsideFolder,
   threadChangedRepositories,
   threadGitRepositories,
   threadRepositoryScopes,
@@ -153,9 +154,21 @@ describe("threadRepositorySections", () => {
   it("orders changed repositories by their latest turn, newest first", () => {
     expect(changed.map((entry) => entry.cwd)).toEqual([
       "/work/shared",
-      "/work/wrapper/web",
       "/work/wrapper/services/api",
+      "/work/wrapper/web",
     ]);
+    // A loaded snapshot lists checkpoints by scope, not in the order they were captured.
+    expect(
+      threadChangedRepositories({
+        checkpoints: [
+          checkpoint("api-3", "scope-api", 3),
+          checkpoint("shared-1", "scope-shared", 1),
+          checkpoint("web-2", "scope-web", 2),
+          checkpoint("web-1", "scope-web", 1),
+        ],
+        checkpointScopes: scopes,
+      }).map((entry) => entry.cwd),
+    ).toEqual(["/work/wrapper/services/api", "/work/wrapper/web", "/work/shared"]);
     // A baseline alone is no change: without a turn the repository sorts last, by name.
     expect(
       threadChangedRepositories({
@@ -259,7 +272,7 @@ describe("threadRepositorySections", () => {
     // A worktree thread reads its own checkouts, never the shared ones.
     expect(
       threadGitRepositories({
-        changed: [],
+        changed: [{ repositoryPath: "/work/api", name: "api", cwd: "/work/api" }],
         taskFolder: {
           repositories: [{ repositoryPath: "/work/api", worktreePath: "/wt/api", name: "api" }],
         },
@@ -298,8 +311,8 @@ describe("threadRepositorySections", () => {
       taskFolder,
     });
     expect(sections.visible.map((section) => [section.key, section.cwd, section.origin])).toEqual([
-      ["/work/wrapper/web", "/wt/task/web", "worktree"],
       ["/work/wrapper/services/api", "/wt/task/services/api", "worktree"],
+      ["/work/wrapper/web", "/wt/task/web", "worktree"],
       ["/work/wrapper/docs", "/wt/task/docs", "worktree"],
       // A submodule the thread changed inside one of its worktrees.
       ["/work/wrapper/web/vendor/lib", "/wt/task/web/vendor/lib", "changed"],
@@ -393,6 +406,18 @@ describe("rewindFileRestore", () => {
         taskFolder: linkedProjectFolder,
       }),
     ).toBe(null);
+  });
+});
+
+describe("isRelativePathInsideFolder", () => {
+  it.each([
+    ["api", true],
+    ["..api", true],
+    ["../api", false],
+    ["..", false],
+    ["D:/api", false],
+  ])("%j is inside: %j", (relativePath, inside) => {
+    expect(isRelativePathInsideFolder(relativePath)).toBe(inside);
   });
 });
 

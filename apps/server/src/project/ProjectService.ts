@@ -1,6 +1,7 @@
 import {
   CommandId,
   type OrchestrationProjectShell,
+  PROJECT_TRACKED_FOLDERS_MAX,
   ProjectId,
   type Project,
   type ProjectCreatePayload,
@@ -16,6 +17,7 @@ import { isWslSharePath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -44,7 +46,12 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import { makeIsWorktreeContainer } from "./worktreeContainer.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
-import { projectFolders, sameProjectFolders } from "../workspace/WorkspaceFolders.ts";
+import {
+  discoverFolders,
+  mergeProjectFolders,
+  projectFolders,
+  sameProjectFolders,
+} from "../workspace/WorkspaceFolders.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -233,13 +240,27 @@ export const make = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     if ((folderSyncDue.get(row.projectId) ?? 0) > now) return;
     folderSyncDue.set(row.projectId, now + FOLDER_SYNC_INTERVAL_MS);
-    const trackedFolders = yield* withDiscovered(row.workspaceRoot, row.trackedFolders);
-    if (sameProjectFolders(trackedFolders, row.trackedFolders)) return;
-    yield* commit({
+    const discovered = yield* discoverFolders(row.workspaceRoot).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+    if (sameProjectFolders(mergeProjectFolders(discovered, row.trackedFolders), row.trackedFolders))
+      return;
+    const command = {
       type: "project.meta.update",
       commandId: CommandId.make(`project-folders:${row.projectId}:${now}`),
       projectId: row.projectId,
-      trackedFolders,
+    } as const;
+    // `row` was read before the scan: an update since then may have added or removed a folder.
+    yield* commit(command, (current) => {
+      if (current?.deletedAt !== null || current.workspaceRoot !== row.workspaceRoot)
+        return Effect.succeed(null);
+      const trackedFolders = mergeProjectFolders(discovered, current.trackedFolders);
+      return Effect.succeed(
+        sameProjectFolders(trackedFolders, current.trackedFolders)
+          ? null
+          : { ...command, trackedFolders },
+      );
     });
   });
 
@@ -326,6 +347,11 @@ export const make = Effect.gen(function* () {
       }
       normalized.push({ path: folderPath, name: folder.name });
     }
+    if (normalized.length > PROJECT_TRACKED_FOLDERS_MAX) {
+      return invalid(
+        `A project tracks at most ${PROJECT_TRACKED_FOLDERS_MAX} added folders; ${normalized.length} were given.`,
+      );
+    }
     return withDiscovered(workspaceRoot, normalized);
   };
 
@@ -342,13 +368,27 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
-    const { projectId } = command;
+  const commit = Effect.fn("ProjectService.commit")(function* (
+    initial: ProjectCommand,
+    // Decides the command from the row as it is under the project's lock; null commits nothing.
+    // It must keep the command's type and workspace root, which pick the locks.
+    refine?: (
+      current: ProjectStore.ProjectRow | undefined,
+    ) => Effect.Effect<ProjectCommand | null, ProjectServiceError>,
+  ) {
+    const { projectId } = initial;
     const dispatchError = (cause: unknown) =>
       new ProjectOperationError({ operation: "dispatch-project-command", projectId, cause });
-    const workspaceRoot = command.type === "project.delete" ? undefined : command.workspaceRoot;
+    const workspaceRoot = initial.type === "project.delete" ? undefined : initial.workspaceRoot;
     const planAndCommit = Effect.gen(function* () {
       const project = Option.getOrUndefined(yield* readRow(projectId, { includeDeleted: true }));
+      let command = initial;
+      if (refine !== undefined) {
+        const refined = yield* Effect.exit(refine(project));
+        if (Exit.isFailure(refined)) return { refused: refined.cause };
+        if (refined.value === null) return null;
+        command = refined.value;
+      }
       const workspaceOwner =
         workspaceRoot === undefined
           ? undefined
@@ -375,17 +415,18 @@ export const make = Effect.gen(function* () {
           acceptedAt: now,
           event: planned.success,
         });
-        return receipt;
+        return { receipt };
       }
-      return yield* eventSink.commitRejectedProjectCommand({
+      const receipt = yield* eventSink.commitRejectedProjectCommand({
         commandId: command.commandId,
         projectId,
         commandType: command.type,
         rejectedAt: now,
         error: encodeProjectCommandRejection(planned.failure),
       });
+      return { receipt };
     });
-    const receipt = yield* projectLocks
+    const outcome = yield* projectLocks
       .withLock(
         projectId,
         workspaceRoot === undefined
@@ -393,9 +434,12 @@ export const make = Effect.gen(function* () {
           : workspaceLocks.withLock(workspaceRoot, planAndCommit),
       )
       .pipe(Effect.mapError(dispatchError));
-    if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
+    if (outcome === null) return;
+    if ("refused" in outcome) return yield* Effect.failCause(outcome.refused);
+    const { receipt } = outcome;
+    if (receipt.projectId !== projectId || receipt.commandType !== initial.type) {
       return yield* dispatchError(
-        `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
+        `Command ${initial.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
       );
     }
     // Retries re-plan against their own effects; the first receipt determines the outcome.
@@ -522,16 +566,7 @@ export const make = Effect.gen(function* () {
       if (workspaceRoot !== previousRoot) {
         yield* rejectWorktreeContainer(input.projectId, workspaceRoot);
       }
-      // Moving the project's folder re-checks the folders it keeps tracking.
-      const trackedFolders =
-        input.trackedFolders === undefined && workspaceRoot === previousRoot
-          ? undefined
-          : yield* normalizeTrackedFolders(
-              input.projectId,
-              workspaceRoot,
-              input.trackedFolders ?? existing.value.trackedFolders,
-            );
-      yield* commit({
+      const command = {
         type: "project.meta.update",
         commandId: input.commandId,
         projectId: input.projectId,
@@ -547,12 +582,26 @@ export const make = Effect.gen(function* () {
           ? {}
           : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
         ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-        ...(input.trackedFolders === undefined || trackedFolders === undefined
-          ? {}
-          : { trackedFolders }),
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),
-      });
+      } as const;
+      // Checked against the row under the lock: an update that ran meanwhile may have moved the
+      // project's folder or changed what it tracks.
+      yield* commit(
+        command,
+        Effect.fnUntraced(function* (current) {
+          if (current === undefined || current.deletedAt !== null) return command;
+          const root = command.workspaceRoot ?? current.workspaceRoot;
+          // Moving the project's folder re-checks the folders it keeps tracking.
+          if (input.trackedFolders === undefined && root === current.workspaceRoot) return command;
+          const trackedFolders = yield* normalizeTrackedFolders(
+            input.projectId,
+            root,
+            input.trackedFolders ?? current.trackedFolders,
+          );
+          return input.trackedFolders === undefined ? command : { ...command, trackedFolders };
+        }),
+      );
       if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }

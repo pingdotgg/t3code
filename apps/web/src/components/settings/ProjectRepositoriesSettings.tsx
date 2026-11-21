@@ -16,7 +16,7 @@ import {
   type WorkspaceFolderState,
 } from "@t3tools/contracts";
 import { FolderIcon, PlusIcon } from "lucide-react";
-import { T, useGT, Var } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useId, useState } from "react";
 
 import { checkProjectAccess, reportProjectFailure } from "../../hooks/useProjectGroupUpdate";
@@ -48,9 +48,9 @@ const NO_TRACKED_FOLDERS: ReadonlyArray<ProjectTrackedFolder> = [];
 const BROWSE_SUGGESTION_LIMIT = 100;
 
 const FOLDER_STATE_LABELS: Record<WorkspaceFolderState, string> = {
-  git: "Git repository",
-  plain: "Folder",
-  missing: "Missing",
+  git: msg("Git repository"),
+  plain: msg("Folder", { $context: "a plain folder that is not a Git repository" }),
+  missing: msg("Missing", { $context: "folder state: not found on disk" }),
 };
 
 /** Tracked folder paths belong to one checkout's machine, so each checkout has its own list. */
@@ -105,6 +105,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   const disabled = !canEdit || !isConnected || isSaving;
   const added = folders.filter((folder) => folder.discovered !== true);
   const gt = useGT();
+  const m = useMessages();
 
   const save = async (next: ReadonlyArray<ProjectTrackedFolder>, failureTitle: string) => {
     if (checkProjectAccess([member], failureTitle)) return false;
@@ -126,7 +127,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   };
 
   const addFolder = async (folder: ProjectTrackedFolder) => {
-    if (await save([...added, folder], "Failed to add folder")) setIsAddingFolder(false);
+    if (await save([...added, folder], gt("Failed to add folder"))) setIsAddingFolder(false);
   };
 
   return (
@@ -163,7 +164,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
                 <span className="min-w-0 truncate">{folder.name}</span>
                 {folder.state ? (
                   <Badge size="sm" variant={folder.state === "missing" ? "warning" : "outline"}>
-                    {FOLDER_STATE_LABELS[folder.state]}
+                    {m(FOLDER_STATE_LABELS[folder.state])}
                   </Badge>
                 ) : null}
               </span>
@@ -184,7 +185,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
                   onClick={() =>
                     void save(
                       added.filter((candidate) => candidate.path !== folder.path),
-                      "Failed to remove folder",
+                      gt("Failed to remove folder"),
                     )
                   }
                 >
@@ -218,7 +219,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
               variant="ghost"
               disabled={disabled}
               aria-label={gt("Add {name} to the project", { name: folder.name })}
-              onClick={() => void save([...added, folder], "Failed to add folder")}
+              onClick={() => void save([...added, folder], gt("Failed to add folder"))}
             >
               <T>Add</T>
             </Button>

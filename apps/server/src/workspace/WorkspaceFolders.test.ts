@@ -91,6 +91,8 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         `{
           // Editors write comments and trailing commas here.
           "folders": [
+            // Entries that lead nowhere take none of the room the real ones need.
+            ${Array.from({ length: 130 }, (_, index) => `{ "path": "gone-${index}" },`).join("")}
             { "path": "api", "name": "API" },
             { "path": "notes" },
             { "path": "../outside" },
@@ -182,6 +184,41 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
     }),
   );
 
+  it.effect("keeps the folders someone added when a project holds more than fit", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* makeTempDir;
+      const workspaceRoot = path.join(tmp, "wrapper");
+      const outside = path.join(tmp, "outside");
+      const longName = "r".repeat(200);
+      yield* Effect.forEach(
+        [longName, ...Array.from({ length: 130 }, (_, index) => `s${index}`)],
+        (name) =>
+          fileSystem.makeDirectory(path.join(workspaceRoot, "src", name, ".git"), {
+            recursive: true,
+          }),
+        { discard: true },
+      );
+      yield* fileSystem.makeDirectory(outside, { recursive: true });
+
+      yield* Effect.gen(function* () {
+        const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
+        const { folders } = yield* workspaceFolders.list({ projectId });
+        assert.equal(folders.length, 128);
+        assert.deepEqual(
+          [folders[0]!.name, folders[0]!.path],
+          ["r".repeat(128), path.join(workspaceRoot, "src", longName)],
+        );
+        assert.deepEqual([folders.at(-1)!.name, folders.at(-1)!.path], ["Outside", outside]);
+      }).pipe(
+        Effect.provide(
+          layerFor({ workspaceRoot, trackedFolders: [{ path: outside, name: "Outside" }] }),
+        ),
+      );
+    }),
+  );
+
   it.effect("reports each tracked folder's state and grants a thread the ones outside", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -198,9 +235,10 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       const linked = folder("shared", "app", "linked");
       const shared = path.join(tmp, "shared");
       const worktree = path.join(tmp, "tree");
-      // `lib` is checked out with a submodule of its own; `docs` was never initialized.
+      // `lib` is checked out with a submodule of its own; `docs` was never initialized. A path
+      // listed twice is one submodule.
       const gitmodules =
-        '[submodule "lib"]\n\tpath = vendor/lib\n[submodule "docs"]\n\tpath = docs\n';
+        '[submodule "lib"]\n\tpath = vendor/lib\n[submodule "docs"]\n\tpath = docs\n[submodule "again"]\n\tpath = vendor/lib\n';
       for (const root of [workspaceRoot, worktree]) {
         yield* fileSystem.makeDirectory(path.join(root, "vendor", "lib", "deep", ".git"), {
           recursive: true,
