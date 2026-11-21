@@ -246,7 +246,8 @@ it("keeps a new binding open when Escape is pressed during its save", async () =
   runCommand.mockReturnValue(pendingSave);
   await using screen = await render(<KeybindingsSettingsPanel />);
   await screen.getByRole("button", { name: "Add keybinding" }).click();
-  await page.getByRole("option", { name: "Toggle sidebar", exact: true }).click();
+  await userEvent.keyboard("sidebar.toggle");
+  await page.getByRole("option", { name: /Toggle sidebar/ }).click();
   const field = screen.getByRole("textbox", { name: "Keybinding for Toggle sidebar", exact: true });
   await field.click();
   await userEvent.keyboard("{Control>}k{/Control}");
