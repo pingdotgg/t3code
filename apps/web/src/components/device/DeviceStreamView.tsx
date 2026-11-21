@@ -79,6 +79,8 @@ export interface DeviceStreamHandle {
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
   readonly inputConnected: boolean;
+  /** The canvas the stream paints, or null while it shows MJPEG images instead. */
+  readonly videoSource: HTMLCanvasElement | null;
 }
 
 export function DeviceStreamView(props: {
@@ -308,6 +310,7 @@ export function DeviceStreamView(props: {
                   pressButton: client.pressButton,
                   rotate: client.rotate,
                   inputConnected: inputState.connected,
+                  videoSource: mjpegUrl ? null : canvas,
                 }
               : null,
           }}

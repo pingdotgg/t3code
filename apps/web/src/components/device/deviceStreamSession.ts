@@ -12,6 +12,7 @@ import { Atom } from "effect/reactivity";
 
 import { m } from "~/i18n/messages";
 import { refreshDeviceHubAccess } from "~/state/device";
+import type { DeviceInput } from "./deviceRecording.logic";
 
 export interface DeviceStreamState {
   readonly status: DeviceStreamStatus;
@@ -74,6 +75,78 @@ export const deviceStreamScreenAtom = Atom.family((viewId: string) =>
   Atom.make<DeviceScreenSize | null>(null).pipe(Atom.withLabel(`device-stream-screen:${viewId}`)),
 );
 
+const inputObservers = new Map<string, Set<(input: DeviceInput) => void>>();
+
+/**
+ * Hears every input any view of the device sends, keyed by `deviceScreenKey`, so a
+ * recording survives the stream reconnecting with fresh hub access.
+ */
+export function observeDeviceInput(
+  deviceKey: string,
+  observer: (input: DeviceInput) => void,
+): () => void {
+  const observers = inputObservers.get(deviceKey) ?? new Set();
+  observers.add(observer);
+  inputObservers.set(deviceKey, observers);
+  return () => {
+    observers.delete(observer);
+    if (observers.size === 0) inputObservers.delete(deviceKey);
+  };
+}
+
+/** Reports only input the client actually forwards on this device's transport. */
+function observeStreamInput(
+  client: DeviceStreamClient,
+  key: Pick<DeviceStreamKey, "environmentId" | "hostId" | "deviceId" | "platform" | "serveSimOnly">,
+): DeviceStreamClient {
+  const deviceKey = deviceScreenKey(key.environmentId, key.hostId, key.deviceId);
+  const ios = key.platform === "ios";
+  const avcc = ios || key.serveSimOnly;
+  const emit = (input: DeviceInput) => {
+    for (const observer of inputObservers.get(deviceKey) ?? []) observer(input);
+  };
+  return {
+    ...client,
+    sendTouch: (phase, x, y) => {
+      emit({ type: "touch", phase, x, y });
+      client.sendTouch(phase, x, y);
+    },
+    sendKey: (event, phase) => {
+      if (phase === "down") {
+        // The Android client sends Escape as Back.
+        emit(
+          !avcc && event.key === "Escape"
+            ? { type: "button", button: "back" }
+            : {
+                type: "key",
+                key: event.key,
+                ctrl: event.ctrlKey,
+                alt: event.altKey,
+                meta: event.metaKey,
+              },
+        );
+      }
+      client.sendKey(event, phase);
+    },
+    sendText: (text) => {
+      if (!avcc) emit({ type: "text", text });
+      client.sendText(text);
+    },
+    pressButton: (button) => {
+      if (!(ios && button === "back")) emit({ type: "button", button });
+      client.pressButton(button);
+    },
+    rotate: () => {
+      if (ios) emit({ type: "rotate" });
+      client.rotate();
+    },
+    setOrientation: (orientation) => {
+      if (ios) emit({ type: "orientation", orientation });
+      client.setOrientation(orientation);
+    },
+  };
+}
+
 /** A device's video and input connection, live while a view reads it. */
 export const deviceStreamSessionAtom = Atom.family((key: DeviceStreamKey) =>
   Atom.make((get): DeviceStreamSession => {
@@ -91,35 +164,38 @@ export const deviceStreamSessionAtom = Atom.family((key: DeviceStreamKey) =>
       session = { ...session, state };
       get.setSelf(session);
     };
-    const client = createDeviceStreamClient(
-      {
-        platform: key.platform,
-        deviceId: key.deviceId,
-        access: key.access,
-        serveSimOnly: key.serveSimOnly,
-      },
-      createCanvasFrameSink(canvas, () => frameListener?.()),
-      {
-        onDuoControl: (duoControl) => {
-          if (duoControl.error && duoControl.error !== state.duoControl.error)
-            controlRejectedListener?.();
-          update({ duoControl });
+    const client = observeStreamInput(
+      createDeviceStreamClient(
+        {
+          platform: key.platform,
+          deviceId: key.deviceId,
+          access: key.access,
+          serveSimOnly: key.serveSimOnly,
         },
-        onDuoUnavailable: () => update({ phoneUnavailable: true }),
-        onStatus: (status, detail) =>
-          update({ status, detail, ...(status === "streaming" ? { hasFrame: true } : {}) }),
-        onScreen: (screen) => {
-          get.set(screenAtom, screen);
-          update({ screen });
+        createCanvasFrameSink(canvas, () => frameListener?.()),
+        {
+          onDuoControl: (duoControl) => {
+            if (duoControl.error && duoControl.error !== state.duoControl.error)
+              controlRejectedListener?.();
+            update({ duoControl });
+          },
+          onDuoUnavailable: () => update({ phoneUnavailable: true }),
+          onStatus: (status, detail) =>
+            update({ status, detail, ...(status === "streaming" ? { hasFrame: true } : {}) }),
+          onScreen: (screen) => {
+            get.set(screenAtom, screen);
+            update({ screen });
+          },
+          onUnauthorized: () => refreshDeviceHubAccess(key.environmentId),
+          onMjpegFallback: (mjpegUrl) =>
+            update({ mjpegUrl, mjpegGeneration: state.mjpegGeneration + 1 }),
+          onCanvasVideo: () => update({ mjpegUrl: null }),
+          onInputConnected: (connected, detail) =>
+            update({ input: { connected, ...(detail ? { detail } : {}) } }),
         },
-        onUnauthorized: () => refreshDeviceHubAccess(key.environmentId),
-        onMjpegFallback: (mjpegUrl) =>
-          update({ mjpegUrl, mjpegGeneration: state.mjpegGeneration + 1 }),
-        onCanvasVideo: () => update({ mjpegUrl: null }),
-        onInputConnected: (connected, detail) =>
-          update({ input: { connected, ...(detail ? { detail } : {}) } }),
-      },
-      m,
+        m,
+      ),
+      key,
     );
     session = {
       stream: client,
