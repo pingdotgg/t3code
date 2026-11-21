@@ -156,6 +156,8 @@ const requiredChecksLayer = (
           return respond({ full_name: "acme/web", permissions: { push: true, admin: false } });
         case "user":
           return respond({ login: "maria" });
+        case "repos/acme/web/issues/7/timeline":
+          return respond([]);
         default:
           return Effect.die(`Unexpected Forgejo request: ${input.path}`);
       }
@@ -664,6 +666,9 @@ it.effect.each([
                 break;
               case "repos/maria/project/branches/main":
                 response = { name: "main", protected: false };
+                break;
+              case "repos/maria/project/issues/42/timeline":
+                response = [];
                 break;
               default:
                 return Effect.die(`Unexpected Forgejo request: ${input.path}`);
