@@ -45,8 +45,10 @@ export function SettingsScreen(
         search={props.search}
         trailing={props.trailing}
         menus={props.menus}
-        onBack={workspaceRoot ? undefined : back}
-        guardBack={props.guardBack}
+        // The column's first page also blocks system Back, which would reveal a second list.
+        onBack={workspaceRoot || back.columnRoot ? undefined : back.onBack}
+        onBackToList={!workspaceRoot && back.columnRoot ? back.onBack : undefined}
+        guardBack={props.guardBack || back.columnRoot}
         hideBottomBorder
       />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>

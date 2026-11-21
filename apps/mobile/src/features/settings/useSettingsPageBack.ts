@@ -6,8 +6,8 @@ import { useHardwareBack } from "../../lib/backHandler";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 
 /**
- * The page's Back action, or undefined for the first page beside the Settings list on wide
- * Android: that page roots the detail column, so Back leaves Settings rather than emptying it.
+ * The page's Back action. The first page beside the Settings list in a split roots the detail
+ * column (`columnRoot`): Back there leaves Settings rather than emptying the column.
  */
 export function useSettingsPageBack() {
   const navigation = useNavigation();
@@ -15,11 +15,10 @@ export function useSettingsPageBack() {
   const { layout } = useAdaptiveWorkspaceLayout();
   const routes = navigation.getState()?.routes ?? [];
   const below = routes[routes.findIndex((candidate) => candidate.key === route.key) - 1];
-  const columnRoot =
-    Platform.OS === "android" && layout.usesSplitView && below?.name === "Settings";
-  useHardwareBack(columnRoot, () => {
+  const columnRoot = layout.usesSplitView && below?.name === "Settings";
+  useHardwareBack(Platform.OS === "android" && columnRoot, () => {
     resetAndroidWorkspace(navigation);
     return true;
   });
-  return columnRoot ? undefined : () => navigation.goBack();
+  return { columnRoot, onBack: () => navigation.goBack() };
 }

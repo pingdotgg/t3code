@@ -16,9 +16,21 @@ export type WorkspaceTab = NavigationTab;
 export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
-/** Settings, Chats, pull requests and issues pair a list with a detail column; Usage is one page. */
-export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
-  return settingsOpen || tab !== "usage";
+/**
+ * Settings, Chats, pull requests and issues pair a list with a detail column; Usage is one page. The
+ * pre-iOS 26 split previously hid the sidebar on Usage, taking its tabs with it.
+ *
+ * 旧版 iPad 的 Usage 侧栏曾随页面切换消失，导致标签栏丢失。
+ */
+export function workspaceUsesColumns(
+  tab: WorkspaceTab,
+  settingsOpen = false,
+  nativeColumns = true,
+  splitView = true,
+) {
+  return settingsOpen
+    ? nativeColumns || splitView
+    : (!nativeColumns && splitView) || tab !== "usage";
 }
 
 export interface WorkspaceTabState {

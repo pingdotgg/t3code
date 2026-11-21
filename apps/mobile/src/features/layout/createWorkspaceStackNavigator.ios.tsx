@@ -543,7 +543,12 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const descriptors = props.descriptors;
   const baseRoute = { key: `${props.state.key}:workspace`, name: "Workspace" };
   const visibleRoute = projection.detail.at(-1) ?? primaryRoute;
-  const workspacePage = !workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen);
+  const workspacePage = !workspaceUsesColumns(
+    workspace.state.selectedTab,
+    workspace.settingsOpen,
+    props.nativeColumns,
+    layout.usesSplitView,
+  );
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
     navigation: props.descriptors[visibleRoute.key]!.navigation,
@@ -687,8 +692,9 @@ function WorkspaceStackNavigator({
   );
   return (
     <NativeWorkspaceModeContext value={usesNativeWorkspaceColumns}>
-      <NavigationContent>
-        <WorkspaceTabsProvider settingsOpen={settingsOpen}>
+      {/* Before iOS 26 NavigationContent's layout draws the sidebar outside its children. */}
+      <WorkspaceTabsProvider settingsOpen={settingsOpen}>
+        <NavigationContent>
           <WorkspaceStackView
             nativeColumns={usesNativeWorkspaceColumns}
             {...rest}
@@ -697,8 +703,8 @@ function WorkspaceStackNavigator({
             descriptors={descriptors}
             navigation={navigation}
           />
-        </WorkspaceTabsProvider>
-      </NavigationContent>
+        </NavigationContent>
+      </WorkspaceTabsProvider>
     </NativeWorkspaceModeContext>
   );
 }

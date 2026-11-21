@@ -55,11 +55,16 @@ describe("Duo list clearance", () => {
 });
 
 describe("workspace root navigation", () => {
-  it("pairs Settings, chats and pull requests with a detail column, and keeps Usage one page", () => {
+  it("pairs Settings, chats, pull requests and issues with a detail column, and keeps Usage one page", () => {
     expect(workspaceUsesColumns("usage")).toBe(false);
     expect(workspaceUsesColumns("usage", true)).toBe(true);
     expect(workspaceUsesColumns("threads")).toBe(true);
     expect(workspaceUsesColumns("pullRequests")).toBe(true);
+    expect(workspaceUsesColumns("issues")).toBe(true);
+    // Before iOS 26 the split keeps its sidebar, which holds the tabs; a narrow window does not.
+    expect(workspaceUsesColumns("usage", false, false)).toBe(true);
+    expect(workspaceUsesColumns("usage", false, false, false)).toBe(false);
+    expect(workspaceUsesColumns("threads", true, false, false)).toBe(false);
   });
 
   it("keeps the registered defaults while customization is unavailable", () => {
