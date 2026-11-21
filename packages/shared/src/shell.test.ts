@@ -23,6 +23,7 @@ import {
   CommandAvailability,
   CommandResolutionCache,
   type CommandAvailabilityChecker,
+  gitForWindowsBash,
   isCommandAvailable,
   listLoginShellCandidates,
   mergePathEntries,
@@ -666,6 +667,7 @@ describe("runsGitWithoutConsole", () => {
 
   it.each([
     [["rev-parse", "--git-path", "index"], true],
+    [["rev-parse", "--git-common-dir", "--show-toplevel"], true],
     [
       [
         "rev-parse",
@@ -754,6 +756,24 @@ describe("preferGitForWindowsBinary", () => {
     expect(preferGitForWindowsBinary("C:\\Program Files\\Git\\cmd\\gitk.exe", {}, everything)).toBe(
       "C:\\Program Files\\Git\\cmd\\gitk.exe",
     );
+  });
+});
+
+describe("gitForWindowsBash", () => {
+  const bash = "C:\\Program Files\\Git\\bin\\bash.exe";
+  const isBash = (filePath: string) => filePath === bash;
+
+  it.each([
+    "C:\\Program Files\\Git\\cmd\\git.exe",
+    "C:\\Program Files\\Git\\bin\\git.exe",
+    "C:\\Program Files\\Git\\mingw64\\bin\\git.exe",
+  ])("finds Git Bash from %s", (git) => {
+    expect(gitForWindowsBash(git, isBash)).toBe(bash);
+  });
+
+  it("finds nothing without a Git for Windows bash", () => {
+    expect(gitForWindowsBash("C:\\Users\\me\\scoop\\shims\\git.exe", isBash)).toBeUndefined();
+    expect(gitForWindowsBash("C:\\Program Files\\Git\\cmd\\gitk.exe", () => true)).toBeUndefined();
   });
 });
 

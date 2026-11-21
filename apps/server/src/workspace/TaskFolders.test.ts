@@ -347,6 +347,64 @@ it.live("puts a clone the project ignores inside the project's worktree", () =>
   ),
 );
 
+it.live("creates the task folder when the project's checkout hook already linked a clone", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository } = yield* fixture;
+      const project = yield* repository("p");
+      yield* fileSystem.writeFileString(path.join(project, ".gitignore"), "vendor/\n");
+      yield* run(project, "add", ".");
+      yield* run(project, "commit", "-m", "ignore vendor");
+      const lib = yield* repository("p/vendor/lib");
+      // Like many projects with vendored clones, a new worktree links them back to the checkout.
+      const hooks = path.join(tmp, "hooks");
+      yield* fileSystem.makeDirectory(hooks);
+      yield* fileSystem.writeFileString(
+        path.join(hooks, "post-checkout"),
+        `#!/bin/sh\nmkdir -p vendor && ln -s "${lib}" vendor/lib\n`,
+        { mode: 0o755 },
+      );
+      yield* run(project, "config", "core.hooksPath", hooks);
+      state.workspaceRoot = project;
+      state.trackedFolders = tracked(lib);
+
+      const created = yield* create("feature").pipe(Effect.exit);
+
+      assert.isTrue(Exit.isSuccess(created), String(Exit.isFailure(created) && created.cause));
+    }),
+  ),
+);
+
+it.live("leaves a hook's link to an empty folder alone", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository } = yield* fixture;
+      const project = yield* repository("p");
+      yield* fileSystem.writeFileString(path.join(project, ".gitignore"), "vendor/\n");
+      yield* run(project, "add", ".");
+      yield* run(project, "commit", "-m", "ignore vendor");
+      const lib = yield* repository("p/vendor/lib");
+      const target = path.join(tmp, "empty");
+      yield* fileSystem.makeDirectory(target);
+      const hooks = path.join(tmp, "hooks");
+      yield* fileSystem.makeDirectory(hooks);
+      yield* fileSystem.writeFileString(
+        path.join(hooks, "post-checkout"),
+        `#!/bin/sh\nmkdir -p vendor && ln -s "${target}" vendor/lib\n`,
+        { mode: 0o755 },
+      );
+      yield* run(project, "config", "core.hooksPath", hooks);
+      state.workspaceRoot = project;
+      state.trackedFolders = tracked(lib);
+
+      const created = yield* create("feature").pipe(Effect.exit);
+
+      assert.isTrue(Exit.isSuccess(created), String(Exit.isFailure(created) && created.cause));
+      assert.deepStrictEqual(yield* fileSystem.readDirectory(target), []);
+    }),
+  ),
+);
+
 it.live("treats a project folder inside a larger repository as plain", () =>
   withState((state) =>
     Effect.gen(function* () {

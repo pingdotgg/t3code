@@ -350,7 +350,7 @@ describe("VcsStatusBroadcaster", () => {
         yield* broadcaster.refreshLocalStatus(`/other-repo-${index}`);
       }
       yield* Deferred.succeed(releasePolicy, undefined);
-      const result = yield* Fiber.join(refresh);
+      const { refsDigest: _refsDigest, ...result } = yield* Fiber.join(refresh);
       assert.deepStrictEqual(result, { ...baseLocalStatus, ...state.currentRemoteStatus });
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
@@ -1568,8 +1568,9 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(subscribed);
 
       state.localStatusCalls = 0;
-      yield* broadcaster.refreshStatus("/repo");
+      const unmoved = yield* broadcaster.refreshStatus("/repo");
       assert.equal(state.localStatusCalls, 1);
+      assert.isString(unmoved.refsDigest);
 
       state.localStatusCalls = 0;
       state.currentRemoteStatus = baseRemoteStatus;
@@ -1580,6 +1581,8 @@ describe("VcsStatusBroadcaster", () => {
       const moved = yield* broadcaster.refreshStatus("/repo");
       assert.equal(state.localStatusCalls, 2);
       assert.deepStrictEqual(moved.branchChanges, totals(0).branchChanges);
+      assert.isString(moved.refsDigest);
+      assert.notEqual(moved.refsDigest, unmoved.refsDigest);
       assert.deepStrictEqual(
         [...(yield* Fiber.join(events))].map((event) => event._tag),
         // The first refresh adds the totals this palette-style subscription skipped.
@@ -1588,8 +1591,9 @@ describe("VcsStatusBroadcaster", () => {
 
       state.localStatusCalls = 0;
       state.refSnapshot = null;
-      yield* broadcaster.refreshStatus("/repo");
+      const unreadable = yield* broadcaster.refreshStatus("/repo");
       assert.equal(state.localStatusCalls, 2);
+      assert.isUndefined(unreadable.refsDigest);
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 

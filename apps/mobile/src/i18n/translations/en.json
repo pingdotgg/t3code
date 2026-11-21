@@ -3738,7 +3738,7 @@
   "b725843fd45b74aa": "Credentials",
   "b239ba3ce2899a3e": "Or use your own credentials",
   "f0e6397ab4de588e": "Token",
-  "295392927d5c8a84": "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one.",
+  "ed83b25c71c98a20": "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one unless asked for another.",
   "ce2136b36f87b655": "Connect this environment to change its settings.",
   "a90a441fd0e08de7": "This environment",
   "32fb83554cfd85b4": "Transcription models",
