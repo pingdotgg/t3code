@@ -20,7 +20,7 @@ const ConfiguredDeviceHostId = DeviceHostId.check(
 );
 
 export const SshDeviceHostConfig = Schema.Struct({
-  // Hosts saved before EAS hosts existed carry no kind.
+  // Hosts saved before Expo hosts existed carry no kind.
   kind: Schema.Literal("ssh").pipe(Schema.withDecodingDefaultKey(Effect.succeed("ssh" as const))),
   id: ConfiguredDeviceHostId,
   label: TrimmedNonEmptyString,
@@ -31,14 +31,14 @@ export const SshDeviceHostConfig = Schema.Struct({
 export type SshDeviceHostConfig = typeof SshDeviceHostConfig.Type;
 
 /**
- * Cloud simulators from EAS Simulator. Sessions bill the Expo account until
+ * Cloud simulators from Expo Simulators. Sessions bill the Expo account until
  * they stop, so every one is bounded. The Expo credential is not stored here.
  */
 export const EasDeviceHostConfig = Schema.Struct({
   kind: Schema.Literal("eas"),
   id: ConfiguredDeviceHostId,
   label: TrimmedNonEmptyString,
-  /** EAS project that sessions run under, when the project's app config does not name one. */
+  /** Expo project that sessions run under, when the project's app config does not name one. */
   appId: Schema.optional(TrimmedNonEmptyString),
   /**
    * Expo access token, kept in the secret store, or the secret provider to read
@@ -49,7 +49,7 @@ export const EasDeviceHostConfig = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed("")),
     Schema.annotateKey({ settingsSecret: true }),
   ),
-  /** EAS allows at most 40 minutes on free accounts and 115 on paid ones. */
+  /** Expo Simulators needs a paid Expo account, and allows sessions of at most 115 minutes. */
   maxSessionMinutes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 115 })).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(30)),
   ),
@@ -60,7 +60,7 @@ export const EasDeviceHostConfig = Schema.Struct({
     Schema.withDecodingDefaultKey(Effect.succeed(2)),
   ),
 }).check(
-  // EAS requires the idle limit to be smaller than the session limit.
+  // Expo requires the idle limit to be smaller than the session limit.
   Schema.makeFilter(
     (host: { readonly idleMinutes: number; readonly maxSessionMinutes: number }) =>
       host.idleMinutes < host.maxSessionMinutes ||
@@ -79,8 +79,11 @@ export const SimlockDeviceHostConfig = Schema.Struct({
   label: TrimmedNonEmptyString,
   /** The gateway's origin, such as https://gateway.example.ts.net:4700. */
   gatewayUrl: TrimmedNonEmptyString.check(Schema.isPattern(/^https?:\/\/[^\s/]+\/?$/)),
-  /** Leases, drives, watches, and takes input on its own leases. Kept in the secret store. */
-  agentToken: TrimmedString.pipe(
+  /**
+   * Leases, drives, watches, and takes input on its own leases. Kept in the secret store, or the
+   * secret provider to read it from.
+   */
+  agentToken: SettingsSecretValue.pipe(
     Schema.withDecodingDefaultKey(Effect.succeed("")),
     Schema.annotateKey({ settingsSecret: true }),
   ),
@@ -106,16 +109,16 @@ export const SshDeviceHostConfigs = Schema.Array(SshDeviceHostConfig).check(uniq
 
 /**
  * Kept apart from the SSH hosts in settings: servers and clients from before
- * EAS hosts decode `deviceHosts` as SSH hosts and would reject the whole file
- * or snapshot over one EAS entry.
+ * Expo hosts decode `deviceHosts` as SSH hosts and would reject the whole file
+ * or snapshot over one Expo entry.
  */
 export const EasDeviceHostConfigs = Schema.Array(EasDeviceHostConfig).check(uniqueHostIds);
 
-/** Kept apart from the other host lists for the same reason as EAS hosts. */
+/** Kept apart from the other host lists for the same reason as Expo hosts. */
 export const SimlockDeviceHostConfigs = Schema.Array(SimlockDeviceHostConfig).check(uniqueHostIds);
 
 export const DeviceEasAccountInput = Schema.Struct({
-  /** A saved EAS host whose stored token is checked when no new token is given. */
+  /** A saved Expo host whose stored token is checked when no new token is given. */
   hostId: Schema.optional(DeviceHostId),
   accessToken: Schema.optional(SettingsSecretValue),
 });
@@ -133,7 +136,7 @@ export const DeviceSimlockIdentityInput = Schema.Struct({
   gatewayUrl: Schema.optional(TrimmedString),
   /** A saved Simlock host whose stored token is checked when no new token is given. */
   hostId: Schema.optional(DeviceHostId),
-  agentToken: Schema.optional(TrimmedString),
+  agentToken: Schema.optional(SettingsSecretValue),
 });
 export type DeviceSimlockIdentityInput = typeof DeviceSimlockIdentityInput.Type;
 
@@ -253,6 +256,7 @@ export const DeviceHostStatuses = Schema.Record(
     status: DeviceHostStatus,
     detail: Schema.optional(Schema.String),
     androidDiscoveryIncomplete: Schema.optional(Schema.Boolean),
+    incompletePlatforms: Schema.optional(Schema.Array(DevicePlatform)),
   }),
 );
 
@@ -260,7 +264,7 @@ const deviceServiceStateFields = {
   supportsHostRetry: Schema.optional(Schema.Boolean),
   supportsToolUpdate: Schema.optional(Schema.Boolean),
   supportsToolInspection: Schema.optional(Schema.Boolean),
-  /** Servers from before EAS hosts ignore `easDeviceHosts`, so clients offer them only when set. */
+  /** Servers from before Expo hosts ignore `easDeviceHosts`, so clients offer them only when set. */
   supportsEasHosts: Schema.optional(Schema.Boolean),
   /** Servers from before Simlock hosts ignore `simlockDeviceHosts`. */
   supportsSimlockHosts: Schema.optional(Schema.Boolean),
@@ -279,7 +283,7 @@ const deviceServiceStateFields = {
 };
 
 /**
- * EAS host summaries travel as `easHosts`: clients from before EAS hosts
+ * Expo host summaries travel as `easHosts`: clients from before Expo hosts
  * decode `hosts` with a `local | ssh` kind and would reject the whole state.
  * Decoded, every host is in `hosts`.
  */
@@ -584,6 +588,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       "invalid_payload",
       "settings_failed",
       "hub_rejected",
+      "package_manager_missing",
     ]),
     exitCode: Schema.optional(Schema.Number),
     cause: Schema.Defect(),
@@ -596,6 +601,8 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       invalid_payload: "The device request could not be encoded.",
       settings_failed: "Could not read or save device settings.",
       hub_rejected: "The device hub could not complete the request.",
+      package_manager_missing:
+        "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
     }[this.reason];
     return `Device ${this.operation} failed: ${explanation}`;
   }

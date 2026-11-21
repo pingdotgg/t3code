@@ -1,7 +1,8 @@
-import { Button } from "../../components/ui/Button";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { limitRecoveryOwnsSnooze } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
@@ -9,10 +10,12 @@ import {
   CHATGPT_WORKSPACE_ADMIN_REQUEST,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
 } from "@t3tools/shared/usageLimits";
-import * as DateTime from "effect/DateTime";
 import * as Clipboard from "expo-clipboard";
+import { T, useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { useState } from "react";
-import { Linking, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useDeadlinePassed } from "../../lib/clock";
@@ -26,11 +29,13 @@ export function UsageLimitRecoveryCard({
   thread: EnvironmentThreadShell;
   environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const resetAt = thread.runtime?.usageLimitResetAt ?? null;
   const canSchedule =
+    thread.settledOverride !== "settled" &&
     resetAt !== null &&
     Date.parse(resetAt) > Date.parse(thread.latestRun?.completedAt ?? thread.updatedAt);
   const resetPassed = useDeadlinePassed(resetAt === null ? null : Date.parse(resetAt));
@@ -38,6 +43,15 @@ export function UsageLimitRecoveryCard({
   const recovery = thread.limitRecovery;
   const scheduled =
     recovery?.runId === runId && recovery?.resetAt === resetAt && recovery?.autoResume;
+  const displayAt =
+    canSchedule &&
+    scheduled &&
+    resetAt &&
+    thread.snoozedUntil &&
+    Date.parse(thread.snoozedUntil) > Date.parse(resetAt)
+      ? thread.snoozedUntil
+      : resetAt;
+  const displayPassed = useDeadlinePassed(displayAt === null ? null : Date.parse(displayAt));
   const [copied, setCopied] = useState(false);
   const [actionPending, setActionPending] = useState(false);
   const code = thread.runtime?.lastErrorCode;
@@ -51,20 +65,36 @@ export function UsageLimitRecoveryCard({
     !runId
   )
     return null;
-  const resetText = resetAt
-    ? `Usage limit resets ${DateTime.toDateUtc(DateTime.makeUnsafe(resetAt)).toLocaleString()}.`
+  const resumes = canSchedule && scheduled;
+  const resumesUpcoming = resumes && !displayPassed;
+  const shownAt = resumesUpcoming ? displayAt : resetAt;
+  const resetDate = shownAt
+    ? new Date(shownAt).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
     : null;
+  const resetText =
+    resetDate === null
+      ? null
+      : resumesUpcoming
+        ? gt("Resumes {date}.", { date: resetDate })
+        : resetPassed
+          ? gt("Reset {date}.", { date: resetDate })
+          : gt("Resets {date}.", { date: resetDate });
   const snoozed =
-    recovery?.snooze === true &&
-    recovery.runId === runId &&
-    recovery.resetAt === resetAt &&
-    resetAt !== null &&
-    thread.snoozedUntil !== null &&
-    Date.parse(thread.snoozedUntil) === Date.parse(resetAt);
+    limitRecoveryOwnsSnooze({
+      runId,
+      resetAt,
+      recovery,
+      snoozedUntil: thread.snoozedUntil,
+    }) && !resetPassed;
   async function toggle(action: "resume" | "snooze") {
     if (!resetAt || !runId || !canSchedule) return;
     if (action === "snooze" && !snoozed && Date.parse(resetAt) <= Date.now()) {
-      setError("The reset time has passed. Retry the thread manually.");
+      setError(gt("The reset time has passed. Retry the thread manually."));
       return;
     }
     setPending(true);
@@ -83,12 +113,12 @@ export function UsageLimitRecoveryCard({
     setPending(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(cause instanceof Error ? cause.message : "Could not change limit recovery.");
+      setError(errorDisplayMessage(cause, m) ?? gt("Could not change limit recovery."));
     }
   }
   const action = workspaceLimit
     ? {
-        label: "Copy request for admin",
+        label: gt("Copy request for admin"),
         role: "button" as const,
         run: () => {
           setError(null);
@@ -97,19 +127,22 @@ export function UsageLimitRecoveryCard({
           void Clipboard.setStringAsync(CHATGPT_WORKSPACE_ADMIN_REQUEST)
             .then(
               () => setCopied(true),
-              () => setError("Could not copy the request. Try again."),
+              () => setError(gt("Could not copy the request. Try again.")),
             )
             .finally(() => setActionPending(false));
         },
       }
     : {
-        label: "Manage usage",
+        label: gt("Manage usage"),
         role: "link" as const,
         run: () => {
           setError(null);
           setActionPending(true);
-          void Linking.openURL(CHATGPT_USAGE_URL)
-            .catch(() => setError("Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."))
+          void tryOpenExternalUrl(CHATGPT_USAGE_URL)
+            .then((opened) => {
+              if (!opened)
+                setError(gt("Could not open ChatGPT. Go to chatgpt.com → Settings → Usage."));
+            })
             .finally(() => setActionPending(false));
         },
       };
@@ -123,50 +156,66 @@ export function UsageLimitRecoveryCard({
           <ProviderIcon provider="codex" size={16} />
         </View>
       ) : null}
-      <View className="min-w-0 flex-1 gap-2">
+      <View className="min-w-0 flex-1 gap-1">
         {chatGptLimit ? (
-          <View className="gap-1">
-            <Text className="text-sm font-t3-medium text-foreground">
-              ChatGPT usage limit reached
-            </Text>
-            <Text className="text-sm text-foreground-muted">
-              {workspaceLimit
-                ? copied
-                  ? "Request copied. Send it to your workspace admin."
-                  : "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits."
-                : (resetText ?? "Review your usage settings in ChatGPT.")}
-            </Text>
-            <Pressable
-              accessibilityRole={action.role}
-              accessibilityState={{ disabled: actionPending }}
-              disabled={actionPending}
-              hitSlop={14}
-              className="mt-1 self-start active:opacity-70"
-              onPress={action.run}
-            >
-              <Text className="text-sm font-t3-medium text-primary">{action.label}</Text>
-            </Pressable>
-          </View>
-        ) : (
-          <Text className="text-sm text-warning-foreground">
-            {resetText ??
-              "The provider did not report a reset time. Retry manually when your limit is available."}
+          <Text className="text-sm font-t3-medium text-foreground">
+            <T>ChatGPT usage limit reached</T>
           </Text>
-        )}
-        {canSchedule ? (
-          <View className="flex-row flex-wrap gap-2">
-            <Button
-              label={scheduled ? "Cancel auto-resume" : "Resume at reset"}
-              tone="secondary"
-              disabled={pending}
-              onPress={() => void toggle("resume")}
-            />
-            <Button
-              label={snoozed ? "Wake now" : "Snooze until reset"}
-              tone="secondary"
-              disabled={pending || (!snoozed && resetPassed)}
-              onPress={() => void toggle("snooze")}
-            />
+        ) : null}
+        <Text
+          className={
+            chatGptLimit ? "text-sm text-foreground-muted" : "text-sm text-warning-foreground"
+          }
+        >
+          {workspaceLimit
+            ? copied
+              ? gt("Request copied. Send it to your workspace admin.")
+              : gt(
+                  "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits.",
+                )
+            : chatGptLimit
+              ? (resetText ?? gt("Review your usage settings in ChatGPT."))
+              : resetDate !== null
+                ? resumesUpcoming
+                  ? gt("Usage limit reached. Resumes {date}.", { date: resetDate })
+                  : resetPassed
+                    ? gt("Usage limit reached. Reset {date}.", { date: resetDate })
+                    : gt("Usage limit reached. Resets {date}.", { date: resetDate })
+                : gt(
+                    "Usage limit reached. The provider did not report a reset time. Retry manually when your limit is available.",
+                  )}
+        </Text>
+        {chatGptLimit || canSchedule ? (
+          // The margins cancel the 44pt touch height so the links sit 8pt under the text.
+          <View className="-mb-3 -mt-2 flex-row flex-wrap gap-x-4">
+            {chatGptLimit ? (
+              <RecoveryAction
+                label={action.label}
+                role={action.role}
+                disabled={actionPending}
+                onPress={action.run}
+              />
+            ) : null}
+            {canSchedule ? (
+              <>
+                <RecoveryAction
+                  label={
+                    scheduled
+                      ? gt("Cancel auto-resume")
+                      : resetPassed
+                        ? gt("Resume now")
+                        : gt("Resume at reset")
+                  }
+                  disabled={pending}
+                  onPress={() => void toggle("resume")}
+                />
+                <RecoveryAction
+                  label={snoozed ? gt("Wake now") : gt("Snooze until reset")}
+                  disabled={pending || (!snoozed && resetPassed)}
+                  onPress={() => void toggle("snooze")}
+                />
+              </>
+            ) : null}
           </View>
         ) : null}
         {error ? (
@@ -176,5 +225,33 @@ export function UsageLimitRecoveryCard({
         ) : null}
       </View>
     </View>
+  );
+}
+
+function RecoveryAction(props: {
+  readonly label: string;
+  readonly role?: "button" | "link";
+  readonly disabled: boolean;
+  readonly onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole={props.role ?? "button"}
+      accessibilityState={{ disabled: props.disabled }}
+      disabled={props.disabled}
+      hitSlop={{ left: 8, right: 8 }}
+      onPress={props.onPress}
+      className="min-h-11 justify-center active:opacity-70"
+    >
+      <Text
+        className={
+          props.disabled
+            ? "text-sm font-t3-medium text-foreground-muted"
+            : "text-sm font-t3-medium text-primary"
+        }
+      >
+        {props.label}
+      </Text>
+    </Pressable>
   );
 }

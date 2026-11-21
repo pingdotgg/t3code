@@ -16,6 +16,29 @@ export const Architecture = Context.Reference<NodeJS.Architecture>(
   },
 );
 
+export const KernelRelease = Context.Reference<string>(
+  "@t3tools/shared/HostProcess/KernelRelease",
+  {
+    defaultValue: () => NodeOS.release(),
+  },
+);
+
+export const LinuxLibc = Context.Reference<"gnu" | "musl">(
+  "@t3tools/shared/HostProcess/LinuxLibc",
+  {
+    defaultValue: () => {
+      try {
+        const report = process.report?.getReport() as
+          | { header?: { glibcVersionRuntime?: unknown } }
+          | undefined;
+        return typeof report?.header?.glibcVersionRuntime === "string" ? "gnu" : "musl";
+      } catch {
+        return "musl";
+      }
+    },
+  },
+);
+
 export const Hostname = Context.Reference<string>("@t3tools/shared/HostProcess/Hostname", {
   defaultValue: () => NodeOS.hostname(),
 });

@@ -8,6 +8,7 @@ import {
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
@@ -24,11 +25,18 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
-import { request, subscribe, type EnvironmentRpcInput } from "../rpc/client.ts";
+import {
+  request,
+  subscribe,
+  subscribeVcsBranch,
+  refreshVcsBranch,
+  type EnvironmentRpcInput,
+} from "../rpc/client.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import { vcsCommandConcurrency, vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import {
   invalidateCachedVcsRefs,
+  invalidateCachedVcsRefsIfChanged,
   vcsRefsCacheStateAtom,
   withVcsRefsPersistenceLock,
 } from "./vcsRefInvalidation.ts";
@@ -294,6 +302,19 @@ export function createVcsEnvironmentAtoms<R, E>(
       label: "environment-data:vcs:read-refs",
       tag: WS_METHODS.vcsListRefs,
     }),
+    branch: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:vcs:branch",
+      idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsBranch>) =>
+        subscribeVcsBranch(input),
+    }),
+    refreshBranch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:refresh-branch",
+      tag: WS_METHODS.vcsRefreshBranch,
+      execute: refreshVcsBranch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
@@ -320,6 +341,18 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsRefreshStatus,
       scheduler: vcsCommandScheduler,
       concurrency: vcsCommandConcurrency,
+      onSettled: (target, registry, exit) =>
+        invalidateCachedVcsRefsIfChanged(
+          registry,
+          { environmentId: target.environmentId, cwd: target.input.cwd },
+          Exit.isSuccess(exit) ? exit.value.refsDigest : undefined,
+        ),
+    }),
+    // Outside the serial queue: it only reads status, and a checkout picked right after opening
+    // the picker must not wait behind that read.
+    refreshLocalStatusForPicker: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:refresh-local-status-for-picker",
+      tag: WS_METHODS.vcsRefreshStatus,
       onSettled: invalidateRefs,
     }),
     createWorktree: createEnvironmentRpcCommand(runtime, {

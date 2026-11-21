@@ -22,6 +22,10 @@ internal class VoiceTranscriptionException(
   cause: Throwable? = null
 ) : Exception(message, cause)
 
+// ML Kit reports every mode UNAVAILABLE for tags with Unicode extensions, which Android adds
+// for regional preferences such as the temperature unit (en-US-u-mu-celsius).
+internal fun speechLocale(systemLocale: Locale): Locale = systemLocale.stripExtensions()
+
 private val recognitionModes = listOf(
   SpeechRecognizerOptions.Mode.MODE_ADVANCED,
   SpeechRecognizerOptions.Mode.MODE_BASIC

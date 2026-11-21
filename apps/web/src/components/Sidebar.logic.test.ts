@@ -1,4 +1,5 @@
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
@@ -7,15 +8,17 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   shouldCreateNewThreadInCurrentProject,
+  resolveScopedNewThreadProjectRef,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
-  resolveSidebarRowThreadId,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
+  resolveSidebarRowStatus,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
+  resolveWindowTitleThreadStatus,
   resolveWorkingStartedAt,
   searchSidebarThreads,
   shouldRecedeSidebarThread,
@@ -34,6 +37,7 @@ import {
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
+  withoutRemovedCheckout,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
@@ -135,48 +139,6 @@ describe("deleteSelectedThreadEntries", () => {
   });
 });
 
-describe("sidebar thread lineage helpers", () => {
-  it("maps an open subagent to its nearest visible ancestor's sidebar row", () => {
-    const environmentId = EnvironmentId.make("environment-row");
-    const otherEnvironmentId = EnvironmentId.make("environment-other");
-    const subagentOf = (id: string, parentId: ThreadId, environment = environmentId) =>
-      makeThreadFixture({
-        id: ThreadId.make(id),
-        environmentId: environment,
-        lineage: {
-          rootThreadId: parentId,
-          parentThreadId: parentId,
-          relationshipToParent: "subagent",
-        },
-      });
-    const root = makeThreadFixture({ id: ThreadId.make("thread-root"), environmentId });
-    const fork = makeThreadFixture({
-      id: ThreadId.make("thread-fork"),
-      environmentId,
-      lineage: {
-        rootThreadId: root.id,
-        parentThreadId: root.id,
-        relationshipToParent: "fork",
-      },
-    });
-    const child = subagentOf("thread-child", root.id);
-    const grandchild = subagentOf("thread-grandchild", child.id);
-    const forkChild = subagentOf("thread-fork-child", fork.id);
-    const orphan = subagentOf("thread-orphan", ThreadId.make("thread-missing"));
-    const elsewhere = subagentOf("thread-elsewhere", root.id, otherEnvironmentId);
-    const threads = [root, fork, child, grandchild, forkChild, orphan, elsewhere];
-
-    expect(resolveSidebarRowThreadId(child.id, environmentId, threads)).toBe(root.id);
-    expect(resolveSidebarRowThreadId(grandchild.id, environmentId, threads)).toBe(root.id);
-    expect(resolveSidebarRowThreadId(forkChild.id, environmentId, threads)).toBe(fork.id);
-    expect(resolveSidebarRowThreadId(elsewhere.id, otherEnvironmentId, threads)).toBe(elsewhere.id);
-    expect(resolveSidebarRowThreadId(orphan.id, environmentId, threads)).toBe(orphan.id);
-    const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
-    const loopB = subagentOf("thread-loop-b", loopA.id);
-    expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
-  });
-});
-
 function makeLatestRun(overrides?: {
   completedAt?: string | null;
   startedAt?: string | null;
@@ -192,6 +154,48 @@ function makeLatestRun(overrides?: {
       overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
   };
 }
+
+describe("withoutRemovedCheckout", () => {
+  const worktree = { branch: "t3/task", worktreePath: "/worktrees/task" };
+  const local = { branch: "main", worktreePath: null };
+  const removed = { branch: null, worktreePath: null };
+  const tracking = { trackedFolders: [{ path: "/work/wrapper/api" }] };
+
+  it.each([
+    {
+      why: "status still loading",
+      thread: worktree,
+      isRepo: undefined,
+      project: null,
+      to: worktree,
+    },
+    { why: "a live checkout", thread: worktree, isRepo: true, project: null, to: worktree },
+    { why: "a removed worktree", thread: worktree, isRepo: false, project: null, to: removed },
+    {
+      why: "a removed worktree of a project tracking nothing",
+      thread: worktree,
+      isRepo: false,
+      project: { trackedFolders: [] },
+      to: removed,
+    },
+    {
+      why: "a plain task folder of a project with tracked folders",
+      thread: worktree,
+      isRepo: false,
+      project: tracking,
+      to: worktree,
+    },
+    {
+      why: "a local thread whose project folder is not a repository",
+      thread: local,
+      isRepo: false,
+      project: tracking,
+      to: removed,
+    },
+  ])("$why", ({ thread, isRepo, project, to }) => {
+    expect(withoutRemovedCheckout(thread, { isRepo }, project)).toEqual(to);
+  });
+});
 
 describe("orderItemsByPreferredIds", () => {
   it("resolves legacy preference aliases without materializing project state", () => {
@@ -309,6 +313,66 @@ describe("resolveSidebarThreadStatus", () => {
         runtime: { ...runtime, status: "idle" as const, lastError: "persisted" },
       }),
     ).toBe("waiting");
+  });
+
+  it("titles the window with live work and requests only", () => {
+    const cases = [
+      [{ ...idle, hasPendingApprovals: true, runtime }, "Needs approval"],
+      [{ ...idle, hasPendingUserInput: true }, "Needs your input"],
+      [{ ...idle, runtime: { ...runtime, status: "preparing" as const } }, "Working"],
+      [{ ...idle, runtime }, "Working"],
+      [{ ...idle, runtime, pendingGuestMessageCount: 1 }, "Working"],
+      [{ ...idle, runtime, blockedOnThreadWait: true }, "Working"],
+      [{ ...idle, runtime: { ...runtime, status: "idle" as const } }, null],
+      [{ ...idle, runtime: { ...runtime, status: "failed" as const } }, null],
+      [{ ...idle, runtime: { ...runtime, status: "completed" as const } }, null],
+      [idle, null],
+    ] as const;
+    for (const [thread, title] of cases) {
+      expect(resolveWindowTitleThreadStatus(thread)).toBe(title);
+    }
+  });
+});
+
+describe("resolveSidebarRowStatus", () => {
+  const failedRuntime = {
+    status: "failed" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: "Provider turn failed.",
+    updatedAt: "2026-03-09T10:05:00.000Z",
+  };
+  const failed = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    runtime: failedRuntime,
+    latestRun: { ...makeLatestRun(), status: "failed" as const },
+  };
+
+  it("settles a failure the user opened to ready, without showing Done", () => {
+    expect(resolveSidebarRowStatus({ ...failed, lastVisitedAt: undefined })).toBe("failed");
+
+    const opened = { ...failed, lastVisitedAt: "2026-03-09T10:06:00.000Z" };
+    expect(resolveSidebarRowStatus(opened)).toBe("ready");
+    expect(hasUnseenCompletion(opened)).toBe(false);
+    // A runtime failure without a failed run has no date, so a visit cannot settle it.
+    expect(resolveSidebarRowStatus({ ...opened, latestRun: null })).toBe("failed");
+  });
+
+  it("does not show a stopped run as an unseen completion", () => {
+    for (const status of ["interrupted", "cancelled"] as const) {
+      const stopped = {
+        ...failed,
+        runtime: { ...failedRuntime, status, lastError: null },
+        latestRun: { ...makeLatestRun(), status },
+        lastVisitedAt: "2026-03-09T10:01:00.000Z",
+      };
+      expect(hasUnseenCompletion(stopped)).toBe(false);
+      expect(resolveThreadStatusPill({ thread: stopped })).toBeNull();
+    }
   });
 });
 
@@ -506,22 +570,44 @@ describe("resolveThreadStatusPill", () => {
   });
 
   it("shows failed, not completed, when the unseen run failed", () => {
-    expect(
-      resolveThreadStatusPill({
-        thread: {
-          ...baseThread,
-          interactionMode: "default",
-          latestRun: { ...makeLatestRun(), status: "failed" },
-          lastVisitedAt: "2026-03-09T10:04:00.000Z",
-          runtime: {
-            ...baseThread.runtime,
-            status: "failed",
-            activeRunId: null,
-            lastError: "Provider turn failed.",
-          },
+    const failed = {
+      ...baseThread,
+      interactionMode: "default" as const,
+      latestRun: { ...makeLatestRun(), status: "failed" as const },
+      lastVisitedAt: "2026-03-09T10:04:00.000Z",
+      runtime: {
+        ...baseThread.runtime,
+        status: "failed" as const,
+        activeRunId: null,
+        lastError: "Provider turn failed.",
+      },
+    };
+    expect(resolveThreadStatusPill({ thread: failed })).toMatchObject({
+      label: "Failed",
+      pulse: false,
+    });
+    // The failure sends the thread to the inbox, so its pill must not say it is still waiting.
+    const watching = {
+      ...failed,
+      pendingBackgroundTasks: [
+        {
+          taskId: "pr-watch",
+          description: "Watching pull request #7",
+          kind: "monitor" as const,
+          awaited: true as const,
         },
-      }),
-    ).toMatchObject({ label: "Failed", pulse: false });
+      ],
+    };
+    expect(isSidebarThreadWorking(watching)).toBe(false);
+    expect(resolveThreadStatusPill({ thread: watching })).toMatchObject({ label: "Failed" });
+    // A run blocked on another thread is still waiting, as its sidebar row says.
+    const blocked = {
+      ...watching,
+      runtime: { ...failed.runtime, status: "running" as const },
+      blockedOnThreadWait: true,
+    };
+    expect(resolveSidebarThreadStatus(blocked)).toBe("waiting");
+    expect(resolveThreadStatusPill({ thread: blocked })).toMatchObject({ label: "Waiting" });
   });
 
   it("shows failed, not plan ready, when a plan run proposed a plan and then failed", () => {
@@ -629,6 +715,7 @@ describe("getFallbackThreadIdAfterDelete", () => {
       deletedThreadIds: new Set([ThreadId.make("thread-active"), ThreadId.make("thread-newest")]),
       sortOrder: "created_at",
       now: "2026-03-09T10:10:00.000Z",
+      delegatedUnderParent: new Set(),
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-next"));
@@ -639,8 +726,30 @@ describe("getFallbackThreadIdAfterDelete", () => {
       "snoozed",
       { snoozedUntil: "2099-01-01T00:00:00.000Z", snoozedAt: "2026-03-09T10:06:00.000Z" },
     ],
+    ["delegated", { id: ThreadId.make("thread-delegated") }],
     ["settled", { settledOverride: "settled", settledAt: "2026-03-09T10:06:00.000Z" }],
-  ] as const)("skips a %s thread parked on its shelf", (_state, parked) => {
+    [
+      "side chat",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("thread-visible"),
+          parentThreadId: ThreadId.make("thread-visible"),
+          relationshipToParent: "fork",
+          sideChat: true,
+        },
+      },
+    ],
+    [
+      "subagent",
+      {
+        lineage: {
+          rootThreadId: ThreadId.make("thread-visible"),
+          parentThreadId: ThreadId.make("thread-visible"),
+          relationshipToParent: "subagent",
+        },
+      },
+    ],
+  ] as const)("skips a %s thread the sidebar does not list", (_state, parked) => {
     const fallbackThreadId = getFallbackThreadIdAfterDelete({
       threads: [
         makeThread({
@@ -663,6 +772,12 @@ describe("getFallbackThreadIdAfterDelete", () => {
       deletedThreadId: ThreadId.make("thread-active"),
       sortOrder: "created_at",
       now: "2026-03-09T10:10:00.000Z",
+      delegatedUnderParent: new Set([
+        threadKey({
+          environmentId: localEnvironmentId,
+          threadId: ThreadId.make("thread-delegated"),
+        }),
+      ]),
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-visible"));
@@ -1460,6 +1575,7 @@ describe("resolveSidebarRouteReveal", () => {
       resolveSidebarRouteReveal({
         reveal: { observedKey: "environment-test:other", pendingKey: null },
         routeKey: hiddenKey,
+        routeKeyInPlace: false,
         isSearching: false,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
@@ -1474,6 +1590,7 @@ describe("resolveSidebarRouteReveal", () => {
       resolveSidebarRouteReveal({
         reveal: { observedKey: hiddenKey, pendingKey: null },
         routeKey: hiddenKey,
+        routeKeyInPlace: false,
         isSearching: false,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
@@ -1490,6 +1607,7 @@ describe("resolveSidebarRouteReveal", () => {
       resolveSidebarRouteReveal({
         reveal,
         routeKey,
+        routeKeyInPlace: false,
         isSearching: false,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
@@ -1504,6 +1622,7 @@ describe("resolveSidebarRouteReveal", () => {
       resolveSidebarRouteReveal({
         reveal: { observedKey: hiddenKey, pendingKey: hiddenKey },
         routeKey: hiddenKey,
+        routeKeyInPlace: false,
         isSearching: true,
         scopedProjectKeys,
         delegatedUnderParent: new Set(),
@@ -1627,5 +1746,68 @@ describe("shouldCreateNewThreadInCurrentProject", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 1, 3)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(false, 0, 0)).toBe(true);
     expect(shouldCreateNewThreadInCurrentProject(true, 2, 2)).toBe(true);
+  });
+});
+
+describe("resolveScopedNewThreadProjectRef", () => {
+  const local = { environmentId: "env-local", projectId: "api" };
+  const remote = { environmentId: "env-remote", projectId: "api-remote" };
+  const api = { environmentId: "env-local", id: "api", memberProjectRefs: [local, remote] };
+  const web = {
+    environmentId: "env-local",
+    id: "web",
+    memberProjectRefs: [{ environmentId: "env-local", projectId: "web" }],
+  };
+  const viewedWeb = { environmentId: "env-local", projectId: "web" };
+
+  it("starts in the one scoped project even while another project's thread is open", () => {
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [api],
+        viewed: viewedWeb,
+      }),
+    ).toBe(local);
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [api],
+        viewed: null,
+      }),
+    ).toBe(local);
+  });
+
+  it("keeps the viewed thread's environment when that thread is in the scoped project", () => {
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [api],
+        viewed: { environmentId: "env-remote", projectId: "api-remote" },
+      }),
+    ).toBe(remote);
+  });
+
+  it("leaves Shift+click, no scope and several scoped projects to the existing rule", () => {
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: true,
+        scopedProjectGroups: [api],
+        viewed: viewedWeb,
+      }),
+    ).toBeNull();
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [],
+        viewed: viewedWeb,
+      }),
+    ).toBeNull();
+    expect(
+      resolveScopedNewThreadProjectRef({
+        shiftKey: false,
+        scopedProjectGroups: [api, web],
+        viewed: viewedWeb,
+      }),
+    ).toBeNull();
   });
 });

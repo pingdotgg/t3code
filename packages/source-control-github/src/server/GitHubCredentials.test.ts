@@ -1,12 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, SecretProviderId, SecretProviderKind } from "@t3tools/contracts";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -18,6 +19,8 @@ const TOKEN_VARIABLES = [
   "GH_ENTERPRISE_TOKEN",
   "GITHUB_ENTERPRISE_TOKEN",
 ] as const;
+
+const ENTERPRISE_TOKEN_VARIABLES = ["GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"] as const;
 
 const hostSettings = (
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }>,
@@ -45,6 +48,22 @@ function harness(
           stderrTruncated: false,
         };
       }
+      // gh hands the enterprise variables to every host but github.com.
+      const fromEnterpriseEnv = input.args.includes("github.com")
+        ? undefined
+        : ENTERPRISE_TOKEN_VARIABLES.map(
+            (name) =>
+              (input.env !== undefined && name in input.env ? input.env : process.env)[name],
+          ).find(Boolean);
+      if (fromEnterpriseEnv !== undefined) {
+        return {
+          exitCode: ChildProcessSpawner.ExitCode(0),
+          stdout: `${fromEnterpriseEnv}\n`,
+          stderr: "",
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }
       return {
         exitCode: ChildProcessSpawner.ExitCode(0),
         stdout: input.args.includes("--user") ? `token-for-${user}\n` : "active-token\n",
@@ -63,6 +82,7 @@ function harness(
       }),
     ),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(FileSystem.layerNoop({})),
     Layer.provide(
       Layer.succeed(
         HttpClient.HttpClient,
@@ -137,9 +157,31 @@ describe("GitHubCredentials", () => {
     const { layer, calls } = harness({}, [], { "github.com": "saved-token" });
     return Effect.gen(function* () {
       const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
       const credential = yield* credentials.get("github.com");
       expect(Redacted.value(credential.token)).toBe("saved-token");
       expect(credential.source).toBe("settings");
+
+      // A reference left in place by getWithSecrets is one its secret provider could not read.
+      yield* settings.update({
+        secretProviders: {
+          [SecretProviderId.make("vault")]: {
+            kind: SecretProviderKind.make("one_password"),
+            label: "Work vault",
+            config: {},
+          },
+        },
+        sourceControlHosts: {
+          github: {
+            tokens: {
+              "github.com": { provider: SecretProviderId.make("vault"), reference: "gh#token" },
+            },
+          },
+        },
+      });
+      const error = yield* Effect.flip(credentials.get("github.com"));
+      expect(error._tag).toBe("SettingsSecretUnresolvedError");
+      expect(error.message).toContain('"Work vault"');
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
@@ -155,6 +197,22 @@ describe("GitHubCredentials", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect.each(ENTERPRISE_TOKEN_VARIABLES)(
+    "keeps %s away from a host other than GH_HOST",
+    (name) => {
+      vi.stubEnv("GH_HOST", "ghe.corp.example");
+      vi.stubEnv(name, "enterprise-secret");
+      const { layer } = harness();
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const other = yield* credentials.get("git.other.example");
+        expect(Redacted.value(other.token)).toBe("active-token");
+        const own = yield* credentials.get("ghe.corp.example");
+        expect(Redacted.value(own.token)).toBe("enterprise-secret");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("never hands a token to a host that is not a plain hostname", () => {
     vi.stubEnv("GH_TOKEN", "env-token");

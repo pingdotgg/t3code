@@ -53,10 +53,13 @@ import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
+import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
   redactHeaders,
@@ -78,6 +81,7 @@ import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerificatio
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
+const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
 const PROMPT_TOO_LONG = "The filled-in prompt is too long.";
 const WEBHOOK_DELIVERY_RETENTION = 50;
 const WEBHOOK_DEDUPE_DELIVERY_RETENTION = 20;
@@ -306,6 +310,15 @@ function iso(value: DateTime.DateTime): string {
   return DateTime.formatIso(DateTime.toUtc(value));
 }
 
+const RUN_OUTCOME_WAIT_MS = 24 * 60 * 60 * 1_000;
+const HELD_OCCURRENCE_ERROR =
+  "A previous occurrence is held in the thread queue. Resume or remove it to run this task again.";
+const UNSUCCESSFUL_RUN_ERRORS = {
+  failed: "The run failed.",
+  interrupted: "The run was stopped.",
+  cancelled: "The run was cancelled.",
+  rolled_back: "The run was rolled back.",
+} as const;
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
 function nextRunAt(
@@ -354,6 +367,14 @@ function requireFutureOnce(
 function errorMessage(error: unknown): string {
   const failure = Cause.isCause(error) ? Cause.squash(error) : error;
   return failure instanceof Error ? failure.message : String(failure);
+}
+
+function dispatchErrorMessage(cause: Cause.Cause<unknown>): string {
+  const failure = Cause.squash(cause);
+  // Direct orchestration refusals are user-facing; nested defects can contain private data.
+  return isOrchestratorDispatchError(failure) && typeof failure.cause === "string"
+    ? (userFacingDispatchErrorMessage(failure.cause) ?? errorMessage(failure))
+    : errorMessage(failure);
 }
 
 function webhookPath(taskId: string, token: string): string {
@@ -459,6 +480,7 @@ export const layer = Layer.effect(
     const mac = yield* Mac.Mac;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+    const serviceScope = yield* Effect.scope;
     const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
@@ -616,6 +638,8 @@ export const layer = Layer.effect(
       requireExisting: boolean,
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
+      /** The thread this save unbinds; any other stored thread is kept. */
+      unboundThreadId: ThreadId | null,
       webhook: {
         readonly token: string | null;
         readonly secret: string | null;
@@ -681,12 +705,12 @@ export const layer = Layer.effect(
           enabled = excluded.enabled,
           schedule_json = excluded.schedule_json,
           project_id = excluded.project_id,
-          -- A first run may bind the thread while this save is in flight; only a
-          -- switch to new threads unbinds.
+          -- A first run may bind the thread while this save is in flight, so a save
+          -- without a thread keeps any thread but the one it unbinds.
           thread_id = CASE
             WHEN excluded.thread_mode = 'new_thread' THEN NULL
             WHEN excluded.project_id != scheduled_tasks.project_id THEN excluded.thread_id
-            ELSE COALESCE(excluded.thread_id, scheduled_tasks.thread_id)
+            ELSE COALESCE(excluded.thread_id, NULLIF(scheduled_tasks.thread_id, ${unboundThreadId}))
           END,
           thread_mode = excluded.thread_mode,
           workspace_strategy_json = excluded.workspace_strategy_json,
@@ -826,6 +850,32 @@ export const layer = Layer.effect(
         ),
     );
 
+    // Reads every run row but only the queued runs' messages, so the cost per
+    // due interval tracks the thread's run count, not its transcript.
+    const queuedOccurrence = Effect.fn("ScheduledTaskService.queuedOccurrence")(function* (
+      taskId: ScheduledTaskId,
+      threadId: ThreadId,
+    ) {
+      const { runs } = yield* threadManagement.getThreadRecords(threadId, ["runs"]);
+      const queued = runs.filter((run) => run.status === "queued");
+      if (queued.length === 0) return null;
+      const queuedMessageIds = new Set(queued.map((run) => run.userMessageId));
+      const { messages } = yield* threadManagement.getThreadRecords(threadId, ["messages"], {
+        messageIds: [...queuedMessageIds],
+      });
+      const taskMessageIds = new Set(
+        messages
+          .filter((message) => message.scheduledTaskId === taskId)
+          .map((message) => message.id),
+      );
+      const occurrences = queued.filter((run) => taskMessageIds.has(run.userMessageId));
+      return occurrences.some((run) => run.queueHeld === true)
+        ? "held"
+        : occurrences.length > 0
+          ? "queued"
+          : null;
+    });
+
     // The run already started the thread, so a failed write only costs the binding.
     // A thread deleted before the binding landed already ran its task cleanup, so apply that
     // cleanup here; a later deletion finds the binding. An unconfirmed lookup keeps the binding.
@@ -844,6 +894,71 @@ export const layer = Layer.effect(
         Effect.logWarning("Could not bind a scheduled task to its first thread.", cause),
       ),
     );
+
+    // A dispatch is recorded once the message is accepted; the provider can still
+    // reject the turn after that, so follow the run and record its failure. A one-time
+    // task whose turn completed at or after its runAt is spent, so it is removed; its
+    // thread stays. A paused task always has a NULL next_run_at, so that alone proves nothing.
+    const recordRunOutcome = Effect.fn("ScheduledTaskService.recordRunOutcome")(function* (
+      taskId: ScheduledTaskId,
+      startedAtIso: string,
+      threadId: ThreadId,
+      messageId: MessageId,
+    ) {
+      const shell = yield* threadManagement.getThreadShell(threadId);
+      if (shell === null) return;
+      const thread = { projectId: shell.projectId, threadId };
+      const { runs } = yield* threadManagement.getProjectThreadRecords(thread, ["runs"]);
+      const dispatched = runs.find((run) => run.userMessageId === messageId);
+      if (dispatched === undefined) return;
+      const { run } = yield* threadManagement.waitForThread({
+        ...thread,
+        runId: dispatched.id,
+        timeoutMs: RUN_OUTCOME_WAIT_MS,
+      });
+      if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
+      if (run.status === "completed") {
+        const removed = yield* sql`
+          DELETE FROM scheduled_tasks
+          WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
+            AND last_run_status = 'succeeded' AND next_run_at IS NULL
+            AND json_extract(schedule_json, '$.type') = 'once'
+            AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
+          RETURNING task_id
+        `;
+        if (removed.length > 0) yield* notifyChanged;
+        return;
+      }
+      // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
+      // thread holds tens of thousands of items.
+      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(
+        thread,
+        ["turnItems", "messages"],
+        {
+          messageIds: [messageId],
+          turnItemRunId: run.id,
+          turnItemTypes: ["error"],
+          turnItemStatuses: ["failed"],
+        },
+      );
+      // A queued message promoted to a steer cancels its run and joins the active one.
+      if (
+        run.status === "cancelled" &&
+        messages.find((message) => message.id === messageId)?.runId !== run.id
+      )
+        return;
+      const error =
+        latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
+      const updated = yield* sql`
+        UPDATE scheduled_tasks
+        SET last_run_status = 'failed', last_run_error = ${error}
+        WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
+          AND (last_run_status = 'succeeded'
+            OR (last_run_status = 'failed' AND last_run_error = ${HELD_OCCURRENCE_ERROR}))
+        RETURNING task_id
+      `;
+      if (updated.length > 0) yield* notifyChanged;
+    });
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
@@ -891,6 +1006,27 @@ export const layer = Layer.effect(
             DateTime.toEpochMillis(parsedNextRunAt.value) > DateTime.toEpochMillis(startedAt))
         ) {
           return { task: active, threadId: null, dispatchFailed: false };
+        }
+        // A thread that stays busy would otherwise collect one copy of the
+        // prompt per interval. A failed read falls through to the normal send.
+        if (
+          trigger === "scheduled" &&
+          active.schedule.type !== "once" &&
+          active.threadId !== null
+        ) {
+          const occurrence = yield* queuedOccurrence(
+            active.id,
+            ThreadId.make(active.threadId),
+          ).pipe(Effect.orElseSucceed(() => null));
+          if (occurrence !== null) {
+            yield* rescheduleMissedRun(
+              active,
+              startedAt,
+              "previous occurrence still queued",
+              occurrence === "held" ? HELD_OCCURRENCE_ERROR : undefined,
+            );
+            return { task: active, threadId: null, dispatchFailed: false };
+          }
         }
         // Reject queued deliveries after pause, same-id recreation or trigger changes.
         if (webhook !== undefined) {
@@ -1012,7 +1148,7 @@ export const layer = Layer.effect(
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
         const completedAt = yield* localNow;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : errorMessage(result.cause);
+        const lastRunError = runSucceeded ? null : dispatchErrorMessage(result.cause);
         const threadId = runSucceeded ? result.value : null;
         // One transaction, so an edit cannot land between reading the schedule and
         // writing the next run computed from it. The origin is read first: it reads
@@ -1078,6 +1214,17 @@ export const layer = Layer.effect(
             ),
           );
         if (written) yield* notifyChanged;
+        if (written && threadId !== null) {
+          yield* recordRunOutcome(active.id, startedAtIso, threadId, messageId).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not record scheduled run outcome", {
+                taskId: active.id,
+                cause,
+              }),
+            ),
+            Effect.forkIn(serviceScope),
+          );
+        }
         // The stored row can belong to a replacement, so report this dispatch separately.
         return { task: recorded, threadId, dispatchFailed: !runSucceeded };
       }).pipe(
@@ -1114,24 +1261,41 @@ export const layer = Layer.effect(
     const rescheduleMissedRun = Effect.fn("ScheduledTaskService.rescheduleMissedRun")(function* (
       task: ScheduledTask,
       now: DateTime.DateTime,
+      reason = "missed",
+      runError?: string,
     ) {
       const next = nextRunAt(task, now);
-      yield* Effect.logInfo("Skipping missed schedule task run", {
+      yield* Effect.logInfo("Skipping schedule task run", {
         taskId: task.id,
+        reason,
         missedRunAt: task.nextRunAt,
         rescheduledTo: next,
       });
-      yield* sql`
+      // `task` can be a stale batch snapshot; a run or edit since then already moved the row on.
+      const updated = yield* sql`
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
             updated_at = ${iso(now)}
+            ${
+              runError === undefined
+                ? sql``
+                : sql`, last_run_status = CASE
+                    WHEN last_run_status IS ${task.lastRunStatus} AND last_run_error IS ${task.lastRunError}
+                    THEN 'failed' ELSE last_run_status END,
+                  last_run_error = CASE
+                    WHEN last_run_status IS ${task.lastRunStatus} AND last_run_error IS ${task.lastRunError}
+                    THEN ${runError} ELSE last_run_error END`
+            }
         WHERE task_id = ${task.id}
+          AND next_run_at IS ${task.nextRunAt}
+          AND last_run_at IS ${task.lastRunAt}
+        RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not reschedule missed schedule task run.", { taskId: task.id, cause }),
         ),
       );
-      yield* notifyChanged;
+      if (updated.length > 0) yield* notifyChanged;
     });
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
@@ -1169,7 +1333,12 @@ export const layer = Layer.effect(
         ({ task, dueAt }) =>
           Effect.suspend(() =>
             isMissedFixedTimeRun(task.schedule, dueAt, now)
-              ? rescheduleMissedRun(task, now)
+              ? rescheduleMissedRun(
+                  task,
+                  now,
+                  "missed",
+                  "Missed a scheduled run because the server was not running at that time.",
+                )
               : runTask(task, "scheduled"),
           ).pipe(
             Effect.catch((cause) =>
@@ -1237,7 +1406,10 @@ export const layer = Layer.effect(
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
       listRows().pipe(
-        Effect.map((tasks) => ({ tasks })),
+        Effect.map((tasks) => ({
+          tasks,
+          timeZone: DateTime.zoneToString(DateTime.zoneMakeLocal()),
+        })),
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
 
@@ -1252,6 +1424,30 @@ export const layer = Layer.effect(
           );
         }),
       );
+
+    const requireDestinationThread = Effect.fn("ScheduledTaskService.requireDestinationThread")(
+      function* (threadId: ThreadId, projectId: ProjectId, taskId: ScheduledTaskId) {
+        const thread = yield* threadManagement
+          .getThreadShell(threadId)
+          .pipe(
+            Effect.mapError((cause) =>
+              taskError("Could not read the destination thread.", { taskId, cause }),
+            ),
+          );
+        if (thread === null || thread.deletedAt !== null) {
+          return yield* taskError("That thread no longer exists.", { taskId });
+        }
+        if (thread.archivedAt !== null) {
+          return yield* taskError(
+            "That thread is archived. Unarchive it or pick another destination.",
+            { taskId },
+          );
+        }
+        if (thread.projectId !== projectId) {
+          return yield* taskError("That thread belongs to a different project.", { taskId });
+        }
+      },
+    );
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
@@ -1284,13 +1480,18 @@ export const layer = Layer.effect(
       // of silently resetting an existing row.
       const existingTask = yield* findTask(id);
       const threadMode = resolveThreadMode(input, existingTask);
-      const keptThreadId = input.threadId ?? existingTask?.threadId ?? null;
+      const keptThreadId =
+        input.threadId ?? (input.unbindThread === true ? null : (existingTask?.threadId ?? null));
       // A bound thread belongs to its project, so moving the task leaves it for a new one.
       const movedOffThread =
         existingTask !== null &&
         existingTask.projectId !== input.projectId &&
         keptThreadId === existingTask.threadId;
       const threadId = threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
+      // An unchanged destination is not rechecked, so a task on an archived thread stays editable.
+      if (threadId !== null && threadId !== existingTask?.threadId) {
+        yield* requireDestinationThread(threadId, input.projectId, id);
+      }
       // Refused on save rather than at run time; a disabled task can still be saved, so one
       // stored above the ceiling can be turned off before its mode is lowered. A task bound to a
       // thread runs in that thread's mode, which the orchestrator checks instead. Checked before
@@ -1370,9 +1571,11 @@ export const layer = Layer.effect(
               return { token, secret, secretChanged };
             })
           : { token: null, secret: null, secretChanged: true };
+      // A folder that is not a Git repository, Scratch included, cannot hold a worktree.
       const workspaceStrategy: ScheduledTask["workspaceStrategy"] =
         input.workspaceStrategy.type === "worktree" &&
-        (yield* managedFolders.isScratchProject(input.projectId))
+        ((yield* managedFolders.isScratchProject(input.projectId)) ||
+          (yield* threadLaunch.isNonGitProject(input.projectId)))
           ? { type: "root" }
           : input.workspaceStrategy;
       const scheduleUnchanged =
@@ -1410,6 +1613,7 @@ export const layer = Layer.effect(
         task,
         input.requireExisting === true,
         scheduleUnchanged ? existingTask.schedule : null,
+        threadId === null && input.unbindThread === true ? (existingTask?.threadId ?? null) : null,
         webhook,
       );
       yield* notifyChanged;
@@ -1850,8 +2054,6 @@ export const layer = Layer.effect(
           : [raced, permits];
       });
     });
-
-    const serviceScope = yield* Effect.scope;
 
     const releaseFailedDelivery = Effect.fn("ScheduledTaskService.releaseFailedDelivery")(
       function* (deliveryId: string) {

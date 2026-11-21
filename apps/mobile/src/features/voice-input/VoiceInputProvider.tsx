@@ -1,10 +1,12 @@
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
-import { RecordingPresets, type RecordingStatus } from "expo-audio";
+import { AudioModule, RecordingPresets, type RecordingStatus } from "expo-audio";
 import { File } from "expo-file-system";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSyncExternalStore } from "react";
 import { Platform } from "react-native";
-import { Atom, AsyncResult } from "effect/reactivity";
+import { Effect } from "effect";
+import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { makeMutable } from "react-native-reanimated";
 
 import {
@@ -15,7 +17,7 @@ import {
 } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
   voiceInputBlocksSubmission,
@@ -25,6 +27,7 @@ import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 import { VoiceInputSession } from "./voiceInputSession";
 import { createVoiceRecordingPermission } from "./voiceRecordingPermission";
+import { voiceRouteAtom } from "./voiceDestination";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
   acquireAudioSession,
@@ -63,8 +66,9 @@ export const localVoiceTranscriberAtom = makePermissionStatusAtom<
   read: () => getLocalVoiceTranscriber().catch(() => null),
 }).pipe(Atom.keepAlive);
 
-// Each foreground re-probe yields a new transcriber; composers re-render only when availability flips.
-const localVoiceInputAvailableAtom = Atom.make((get) => {
+const voiceInputAvailableAtom = Atom.make((get) => {
+  const route = get(voiceRouteAtom);
+  if (route) return route.transcriber !== null;
   const transcriber = get(localVoiceTranscriberAtom);
   return transcriber !== null && transcriber !== "checking";
 });
@@ -73,22 +77,25 @@ const localVoiceInputAvailableAtom = Atom.make((get) => {
  * The app has one microphone and one dictation at a time, so the session
  * lives for the registry's lifetime rather than any screen's.
  */
-const voiceInputAtom = Atom.make((get) => {
+export const voiceInputAtom = Atom.make((get) => {
   const registry = get.registry;
-  // Mounted so the recorder can read and remember microphones synchronously.
+  // Mounted so the recorder can read known microphones synchronously.
   get.mount(mobilePreferencesAtom);
-  get.mount(updateMobilePreferencesAtom);
-  get.mount(localVoiceTranscriberAtom);
   const audioLevels = makeMutable<ReadonlyArray<number>>(
     Array<number>(VOICE_WAVEFORM_SAMPLE_COUNT).fill(0),
   );
   let keepAwakeSequence = 0;
   let audioToken: ReturnType<typeof acquireAudioSession> | null = null;
+  let recordingMicrophoneOrder: ReadonlyArray<MicrophoneEntry> | null = null;
   const permission = createVoiceRecordingPermission(() => {
     void session.controller.appMovedToBackground();
   });
   const recorder = createLazyVoiceRecorder({
-    create: () => createVoiceRecorder(VOICE_RECORDING_OPTIONS),
+    getDestination: () => (registry.get(voiceRouteAtom) === null ? "local" : "environment"),
+    create: (destination) =>
+      destination === "local"
+        ? createVoiceRecorder(VOICE_RECORDING_OPTIONS)
+        : new AudioModule.AudioRecorder(VOICE_RECORDING_OPTIONS),
     onStatus: (status: RecordingStatus) => {
       session.controller.handleRecorderStatus({
         isFinished: status.isFinished,
@@ -97,14 +104,12 @@ const voiceInputAtom = Atom.make((get) => {
         url: status.url,
       });
     },
-    // Read when recording starts so preference changes do not re-render every composer.
     selectInput: (inputs) => {
-      const preferences = registry.get(mobilePreferencesAtom);
-      if (!AsyncResult.isSuccess(preferences)) return null;
-      const known = deviceMicrophoneOrder(preferences.value.microphones);
+      const known = recordingMicrophoneOrder;
+      if (!known) return null;
       const order = rememberMicrophones(known, inputs);
       if (order !== known) {
-        registry.set(updateMobilePreferencesAtom, {
+        void runAtomCommand(registry, saveMobilePreferences, {
           transform: (current) => ({
             microphones: rememberMicrophones(deviceMicrophoneOrder(current.microphones), inputs),
           }),
@@ -116,6 +121,8 @@ const voiceInputAtom = Atom.make((get) => {
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
     getTranscriber: () => {
+      const route = registry.get(voiceRouteAtom);
+      if (route) return route.transcriber;
       const transcriber = registry.get(localVoiceTranscriberAtom);
       return transcriber === "checking" ? null : transcriber;
     },
@@ -124,7 +131,20 @@ const voiceInputAtom = Atom.make((get) => {
       const token = acquireAudioSession("recording");
       audioToken = token;
       try {
-        await activateAudioSession(token);
+        const current = registry.get(mobilePreferencesAtom);
+        const preferences = AsyncResult.isSuccess(current)
+          ? current.value
+          : await Effect.runPromise(
+              AtomRegistry.getResult(registry, mobilePreferencesAtom).pipe(
+                Effect.orElseSucceed(() => null),
+              ),
+            );
+        recordingMicrophoneOrder = preferences
+          ? deviceMicrophoneOrder(preferences.microphones)
+          : null;
+        const builtInMicFirst =
+          Platform.OS === "ios" && recordingMicrophoneOrder?.[0]?.kind === "builtIn";
+        await activateAudioSession(token, { allowBluetoothRecording: !builtInMicFirst });
       } catch (error) {
         await releaseAudioSession(token).catch(() => {});
         throw error;
@@ -144,6 +164,7 @@ const voiceInputAtom = Atom.make((get) => {
     publishAudioLevels: (levels) => audioLevels.set(levels),
     keepAwake: () => keepScreenAwake(`voice-input:${++keepAwakeSequence}`),
   });
+  get.subscribe(voiceRouteAtom, () => session.controller.cancel());
   get.addFinalizer(() => {
     permission.dispose();
     session.dispose();
@@ -154,7 +175,7 @@ const voiceInputAtom = Atom.make((get) => {
 
 export function useGlobalVoiceInput() {
   const { session, audioLevels } = useAtomValue(voiceInputAtom);
-  const isTranscriberAvailable = useAtomValue(localVoiceInputAvailableAtom);
+  const isTranscriberAvailable = useAtomValue(voiceInputAvailableAtom);
   const snapshot = useSyncExternalStore(session.subscribe, session.getSnapshot);
   return {
     ...snapshot,
