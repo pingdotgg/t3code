@@ -6,7 +6,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -14,7 +13,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 
 const SAMPLE_RATE = 16_000;
 const MAX_PCM_BYTES = SAMPLE_RATE * Float32Array.BYTES_PER_ELEMENT * 5 * 60;
-// The first prepare for a language can download Apple's model.
+// Preparing a language for the first time downloads Apple's model.
 const PREPARE_TIMEOUT = Duration.minutes(10);
 // Matches the longest accepted recording, so analysis can never outlast its deadline.
 const TRANSCRIBE_TIMEOUT = Duration.minutes(5);
@@ -73,11 +72,8 @@ export class AppleSpeech extends Context.Service<
   }
 >()("@t3tools/desktop/speech/AppleSpeech") {}
 
-const unavailable: DesktopAppleSpeechResult = {
-  ok: false,
-  code: "unavailable",
-  message: "Apple Speech needs the T3 Code desktop app on macOS 26 or later.",
-};
+const unavailable: DesktopAppleSpeechResult = { ok: false, code: "unavailable" };
+const failed: DesktopAppleSpeechResult = { ok: false, code: "failed" };
 
 export const layer = Layer.effect(
   AppleSpeech,
@@ -118,35 +114,23 @@ export const layer = Layer.effect(
             ],
             { concurrency: "unbounded" },
           );
-          const message = stderr.trim() || "Apple Speech failed.";
           switch (Number(exitCode)) {
             case 0:
               return { ok: true, value: (yield* decodeOutput(stdout)).value } as const;
             case 2:
-              return { ok: false, code: "unsupported-locale", message } as const;
+              return { ok: false, code: "unsupported-locale" } as const;
             case 3:
               return unavailable;
             default:
-              return { ok: false, code: "failed", message } as const;
+              yield* Effect.logWarning("Apple Speech helper failed", { exitCode, stderr });
+              return failed;
           }
         }),
       ).pipe(
         // Leaving the scope kills a helper that outlives its timeout.
-        Effect.timeoutOrElse({
-          duration: timeout,
-          orElse: () =>
-            Effect.succeed<DesktopAppleSpeechResult>({
-              ok: false,
-              code: "failed",
-              message: "Apple Speech did not respond.",
-            }),
-        }),
+        Effect.timeoutOrElse({ duration: timeout, orElse: () => Effect.succeed(failed) }),
         Effect.catch((cause) =>
-          Effect.succeed<DesktopAppleSpeechResult>({
-            ok: false,
-            code: "failed",
-            message: cause instanceof Error ? cause.message : "Apple Speech failed.",
-          }),
+          Effect.logWarning("Apple Speech helper did not run", { cause }).pipe(Effect.as(failed)),
         ),
       );
 
@@ -165,33 +149,10 @@ export const layer = Layer.effect(
         : Effect.succeed(available),
     );
 
-    // Each dictation start awaits prepare before the microphone opens, so a locale is
-    // prepared once. Callers share an in-flight prepare (one asset download), and a
-    // failure is dropped so the next start retries it.
-    const prepared = new Map<string, Effect.Effect<DesktopAppleSpeechResult>>();
-    const claimPermit = yield* Semaphore.make(1);
-    // One native analysis at a time, even if IPC callers overlap.
-    const transcribePermit = yield* Semaphore.make(1);
-    const claimPrepare = Effect.fn("AppleSpeech.claimPrepare")(function* (locale: string) {
-      const existing = prepared.get(locale);
-      if (existing !== undefined) return existing;
-      const shared = yield* Effect.cached(
-        run(["prepare", locale], PREPARE_TIMEOUT).pipe(
-          Effect.tap((result) =>
-            Effect.sync(() => {
-              if (!result.ok) prepared.delete(locale);
-            }),
-          ),
-        ),
-      );
-      prepared.set(locale, shared);
-      return shared;
-    }, claimPermit.withPermits(1));
-
     return AppleSpeech.of({
       isAvailable,
       prepare: Effect.fn("AppleSpeech.prepare")(function* (locale) {
-        return yield* yield* claimPrepare(locale);
+        return yield* run(["prepare", locale], PREPARE_TIMEOUT);
       }),
       transcribe: Effect.fn("AppleSpeech.transcribe")(function* (locale, pcm) {
         if (
@@ -199,25 +160,14 @@ export const layer = Layer.effect(
           pcm.byteLength > MAX_PCM_BYTES ||
           pcm.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0
         )
-          return {
-            ok: false,
-            code: "failed",
-            message: "The recording is empty or too long.",
-          } as const;
+          return failed;
         return yield* Effect.scoped(
           Effect.gen(function* () {
             const file = yield* fileSystem.makeTempFileScoped({ suffix: ".wav" });
             yield* fileSystem.writeFile(file, encodeSpeechWav(pcm));
             return yield* run(["transcribe", locale, file], TRANSCRIBE_TIMEOUT);
           }),
-        ).pipe(
-          Effect.orElseSucceed((): DesktopAppleSpeechResult => ({
-            ok: false,
-            code: "failed",
-            message: "Could not save the recording for Apple Speech.",
-          })),
-          transcribePermit.withPermits(1),
-        );
+        ).pipe(Effect.orElseSucceed(() => failed));
       }),
     });
   }),

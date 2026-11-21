@@ -7,8 +7,9 @@ the device requires an explicit grant naming one environment and, for cloud
 transcription, one provider.
 
 The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)
-owns the operation while the client supplies capture and transcription. Preparation
-binds the transcriber and resolved locale for the whole recording. Draft ownership,
+owns the operation while the client supplies capture and transcription. The
+transcriber is bound to the recording when it starts. Capture can begin while
+the locale and destination are still being resolved. Draft ownership,
 text, and revision are captured before recording and checked before insertion, so
 a late transcript cannot overwrite a draft that was edited or replaced. A
 transcriber may expose a streaming session, in which case audio leaves during

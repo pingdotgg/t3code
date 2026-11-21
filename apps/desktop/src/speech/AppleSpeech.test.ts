@@ -1,7 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -18,7 +16,6 @@ type HelperOutput = {
   stdout?: string;
   stderr?: string;
   exitCode: number;
-  exit?: Deferred.Deferred<void>;
 };
 
 function makeProcess(result: HelperOutput) {
@@ -27,9 +24,7 @@ function makeProcess(result: HelperOutput) {
     stdout: text(result.stdout ?? ""),
     stderr: text(result.stderr ?? ""),
     all: Stream.empty,
-    exitCode: (result.exit ? Deferred.await(result.exit) : Effect.void).pipe(
-      Effect.as(ChildProcessSpawner.ExitCode(result.exitCode)),
-    ),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
     isRunning: Effect.succeed(false),
     kill: () => Effect.void,
     stdin: Sink.drain,
@@ -81,50 +76,23 @@ describe("AppleSpeech", () => {
     ],
     [
       { stderr: "Locale not supported: xx\n", exitCode: 2 },
-      { ok: false, code: "unsupported-locale", message: "Locale not supported: xx" },
+      { ok: false, code: "unsupported-locale" },
     ],
     [{ exitCode: 3 }, { ok: false, code: "unavailable" }],
     [
       { stderr: "boom", exitCode: 1 },
-      { ok: false, code: "failed", message: "boom" },
-    ],
-    [
-      { stdout: "not json", exitCode: 0 },
       { ok: false, code: "failed" },
     ],
-  ] as const)(
-    "maps helper output %j to %j, preparing again only after a failure",
-    ([output, expected]) => {
-      const { layer, commands } = setup(output);
-      return Effect.gen(function* () {
-        const speech = yield* AppleSpeech.AppleSpeech;
-        assert.deepInclude(yield* speech.prepare("en-US"), expected);
-        assert.deepInclude(yield* speech.prepare("en-US"), expected);
-        const command = ["/app/Resources/apple-speech/t3-apple-speech", "prepare", "en-US"];
-        assert.deepEqual(commands, expected.ok ? [command] : [command, command]);
-      }).pipe(Effect.provide(layer));
-    },
-  );
-
-  it.effect("shares one helper between prepares that start while the first is running", () =>
-    Effect.gen(function* () {
-      const exit = yield* Deferred.make<void>();
-      const { layer, commands } = setup({ stdout: '{"value":"en-US"}', exitCode: 0, exit });
-      return yield* Effect.gen(function* () {
-        const speech = yield* AppleSpeech.AppleSpeech;
-        const first = yield* speech
-          .prepare("en-US")
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        const second = yield* speech
-          .prepare("en-US")
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.succeed(exit, undefined);
-        assert.deepEqual(yield* Fiber.join(first), { ok: true, value: "en-US" });
-        assert.deepEqual(yield* Fiber.join(second), { ok: true, value: "en-US" });
-        assert.lengthOf(commands, 1);
-      }).pipe(Effect.provide(layer));
-    }),
-  );
+  ] as const)("maps helper output %j to %j", ([output, expected]) => {
+    const { layer, commands } = setup(output);
+    return Effect.gen(function* () {
+      const speech = yield* AppleSpeech.AppleSpeech;
+      assert.deepEqual(yield* speech.prepare("en-US"), expected);
+      assert.deepEqual(commands, [
+        ["/app/Resources/apple-speech/t3-apple-speech", "prepare", "en-US"],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect.each([
     [0, true, 1],
@@ -175,15 +143,6 @@ describe("AppleSpeech", () => {
         [0, 1, 2, 3].map((index) => wav.getInt16(44 + index * 2, true)),
         [0, 32767, -32767, 32767],
       );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("rejects PCM that is not whole Float32 samples without running the helper", () => {
-    const { layer, commands } = setup({ exitCode: 0 });
-    return Effect.gen(function* () {
-      const result = yield* (yield* AppleSpeech.AppleSpeech).transcribe("en-US", new Uint8Array(3));
-      assert.deepInclude(result, { ok: false, code: "failed" });
-      assert.lengthOf(commands, 0);
     }).pipe(Effect.provide(layer));
   });
 });
