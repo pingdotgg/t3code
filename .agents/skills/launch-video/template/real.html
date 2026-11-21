@@ -232,15 +232,10 @@
     <script>
       // Everything here is in animation seconds. capture.mjs calls setup() once the beats have loaded.
       window.setup = () => {
-        Kit.show("iframe[data-beat=BEAT_ONE]", 0);
-        Kit.anim(
-          "#cap1",
-          [
-            { opacity: 0, transform: "translateY(10px)" },
-            { opacity: 1, transform: "none" },
-          ],
-          { at: 0.4, dur: 0.3 },
-        );
+        // One visibility window per beat; never pair Kit.show and Kit.hide on one element.
+        Kit.beats([["BEAT_ONE", 0]]);
+        // Captions play in order and must not overlap.
+        Kit.captions([["#cap1", 0.4, 5.8]]);
         Kit.anim(".outro", [{ opacity: 0 }, { opacity: 1 }], { at: 6, dur: 0.5 });
         Kit.stagger(".outro .logo, .outro h2, .outro p, .outro .url", 6.05, 0.08, "rise", {
           y: 18,
