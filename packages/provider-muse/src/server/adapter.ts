@@ -293,7 +293,7 @@ const liveBackgroundTask = (task: {
 }): LiveBackgroundTask => {
   const monitor = isMonitorTask(task);
   // Registry-only rows carry a `tool.<name>` kind instead of a tool name.
-  const description = task.tool ?? task.kind.replace(/^tool\./, "");
+  const description = task.tool ?? (monitor ? "monitor" : task.kind.replace(/^tool\./, ""));
   return {
     kind: monitor ? "monitor" : "command",
     ...(description ? { description } : {}),
