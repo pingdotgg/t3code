@@ -3871,29 +3871,30 @@ export const validateMacUpdateZipTimestamps = Effect.fn(
   }
 });
 
-export const validateMacUpdateZips = Effect.fn("desktopArtifact.validateMacUpdateZips")(
-  function* (input: { readonly stageDistDir: string; readonly expectZip: boolean }) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const zipPaths = (yield* fs.readDirectory(input.stageDistDir))
-      .filter((entry) => entry.endsWith(".zip"))
-      .map((entry) => path.join(input.stageDistDir, entry));
-    if (input.expectZip && zipPaths.length === 0) {
-      return yield* new MacUpdateZipTimestampError({
-        zipPath: input.stageDistDir,
-        reason: "expected at least one macOS update .zip archive in stage dist directory",
-      });
-    }
-    for (const zipPath of zipPaths) {
-      yield* validateMacUpdateZipTimestamps(zipPath);
-    }
-    if (zipPaths.length > 0) {
-      yield* Effect.log(
-        `[desktop-artifact] Validated macOS update zip UTC timestamps (${String(zipPaths.length)} archive(s)).`,
-      );
-    }
-  },
-);
+const validateMacUpdateZips = Effect.fn("desktopArtifact.validateMacUpdateZips")(function* (input: {
+  readonly stageDistDir: string;
+  readonly expectZip: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const zipPaths = (yield* fs.readDirectory(input.stageDistDir))
+    .filter((entry) => entry.endsWith(".zip"))
+    .map((entry) => path.join(input.stageDistDir, entry));
+  if (input.expectZip && zipPaths.length === 0) {
+    return yield* new MacUpdateZipTimestampError({
+      zipPath: input.stageDistDir,
+      reason: "expected at least one macOS update .zip archive in stage dist directory",
+    });
+  }
+  for (const zipPath of zipPaths) {
+    yield* validateMacUpdateZipTimestamps(zipPath);
+  }
+  if (zipPaths.length > 0) {
+    yield* Effect.log(
+      `[desktop-artifact] Validated macOS update zip UTC timestamps (${String(zipPaths.length)} archive(s)).`,
+    );
+  }
+});
 
 export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMacPackagedPayload")(
   function* (input: { readonly stageDistDir: string; readonly verbose?: boolean }) {

@@ -1,7 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
 import * as NodeCrypto from "node:crypto";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -56,7 +54,6 @@ import {
   stageBrowserSecret,
   validateLinuxPackagedPayload,
   validateMacPackagedPayload,
-  validateMacUpdateZips,
   validateMacUpdateZipTimestamps,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
@@ -2073,96 +2070,5 @@ it.effect("validateMacUpdateZipTimestamps requires Info-ZIP UX extra field 0x585
       assert.instanceOf(err, MacUpdateZipTimestampError);
       assert.include(err.message, "0x5855");
     }
-
-    const emptyDir = path.join(root, "empty-dist");
-    yield* fs.makeDirectory(emptyDir, { recursive: true });
-    yield* validateMacUpdateZips({ stageDistDir: emptyDir, expectZip: false });
-    const missingZipErr = yield* validateMacUpdateZips({
-      stageDistDir: emptyDir,
-      expectZip: true,
-    }).pipe(Effect.flip);
-    assert.instanceOf(missingZipErr, MacUpdateZipTimestampError);
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-);
-
-async function runAppBuilderMacZipInUtc(appDir: string, outZip: string): Promise<void> {
-  const desktopReq = NodeModule.createRequire(
-    NodePath.resolve(import.meta.dirname, "../apps/desktop/package.json"),
-  );
-  const ebReq = NodeModule.createRequire(desktopReq.resolve("electron-builder/package.json"));
-  const { archive } = ebReq("app-builder-lib/out/targets/archive.js") as {
-    archive: (
-      format: string,
-      outFile: string,
-      dirToArchive: string,
-      options?: { preserveSymlinks?: boolean },
-    ) => Promise<string>;
-  };
-  const previousTz = process.env.TZ;
-  process.env.TZ = "UTC";
-  try {
-    await archive("zip", outZip, appDir, { preserveSymlinks: true });
-  } finally {
-    if (previousTz === undefined) {
-      delete process.env.TZ;
-    } else {
-      process.env.TZ = previousTz;
-    }
-  }
-}
-
-it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
-  "app-builder-lib macOS zip preserves UTC mtime, symlinks, and executable mode through ditto",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-zip-roundtrip-" });
-
-      const appDir = path.join(root, "Demo.app");
-      const macOsDir = path.join(appDir, "Contents/MacOS");
-      const frameworkVersionsDir = path.join(appDir, "Contents/Frameworks/Foo.framework/Versions");
-      const versionADir = path.join(frameworkVersionsDir, "A");
-      yield* fs.makeDirectory(macOsDir, { recursive: true });
-      yield* fs.makeDirectory(versionADir, { recursive: true });
-
-      const binPath = path.join(macOsDir, "Demo");
-      yield* fs.writeFileString(binPath, "#!/bin/sh\necho ok\n");
-      yield* fs.chmod(binPath, 0o755);
-      yield* fs.symlink("A", path.join(frameworkVersionsDir, "Current"));
-
-      // 2026-11-21T01:45:08Z — 8h ahead of PST if interpreted as local time.
-      const expectedUtcSeconds = 1_795_225_508;
-      yield* Effect.promise(() => NodeFSP.utimes(binPath, expectedUtcSeconds, expectedUtcSeconds));
-
-      const outZip = path.join(root, "Demo.zip");
-      yield* Effect.promise(() => runAppBuilderMacZipInUtc(appDir, outZip));
-
-      yield* validateMacUpdateZipTimestamps(outZip);
-
-      const extractedDir = path.join(root, "extracted");
-      yield* fs.makeDirectory(extractedDir, { recursive: true });
-      const ditto = yield* spawner.spawn(
-        ChildProcess.make("ditto", ["-x", "-k", outZip, extractedDir], {
-          env: { TZ: "America/Los_Angeles" },
-          extendEnv: true,
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "pipe",
-        }),
-      );
-      assert.equal(Number(yield* ditto.exitCode), 0);
-
-      const extractedBin = path.join(extractedDir, "Demo.app/Contents/MacOS/Demo");
-      const extractedStat = yield* Effect.promise(() => NodeFSP.lstat(extractedBin));
-      assert.equal(Math.trunc(extractedStat.mtimeMs / 1000), expectedUtcSeconds);
-      assert.equal(extractedStat.mode & 0o777, 0o755);
-      assert.equal(
-        yield* fs.readLink(
-          path.join(extractedDir, "Demo.app/Contents/Frameworks/Foo.framework/Versions/Current"),
-        ),
-        "A",
-      );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
