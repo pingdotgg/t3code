@@ -263,6 +263,26 @@ describe("AntigravitySwarm", () => {
     });
     expect(parsed.detail).toBe("[@alpha] pnpm test");
 
+    // Falls back to toolCall._meta.antigravity when top-level _meta.antigravity lacks childSessionId.
+    const fallbackParsed = parsePermissionRequest({
+      sessionId: "root-1",
+      _meta: { antigravity: {} },
+      toolCall: {
+        toolCallId: "worker-cmd-2",
+        kind: "execute",
+        title: "pnpm lint",
+        rawInput: { CommandLine: "pnpm lint" },
+        _meta: {
+          antigravity: {
+            childSessionId: "worker-a",
+            swarm: { workerSessionId: "worker-a", workerName: "alpha" },
+          },
+        },
+      },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    });
+    expect(fallbackParsed.detail).toBe("[@alpha] pnpm lint");
+
     const baseRequest = {
       sessionId: "root-1",
       toolCall: {
@@ -284,18 +304,57 @@ describe("AntigravitySwarm", () => {
       _meta: {
         antigravity: {
           childSessionId: "worker-a",
-          workspaces: ["/tmp/isolated-worktree"],
+          workspaces: ["/tmp/isolated-worktree", "/"],
         },
       },
     };
-    // Generic ACP servers cannot expand writable roots via _meta.antigravity.workspaces.
+    // Untracked metadata roots never widen workspaceWrite.
     expect(acpPermissionDisposition(policy, baseRequest)).toBe("deny");
     expect(acpPermissionDisposition(policy, childWorktreeRequest)).toBe("deny");
-    // Antigravity adapters pass their verified worker worktree roots explicitly.
+    expect(
+      acpPermissionDisposition(policy, childWorktreeRequest, {
+        extraWritableRoots: tracker.childPermissionWorkspaces(childWorktreeRequest),
+      }),
+    ).toBe("deny");
+
+    // Once the session records worker-a's worktree (while rejecting root "/" paths),
+    // edits inside the tracked worktree are allowed and outside paths remain denied.
+    tracker.applyNotification({
+      sessionId: "root-1",
+      head: 1,
+      activeWorkers: 1,
+      workingWorkers: 1,
+      waitingWorkers: 0,
+      members: [
+        {
+          name: "alpha",
+          role: "worker",
+          conversationId: "worker-a",
+          workspaces: ["/tmp/isolated-worktree", "/"],
+          state: "working",
+        },
+      ],
+    });
+    expect(tracker.childPermissionWorkspaces(childWorktreeRequest)).toEqual([
+      "/tmp/isolated-worktree",
+    ]);
     expect(
       acpPermissionDisposition(policy, childWorktreeRequest, {
         extraWritableRoots: tracker.childPermissionWorkspaces(childWorktreeRequest),
       }),
     ).toBe("allow");
+    expect(
+      acpPermissionDisposition(
+        policy,
+        {
+          ...childWorktreeRequest,
+          toolCall: {
+            ...childWorktreeRequest.toolCall,
+            locations: [{ path: "/tmp/other-dir/escape.ts" }],
+          },
+        },
+        { extraWritableRoots: tracker.childPermissionWorkspaces(childWorktreeRequest) },
+      ),
+    ).toBe("deny");
   });
 });

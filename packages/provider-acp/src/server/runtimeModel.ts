@@ -1298,30 +1298,29 @@ export function extractAcpChildRequestTarget(input: {
   readonly toolCallMeta?: unknown;
   readonly fallbackToolCallId?: string | undefined;
 }): AcpChildRequestTarget | undefined {
-  const fromMeta = (candidate: unknown) => {
-    if (!isRecord(candidate)) return undefined;
-    const antigravity = candidate.antigravity;
-    return isRecord(antigravity) ? antigravity : undefined;
-  };
-  const ag = fromMeta(input.meta) ?? fromMeta(input.toolCallMeta);
-  if (ag === undefined) return undefined;
-  const swarm = isRecord(ag.swarm) ? ag.swarm : undefined;
-  const childSessionId =
-    (typeof ag.childSessionId === "string" && ag.childSessionId.trim()) ||
-    (typeof swarm?.workerSessionId === "string" && swarm.workerSessionId.trim()) ||
-    "";
-  if (childSessionId.length === 0) return undefined;
-  const toolCallId =
-    (typeof ag.workerToolCallId === "string" && ag.workerToolCallId.trim()) ||
-    (typeof input.fallbackToolCallId === "string" && input.fallbackToolCallId.trim()) ||
-    null;
-  const workerName =
-    (typeof swarm?.workerName === "string" && swarm.workerName.trim().replace(/^@/, "")) ||
-    (typeof ag.agentName === "string" && ag.agentName.trim().replace(/^@/, "")) ||
-    "";
-  const role = typeof ag.role === "string" ? ag.role.trim() : "";
-  const workerLabel = workerName.length > 0 ? `@${workerName}` : role.length > 0 ? role : null;
-  return { childSessionId, toolCallId, workerLabel };
+  for (const candidate of [input.meta, input.toolCallMeta]) {
+    if (!isRecord(candidate)) continue;
+    const ag = candidate.antigravity;
+    if (!isRecord(ag)) continue;
+    const swarm = isRecord(ag.swarm) ? ag.swarm : undefined;
+    const childSessionId =
+      (typeof ag.childSessionId === "string" && ag.childSessionId.trim()) ||
+      (typeof swarm?.workerSessionId === "string" && swarm.workerSessionId.trim()) ||
+      "";
+    if (childSessionId.length === 0) continue;
+    const toolCallId =
+      (typeof ag.workerToolCallId === "string" && ag.workerToolCallId.trim()) ||
+      (typeof input.fallbackToolCallId === "string" && input.fallbackToolCallId.trim()) ||
+      null;
+    const workerName =
+      (typeof swarm?.workerName === "string" && swarm.workerName.trim().replace(/^@/, "")) ||
+      (typeof ag.agentName === "string" && ag.agentName.trim().replace(/^@/, "")) ||
+      "";
+    const role = typeof ag.role === "string" ? ag.role.trim() : "";
+    const workerLabel = workerName.length > 0 ? `@${workerName}` : role.length > 0 ? role : null;
+    return { childSessionId, toolCallId, workerLabel };
+  }
+  return undefined;
 }
 
 export function parsePermissionRequest(

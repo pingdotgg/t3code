@@ -2645,6 +2645,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         >(new Map());
         const pendingExtensionSubagents = yield* Ref.make<
           ReadonlyArray<{
+            readonly sessionId: string;
             readonly subagent: AcpAdapterV2SubagentUpdate;
             readonly allowReopenFromIdle: boolean;
           }>
@@ -3589,7 +3590,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
             for (const event of parseSessionUpdateEvent(notification).events) {
               if (event._tag !== "ToolCallUpdated") continue;
-              if (event.toolCall.status !== undefined && event.toolCall.status !== "pending") {
+              if (
+                event.toolCall.status !== undefined &&
+                event.toolCall.status !== "pending" &&
+                event.toolCall.status !== "requiresAction"
+              ) {
                 yield* cancelPendingChildRuntimeRequests(
                   notification.sessionId,
                   event.toolCall.toolCallId,
@@ -6116,7 +6121,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ) {
               for (const event of parseSessionUpdateEvent(notification).events) {
                 if (event._tag !== "ToolCallUpdated") continue;
-                if (event.toolCall.status !== undefined && event.toolCall.status !== "pending") {
+                if (
+                  event.toolCall.status !== undefined &&
+                  event.toolCall.status !== "pending" &&
+                  event.toolCall.status !== "requiresAction"
+                ) {
                   yield* cancelPendingChildRuntimeRequests(
                     notification.sessionId,
                     event.toolCall.toolCallId,
@@ -7200,9 +7209,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.update(pendingExtensionSubagents, (current) =>
               current.filter(
                 (entry) =>
-                  entry.subagent.nativeTaskId !== update.nativeTaskId &&
-                  (update.childSessionId === null ||
-                    entry.subagent.childSessionId !== update.childSessionId),
+                  entry.sessionId !== notice.sessionId ||
+                  (entry.subagent.nativeTaskId !== update.nativeTaskId &&
+                    (update.childSessionId === null ||
+                      entry.subagent.childSessionId !== update.childSessionId)),
               ),
             );
             if (update.childSessionId !== null) {
@@ -7244,11 +7254,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.update(pendingExtensionSubagents, (current) => [
               ...current.filter(
                 (entry) =>
-                  entry.subagent.nativeTaskId !== update.nativeTaskId &&
-                  (update.childSessionId === null ||
-                    entry.subagent.childSessionId !== update.childSessionId),
+                  entry.sessionId !== notice.sessionId ||
+                  (entry.subagent.nativeTaskId !== update.nativeTaskId &&
+                    (update.childSessionId === null ||
+                      entry.subagent.childSessionId !== update.childSessionId)),
               ),
-              { subagent: update, allowReopenFromIdle },
+              { sessionId: notice.sessionId, subagent: update, allowReopenFromIdle },
             ]);
             if (!(yield* Ref.get(loadingSessionId))) {
               yield* offerContinuationRun(notice.sessionId);
@@ -8066,7 +8077,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.gen(function* () {
                     if (yield* Ref.get(stoppedRunQuarantine)) return;
                     const expectedSessionId =
-                      (yield* Ref.get(activeSessionId)) ?? (yield* Ref.get(loadingSessionId));
+                      (yield* Ref.get(loadingSessionId)) ?? (yield* Ref.get(activeSessionId));
                     if (expectedSessionId !== notice.sessionId) return;
                     yield* upsertSubagentFromExtension(notice);
                   }),
@@ -8077,7 +8088,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.gen(function* () {
                     if (yield* Ref.get(stoppedRunQuarantine)) return;
                     const expectedSessionId =
-                      (yield* Ref.get(activeSessionId)) ?? (yield* Ref.get(loadingSessionId));
+                      (yield* Ref.get(loadingSessionId)) ?? (yield* Ref.get(activeSessionId));
                     if (expectedSessionId !== notice.sessionId) return;
                     if (notice.active) externalBackgroundWorkSessionIds.add(notice.sessionId);
                     else externalBackgroundWorkSessionIds.delete(notice.sessionId);
@@ -9980,7 +9991,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             yield* Ref.set(activeTurn, context);
             yield* Ref.set(stoppedRunQuarantine, false);
-            const queuedExtensionSubagents = yield* Ref.getAndSet(pendingExtensionSubagents, []);
+            const queuedExtensionSubagents = yield* Ref.modify(
+              pendingExtensionSubagents,
+              (current) => [
+                current.filter((entry) => entry.sessionId === requestedSessionId),
+                current.filter((entry) => entry.sessionId !== requestedSessionId),
+              ],
+            );
             const runningTurn = providerTurnPayload(context, "running", null);
             yield* Ref.update(providerTurns, (current) => {
               const updated = new Map(current);
