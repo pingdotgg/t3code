@@ -5325,6 +5325,8 @@ interface ClaudeLiveQueryContext {
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
+  readonly taskOutputCwd: string | null;
+  readonly taskOutputProjectBySession: Map<string, string>;
 }
 
 interface ActiveClaudeToolCall {
@@ -11609,6 +11611,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   root: liveQuery.taskOutputRoot,
                   sessionId: message.session_id,
                   taskId: message.task_id,
+                  cwd: liveQuery.taskOutputCwd,
+                  projectCache: liveQuery.taskOutputProjectBySession,
                   stop,
                   onChunk: (chunk) =>
                     emitProviderEvent({
@@ -13372,6 +13376,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resolvedTurnCwd,
               hostPlatform,
             ),
+            taskOutputCwd: resolvedTurnCwd,
+            taskOutputProjectBySession: new Map(),
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
           yield* Ref.update(queryContext, (replaced) => {
