@@ -1919,21 +1919,24 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
       const commands = yield* captureRecordingGitCommands(cwd, checkpointRef);
 
-      assert.deepStrictEqual(commands, [
-        "rev-parse",
-        "rev-parse",
-        "rev-parse",
-        "config",
-        "rev-parse",
-        "read-tree",
-        "ls-files",
-        "add",
-        "write-tree",
-        "commit-tree",
-        "update-ref",
-        // Without a parsed top level, capture cannot rule out submodules.
-        "submodule",
-      ]);
+      // Without a parsed top level, capture cannot rule out submodules; it lists them alongside.
+      assert.include(commands, "submodule");
+      assert.deepStrictEqual(
+        commands.filter((command) => command !== "submodule"),
+        [
+          "rev-parse",
+          "rev-parse",
+          "rev-parse",
+          "config",
+          "rev-parse",
+          "read-tree",
+          "ls-files",
+          "add",
+          "write-tree",
+          "commit-tree",
+          "update-ref",
+        ],
+      );
       assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
       assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
       assert.deepStrictEqual(
@@ -2235,6 +2238,59 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
       const ref = yield* git(cwd, ["for-each-ref", "refs/t3"]);
       assert.strictEqual(ref.stdout, "");
     }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("returns after the submodule budget without a ref in uncaptured submodules", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "test", cwd, args });
+    const makeRepository = Effect.fn("makeRepository")(function* (prefix: string) {
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix });
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["config", "user.email", "test@test.com"]);
+      yield* git(cwd, ["config", "user.name", "Test"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "original\n");
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "-m", "initial"]);
+      return cwd;
+    });
+    const library = yield* makeRepository("t3-submodule-budget-library-");
+    const root = yield* makeRepository("t3-submodule-budget-root-");
+    yield* git(root, ["-c", "protocol.file.allow=always", "submodule", "add", library, "library"]);
+    yield* git(root, ["commit", "-m", "add library"]);
+    const submodule = path.join(root, "library");
+    yield* git(submodule, ["config", "user.email", "test@test.com"]);
+    yield* git(submodule, ["config", "user.name", "Test"]);
+    yield* git(submodule, ["commit", "--allow-empty", "-m", "moved"]);
+    const submoduleStarted = yield* Deferred.make<void>();
+    const stalledDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) =>
+          input.cwd === submodule
+            ? Deferred.succeed(submoduleStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : liveProcess.run(input),
+      }),
+    );
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/budget");
+
+    const capture = yield* stalledDriver.checkpoints
+      .captureCheckpoint({ cwd: root, checkpointRef })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(submoduleStarted);
+    yield* TestClock.adjust("3 seconds");
+    yield* Fiber.join(capture);
+
+    // The root tree records the submodule's moved HEAD even though its own capture never ran.
+    assert.strictEqual(
+      (yield* git(root, ["rev-parse", `${checkpointRef}:library`])).stdout,
+      (yield* git(submodule, ["rev-parse", "HEAD"])).stdout,
+    );
+    assert.strictEqual((yield* git(submodule, ["for-each-ref", "refs/t3"])).stdout, "");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
