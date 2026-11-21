@@ -51,6 +51,11 @@ if [[ -n "${CONN_GPUI_EXTRA_FEATURES:-}" ]]; then
   FEATURES="$FEATURES $CONN_GPUI_EXTRA_FEATURES"
 fi
 
+INTERACTIVE_ARGS=()
+if [[ ! -t 0 ]]; then
+  INTERACTIVE_ARGS+=(--interactive false)
+fi
+
 cd "$ROOT"
 exec "$DX_BIN" serve \
   --platform macos \
@@ -59,5 +64,6 @@ exec "$DX_BIN" serve \
   --features "$FEATURES" \
   --hot-patch \
   --open false \
+  "${INTERACTIVE_ARGS[@]}" \
   --addr 127.0.0.1 \
   --port "$DX_PORT"
