@@ -2434,6 +2434,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               } else {
                 // A monitor outlives its turn, so Stop must reach Muse's own task registry.
                 yield* request("task/stopAll", {}).pipe(Effect.ignore);
+                // A monitor that already woke the session left a turn this call must end too.
+                if (wake)
+                  yield* request("turn/interrupt", { turnId: wake.nativeId }).pipe(Effect.ignore);
                 yield* settleObservedChildren("interrupted");
                 wake = undefined;
                 return;
