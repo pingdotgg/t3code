@@ -69,6 +69,8 @@ interface FxBackendProbe {
   readonly models: ReadonlyArray<string> | undefined;
   /** Token Pass is AI Gateway's, so only the signed-in gateway backend reports it. */
   readonly usageLimits: ServerProviderUsageLimits | undefined;
+  /** The Vercel team those limits belong to. */
+  readonly team: string | undefined;
 }
 
 /**
@@ -267,6 +269,8 @@ const probeFxBackend = Effect.fn("probeFxBackend")(function* (
   );
   const auth = fxAuth(status?.auth).status;
   const signedIn = auth === "unknown" ? undefined : auth === "authenticated";
+  const readsTokenPass = backend.id === "gateway" && signedIn === true;
+  const team = readsTokenPass ? nonEmptyTrimmed(status?.team) : undefined;
   const [models, usageLimits] = yield* Effect.all(
     [
       signedIn === false
@@ -278,9 +282,9 @@ const probeFxBackend = Effect.fn("probeFxBackend")(function* (
               ),
             ),
           ),
-      backend.id === "gateway" && signedIn === true
+      readsTokenPass
         ? readFxCli(settings, ["credits", "--json"], env).pipe(
-            Effect.map((credits) => fxCreditsToLimits({ credits, checkedAt, team: status?.team })),
+            Effect.map((credits) => fxCreditsToLimits({ credits, checkedAt, team })),
           )
         : Effect.undefined,
     ],
@@ -296,6 +300,7 @@ const probeFxBackend = Effect.fn("probeFxBackend")(function* (
         : `Signed out. Run \`${backend.login}\` on this machine.`,
     models,
     usageLimits,
+    team,
   } satisfies FxBackendProbe;
 });
 
@@ -376,11 +381,14 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     listed.length === 0 || listed.some((backend) => backend.models === undefined);
   const signedIn = backends.find((backend) => backend.signedIn === true);
   const statusAuth = fxAuth(status?.auth);
-  const tokenPass = backends.find((backend) => backend.usageLimits !== undefined)?.usageLimits;
-  const auth: ServerProviderAuth =
+  const tokenPass = backends.find((backend) => backend.usageLimits !== undefined);
+  const backendAuth: ServerProviderAuth =
     statusAuth.status !== "authenticated" && signedIn !== undefined
       ? { status: "authenticated", label: signedIn.name }
       : statusAuth;
+  // The server keeps the last reading after a failed read only while this stays the same team.
+  const auth: ServerProviderAuth =
+    tokenPass?.team === undefined ? backendAuth : { ...backendAuth, workspaceId: tokenPass.team };
   const probe =
     auth.status === "unauthenticated"
       ? { status: "error" as const, message: "Run `fx login` to sign in." }
@@ -409,7 +417,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
       version,
       auth,
       ...probe,
-      ...(tokenPass === undefined ? {} : { usageLimits: tokenPass }),
+      ...(tokenPass?.usageLimits === undefined ? {} : { usageLimits: tokenPass.usageLimits }),
     },
     defaultModel,
     backends,

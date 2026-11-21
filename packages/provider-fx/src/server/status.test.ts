@@ -203,7 +203,11 @@ describe("checkFxProviderStatus", () => {
         "local status --json",
       ]);
       assert.equal(draft.status, "ready");
-      assert.deepEqual(draft.auth, { status: "authenticated", label: "chatgpt subscription" });
+      assert.deepEqual(draft.auth, {
+        status: "authenticated",
+        label: "chatgpt subscription",
+        workspaceId: "example-team",
+      });
       assert.deepEqual(
         draft.models.map((model) => [model.slug, model.name, model.subProvider]),
         [
