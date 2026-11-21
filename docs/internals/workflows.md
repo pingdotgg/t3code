@@ -15,12 +15,15 @@ not orchestration events: the event store knows projects and threads, a run is n
 journal is the engine's to read. Clients follow runs the way they follow scheduled tasks, by a
 list that is sent again when something changes.
 
-**Off until something is defined.** The server registers what the files in the home's `workflows`
-folder define. While they define nothing and no runs are kept, the `Workflows` service is the
-disabled one and the engine's modules are never imported
-([`WorkflowRuntime.ts`](../../apps/server/src/workflows/WorkflowRuntime.ts)). Keep it that way:
-anything a light module imports from `effect/workflow` or `effect/cluster` is paid for by every
-server and CLI start.
+**Off until turned on, then until something is defined.** Workflows are a Labs setting,
+`workflowsEnabled`, and the runtime's lifetime follows it: while it is off no file is loaded, no
+engine runs, and every request is refused with how to turn it on; turning it off closes the
+runtime the way a restart does, so runs wait in the database for it to come back. Once on, the
+server registers what the files in the home's `workflows` folder define. While they define
+nothing and no runs are kept, the `Workflows` service is the disabled one and the engine's modules
+are never imported ([`WorkflowRuntime.ts`](../../apps/server/src/workflows/WorkflowRuntime.ts)).
+Keep it that way: anything a light module imports from `effect/workflow` or `effect/cluster` is
+paid for by every server and CLI start.
 
 **A step failure pauses the run.** The alternative, ending the run, loses everything done so far to
 a dependency that is back in a minute. Resuming runs the failed step again and nothing before it.
