@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, R2, O1, X1, and Y1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, K2, C2, F1, D1, M1, L1, B12, R2, A1, O1, X1, and Y1.
 
 ## How to read this
 
@@ -38,9 +38,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. R2 after L1. O1 after B12 and R2. X1 after O1. Y1 after O1.
+  - [ ] B7 after B6. C1 after B7. B8 after C1. B9 after B8. B10 after B9. B11 after B10. W2 after B11. R1 after W2. K2 after R1. C2 after K2. F1 after C2. D1 after F1. M1 after D1. L1 after M1. B12 after L1. R2 after L1. A1 after L1. O1 after B12, R2, and A1. X1 after O1. Y1 after O1.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts, and B12 and R2 also edit the separate `13kparkin/pstack-t3` repo.
-- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, C1, B8, B9, B10, B11, W2, R1, C2, F1, D1, M1, L1, A1, X1, and Y1 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -1713,9 +1713,67 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends R2 to the base-branch stack and the operator lands it bottom-up.
 
+## Add docs to a board as work (A1)
+
+**Depends on.** L1.
+
+**Files.**
+
+- [ ] Edit `apps/board/src/chat/Composer.tsx`, `apps/board/src/board/OrchestratorCard.tsx`, `apps/board/src/board/Viewport.tsx`, and `apps/board/src/orchestrator/brief.md`.
+- [ ] Create `apps/board/src/chat/attachments.ts` and `apps/board/src/chat/attachments.test.ts`.
+
+**Build.**
+
+- [ ] A board's work is its tickets and its docs. The operator adds docs by attaching files in the orchestrator chat, with an attach button or by dropping files onto the composer or the board. The composer sends them as T3 chat attachments, images and other files alike, the way T3 web's `apps/web/src/components/chat/ChatComposer.tsx` does, read only. T3's own limits apply: 100 files per message, 50 MiB per file, 10 MiB per image, and 80 MiB of images per message.
+- [ ] Dropping files onto the board sends one orchestrator message, "Add these docs to the board's work", with the files attached.
+- [ ] The orchestrator card lists the board's docs by name, from the attachments in its thread. It shows one row per doc and a count.
+- [ ] `brief.md` tells the orchestrator to read every attached doc before it plans, to cite the doc a ticket comes from, and to organize docs into tickets the same way it does issues.
+- [ ] In `attachments.ts`, keep the pure pieces: turn dropped files into T3 attachment inputs, and check them against T3's limits before sending.
+
+**You see.**
+
+- [ ] The operator drops a spec onto a board, the orchestrator card lists it, and the orchestrator files tickets that cite it.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `attachments.test.ts` turns a fixed markdown file and a fixed PNG into literal attachment inputs, and rejects a file over T3's 50 MiB limit with T3's own message. Run `vp test run src/chat/attachments.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe. Every lane uses a real Claude orchestrator.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk's composer sends no attachments, so record that fact. Attach a markdown spec with the button at head. Save `a1-attach.png`. Pass when the message carries the file and the orchestrator quotes a line from it.
+- [ ] Lane 2. Drop a PDF onto the board. Save `a1-drop.png`. Pass when one orchestrator message carries it and the orchestrator card lists it.
+- [ ] Lane 3. Attach a screenshot image. Save `a1-image.png`. Pass when the orchestrator describes what the image shows.
+- [ ] Lane 4. Give a board a goal and a two-page spec. Save `a1-tickets.txt`. Pass when the orchestrator's tickets each cite the spec.
+- [ ] Lane 5. Add one Linear issue and one doc to the same board. Save `a1-mixed.png`. Pass when both turn into tickets on the board.
+- [ ] Lane 6. Reopen the board. Save `a1-reopen.png`. Pass when the orchestrator card still lists every doc.
+- [ ] Lane 7. Attach a file over 50 MiB. Save `a1-limit.png`. Pass when the board shows T3's limit message and sends nothing.
+- [ ] Lane 8. Start a child agent on a ticket that cites a doc. Save `a1-child.txt`. Pass when the child reads the doc by its path.
+- [ ] Lane 9. Run the Windows app and drop a file from Windows Explorer onto the board. Save `a1-windows.png` from a full-window capture. Pass when it attaches the same way as in lane 2.
+- [ ] Lane 10. Run the boundary check, the standards check, and the dependency rules at head. Save `a1-checks.txt`. Pass when all three exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from dropping a 1 MiB file to its chip showing in the composer.
+- [ ] Probe. Log `board:attach-drop` and `board:attach-shown` ten times.
+- [ ] Baseline. Trunk has no attachments. Record the head times.
+- [ ] Rule. The median stays under 200 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 2, 4, and 6 screenshots into `apps/board/docs/media/a1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/a1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends A1 to the base-branch stack and the operator lands it bottom-up.
+
 ## Meet every recorded speed budget (O1)
 
-**Depends on.** B12 and R2.
+**Depends on.** B12, R2, and A1.
 
 **Files.**
 
