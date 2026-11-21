@@ -51,7 +51,7 @@ import {
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
-import * as BlenderWorkflow from "../blender/BlenderWorkflow.ts";
+import * as Blender from "../blender/Blender.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
 import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -287,7 +287,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   );
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
-  const blender = yield* Effect.serviceOption(BlenderWorkflow.BlenderWorkflow);
+  const blender = yield* Effect.serviceOption(Blender.Blender);
   // Every request reads it, and a remote added mid-thread shows the tools within a minute.
   const forgeOfThread = yield* Cache.make({
     capacity: 1_000,
@@ -341,16 +341,16 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined
         ? undefined
         : yield* Cache.get(forgeOfThread, limited.thread.threadId);
-    const blenderActive =
+    const blenderRelevant =
       limited.thread === undefined || Option.isNone(blender)
         ? undefined
-        : yield* blender.value.isActive(limited.thread.threadId);
+        : yield* blender.value.isRelevant(limited.thread.threadId);
     return {
       ...limited,
       linkedEnvironments,
       origin,
       ...(forge === undefined ? {} : { forge }),
-      ...(blenderActive === undefined ? {} : { blenderActive }),
+      ...(blenderRelevant === undefined ? {} : { blenderRelevant }),
     };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
@@ -1449,9 +1449,9 @@ const layerToolExposure = Layer.effect(
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     const notify = () => server.notifications["notifications/tools/list_changed"]({});
-    const blender = yield* Effect.serviceOption(BlenderWorkflow.BlenderWorkflow);
+    const blender = yield* Effect.serviceOption(Blender.Blender);
     if (Option.isSome(blender)) {
-      yield* blender.value.changes.pipe(Stream.runForEach(notify), Effect.forkScoped);
+      yield* blender.value.relevanceChanges.pipe(Stream.runForEach(notify), Effect.forkScoped);
     }
     return McpToolExposure.make(
       () =>
@@ -1464,7 +1464,7 @@ const layerToolExposure = Layer.effect(
 /**
  * A provider session that sends `MCP_TOOL_EXPOSURE_HEADER: deferred` lists only
  * the direct tools and what its `tool_search` calls loaded. Other clients list all
- * visible tools except `tool_search`. Blender visibility always requires thread activation.
+ * visible tools except `tool_search`. Blender tools appear only in a thread that opened a scene.
  */
 const layerDeferredListing = McpServer.visibility(
   Effect.gen(function* () {

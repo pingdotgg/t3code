@@ -10,14 +10,15 @@ import {
   isBlenderJobTerminal,
   type BlenderScene,
   type BlenderExecutableSource,
-  type BlenderInspectInput,
   type BlenderJob,
   type BlenderJobEvent,
   type BlenderJobFailureReason,
   type BlenderJobOutput,
   type BlenderJobRef,
+  type BlenderOpenSceneInput,
   type BlenderProbeFailure,
   type BlenderRequestErrorReason,
+  type BlenderSceneInput,
   type BlenderStartJobInput,
   type BlenderStatus,
   type OrchestrationV2DomainEvent,
@@ -52,7 +53,6 @@ import { USER_STOP_REASON } from "../orchestration-v2/RunExecutionService.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
-import * as BlenderWorkflow from "./BlenderWorkflow.ts";
 import { BLENDER_JOB_SCRIPT } from "./jobScript.ts";
 
 const PROBE_TIMEOUT = "15 seconds";
@@ -65,11 +65,12 @@ const GLB_MAGIC = "glTF";
 const PREVIEW_MARKER = /^T3_BLENDER_PREVIEW ([1-9]\d{0,2})\r?$/gm;
 const MAX_ACTIVE_JOBS = 24;
 const MAX_RETAINED_JOBS = 24;
+const MAX_RELEVANT_THREADS = 256;
 
 /**
- * The environment's Blender integration, for settings, clients and agents alike. Jobs belong to
- * a thread, run in a background Blender, outlive their request, end when the thread is stopped,
- * archived or deleted, and keep outputs privately for authenticated asset URLs.
+ * The environment's Blender integration. Jobs belong to a thread, outlive their request, end with
+ * the thread's Stop, archive or delete, and keep outputs private for asset URLs. Settings, caller
+ * permissions and the workspace govern jobs; relevance only lists the tools to a thread's agent.
  */
 export class Blender extends Context.Service<
   Blender,
@@ -78,8 +79,20 @@ export class Blender extends Context.Service<
     readonly status: Effect.Effect<BlenderStatus, ServerSettingsError>;
     /** Summarizes a `.blend` in the thread's workspace without writing it. */
     readonly inspect: (
-      input: BlenderInspectInput,
+      input: BlenderSceneInput,
     ) => Effect.Effect<BlenderScene, BlenderRequestError | ServerSettingsError>;
+    /**
+     * Marks the thread relevant and returns the job whose preview shows the `.blend` as it is now.
+     * The same file version and Blender always return the same job, unless `retry` redoes a failed
+     * export; a new version starts one preview-only export and cancels the one it replaces.
+     */
+    readonly openScene: (
+      input: BlenderOpenSceneInput,
+    ) => Effect.Effect<BlenderJob, BlenderRequestError | ServerSettingsError>;
+    /** Whether the integration is on and the thread opened a scene. */
+    readonly isRelevant: (threadId: ThreadId) => Effect.Effect<boolean>;
+    /** Emits when a thread becomes relevant or stops being so. */
+    readonly relevanceChanges: Stream.Stream<void>;
     /** Queues a job and returns at once; its state then arrives through `streamThreadJobs`. */
     readonly startJob: (
       input: BlenderStartJobInput,
@@ -101,6 +114,7 @@ export class Blender extends Context.Service<
 /** A thread event that ends the thread's jobs; `forget` also drops their retained outputs. */
 export interface BlenderThreadStop {
   readonly threadId: ThreadId;
+  /** Set for a Stop request, which ends jobs created by then; unset when the thread itself ended. */
   readonly at?: number;
   readonly forget: boolean;
 }
@@ -241,6 +255,10 @@ interface JobEntry {
   readonly dir: string;
   /** Jobs with the same target replace each other's preview. */
   readonly target: string;
+  /** The input file's modification time and size when the job copied it, and the Blender run. */
+  readonly sourceVersion: string | undefined;
+  /** Started by opening the scene rather than by an agent. */
+  readonly opened: boolean;
   readonly done: Deferred.Deferred<BlenderJob>;
   fiber: Fiber.Fiber<void> | undefined;
   /** Set once the job commits to succeeding; cancelling then waits for the result instead. */
@@ -256,6 +274,7 @@ interface JobPlan {
 }
 
 const RENDER_FILE = "render.png";
+const jobTarget = (threadId: ThreadId, file: string | undefined) => `${threadId}\u0000${file}`;
 const previewFile = (revision: number) => `preview-${revision}.glb`;
 
 const make = Effect.fn("Blender.make")(function* (options: {
@@ -284,6 +303,8 @@ const make = Effect.fn("Blender.make")(function* (options: {
     // The newest job sequence that published a preview, per target.
     const currentPreview = new Map<string, number>();
     let sequence = 0;
+    const relevant = new Set<ThreadId>();
+    const relevanceChanges = yield* PubSub.sliding<void>(1);
     let preparing: { readonly threadId: ThreadId; readonly at: number; stopped: boolean } | null =
       null;
 
@@ -451,7 +472,7 @@ const make = Effect.fn("Blender.make")(function* (options: {
     const writeSpec = (file: string, spec: Record<string, unknown>) =>
       fs.writeFileString(file, JSON.stringify(spec), { mode: 0o600 });
 
-    const inspect = Effect.fn("Blender.inspect")(function* (input: BlenderInspectInput) {
+    const inspect = Effect.fn("Blender.inspect")(function* (input: BlenderSceneInput) {
       const executablePath = yield* executableForJobs;
       const root = yield* threadRoot(input.threadId);
       const file = yield* workspaceFile(root, input.path, ".blend");
@@ -801,120 +822,198 @@ const make = Effect.fn("Blender.make")(function* (options: {
           ),
         );
 
-    const startJob = Effect.fn("Blender.startJob")(
-      function* (input: BlenderStartJobInput, requestOptions?: { readonly notifyAgent?: boolean }) {
-        if (input.input === undefined && input.script === undefined) {
-          return yield* requestError("invalid-request", "A job needs an input file or a script.");
-        }
-        const executablePath = yield* executableForJobs;
-        const root = yield* threadRoot(input.threadId);
-        const source =
-          input.input === undefined ? undefined : yield* workspaceFile(root, input.input, ".blend");
-        const script =
-          input.script === undefined ? undefined : yield* workspaceFile(root, input.script, ".py");
-        const saveAs =
-          input.saveAs === undefined ? undefined : yield* saveTarget(root, input.saveAs);
-        const active = [...jobs.values()].filter((entry) => !isBlenderJobTerminal(entry.job));
-        if (
-          active.length >= MAX_ACTIVE_JOBS ||
-          active.filter((entry) => entry.job.threadId === input.threadId).length >=
-            limits.activeJobsPerThread
-        ) {
-          return yield* requestError("too-many-jobs");
-        }
+    const fileVersion = (file: string) =>
+      fs.stat(file).pipe(
+        Effect.map((info) => `${Option.getOrUndefined(info.mtime)?.getTime()}:${info.size}`),
+        Effect.mapError(() => requestError("file-not-found", "Could not read the job's input.")),
+      );
 
-        const id = BlenderJobId.make(yield* random.uuidV4());
-        const dir = path.join(jobsDir, id);
-        const work = path.join(dir, "work");
-        const out = path.join(dir, "out");
-        const outputs = [...new Set(input.outputs)];
-        const preparation = { threadId: input.threadId, at: yield* now, stopped: false };
-        preparing = preparation;
-        // The input is copied now, so the job sees the file as it was when requested.
-        yield* Effect.gen(function* () {
-          yield* fs.makeDirectory(work, { recursive: true, mode: 0o700 });
-          yield* fs.makeDirectory(out, { recursive: true, mode: 0o700 });
-          if (source !== undefined) yield* fs.copyFile(source, path.join(work, "input.blend"));
-          yield* writeSpec(path.join(work, "spec.json"), {
-            resultPath: path.join(work, "result.json"),
-            outputDir: out,
-            outputs,
-            ...(script === undefined ? {} : { script }),
-            ...(saveAs === undefined ? {} : { savePath: path.join(work, "scene.blend") }),
-          });
-        }).pipe(
-          Effect.onError(() => removeDir(dir)),
-          Effect.mapError(() => requestError("file-not-found", "Could not stage the job's input.")),
+    /** Checks a job request against settings and the thread's workspace. */
+    const resolveJob = Effect.fn("Blender.resolveJob")(function* (input: BlenderStartJobInput) {
+      if (input.input === undefined && input.script === undefined) {
+        return yield* requestError("invalid-request", "A job needs an input file or a script.");
+      }
+      const executablePath = yield* executableForJobs;
+      const root = yield* threadRoot(input.threadId);
+      const source =
+        input.input === undefined ? undefined : yield* workspaceFile(root, input.input, ".blend");
+      const script =
+        input.script === undefined ? undefined : yield* workspaceFile(root, input.script, ".py");
+      const saveAs = input.saveAs === undefined ? undefined : yield* saveTarget(root, input.saveAs);
+      const sourceVersion =
+        source === undefined ? undefined : `${yield* fileVersion(source)}\u0000${executablePath}`;
+      return { executablePath, root, source, script, saveAs, sourceVersion };
+    });
+
+    /** Stages a resolved job's inputs and queues it. Runs inside `staged`. */
+    const queueJob = Effect.fn("Blender.queueJob")(function* (
+      input: BlenderStartJobInput,
+      resolved: Effect.Success<ReturnType<typeof resolveJob>>,
+      origin: { readonly notifyAgent: boolean; readonly opened: boolean },
+    ) {
+      const { executablePath, root, source, script, saveAs } = resolved;
+      const active = [...jobs.values()].filter((entry) => !isBlenderJobTerminal(entry.job));
+      if (
+        active.length >= MAX_ACTIVE_JOBS ||
+        active.filter((entry) => entry.job.threadId === input.threadId).length >=
+          limits.activeJobsPerThread
+      ) {
+        return yield* requestError("too-many-jobs");
+      }
+
+      const id = BlenderJobId.make(yield* random.uuidV4());
+      const dir = path.join(jobsDir, id);
+      const work = path.join(dir, "work");
+      const out = path.join(dir, "out");
+      const outputs = [...new Set(input.outputs)];
+      const preparation = { threadId: input.threadId, at: yield* now, stopped: false };
+      preparing = preparation;
+      // The input is copied now, so the job sees the file as it was when requested.
+      yield* Effect.gen(function* () {
+        yield* fs.makeDirectory(work, { recursive: true, mode: 0o700 });
+        yield* fs.makeDirectory(out, { recursive: true, mode: 0o700 });
+        if (source !== undefined) yield* fs.copyFile(source, path.join(work, "input.blend"));
+        yield* writeSpec(path.join(work, "spec.json"), {
+          resultPath: path.join(work, "result.json"),
+          outputDir: out,
+          outputs,
+          ...(script === undefined ? {} : { script }),
+          ...(saveAs === undefined ? {} : { savePath: path.join(work, "scene.blend") }),
+        });
+      }).pipe(
+        Effect.onError(() => removeDir(dir)),
+        Effect.mapError(() => requestError("file-not-found", "Could not stage the job's input.")),
+      );
+
+      const entry: JobEntry = {
+        job: {
+          id,
+          threadId: input.threadId,
+          sequence: sequence++,
+          ...(source === undefined ? {} : { input: relative(root, source) }),
+          ...(script === undefined ? {} : { script: relative(root, script) }),
+          outputs,
+          ...(saveAs === undefined ? {} : { saveAs: relative(root, saveAs) }),
+          createdAt: preparation.at,
+          status: "queued",
+        },
+        dir,
+        target: jobTarget(input.threadId, source ?? script),
+        sourceVersion: resolved.sourceVersion,
+        opened: origin.opened,
+        done: yield* Deferred.make<BlenderJob>(),
+        fiber: undefined,
+        finishing: false,
+      };
+      const ready = yield* Deferred.make<void>();
+      const currentRoot = yield* threadRoot(input.threadId).pipe(
+        Effect.onError(() => removeDir(dir)),
+      );
+      if (currentRoot !== root) {
+        yield* removeDir(dir);
+        return yield* requestError(
+          "path-not-allowed",
+          "The thread's workspace moved while preparing the job.",
         );
-
-        const entry: JobEntry = {
-          job: {
-            id,
-            threadId: input.threadId,
-            sequence: sequence++,
-            ...(input.input === undefined ? {} : { input: input.input }),
-            ...(script === undefined ? {} : { script: relative(root, script) }),
-            outputs,
-            ...(saveAs === undefined ? {} : { saveAs: relative(root, saveAs) }),
-            createdAt: preparation.at,
-            status: "queued",
+      }
+      return yield* Effect.gen(function* () {
+        const queued = entry.job;
+        const fiber = yield* runJob(
+          entry,
+          {
+            executablePath,
+            cwd: root,
+            hasInput: source !== undefined,
+            saveAs,
+            timeoutSeconds: input.timeoutSeconds ?? BLENDER_JOB_DEFAULT_TIMEOUT_SECONDS,
           },
-          dir,
-          target: `${input.threadId}\u0000${source ?? script}`,
-          done: yield* Deferred.make<BlenderJob>(),
-          fiber: undefined,
-          finishing: false,
-        };
-        const ready = yield* Deferred.make<void>();
-        const currentRoot = yield* threadRoot(input.threadId).pipe(
-          Effect.onError(() => removeDir(dir)),
-        );
-        if (currentRoot !== root) {
-          yield* removeDir(dir);
+          root,
+          ready,
+          origin.notifyAgent,
+        ).pipe(Effect.forkIn(layerScope, { startImmediately: true }));
+        if (preparation.stopped) {
+          yield* Fiber.interrupt(fiber);
           return yield* requestError(
-            "path-not-allowed",
-            "The thread's workspace moved while preparing the job.",
+            "invalid-request",
+            "The thread stopped while preparing the job.",
           );
         }
-        return yield* Effect.gen(function* () {
-          const queued = entry.job;
-          const fiber = yield* runJob(
-            entry,
-            {
-              executablePath,
-              cwd: root,
-              hasInput: source !== undefined,
-              saveAs,
-              timeoutSeconds: input.timeoutSeconds ?? BLENDER_JOB_DEFAULT_TIMEOUT_SECONDS,
-            },
-            root,
-            ready,
-            requestOptions?.notifyAgent === true,
-          ).pipe(Effect.forkIn(layerScope, { startImmediately: true }));
-          if (preparation.stopped) {
-            yield* Fiber.interrupt(fiber);
-            return yield* requestError(
-              "invalid-request",
-              "The thread stopped while preparing the job.",
-            );
-          }
-          entry.fiber = fiber;
-          jobs.set(id, entry);
-          yield* publishUpdate(queued);
-          yield* Deferred.succeed(ready, undefined);
-          return queued;
-        }).pipe(Effect.uninterruptible);
-      },
-      (effect) =>
-        staging.withPermit(
-          effect.pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                preparing = null;
-              }),
-            ),
+        entry.fiber = fiber;
+        jobs.set(id, entry);
+        yield* publishUpdate(queued);
+        yield* Deferred.succeed(ready, undefined);
+        return queued;
+      }).pipe(Effect.uninterruptible);
+    });
+
+    /** One request stages at a time, so concurrent requests see each other's queued jobs. */
+    const staged = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      staging.withPermit(
+        effect.pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              preparing = null;
+            }),
           ),
         ),
+      );
+
+    const startJob = Effect.fn("Blender.startJob")(function* (
+      input: BlenderStartJobInput,
+      requestOptions?: { readonly notifyAgent?: boolean },
+    ) {
+      const resolved = yield* resolveJob(input);
+      return yield* queueJob(input, resolved, {
+        notifyAgent: requestOptions?.notifyAgent === true,
+        opened: false,
+      });
+    }, staged);
+
+    const markRelevant = (threadId: ThreadId) =>
+      Effect.suspend(() => {
+        const known = relevant.delete(threadId);
+        relevant.add(threadId);
+        for (const oldest of relevant) {
+          if (relevant.size <= MAX_RELEVANT_THREADS) break;
+          relevant.delete(oldest);
+        }
+        return known ? Effect.void : PubSub.publish(relevanceChanges, undefined);
+      });
+
+    const openScene = Effect.fn("Blender.openScene")(
+      function* (input: BlenderOpenSceneInput) {
+        const request = {
+          threadId: input.threadId,
+          input: input.path,
+          outputs: ["preview" as const],
+        };
+        const resolved = yield* resolveJob(request);
+        yield* markRelevant(input.threadId);
+        const target = jobTarget(input.threadId, resolved.source);
+        const previews = [...jobs.values()]
+          .filter((entry) => entry.target === target && entry.job.outputs.includes("preview"))
+          .toSorted((a, b) => b.job.sequence - a.job.sequence);
+        // A job of this version that shows or will show its preview: an agent's edit counts
+        // unless it failed before publishing one, and a cancelled export is started again.
+        const reusable = previews.find(
+          (entry) =>
+            entry.sourceVersion === resolved.sourceVersion &&
+            entry.job.status !== "cancelled" &&
+            (entry.job.status !== "failed" ||
+              (input.retry !== true && (entry.opened || entry.job.result?.preview !== undefined))),
+        );
+        if (reusable !== undefined) return { job: reusable.job, replaced: [] };
+        const replaced = previews.filter(
+          (entry) => entry.opened && !isBlenderJobTerminal(entry.job),
+        );
+        const job = yield* queueJob(request, resolved, { notifyAgent: false, opened: true });
+        return { job, replaced };
+      },
+      staged,
+      Effect.tap(({ replaced }) =>
+        Effect.forEach(replaced, (entry) => cancelEntry(entry, "replaced"), { discard: true }),
+      ),
+      Effect.map(({ job }) => job),
     );
 
     const findJob = Effect.fn("Blender.findJob")(function* (ref: BlenderJobRef) {
@@ -941,6 +1040,9 @@ const make = Effect.fn("Blender.make")(function* (options: {
     });
 
     const cancelThread = Effect.fn("Blender.cancelThread")(function* (stop: BlenderThreadStop) {
+      if (stop.at === undefined && relevant.delete(stop.threadId)) {
+        yield* PubSub.publish(relevanceChanges, undefined);
+      }
       if (
         preparing?.threadId === stop.threadId &&
         (stop.at === undefined || preparing.at <= stop.at)
@@ -994,6 +1096,17 @@ const make = Effect.fn("Blender.make")(function* (options: {
     return Blender.of({
       status,
       inspect,
+      openScene,
+      isRelevant: Effect.fn("Blender.isRelevant")(function* (threadId) {
+        if (!relevant.has(threadId)) return false;
+        const enabled = yield* settings.getSettings.pipe(
+          Effect.map(({ blender }) => blender.enabled),
+          Effect.orElseSucceed(() => false),
+        );
+        // Archiving or eviction may land while settings load.
+        return enabled && relevant.has(threadId);
+      }),
+      relevanceChanges: Stream.fromPubSub(relevanceChanges),
       startJob,
       getJob: Effect.fn("Blender.getJob")(function* (ref) {
         return (yield* findJob(ref)).job;
@@ -1040,7 +1153,6 @@ export const layer = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     const engine = yield* Orchestrator.OrchestratorV2;
     const projects = yield* ProjectStore.ProjectStoreV2;
-    const workflow = yield* BlenderWorkflow.BlenderWorkflow;
     const path = yield* Path.Path;
     const threads: BlenderThreads = {
       workspaceRoot: (threadId) =>
@@ -1074,7 +1186,6 @@ export const layer = Layer.unwrap(
     const onAgentJobCompleted = Effect.fn("Blender.onAgentJobCompleted")(function* (
       job: BlenderJob,
     ) {
-      if (!(yield* workflow.isActive(job.threadId))) return;
       const succeeded = job.status === "succeeded";
       const summary = succeeded ? "Blender job finished" : "Blender job failed";
       yield* engine

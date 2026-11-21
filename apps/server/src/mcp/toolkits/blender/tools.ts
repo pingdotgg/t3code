@@ -1,5 +1,5 @@
 import {
-  BlenderInspectInput,
+  BlenderSceneInput,
   BlenderJob,
   BlenderJobOutput,
   BlenderJobRef,
@@ -39,7 +39,7 @@ export const BlenderToolkit = Toolkit.make(
   Tool.make("blender_inspect", {
     description:
       "Read object names, dimensions and saved selection from a workspace-relative .blend in this thread. Use the background Blender on this environment.",
-    parameters: BlenderInspectInput.mapFields(Struct.omit(["threadId"])),
+    parameters: BlenderSceneInput.mapFields(Struct.omit(["threadId"])),
     success: BlenderScene,
     failure: OrchestratorMcpFailure,
     failureMode: "return",

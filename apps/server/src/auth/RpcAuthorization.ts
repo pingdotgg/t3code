@@ -127,15 +127,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
   // Probing runs only the executable this environment's settings chose, as provider checks do.
   [WS_METHODS.blenderGetStatus]: AuthOrchestrationReadScope,
-  [WS_METHODS.blenderGetWorkflow]: AuthOrchestrationReadScope,
-  [WS_METHODS.blenderSetWorkflow]: AuthTerminalOperateScope,
-  // A job runs a workspace script with the environment user's privileges, as a terminal does;
-  // requiredScopesForRpcCall adds orchestration:operate for the thread it belongs to.
-  [WS_METHODS.blenderStartJob]: AuthTerminalOperateScope,
-  // Inspecting reads a workspace file; requiredScopesForRpcCall adds orchestration:operate.
-  [WS_METHODS.blenderInspect]: AuthFilesystemReadScope,
-  [WS_METHODS.blenderGetJob]: AuthOrchestrationReadScope,
-  [WS_METHODS.blenderCancelJob]: AuthOrchestrationOperateScope,
+  // Opening a scene runs Blender on the host, as a terminal does, on a workspace file of a
+  // thread; requiredScopesForRpcCall adds orchestration:operate and filesystem:read.
+  [WS_METHODS.blenderOpenScene]: AuthTerminalOperateScope,
   [WS_METHODS.blenderSubscribeJobs]: AuthOrchestrationReadScope,
   [WS_METHODS.cloudGetRelayClientStatus]: AuthRelayReadScope,
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
@@ -313,12 +307,12 @@ const requiredScopesForRpcCall = (
   if (method === WS_METHODS.serverRetryResourceTelemetry) {
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
   }
-  if (
-    method === WS_METHODS.blenderStartJob ||
-    method === WS_METHODS.blenderInspect ||
-    method === WS_METHODS.blenderSetWorkflow
-  ) {
-    return [requiredScopeForRpcMethod(method), AuthOrchestrationOperateScope];
+  if (method === WS_METHODS.blenderOpenScene) {
+    return [
+      requiredScopeForRpcMethod(method),
+      AuthOrchestrationOperateScope,
+      AuthFilesystemReadScope,
+    ];
   }
   if (method === WS_METHODS.assetsCreateUrl) {
     const { resource } = decodeAssetCreateUrlInput(payload);

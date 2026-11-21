@@ -349,6 +349,7 @@ const startJobs = Effect.fn(function* (input: {
   ) => Effect.Effect<ReturnType<typeof exited>, never, FileSystem.FileSystem | Path.Path>;
   readonly limits?: Partial<Blender.BlenderLimits>;
   readonly onAgentJobCompleted?: (job: BlenderJob) => Effect.Effect<void>;
+  readonly enabled?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -395,7 +396,9 @@ const startJobs = Effect.fn(function* (input: {
         : { onAgentJobCompleted: input.onAgentJobCompleted }),
     }).pipe(
       Layer.provide(
-        ServerSettings.layerTest({ blender: { enabled: true, executablePath: executable } }),
+        ServerSettings.layerTest({
+          blender: { enabled: input.enabled ?? true, executablePath: executable },
+        }),
       ),
       Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, runner)),
       Layer.provide(SecureRandom.layerWebCrypto),
@@ -781,6 +784,162 @@ describe("Blender jobs", () => {
         .pipe(Effect.flip);
       assert.strictEqual(evicted.reason, "job-not-found");
       assert.deepStrictEqual(yield* fs.readDirectory(`${root}/state/jobs`), [second.id]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("Blender.openScene", () => {
+  const scene = { threadId: THREAD, path: "models/chair.blend" };
+
+  it.effect("shares one export per file version and replaces the export of an older one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fake = yield* gatedRun();
+      const { blender, jobs, workspace } = yield* startJobs({
+        run: fake.run,
+        limits: { runningJobs: 2 },
+      });
+      const [first, second] = yield* Effect.all(
+        [blender.openScene(scene), blender.openScene(scene)],
+        {
+          concurrency: "unbounded",
+        },
+      );
+      assert.strictEqual(second.id, first.id);
+      assert.strictEqual(first.input, path.join("models", "chair.blend"));
+      assert.deepStrictEqual((yield* Queue.take(fake.started)).spec.outputs, ["preview"]);
+      yield* Deferred.succeed(fake.gates[0]!, undefined);
+      assert.strictEqual(
+        (yield* blender.awaitJob({ threadId: THREAD, jobId: first.id })).status,
+        "succeeded",
+      );
+      // Reopening the unchanged file, as a remount does, starts nothing.
+      assert.strictEqual((yield* blender.openScene(scene)).id, first.id);
+
+      const file = path.join(workspace, "models", "chair.blend");
+      yield* fs.writeFileString(file, "edited scene");
+      const edited = yield* blender.openScene(scene);
+      yield* Queue.take(fake.started);
+      yield* fs.writeFileString(file, "edited scene again");
+      const latest = yield* blender.openScene(scene);
+      // The replaced export has ended by the time the newer open returns.
+      const replaced = yield* blender.getJob({ threadId: THREAD, jobId: edited.id });
+      assert.deepStrictEqual([replaced.status, replaced.cancelledBy], ["cancelled", "replaced"]);
+      yield* Queue.take(fake.started);
+      yield* Deferred.succeed(fake.gates[2]!, undefined);
+      const shown = yield* blender.awaitJob({ threadId: THREAD, jobId: latest.id });
+      assert.strictEqual(shown.result?.preview?.current, true);
+      assert.strictEqual(jobs.length, 3);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("shows an agent's edit of the same version, and redoes a failed export on retry", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const fake = yield* gatedRun();
+      let failNext = false;
+      const { blender, jobs } = yield* startJobs({
+        run: (job) =>
+          failNext
+            ? fs
+                .writeFileString(
+                  job.spec.resultPath,
+                  JSON.stringify({ ok: false, message: "boom" }),
+                )
+                .pipe(Effect.orDie, Effect.as(exited(23)))
+            : fake.run(job),
+      });
+      const edit = yield* blender.startJob(
+        { ...scene, input: scene.path, script: "edit.py", outputs: ["preview"] },
+        { notifyAgent: true },
+      );
+      assert.strictEqual((yield* blender.openScene(scene)).id, edit.id);
+      yield* Queue.take(fake.started);
+      yield* Effect.sync(() => {
+        failNext = true;
+      });
+      yield* blender.cancelJob({ threadId: THREAD, jobId: edit.id });
+
+      const failed = yield* blender.openScene(scene);
+      assert.strictEqual(
+        (yield* blender.awaitJob({ threadId: THREAD, jobId: failed.id })).status,
+        "failed",
+      );
+      // A remount shows the same failure instead of exporting again.
+      assert.strictEqual((yield* blender.openScene(scene)).id, failed.id);
+      yield* Effect.sync(() => {
+        failNext = false;
+      });
+      const retried = yield* blender.openScene({ ...scene, retry: true });
+      assert.notStrictEqual(retried.id, failed.id);
+      yield* Queue.take(fake.started);
+      yield* Deferred.succeed(fake.gates[1]!, undefined);
+      assert.strictEqual(
+        (yield* blender.awaitJob({ threadId: THREAD, jobId: retried.id })).status,
+        "succeeded",
+      );
+      assert.strictEqual(jobs.length, 3);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("makes only the opening thread relevant, and only for a scene it can open", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const disabled = yield* startJobs({ enabled: false });
+      const off = yield* disabled.blender.openScene(scene).pipe(Effect.flip);
+      assert.strictEqual(off._tag === "BlenderRequestError" ? off.reason : off._tag, "disabled");
+      assert.isFalse(yield* disabled.blender.isRelevant(THREAD));
+
+      const fake = yield* gatedRun();
+      const { blender, jobs, root, stops, workspace } = yield* startJobs({ run: fake.run });
+      yield* fs.symlink(path.join(root, "outside.blend"), path.join(workspace, "link.blend"));
+      const reasons = yield* Effect.forEach(
+        [
+          { threadId: THREAD, path: "../outside.blend" },
+          { threadId: THREAD, path: "link.blend" },
+          { threadId: THREAD, path: "edit.py" },
+          { threadId: THREAD, path: "models/missing.blend" },
+          { threadId: ThreadId.make("thread-unknown"), path: scene.path },
+        ],
+        (request) =>
+          blender.openScene(request).pipe(
+            Effect.flip,
+            Effect.map((error) =>
+              error._tag === "BlenderRequestError" ? error.reason : error._tag,
+            ),
+          ),
+      );
+      assert.deepStrictEqual(reasons, [
+        "path-not-allowed",
+        "path-not-allowed",
+        "path-not-allowed",
+        "file-not-found",
+        "thread-not-found",
+      ]);
+      assert.isFalse(yield* blender.isRelevant(THREAD));
+      assert.strictEqual(jobs.length, 0);
+
+      const changed = yield* Effect.forkChild(Stream.runHead(blender.relevanceChanges), {
+        startImmediately: true,
+      });
+      const opened = yield* blender.openScene(scene);
+      assert.isTrue(yield* blender.isRelevant(THREAD));
+      assert.isFalse(yield* blender.isRelevant(OTHER_THREAD));
+      yield* Fiber.join(changed);
+
+      // Stopping a turn ends its export but keeps the tools; archiving the thread removes them.
+      // Each stop ends a running export only after it has settled relevance.
+      yield* Queue.take(fake.started);
+      yield* Queue.offer(stops, { threadId: THREAD, at: opened.createdAt, forget: false });
+      yield* blender.awaitJob({ threadId: THREAD, jobId: opened.id });
+      assert.isTrue(yield* blender.isRelevant(THREAD));
+      const reopened = yield* blender.openScene(scene);
+      yield* Queue.take(fake.started);
+      yield* Queue.offer(stops, { threadId: THREAD, forget: false });
+      yield* blender.awaitJob({ threadId: THREAD, jobId: reopened.id });
+      assert.isFalse(yield* blender.isRelevant(THREAD));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

@@ -263,7 +263,6 @@ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReact
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as Blender from "./blender/Blender.ts";
-import * as BlenderWorkflow from "./blender/BlenderWorkflow.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -1588,7 +1587,6 @@ export const layerWsRpc = (
       const secretCheck = yield* SecretCheck.SecretCheck;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const blender = yield* Blender.Blender;
-      const blenderWorkflow = yield* BlenderWorkflow.BlenderWorkflow;
       const textGenerators = yield* TextGenerators.TextGenerators;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -2769,13 +2767,7 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.blenderGetStatus]: (_input) => blender.status,
-        [WS_METHODS.blenderGetWorkflow]: ({ threadId }) => blenderWorkflow.isActive(threadId),
-        [WS_METHODS.blenderSetWorkflow]: ({ threadId, active }) =>
-          blenderWorkflow.setActive(threadId, active),
-        [WS_METHODS.blenderInspect]: (input) => blender.inspect(input),
-        [WS_METHODS.blenderStartJob]: (input) => blender.startJob(input),
-        [WS_METHODS.blenderGetJob]: (input) => blender.getJob(input),
-        [WS_METHODS.blenderCancelJob]: (input) => blender.cancelJob(input),
+        [WS_METHODS.blenderOpenScene]: (input) => blender.openScene(input),
         [WS_METHODS.blenderSubscribeJobs]: (input) => blender.streamThreadJobs(input.threadId),
         [WS_METHODS.cloudGetRelayClientStatus]: (_input) => relayClient.resolve,
         [WS_METHODS.cloudInstallRelayClient]: (_input) =>

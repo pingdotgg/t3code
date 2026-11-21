@@ -2025,7 +2025,7 @@ it.effect(
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("defers optional tools and exposes Blender only in its activated thread", () =>
+it.effect("defers optional tools and exposes Blender only in a thread that opened a scene", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const scopeFor = (token: string): McpInvocationContext.McpThreadInvocationScope => ({
@@ -2043,8 +2043,8 @@ it.effect("defers optional tools and exposes Blender only in its activated threa
       const scopes = new Map<string, McpInvocationContext.McpThreadInvocationScope>([
         ["deferringToken", scopeFor("deferringToken")],
         ["otherToken", scopeFor("otherToken")],
-        ["blenderDeferred", { ...scopeFor("blenderDeferred"), blenderActive: true }],
-        ["blenderFlat", { ...scopeFor("blenderFlat"), blenderActive: true }],
+        ["blenderDeferred", { ...scopeFor("blenderDeferred"), blenderRelevant: true }],
+        ["blenderFlat", { ...scopeFor("blenderFlat"), blenderRelevant: true }],
       ]);
       const tool = (name: string, description: string) =>
         Tool.make(name, {

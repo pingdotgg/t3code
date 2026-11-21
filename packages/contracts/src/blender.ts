@@ -59,12 +59,19 @@ export const BlenderJobId = TrimmedNonEmptyString.check(Schema.isMaxLength(64)).
 );
 export type BlenderJobId = typeof BlenderJobId.Type;
 
-export const BlenderInspectInput = Schema.Struct({
+/** A `.blend` file in the thread's workspace. */
+export const BlenderSceneInput = Schema.Struct({
   threadId: ThreadId,
-  /** A `.blend` file. */
   path: BlenderWorkspacePath,
 });
-export type BlenderInspectInput = typeof BlenderInspectInput.Type;
+export type BlenderSceneInput = typeof BlenderSceneInput.Type;
+
+export const BlenderOpenSceneInput = Schema.Struct({
+  ...BlenderSceneInput.fields,
+  /** Starts a new export when this version's last one failed. */
+  retry: Schema.optionalKey(Schema.Boolean),
+});
+export type BlenderOpenSceneInput = typeof BlenderOpenSceneInput.Type;
 
 export const BlenderSceneObject = Schema.Struct({
   name: Schema.String,
@@ -151,7 +158,8 @@ export const BlenderJob = Schema.Struct({
       exitCode: Schema.optionalKey(Schema.Number),
     }),
   ),
-  cancelledBy: Schema.optionalKey(Schema.Literals(["request", "thread-stopped"])),
+  /** `replaced`: an automatic preview export the file's newer version superseded. */
+  cancelledBy: Schema.optionalKey(Schema.Literals(["request", "thread-stopped", "replaced"])),
 });
 export type BlenderJob = typeof BlenderJob.Type;
 

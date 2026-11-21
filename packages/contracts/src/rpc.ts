@@ -340,13 +340,10 @@ import {
   DeviceShutdownInput,
 } from "./device.ts";
 import {
-  BlenderInspectInput,
   BlenderJob,
   BlenderJobEvent,
-  BlenderJobRef,
+  BlenderOpenSceneInput,
   BlenderRequestError,
-  BlenderScene,
-  BlenderStartJobInput,
   BlenderStatus,
   BlenderSubscribeJobsInput,
 } from "./blender.ts";
@@ -601,12 +598,7 @@ export const WS_METHODS = {
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
   blenderGetStatus: "blender.getStatus",
-  blenderGetWorkflow: "blender.getWorkflow",
-  blenderSetWorkflow: "blender.setWorkflow",
-  blenderInspect: "blender.inspect",
-  blenderStartJob: "blender.startJob",
-  blenderGetJob: "blender.getJob",
-  blenderCancelJob: "blender.cancelJob",
+  blenderOpenScene: "blender.openScene",
   blenderSubscribeJobs: "blender.subscribeJobs",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1108,46 +1100,10 @@ const WsBlenderGetStatusRpc = Rpc.make(WS_METHODS.blenderGetStatus, {
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
-const BlenderError = Schema.Union([
-  BlenderRequestError,
-  ServerSettingsError,
-  EnvironmentAuthorizationError,
-]);
-
-const WsBlenderGetWorkflowRpc = Rpc.make(WS_METHODS.blenderGetWorkflow, {
-  payload: BlenderSubscribeJobsInput,
-  success: Schema.Boolean,
-  error: EnvironmentAuthorizationError,
-});
-
-const WsBlenderSetWorkflowRpc = Rpc.make(WS_METHODS.blenderSetWorkflow, {
-  payload: Schema.Struct({ ...BlenderSubscribeJobsInput.fields, active: Schema.Boolean }),
-  success: Schema.Boolean,
-  error: BlenderError,
-});
-
-const WsBlenderInspectRpc = Rpc.make(WS_METHODS.blenderInspect, {
-  payload: BlenderInspectInput,
-  success: BlenderScene,
-  error: BlenderError,
-});
-
-const WsBlenderStartJobRpc = Rpc.make(WS_METHODS.blenderStartJob, {
-  payload: BlenderStartJobInput,
+const WsBlenderOpenSceneRpc = Rpc.make(WS_METHODS.blenderOpenScene, {
+  payload: BlenderOpenSceneInput,
   success: BlenderJob,
-  error: BlenderError,
-});
-
-const WsBlenderGetJobRpc = Rpc.make(WS_METHODS.blenderGetJob, {
-  payload: BlenderJobRef,
-  success: BlenderJob,
-  error: Schema.Union([BlenderRequestError, EnvironmentAuthorizationError]),
-});
-
-const WsBlenderCancelJobRpc = Rpc.make(WS_METHODS.blenderCancelJob, {
-  payload: BlenderJobRef,
-  success: BlenderJob,
-  error: Schema.Union([BlenderRequestError, EnvironmentAuthorizationError]),
+  error: Schema.Union([BlenderRequestError, ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
 const WsBlenderSubscribeJobsRpc = Rpc.make(WS_METHODS.blenderSubscribeJobs, {
@@ -2401,12 +2357,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerCheckOtlpEndpointRpc,
   WsBlenderGetStatusRpc,
-  WsBlenderGetWorkflowRpc,
-  WsBlenderSetWorkflowRpc,
-  WsBlenderInspectRpc,
-  WsBlenderStartJobRpc,
-  WsBlenderGetJobRpc,
-  WsBlenderCancelJobRpc,
+  WsBlenderOpenSceneRpc,
   WsBlenderSubscribeJobsRpc,
   WsServerListTextGeneratorModelsRpc,
   WsServerPrepareTriageRpc,

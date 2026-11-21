@@ -1268,11 +1268,13 @@ export default function FilePreviewPanel({
   const isAudio = relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
   const isMedia = isImage || isVideo || isAudio;
+  // A thread's own scene; Blender's setting decides whether it previews or says how to turn it on.
   const isBlenderScene =
     !draft &&
     attachment === undefined &&
-    serverConfig?.settings.blender.enabled === true &&
-    relativePath?.toLowerCase().endsWith(".blend") === true;
+    relativePath !== null &&
+    !isHostPath(relativePath) &&
+    relativePath.toLowerCase().endsWith(".blend");
   const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isDocument =
     relativePath !== null &&
@@ -1684,6 +1686,8 @@ export default function FilePreviewPanel({
               key={JSON.stringify([environmentId, threadRef.threadId, relativePath])}
               thread={threadRef}
               path={relativePath}
+              enabled={serverConfig ? serverConfig.settings.blender.enabled : null}
+              workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview

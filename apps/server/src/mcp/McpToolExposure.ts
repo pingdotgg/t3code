@@ -3,8 +3,9 @@ import * as Effect from "effect/Effect";
 
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
 
+/** Lists and dispatches Blender tools only for a thread that opened a scene. */
 export const isAllowedBlenderTool = (scope: McpInvocationScope | undefined, tool: string) =>
-  !tool.startsWith("blender_") || (scope?.thread !== undefined && scope.blenderActive === true);
+  !tool.startsWith("blender_") || (scope?.thread !== undefined && scope.blenderRelevant === true);
 
 export const TOOL_SEARCH = "tool_search";
 

@@ -14,13 +14,13 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readCaller } from "../../threadAccess.ts";
 import { BlenderToolkit } from "./tools.ts";
 
-const activeThread = Effect.fn("BlenderMcp.activeThread")(function* () {
-  const { thread, blenderActive, origin, capabilities } =
-    yield* McpInvocationContext.McpInvocationContext;
-  if (thread === undefined || blenderActive !== true || !capabilities.has("orchestration")) {
+/** Jobs belong to the calling thread; settings and its workspace govern them in Blender. */
+const callerThread = Effect.fn("BlenderMcp.callerThread")(function* () {
+  const { thread, origin, capabilities } = yield* McpInvocationContext.McpInvocationContext;
+  if (thread === undefined || !capabilities.has("orchestration")) {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
-      message: "Blender has not been activated for this thread.",
+      message: "Blender tools act in a thread.",
     });
   }
   return { threadId: thread.threadId, origin };
@@ -36,7 +36,7 @@ const rejected = (error: BlenderRequestError | ServerSettingsError) =>
 export const layer = McpToolAccess.toLayer(BlenderToolkit, {
   blender_inspect: McpToolAccess.readsAsCaller(({ path }) =>
     Effect.gen(function* () {
-      const { threadId } = yield* activeThread();
+      const { threadId } = yield* callerThread();
       const blender = yield* Blender.Blender;
       const scene = yield* blender.inspect({ threadId, path }).pipe(Effect.mapError(rejected));
       return {
@@ -49,7 +49,7 @@ export const layer = McpToolAccess.toLayer(BlenderToolkit, {
   ),
   blender_run: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const { threadId } = yield* activeThread();
+      const { threadId } = yield* callerThread();
       const { limits } = yield* readCaller();
       if (
         limits.interactionMode === "plan" ||
@@ -70,7 +70,7 @@ export const layer = McpToolAccess.toLayer(BlenderToolkit, {
   ),
   blender_job: McpToolAccess.readsAsCaller(({ jobId }) =>
     Effect.gen(function* () {
-      const { threadId, origin } = yield* activeThread();
+      const { threadId, origin } = yield* callerThread();
       const blender = yield* Blender.Blender;
       const ref = { threadId, jobId };
       const job = yield* blender.getJob(ref).pipe(Effect.mapError(rejected));
@@ -92,7 +92,7 @@ export const layer = McpToolAccess.toLayer(BlenderToolkit, {
   ),
   blender_cancel: McpToolAccess.actsAsCaller(({ jobId }) =>
     Effect.gen(function* () {
-      const { threadId } = yield* activeThread();
+      const { threadId } = yield* callerThread();
       const blender = yield* Blender.Blender;
       return yield* blender.cancelJob({ threadId, jobId }).pipe(Effect.mapError(rejected));
     }),

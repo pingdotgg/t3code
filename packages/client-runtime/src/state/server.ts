@@ -1547,26 +1547,9 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshIntervalMs: 5 * 60_000,
     }),
-    blenderWorkflow: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:blender:workflow",
-      tag: WS_METHODS.blenderGetWorkflow,
-      idleTtlMs: 0,
-    }),
-    blenderSetWorkflow: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:blender:set-workflow",
-      tag: WS_METHODS.blenderSetWorkflow,
-    }),
-    blenderInspect: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:blender:inspect",
-      tag: WS_METHODS.blenderInspect,
-    }),
-    blenderStartJob: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:blender:start-job",
-      tag: WS_METHODS.blenderStartJob,
-    }),
-    blenderCancelJob: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:blender:cancel-job",
-      tag: WS_METHODS.blenderCancelJob,
+    blenderOpenScene: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:blender:open-scene",
+      tag: WS_METHODS.blenderOpenScene,
     }),
     blenderJobs: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:blender:jobs",

@@ -586,26 +586,27 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
   }),
 );
 
-it.effect("requires host execution and thread operation to start a Blender job", () =>
+it.effect("requires host execution, thread operation and file reads to open a Blender scene", () =>
   Effect.gen(function* () {
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
         (
           tag,
-        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.blenderStartJob> =>
-          tag !== WS_METHODS.blenderStartJob,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.blenderOpenScene> =>
+          tag !== WS_METHODS.blenderOpenScene,
       ),
     );
-    const startWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+    const openWith = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
       RpcTest.makeClient(group).pipe(
         Effect.provide(
           Layer.mergeAll(
-            group.toLayerHandler(WS_METHODS.blenderStartJob, (input) =>
+            group.toLayerHandler(WS_METHODS.blenderOpenScene, (input) =>
               Effect.succeed({
                 id: BlenderJobId.make("job"),
                 threadId: input.threadId,
                 sequence: 0,
-                outputs: [],
+                input: input.path,
+                outputs: ["preview" as const],
                 createdAt: 0,
                 status: "queued" as const,
               }),
@@ -614,10 +615,9 @@ it.effect("requires host execution and thread operation to start a Blender job",
           ),
         ),
         Effect.flatMap((client) =>
-          client[WS_METHODS.blenderStartJob]({
+          client[WS_METHODS.blenderOpenScene]({
             threadId: ThreadId.make("thread"),
-            script: "edit.py",
-            outputs: [],
+            path: "models/chair.blend",
           }),
         ),
         Effect.map((job) => job.status),
@@ -627,11 +627,21 @@ it.effect("requires host execution and thread operation to start a Blender job",
       );
     expect(
       yield* Effect.all([
-        startWith([AuthOrchestrationOperateScope]),
-        startWith([AuthTerminalOperateScope]),
-        startWith([AuthTerminalOperateScope, AuthOrchestrationOperateScope]),
+        openWith([AuthOrchestrationOperateScope, AuthFilesystemReadScope]),
+        openWith([AuthTerminalOperateScope, AuthFilesystemReadScope]),
+        openWith([AuthTerminalOperateScope, AuthOrchestrationOperateScope]),
+        openWith([
+          AuthTerminalOperateScope,
+          AuthOrchestrationOperateScope,
+          AuthFilesystemReadScope,
+        ]),
       ]),
-    ).toEqual([AuthTerminalOperateScope, AuthOrchestrationOperateScope, "queued"]);
+    ).toEqual([
+      AuthTerminalOperateScope,
+      AuthOrchestrationOperateScope,
+      AuthFilesystemReadScope,
+      "queued",
+    ]);
   }),
 );
 
