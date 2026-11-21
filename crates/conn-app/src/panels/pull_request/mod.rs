@@ -4,7 +4,6 @@
 
 mod header;
 mod logic;
-mod markdown;
 mod tabs;
 
 use std::collections::{HashMap, HashSet};

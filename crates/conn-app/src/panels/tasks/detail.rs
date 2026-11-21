@@ -24,15 +24,14 @@ use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, App, FontWeight, Hsla, MouseButton, ScrollHandle, SharedString, Window, div, px,
 };
-use markdown::mdast::Node;
 
 use super::board::pull_request_presentation;
 use super::format::{format_diff_count, live_status_label};
+use crate::chat::markdown::{HeadingStyle, MarkdownOptions, render_markdown};
 use crate::icons::provider_mark;
-use crate::panels::chrome::{self, UI_LINE_HEIGHT_PX, UI_TEXT_PX, XS_LINE_HEIGHT_PX, XS_TEXT_PX};
+use crate::panels::chrome::{self, UI_LINE_HEIGHT_PX, UI_TEXT_PX};
 use crate::panels::color::to_hsla;
 use crate::panels::header::superhero_icon;
-use crate::theme::MONO_FONT;
 
 const DETAIL_PAD_X_PX: f32 = 18.0;
 const NAV_HEIGHT_PX: f32 = 36.0;
@@ -661,6 +660,10 @@ fn render_brief(tokens: &Tokens, task: &TaskDetail, subtask: Option<&Subtask>) -
     let brief_src = subtask
         .map(|s| s.brief.as_str())
         .unwrap_or(task.brief.as_str());
+    let brief_id = match subtask {
+        Some(sub) => format!("task-{}-subtask-{}", task.summary.id, sub.id),
+        None => format!("task-{}-brief", task.summary.id),
+    };
     let brief_body: AnyElement = if brief_src.trim().is_empty() {
         div()
             .text_size(px(UI_TEXT_PX))
@@ -669,7 +672,17 @@ fn render_brief(tokens: &Tokens, task: &TaskDetail, subtask: Option<&Subtask>) -
             .child("No brief.")
             .into_any_element()
     } else {
-        render_markdown_brief(tokens, brief_src)
+        // Conn `TaskDetail.tsx:507`: headings inside a task brief stay at body size (`14px` medium).
+        let options = MarkdownOptions {
+            heading_style: HeadingStyle::BodySize,
+            ..MarkdownOptions::default()
+        };
+        div()
+            .w_full()
+            .min_w_0()
+            .when(subtask.is_some(), |el| el.mt(px(10.0)))
+            .child(render_markdown(&brief_id, brief_src, tokens, &options))
+            .into_any_element()
     };
 
     let deliverables = subtask.filter(|s| !s.deliverables.is_empty()).map(|s| {
@@ -1160,186 +1173,9 @@ fn render_agent_state(tokens: &Tokens, agent: &TaskAgent) -> AnyElement {
         .into_any_element()
 }
 
-/// Lightweight Markdown renderer for task and subtask briefs using `markdown::to_mdast`.
-/// Keeps headings at body size (`14px` medium) matching `TaskDetail.tsx:507`.
-fn render_markdown_brief(tokens: &Tokens, src: &str) -> AnyElement {
-    let Ok(root) = markdown::to_mdast(src, &markdown::ParseOptions::gfm()) else {
-        return div()
-            .text_size(px(SM_TEXT_PX))
-            .line_height(px(22.0))
-            .text_color(to_hsla(tokens.foreground).opacity(0.88))
-            .child(src.to_owned())
-            .into_any_element();
-    };
-    let mut col = v_flex().w_full().gap(px(10.0));
-    if let Node::Root(r) = root {
-        for child in &r.children {
-            if let Some(el) = render_md_node(tokens, child) {
-                col = col.child(el);
-            }
-        }
-    }
-    col.into_any_element()
-}
-
-fn render_md_node(tokens: &Tokens, node: &Node) -> Option<AnyElement> {
-    let fg = to_hsla(tokens.foreground);
-    let muted = to_hsla(tokens.muted_foreground);
-    match node {
-        Node::Heading(h) => {
-            let text = collect_plain_text(node);
-            Some(
-                div()
-                    .w_full()
-                    .pt(px(2.0))
-                    .text_size(px(SM_TEXT_PX))
-                    .line_height(px(SM_LINE_HEIGHT_PX))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(fg)
-                    .child(if text.is_empty() {
-                        format!("Heading {}", h.depth)
-                    } else {
-                        text
-                    })
-                    .into_any_element(),
-            )
-        }
-        Node::Paragraph(_) => {
-            let text = collect_plain_text(node);
-            (!text.is_empty()).then(|| {
-                div()
-                    .w_full()
-                    .text_size(px(SM_TEXT_PX))
-                    .line_height(px(22.0))
-                    .text_color(fg.opacity(0.88))
-                    .child(text)
-                    .into_any_element()
-            })
-        }
-        Node::List(list) => {
-            let mut ul = v_flex().w_full().gap(px(4.0)).pl(px(12.0));
-            for (idx, item) in list.children.iter().enumerate() {
-                let bullet = if list.ordered {
-                    format!("{}.", list.start.unwrap_or(1) + idx as u32)
-                } else {
-                    "\u{2022}".to_owned()
-                };
-                let text = collect_plain_text(item);
-                ul = ul.child(
-                    h_flex()
-                        .items_start()
-                        .gap(px(8.0))
-                        .text_size(px(SM_TEXT_PX))
-                        .line_height(px(22.0))
-                        .text_color(fg.opacity(0.88))
-                        .child(div().flex_shrink_0().text_color(muted).child(bullet))
-                        .child(div().min_w_0().flex_1().child(text)),
-                );
-            }
-            Some(ul.into_any_element())
-        }
-        Node::Code(code) => Some(
-            div()
-                .w_full()
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(to_hsla(tokens.shell_divider))
-                .bg(to_hsla(tokens.code_background))
-                .px(px(12.0))
-                .py(px(10.0))
-                .font_family(MONO_FONT)
-                .text_size(px(XS_TEXT_PX))
-                .line_height(px(XS_LINE_HEIGHT_PX + 2.0))
-                .text_color(to_hsla(tokens.code_foreground))
-                .child(code.value.clone())
-                .into_any_element(),
-        ),
-        Node::Blockquote(_) => {
-            let text = collect_plain_text(node);
-            (!text.is_empty()).then(|| {
-                div()
-                    .w_full()
-                    .pl(px(12.0))
-                    .border_l_2()
-                    .border_color(to_hsla(tokens.shell_divider_header))
-                    .text_size(px(SM_TEXT_PX))
-                    .line_height(px(22.0))
-                    .text_color(muted)
-                    .child(text)
-                    .into_any_element()
-            })
-        }
-        Node::ThematicBreak(_) => Some(
-            div()
-                .w_full()
-                .h(px(1.0))
-                .my(px(4.0))
-                .bg(to_hsla(tokens.shell_divider))
-                .into_any_element(),
-        ),
-        _ => {
-            let text = collect_plain_text(node);
-            (!text.is_empty()).then(|| {
-                div()
-                    .w_full()
-                    .text_size(px(SM_TEXT_PX))
-                    .line_height(px(22.0))
-                    .text_color(fg.opacity(0.88))
-                    .child(text)
-                    .into_any_element()
-            })
-        }
-    }
-}
-
-/// Extracts readable inline text from a Markdown AST node.
-pub(super) fn collect_plain_text(node: &Node) -> String {
-    let mut out = String::new();
-    append_plain_text(node, &mut out);
-    out.trim().to_owned()
-}
-
-fn append_plain_text(node: &Node, out: &mut String) {
-    match node {
-        Node::Text(t) => out.push_str(&t.value),
-        Node::InlineCode(c) => {
-            out.push('`');
-            out.push_str(&c.value);
-            out.push('`');
-        }
-        Node::Break(_) => out.push('\n'),
-        _ => {
-            if let Some(children) = node.children() {
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 && matches!(child, Node::Paragraph(_) | Node::List(_)) {
-                        out.push('\n');
-                    }
-                    append_plain_text(child, out);
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn extracts_markdown_plain_text_cleanly() {
-        let ast = markdown::to_mdast(
-            "Hello **world** with `code`.",
-            &markdown::ParseOptions::gfm(),
-        );
-        let Ok(root) = ast else {
-            panic!("markdown parse failed");
-        };
-        assert_eq!(
-            collect_plain_text(&root),
-            "Hello world with `code`.",
-            "inline formatting flattens cleanly"
-        );
-    }
 
     #[test]
     fn formats_subtask_meta_text_with_dashes_for_missing_values() {

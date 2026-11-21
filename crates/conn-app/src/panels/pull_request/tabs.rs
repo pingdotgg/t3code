@@ -34,7 +34,7 @@ use super::logic::{
     is_verdict_stale, newest_commit_at, resolve_state_presentation, review_outcome,
     review_outcome_color, review_outcome_label, state_tone_color, summarize_checks,
 };
-use super::markdown::render_markdown;
+use crate::chat::markdown::{MarkdownOptions, render_markdown};
 use crate::theme::MONO_FONT;
 
 const INSET_X_PX: f32 = 18.0; // `px-4.5`
@@ -612,12 +612,12 @@ pub(super) fn render_description_tab(
         .gap(px(4.0))
         .px(px(INSET_X_PX))
         .py(px(16.0))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .child(render_markdown("pr-desc", text, tokens)),
-        );
+        .child(div().flex_1().min_w_0().child(render_markdown(
+            "pr-desc",
+            text,
+            tokens,
+            &MarkdownOptions::default(),
+        )));
     if can_edit {
         let on_edit = cb.on_start_edit_body.clone();
         row = row.child(
@@ -1104,6 +1104,7 @@ fn render_review_verdict_event(
             &format!("verdict-{idx}"),
             body,
             tokens,
+            &MarkdownOptions::default(),
         )));
     }
 
@@ -1574,11 +1575,22 @@ fn render_conversation_card(
         );
 
     if let Some(body) = &event.body {
-        card = card.child(div().w_full().p(px(12.0)).child(render_markdown(
-            &format!("card-{card_id}"),
-            body,
-            tokens,
-        )));
+        let body_el = if event.markdown {
+            render_markdown(
+                &format!("card-{card_id}"),
+                body,
+                tokens,
+                &MarkdownOptions::default(),
+            )
+        } else {
+            div()
+                .text_size(px(14.0))
+                .line_height(px(22.75))
+                .text_color(muted)
+                .child(body.clone())
+                .into_any_element()
+        };
+        card = card.child(div().w_full().p(px(12.0)).child(body_el));
     }
 
     card.into_any_element()

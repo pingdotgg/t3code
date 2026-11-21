@@ -1,20 +1,21 @@
 //! Markdown-to-blocks parser (via `markdown::to_mdast`), syntect syntax highlighting,
 //! and GPUI rendering styled to match Conn's `ChatMarkdown` and `MarkdownCodeBlock`.
 
+use std::fmt;
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::LazyLock;
 
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::{
-    AnyElement, ClipboardItem, Context, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
+    AnyElement, App, ClipboardItem, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
     IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled, StyledText,
-    UnderlineStyle, div, px,
+    UnderlineStyle, Window, div, px,
 };
 use markdown::mdast::Node;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
-use super::ChatView;
 use super::color::{SyntaxRole, hsla, hsla_alpha, prose_foreground};
 use super::icons;
 
@@ -61,6 +62,38 @@ pub(super) struct SyntaxSpan {
 pub(super) struct ListItem {
     pub(super) checked: Option<bool>,
     pub(super) blocks: Vec<MarkdownBlock>,
+}
+
+/// Heading size and weight treatment for a Markdown container.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum HeadingStyle {
+    /// Standard `.chat-markdown` scale (`h1` 20px, `h2` 18px, `h3` 16px, `h4`–`h6` 14px, semibold).
+    #[default]
+    Scale,
+    /// Body-sized headings (`14px`, medium weight), matching Conn's `TaskDetail.tsx` brief wrapper
+    /// (`[&_:is(h1,h2,h3,h4,h5,h6)]:text-sm! [&_:is(h1,h2,h3,h4,h5,h6)]:font-medium!`).
+    BodySize,
+}
+
+/// Per-context rendering options for [`render_blocks`] and [`render_markdown`].
+#[derive(Default)]
+pub(crate) struct MarkdownOptions<'a> {
+    /// Heading typography style.
+    pub(crate) heading_style: HeadingStyle,
+    /// Block id of the code block most recently copied, to show check feedback.
+    pub(crate) copied_code_key: Option<&'a str>,
+    /// Optional notification invoked after a code block's copy button writes to the clipboard.
+    pub(crate) on_copy_code: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+}
+
+impl fmt::Debug for MarkdownOptions<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MarkdownOptions")
+            .field("heading_style", &self.heading_style)
+            .field("copied_code_key", &self.copied_code_key)
+            .field("has_on_copy_code", &self.on_copy_code.is_some())
+            .finish()
+    }
 }
 
 /// Block-level AST node ready for GPUI rendering and unit testing.
@@ -204,7 +237,7 @@ fn collect_block(node: &Node, out: &mut Vec<MarkdownBlock>) {
         Node::ThematicBreak(_) => out.push(MarkdownBlock::ThematicBreak),
         Node::Html(html) => {
             let trimmed = html.value.trim();
-            if !trimmed.is_empty() {
+            if !trimmed.is_empty() && !(trimmed.starts_with("<!--") && trimmed.ends_with("-->")) {
                 out.push(MarkdownBlock::Paragraph(vec![InlineSpan {
                     text: trimmed.to_owned(),
                     style: InlineStyle::default(),
@@ -268,7 +301,12 @@ fn collect_inline(node: &Node, style: InlineStyle, link: Option<&str>, out: &mut
             push_span(out, &format!("[{label}]"), style, Some(img.url.as_str()));
         }
         Node::Break(_) => push_span(out, "\n", style, link),
-        Node::Html(h) => push_span(out, &h.value, style, link),
+        Node::Html(h) => {
+            let trimmed = h.value.trim();
+            if !(trimmed.starts_with("<!--") && trimmed.ends_with("-->")) {
+                push_span(out, &h.value, style, link);
+            }
+        }
         Node::InlineMath(m) => {
             let mut code_style = style;
             code_style.code = true;
@@ -411,13 +449,24 @@ fn classify_scope(scope: Scope) -> SyntaxRole {
     }
 }
 
-/// Renders a slice of [`MarkdownBlock`]s for an assistant timeline entry.
+/// Parses and renders GitHub-flavored Markdown into a GPUI element styled like Conn's
+/// `ChatMarkdown`.
+pub(crate) fn render_markdown(
+    entry_id: &str,
+    src: &str,
+    tokens: &Tokens,
+    options: &MarkdownOptions<'_>,
+) -> AnyElement {
+    let blocks = parse_markdown(src);
+    render_blocks(entry_id, &blocks, tokens, options)
+}
+
+/// Renders a slice of [`MarkdownBlock`]s styled like Conn's `ChatMarkdown`.
 pub(super) fn render_blocks(
     entry_id: &str,
     blocks: &[MarkdownBlock],
     tokens: &Tokens,
-    copied_key: Option<&str>,
-    cx: &mut Context<'_, ChatView>,
+    options: &MarkdownOptions<'_>,
 ) -> AnyElement {
     let mut container = div()
         .flex()
@@ -427,14 +476,7 @@ pub(super) fn render_blocks(
         .min_w_0();
     for (idx, block) in blocks.iter().enumerate() {
         let block_id = format!("{entry_id}-b{idx}");
-        container = container.child(render_block(
-            &block_id,
-            block,
-            idx == 0,
-            tokens,
-            copied_key,
-            cx,
-        ));
+        container = container.child(render_block(&block_id, block, idx == 0, tokens, options));
     }
     container.into_any_element()
 }
@@ -444,8 +486,7 @@ fn render_block(
     block: &MarkdownBlock,
     is_first: bool,
     tokens: &Tokens,
-    copied_key: Option<&str>,
-    cx: &mut Context<'_, ChatView>,
+    options: &MarkdownOptions<'_>,
 ) -> AnyElement {
     match block {
         MarkdownBlock::Paragraph(spans) => div()
@@ -458,19 +499,32 @@ fn render_block(
             .into_any_element(),
 
         MarkdownBlock::Heading { level, spans } => {
-            let (font_px, line_px, text_color) = match level {
-                1 => (20.0, 26.0, hsla(tokens.foreground)),
-                2 => (18.0, 23.4, hsla(tokens.foreground)),
-                3 => (16.0, 20.8, hsla(tokens.foreground)),
-                6 => (14.0, 18.2, hsla(tokens.muted_foreground)),
-                _ => (14.0, 18.2, hsla(tokens.foreground)),
+            let (font_px, line_px, weight, text_color) = match options.heading_style {
+                HeadingStyle::Scale => {
+                    let (font, line, color) = match level {
+                        1 => (20.0, 26.0, hsla(tokens.foreground)),
+                        2 => (18.0, 23.4, hsla(tokens.foreground)),
+                        3 => (16.0, 20.8, hsla(tokens.foreground)),
+                        6 => (14.0, 18.2, hsla(tokens.muted_foreground)),
+                        _ => (14.0, 18.2, hsla(tokens.foreground)),
+                    };
+                    (font, line, FontWeight::SEMIBOLD, color)
+                }
+                HeadingStyle::BodySize => {
+                    let color = if *level == 6 {
+                        hsla(tokens.muted_foreground)
+                    } else {
+                        hsla(tokens.foreground)
+                    };
+                    (BODY_FONT_PX, 18.2, FontWeight::MEDIUM, color)
+                }
             };
             let mut el = div()
                 .w_full()
                 .min_w_0()
                 .text_size(px(font_px))
                 .line_height(px(line_px))
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_weight(weight)
                 .text_color(text_color)
                 .child(render_inline_spans(block_id, spans, tokens, font_px));
             if !is_first {
@@ -490,8 +544,7 @@ fn render_block(
             code,
             highlights,
             tokens,
-            copied_key,
-            cx,
+            options,
         ),
 
         MarkdownBlock::List {
@@ -505,14 +558,7 @@ fn render_block(
                 let mut body = div().flex().flex_col().gap(px(4.0)).flex_1().min_w_0();
                 for (b_idx, inner) in item.blocks.iter().enumerate() {
                     let inner_id = format!("{block_id}-i{idx}-{b_idx}");
-                    body = body.child(render_block(
-                        &inner_id,
-                        inner,
-                        b_idx == 0,
-                        tokens,
-                        copied_key,
-                        cx,
-                    ));
+                    body = body.child(render_block(&inner_id, inner, b_idx == 0, tokens, options));
                 }
 
                 let row = if let Some(checked) = item.checked {
@@ -594,8 +640,7 @@ fn render_block(
                 .text_color(prose_foreground(tokens));
             for (idx, b) in inner.iter().enumerate() {
                 let inner_id = format!("{block_id}-q{idx}");
-                inner_col =
-                    inner_col.child(render_block(&inner_id, b, idx == 0, tokens, copied_key, cx));
+                inner_col = inner_col.child(render_block(&inner_id, b, idx == 0, tokens, options));
             }
             inner_col.into_any_element()
         }
@@ -623,16 +668,16 @@ fn render_code_block(
     code: &str,
     highlights: &[SyntaxSpan],
     tokens: &Tokens,
-    copied_key: Option<&str>,
-    cx: &mut Context<'_, ChatView>,
+    options: &MarkdownOptions<'_>,
 ) -> AnyElement {
     let lang_label = match language {
         None | Some("text") => "Text".to_owned(),
         Some(other) => other.to_owned(),
     };
-    let is_copied = copied_key == Some(block_id);
+    let is_copied = options.copied_code_key == Some(block_id);
     let copy_code = code.to_owned();
     let copy_key = block_id.to_owned();
+    let on_copy = options.on_copy_code.clone();
 
     let runs: Vec<(Range<usize>, HighlightStyle)> = highlights
         .iter()
@@ -660,10 +705,12 @@ fn render_code_block(
         .rounded(px(6.0))
         .cursor_pointer()
         .hover(|s| s.bg(hsla(tokens.shell_highlight)))
-        .on_click(cx.listener(move |view, _, _, cx| {
+        .on_click(move |_, window, cx| {
             cx.write_to_clipboard(ClipboardItem::new_string(copy_code.clone()));
-            view.mark_code_copied(copy_key.clone(), cx);
-        }))
+            if let Some(cb) = &on_copy {
+                cb(copy_key.clone(), window, cx);
+            }
+        })
         .child(icons::icon(
             if is_copied { icons::CHECK } else { icons::COPY },
             12.0,
@@ -1044,6 +1091,28 @@ mod tests {
                 assert_eq!(rows.len(), 1, "one body row");
             }
             other => panic!("expected table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn skips_html_comments() {
+        let md = "<!-- hidden -->\n## Summary\n\nVisible <!-- inline --> text";
+        let blocks = parse_markdown(md);
+        assert_eq!(
+            blocks.len(),
+            2,
+            "comment block skipped, heading + paragraph remain"
+        );
+        assert!(matches!(blocks[0], MarkdownBlock::Heading { level: 2, .. }));
+        match &blocks[1] {
+            MarkdownBlock::Paragraph(spans) => {
+                let joined: String = spans.iter().map(|s| s.text.as_str()).collect();
+                assert!(
+                    !joined.contains("inline"),
+                    "inline HTML comment stripped: {joined:?}"
+                );
+            }
+            other => panic!("expected paragraph, got {other:?}"),
         }
     }
 }

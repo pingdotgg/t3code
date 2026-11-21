@@ -5,11 +5,12 @@ mod cache;
 mod color;
 mod composer;
 mod icons;
-mod markdown;
+pub(crate) mod markdown;
 mod spinner;
 
 use std::collections::HashSet;
 use std::fmt;
+use std::rc::Rc;
 
 use conn_state::{ItemStatus, ThreadState, TimelineEntry};
 use conn_theme::Tokens;
@@ -326,20 +327,27 @@ impl ChatView {
             } => {
                 if let TimelineEntry::Assistant { id, .. } = &row.entry {
                     let blocks = row.blocks.as_deref().unwrap_or(&[]);
+                    let entity = cx.entity().downgrade();
+                    let options = markdown::MarkdownOptions {
+                        heading_style: markdown::HeadingStyle::Scale,
+                        copied_code_key: self.copied_code_key.as_deref(),
+                        on_copy_code: Some(Rc::new(move |key, _window, cx| {
+                            let _ = entity.update(cx, |view, cx| view.mark_code_copied(key, cx));
+                        })),
+                    };
                     // Conn `AssistantTimelineRow`: `px-1 py-0.5`, row spacing `pb-2` before work or `pb-4`.
                     div()
                         .w_full()
                         .min_w_0()
                         .pb(px(if *followed_by_work { 8.0 } else { 16.0 }))
-                        .child(div().w_full().min_w_0().px(px(4.0)).py(px(2.0)).child(
-                            markdown::render_blocks(
-                                id,
-                                blocks,
-                                &self.tokens,
-                                self.copied_code_key.as_deref(),
-                                cx,
-                            ),
-                        ))
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .px(px(4.0))
+                                .py(px(2.0))
+                                .child(markdown::render_blocks(id, blocks, &self.tokens, &options)),
+                        )
                         .into_any_element()
                 } else {
                     div().into_any_element()
