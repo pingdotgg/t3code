@@ -250,6 +250,33 @@ export const antigravityAccountFingerprint = (userInfo: unknown) =>
 export const antigravitySummaryWindows = (response: unknown, requestedAt: number) =>
   decodeSummary(response).pipe(Effect.map((summary) => summaryWindows(summary, requestedAt)));
 
+function summaryModelFamily(bucketId: string): { id: string; label: string } | undefined {
+  const lower = bucketId.toLowerCase();
+  if (lower.startsWith("gemini-")) {
+    if (/(?:^|-)argon(?:-|$)/.test(lower)) {
+      return { id: "gemini-argon-quota", label: "Gemini Argon" };
+    }
+    if (/(?:^|-)carbon(?:-|$)/.test(lower)) {
+      return { id: "gemini-carbon-quota", label: "Gemini Carbon" };
+    }
+    return { id: "gemini-quota", label: "Gemini" };
+  }
+  if (lower.startsWith("claude-")) return { id: "claude-quota", label: "Claude" };
+  if (lower.startsWith("gpt-")) return { id: "gpt-quota", label: "GPT" };
+  return undefined;
+}
+
+function shouldReplaceFoldedWindow(
+  previous: ServerProviderUsageWindow | undefined,
+  next: ServerProviderUsageWindow,
+): boolean {
+  if (!previous) return true;
+  if (next.usedPercent !== previous.usedPercent) return next.usedPercent > previous.usedPercent;
+  if (next.resetsAt === undefined) return false;
+  if (previous.resetsAt === undefined) return true;
+  return Date.parse(next.resetsAt) < Date.parse(previous.resetsAt);
+}
+
 function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   const groups = summary.groups?.some((group) => group.buckets?.length)
@@ -258,6 +285,19 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
+      const weekly = bucket.window === "weekly";
+      const session = bucket.window === "5h";
+      const windowDurationMins = SUMMARY_WINDOW_MINS.get(bucket.window ?? "");
+      // Enterprise summaries emit unwindowed per-model buckets; fold them by family like modelWindows.
+      const folded =
+        windowDurationMins === undefined ? summaryModelFamily(bucket.bucketId) : undefined;
+      if (folded) {
+        const window = quotaWindow(folded.id, `${folded.label} · Reported quota`, bucket, "other");
+        if (window && shouldReplaceFoldedWindow(windows.get(window.id), window)) {
+          windows.set(window.id, window);
+        }
+        continue;
+      }
       // Argon and Carbon are metered separately from the default Gemini buckets.
       const family = bucket.bucketId.startsWith("gemini-argon-")
         ? group.displayName?.trim() || "Gemini Argon"
@@ -268,9 +308,6 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
             : bucket.bucketId.startsWith("3p-")
               ? "Claude & GPT (shared)"
               : group.displayName?.trim() || bucket.bucketId;
-      const weekly = bucket.window === "weekly";
-      const session = bucket.window === "5h";
-      const windowDurationMins = SUMMARY_WINDOW_MINS.get(bucket.window ?? "");
       const window = quotaWindow(
         bucket.bucketId,
         `${family} · ${weekly ? "Weekly" : session ? "5-hour" : bucket.displayName?.trim() || "Quota"}`,

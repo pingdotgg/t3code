@@ -557,6 +557,179 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  // Oracle: Gemini Enterprise returns one unwindowed bucket per model+effort variant under "All Models".
+  it.effect("folds unwindowed per-model Enterprise summary buckets by model family", () =>
+    Effect.gen(function* () {
+      const enterpriseSummary = {
+        groups: [
+          {
+            displayName: "All Models",
+            buckets: [
+              {
+                bucketId: "claude-opus-5-5-high",
+                displayName: "Claude Opus 5.5 (High)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "claude-opus-5-5-low",
+                displayName: "Claude Opus 5.5 (Low)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "gemini-3.1-pro-high",
+                displayName: "Gemini 3.1 Pro (High)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "gemini-3.1-pro-low",
+                displayName: "Gemini 3.1 Pro (Low)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "gemini-3.6-flash-high",
+                displayName: "Gemini 3.6 Flash (High)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "gemini-4-neon-xhigh",
+                displayName: "Gemini 4 Neon (XHigh)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "gemini-4-argon-high",
+                displayName: "Gemini 4 Argon (High)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "gemini-4-argon-low",
+                displayName: "Gemini 4 Argon (Low)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "gemini-4-carbon-high",
+                displayName: "Gemini 4 Carbon (High)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "gpt-oss-120b-high",
+                displayName: "GPT OSS 120B (High)",
+                remainingFraction: 1,
+              },
+              {
+                bucketId: "gpt-oss-120b-medium",
+                displayName: "GPT OSS 120B (Medium)",
+                remainingFraction: 1,
+              },
+            ],
+          },
+        ],
+      };
+      const { probe } = yield* fixture({
+        authMethod: "oauth-business",
+        summary: enterpriseSummary,
+      });
+      expect((yield* probe).windows).toEqual([
+        { id: "claude-quota", label: "Claude · Reported quota", kind: "other", usedPercent: 0 },
+        {
+          id: "gemini-argon-quota",
+          label: "Gemini Argon · Reported quota",
+          kind: "other",
+          usedPercent: 0,
+        },
+        {
+          id: "gemini-carbon-quota",
+          label: "Gemini Carbon · Reported quota",
+          kind: "other",
+          usedPercent: 0,
+        },
+        { id: "gemini-quota", label: "Gemini · Reported quota", kind: "other", usedPercent: 0 },
+        { id: "gpt-quota", label: "GPT · Reported quota", kind: "other", usedPercent: 0 },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("keeps the most-used reading and earliest reset when folding per-model buckets", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        authMethod: "oauth-business",
+        summary: {
+          groups: [
+            {
+              displayName: "All Models",
+              buckets: [
+                {
+                  bucketId: "gemini-3.1-pro-low",
+                  displayName: "Gemini 3.1 Pro (Low)",
+                  remainingFraction: 0.8,
+                  resetTime: "2026-10-21T18:00:00Z",
+                },
+                {
+                  bucketId: "gemini-3.1-pro-high",
+                  displayName: "Gemini 3.1 Pro (High)",
+                  remainingFraction: 0.4,
+                },
+                {
+                  bucketId: "gemini-4-neon-xhigh",
+                  displayName: "Gemini 4 Neon (XHigh)",
+                  remainingFraction: 0.4,
+                  resetTime: "2026-10-21T16:00:00Z",
+                },
+                {
+                  bucketId: "gemini-3.6-flash-high",
+                  displayName: "Gemini 3.6 Flash (High)",
+                  remainingFraction: 0.4,
+                  resetTime: "2026-10-21T14:00:00Z",
+                },
+                {
+                  bucketId: "gemini-3.1-pro-disabled",
+                  remainingFraction: 0,
+                  disabled: true,
+                },
+                {
+                  bucketId: "claude-opus-5-5-high",
+                  remainingFraction: 0.5,
+                  resetTime: "2026-10-21T17:00:00Z",
+                },
+                {
+                  bucketId: "claude-opus-5-5-low",
+                  remainingFraction: 0.5,
+                },
+                {
+                  bucketId: "3p-custom",
+                  displayName: "Custom",
+                  remainingFraction: 0.75,
+                },
+              ],
+            },
+          ],
+        },
+      });
+      const windows = (yield* probe).windows;
+      expect(windows).toEqual([
+        {
+          id: "3p-custom",
+          label: "Claude & GPT (shared) · Custom",
+          kind: "other",
+          usedPercent: 25,
+        },
+        {
+          id: "claude-quota",
+          label: "Claude · Reported quota",
+          kind: "other",
+          usedPercent: 50,
+          resetsAt: "2026-10-21T17:00:00.000Z",
+        },
+        {
+          id: "gemini-quota",
+          label: "Gemini · Reported quota",
+          kind: "other",
+          usedPercent: expect.closeTo(60),
+          resetsAt: "2026-10-21T14:00:00.000Z",
+        },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("keeps one endpoint's quotas when the other fails", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
