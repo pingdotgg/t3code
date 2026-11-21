@@ -1,3 +1,4 @@
+import { loadHeicDecoder } from "./heicDecoder";
 import {
   downscalableImageMimeType,
   fitImageAttachmentSize,
@@ -513,7 +514,7 @@ async function convertHeicImage(
         ? await createImageBitmap(file).catch(() => undefined)
         : undefined;
     if (!bitmap) {
-      const { heicTo } = await import("heic-to/csp");
+      const { heicTo } = await loadHeicDecoder();
       bitmap = await heicTo({ blob: file, type: "bitmap" });
     }
     const imageSize = fitImageAttachmentSize(bitmap) ?? {
