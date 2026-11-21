@@ -72,6 +72,9 @@ const startCommand = Command.make("start", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const input = yield* jsonArgument(flags.input, "--input");
+      if (flags.key.trim() === "") {
+        return yield* new ThreadUsageError({ detail: "--key cannot be blank." });
+      }
       yield* withThreadTools(
         flags,
         Effect.fn("cli.workflow.start")(function* (tools) {
