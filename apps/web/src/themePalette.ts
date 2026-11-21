@@ -1737,6 +1737,8 @@ export function applyThemeColorPreview(
   }
   applyContextChipVariables(root, colors);
   applyThemeCss(css);
+  // A draft has no published image, so the stored theme's must not show under it.
+  applyThemeBackground(undefined);
   setThemePreviewAppearance(appearance);
 }
 
