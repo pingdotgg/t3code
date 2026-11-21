@@ -4207,6 +4207,7 @@
   "ba03873d5356238b": "+{percent} % dans {duration} · {time}",
   "78c1d280f021a28f": "Depuis {sources}",
   "e16b0b9b490c8bc7": "{label} : {value}",
+  "d2a0e263c30db77f": "Documents",
   "ba67d0a9ff5dabf0": "L’API Presse-papiers n’est pas disponible pour copier la demande à l’administrateur.",
   "aef4bec20e799aab": "Impossible de copier la demande à l’administrateur dans le presse-papiers.",
   "409185e3d9bbdb2c": "Demande copiée",

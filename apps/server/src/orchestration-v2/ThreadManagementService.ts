@@ -33,6 +33,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadTranscript,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2GetThreadChangedFilesResult,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ProviderInstanceId,
@@ -436,6 +437,9 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
+  readonly getThreadChangedFiles: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<OrchestrationV2GetThreadChangedFilesResult, Orchestrator.OrchestratorV2Error>;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
   readonly getThreadProjection: (
     threadId: ThreadId,
@@ -632,6 +636,8 @@ function latestSteerableRun(
 }
 
 const SETTLE_AFTER_RUN_WAIT_MS = 24 * 60 * 60 * 1_000;
+/** Enough for the thread details list; the answer says when more exist. */
+const THREAD_CHANGED_FILES_LIMIT = 200;
 const FORCE_STOP_REASON = "Force stopped by user";
 const FORCE_STOP_RELEASE_WAIT = "10 seconds";
 const isForceStopThreadError = Schema.is(OrchestrationV2ForceStopThreadError);
@@ -1833,6 +1839,18 @@ const make = Effect.gen(function* () {
         Effect.map((item) => ({ item: item === null ? null : projectTurnItemForDetail(item) })),
       );
     }),
+    getThreadChangedFiles: Effect.fn("ThreadManagementService.getThreadChangedFiles")(
+      function (input) {
+        return ensureProjectionTranscript(input.threadId).pipe(
+          Effect.andThen(
+            orchestrator.getThreadChangedFiles({
+              threadId: input.threadId,
+              limit: THREAD_CHANGED_FILES_LIMIT,
+            }),
+          ),
+        );
+      },
+    ),
     getThreadRecords: Effect.fn("ThreadManagementService.getThreadRecords")(
       function (threadId, fields, filter) {
         return ensureProjectionTranscript(threadId).pipe(

@@ -4194,6 +4194,7 @@
   "ba03873d5356238b": "{duration} 후 +{percent}% · {time}",
   "78c1d280f021a28f": "출처: {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "d2a0e263c30db77f": "문서",
   "ba67d0a9ff5dabf0": "관리자 요청을 복사하는 중 클립보드 API를 사용할 수 없습니다.",
   "aef4bec20e799aab": "관리자 요청을 클립보드에 복사하지 못했습니다.",
   "409185e3d9bbdb2c": "요청 복사됨",

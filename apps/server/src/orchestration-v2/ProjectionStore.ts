@@ -49,6 +49,7 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
+  OrchestrationV2GetThreadChangedFilesResult,
   GuestShareId,
   ProviderThreadId,
   ProviderTurnId,
@@ -591,6 +592,11 @@ export interface ProjectionStoreV2Shape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, ProjectionStoreV2Error>;
+  /** Files the thread's agents and the tasks they delegated created or changed, newest first. */
+  readonly getThreadChangedFiles: (input: {
+    readonly threadId: ThreadId;
+    readonly limit: number;
+  }) => Effect.Effect<OrchestrationV2GetThreadChangedFilesResult, ProjectionStoreV2Error>;
   readonly getMessagesById: (
     threadId: ThreadId,
     messageIds: ReadonlyArray<MessageId>,
@@ -6801,6 +6807,63 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
+    const getThreadChangedFiles: ProjectionStoreV2Shape["getThreadChangedFiles"] = ({
+      threadId,
+      limit,
+    }) =>
+      // Delegated tasks run in child threads. A Codex change lists each file in `changes`; a
+      // Claude change names its one file. A path whose latest change deleted it is left out.
+      sql<{ path: string; thread_id: string; changed_at: string; deleted: number }>`
+        WITH RECURSIVE family(thread_id, depth) AS (
+          SELECT ${threadId}, 0
+          UNION
+          SELECT subagent.child_thread_id, family.depth + 1
+          FROM orchestration_v2_projection_subagents AS subagent
+          JOIN family ON subagent.thread_id = family.thread_id
+          WHERE subagent.child_thread_id IS NOT NULL AND family.depth < 8
+        ),
+        -- CROSS JOIN keeps family outermost, so each thread's items come from its index.
+        file_changes AS MATERIALIZED (
+          SELECT item.thread_id, item.updated_at, item.ordinal, item.payload_json
+          FROM family
+          CROSS JOIN orchestration_v2_projection_turn_items AS item
+            ON item.thread_id = family.thread_id
+          WHERE item.type = 'file_change' AND item.status = 'completed'
+        ),
+        changed(path, thread_id, changed_at, ordinal, position, deleted) AS (
+          SELECT json_extract(payload_json, '$.fileName'), thread_id, updated_at, ordinal, 0, 0
+          FROM file_changes
+          WHERE coalesce(json_array_length(payload_json, '$.changes'), 0) = 0
+          UNION ALL
+          SELECT json_extract(change.value, '$.path'), thread_id, updated_at, ordinal, change.key,
+            json_extract(change.value, '$.operation') = 'delete'
+          FROM file_changes, json_each(file_changes.payload_json, '$.changes') AS change
+          WHERE json_array_length(file_changes.payload_json, '$.changes') > 0
+        ),
+        latest AS (
+          SELECT path, thread_id, changed_at, deleted,
+            ROW_NUMBER() OVER (
+              PARTITION BY path ORDER BY changed_at DESC, ordinal DESC, position DESC
+            ) AS newest
+          FROM changed
+          WHERE path IS NOT NULL AND trim(path) <> ''
+        )
+        SELECT path, thread_id, changed_at, deleted FROM latest
+        WHERE newest = 1 AND deleted = 0
+        ORDER BY changed_at DESC, path
+        LIMIT ${limit + 1}
+      `.pipe(
+        Effect.map((rows) => ({
+          files: rows.slice(0, limit).map((row) => ({
+            path: row.path,
+            threadId: ThreadId.make(row.thread_id),
+            changedAt: row.changed_at,
+          })),
+          truncated: rows.length > limit,
+        })),
+        Effect.mapError(controlReadError(threadId)),
+      );
+
     // A run fork shows its source's history through the fork run without copying it, and every
     // run fork below it shows that history too. Returns the last source run live forks show, with
     // and without `leavingForkId`.
@@ -9871,6 +9934,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
+      getThreadChangedFiles: readOnReader(getThreadChangedFiles),
       getMessagesById: readOnReader(getMessagesById),
       getThreadRecords: (threadId, fields, filter) =>
         getThreadRecords(threadId, fields, filter).pipe(NodeSqliteClient.readOnly),

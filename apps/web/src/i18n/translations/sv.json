@@ -4207,6 +4207,7 @@
   "ba03873d5356238b": "+{percent} % om {duration} · {time}",
   "78c1d280f021a28f": "Från {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "d2a0e263c30db77f": "Dokument",
   "ba67d0a9ff5dabf0": "Urklipps-API:t är inte tillgängligt vid kopiering av administratörsbegäran.",
   "aef4bec20e799aab": "Kunde inte kopiera administratörsbegäran till urklipp.",
   "409185e3d9bbdb2c": "Begäran kopierades",

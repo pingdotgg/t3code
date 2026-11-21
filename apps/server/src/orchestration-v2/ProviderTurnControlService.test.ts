@@ -175,6 +175,7 @@ function layerProjectionStore(
       listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
       getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
       getTurnItem: () => Effect.die("unused turn item read"),
+      getThreadChangedFiles: () => Effect.die("unused changed files read"),
       getMessagesById: () => Effect.die("unused getMessagesById"),
       getThreadRecords: () => Effect.die("unused record read"),
       getRuntimeRequest: () => Effect.die("unused getRuntimeRequest"),

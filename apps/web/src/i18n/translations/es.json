@@ -4206,6 +4206,7 @@
   "ba03873d5356238b": "+{percent} % en {duration} · {time}",
   "78c1d280f021a28f": "De {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "d2a0e263c30db77f": "Documentos",
   "ba67d0a9ff5dabf0": "La API del portapapeles no está disponible al copiar la solicitud de administrador.",
   "aef4bec20e799aab": "No se pudo copiar la solicitud de administrador al portapapeles.",
   "409185e3d9bbdb2c": "Solicitud copiada",

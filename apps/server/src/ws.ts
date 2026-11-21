@@ -1912,6 +1912,7 @@ export const layerWsRpc = (
           shellResumeCompletionMarker: true,
           shellThreadFamilies: true,
           threadLinkMetadata: true,
+          threadChangedFiles: true,
           shellOlderSettled: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
@@ -2071,6 +2072,17 @@ export const layerWsRpc = (
                 new OrchestrationV2GetThreadProjectionError({
                   threadId: input.threadId,
                   message: "Failed to load turn item",
+                  cause,
+                }),
+            ),
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.getThreadChangedFiles]: (input) =>
+          threadManagement.getThreadChangedFiles({ threadId: input.threadId }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: "Failed to load changed files",
                   cause,
                 }),
             ),

@@ -3720,6 +3720,138 @@ it.effect("lists only active subagent IDs without loading shell data", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("lists a thread's changed files with its delegated tasks', newest first", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const fileChange = (
+      id: string,
+      threadId: string,
+      at: string,
+      payload: Record<string, unknown>,
+      status = "completed",
+      ordinal = 1,
+    ) => sql`
+      INSERT INTO orchestration_v2_projection_turn_items (
+        turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+        parent_item_id, ordinal, type, status, updated_at, payload_json
+      ) VALUES (
+        ${id}, ${threadId}, NULL, NULL, NULL, NULL, NULL, ${ordinal}, 'file_change', ${status}, ${at},
+        ${JSON.stringify({ type: "file_change", ...payload })}
+      )
+    `;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_subagents (
+        subagent_id, thread_id, run_id, parent_node_id, provider, child_thread_id, origin,
+        status, updated_at, payload_json
+      ) VALUES
+        ('subagent:files:child', 'thread:files', NULL, 'node', 'codex', 'thread:files:child',
+         'app_owned', 'completed', '2026-01-05T00:00:00.000Z', '{}'),
+        ('subagent:files:grandchild', 'thread:files:child', NULL, 'node', 'codex',
+         'thread:files:grandchild', 'app_owned', 'completed', '2026-01-05T00:00:00.000Z', '{}')
+    `;
+    yield* fileChange("item:1", "thread:files", "2026-01-05T00:00:01.000Z", {
+      fileName: "/docs/plan.md",
+    });
+    // The same file changed again later by a delegated task: one row, the later change wins.
+    yield* fileChange("item:2", "thread:files:child", "2026-01-05T00:00:05.000Z", {
+      fileName: "/docs/plan.md",
+    });
+    // Codex lists every file of one change; a file deleted last is left out.
+    yield* fileChange("item:3", "thread:files:grandchild", "2026-01-05T00:00:03.000Z", {
+      fileName: "/docs/a.md",
+      changes: [
+        { operation: "add", path: "/docs/a.md" },
+        { operation: "update", path: "/docs/b.md" },
+        { operation: "add", path: "/docs/gone.md" },
+      ],
+    });
+    yield* fileChange("item:4", "thread:files", "2026-01-05T00:00:04.000Z", {
+      fileName: "/docs/gone.md",
+      changes: [{ operation: "delete", path: "/docs/gone.md" }],
+    });
+    // A change that failed changed nothing, and another thread's files stay out.
+    yield* fileChange(
+      "item:5",
+      "thread:files",
+      "2026-01-05T00:00:06.000Z",
+      { fileName: "/docs/failed.md" },
+      "failed",
+    );
+    yield* fileChange("item:6", "thread:other", "2026-01-05T00:00:07.000Z", {
+      fileName: "/docs/other.md",
+    });
+
+    // An empty list of changes still names its file.
+    yield* fileChange("item:7", "thread:files", "2026-01-05T00:00:02.000Z", {
+      fileName: "/docs/empty-changes.md",
+      changes: [],
+    });
+    // Two changes in the same millisecond: the later item decides, here a delete.
+    for (const [id, ordinal, operation] of [
+      ["item:8", 8, "update"],
+      ["item:9", 9, "delete"],
+    ] as const) {
+      yield* fileChange(
+        id,
+        "thread:files",
+        "2026-01-05T00:00:02.500Z",
+        { fileName: "/docs/tie.md", changes: [{ operation, path: "/docs/tie.md" }] },
+        "completed",
+        ordinal,
+      );
+    }
+
+    const result = yield* store.getThreadChangedFiles({
+      threadId: ThreadId.make("thread:files"),
+      limit: 10,
+    });
+    assert.deepEqual(result, {
+      files: [
+        {
+          path: "/docs/plan.md",
+          threadId: ThreadId.make("thread:files:child"),
+          changedAt: "2026-01-05T00:00:05.000Z",
+        },
+        {
+          path: "/docs/a.md",
+          threadId: ThreadId.make("thread:files:grandchild"),
+          changedAt: "2026-01-05T00:00:03.000Z",
+        },
+        {
+          path: "/docs/b.md",
+          threadId: ThreadId.make("thread:files:grandchild"),
+          changedAt: "2026-01-05T00:00:03.000Z",
+        },
+        {
+          path: "/docs/empty-changes.md",
+          threadId: ThreadId.make("thread:files"),
+          changedAt: "2026-01-05T00:00:02.000Z",
+        },
+      ],
+      truncated: false,
+    });
+    // Each thread's file changes come from its own index, never a scan of every thread's items.
+    const traced = traceSqlStatements();
+    yield* store
+      .getThreadChangedFiles({ threadId: ThreadId.make("thread:files"), limit: 10 })
+      .pipe(Effect.withTracer(traced.tracer));
+    const plan = (yield* queryPlan(
+      traced.statements.find((statement) => statement.includes("file_changes")),
+    )).join("\n");
+    assert.include(plan, "turn_items_thread_type_idx (thread_id=? AND type=? AND status=?)");
+    assert.notMatch(plan, /SCAN item\b/);
+    const limited = yield* store.getThreadChangedFiles({
+      threadId: ThreadId.make("thread:files"),
+      limit: 1,
+    });
+    assert.deepEqual(
+      [limited.files.map((file) => file.path), limited.truncated],
+      [["/docs/plan.md"], true],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 // regression: #25621 SQLite rejects statements binding more than 32,766 variables
 it.effect("lists every thread in the shell snapshot past SQLite's bound variable limit", () =>
   Effect.gen(function* () {

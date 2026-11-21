@@ -4021,6 +4021,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
+  getThreadChangedFiles: "orchestration.getThreadChangedFiles",
   launchThread: "orchestration.launchThread",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
@@ -4585,6 +4586,33 @@ export const OrchestrationV2GetTurnItemResult = Schema.Struct({
 });
 export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
 
+export const OrchestrationV2GetThreadChangedFilesInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Ignored by the server; clients change it to ask again after the thread changes more files. */
+  revision: Schema.optional(Schema.String),
+});
+export type OrchestrationV2GetThreadChangedFilesInput =
+  typeof OrchestrationV2GetThreadChangedFilesInput.Type;
+
+/** A file an agent of the thread, or of a task it delegated, created or changed. */
+export const OrchestrationV2ThreadChangedFile = Schema.Struct({
+  /** As the provider reported it; absolute for Claude and Codex. */
+  path: TrimmedNonEmptyString,
+  /** The thread whose agent changed it last. */
+  threadId: ThreadId,
+  changedAt: IsoDateTime,
+});
+export type OrchestrationV2ThreadChangedFile = typeof OrchestrationV2ThreadChangedFile.Type;
+
+/** Newest first, one row per path. */
+export const OrchestrationV2GetThreadChangedFilesResult = Schema.Struct({
+  files: Schema.Array(OrchestrationV2ThreadChangedFile),
+  /** More files exist than the server returns. */
+  truncated: Schema.Boolean,
+});
+export type OrchestrationV2GetThreadChangedFilesResult =
+  typeof OrchestrationV2GetThreadChangedFilesResult.Type;
+
 const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
   "invalid-path": "Workflow scripts must be absolute .js paths.",
   "root-unavailable": "Script root unavailable.",
@@ -4735,6 +4763,10 @@ export const OrchestrationV2RpcSchemas = {
   getTurnItem: {
     input: OrchestrationV2GetTurnItemInput,
     output: OrchestrationV2GetTurnItemResult,
+  },
+  getThreadChangedFiles: {
+    input: OrchestrationV2GetThreadChangedFilesInput,
+    output: OrchestrationV2GetThreadChangedFilesResult,
   },
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,

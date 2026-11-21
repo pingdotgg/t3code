@@ -4209,6 +4209,7 @@
   "ba03873d5356238b": "+{percent} % in {duration} · {time}",
   "78c1d280f021a28f": "Von {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "d2a0e263c30db77f": "Dokumente",
   "ba67d0a9ff5dabf0": "Die Zwischenablage-API ist beim Kopieren der Admin-Anfrage nicht verfügbar.",
   "aef4bec20e799aab": "Die Admin-Anfrage konnte nicht in die Zwischenablage kopiert werden.",
   "409185e3d9bbdb2c": "Anfrage kopiert",

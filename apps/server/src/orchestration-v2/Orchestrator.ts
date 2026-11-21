@@ -64,6 +64,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2GetThreadChangedFilesResult,
   latestProviderTurnForAttempt,
   repositoryRewindCheckpoint,
   parseGoalCommand,
@@ -470,6 +471,10 @@ export interface OrchestratorV2Shape {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2TurnItem | null, OrchestratorV2Error>;
+  readonly getThreadChangedFiles: (input: {
+    readonly threadId: ThreadId;
+    readonly limit: number;
+  }) => Effect.Effect<OrchestrationV2GetThreadChangedFilesResult, OrchestratorV2Error>;
   readonly getThreadRecords: <K extends ProjectionRecordField>(
     threadId: ThreadId,
     fields: ReadonlyArray<K>,
@@ -17112,6 +17117,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     getTurnItem: Effect.fn("OrchestratorV2.getTurnItem")(function (input) {
       return projectionStore
         .getTurnItem(input)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+          ),
+        );
+    }),
+    getThreadChangedFiles: Effect.fn("OrchestratorV2.getThreadChangedFiles")(function (input) {
+      return projectionStore
+        .getThreadChangedFiles(input)
         .pipe(
           Effect.mapError(
             (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),

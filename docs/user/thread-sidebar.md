@@ -297,6 +297,15 @@ Select a server to open it in the browser panel. **Stop** ends the server's job
 and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
 access to the environment and is not available on Windows.
 
+On web and desktop, **Documents** in the thread details card lists the files the
+thread's agents created or changed, newest first, including files outside the
+project and those changed by tasks the thread delegated. A delegated task's files
+appear when it finishes. Files an agent only read, and files whose last change
+deleted them, are not listed. A file removed by a shell command stays listed. Hover a file to see its
+full path. Click it to open it with the default app of the machine the thread runs
+on, or use the row's buttons to show it in its folder or copy its path. When that
+machine has no default app to open files with, clicking copies the path instead.
+
 To choose what the thread details card shows, right-click the card or open
 **Settings → Appearance → Thread details**. Hidden rows keep their keyboard
 shortcuts, such as Open in editor and project scripts. **Reset to default** brings

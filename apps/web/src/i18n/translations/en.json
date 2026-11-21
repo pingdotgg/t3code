@@ -4208,6 +4208,7 @@
   "ba03873d5356238b": "+{percent}% in {duration} · {time}",
   "78c1d280f021a28f": "From {sources}",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "d2a0e263c30db77f": "Documents",
   "ba67d0a9ff5dabf0": "Clipboard API is unavailable while copying admin request.",
   "aef4bec20e799aab": "Failed to copy admin request to the clipboard.",
   "409185e3d9bbdb2c": "Request copied",
