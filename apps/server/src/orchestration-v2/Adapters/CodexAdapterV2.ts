@@ -798,6 +798,23 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+/**
+ * Full access keeps Codex on granular approvals so MCP prompts reach T3, but that also lets
+ * Codex ask about commands it judges dangerous (such as `rm -rf`). Without an explicit approval
+ * or sandbox override, Full access means no prompts, so T3 accepts those itself.
+ */
+function codexFullAccessAcceptsApprovals(runtimePolicy: {
+  readonly runtimeMode: RuntimeMode;
+  readonly approvalPolicy?: unknown;
+  readonly sandboxPolicy?: unknown;
+}): boolean {
+  return (
+    runtimePolicy.runtimeMode === "full-access" &&
+    runtimePolicy.approvalPolicy === undefined &&
+    runtimePolicy.sandboxPolicy === undefined
+  );
+}
+
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
 function codexCyberAccess(
@@ -5987,6 +6004,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
+            if (codexFullAccessAcceptsApprovals(context.input.runtimePolicy)) {
+              return {
+                decision: "accept",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("command")) {
               return {
@@ -6057,6 +6079,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for file change approval turn ${payload.turnId}.`,
                 payload,
               );
+            }
+            if (codexFullAccessAcceptsApprovals(context.input.runtimePolicy)) {
+              return { decision: "accept" } satisfies CodexSchema.FileChangeRequestApprovalResponse;
             }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("file-change")) {
