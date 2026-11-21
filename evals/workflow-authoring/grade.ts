@@ -117,8 +117,9 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
         ...agent(asked.get(turn.turnId)!),
       });
     }),
+    // Every turn here has already completed, so there is nothing to stop.
     interrupt: Effect.fn("gradeWorkflow.agents.interrupt")(function* () {
-      return yield* Effect.void;
+      return yield* Effect.succeed("ended" as const);
     }),
   });
   const engine = WorkflowEngine.layer(definitions).pipe(

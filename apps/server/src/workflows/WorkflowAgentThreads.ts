@@ -301,8 +301,8 @@ const make = Effect.gen(function* () {
       const shell = yield* threads
         .getThreadShell(threadId)
         .pipe(Effect.mapError(failed("Could not read the thread")));
-      if (shell === null) return;
-      yield* threads
+      if (shell === null) return "ended" as const;
+      const stopped = yield* threads
         .interruptThread({
           projectId: shell.projectId,
           threadId,
@@ -313,6 +313,7 @@ const make = Effect.gen(function* () {
           ...(target.turnId === undefined ? {} : { runId: target.turnId as RunId }),
         })
         .pipe(Effect.mapError(failed("Could not stop the thread")));
+      return stopped.type === "interrupt_requested" ? ("stopped" as const) : ("ended" as const);
     }),
   });
 });

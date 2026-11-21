@@ -169,9 +169,9 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
               Effect.succeed<AgentTurn>({ threadId: "", turnId: "", failed: text(error) }),
             ),
       );
-  const resultOf = (turn: AgentTurn) =>
+  const resultOf = (turn: AgentTurn, wait = { quiet }) =>
     agents
-      .result(turn, { quiet })
+      .result(turn, wait)
       .pipe(
         onFailure === "pause"
           ? identity
@@ -193,16 +193,34 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
     if (Option.isSome(result)) return result.value;
     // A stop that still fails pauses the run unrecorded, so resuming tries the stop again. A step
     // that returns its failure says the turn may still be running.
-    const stoppedIt = yield* agents
+    const stopping = agents
       .interrupt({ ...threadOf(turn), turnId: turn.turnId })
-      .pipe(
-        Effect.retry({ times: 2 }),
-        Effect.as(true),
-        onFailure === "pause" ? identity : Effect.catch(() => Effect.succeed(false)),
-      );
+      .pipe(Effect.retry({ times: 2 }));
+    const stop: "stopped" | "ended" | "failed" = yield* onFailure === "pause"
+      ? stopping
+      : stopping.pipe(Effect.orElseSucceed(() => "failed" as const));
+    const late = `it was not done after ${Duration.format(limit)}`;
+    if (stop === "ended") {
+      // The turn ended before it could be stopped, maybe long ago, as a run that resumes late
+      // finds it. What it left is the answer when it is one.
+      const ended = yield* resultOf(turn, { quiet: undefined });
+      if (
+        ended.ending !== "completed" ||
+        outputSchema === undefined ||
+        ended.output !== undefined
+      ) {
+        return ended;
+      }
+      // Stopping the later turn it may answer from could stop someone else's.
+      return {
+        ending: "stopped" as const,
+        detail: `${late}: its turn ended without its result, and the agent may still be at work on its thread`,
+        reply: "",
+      };
+    }
     return {
       ending: "stopped" as const,
-      detail: `it was not done after ${Duration.format(limit)}${stoppedIt ? "" : ", and its turn could not be stopped"}`,
+      detail: `${late}${stop === "stopped" ? "" : ", and its turn could not be stopped"}`,
       reply: "",
     };
   });
