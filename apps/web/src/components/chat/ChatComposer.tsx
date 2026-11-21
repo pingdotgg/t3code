@@ -2387,12 +2387,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const promptSuggestionShortcutLabel =
     offeredPromptSuggestion === null
       ? null
-      : shortcutLabelForCommand(keybindings, "composer.acceptPromptSuggestion", {
+      : // A suggestion is only accepted from the focused, empty composer of an idle thread.
+        shortcutLabelForCommand(keybindings, "composer.acceptPromptSuggestion", {
           context: {
             composerFocus: true,
+            editableFocus: true,
+            composerEmpty: true,
+            turnRunning: false,
             terminalFocus: false,
             terminalOpen,
             draftThreadRoute: routeKind === "draft",
+            composerRequiresModifier: composerRequiresModifier(settings.sendShortcut, ""),
           },
         });
 
