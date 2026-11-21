@@ -6,7 +6,7 @@ import {
   type WorkflowBeat,
   type WorkflowRunNode,
 } from "@t3tools/client-runtime/workflows";
-import type { WorkflowStep } from "@t3tools/contracts";
+import type { EnvironmentId, WorkflowStep } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -20,6 +20,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { cn } from "../../lib/cn";
+import { useEnvironments } from "../../state/environments";
 
 export function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -62,14 +63,25 @@ export function Facts(props: {
   );
 }
 
+/** Whether this device can open a thread: only one in an environment it is paired with. */
+export function useCanOpenThread(environmentId: EnvironmentId) {
+  const { environments } = useEnvironments();
+  return (thread: NonNullable<WorkflowBeat["thread"]>) => {
+    const target = thread.environmentId ?? environmentId;
+    return environments.some((environment) => environment.environmentId === target);
+  };
+}
+
 /** All of one step, as its sheet shows it: what it said, its facts, and where to read more. */
 export function BeatCard(props: {
   readonly beat: WorkflowBeat;
-  readonly onOpenThread: (thread: NonNullable<WorkflowBeat["thread"]>) => void;
+  /** Null where this device cannot open the step's thread. */
+  readonly onOpenThread: ((thread: NonNullable<WorkflowBeat["thread"]>) => void) | null;
   readonly onOpenRun: (runId: string) => void;
 }) {
   const { beat } = props;
-  const thread = beat.thread;
+  const opener = props.onOpenThread;
+  const thread = opener === null ? null : beat.thread;
   const child = beat.childRun;
   const summary = workflowAgentSummary(beat);
   const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
@@ -122,7 +134,7 @@ export function BeatCard(props: {
                   ? gt("Watch live")
                   : gt("Transcript", { $context: "button, opens the agent's conversation" })
               }
-              onPress={() => props.onOpenThread(thread)}
+              onPress={() => opener?.(thread)}
             />
           )}
           {child === null ? null : (

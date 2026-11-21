@@ -32,7 +32,14 @@ import { cn } from "../../lib/cn";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Card, Facts, plain, reportFailure, workflowRunFeedOf } from "./WorkflowStepCard";
+import {
+  Card,
+  Facts,
+  plain,
+  reportFailure,
+  useCanOpenThread,
+  workflowRunFeedOf,
+} from "./WorkflowStepCard";
 import { WORKFLOW_TONE_CLASS, WorkflowChip } from "./WorkflowsScreen";
 
 export type WorkflowRunParams = {
@@ -44,7 +51,8 @@ function QuestionCard(props: {
   readonly environmentId: EnvironmentId;
   readonly question: WorkflowQuestion;
   readonly canAnswer: boolean;
-  readonly onOpenThread: (thread: NonNullable<WorkflowBeat["thread"]>) => void;
+  /** Null where this device cannot open the question's thread. */
+  readonly onOpenThread: ((thread: NonNullable<WorkflowBeat["thread"]>) => void) | null;
 }) {
   const { question } = props;
   const view = readWorkflowQuestion(question);
@@ -96,11 +104,11 @@ function QuestionCard(props: {
             onPress={() => void choose(choice)}
           />
         ))}
-        {thread === null ? null : (
+        {thread === null || props.onOpenThread === null ? null : (
           <Button
             tone="text"
             label={gt("Ask the agent first")}
-            onPress={() => props.onOpenThread(thread)}
+            onPress={() => props.onOpenThread?.(thread)}
           />
         )}
       </View>
@@ -337,6 +345,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
           ),
         ),
     );
+  const canOpenThread = useCanOpenThread(environmentId);
   const openThread = (thread: NonNullable<WorkflowBeat["thread"]>) =>
     navigation.dispatch(
       StackActions.push("Thread", {
@@ -368,7 +377,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
       environmentId={environmentId}
       question={asked}
       canAnswer={canOperate}
-      onOpenThread={openThread}
+      onOpenThread={asked.thread !== null && canOpenThread(asked.thread) ? openThread : null}
     />
   );
   const pausedAt = feed === null ? null : workflowPausedBeat(feed, run.status);
@@ -445,9 +454,14 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
         </View>
       </View>
       {feed === null ? (
-        <Text className="px-1 text-sm text-foreground-muted">
-          {detail.error ?? gt("Loading the run's steps…")}
-        </Text>
+        <>
+          <Text className="px-1 text-sm text-foreground-muted">
+            {detail.error ?? gt("Loading the run's steps…")}
+          </Text>
+          {/* What waits on a person comes with the run, not its steps, so it stays answerable. */}
+          {run.status === "paused" ? pause : null}
+          {node.questions.map((asked) => question(asked))}
+        </>
       ) : (
         <View>
           <View className={cn("size-2.5 self-center rounded-full border-2", WIRE)} />

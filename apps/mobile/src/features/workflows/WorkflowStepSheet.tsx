@@ -15,7 +15,7 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { BeatCard, Card, Facts, workflowRunFeedOf } from "./WorkflowStepCard";
+import { BeatCard, Card, Facts, useCanOpenThread, workflowRunFeedOf } from "./WorkflowStepCard";
 
 export type WorkflowStepParams = {
   readonly environmentId: string;
@@ -57,6 +57,7 @@ export function WorkflowStepSheet({ route }: StaticScreenProps<WorkflowStepParam
         threadId: ThreadId.make(thread.threadId),
       }),
     );
+  const canOpenThread = useCanOpenThread(environmentId);
   const openRun = (runId: string) =>
     navigation.dispatch(StackActions.replace("WorkflowRun", { environmentId, runId }));
   return (
@@ -105,7 +106,11 @@ export function WorkflowStepSheet({ route }: StaticScreenProps<WorkflowStepParam
               {detail.error ?? live.error ?? gt("Loading the step…")}
             </Text>
           ) : (
-            <BeatCard beat={beat} onOpenThread={openThread} onOpenRun={openRun} />
+            <BeatCard
+              beat={beat}
+              onOpenThread={beat.thread !== null && canOpenThread(beat.thread) ? openThread : null}
+              onOpenRun={openRun}
+            />
           )}
         </ScrollView>
       </ScreenContent>
