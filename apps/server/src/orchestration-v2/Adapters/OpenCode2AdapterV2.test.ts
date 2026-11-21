@@ -8427,6 +8427,112 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
+  // regression: #37694
+  it.effect.each([false, true])(
+    "keeps an OpenCode goal waiting for a T3 wake and resumes it, with OpenCode pausing first %s",
+    (nativePauseFirst) =>
+      Effect.gen(function* () {
+        let pendingWake = true;
+        const gate = makeProviderReplayGate(["wake-read"]);
+        const nativePaused = yield* Deferred.make<void>();
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+          threadId,
+          providerSessionId: "mcp:opencode2-adapter",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: "Bearer thread-credential",
+          browserToolsAvailable: false,
+          // OpenCode's no-progress pause can land before the pending-wake read resolves.
+          hasPendingWake: Effect.suspend(() =>
+            nativePauseFirst && pendingWake
+              ? Deferred.await(nativePaused).pipe(
+                  Effect.as(true),
+                  Effect.ensuring(Effect.sync(() => gate.release("wake-read"))),
+                )
+              : Effect.succeed(pendingWake),
+          ),
+        });
+        yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+        const add = [out("mcp.add", "<any>"), reply("mcp.add", null)];
+        const goalChanged = (status: "active" | "paused" | "complete") =>
+          event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal(status) });
+        const { runtime, thread } = yield* resumed(
+          [
+            ...add,
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            goalChanged("active"),
+            // OpenCode continues the goal inside this execution, so the pause must follow the step.
+            event("session.step.ended", {
+              sessionID: SESSION,
+              assistantMessageID: "msg_waiting",
+              finish: "stop",
+              cost: 0,
+              tokens: { input: 100, output: 10, reasoning: 0, cache: { read: 0, write: 0 } },
+            }),
+            ...(nativePauseFirst
+              ? [
+                  goalChanged("paused"),
+                  event("session.execution.succeeded", { sessionID: SESSION }, "wake-read"),
+                ]
+              : [
+                  out("session.command", { sessionID: SESSION, name: "goal", text: "pause" }),
+                  reply("session.command", null),
+                  goalChanged("paused"),
+                  event("session.execution.succeeded", { sessionID: SESSION }),
+                ]),
+            ...add,
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            out("session.command", { sessionID: SESSION, name: "goal", text: "resume" }),
+            reply("session.command", null),
+            out("rpc.call", "<any>"),
+            reply("rpc.call", { output: nativeGoal("active") }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+            goalChanged("complete"),
+            out("mcp.remove", "<any>"),
+            reply("mcp.remove", null),
+          ],
+          { version: "2.2.6", replayGate: gate },
+        );
+        const waiting = yield* runtime.events.pipe(
+          Stream.tap((e) =>
+            e.type === "provider_thread.updated" && e.providerThread.goal?.status === "paused"
+              ? Deferred.succeed(nativePaused, undefined)
+              : Effect.void,
+          ),
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        assert.deepInclude((yield* Fiber.join(waiting)).at(-1), {
+          type: "turn.terminal",
+          status: "completed",
+        });
+        pendingWake = false;
+        const goals = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        const collected = yield* Fiber.join(goals);
+        const statuses = collected.flatMap((e) =>
+          e.type === "provider_thread.updated" && e.providerThread.goal
+            ? [e.providerThread.goal.status]
+            : [],
+        );
+        assert.deepEqual(
+          statuses.filter((status, index) => status !== statuses[index - 1]),
+          ["paused", "active", "complete"],
+        );
+        assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      }),
+  );
+
   it.effect("does not replace a newer goal event with an older goal RPC response", () =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["release-goal-read"]);

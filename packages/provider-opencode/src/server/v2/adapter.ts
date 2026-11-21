@@ -349,6 +349,8 @@ interface ThreadState {
   goalRevision: number;
   goalFresh: boolean;
   goalRefreshing: boolean;
+  /** The adapter paused the goal for a T3 wake; the next prompted turn resumes it. */
+  goalPausedForWake: boolean;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   model: ModelRef | undefined;
@@ -934,6 +936,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       goalRevision: 0,
       goalFresh: false,
       goalRefreshing: false,
+      goalPausedForWake: false,
       providerTurns: new Map(),
       active: undefined,
       model: undefined,
@@ -2987,6 +2990,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return;
         case "session.step.ended":
         case "session.step.failed": {
+          // OpenCode runs its goal check, and any continuation, right after a step that stops.
+          if (
+            event.type === "session.step.ended" &&
+            event.data.finish !== "tool-calls" &&
+            state.providerThread.goal?.status === "active" &&
+            !state.goalPausedForWake
+          ) {
+            yield* Effect.forkIn(pauseGoalForWake(state, turn), sessionScope);
+          }
           const tokens = event.data.tokens;
           if (tokens === undefined) return;
           turn.steps += 1;
@@ -3291,6 +3303,55 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return;
       }
       yield* finishTurn(state, end);
+    });
+
+    // OpenCode defers goal continuations only for its own subagents, so without a pause the goal
+    // re-prompts the parent while a T3 delegated task that will wake it is still running.
+    const pauseGoalForWake = Effect.fn("OpenCode2Adapter.pauseGoalForWake")(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+    ) {
+      const pendingWake = (yield* mcpSessions.read(turn.input.threadId))?.hasPendingWake;
+      if (pendingWake === undefined || !(yield* pendingWake)) return;
+      // OpenCode's goal check can pause for no progress before this read resolves; the wake still
+      // owns that goal, so a paused goal is adopted for resume without another pause.
+      const pausing = yield* lock.withPermit(
+        Effect.sync(() => {
+          const status = state.providerThread.goal?.status;
+          if (
+            (state.active !== undefined && state.active !== turn) ||
+            turn.interrupted ||
+            state.goalPausedForWake ||
+            (status !== "active" && status !== "paused")
+          ) {
+            return false;
+          }
+          state.goalPausedForWake = true;
+          return status === "active";
+        }),
+      );
+      if (!pausing) return;
+      yield* client.session
+        .command({ sessionID: Session.ID.make(state.sessionId), name: "goal", text: "pause" })
+        .pipe(
+          Effect.timeout(REQUEST_REPLY_TIMEOUT),
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not pause an OpenCode goal awaiting a T3 wake.", {
+              cause,
+            }).pipe(
+              Effect.andThen(
+                lock.withPermit(
+                  Effect.sync(() => {
+                    // A failure because OpenCode paused it first still leaves the wake to resume it.
+                    if (state.providerThread.goal?.status === "active") {
+                      state.goalPausedForWake = false;
+                    }
+                  }),
+                ),
+              ),
+            ),
+          ),
+        );
     });
 
     const endIfSettled = (state: ThreadState, turn: ActiveTurn) =>
@@ -4706,6 +4767,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const bare = turnInput.message.attachments.length === 0;
       const id = turnPromptId(sessionId, turnInput.attemptId);
       const goalCommand = supportsNativeGoals() ? parseGoalCommand(turnInput.message) : null;
+      if (goalCommand !== null && goalCommand.type !== "show") state.goalPausedForWake = false;
       if (goalCommand?.type === "show") {
         if (!sending()) return;
         yield* readGoal(state);
@@ -4747,7 +4809,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
-      return yield* client.session
+      const prompt = client.session
         .prompt({
           sessionID,
           id,
@@ -4758,6 +4820,34 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             : { skills: skills.map((id) => ({ id: Skill.ID.make(id) })) }),
         })
         .pipe(Effect.asVoid);
+      if (turnInput.resume === true || turnInput.restartContinuationOfRunId !== undefined) {
+        return yield* prompt;
+      }
+      const resumeGoal = state.goalPausedForWake && state.providerThread.goal?.status === "paused";
+      state.goalPausedForWake = false;
+      if (!resumeGoal) return yield* prompt;
+      // Resuming after the prompt keeps the wake result ahead of the goal's next check; the turn
+      // stays held until the resumed goal is read back.
+      state.goalRefreshing = true;
+      yield* Effect.gen(function* () {
+        yield* prompt;
+        yield* client.session.command({ sessionID, name: "goal", text: "resume" }).pipe(
+          Effect.andThen(readGoal(state)),
+          Effect.timeout(REQUEST_REPLY_TIMEOUT),
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not resume an OpenCode goal after a T3 wake.", { cause }),
+          ),
+        );
+      }).pipe(
+        Effect.ensuring(
+          lock.withPermit(
+            Effect.gen(function* () {
+              state.goalRefreshing = false;
+              if (state.active === turn) yield* endIfSettled(state, turn);
+            }),
+          ),
+        ),
+      );
     });
 
     const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
@@ -5168,6 +5258,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             return;
           }
           turn.interrupted = true;
+          state.goalPausedForWake = false;
           const reply = yield* client.session
             .interrupt({ sessionID: Session.ID.make(sessionId) })
             .pipe(
