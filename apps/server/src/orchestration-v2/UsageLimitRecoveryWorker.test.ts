@@ -8,6 +8,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -116,3 +117,71 @@ describe("limitRecoveryCommand arming", () => {
     assert.isNull(limitRecoveryCommand(thread, true, nowMs));
   });
 });
+
+it.effect("an armed thread resumes once a fresh usage reading shows the allowance restored", () =>
+  Effect.gen(function* () {
+    const startMs = Date.parse("2026-10-20T11:46:00.000Z");
+    yield* TestClock.setTime(startMs);
+    const failedAt = DateTime.makeUnsafe(Date.parse("2026-10-20T11:40:00.000Z"));
+    const resetAt = "2026-10-20T15:10:00.000Z";
+    const runId = RunId.make("run:limited");
+    const armed: ProjectionStore.ProjectionLimitRecoveryCandidate = {
+      id: ThreadId.make("thread:limited"),
+      status: "failed",
+      lastErrorClass: "usage_limit",
+      usageLimitResetAt: resetAt,
+      latestRunId: runId,
+      latestRunCompletedAt: failedAt,
+      updatedAt: failedAt,
+      archivedAt: null,
+      settledOverride: null,
+      pendingRuntimeRequest: null,
+      limitRecovery: { runId, resetAt, autoResume: true },
+      snoozedUntil: null,
+    };
+    // Read at 11:44, after the failure: both windows back at 0% used.
+    const restored = {
+      instanceId: "claudeAgent",
+      driver: "claudeAgent",
+      usageLimits: {
+        checkedAt: "2026-10-20T11:44:00.000Z",
+        windows: [
+          { id: "five_hour", kind: "session", label: "5h", usedPercent: 0, resetsAt: resetAt },
+          { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 0 },
+        ],
+      },
+    };
+    const log = yield* Queue.unbounded<string>();
+    const layer = UsageLimitRecoveryWorker.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Scheduler.layer,
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([restored] as never),
+            streamChanges: Stream.never,
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getLimitRecoveryCandidates: () => Queue.offer(log, "sweep").pipe(Effect.as([armed])),
+            getLimitRecoveryWakeAt: () =>
+              Queue.offer(log, "wait-for-reset").pipe(Effect.as(Date.parse(resetAt))),
+          }),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            dispatch: (command) => Queue.offer(log, command.type).pipe(Effect.as({} as never)),
+          }),
+          Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings: Effect.succeed({
+              autoResumeLimitedThreads: true,
+              snoozeLimitedThreads: false,
+            } as never),
+            streamChanges: Stream.never,
+          }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      assert.equal(yield* Queue.take(log), "sweep");
+      assert.equal(yield* Queue.take(log), "message.dispatch");
+    }).pipe(Effect.provide(layer));
+  }),
+);
