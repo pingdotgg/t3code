@@ -119,8 +119,7 @@ const makeSweep = Effect.gen(function* () {
         preferences.snoozeLimitedThreads,
       );
       if (command === null) continue;
-      acted = true;
-      yield* Effect.gen(function* () {
+      const waitsForSettings = yield* Effect.gen(function* () {
         if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
           yield* orchestrator.autoArmLimitRecovery({
             commandId: command.commandId,
@@ -131,13 +130,19 @@ const makeSweep = Effect.gen(function* () {
           yield* threads.dispatch(command);
         }
       }).pipe(
+        Effect.as(false),
+        // Only re-enabling the instance lets it through, and that settings change wakes the sweep.
+        Effect.catchTags({
+          ThreadManagementProviderInstanceDisabledError: () => Effect.succeed(true),
+        }),
         Effect.catchCause((cause) =>
           Effect.logWarning("orchestration-v2.limit-recovery.dispatch-failed", {
             threadId: thread.id,
             cause,
-          }),
+          }).pipe(Effect.as(false)),
         ),
       );
+      if (!waitsForSettings) acted = true;
     }
     // A sweep that acted, or failed to, re-checks on the next tick.
     if (acted) return;

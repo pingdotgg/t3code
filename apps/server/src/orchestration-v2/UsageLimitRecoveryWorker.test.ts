@@ -1,5 +1,11 @@
 import { assert, describe, it } from "@effect/vitest";
-import { RunId, ThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2DomainEvent,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -91,6 +97,63 @@ const failedThread = (failedAgoMs: number, resetAgoMs: number) => {
   };
   return candidate;
 };
+
+it.effect("a resume refused for a disabled provider instance waits for a settings change", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(nowMs);
+    const queries = yield* Queue.unbounded<number>();
+    const settingsChanges = yield* Queue.unbounded<never>();
+    const failed = failedThread(2 * HOUR_MS, HOUR_MS);
+    const armed: ProjectionStore.ProjectionLimitRecoveryCandidate = {
+      ...failed,
+      limitRecovery: {
+        runId: RunId.make("run:limited"),
+        resetAt: failed.usageLimitResetAt ?? "",
+        autoResume: true,
+      },
+    };
+    const layer = UsageLimitRecoveryWorker.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Scheduler.layer,
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getLimitRecoveryCandidates: () =>
+              Clock.currentTimeMillis.pipe(
+                Effect.flatMap((now) => Queue.offer(queries, now - nowMs)),
+                Effect.as([armed]),
+              ),
+            getLimitRecoveryWakeAt: () => Effect.succeed(null),
+          }),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            dispatch: () =>
+              Effect.fail(
+                new ThreadManagement.ThreadManagementProviderInstanceDisabledError({
+                  projectId: ProjectId.make("project:limited"),
+                  instanceId: ProviderInstanceId.make("codex"),
+                }),
+              ),
+          }),
+          Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings: Effect.succeed({
+              autoResumeLimitedThreads: true,
+              snoozeLimitedThreads: false,
+            } as never),
+            streamChanges: Stream.fromQueue(settingsChanges),
+          }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      assert.equal(yield* Queue.take(queries), 0);
+      yield* TestClock.adjust("60 seconds");
+      // Re-enabling the instance is a settings change, so only then does the sweep query again.
+      yield* Queue.offer(settingsChanges, {} as never);
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(yield* Queue.take(queries), 65_000);
+    }).pipe(Effect.provide(layer));
+  }),
+);
 
 describe("limitRecoveryCommand arming", () => {
   it("does not freshly arm a failure whose reset passed days ago", () => {
