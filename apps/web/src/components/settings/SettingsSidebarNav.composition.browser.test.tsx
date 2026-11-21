@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
+import { Dialog } from "../ui/dialog";
 import { SidebarProvider } from "../ui/sidebar";
 import { SettingsSidebarNav } from "./SettingsSidebarNav";
 import { SETTINGS_NAV_GROUPS, SETTINGS_SECTION_LABELS } from "./settingsSearch";
@@ -14,9 +15,12 @@ vi.mock("./useAvailableSettingsSearchItems", () => ({
 
 it("ignores composing keys in the search", async () => {
   await using screen = await render(
-    <SidebarProvider defaultOpen>
-      <SettingsSidebarNav pathname="/settings/general" />
-    </SidebarProvider>,
+    // The nav's phone header holds the settings modal's close button.
+    <Dialog>
+      <SidebarProvider defaultOpen>
+        <SettingsSidebarNav pathname="/settings/general" mobileOpen onMobileOpenChange={vi.fn()} />
+      </SidebarProvider>
+    </Dialog>,
     { router: "/settings/general" },
   );
   const search = page.getByRole("combobox", { name: "Search settings" });
@@ -46,9 +50,12 @@ it("ignores composing keys in the search", async () => {
 
 function renderNav() {
   return render(
-    <SidebarProvider defaultOpen>
-      <SettingsSidebarNav pathname="/settings/general" />
-    </SidebarProvider>,
+    // The nav's phone header holds the settings modal's close button.
+    <Dialog>
+      <SidebarProvider defaultOpen>
+        <SettingsSidebarNav pathname="/settings/general" mobileOpen onMobileOpenChange={vi.fn()} />
+      </SidebarProvider>
+    </Dialog>,
     { router: "/settings/general" },
   );
 }
