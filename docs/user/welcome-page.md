@@ -107,8 +107,10 @@ malformed records and conversations with no messages, such as a session opened
 in an editor but never used. It skips unreadable or unparseable conversations.
 
 Each import attempt reads up to 100 conversations and 4 GiB per project.
-Conversations with no messages count toward the 4 GiB but not the 100. To
-continue a large batch, open the Welcome page again and pick the project in
+Conversations with no messages count toward the 4 GiB but not the 100. The
+summary counts the conversations past that limit as not imported yet, separately
+from conversations that could not be imported. To continue a large batch, open
+the Welcome page again from **Settings → About** and pick the project in
 **Review all**. Completed conversations are not imported again. You can continue
 without the remaining history.
 

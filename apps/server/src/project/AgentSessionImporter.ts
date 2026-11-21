@@ -266,11 +266,17 @@ const make = Effect.gen(function* () {
     const importedThreadIds = new Set<ThreadId>();
     let importedCount = 0;
     let skippedCount = 0;
+    let deferredCount = 0;
 
     yield* Stream.runForEach(outcomes, (outcome) =>
       Effect.gen(function* () {
         if (outcome._tag === "Skipped") {
           skippedCount += 1;
+          return;
+        }
+        if (outcome._tag === "Deferred") {
+          skippedCount += 1;
+          deferredCount += 1;
           return;
         }
         const source = outcome.source;
@@ -495,7 +501,7 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+    return { importedCount, skippedCount, deferredCount } satisfies AgentSessionImportResult;
   });
 
   /**
