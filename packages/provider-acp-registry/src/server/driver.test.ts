@@ -103,6 +103,37 @@ function providerWithModels(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
+  it("forwards ACP model descriptions to the client model catalog", () => {
+    const provider = providerWithModels(
+      [{ id: "hy4", name: "Hy4", description: "x0.29 credits" }],
+      "hy4",
+    );
+    expect(provider.models).toMatchObject([
+      { slug: "hy4", name: "Hy4", description: "x0.29 credits" },
+    ]);
+
+    const live = normalizeAcpRegistryLiveConfiguration([
+      {
+        id: "model",
+        name: "Model",
+        description: "Select the AI model to use for this session",
+        category: "model",
+        type: "select",
+        currentValue: "hy4",
+        options: [{ value: "hy4", name: "Hy4", description: "x0.29 credits" }],
+      },
+    ]);
+    expect(
+      applyAcpRegistryLiveConfiguration(providerWithModels([], null), live, []).models,
+    ).toMatchObject([{ slug: "hy4", description: "x0.29 credits" }]);
+
+    const verbose = providerWithModels(
+      [{ id: "verbose", name: "Verbose", description: "A very long prose description ".repeat(3) }],
+      "verbose",
+    );
+    expect(verbose.models[0]).not.toHaveProperty("description");
+  });
+
   it("keeps the custom model display name and options saved by the Settings editor", () => {
     const fastMode = { id: "fast", label: "Fast mode", type: "boolean" } as const;
     const snapshot = buildCheckedAcpRegistrySnapshot({
@@ -260,7 +291,7 @@ describe("acpRegistrySnapshotReadiness", () => {
           ready: true,
           icon: null,
           authMethods: [],
-          models: [{ id: "probe-model", name: "Probe model", description: null }],
+          models: [{ id: "probe-model", name: "Probe model", description: "x0.29 credits" }],
           currentModelId: "probe-model",
           configOptions: [],
           sessionManagement: {
@@ -325,6 +356,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     ).toMatchObject([
       {
         slug: "probe-model",
+        description: "x0.29 credits",
         isDefault: true,
         capabilities: { optionDescriptors: [{ id: "effort", currentValue: "high" }] },
       },

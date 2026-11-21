@@ -153,6 +153,17 @@ const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
   };
 };
 
+/**
+ * Only compact provider metadata belongs in a model picker row. ACP agents can report long
+ * prose as an option description; forwarding that would crowd out the model name in every
+ * client. Credit multipliers such as `x0.29 credits` stay well under this limit.
+ */
+const MAX_FORWARDED_MODEL_DESCRIPTION_LENGTH = 32;
+const isPickerDescription = (description: string | null | undefined): description is string =>
+  typeof description === "string" &&
+  description.length > 0 &&
+  description.length <= MAX_FORWARDED_MODEL_DESCRIPTION_LENGTH;
+
 function modelsFromDiscovery(
   discovery:
     | Pick<
@@ -206,6 +217,7 @@ function modelsFromDiscovery(
       : discovered.map((model) => ({
           slug: model.id,
           name: model.name,
+          ...(isPickerDescription(model.description) ? { description: model.description } : {}),
           isCustom: false,
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
           capabilities: capabilitiesFor(model),
@@ -382,7 +394,7 @@ export function applyAcpRegistryLiveConfiguration(
         models: probedModels.map((model) => ({
           id: model.slug,
           name: model.name,
-          description: null,
+          description: model.description ?? null,
         })),
         currentModelId: selectedProbedModelId,
       };

@@ -79,6 +79,7 @@ import { hasRuntimeModelCatalog } from "../../providerModels";
 type ModelPickerItem = {
   slug: string;
   name: string;
+  description?: string | undefined;
   shortName?: string;
   subProvider?: string;
   badge?: "new";
@@ -612,6 +613,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         out.push({
           slug: model.slug,
           name: model.name,
+          ...(model.description ? { description: model.description } : {}),
           ...(model.shortName ? { shortName: model.shortName } : {}),
           ...(model.subProvider ? { subProvider: model.subProvider } : {}),
           ...(model.badge ? { badge: model.badge } : {}),
@@ -707,6 +709,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         lockedProvider !== null ? result.filter((m) => matchesLockedProvider(m)) : result;
       return rankModelPickerSearch(candidates, searchQuery, (model) => ({
         name: model.name,
+        ...(model.description ? { description: model.description } : {}),
         ...(model.shortName ? { shortName: model.shortName } : {}),
         ...(model.subProvider ? { subProvider: model.subProvider } : {}),
         driverKind: model.driverKind,
@@ -1215,6 +1218,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     index={index}
                     slug={model.slug}
                     name={model.name}
+                    description={model.description}
                     subProvider={model.subProvider}
                     instanceId={model.instanceId}
                     driverKind={model.driverKind}

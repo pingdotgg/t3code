@@ -16,6 +16,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
   slug: string;
   name: string;
+  description?: string | undefined;
   subProvider?: string | undefined;
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
@@ -86,6 +87,20 @@ export const ModelListRow = memo(function ModelListRow(props: {
           <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
             {props.subProvider}
           </span>
+        ) : null}
+        {props.description ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
+                  {props.description}
+                </span>
+              }
+            />
+            <TooltipPopup side="top" align="center">
+              {props.description}
+            </TooltipPopup>
+          </Tooltip>
         ) : null}
         {props.showNewBadge ? (
           <span

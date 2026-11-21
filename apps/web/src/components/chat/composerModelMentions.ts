@@ -24,6 +24,7 @@ export function matchComposerModelItems(input: {
 
   return rankComposerModelMentions(candidates, input.query, ({ entry, option }) => ({
     name: option.name,
+    ...(option.description ? { description: option.description } : {}),
     ...(option.shortName ? { shortName: option.shortName } : {}),
     ...(option.subProvider ? { subProvider: option.subProvider } : {}),
     driverKind: entry.driverKind,
@@ -38,6 +39,8 @@ export function matchComposerModelItems(input: {
     acpRegistryAgentId: entry.acpRegistryAgentId,
     acpRegistryIconUrl: entry.acpRegistryIconUrl,
     label: getDisplayModelName(option),
-    description: option.subProvider ?? entry.displayName,
+    description: option.description
+      ? `${option.subProvider ?? entry.displayName} · ${option.description}`
+      : (option.subProvider ?? entry.displayName),
   }));
 }

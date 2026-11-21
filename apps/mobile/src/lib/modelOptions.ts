@@ -40,6 +40,8 @@ export type ModelOption = {
   readonly key: string;
   readonly label: string;
   readonly shortName?: string;
+  /** Secondary provider metadata, such as a credit multiplier. Kept separate from `subtitle`, which groups models by sub-provider. */
+  readonly description?: string | undefined;
   readonly subtitle: string;
   readonly providerKey: string;
   readonly providerLabel: string;
@@ -421,6 +423,7 @@ export function buildModelOptions(
         key,
         label: model.name,
         ...(shortName ? { shortName } : {}),
+        ...(model.description ? { description: model.description } : {}),
         subtitle: model.subProvider ?? "",
         providerKey: provider.instanceId,
         providerLabel,
@@ -491,6 +494,7 @@ export function buildModelOptions(
         key,
         label: model?.name ?? fallbackModelSelection.model,
         ...(shortName ? { shortName } : {}),
+        ...(model?.description ? { description: model.description } : {}),
         subtitle: model?.subProvider ?? "",
         providerKey: fallbackModelSelection.instanceId,
         providerLabel,

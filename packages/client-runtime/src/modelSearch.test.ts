@@ -58,6 +58,7 @@ type CatalogModel = {
   providerDisplayName: string;
   name: string;
   subProvider?: string;
+  description?: string;
   isFavorite?: boolean;
 };
 
@@ -134,6 +135,25 @@ function search(query: string, models: ReadonlyArray<CatalogModel> = catalog): s
 }
 
 describe("rankModelPickerSearch", () => {
+  it("matches provider metadata such as a credit multiplier", () => {
+    const models: CatalogModel[] = [
+      {
+        driverKind: "acpRegistry",
+        providerDisplayName: "Codebuddy",
+        name: "Hy4",
+        description: "x0.29 credits",
+      },
+      {
+        driverKind: "acpRegistry",
+        providerDisplayName: "Codebuddy",
+        name: "Hy4 flash",
+        description: "x0.00 credits",
+      },
+    ];
+    expect(search("x0.00", models)).toEqual(["Hy4 flash"]);
+    expect(search("credits", models)).toEqual(["Hy4", "Hy4 flash"]);
+  });
+
   it("keeps newest first when a version token narrows the family", () => {
     expect(search("opus 4")).toEqual([
       "Claude Opus 4.8",

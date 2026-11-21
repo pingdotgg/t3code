@@ -212,6 +212,7 @@ export function buildComposerModelItems(
     query,
     (option) => ({
       name: option.label,
+      ...(option.description ? { description: option.description } : {}),
       ...(option.subtitle ? { subProvider: option.subtitle } : {}),
       driverKind: option.providerDriver,
       providerDisplayName: option.providerLabel,
@@ -221,9 +222,12 @@ export function buildComposerModelItems(
     type: "model",
     option,
     label: option.label,
-    description: option.subtitle
-      ? `${option.providerLabel} · ${option.subtitle}`
-      : option.providerLabel,
+    description: [
+      option.subtitle ? `${option.providerLabel} · ${option.subtitle}` : option.providerLabel,
+      option.description,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   }));
 }
 

@@ -6,6 +6,7 @@ export type ModelPickerSearchableModel = {
   name: string;
   shortName?: string;
   subProvider?: string;
+  description?: string;
   isFavorite?: boolean;
 };
 
@@ -20,6 +21,7 @@ function getModelPickerSearchFields(model: ModelPickerSearchableModel): string[]
     normalizeSearchQuery(model.driverKind),
     normalizeSearchQuery(model.providerDisplayName),
     buildModelPickerSearchText(model),
+    ...(model.description ? [normalizeSearchQuery(model.description)] : []),
   ];
 }
 
@@ -46,7 +48,14 @@ function normalizeModelName(name: string): string {
 
 function buildModelPickerSearchText(model: ModelPickerSearchableModel): string {
   return normalizeSearchQuery(
-    [model.name, model.shortName, model.subProvider, model.driverKind, model.providerDisplayName]
+    [
+      model.name,
+      model.shortName,
+      model.subProvider,
+      model.driverKind,
+      model.providerDisplayName,
+      model.description,
+    ]
       .filter((value): value is string => typeof value === "string" && value.length > 0)
       .join(" "),
   );
