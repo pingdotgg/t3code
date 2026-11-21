@@ -70,8 +70,8 @@ export function mayContainStandaloneIssueLink(text: string): boolean {
 
 /**
  * A standalone tracker link resolves through the project bound to its scope, else any bound to
- * the tracker, and only when it names the workspace the credential reaches: team keys repeat
- * across workspaces, so a link elsewhere stays an ordinary link.
+ * the tracker, and only through an account whose credential reaches the workspace it names: team
+ * keys repeat across workspaces, so a link elsewhere stays an ordinary link.
  */
 function resolveStandaloneIssueLink<Project extends LinkProject>(
   url: string,
@@ -82,14 +82,23 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
   const parsed = trackers === undefined ? null : parseStandaloneIssueLink(url);
   if (parsed === null || trackers === undefined) return null;
   const { tracker, link } = parsed;
-  const workspace = trackers.trackers.find(
-    (connection) => connection.tracker === tracker && connection.account !== null,
-  )?.workspace;
-  if (workspace?.toLowerCase() !== link.workspace.toLowerCase()) return null;
-  const { bindings } = trackers;
+  const accounts = new Set(
+    [...trackers.trackers, ...(trackers.accounts ?? [])]
+      .filter(
+        (connection) =>
+          connection.tracker === tracker &&
+          connection.account !== null &&
+          connection.workspace?.toLowerCase() === link.workspace.toLowerCase(),
+      )
+      .map((connection) => connection.accountId ?? null),
+  );
+  if (accounts.size === 0) return null;
+  const bindings = { ...trackers.bindings, ...trackers.accountBindings };
   const onTracker = projects.flatMap((project) => {
     const binding = bindings[project.id];
-    return binding?.tracker === tracker ? [{ project, binding }] : [];
+    return binding?.tracker === tracker && accounts.has(binding.accountId ?? null)
+      ? [{ project, binding }]
+      : [];
   });
   const preferFirst = (candidates: typeof onTracker) =>
     candidates.find((candidate) => candidate.project.id === preferredProjectId) ?? candidates[0];

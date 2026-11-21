@@ -2,12 +2,12 @@
  * What a standalone tracker package may ask of the server it runs in: the credential the user
  * saved in Settings. Git-host trackers never need it; their CLIs carry their own credentials.
  */
-import type { IssueTrackerKind } from "@t3tools/contracts";
+import type { IssueTrackerAccountId, IssueTrackerKind } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
 
-import type { IssueTrackerError } from "./IssueTracker.ts";
+import type { IssueTrackerApi, IssueTrackerError } from "./IssueTracker.ts";
 
 export class IssueTrackerHost extends Context.Service<
   IssueTrackerHost,
@@ -20,3 +20,37 @@ export class IssueTrackerHost extends Context.Service<
     };
   }
 >()("@t3tools/source-control-core/server/IssueTrackerHost") {}
+
+/**
+ * The account a standalone tracker call is made as, set by the server around each call; null is
+ * the tracker's first account. A tracker never reads it: `credentials.get` does.
+ */
+export const IssueTrackerAccount = Context.Reference<IssueTrackerAccountId | null>(
+  "@t3tools/source-control-core/server/IssueTrackerHost/IssueTrackerAccount",
+  { defaultValue: () => null },
+);
+
+/** The tracker with every call made as one account, so no call site can forget to name it. */
+export function asIssueTrackerAccount(
+  api: IssueTrackerApi,
+  accountId: IssueTrackerAccountId | null,
+): IssueTrackerApi {
+  if (accountId === null) return api;
+  const as = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.provideService(effect, IssueTrackerAccount, accountId);
+  const { create, comment, update, setState, setReaction, listTemplates, listCandidates } = api;
+  return {
+    ...api,
+    getViewer: (input) => as(api.getViewer(input)),
+    listIssues: (input) => as(api.listIssues(input)),
+    getIssue: (input) => as(api.getIssue(input)),
+    getComments: (input) => as(api.getComments(input)),
+    ...(create && { create: (input) => as(create(input)) }),
+    ...(comment && { comment: (input) => as(comment(input)) }),
+    ...(update && { update: (input) => as(update(input)) }),
+    ...(setState && { setState: (input) => as(setState(input)) }),
+    ...(setReaction && { setReaction: (input) => as(setReaction(input)) }),
+    ...(listTemplates && { listTemplates: (input) => as(listTemplates(input)) }),
+    ...(listCandidates && { listCandidates: (input) => as(listCandidates(input)) }),
+  };
+}

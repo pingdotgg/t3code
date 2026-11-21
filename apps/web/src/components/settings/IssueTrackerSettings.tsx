@@ -1,14 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   boundIssueTrackerScopes,
+  hasIssueTrackerTeams,
   issueTrackerBindingFor,
+  issueTrackerBindings,
   issueTrackerScopeOptions,
   issueTrackerSummary,
-  hasIssueTrackerTeams,
 } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, useMessages } from "gt-react";
-import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ExternalLinkIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState, type ElementType } from "react";
 import type {
   EnvironmentId,
@@ -19,7 +20,7 @@ import type {
 
 import { useEnvironmentQuery } from "../../state/query";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
@@ -53,7 +54,10 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
   const query = useEnvironmentQuery(
     issueTrackerEnvironment.connections({ environmentId, input: {} }),
   );
+  const canAddAccounts =
+    useServerConfigs().get(environmentId)?.environment.capabilities.issueTrackerAccounts === true;
   const trackers = query.data?.trackers ?? [];
+  const accounts = query.data?.accounts ?? [];
   if (query.data === null && query.isPending) {
     return (
       <SettingsSection id={searchableSetting("issue-trackers").id} title={title}>
@@ -82,17 +86,23 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
   if (trackers.length === 0) return null;
   return (
     <SettingsSection id={searchableSetting("issue-trackers").id} title={title}>
-      {trackers.map((tracker) => (
-        <TrackerRow
-          // Drafts belong to one environment; switching must not carry them over.
-          key={`${tracker.tracker}-${environmentId}`}
-          environmentId={environmentId}
-          tracker={tracker}
-          bindings={query.data?.bindings ?? {}}
-          refreshing={query.isPending}
-          refreshFailed={query.error !== null}
-        />
-      ))}
+      {trackers.flatMap((tracker) => {
+        const added = accounts.filter((account) => account.tracker === tracker.tracker);
+        // Another account is added from the first one's row, which stays while any is connected.
+        const canAddAccount = canAddAccounts && (tracker.connected || added.length > 0);
+        return [tracker, ...added].map((account) => (
+          <TrackerRow
+            // Drafts belong to one environment; switching must not carry them over.
+            key={`${tracker.tracker}-${account.accountId ?? ""}-${environmentId}`}
+            environmentId={environmentId}
+            tracker={account}
+            bindings={issueTrackerBindings(query.data)}
+            refreshing={query.isPending}
+            refreshFailed={query.error !== null}
+            canAddAccount={canAddAccount && account.accountId === undefined}
+          />
+        ));
+      })}
     </SettingsSection>
   );
 }
@@ -103,12 +113,14 @@ function TrackerRow({
   bindings,
   refreshing,
   refreshFailed,
+  canAddAccount,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
   readonly refreshing: boolean;
   readonly refreshFailed: boolean;
+  readonly canAddAccount: boolean;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -121,20 +133,23 @@ function TrackerRow({
   const [failure, setFailure] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const submit = async (token: string | null) => {
+  const submit = async (token: string | null, addAccount = false) => {
     setBusy(true);
     setFailure(null);
     const result = await connect({
       environmentId,
-      input: { tracker: tracker.tracker, token },
+      input: addAccount
+        ? { tracker: tracker.tracker, token, addAccount }
+        : { tracker: tracker.tracker, accountId: tracker.accountId, token },
     });
     setBusy(false);
-    if (result._tag === "Success") return;
+    if (result._tag === "Success") return true;
     const error = squashAtomCommandFailure(result);
     setFailure(error instanceof Error ? error.message : gt("The request failed."));
+    return false;
   };
 
-  const inputId = `issue-tracker-${tracker.tracker}-${environmentId}`;
+  const inputId = `issue-tracker-${tracker.tracker}-${tracker.accountId ?? ""}-${environmentId}`;
   const usable = tracker.connected && tracker.account !== null;
   const summary = issueTrackerSummary(tracker, bindings, messages);
 
@@ -156,6 +171,9 @@ function TrackerRow({
             <span className="truncate text-sm font-medium text-foreground">
               {tracker.displayName}
             </span>
+            {tracker.workspace ? (
+              <span className="truncate text-xs text-muted-foreground">{tracker.workspace}</span>
+            ) : null}
             {tracker.connected && tracker.account === null ? (
               <Badge variant="destructive" size="sm">
                 <T>Credential rejected</T>
@@ -242,6 +260,9 @@ function TrackerRow({
                   refreshFailed={refreshFailed}
                 />
               ) : null}
+              {canAddAccount ? (
+                <AddAccountRow tracker={tracker} onAdd={(token) => submit(token, true)} />
+              ) : null}
             </div>
           </fieldset>
         </CollapsibleContent>
@@ -275,17 +296,17 @@ function ProjectBindings({
   if (held && !saving && !refreshing && !refreshFailed) setPicks({});
   const busy = saving || (held && refreshing);
   const bound = (projectId: ProjectId) =>
-    picks[projectId] ?? boundIssueTrackerScopes(tracker.tracker, bindings[projectId]);
+    picks[projectId] ?? boundIssueTrackerScopes(tracker, bindings[projectId]);
   if (projects.length === 0 || !hasIssueTrackerTeams(tracker, bindings)) return null;
 
   const change = async (projectId: ProjectId, scopes: ReadonlyArray<string>) => {
     if (busy) return;
-    const binding = issueTrackerBindingFor(tracker.tracker, bound(projectId), scopes);
+    const binding = issueTrackerBindingFor(tracker, bound(projectId), scopes);
     const before = picks[projectId];
     setSaving(true);
     setPicks((current) => ({
       ...current,
-      [projectId]: boundIssueTrackerScopes(tracker.tracker, binding ?? undefined),
+      [projectId]: boundIssueTrackerScopes(tracker, binding ?? undefined),
     }));
     const result = await bind({ environmentId, input: { projectId, binding } });
     if (result._tag !== "Success") setPicks((current) => ({ ...current, [projectId]: before }));
@@ -302,7 +323,7 @@ function ProjectBindings({
         )}
       />
       {projects.map((project) => {
-        // A project bound to another tracker keeps that binding; this picker shows it unbound.
+        // A project bound to another tracker or account keeps that binding; this picker shows it unbound.
         const value = bound(project.id);
         const options = issueTrackerScopeOptions(tracker, value);
         return (
@@ -357,5 +378,51 @@ function ProjectBindings({
         );
       })}
     </>
+  );
+}
+
+/** A credential for another account of the tracker, kept beside this one. */
+function AddAccountRow({
+  tracker,
+  onAdd,
+}: {
+  readonly tracker: IssueTrackerConnection;
+  readonly onAdd: (token: string) => Promise<boolean>;
+}) {
+  const gt = useGT();
+  const [adding, setAdding] = useState(false);
+  const inputId = `issue-tracker-${tracker.tracker}-add-account`;
+  if (!adding) {
+    return (
+      <SettingsRow
+        title={gt("Another account")}
+        description={gt("Connect a second {tracker} workspace or user.", {
+          tracker: tracker.displayName,
+        })}
+        control={
+          <Button type="button" size="xs" variant="outline" onClick={() => setAdding(true)}>
+            <PlusIcon className="size-3.5" />
+            <T>Add account</T>
+          </Button>
+        }
+      />
+    );
+  }
+  return (
+    <SettingsRow
+      title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
+      description={gt("For the new {tracker} account.", { tracker: tracker.displayName })}
+      control={
+        <SecretInput
+          id={inputId}
+          size="sm"
+          className="w-full min-w-0 @min-[32rem]/settings-row:w-56"
+          value=""
+          onCommit={(next) => {
+            if (next.trim()) void onAdd(next.trim()).then((added) => added && setAdding(false));
+          }}
+        />
+      }
+    />
   );
 }

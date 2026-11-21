@@ -412,7 +412,10 @@ To list Linear issues beside a project's, connect Linear with an API key under
 Settings → Source control & issues, then pick one or more teams for that project there. Pick
 another team at any time to add it; uncheck every team to unbind the project. Each team's
 issues appear in the Linear group of the issue list, sorted with the rest by last update, and
-each can be loaded further on its own. Agents file new issues in the first team picked.
+each can be loaded further on its own. Agents file new issues in the first team picked. Use
+**Add account** in the same place (on mobile, the **Another account** form on Linear's page) to
+connect another Linear workspace or user; each project reads its teams through the account you
+picked them under.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can

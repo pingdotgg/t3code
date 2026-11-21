@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
+  IssueTrackerAccountId,
   IssueTrackerKind,
   type IssueTrackerProjectBinding,
   SourceControlProviderKind,
@@ -16,6 +17,7 @@ import {
   type StandaloneIssueTrackerApi,
   type TrackerIssueDetail,
 } from "@t3tools/source-control-core/server/IssueTracker";
+import { IssueTrackerAccount } from "@t3tools/source-control-core/server/IssueTrackerHost";
 
 import { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
@@ -59,6 +61,7 @@ function fakeStandaloneTracker(
         ["https://linear.app/acme/issue/ENG-1/issue-title", "acme"],
         ["https://linear.app/acme/issue/ENG-1/canonical-title", "acme"],
         ["https://linear.app/other-workspace/issue/ENG-1/old-title", "other-workspace"],
+        ["https://linear.app/other-workspace/issue/ENG-1/canonical-title", "other-workspace"],
       ]);
       const workspace = links.get(url.href);
       return workspace === undefined
@@ -588,6 +591,124 @@ describe("IssueService with a standalone tracker", () => {
       const missing = yield* service.list({ state: "open", projectId: "missing" as ProjectId });
       expect(missing.scopes).toEqual([]);
       expect(reads).toBe(2);
+    }),
+  );
+
+  it.effect("reads each project's team as the account it is bound with", () =>
+    Effect.gen(function* () {
+      const asWhom = Effect.map(IssueTrackerAccount, (account) => account ?? "first");
+      const fail = (reason: IssueTrackerError["reason"], retryAt?: number) =>
+        new IssueTrackerError({
+          tracker: LINEAR,
+          operation: "read",
+          reason,
+          detail: reason,
+          ...(retryAt === undefined ? {} : { retryAt }),
+        });
+      const twoAccounts = (overrides: Partial<IssueTrackerApi>) =>
+        makeService({
+          projects: [project({ id: "work" }), project({ id: "home" })],
+          trackers: [fakeStandaloneTracker(overrides)],
+          bindings: {
+            work: { tracker: LINEAR, scope: "ENG" },
+            home: {
+              tracker: LINEAR,
+              accountId: IssueTrackerAccountId.make("second"),
+              scope: "ENG",
+            },
+          },
+        });
+      const calls: string[] = [];
+      const service = yield* twoAccounts({
+        getViewer: () => Effect.map(asWhom, (account) => `viewer-${account}`),
+        listIssues: (input) =>
+          Effect.map(asWhom, (account) => {
+            calls.push(`${account} ${input.cursor ?? ""}`);
+            return { items: [issue("ENG-1")], nextCursor: `${account}-next` };
+          }),
+        getIssue: (input) =>
+          Effect.map(asWhom, (account) => ({
+            ...issue(input.key),
+            title: account,
+            url: `https://linear.app/${account === "first" ? "acme" : "other-workspace"}/issue/${input.key}/canonical-title`,
+          })),
+      });
+
+      // The same team key on two accounts is two scopes, each with its own cursor and viewer.
+      const listed = yield* service.list({ state: "open", involvement: "assigned" });
+      expect(calls.sort()).toEqual(["first ", "second "]);
+      expect(listed).toMatchObject({
+        viewers: { "linear.app": "viewer-first", "linear.app second": "viewer-second" },
+        nextCursors: { "linear.app eng": "first-next", "linear.app second/eng": "second-next" },
+      });
+      calls.length = 0;
+      yield* service.list({ state: "open", cursors: { "linear.app second/eng": "second-next" } });
+      expect(calls).toEqual(["second second-next"]);
+      const ref = { tracker: LINEAR, scope: "ENG", key: "ENG-1", projectId: "home" as ProjectId };
+      expect(yield* service.detail(ref)).toMatchObject({ title: "second" });
+
+      // A link resolves through the account whose workspace it names, whichever is preferred.
+      expect(
+        yield* service.resolveUrl(
+          "https://linear.app/other-workspace/issue/ENG-1/old-title",
+          "work" as ProjectId,
+        ),
+      ).toMatchObject({ projectId: "home", issue: { title: "second" } });
+
+      // One refused key leaves the group usable, even on a continuation that skips the other.
+      const refusing = (refused: ReadonlyArray<string>) =>
+        twoAccounts({
+          listIssues: () =>
+            Effect.flatMap(asWhom, (account) =>
+              refused.includes(account)
+                ? Effect.fail(fail("unauthenticated"))
+                : Effect.succeed({ items: [], nextCursor: null }),
+            ),
+        });
+      const partly = yield* (yield* refusing(["second"])).list({ state: "open" });
+      expect(partly).toMatchObject({
+        trackers: [{ configured: true }],
+        errors: [{ projectId: "home" }],
+      });
+      const continued = yield* (yield* refusing(["second"])).list({
+        state: "open",
+        cursors: { "linear.app second/eng": "second-next" },
+      });
+      expect(continued.trackers).toMatchObject([{ configured: true }]);
+      const none = yield* (yield* refusing(["first", "second"])).list({ state: "open" });
+      expect(none.trackers).toMatchObject([{ configured: false }]);
+
+      // The preferred account missing the key does not hide why the link's own account failed.
+      const limited = yield* twoAccounts({
+        getIssue: () =>
+          Effect.flatMap(asWhom, (account) =>
+            Effect.fail(account === "first" ? fail("not-found") : fail("rate-limited", 60)),
+          ),
+      });
+      expect(
+        yield* Effect.flip(
+          limited.resolveUrl(
+            "https://linear.app/other-workspace/issue/ENG-1/old-title",
+            "work" as ProjectId,
+          ),
+        ),
+      ).toMatchObject({ reason: "rate-limited", retryAt: 60 });
+
+      // Two users of one workspace: the account bound to the link's exact team serves it.
+      const sameWorkspace = yield* makeService({
+        projects: [project({ id: "ops" }), project({ id: "eng" })],
+        trackers: [fakeStandaloneTracker()],
+        bindings: {
+          ops: { tracker: LINEAR, scope: "OPS" },
+          eng: { tracker: LINEAR, accountId: IssueTrackerAccountId.make("second"), scope: "ENG" },
+        },
+      });
+      expect(
+        yield* sameWorkspace.resolveUrl(
+          "https://linear.app/acme/issue/ENG-1/old-title",
+          "ops" as ProjectId,
+        ),
+      ).toMatchObject({ projectId: "eng", writable: true });
     }),
   );
 
