@@ -1810,8 +1810,10 @@ const make = Effect.gen(function* () {
     ): Effect.fn.Return<void, PlatformError | ServerSettingsError> {
       for (const name of yield* fs.readDirectory(directory)) {
         const target = path.join(directory, name);
-        if ((yield* fs.realPath(target)) !== target || !inside(realRoot, target)) continue;
-        const stat = yield* fs.stat(target);
+        if (!inside(realRoot, target)) continue;
+        const stat = yield* fs.lstat(target);
+        if (stat.type === "SymbolicLink") continue;
+        if ((yield* fs.realPath(target)) !== target) continue;
         if (stat.type === "Directory" && rotatedLogs) {
           yield* visit(target);
         } else if (stat.type === "File" && (!rotatedLogs || /\.(?:log|ndjson)\.\d+$/.test(name))) {

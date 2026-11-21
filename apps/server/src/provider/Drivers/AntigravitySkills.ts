@@ -48,14 +48,14 @@ const SkillFrontmatter = Schema.Struct({
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 const SkillConfigEntry = Schema.Struct({
   path: Schema.String,
-  include_only: Schema.optional(Schema.Array(Schema.String)),
-  exclude: Schema.optional(Schema.Array(Schema.String)),
+  include_only: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  exclude: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
 });
 const decodeSkillsConfig = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
-      inherits: Schema.optional(Schema.Array(SkillConfigEntry)),
-      entries: Schema.optional(Schema.Array(SkillConfigEntry)),
+      inherits: Schema.optional(Schema.NullOr(Schema.Array(SkillConfigEntry))),
+      entries: Schema.optional(Schema.NullOr(Schema.Array(SkillConfigEntry))),
     }),
   ),
 );
@@ -185,124 +185,36 @@ const readSkillFrontmatter = Effect.fn("readAntigravitySkill")(function* (
   return bytes.toString("utf8", 0, frontmatterEnd);
 });
 
-type SkillPatternMatcher = (entry: string) => boolean;
-
 interface SkillEntryFilter {
-  readonly includeGroups: ReadonlyArray<ReadonlyArray<SkillPatternMatcher>>;
-  readonly excludePatterns: ReadonlyArray<SkillPatternMatcher>;
+  readonly includeGroups: ReadonlyArray<ReadonlyArray<string>>;
+  readonly excludeNames: ReadonlyArray<string>;
 }
 
 const EMPTY_SKILL_FILTER: SkillEntryFilter = {
   includeGroups: [],
-  excludePatterns: [],
+  excludeNames: [],
 };
-
-interface SkillPatternToken {
-  readonly test: (character: string) => boolean;
-  readonly optional: boolean;
-  readonly repeats: boolean;
-}
-
-/** Undefined for syntax outside literals, escapes, `.`, `[...]` and `* + ?`; such patterns match literally. */
-function parseSkillPattern(pattern: string): ReadonlyArray<SkillPatternToken> | undefined {
-  const characters = Array.from(pattern);
-  const tokens: Array<SkillPatternToken> = [];
-  let index = 0;
-  while (index < characters.length) {
-    const character = characters[index]!;
-    let test: (candidate: string) => boolean;
-    if (character === "\\") {
-      const escaped = characters[index + 1];
-      if (escaped === undefined) return undefined;
-      if (/[dDwWsS]/.test(escaped)) {
-        const characterClass = new RegExp(`^\\${escaped}$`, "u");
-        test = (candidate) => characterClass.test(candidate);
-      } else {
-        test = (candidate) => candidate === escaped;
-      }
-      index += 2;
-    } else if (character === "[") {
-      const close = characters.indexOf("]", index + 2);
-      if (close === -1) return undefined;
-      let characterClass: RegExp;
-      try {
-        characterClass = new RegExp(`^[${characters.slice(index + 1, close).join("")}]$`, "u");
-      } catch {
-        return undefined;
-      }
-      test = (candidate) => characterClass.test(candidate);
-      index = close + 1;
-    } else if (character === ".") {
-      test = () => true;
-      index += 1;
-    } else if ("()|{}^$*+?".includes(character)) {
-      return undefined;
-    } else {
-      test = (candidate) => candidate === character;
-      index += 1;
-    }
-    const quantifier = characters[index];
-    const optional = quantifier === "*" || quantifier === "?";
-    const repeats = quantifier === "*" || quantifier === "+";
-    if (optional || repeats) {
-      index += 1;
-      if (characters[index] === "?") index += 1;
-    }
-    tokens.push({ test, optional, repeats });
-  }
-  return tokens;
-}
-
-/** Manifests can come from an opened workspace, so matching runs as an NFA in linear time instead of RegExp. */
-function compileSkillPattern(pattern: string): SkillPatternMatcher {
-  const tokens = parseSkillPattern(pattern);
-  if (tokens === undefined) return (entry) => entry === pattern;
-  const close = (states: Set<number>) => {
-    for (const state of states) {
-      if (state < tokens.length && tokens[state]!.optional) states.add(state + 1);
-    }
-    return states;
-  };
-  return (entry) => {
-    let states = close(new Set([0]));
-    for (const character of entry) {
-      const next = new Set<number>();
-      for (const state of states) {
-        const token = tokens[state];
-        if (!token?.test(character)) continue;
-        next.add(state + 1);
-        if (token.repeats) next.add(state);
-      }
-      if (next.size === 0) return false;
-      states = close(next);
-    }
-    return states.has(tokens.length);
-  };
-}
 
 function matchesSkillFilter(entry: string, filter: SkillEntryFilter): boolean {
   for (const group of filter.includeGroups) {
-    if (!group.some((matches) => matches(entry))) return false;
+    if (!group.includes(entry)) return false;
   }
-  return !filter.excludePatterns.some((matches) => matches(entry));
+  return !filter.excludeNames.includes(entry);
 }
 
 function narrowSkillFilter(
   parent: SkillEntryFilter,
-  entry: {
-    readonly include_only?: ReadonlyArray<string> | undefined;
-    readonly exclude?: ReadonlyArray<string> | undefined;
-  },
+  entry: typeof SkillConfigEntry.Type,
 ): SkillEntryFilter {
   const includeGroups =
     entry.include_only && entry.include_only.length > 0
-      ? [...parent.includeGroups, entry.include_only.map(compileSkillPattern)]
+      ? [...parent.includeGroups, entry.include_only]
       : parent.includeGroups;
-  const excludePatterns =
+  const excludeNames =
     entry.exclude && entry.exclude.length > 0
-      ? [...parent.excludePatterns, ...entry.exclude.map(compileSkillPattern)]
-      : parent.excludePatterns;
-  return { includeGroups, excludePatterns };
+      ? [...parent.excludeNames, ...entry.exclude]
+      : parent.excludeNames;
+  return { includeGroups, excludeNames };
 }
 
 // agy does not expand ~, so a ~/ path stays relative to the config file.

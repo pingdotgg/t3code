@@ -59,6 +59,7 @@ export class GitWorkflowService extends Context.Service<
         readonly refName: string;
         readonly aheadCount: number;
         readonly behindCount: number;
+        readonly details: GitVcsDriver.GitRemoteStatusDetails;
       } | null,
       GitManagerServiceError
     >;
@@ -384,6 +385,7 @@ export const make = Effect.gen(function* () {
             refName: details.branch,
             aheadCount: details.aheadCount,
             behindCount: details.behindCount,
+            details,
           }
         : null;
     }),
