@@ -14220,7 +14220,41 @@ describe("subagent lifecycle cascade", () => {
         },
       });
     });
-    return { threads, now, set, sideChat, run, commit, state, archived, outbox, cascade, drain };
+    const markUsed = (threadId: ThreadId) =>
+      store.apply({
+        id: EventId.make(`use:${threadId}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make(`use:${threadId}`),
+          threadId,
+          runId: null,
+          nodeId: null,
+          role: "user",
+          text: "This thread has a message.",
+          attachments: [],
+          streaming: false,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    return {
+      threads,
+      now,
+      set,
+      sideChat,
+      run,
+      commit,
+      state,
+      archived,
+      outbox,
+      cascade,
+      drain,
+      markUsed,
+    };
   });
   const receipt = (id: string) =>
     Effect.flatMap(Receipts.CommandReceiptStoreV2, (r) => r.getByCommandId(CommandId.make(id)));
@@ -14408,6 +14442,22 @@ describe("subagent lifecycle cascade", () => {
         yield* f.drain;
         yield* TestClock.adjust("8 days");
         yield* f.outbox.pruneSettled;
+        if (source === parent && delivery === "reply") {
+          yield* f.markUsed(parent);
+          yield* f.threads.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("rename:archived-parent"),
+            threadId: parent,
+            title: "Renamed parent",
+          });
+          const kept = yield* f.threads.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make("unused-only:parent"),
+            threadId: parent,
+            onlyIfUnused: true,
+          });
+          assert.isEmpty(kept.storedEvents);
+        }
         yield* apply("unarchive");
         assert.equal(yield* f.archived(side, child, independent), "001");
       }).pipe(Effect.provide(layerTest)),
@@ -14466,7 +14516,7 @@ describe("subagent lifecycle cascade", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(["reply", "worker", "legacy worker"] as const)(
+  it.effect.each(["reply", "worker", "legacy worker", "legacy worker after unused close"] as const)(
     "leaves a moved side chat's subagent alone during parent deletion through %s",
     (delivery) =>
       Effect.gen(function* () {
@@ -14480,16 +14530,28 @@ describe("subagent lifecycle cascade", () => {
           projectId,
           lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
         });
+        const commandId = CommandId.make("delete:parent:side-chat:side");
+        if (delivery === "legacy worker after unused close") {
+          yield* f.markUsed(side);
+          const kept = yield* f.threads.dispatch({
+            type: "thread.delete",
+            commandId,
+            threadId: side,
+            onlyIfUnused: true,
+          });
+          assert.isEmpty(kept.storedEvents);
+        }
         if (delivery === "reply") yield* f.run("delete");
         else {
           yield* f.commit("delete");
-          if (delivery === "legacy worker") {
+          if (delivery === "worker") yield* f.drain;
+          else {
             yield* f.threads.cascadeSubagentLifecycle({
               threadId: side,
-              commandId: CommandId.make("delete:parent:side-chat:side"),
+              commandId,
               operation: "thread.delete",
             });
-          } else yield* f.drain;
+          }
         }
         assert.equal(yield* f.state("deletedAt", parent, side, child), "110");
       }).pipe(Effect.provide(layerTest)),

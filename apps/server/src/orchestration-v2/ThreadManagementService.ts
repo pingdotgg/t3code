@@ -1810,27 +1810,32 @@ const make = Effect.gen(function* () {
     if (failures[0] !== undefined) return yield* failures[0];
   });
 
-  // Older embedded deletes have only the enclosing parent's lifecycle receipt.
+  // An older embedded delete can share its derived ID with an accepted unused-only close.
   const legacySideChatDeletionParent = Effect.fn(
     "ThreadManagementService.legacySideChatDeletionParent",
   )(function* (commandId: CommandId, threadId: ThreadId) {
     const suffix = `:side-chat:${threadId}`;
     if (commandId.length <= suffix.length || !commandId.endsWith(suffix)) return;
+    const parentCommandId = CommandId.make(commandId.slice(0, -suffix.length));
+    const parent = Option.getOrUndefined(yield* receipts.getByCommandId(parentCommandId));
+    if (
+      parent?.status !== "accepted" ||
+      parent.commandType !== "thread.delete" ||
+      parent.threadId === threadId
+    )
+      return;
     const direct = Option.getOrUndefined(yield* receipts.getByCommandId(commandId));
     if (
       direct?.threadId === threadId &&
       direct.commandType === "thread.delete" &&
       direct.status === "accepted"
-    )
-      return;
-    const parentCommandId = CommandId.make(commandId.slice(0, -suffix.length));
-    const parent = Option.getOrUndefined(yield* receipts.getByCommandId(parentCommandId));
-    if (
-      parent?.status === "accepted" &&
-      parent.commandType === "thread.delete" &&
-      parent.threadId !== threadId
-    )
-      return parent.threadId;
+    ) {
+      const deletion = yield* orchestrator
+        .streamStoredEventsFrom({ threadId, eventType: "thread.deleted" })
+        .pipe(Stream.runHead);
+      if (Option.isSome(deletion) && deletion.value.commandId !== parentCommandId) return;
+    }
+    return parent.threadId;
   });
 
   const cascadeSubagentLifecycle: ThreadManagementServiceShape["cascadeSubagentLifecycle"] =

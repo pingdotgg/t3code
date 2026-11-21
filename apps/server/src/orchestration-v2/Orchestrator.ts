@@ -15754,7 +15754,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (parent === null || sideChatIds.length === 0) break;
         const parentArchive =
           command.type === "thread.unarchive"
-            ? yield* commandReceipts.getLatestLifecycle(parent.id).pipe(mapDispatchError(command))
+            ? yield* commandReceipts
+                .getLatestLifecycle(parent.id, ["thread.archive"])
+                .pipe(mapDispatchError(command))
             : null;
         // Unarchive restores the side chats this parent's archive took, not ones archived before it.
         for (const threadId of sideChatIds) {
@@ -15780,7 +15782,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId,
           };
           const derivedArchiveId =
-            parentArchive?.commandType === "thread.archive"
+            parentArchive !== null
               ? sideChatLifecycleCommandId(parentArchive.commandId, threadId)
               : undefined;
           const sideChatArchive =

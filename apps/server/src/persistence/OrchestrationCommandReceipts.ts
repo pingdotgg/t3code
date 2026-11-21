@@ -30,6 +30,17 @@ export const GetByCommandIdInput = Schema.Struct({
 });
 export type GetByCommandIdInput = typeof GetByCommandIdInput.Type;
 
+const LifecycleCommandType = Schema.Literals([
+  "thread.archive",
+  "thread.unarchive",
+  "thread.delete",
+]);
+export type LifecycleCommandType = typeof LifecycleCommandType.Type;
+const GetLatestLifecycleInput = Schema.Struct({
+  threadId: ThreadId,
+  commandTypes: Schema.optional(Schema.Array(LifecycleCommandType)),
+});
+
 export class OrchestrationCommandReceiptRepository extends Context.Service<
   OrchestrationCommandReceiptRepository,
   {
@@ -41,9 +52,9 @@ export class OrchestrationCommandReceiptRepository extends Context.Service<
       receipt: OrchestrationCommandReceipt,
     ) => Effect.Effect<void, OrchestrationCommandReceiptRepositoryError>;
 
-    readonly getLatestLifecycle: (input: {
-      readonly threadId: ThreadId;
-    }) => Effect.Effect<
+    readonly getLatestLifecycle: (
+      input: typeof GetLatestLifecycleInput.Type,
+    ) => Effect.Effect<
       Option.Option<OrchestrationCommandReceipt>,
       OrchestrationCommandReceiptRepositoryError
     >;
@@ -116,15 +127,16 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
   });
 
   const findLatestLifecycle = SqlSchema.findOneOption({
-    Request: Schema.Struct({ threadId: ThreadId }),
+    Request: GetLatestLifecycleInput,
     Result: OrchestrationCommandReceipt,
-    execute: ({ threadId }) => sql`
+    execute: ({ threadId, commandTypes }) => sql`
       SELECT command_id AS "commandId", aggregate_kind AS "aggregateKind",
         aggregate_id AS "aggregateId", command_type AS "commandType",
         accepted_at AS "acceptedAt", result_sequence AS "resultSequence", status, error
       FROM orchestration_command_receipts
       WHERE aggregate_kind = 'thread' AND aggregate_id = ${threadId}
         AND status = 'accepted' AND command_type IN ('thread.archive', 'thread.unarchive', 'thread.delete')
+        ${commandTypes === undefined ? sql`` : sql`AND command_type IN ${sql.in(commandTypes)}`}
       ORDER BY result_sequence DESC LIMIT 1
     `,
   });
