@@ -82,6 +82,40 @@ describe("forgejoChangeRequest", () => {
   it("keeps the ref when the server sends no label", () => {
     assert.strictEqual(headBranch({ ref: "feature", repo: null }), "feature");
   });
+
+  it.each([
+    { mergeable: true, draft: false, title: "Feature", expected: "mergeable" },
+    { mergeable: false, draft: false, title: "Feature", expected: "conflicting" },
+    { mergeable: false, draft: true, title: "Feature", expected: "unknown" },
+    { mergeable: false, draft: false, title: "[WIP] Feature", expected: "unknown" },
+    { mergeable: false, draft: false, title: "WIP: Feature", expected: "unknown" },
+    { mergeable: undefined, draft: false, title: "Feature", expected: "unknown" },
+  ])(
+    "maps mergeable=$mergeable (draft=$draft, title=$title) to mergeability=$expected",
+    ({ mergeable, draft, title, expected }) => {
+      const cr = forgejoChangeRequest(
+        decodeForgejoPullRequest({
+          number: 7,
+          title,
+          body: null,
+          html_url: "https://forgejo.test/maria/project/pulls/7",
+          user: null,
+          state: "open",
+          merged: false,
+          mergeable,
+          draft,
+          head: { ref: "feature", label: "feature", sha: "head", repo: null },
+          base: { ref: "main", label: "main", sha: "base", repo: null },
+          created_at: "2026-10-10T19:52:40Z",
+          updated_at: "2026-10-12T00:00:00Z",
+          closed_at: null,
+          merged_at: null,
+          labels: null,
+        }),
+      );
+      assert.strictEqual(cr.mergeability, expected);
+    },
+  );
 });
 
 describe("forgejoReview", () => {

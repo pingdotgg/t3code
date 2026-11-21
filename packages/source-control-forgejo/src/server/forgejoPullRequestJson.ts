@@ -131,6 +131,7 @@ export function forgejoActor(
 }
 
 export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
+  const isDraft = Boolean(pr.draft) || /^(?:\[WIP\]|WIP:)/i.test(pr.title);
   return {
     number: pr.number,
     title: pr.title,
@@ -140,9 +141,13 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
     baseBranch: pr.base.ref,
     headRepositoryNameWithOwner: pr.head.repo?.full_name ?? null,
     state: pr.merged ? "merged" : pr.state === "closed" ? "closed" : "open",
-    isDraft: pr.draft ?? /^(?:\[WIP\]|WIP:)/i.test(pr.title),
-    // A false value also covers drafts and unfinished or failed conflict checks.
-    mergeability: pr.mergeable === true ? "mergeable" : "unknown",
+    isDraft,
+    mergeability:
+      pr.mergeable === true
+        ? "mergeable"
+        : pr.mergeable === false && !isDraft
+          ? "conflicting"
+          : "unknown",
     additions: pr.additions ?? 0,
     deletions: pr.deletions ?? 0,
     createdAt: toIsoUtc(pr.created_at),
