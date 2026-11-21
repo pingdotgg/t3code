@@ -22,6 +22,10 @@ import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
 import { remarkKeepOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 import {
+  remarkEnableLeadingWhitespace,
+  remarkKeepLeadingWhitespace,
+} from "./markdownLeadingWhitespace.ts";
+import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
 } from "./codexMarkdownDirectives.ts";
@@ -259,10 +263,12 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkNormalizeLinksAndTagInlineCode,
 ];
 
+// Leading whitespace is kept only where each line renders as a line.
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
+  remarkKeepLeadingWhitespace,
   remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
@@ -277,8 +283,10 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
 
 // Users type paths like ~/a and (~/b, which GFM's single-tilde strikethrough hides as <del>.
 // Appended after the base list, this reconfigures its remark-gfm entry; ~~double~~ still strikes.
+// Users also indent lines with spaces, which CommonMark drops from a paragraph.
 export const CHAT_USER_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   [remarkGfm, { singleTilde: false }],
+  remarkEnableLeadingWhitespace,
 ];
 
 // Start tags an HTML parser closes an open `<p>` for.
@@ -832,36 +840,61 @@ const imageSourceProcessor = unified()
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
 
+export type ChatMarkdownImageProperties = {
+  readonly src?: unknown;
+  readonly dataLocalSrc?: unknown;
+  readonly dataDarkSrc?: unknown;
+  readonly dataLightSrc?: unknown;
+};
+
+/** Keep the authored path for file links and normalize Windows separators for classification. */
+export function chatMarkdownImageSource(
+  properties?: ChatMarkdownImageProperties,
+  theme?: "dark" | "light",
+) {
+  const themeSrc =
+    theme === undefined
+      ? undefined
+      : properties?.[theme === "dark" ? "dataDarkSrc" : "dataLightSrc"];
+  const localSrc = typeof themeSrc === "string" ? undefined : properties?.dataLocalSrc;
+  const source =
+    typeof themeSrc === "string"
+      ? themeSrc
+      : typeof localSrc === "string"
+        ? localSrc
+        : properties?.src;
+  if (typeof source !== "string") return null;
+  const authoredSrc = normalizeMarkdownLinkDestination(source);
+  return {
+    authoredSrc,
+    classifiedSrc: typeof localSrc === "string" ? authoredSrc.replaceAll("\\", "/") : authoredSrc,
+  };
+}
+
 interface ImageSourceNode {
   readonly type: string;
   readonly tagName?: string;
-  readonly properties?: {
-    readonly src?: unknown;
-    readonly dataLocalSrc?: unknown;
-    readonly dataDarkSrc?: unknown;
-    readonly dataLightSrc?: unknown;
-  };
+  readonly properties?: ChatMarkdownImageProperties;
   readonly children?: ReadonlyArray<ImageSourceNode>;
 }
 
 /**
- * The sources of the images chat markdown shows, read as ChatMarkdown's `img` renderer reads
- * them. Code, comments, and plain links show no image, so they add none.
+ * Collect the fallback and every theme variant so images are available to all viewers.
  */
 export function chatMarkdownImageSources(markdown: string): Array<string> {
   const sources: Array<string> = [];
   const visit = (node: ImageSourceNode) => {
     if (node.type === "element" && node.tagName === "img") {
-      const { src, dataLocalSrc, dataDarkSrc, dataLightSrc } = node.properties ?? {};
-      // The sanitizer drops a Windows drive path from `src`; the renderer reads it from here.
-      if (typeof dataLocalSrc === "string") {
-        sources.push(normalizeMarkdownLinkDestination(dataLocalSrc).replaceAll("\\", "/"));
-      } else if (typeof src === "string") {
-        sources.push(normalizeMarkdownLinkDestination(src));
-      }
-      // A `<picture>` shows one of these instead, by the viewer's theme.
-      for (const variant of [dataDarkSrc, dataLightSrc]) {
-        if (typeof variant === "string") sources.push(normalizeMarkdownLinkDestination(variant));
+      const properties = node.properties;
+      const fallback = chatMarkdownImageSource(properties);
+      if (fallback) sources.push(fallback.classifiedSrc);
+      for (const [theme, variant] of [
+        ["dark", properties?.dataDarkSrc],
+        ["light", properties?.dataLightSrc],
+      ] as const) {
+        if (typeof variant !== "string") continue;
+        const source = chatMarkdownImageSource(properties, theme);
+        if (source) sources.push(source.classifiedSrc);
       }
     }
     node.children?.forEach(visit);
