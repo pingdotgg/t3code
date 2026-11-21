@@ -9367,7 +9367,7 @@
   "33fbce50a4ea67e6": "Argumentos de CLI adicionales que se pasan al iniciar la sesión.",
   "abdee70d90cb26a3": "Compacta tras 100 000 a 1 000 000 de tokens. Déjalo vacío para usar el valor predeterminado de Claude.",
   "f907b2466603538e": "Cuándo compactar un hilo inactivo de más de 200 000 tokens: cuando vuelvas, justo antes de que caduque su caché de prompts, o nunca. Sustituye el valor predeterminado de Proveedores > Avanzado.",
-  "484df18e29b21047": "Las cuentas de Google usan tu suscripción; las claves de API y Agent Platform facturan el uso.",
+  "9610fb9f4d9849ec": "Cuenta de Google y Gemini Enterprise usan tu plan actual. Clave de API de Gemini y Agent Platform cobran por uso en tu clave o proyecto de Google Cloud.",
   "931df01584748bf9": "Clave exprés de Gemini o Vertex AI. Se guarda por separado en el host.",
   "8bf0f6ed8dd4b77e": "Obligatorio para Gemini Enterprise. Agent Platform lo usa cuando no hay ninguna clave de API.",
   "7c735c8fbd3fb6e3": "Región de Gemini Enterprise o Agent Platform.",

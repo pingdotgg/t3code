@@ -9369,7 +9369,7 @@
   "33fbce50a4ea67e6": "Zusätzliche CLI-Argumente, die beim Sitzungsstart übergeben werden.",
   "abdee70d90cb26a3": "Nach 100.000 bis 1.000.000 Tokens komprimieren. Leer lassen, um den Standard von Claude zu verwenden.",
   "f907b2466603538e": "Wann ein inaktiver Thread mit über 200.000 Tokens komprimiert wird: nachdem du zurückkommst, kurz bevor sein Prompt-Cache abläuft, oder nie. Überschreibt den Standard unter Anbieter > Erweitert.",
-  "484df18e29b21047": "Google-Konten nutzen dein Abonnement; API-Schlüssel und Agent Platform rechnen nach Nutzung ab.",
+  "9610fb9f4d9849ec": "Google-Konto und Gemini Enterprise nutzen deinen bestehenden Tarif. Gemini-API-Schlüssel und Agent Platform rechnen pro Nutzung über deinen Schlüssel oder dein Google-Cloud-Projekt ab.",
   "931df01584748bf9": "Express-Schlüssel für Gemini oder Vertex AI. Wird separat auf dem Host gespeichert.",
   "8bf0f6ed8dd4b77e": "Erforderlich für Gemini Enterprise. Agent Platform verwendet es, wenn kein API-Schlüssel gesetzt ist.",
   "7c735c8fbd3fb6e3": "Region für Gemini Enterprise oder Agent Platform.",

@@ -9327,7 +9327,7 @@
   "33fbce50a4ea67e6": "세션 시작 시 전달할 추가 CLI 인수입니다.",
   "abdee70d90cb26a3": "100,000~1,000,000 토큰 후 압축합니다. 비워 두면 Claude 기본값을 사용합니다.",
   "f907b2466603538e": "200,000 토큰을 넘는 유휴 스레드를 압축할 시점입니다. 돌아왔을 때, 프롬프트 캐시가 만료되기 직전, 또는 안 함 중에서 고릅니다. 제공자 > 고급의 기본값을 재정의합니다.",
-  "484df18e29b21047": "Google 계정은 구독을 사용하고, API 키와 Agent Platform은 사용량에 따라 요금이 청구됩니다.",
+  "9610fb9f4d9849ec": "Google 계정과 Gemini Enterprise는 기존 요금제를 사용합니다. Gemini API 키와 Agent Platform은 사용량에 따라 키 또는 Google Cloud 프로젝트로 요금이 청구됩니다.",
   "931df01584748bf9": "Gemini 또는 Vertex AI 익스프레스 키입니다. 호스트에 따로 저장됩니다.",
   "8bf0f6ed8dd4b77e": "Gemini Enterprise에 필요합니다. API 키가 설정되지 않으면 Agent Platform에서 사용합니다.",
   "7c735c8fbd3fb6e3": "Gemini Enterprise 또는 Agent Platform의 리전입니다.",
