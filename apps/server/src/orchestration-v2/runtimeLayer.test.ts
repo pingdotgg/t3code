@@ -14241,6 +14241,24 @@ describe("subagent lifecycle cascade", () => {
           updatedAt: now,
         },
       });
+    const renameAndKeep = Effect.fn("test.renameAndKeep")(function* (
+      threadId: ThreadId,
+      lifecycle: string,
+    ) {
+      yield* threads.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make(`rename:${lifecycle}:${threadId}`),
+        threadId,
+        title: `Renamed after ${lifecycle}`,
+      });
+      const kept = yield* threads.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(`unused-only:${lifecycle}:${threadId}`),
+        threadId,
+        onlyIfUnused: true,
+      });
+      assert.isEmpty(kept.storedEvents);
+    });
     return {
       threads,
       now,
@@ -14254,6 +14272,7 @@ describe("subagent lifecycle cascade", () => {
       cascade,
       drain,
       markUsed,
+      renameAndKeep,
     };
   });
   const receipt = (id: string) =>
@@ -14395,12 +14414,14 @@ describe("subagent lifecycle cascade", () => {
           });
         }
         yield* f.run("archive", independent);
+        if (source === parent && delivery === "worker") yield* f.markUsed(side);
         const apply = Effect.fn("test.applySideChatLifecycle")(function* (
           operation: "archive" | "unarchive",
         ) {
           if (delivery === "reply") yield* f.run(operation);
           else {
             yield* f.commit(operation);
+            if (source === parent) yield* f.renameAndKeep(side, operation);
             yield* f.drain;
           }
         });
@@ -14444,19 +14465,7 @@ describe("subagent lifecycle cascade", () => {
         yield* f.outbox.pruneSettled;
         if (source === parent && delivery === "reply") {
           yield* f.markUsed(parent);
-          yield* f.threads.dispatch({
-            type: "thread.metadata.update",
-            commandId: CommandId.make("rename:archived-parent"),
-            threadId: parent,
-            title: "Renamed parent",
-          });
-          const kept = yield* f.threads.dispatch({
-            type: "thread.delete",
-            commandId: CommandId.make("unused-only:parent"),
-            threadId: parent,
-            onlyIfUnused: true,
-          });
-          assert.isEmpty(kept.storedEvents);
+          yield* f.renameAndKeep(parent, "archive");
         }
         yield* apply("unarchive");
         assert.equal(yield* f.archived(side, child, independent), "001");

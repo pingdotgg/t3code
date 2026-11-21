@@ -1903,7 +1903,14 @@ const make = Effect.gen(function* () {
             }
             if (limit && exceededDispatchModeLimit(limit, current)) return;
             if (source && current.deletedAt !== null) return;
-            const latest = source ? yield* receipts.getLatestLifecycle(thread.id) : null;
+            const latest = source
+              ? yield* receipts.getLatestLifecycle(
+                  thread.id,
+                  path.length === 0 && sideChat
+                    ? ["thread.archive", "thread.unarchive"]
+                    : undefined,
+                )
+              : null;
             if (source && CommandReceiptStore.supersedesCascade(latest, source.cutoff, commandId))
               return;
             const children = yield* orchestrator.getSubagentChildThreads(thread.id);
