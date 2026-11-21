@@ -5,7 +5,9 @@
 //! short-lived media ticket passed as `wsTicket` (alongside optional `hostId`) on HTTP, SSE,
 //! and WebSocket requests under `/api/device-hub/vendor/{serve-sim,serve-emu}`.
 
+pub mod input;
 pub mod mjpeg;
+pub mod sse;
 
 use std::fmt;
 use std::time::Duration;
@@ -14,7 +16,21 @@ use conn_contract::DevicePlatform;
 use serde::Deserialize;
 use url::Url;
 
+pub use self::input::{
+    DeviceInputCommand, DeviceInputEvent, DeviceScreenConfig, HardwareButton, IOS_MSG_BUTTON,
+    IOS_MSG_HINGE, IOS_MSG_KEY, IOS_MSG_ORIENTATION, IOS_MSG_TOUCH, IOS_TAG_CONTROL_REPLY,
+    IOS_TAG_INPUT_ADMITTED, IOS_TAG_SCREEN_CONFIG, InputWsError, IosServerPacket, KeyPhase,
+    TouchPhase, android_keycode_for_key, chunk_android_text, decode_ios_server_packet,
+    device_input_ws_url, encode_android_command, encode_ios_button, encode_ios_hinge,
+    encode_ios_key, encode_ios_orientation, encode_ios_touch, encode_tagged_json,
+    hid_usage_for_key, prime_ios_helper, raw_ios_point, run_device_input_ws,
+};
 pub use self::mjpeg::{MjpegParser, MjpegStreamError, mjpeg_stream_url, stream_mjpeg_frames};
+pub use self::sse::{
+    DEVICE_EVENT_LOG_LIMIT, DeviceEventLogEntry, DeviceForegroundInfo, DeviceHubHttpError,
+    SseEvent, SseParser, append_device_event_log, capture_device_screenshot,
+    stream_device_event_log, stream_device_foreground,
+};
 
 use crate::ClientError;
 
