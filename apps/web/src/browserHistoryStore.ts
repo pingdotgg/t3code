@@ -343,6 +343,7 @@ export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()((set, g
       void transactIndexedHistory(update).then(
         ({ history, changed }) => {
           publish(history);
+          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel is scoped to the origin
           if (changed) historyChannel?.postMessage(null);
         },
         () => publish(update(get())),
