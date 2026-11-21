@@ -260,6 +260,33 @@ it.effect("--wait lasts until background work the agent waits on wakes it and th
   }),
 );
 
+it.effect("--wait returns the result a woken run submits for the run that asked for it", () =>
+  Effect.gen(function* () {
+    const wakeRun = RunId.make("run-2");
+    const { tools } = scriptedTools({
+      t3_thread_wait: [
+        { threadId, runId, status: "completed", timedOut: false },
+        {
+          threadId,
+          runId,
+          status: "completed",
+          timedOut: false,
+          resultRun: { runId: wakeRun, status: "completed" },
+          output: { head: "abc" },
+        },
+      ],
+      t3_thread_read: laterRunReads(wakeRun, []),
+    });
+
+    assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId, true), {
+      type: "ended",
+      runId: wakeRun,
+      status: "completed",
+      output: { head: "abc" },
+    });
+  }),
+);
+
 it.effect(
   "--wait waits out the moment between background work ending and its wake run starting",
   () =>
@@ -329,6 +356,7 @@ it.effect(
             status: "completed",
             timedOut: false,
             resultRun: { runId: sentRun, status: "failed" },
+            output: { head: "abc" },
           },
         ],
         t3_thread_read: laterRunReads(sentRun, [{ runId: sentRun, type: "user_message" }]),
@@ -338,6 +366,7 @@ it.effect(
         type: "ended",
         runId,
         status: "completed",
+        output: { head: "abc" },
       });
     }),
 );
