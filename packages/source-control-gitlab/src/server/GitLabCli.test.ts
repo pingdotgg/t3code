@@ -1,8 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, afterEach, expect, vi } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -13,12 +15,41 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 import * as GitLabCli from "./GitLabCli.ts";
 
 const mockedRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
+const mockedRemotes = vi.fn<SourceControlHost.SourceControlHost["Service"]["git"]["remotes"]>();
 const layer = it.layer(
   GitLabCli.layer.pipe(
-    Layer.provide(TestSourceControlHost.layer({ process: { run: mockedRun } })),
+    Layer.provide(
+      TestSourceControlHost.layer({
+        process: { run: mockedRun },
+        git: { remotes: mockedRemotes },
+      }),
+    ),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
+
+// The layer is shared, and so is its cache of each checkout's remotes: give each test its own cwd.
+function remotesOf(...urls: ReadonlyArray<string>) {
+  return Effect.succeed(
+    Effect.succeed({
+      remotes: urls.map((url, index) => ({
+        name: index === 0 ? "origin" : `mirror${index}`,
+        url,
+        pushUrl: Option.none(),
+        isPrimary: index === 0,
+      })),
+      freshness: {
+        source: "live-local" as const,
+        observedAt: DateTime.makeUnsafe("1970-01-01T00:00:00.000Z"),
+        expiresAt: Option.none(),
+      },
+    }),
+  );
+}
+
+function glabHostOfLastRun(): string | undefined {
+  return mockedRun.mock.lastCall?.[0].env?.GITLAB_HOST;
+}
 
 function processOutput(stdout: string): SourceControlHost.SourceControlProcessOutput {
   return {
@@ -32,6 +63,7 @@ function processOutput(stdout: string): SourceControlHost.SourceControlProcessOu
 
 afterEach(() => {
   mockedRun.mockReset();
+  mockedRemotes.mockReset();
 });
 
 layer("GitLabCli.layer", (it) => {
@@ -423,6 +455,107 @@ layer("GitLabCli.layer", (it) => {
 
       assert.strictEqual(error._tag, "GitLabCliRateLimitError");
       assert.strictEqual(error.cause, cause);
+    }),
+  );
+
+  it.effect.each([
+    {
+      remotes: ["http://gitlab.internal:9999/group/project.git"],
+      expected: "gitlab.internal:9999",
+      cwd: "/custom-port",
+    },
+    {
+      // The SSH server's port says nothing about where the web API is served.
+      remotes: ["ssh://git@gitlab.internal:2222/group/project.git"],
+      expected: "gitlab.internal",
+      cwd: "/ssh-port",
+    },
+    {
+      remotes: ["https://gitlab.internal/group/project.git"],
+      expected: "gitlab.internal",
+      cwd: "/default-port",
+    },
+    {
+      remotes: ["http://other.internal:9999/group/project.git"],
+      expected: "gitlab.internal",
+      cwd: "/other-host",
+    },
+    {
+      // Two ports for one host leave no single answer.
+      remotes: [
+        "http://gitlab.internal:9999/group/project.git",
+        "https://gitlab.internal:8443/group/project.git",
+      ],
+      expected: "gitlab.internal",
+      cwd: "/two-ports",
+    },
+  ])("sends a host without a port to glab as $remotes spells it", ({ remotes, expected, cwd }) =>
+    Effect.gen(function* () {
+      mockedRemotes.mockReturnValueOnce(remotesOf(...remotes));
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.execute({ cwd, host: "gitlab.internal", args: ["api", "projects/1"] });
+
+      assert.strictEqual(glabHostOfLastRun(), expected);
+    }),
+  );
+
+  it.effect("keeps a host that names its port without listing remotes", () =>
+    Effect.gen(function* () {
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.execute({
+        cwd: "/named-port",
+        host: "gitlab.internal:8443",
+        args: ["api", "projects/1"],
+      });
+
+      assert.strictEqual(glabHostOfLastRun(), "gitlab.internal:8443");
+      expect(mockedRemotes).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("keeps the host as given when the checkout's remotes cannot be listed", () =>
+    Effect.gen(function* () {
+      mockedRemotes.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessExitError({
+            operation: "VcsProcess.listRemotes",
+            command: "git",
+            cwd: "/not-a-checkout",
+            exitCode: 128,
+            detail: "not a git repository",
+            failureKind: "command-failed",
+          }),
+        ),
+      );
+      mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      yield* glab.execute({
+        cwd: "/not-a-checkout",
+        host: "gitlab.internal",
+        args: ["api", "projects/1"],
+      });
+
+      assert.strictEqual(glabHostOfLastRun(), "gitlab.internal");
+    }),
+  );
+
+  it.effect("lists a checkout's remotes once for consecutive commands", () =>
+    Effect.gen(function* () {
+      mockedRemotes.mockReturnValue(remotesOf("http://gitlab.internal:9999/group/project.git"));
+      mockedRun.mockReturnValue(Effect.succeed(processOutput("{}")));
+
+      const glab = yield* GitLabCli.GitLabCli;
+      for (const path of ["projects/1", "projects/1/merge_requests/2"]) {
+        yield* glab.execute({ cwd: "/repeated", host: "gitlab.internal", args: ["api", path] });
+        assert.strictEqual(glabHostOfLastRun(), "gitlab.internal:9999");
+      }
+
+      expect(mockedRemotes).toHaveBeenCalledTimes(1);
     }),
   );
 });

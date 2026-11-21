@@ -32,6 +32,20 @@ it.effect("reports activity as rate limited when only the reactions endpoint is"
                       )
                     : Effect.succeed(TestSourceControlHost.processOutput("[]")),
               },
+              git: {
+                // `/repo` is no checkout, so glab gets the host as given.
+                remotes: (cwd) =>
+                  Effect.fail(
+                    new VcsProcessExitError({
+                      operation: "VcsProcess.listRemotes",
+                      command: "git",
+                      cwd,
+                      exitCode: 128,
+                      detail: "not a git repository",
+                      failureKind: "command-failed",
+                    }),
+                  ),
+              },
             }),
           ),
           Layer.provide(FileSystem.layerNoop({})),

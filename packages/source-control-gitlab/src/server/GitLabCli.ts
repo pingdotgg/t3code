@@ -1,4 +1,6 @@
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -502,37 +504,106 @@ const hostOf = (value: string) =>
     .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
     .replace(/\/.*$/, "");
 
+/** A checkout's remotes rarely change, and a watched merge request is read every sweep. */
+const REMOTE_AUTHORITIES_TTL = Duration.minutes(1);
+const REMOTE_AUTHORITIES_CAPACITY = 64;
+
+const hasPort = (host: string) => /:\d+$/.test(host);
+
+/**
+ * The hostname and `host:port` an HTTP remote is served from, or null when its URL names no port.
+ * An SSH remote's port belongs to the SSH server, not the web server glab talks to.
+ */
+const httpRemoteAuthority = (
+  remoteUrl: string,
+): { readonly hostname: string; readonly authority: string } | null => {
+  try {
+    const url = new URL(remoteUrl.trim());
+    return (url.protocol === "http:" || url.protocol === "https:") && url.port !== ""
+      ? { hostname: url.hostname.toLowerCase(), authority: url.host.toLowerCase() }
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
-  const { process } = yield* SourceControlHost.SourceControlHost;
+  const { process, git } = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const environment = yield* HostProcess.Environment;
   const defaultHost = hostOf(environment.GITLAB_HOST?.trim() || "gitlab.com");
 
+  const remoteAuthorities = yield* Cache.makeWith(
+    (cwd: string) =>
+      git.remotes(cwd).pipe(
+        Effect.flatten,
+        Effect.map(({ remotes }) =>
+          remotes.flatMap((remote) => {
+            const authority = httpRemoteAuthority(remote.url);
+            return authority === null ? [] : [authority];
+          }),
+        ),
+      ),
+    {
+      capacity: REMOTE_AUTHORITIES_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? REMOTE_AUTHORITIES_TTL : Duration.zero),
+    },
+  );
+
+  /**
+   * Repository keys drop the port, so a caller can name a host that glab only knows as the
+   * `host:port` its remote is served from, and without the port glab asks HTTPS on 443. Spell the
+   * host as the checkout's HTTP remote on it does. With no such remote, remotes on several ports,
+   * or remotes that cannot be listed, the caller's host is used as given.
+   */
+  const glabHost = (cwd: string, host: string): Effect.Effect<string> =>
+    hasPort(host)
+      ? Effect.succeed(host)
+      : Cache.get(remoteAuthorities, cwd).pipe(
+          Effect.map((authorities) => {
+            const hostname = host.trim().toLowerCase();
+            const onHost = new Set(
+              authorities
+                .filter((remote) => remote.hostname === hostname)
+                .map((remote) => remote.authority),
+            );
+            const [authority] = onHost;
+            return onHost.size === 1 && authority !== undefined ? authority : host;
+          }),
+          Effect.orElseSucceed(() => host),
+        );
+
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
     mapError: (error: VcsError) => GitLabCliError,
-  ) =>
-    process
-      .run({
-        operation: "GitLabCli.execute",
-        command: "glab",
-        args: input.args,
-        cwd: input.cwd,
-        env: {
-          // glab may otherwise prefer a different checkout remote.
-          ...(input.host === undefined ? {} : { GITLAB_HOST: input.host }),
-          ...(input.callerNamedHost !== undefined && hostOf(input.callerNamedHost) !== defaultHost
-            ? WITHOUT_ENVIRONMENT_TOKEN
-            : {}),
-        },
-        classifyFailure: classifyGlabFailure,
-        notFoundDetail: "Merge request not found.",
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      })
-      .pipe(Effect.mapError(mapError));
+  ): Effect.Effect<SourceControlHost.SourceControlProcessOutput, GitLabCliError> => {
+    const resolvedHost: Effect.Effect<string | undefined> =
+      input.host === undefined ? Effect.undefined : glabHost(input.cwd, input.host);
+    return resolvedHost.pipe(
+      Effect.flatMap((host) =>
+        process.run({
+          operation: "GitLabCli.execute",
+          command: "glab",
+          args: input.args,
+          cwd: input.cwd,
+          env: {
+            // glab may otherwise prefer a different checkout remote.
+            ...(host === undefined ? {} : { GITLAB_HOST: host }),
+            ...(input.callerNamedHost !== undefined && hostOf(input.callerNamedHost) !== defaultHost
+              ? WITHOUT_ENVIRONMENT_TOKEN
+              : {}),
+          },
+          classifyFailure: classifyGlabFailure,
+          notFoundDetail: "Merge request not found.",
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+          ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+        }),
+      ),
+      Effect.mapError(mapError),
+    );
+  };
 
   const execute: GitLabCli["Service"]["execute"] = (input) =>
     run(input, (error) =>
