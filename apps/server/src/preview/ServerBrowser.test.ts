@@ -3069,9 +3069,24 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
         height: 760,
       });
       expect(yield* status).toEqual({ width: 560, height: 760 });
-      // A desktop that never draws the new size, such as a minimized window, fails the resize.
       const unpainted = Promise.withResolvers<void>();
       heldStill = () => unpainted.promise;
+      // Fill asks for no size, so a page that keeps its size without a resize is not undrawn.
+      const kept = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "fill" },
+        })
+        .pipe(Effect.forkScoped);
+      let keptEvent = yield* PubSub.take(events);
+      while (keptEvent.type !== "resized" || keptEvent.tabId !== tabId) {
+        keptEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect((yield* Fiber.join(kept)).viewport).toEqual({ width: 560, height: 760 });
+      // A desktop that never draws the new size, such as a minimized window, fails the resize.
       const undrawn = yield* broker
         .invoke<PreviewAutomationResizeResult>({
           scope,

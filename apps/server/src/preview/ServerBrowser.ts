@@ -2859,8 +2859,11 @@ const make = Effect.gen(function* () {
         const changes = tab.desktopViewportChanges;
         const measured = await within(measureDesktopViewport(tab), remainingMs());
         // A window that does not paint, such as a minimized one, never draws the new size.
+        // Fill asks for no size, so only a fixed one can be missed.
         tab.desktopResizeUndrawn =
-          undrawn && (measured?.width !== to?.width || measured?.height !== to?.height);
+          undrawn &&
+          to !== null &&
+          (measured?.width !== to.width || measured?.height !== to.height);
         if (tab.desktopResizeUndrawn) {
           throw new ServerBrowserPage.ServerBrowserOperationError({
             tag: "PreviewAutomationExecutionError",
