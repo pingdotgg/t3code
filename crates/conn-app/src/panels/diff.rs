@@ -6,7 +6,12 @@ use std::fmt;
 
 use conn_client::Connection;
 use conn_contract::rpc::orchestration::{get_full_thread_diff, get_turn_diff};
-use conn_contract::{OrchestrationGetFullThreadDiffInput, OrchestrationGetTurnDiffInput};
+use conn_contract::{
+    OrchestrationGetFullThreadDiffInput, OrchestrationGetTurnDiffInput, ReviewBranchCommitsInput,
+    ReviewBranchCommitsResult, ReviewBranchCommitsResultCommitsItem, ReviewDiffPreviewInput,
+    ReviewDiffPreviewInputSourceKind, ReviewDiffPreviewResult, ReviewDiffPreviewSourceKind,
+    VcsListRefsInput, VcsListRefsResult,
+};
 use conn_theme::{Appearance, Tokens, color_mix_srgb};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -22,6 +27,7 @@ use super::color::to_hsla;
 use super::diff_parser::{DiffFile, DiffLine, DiffLineKind, parse_unified_diff};
 use super::header::{CONTROL_RADIUS_PX, superhero_icon};
 use super::highlight::{HighlightSpan, highlight_lines};
+use crate::a11y::ConnA11yExt as _;
 
 const FILE_LIST_WIDTH_PX: f32 = 216.0;
 const FILE_LIST_MIN_WIDTH_PX: f32 = 140.0;
@@ -52,34 +58,60 @@ enum DiffViewMode {
     Split,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 enum DiffScope {
+    /// Branch diff against automatic or chosen base ref (`review.getDiffPreview` `branch-range`).
     #[default]
+    Branch,
+    /// Uncommitted working-tree diff (`review.getDiffPreview` `working-tree`).
+    WorkingTree,
+    /// Single branch commit diff (`review.getDiffPreview` with `commitSha`).
+    Commit { sha: String, subject: String },
+    /// Full thread checkpoint diff (`orchestration.getFullThreadDiff`).
     AllChanges,
-    Turn {
-        from: i64,
-        to: i64,
-    },
+    /// Single turn checkpoint diff (`orchestration.getTurnDiff`).
+    Turn { from: i64, to: i64 },
 }
 
 impl DiffScope {
-    fn label(self) -> String {
+    fn label(&self) -> String {
         match self {
-            Self::AllChanges => "All changes".to_owned(),
+            Self::Branch => "Changes".to_owned(),
+            Self::WorkingTree => "Uncommitted".to_owned(),
+            Self::Commit { sha, subject } => {
+                if subject.trim().is_empty() {
+                    format!("Commit {}", &sha[..sha.len().min(7)])
+                } else {
+                    subject.chars().take(28).collect()
+                }
+            }
+            Self::AllChanges => "All turns".to_owned(),
             Self::Turn { to, .. } => format!("Turn {to}"),
         }
     }
+
+    fn is_git_scope(&self) -> bool {
+        matches!(self, Self::Branch | Self::WorkingTree | Self::Commit { .. })
+    }
 }
 
-/// Thread diff panel displaying changed files on the left and unified or split diff hunks on the right.
+/// Thread & git diff panel displaying changed files on the left and unified or split diff hunks on the right.
 pub(crate) struct DiffPanel {
     tokens: Tokens,
     connection: Option<Connection>,
+    workspace_root: Option<String>,
     thread_id: Option<String>,
     turn_count: Option<i64>,
     available_turns: Vec<i64>,
+    branch_commits: Vec<ReviewBranchCommitsResultCommitsItem>,
+    available_refs: Vec<String>,
+    base_ref: Option<String>,
+    resolved_base_ref: Option<String>,
+    resolved_head_ref: Option<String>,
     scope: DiffScope,
     scope_menu_open: bool,
+    base_ref_menu_open: bool,
+    ignore_whitespace: bool,
     state: DiffLoadState,
     selected_index: usize,
     view_mode: DiffViewMode,
@@ -105,11 +137,19 @@ impl DiffPanel {
         Self {
             tokens,
             connection,
+            workspace_root: None,
             thread_id: None,
             turn_count: None,
             available_turns: Vec::new(),
-            scope: DiffScope::AllChanges,
+            branch_commits: Vec::new(),
+            available_refs: Vec::new(),
+            base_ref: None,
+            resolved_base_ref: None,
+            resolved_head_ref: None,
+            scope: DiffScope::Branch,
             scope_menu_open: false,
+            base_ref_menu_open: false,
+            ignore_whitespace: false,
             state: DiffLoadState::Empty,
             selected_index: 0,
             view_mode: DiffViewMode::Unified,
@@ -129,6 +169,10 @@ impl DiffPanel {
         self.connection = connection;
         self.generation = self.generation.wrapping_add(1);
         self.state = DiffLoadState::Empty;
+        self.branch_commits.clear();
+        self.available_refs.clear();
+        self.resolved_base_ref = None;
+        self.resolved_head_ref = None;
         self.selected_index = 0;
         cx.notify();
     }
@@ -138,6 +182,30 @@ impl DiffPanel {
         cx.notify();
     }
 
+    pub(crate) fn set_workspace_root(
+        &mut self,
+        workspace_root: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.workspace_root == workspace_root {
+            return;
+        }
+        self.workspace_root = workspace_root;
+        self.branch_commits.clear();
+        self.available_refs.clear();
+        self.base_ref = None;
+        self.resolved_base_ref = None;
+        self.resolved_head_ref = None;
+        self.scope_menu_open = false;
+        self.base_ref_menu_open = false;
+        if self.workspace_root.is_some() || self.thread_id.is_some() {
+            self.reload(cx);
+        } else {
+            self.state = DiffLoadState::Empty;
+            cx.notify();
+        }
+    }
+
     pub(crate) fn set_thread(&mut self, thread_id: Option<String>, cx: &mut Context<'_, Self>) {
         if self.thread_id == thread_id {
             return;
@@ -145,8 +213,13 @@ impl DiffPanel {
         self.thread_id = thread_id;
         self.turn_count = None;
         self.available_turns.clear();
-        self.scope = DiffScope::AllChanges;
+        self.scope = if self.workspace_root.is_some() {
+            DiffScope::Branch
+        } else {
+            DiffScope::AllChanges
+        };
         self.scope_menu_open = false;
+        self.base_ref_menu_open = false;
         self.selected_index = 0;
         self.reload(cx);
     }
@@ -156,75 +229,204 @@ impl DiffPanel {
             return;
         }
         self.turn_count = turn_count;
-        if self.thread_id.is_some() {
+        if self.thread_id.is_some() || self.workspace_root.is_some() {
             self.reload(cx);
         }
+    }
+
+    fn load_refs_if_needed(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(conn), Some(cwd)) = (self.connection.clone(), self.workspace_root.clone()) else {
+            return;
+        };
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            let input = VcsListRefsInput {
+                cwd,
+                query: None,
+                cursor: None,
+                include_matching_remote_refs: Some(true),
+                ref_kind: None,
+                refresh: None,
+                limit: Some(60),
+            };
+            let result = conn
+                .call::<VcsListRefsInput, VcsListRefsResult>("vcs.listRefs", &input)
+                .await;
+            if let Ok(resp) = result {
+                let names: Vec<String> = resp.refs.into_iter().map(|r| r.name).collect();
+                let _ = this.update(cx, |panel, cx| {
+                    if panel.generation == generation {
+                        panel.available_refs = names;
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn reload(&mut self, cx: &mut Context<'_, Self>) {
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
 
-        let Some(thread_id) = self.thread_id.clone() else {
-            self.state = DiffLoadState::Empty;
-            cx.notify();
-            return;
-        };
         let Some(conn) = self.connection.clone() else {
             self.state = DiffLoadState::Error("Not connected to server.".to_owned());
             cx.notify();
             return;
         };
+        if self.thread_id.is_none() && self.workspace_root.is_none() {
+            self.state = DiffLoadState::Empty;
+            cx.notify();
+            return;
+        }
 
+        let thread_id = self.thread_id.clone();
+        let workspace_root = self.workspace_root.clone();
         let explicit_turns = self.turn_count;
-        let scope = self.scope;
+        let base_ref = self.base_ref.clone();
+        let ignore_whitespace = self.ignore_whitespace;
+        let scope = if workspace_root.is_none() && self.scope.is_git_scope() {
+            DiffScope::AllChanges
+        } else {
+            self.scope.clone()
+        };
         self.state = DiffLoadState::Loading;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let discovered_turns = resolve_checkpoint_turns(&conn, &thread_id).await;
+            let discovered_turns = match &thread_id {
+                Some(tid) => resolve_checkpoint_turns(&conn, tid).await,
+                None => Ok(Vec::new()),
+            };
             let turns_for_ui = discovered_turns.as_ref().cloned().unwrap_or_default();
 
-            let result = match scope {
-                DiffScope::AllChanges => {
-                    let to_turn_count = match explicit_turns {
-                        Some(n) => Ok(n),
-                        None => discovered_turns.map(|v| v.last().copied().unwrap_or(0)),
+            let commits_for_ui = match &workspace_root {
+                Some(cwd) => {
+                    let input = ReviewBranchCommitsInput {
+                        cwd: cwd.clone(),
+                        base_ref: base_ref.clone(),
                     };
-                    match to_turn_count {
-                        Ok(0) => Ok(Vec::new()),
-                        Ok(to_turn_count) => {
-                            let payload = OrchestrationGetFullThreadDiffInput {
-                                thread_id,
-                                to_turn_count,
-                                ignore_whitespace: None,
-                            };
-                            conn.call::<get_full_thread_diff::Payload, get_full_thread_diff::Success>(
-                                "orchestration.getFullThreadDiff",
-                                &payload,
-                            )
-                            .await
-                            .map(|resp| parse_unified_diff(&resp.diff))
-                            .map_err(|e| e.to_string())
-                        }
-                        Err(err) => Err(err),
-                    }
-                }
-                DiffScope::Turn { from, to } => {
-                    let payload = OrchestrationGetTurnDiffInput {
-                        from_turn_count: from,
-                        to_turn_count: to,
-                        thread_id,
-                        ignore_whitespace: None,
-                    };
-                    conn.call::<get_turn_diff::Payload, get_turn_diff::Success>(
-                        "orchestration.getTurnDiff",
-                        &payload,
+                    conn.call::<ReviewBranchCommitsInput, ReviewBranchCommitsResult>(
+                        "review.getBranchCommits",
+                        &input,
                     )
                     .await
-                    .map(|resp| parse_unified_diff(&resp.diff))
-                    .map_err(|e| e.to_string())
+                    .map(|r| r.commits)
+                    .unwrap_or_default()
                 }
+                None => Vec::new(),
+            };
+
+            let mut resolved_base: Option<String> = None;
+            let mut resolved_head: Option<String> = None;
+
+            let result = match scope {
+                DiffScope::Branch | DiffScope::WorkingTree | DiffScope::Commit { .. } => {
+                    match workspace_root {
+                        None => Ok(Vec::new()),
+                        Some(cwd) => {
+                            let (source_kind, commit_sha, wanted_kind) = match &scope {
+                                DiffScope::WorkingTree => (
+                                    Some(ReviewDiffPreviewInputSourceKind::WorkingTree),
+                                    None,
+                                    ReviewDiffPreviewSourceKind::WorkingTree,
+                                ),
+                                DiffScope::Commit { sha, .. } => (
+                                    None,
+                                    Some(sha.clone()),
+                                    ReviewDiffPreviewSourceKind::Commit,
+                                ),
+                                _ => (
+                                    Some(ReviewDiffPreviewInputSourceKind::BranchRange),
+                                    None,
+                                    ReviewDiffPreviewSourceKind::BranchRange,
+                                ),
+                            };
+                            let input = ReviewDiffPreviewInput {
+                                cwd,
+                                base_ref: if matches!(scope, DiffScope::WorkingTree) {
+                                    None
+                                } else {
+                                    base_ref
+                                },
+                                commit_sha,
+                                ignore_whitespace: Some(ignore_whitespace),
+                                source_kind,
+                                tracked_only: None,
+                                metadata_only: None,
+                                file: None,
+                            };
+                            match conn
+                                .call::<ReviewDiffPreviewInput, ReviewDiffPreviewResult>(
+                                    "review.getDiffPreview",
+                                    &input,
+                                )
+                                .await
+                            {
+                                Ok(preview) => {
+                                    let matched = preview
+                                        .sources
+                                        .iter()
+                                        .find(|s| s.kind == wanted_kind)
+                                        .or_else(|| preview.sources.first());
+                                    if let Some(src) = matched {
+                                        resolved_base = src.base_ref.clone();
+                                        resolved_head = src.head_ref.clone();
+                                        Ok(parse_unified_diff(&src.diff))
+                                    } else {
+                                        Ok(Vec::new())
+                                    }
+                                }
+                                Err(err) => Err(err.to_string()),
+                            }
+                        }
+                    }
+                }
+                DiffScope::AllChanges => match thread_id {
+                    None => Ok(Vec::new()),
+                    Some(thread_id) => {
+                        let to_turn_count = match explicit_turns {
+                            Some(n) => Ok(n),
+                            None => discovered_turns.map(|v| v.last().copied().unwrap_or(0)),
+                        };
+                        match to_turn_count {
+                            Ok(0) => Ok(Vec::new()),
+                            Ok(to_turn_count) => {
+                                let payload = OrchestrationGetFullThreadDiffInput {
+                                    thread_id,
+                                    to_turn_count,
+                                    ignore_whitespace: Some(ignore_whitespace),
+                                };
+                                conn.call::<get_full_thread_diff::Payload, get_full_thread_diff::Success>(
+                                    "orchestration.getFullThreadDiff",
+                                    &payload,
+                                )
+                                .await
+                                .map(|resp| parse_unified_diff(&resp.diff))
+                                .map_err(|e| e.to_string())
+                            }
+                            Err(err) => Err(err),
+                        }
+                    }
+                },
+                DiffScope::Turn { from, to } => match thread_id {
+                    None => Ok(Vec::new()),
+                    Some(thread_id) => {
+                        let payload = OrchestrationGetTurnDiffInput {
+                            from_turn_count: from,
+                            to_turn_count: to,
+                            thread_id,
+                            ignore_whitespace: Some(ignore_whitespace),
+                        };
+                        conn.call::<get_turn_diff::Payload, get_turn_diff::Success>(
+                            "orchestration.getTurnDiff",
+                            &payload,
+                        )
+                        .await
+                        .map(|resp| parse_unified_diff(&resp.diff))
+                        .map_err(|e| e.to_string())
+                    }
+                },
             };
 
             let _ = this.update(cx, |panel, cx| {
@@ -234,6 +436,9 @@ impl DiffPanel {
                 if !turns_for_ui.is_empty() {
                     panel.available_turns = turns_for_ui;
                 }
+                panel.branch_commits = commits_for_ui;
+                panel.resolved_base_ref = resolved_base;
+                panel.resolved_head_ref = resolved_head;
                 match result {
                     Ok(files) => {
                         panel.selected_index = 0;
@@ -285,11 +490,15 @@ impl DiffPanel {
             DiffViewMode::Split => "superhero/diff-unified.svg",
         };
 
+        let has_git = self.workspace_root.is_some();
         let has_turns = !self.available_turns.is_empty();
+        let can_pick_scope = has_git || has_turns;
+        let scope_label = self.scope.label();
         let mut scope_slot = div().relative().child(
             // Scope trigger pill matching `DiffPanel.tsx` (`size="xs" variant="secondary"`, 6px radius).
             h_flex()
                 .id("diff-scope-trigger")
+                .a11y_button("diff.scope.trigger", format!("Diff scope: {scope_label}"))
                 .h(px(28.0))
                 .px(px(8.0))
                 .gap(px(4.0))
@@ -301,37 +510,39 @@ impl DiffPanel {
                 .text_size(px(UI_TEXT_PX))
                 .line_height(px(UI_LINE_HEIGHT_PX))
                 .text_color(fg)
-                .when(has_turns, |el| {
+                .when(can_pick_scope, |el| {
                     el.cursor_pointer()
                         .hover(move |s| s.bg(hover_bg))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|this, _, _, cx| {
                                 cx.stop_propagation();
+                                this.base_ref_menu_open = false;
                                 this.scope_menu_open = !this.scope_menu_open;
                                 cx.notify();
                             }),
                         )
                 })
-                .child(self.scope.label())
-                .when(has_turns, |el| {
+                .child(scope_label)
+                .when(can_pick_scope, |el| {
                     el.child(superhero_icon("superhero/chevron-down.svg", 12.0, muted))
                 }),
         );
-        if self.scope_menu_open && has_turns {
+        if self.scope_menu_open && can_pick_scope {
             let pop_bg = to_hsla(self.tokens.popover);
             let pop_fg = to_hsla(self.tokens.popover_foreground);
             let pop_border = to_hsla(self.tokens.shell_inner_border);
+            let pop_div = to_hsla(self.tokens.glass_divider);
             let mut menu = v_flex()
                 .id("diff-scope-menu")
                 .absolute()
                 .top_full()
                 .left_0()
                 .mt(px(4.0))
-                .w(px(164.0))
-                .max_h(px(240.0))
+                .w(px(248.0))
+                .max_h(px(320.0))
                 .overflow_y_scroll()
-                .rounded(px(8.0))
+                .rounded(px(10.0))
                 .bg(pop_bg)
                 .border_1()
                 .border_color(pop_border)
@@ -340,83 +551,359 @@ impl DiffPanel {
                 .gap(px(2.0))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
 
-            let all_selected = self.scope == DiffScope::AllChanges;
-            menu = menu.child(
-                h_flex()
-                    .id("diff-scope-all")
-                    .h(px(26.0))
-                    .px(px(8.0))
-                    .gap(px(6.0))
-                    .items_center()
-                    .rounded(px(5.0))
-                    .cursor_pointer()
-                    .text_size(px(UI_TEXT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(pop_fg)
-                    .hover(move |s| s.bg(hover_bg))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            cx.stop_propagation();
-                            this.scope_menu_open = false;
-                            if this.scope != DiffScope::AllChanges {
-                                this.scope = DiffScope::AllChanges;
-                                this.reload(cx);
-                            } else {
-                                cx.notify();
-                            }
-                        }),
-                    )
-                    .child(div().flex_1().child("All changes"))
-                    .when(all_selected, |el| {
-                        el.child(superhero_icon("superhero/check.svg", 13.0, pop_fg))
-                    }),
-            );
+            if has_git {
+                for (id, label, icon, target) in [
+                    (
+                        "diff-scope-branch",
+                        "Changes (branch)",
+                        "superhero/branch.svg",
+                        DiffScope::Branch,
+                    ),
+                    (
+                        "diff-scope-working-tree",
+                        "Uncommitted",
+                        "superhero/git-controls.svg",
+                        DiffScope::WorkingTree,
+                    ),
+                ] {
+                    let selected = self.scope == target;
+                    menu = menu.child(
+                        h_flex()
+                            .id(id)
+                            .a11y_button(SharedString::from(format!("diff.scope.{id}")), label)
+                            .h(px(26.0))
+                            .px(px(8.0))
+                            .gap(px(6.0))
+                            .items_center()
+                            .rounded(px(6.0))
+                            .cursor_pointer()
+                            .text_size(px(UI_TEXT_PX))
+                            .line_height(px(UI_LINE_HEIGHT_PX))
+                            .text_color(if selected { pop_fg } else { muted })
+                            .hover(move |s| s.bg(hover_bg).text_color(pop_fg))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.scope_menu_open = false;
+                                    if this.scope != target {
+                                        this.scope = target.clone();
+                                        this.reload(cx);
+                                    } else {
+                                        cx.notify();
+                                    }
+                                }),
+                            )
+                            .child(superhero_icon(
+                                icon,
+                                13.0,
+                                if selected { pop_fg } else { muted },
+                            ))
+                            .child(div().flex_1().truncate().child(label))
+                            .when(selected, |el| {
+                                el.child(superhero_icon("superhero/check.svg", 13.0, pop_fg))
+                            }),
+                    );
+                }
 
-            for (idx, &turn) in self.available_turns.iter().enumerate() {
-                let prev = idx
-                    .checked_sub(1)
-                    .and_then(|p| self.available_turns.get(p).copied())
-                    .unwrap_or(0);
-                let target = DiffScope::Turn {
-                    from: prev,
-                    to: turn,
-                };
-                let selected = self.scope == target;
+                if !self.branch_commits.is_empty() {
+                    menu = menu
+                        .child(div().my(px(3.0)).h(px(1.0)).w_full().bg(pop_div))
+                        .child(
+                            div()
+                                .px(px(8.0))
+                                .py(px(2.0))
+                                .text_size(px(11.0))
+                                .text_color(muted)
+                                .child("Commits"),
+                        );
+                    for commit in self.branch_commits.iter().take(12) {
+                        let short_sha = &commit.sha[..commit.sha.len().min(7)];
+                        let target = DiffScope::Commit {
+                            sha: commit.sha.clone(),
+                            subject: commit.subject.clone(),
+                        };
+                        let selected = self.scope == target;
+                        let title = if commit.subject.trim().is_empty() {
+                            short_sha.to_owned()
+                        } else {
+                            commit.subject.clone()
+                        };
+                        menu = menu.child(
+                            h_flex()
+                                .id(SharedString::from(format!("diff-scope-commit-{short_sha}")))
+                                .h(px(26.0))
+                                .px(px(8.0))
+                                .gap(px(6.0))
+                                .items_center()
+                                .rounded(px(6.0))
+                                .cursor_pointer()
+                                .text_size(px(UI_TEXT_PX))
+                                .line_height(px(UI_LINE_HEIGHT_PX))
+                                .text_color(if selected { pop_fg } else { muted })
+                                .hover(move |s| s.bg(hover_bg).text_color(pop_fg))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.scope_menu_open = false;
+                                        if this.scope != target {
+                                            this.scope = target.clone();
+                                            this.reload(cx);
+                                        } else {
+                                            cx.notify();
+                                        }
+                                    }),
+                                )
+                                .child(superhero_icon(
+                                    "superhero/commit.svg",
+                                    12.0,
+                                    if selected { pop_fg } else { muted },
+                                ))
+                                .child(div().flex_1().min_w_0().truncate().child(title))
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(px(11.0))
+                                        .text_color(muted)
+                                        .child(short_sha.to_owned()),
+                                )
+                                .when(selected, |el| {
+                                    el.child(superhero_icon("superhero/check.svg", 13.0, pop_fg))
+                                }),
+                        );
+                    }
+                }
+            }
+
+            if has_turns {
+                if has_git {
+                    menu = menu
+                        .child(div().my(px(3.0)).h(px(1.0)).w_full().bg(pop_div))
+                        .child(
+                            div()
+                                .px(px(8.0))
+                                .py(px(2.0))
+                                .text_size(px(11.0))
+                                .text_color(muted)
+                                .child("Thread turns"),
+                        );
+                }
+                let all_selected = self.scope == DiffScope::AllChanges;
                 menu = menu.child(
                     h_flex()
-                        .id(SharedString::from(format!("diff-scope-turn-{turn}")))
+                        .id("diff-scope-all")
                         .h(px(26.0))
                         .px(px(8.0))
                         .gap(px(6.0))
                         .items_center()
-                        .rounded(px(5.0))
+                        .rounded(px(6.0))
                         .cursor_pointer()
                         .text_size(px(UI_TEXT_PX))
                         .line_height(px(UI_LINE_HEIGHT_PX))
-                        .text_color(if selected { pop_fg } else { muted })
+                        .text_color(if all_selected { pop_fg } else { muted })
                         .hover(move |s| s.bg(hover_bg).text_color(pop_fg))
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
+                            cx.listener(|this, _, _, cx| {
                                 cx.stop_propagation();
                                 this.scope_menu_open = false;
-                                if this.scope != target {
-                                    this.scope = target;
+                                if this.scope != DiffScope::AllChanges {
+                                    this.scope = DiffScope::AllChanges;
                                     this.reload(cx);
                                 } else {
                                     cx.notify();
                                 }
                             }),
                         )
-                        .child(div().flex_1().child(format!("Turn {turn}")))
-                        .when(selected, |el| {
+                        .child(div().flex_1().child("All turns"))
+                        .when(all_selected, |el| {
                             el.child(superhero_icon("superhero/check.svg", 13.0, pop_fg))
                         }),
                 );
+
+                for (idx, &turn) in self.available_turns.iter().enumerate() {
+                    let prev = idx
+                        .checked_sub(1)
+                        .and_then(|p| self.available_turns.get(p).copied())
+                        .unwrap_or(0);
+                    let target = DiffScope::Turn {
+                        from: prev,
+                        to: turn,
+                    };
+                    let selected = self.scope == target;
+                    menu = menu.child(
+                        h_flex()
+                            .id(SharedString::from(format!("diff-scope-turn-{turn}")))
+                            .h(px(26.0))
+                            .px(px(8.0))
+                            .gap(px(6.0))
+                            .items_center()
+                            .rounded(px(6.0))
+                            .cursor_pointer()
+                            .text_size(px(UI_TEXT_PX))
+                            .line_height(px(UI_LINE_HEIGHT_PX))
+                            .text_color(if selected { pop_fg } else { muted })
+                            .hover(move |s| s.bg(hover_bg).text_color(pop_fg))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.scope_menu_open = false;
+                                    if this.scope != target {
+                                        this.scope = target.clone();
+                                        this.reload(cx);
+                                    } else {
+                                        cx.notify();
+                                    }
+                                }),
+                            )
+                            .child(div().flex_1().child(format!("Turn {turn}")))
+                            .when(selected, |el| {
+                                el.child(superhero_icon("superhero/check.svg", 13.0, pop_fg))
+                            }),
+                    );
+                }
             }
             scope_slot = scope_slot.child(deferred(menu).with_priority(3));
         }
+
+        // Base ref comparison switcher (`main -> feat/foo`) shown for Branch scope.
+        let base_ref_slot = (has_git && self.scope == DiffScope::Branch).then(|| {
+            let base_label = self
+                .resolved_base_ref
+                .as_deref()
+                .or(self.base_ref.as_deref())
+                .unwrap_or("Automatic");
+            let head_label = self.resolved_head_ref.as_deref().unwrap_or("HEAD");
+            let mut slot = div().relative().child(
+                h_flex()
+                    .id("diff-base-ref-trigger")
+                    .a11y_button(
+                        "diff.base-ref.trigger",
+                        format!("Compare base {base_label} to {head_label}"),
+                    )
+                    .h(px(28.0))
+                    .px(px(8.0))
+                    .gap(px(4.0))
+                    .items_center()
+                    .rounded(px(CONTROL_RADIUS_PX))
+                    .bg(control_bg)
+                    .border_1()
+                    .border_color(control_border)
+                    .text_size(px(12.0))
+                    .text_color(muted)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg).text_color(fg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.scope_menu_open = false;
+                            this.base_ref_menu_open = !this.base_ref_menu_open;
+                            if this.base_ref_menu_open {
+                                this.load_refs_if_needed(cx);
+                            }
+                            cx.notify();
+                        }),
+                    )
+                    .child(base_label.to_owned())
+                    .child(superhero_icon("superhero/arrow-right.svg", 11.0, muted))
+                    .child(div().text_color(fg).child(head_label.to_owned())),
+            );
+            if self.base_ref_menu_open {
+                let pop_bg = to_hsla(self.tokens.popover);
+                let pop_fg = to_hsla(self.tokens.popover_foreground);
+                let pop_border = to_hsla(self.tokens.shell_inner_border);
+                let mut menu = v_flex()
+                    .id("diff-base-ref-menu")
+                    .absolute()
+                    .top_full()
+                    .left_0()
+                    .mt(px(4.0))
+                    .w(px(210.0))
+                    .max_h(px(260.0))
+                    .overflow_y_scroll()
+                    .rounded(px(10.0))
+                    .bg(pop_bg)
+                    .border_1()
+                    .border_color(pop_border)
+                    .shadow_md()
+                    .p(px(4.0))
+                    .gap(px(2.0))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+                let auto_selected = self.base_ref.is_none();
+                menu = menu.child(
+                    h_flex()
+                        .id("diff-base-ref-auto")
+                        .h(px(26.0))
+                        .px(px(8.0))
+                        .gap(px(6.0))
+                        .items_center()
+                        .rounded(px(6.0))
+                        .cursor_pointer()
+                        .text_size(px(UI_TEXT_PX))
+                        .text_color(if auto_selected { pop_fg } else { muted })
+                        .hover(move |s| s.bg(hover_bg).text_color(pop_fg))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.base_ref_menu_open = false;
+                                if this.base_ref.take().is_some() {
+                                    this.reload(cx);
+                                } else {
+                                    cx.notify();
+                                }
+                            }),
+                        )
+                        .child(div().flex_1().child("Automatic"))
+                        .when(auto_selected, |el| {
+                            el.child(superhero_icon("superhero/check.svg", 13.0, pop_fg))
+                        }),
+                );
+
+                for ref_name in &self.available_refs {
+                    let selected = self.base_ref.as_deref() == Some(ref_name.as_str());
+                    let chosen = ref_name.clone();
+                    menu = menu.child(
+                        h_flex()
+                            .id(SharedString::from(format!("diff-base-ref-{ref_name}")))
+                            .h(px(26.0))
+                            .px(px(8.0))
+                            .gap(px(6.0))
+                            .items_center()
+                            .rounded(px(6.0))
+                            .cursor_pointer()
+                            .text_size(px(UI_TEXT_PX))
+                            .text_color(if selected { pop_fg } else { muted })
+                            .hover(move |s| s.bg(hover_bg).text_color(pop_fg))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.base_ref_menu_open = false;
+                                    if this.base_ref.as_deref() != Some(chosen.as_str()) {
+                                        this.base_ref = Some(chosen.clone());
+                                        this.reload(cx);
+                                    } else {
+                                        cx.notify();
+                                    }
+                                }),
+                            )
+                            .child(div().flex_1().truncate().child(ref_name.clone()))
+                            .when(selected, |el| {
+                                el.child(superhero_icon("superhero/check.svg", 13.0, pop_fg))
+                            }),
+                    );
+                }
+                slot = slot.child(deferred(menu).with_priority(3));
+            }
+            slot
+        });
+
+        let whitespace_color = if self.ignore_whitespace { fg } else { muted };
 
         h_flex()
             .w_full()
@@ -426,18 +913,23 @@ impl DiffPanel {
             .items_center()
             .justify_between()
             .gap(px(8.0))
-            .child(h_flex().items_center().gap(px(8.0)).child(scope_slot).when(
-                file_count > 0,
-                |el| {
-                    el.child(
-                        div()
-                            .text_size(px(UI_TEXT_PX))
-                            .line_height(px(UI_LINE_HEIGHT_PX))
-                            .text_color(muted)
-                            .child(file_count_label),
-                    )
-                },
-            ))
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(scope_slot)
+                    .when_some(base_ref_slot, |el, slot| el.child(slot))
+                    .when(file_count > 0, |el| {
+                        el.child(
+                            div()
+                                .text_size(px(UI_TEXT_PX))
+                                .line_height(px(UI_LINE_HEIGHT_PX))
+                                .text_color(muted)
+                                .child(file_count_label),
+                        )
+                    }),
+            )
             .child(
                 h_flex()
                     .flex_shrink_0()
@@ -475,6 +967,7 @@ impl DiffPanel {
                             .child(
                                 div()
                                     .id("diff-refresh-btn")
+                                    .a11y_button("diff.refresh", "Refresh diff")
                                     .size(px(TOOLBAR_BTN_SIZE_PX))
                                     .rounded(px(9999.0))
                                     .flex()
@@ -488,6 +981,38 @@ impl DiffPanel {
                                     )
                                     .conn_tooltip("Refresh diff", &self.tokens)
                                     .child(superhero_icon("superhero/refresh.svg", 14.0, muted)),
+                            )
+                            .child(
+                                div()
+                                    .id("diff-whitespace-btn")
+                                    .a11y_button("diff.whitespace", "Ignore whitespace")
+                                    .size(px(TOOLBAR_BTN_SIZE_PX))
+                                    .rounded(px(9999.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(hover_bg))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.ignore_whitespace = !this.ignore_whitespace;
+                                            this.reload(cx);
+                                        }),
+                                    )
+                                    .conn_tooltip(
+                                        if self.ignore_whitespace {
+                                            "Show whitespace changes"
+                                        } else {
+                                            "Ignore whitespace"
+                                        },
+                                        &self.tokens,
+                                    )
+                                    .child(superhero_icon(
+                                        "superhero/whitespace.svg",
+                                        14.0,
+                                        whitespace_color,
+                                    )),
                             )
                             .child(
                                 div()
@@ -1097,8 +1622,9 @@ impl Render for DiffPanel {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if this.scope_menu_open {
+                    if this.scope_menu_open || this.base_ref_menu_open {
                         this.scope_menu_open = false;
+                        this.base_ref_menu_open = false;
                         cx.notify();
                     }
                 }),
@@ -1300,5 +1826,32 @@ mod tests {
                 (None, Some(5)),
             ]
         );
+    }
+
+    #[test]
+    fn diff_scope_labels_and_git_classification_match_conn() {
+        assert_eq!(DiffScope::Branch.label(), "Changes");
+        assert!(DiffScope::Branch.is_git_scope());
+        assert_eq!(DiffScope::WorkingTree.label(), "Uncommitted");
+        assert!(DiffScope::WorkingTree.is_git_scope());
+        assert_eq!(
+            DiffScope::Commit {
+                sha: "abcdef123456".to_owned(),
+                subject: String::new(),
+            }
+            .label(),
+            "Commit abcdef1"
+        );
+        assert_eq!(
+            DiffScope::Commit {
+                sha: "abcdef123456".to_owned(),
+                subject: "feat(diff): add scopes".to_owned(),
+            }
+            .label(),
+            "feat(diff): add scopes"
+        );
+        assert!(!DiffScope::AllChanges.is_git_scope());
+        assert_eq!(DiffScope::AllChanges.label(), "All turns");
+        assert_eq!(DiffScope::Turn { from: 1, to: 2 }.label(), "Turn 2");
     }
 }

@@ -349,6 +349,8 @@ impl RightPanel {
             self.workspace_root = workspace_root.clone();
             self.files
                 .update(cx, |p, cx| p.set_workspace_root(workspace_root.clone(), cx));
+            self.diff
+                .update(cx, |p, cx| p.set_workspace_root(workspace_root.clone(), cx));
             self.terminal
                 .update(cx, |p, cx| p.set_workspace_root(workspace_root, cx));
         }
