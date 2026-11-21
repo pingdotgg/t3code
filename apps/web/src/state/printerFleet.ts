@@ -81,7 +81,9 @@ export function selectFleetPrinter(
     );
   }
   if (preferredPrinterId !== undefined) {
-    return entries.find((entry) => entry.printer.id === preferredPrinterId);
+    const matches = entries.filter((entry) => entry.printer.id === preferredPrinterId);
+    // Fail closed if multiple environments share the same printerId without an explicit owner environment pin.
+    return matches.length === 1 ? matches[0] : undefined;
   }
   if (preferredProxyEnvironmentId !== undefined) {
     return entries.find((entry) => entry.proxyEnvironmentId === preferredProxyEnvironmentId);

@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type {
+  EnvironmentId,
   PrinterAction,
   PrinterId,
   PrinterObject,
@@ -424,15 +425,21 @@ export function PrinterPanel(props: {
     localState: state,
     loaded,
     error: stateError,
+    loadingEnvironmentIds,
   } = useFleetPrinters(threadEnvironmentId);
 
+  const pinnedOwnerEnvironmentId =
+    props.surface.printerId !== undefined
+      ? (props.surface.proxyEnvironmentId ?? threadEnvironmentId)
+      : props.surface.proxyEnvironmentId;
   const activeEntry = selectFleetPrinter(
     fleetPrinters,
     props.surface.printerId,
-    props.surface.proxyEnvironmentId,
+    pinnedOwnerEnvironmentId,
   );
   const activePrinter = activeEntry?.printer;
   const proxyEnvironmentId = activeEntry?.proxyEnvironmentId ?? threadEnvironmentId;
+  const activePrinterKey = activePrinter ? `${proxyEnvironmentId}:${activePrinter.id}` : "none";
 
   const mediaAccess = usePrinterMediaAccess(proxyEnvironmentId);
 
@@ -444,8 +451,16 @@ export function PrinterPanel(props: {
   const [viewMode, setViewMode] = useState<PrinterViewportMode>("camera");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [confirmStopOpen, setConfirmStopOpen] = useState(false);
+  const [stopTarget, setStopTarget] = useState<{
+    readonly printerId: PrinterId;
+    readonly printerLabel: string;
+    readonly proxyEnvironmentId: EnvironmentId;
+    readonly expectedJobFileName: string | null;
+    readonly displayName: string;
+  } | null>(null);
   const [skipTarget, setSkipTarget] = useState<{
+    readonly printerId: PrinterId;
+    readonly proxyEnvironmentId: EnvironmentId;
     readonly object: PrinterObject;
     readonly jobFileName: string | null;
   } | null>(null);
@@ -478,37 +493,51 @@ export function PrinterPanel(props: {
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
-    const result = await runList({
-      environmentId: proxyEnvironmentId,
-      input: {
-        ...(activePrinter ? { printerId: activePrinter.id } : {}),
-        refresh: true,
-      },
-    });
-    setRefreshing(false);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: gt("Could not refresh printer"),
-        description: formatEnvironmentQueryError(result.cause),
+    try {
+      const result = await runList({
+        environmentId: proxyEnvironmentId,
+        input: {
+          ...(activePrinter ? { printerId: activePrinter.id } : {}),
+          refresh: true,
+        },
       });
+      if (result._tag === "Failure") {
+        toastManager.add({
+          type: "error",
+          title: gt("Could not refresh printer"),
+          description: formatEnvironmentQueryError(result.cause),
+        });
+      }
+    } finally {
+      setRefreshing(false);
     }
   };
 
-  const handleAction = async (action: PrinterAction) => {
-    if (!activePrinter || !canAction || pendingAction !== null) return;
+  const handleAction = async (
+    action: PrinterAction,
+    targetOverride?: {
+      readonly printerId: PrinterId;
+      readonly proxyEnvironmentId: EnvironmentId;
+    },
+  ) => {
+    const targetPrinterId = targetOverride?.printerId ?? activePrinter?.id;
+    const targetEnvId = targetOverride?.proxyEnvironmentId ?? proxyEnvironmentId;
+    if (!targetPrinterId || !canAction || pendingAction !== null) return;
     setPendingAction(action.kind);
-    const result = await runAction({
-      environmentId: proxyEnvironmentId,
-      input: { printerId: activePrinter.id, action },
-    });
-    setPendingAction(null);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: gt("Printer command failed"),
-        description: formatEnvironmentQueryError(result.cause),
+    try {
+      const result = await runAction({
+        environmentId: targetEnvId,
+        input: { printerId: targetPrinterId, action },
       });
+      if (result._tag === "Failure") {
+        toastManager.add({
+          type: "error",
+          title: gt("Printer command failed"),
+          description: formatEnvironmentQueryError(result.cause),
+        });
+      }
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -516,6 +545,8 @@ export function PrinterPanel(props: {
     if (!fleetKey) return;
     const match = fleetPrinters.find((entry) => entry.key === fleetKey);
     if (!match) return;
+    setStopTarget(null);
+    setSkipTarget(null);
     useRightPanelStore.getState().openPrinter(props.threadRef, {
       printerId: match.printer.id as PrinterId,
       proxyEnvironmentId: match.proxyEnvironmentId,
@@ -524,7 +555,9 @@ export function PrinterPanel(props: {
   };
 
   const renderEmptyState = () => {
-    if (!loaded) {
+    const pinnedEnvLoading =
+      pinnedOwnerEnvironmentId !== undefined && loadingEnvironmentIds.has(pinnedOwnerEnvironmentId);
+    if (!loaded || pinnedEnvLoading) {
       return (
         <div className="flex flex-1 items-center justify-center p-6">
           <Spinner />
@@ -707,7 +740,18 @@ export function PrinterPanel(props: {
               size="xs"
               variant="destructive-outline"
               disabled={!canAction || pendingAction !== null}
-              onClick={() => setConfirmStopOpen(true)}
+              onClick={() =>
+                setStopTarget({
+                  printerId: activePrinter.id,
+                  printerLabel: activePrinter.label,
+                  proxyEnvironmentId,
+                  expectedJobFileName: activePrinter.job.fileName,
+                  displayName:
+                    activePrinter.job.displayName ??
+                    activePrinter.job.fileName ??
+                    gt("the current job"),
+                })
+              }
             >
               <Square className="size-3" />
               {gt("Stop")}
@@ -786,7 +830,12 @@ export function PrinterPanel(props: {
       hasPickImage={activePrinter.media.hasPickImage}
       onSelectObject={() => setViewMode("pick")}
       onRequestSkip={(obj) =>
-        setSkipTarget({ object: obj, jobFileName: activePrinter.job.fileName })
+        setSkipTarget({
+          printerId: activePrinter.id,
+          proxyEnvironmentId,
+          object: obj,
+          jobFileName: activePrinter.job.fileName,
+        })
       }
     />
   );
@@ -943,6 +992,7 @@ export function PrinterPanel(props: {
             <div className="grid grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)] gap-3">
               <div className="space-y-3">
                 <PrinterViewport
+                  key={`viewport:${activePrinterKey}`}
                   printer={activePrinter}
                   mediaAccess={mediaAccess}
                   visible={props.visible}
@@ -971,6 +1021,7 @@ export function PrinterPanel(props: {
                 <PrinterFilamentStrip filament={activePrinter.filament} />
                 {objectsCard}
                 <PrinterControlsDeck
+                  key={`controls:${activePrinterKey}`}
                   printer={activePrinter}
                   canControl={canAction}
                   pendingAction={pendingAction}
@@ -981,6 +1032,7 @@ export function PrinterPanel(props: {
           ) : (
             <div className="space-y-2.5">
               <PrinterViewport
+                key={`viewport:${activePrinterKey}`}
                 printer={activePrinter}
                 mediaAccess={mediaAccess}
                 visible={props.visible}
@@ -1030,6 +1082,7 @@ export function PrinterPanel(props: {
                 </div>
               ) : tab === "controls" ? (
                 <PrinterControlsDeck
+                  key={`controls:${activePrinterKey}`}
                   printer={activePrinter}
                   canControl={canAction}
                   pendingAction={pendingAction}
@@ -1043,18 +1096,25 @@ export function PrinterPanel(props: {
         </div>
       </div>
 
-      {/* Stop Print Confirmation Dialog */}
-      <AlertDialog open={confirmStopOpen} onOpenChange={setConfirmStopOpen}>
+      {/* Stop Print Confirmation Dialog (bound to the job captured when opened) */}
+      <AlertDialog
+        open={
+          stopTarget !== null &&
+          stopTarget.printerId === activePrinter.id &&
+          stopTarget.proxyEnvironmentId === proxyEnvironmentId &&
+          stopTarget.expectedJobFileName === activePrinter.job.fileName
+        }
+        onOpenChange={(open) => {
+          if (!open) setStopTarget(null);
+        }}
+      >
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>{gt("Stop active print?")}</AlertDialogTitle>
             <AlertDialogDescription>
               {gt("This cancels {job} on {printer}. The print cannot be resumed after stopping.", {
-                job:
-                  activePrinter.job.displayName ??
-                  activePrinter.job.fileName ??
-                  gt("the current job"),
-                printer: activePrinter.label,
+                job: stopTarget?.displayName ?? gt("the current job"),
+                printer: stopTarget?.printerLabel ?? activePrinter.label,
               })}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1063,11 +1123,19 @@ export function PrinterPanel(props: {
             <Button
               variant="destructive"
               onClick={() => {
-                setConfirmStopOpen(false);
-                void handleAction({
-                  kind: "stop",
-                  expectedJobFileName: activePrinter.job.fileName,
-                });
+                if (!stopTarget) return;
+                const captured = stopTarget;
+                setStopTarget(null);
+                void handleAction(
+                  {
+                    kind: "stop",
+                    expectedJobFileName: captured.expectedJobFileName,
+                  },
+                  {
+                    printerId: captured.printerId,
+                    proxyEnvironmentId: captured.proxyEnvironmentId,
+                  },
+                );
               }}
             >
               {gt("Stop print")}
@@ -1078,7 +1146,12 @@ export function PrinterPanel(props: {
 
       {/* Skip Object Confirmation Dialog */}
       <AlertDialog
-        open={skipTarget !== null}
+        open={
+          skipTarget !== null &&
+          skipTarget.printerId === activePrinter.id &&
+          skipTarget.proxyEnvironmentId === proxyEnvironmentId &&
+          skipTarget.jobFileName === activePrinter.job.fileName
+        }
         onOpenChange={(open) => {
           if (!open) setSkipTarget(null);
         }}
@@ -1099,13 +1172,21 @@ export function PrinterPanel(props: {
               variant="destructive"
               onClick={() => {
                 if (!skipTarget) return;
-                const { object, jobFileName } = skipTarget;
+                const captured = skipTarget;
                 setSkipTarget(null);
-                void handleAction({
-                  kind: "skipObjects",
-                  objectIds: [object.id],
-                  ...(jobFileName !== null ? { expectedJobFileName: jobFileName } : {}),
-                });
+                void handleAction(
+                  {
+                    kind: "skipObjects",
+                    objectIds: [captured.object.id],
+                    ...(captured.jobFileName !== null
+                      ? { expectedJobFileName: captured.jobFileName }
+                      : {}),
+                  },
+                  {
+                    printerId: captured.printerId,
+                    proxyEnvironmentId: captured.proxyEnvironmentId,
+                  },
+                );
               }}
             >
               {gt("Skip object")}

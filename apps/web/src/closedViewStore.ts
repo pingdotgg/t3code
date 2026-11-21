@@ -86,8 +86,12 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
       );
     case "printer":
       return (
+        (surface.id === "printer" || surface.id.startsWith("printer:")) &&
         (surface.title === undefined || typeof surface.title === "string") &&
-        (surface.printerId === undefined || typeof surface.printerId === "string")
+        (surface.printerId === undefined ||
+          (typeof surface.printerId === "string" && surface.printerId.length > 0)) &&
+        (surface.proxyEnvironmentId === undefined ||
+          (typeof surface.proxyEnvironmentId === "string" && surface.proxyEnvironmentId.length > 0))
       );
     case "thread":
       return typeof surface.threadId === "string" && surface.id === `thread:${surface.threadId}`;

@@ -23,7 +23,7 @@ export class PrinterRequestGuard extends Context.Service<
   () => Effect.Effect<void, PrinterOperationError>
 >()("t3/printer/PrinterUrlGuard/PrinterRequestGuard") {}
 
-interface ResolvedAddress {
+export interface ResolvedAddress {
   readonly address: string;
   readonly family: number;
 }
@@ -32,6 +32,12 @@ export class PrinterDnsLookup extends Context.Service<
   PrinterDnsLookup,
   (hostname: string) => Effect.Effect<ReadonlyArray<ResolvedAddress>, PrinterOperationError>
 >()("t3/printer/PrinterUrlGuard/PrinterDnsLookup") {}
+
+/** Optional host->addresses pin shared across a single action's preflight poll and write dispatch. */
+export class PrinterPinnedAddresses extends Context.Service<
+  PrinterPinnedAddresses,
+  ReadonlyMap<string, ReadonlyArray<ResolvedAddress>>
+>()("t3/printer/PrinterUrlGuard/PrinterPinnedAddresses") {}
 
 const requireUndici = NodeModule.createRequire(import.meta.url);
 
@@ -90,6 +96,7 @@ export function validatePrinterBaseUrl(
   rawUrl: string,
   operation: string,
   printerId?: string,
+  options?: { readonly allowQuery?: boolean },
 ): Effect.Effect<URL, PrinterOperationError> {
   return Effect.try({
     try: () => {
@@ -101,6 +108,12 @@ export function validatePrinterBaseUrl(
         throw new Error(
           "Remove embedded credentials from the printer URL; use the token field instead.",
         );
+      }
+      if (parsed.hash !== "") {
+        throw new Error("Remove URL fragments (#...) from the printer URL.");
+      }
+      if (!options?.allowQuery && parsed.search !== "") {
+        throw new Error("Remove query parameters (?...) from the printer backend URL.");
       }
       if (isBlockedPrinterAddress(parsed.hostname)) {
         throw new Error("Link-local and metadata endpoints are not permitted as printer hosts.");
@@ -132,6 +145,13 @@ const resolveCheckedAddresses = Effect.fn("PrinterUrlGuard.resolveCheckedAddress
   if (NodeNet.isIP(bareHost) !== 0) {
     return null;
   }
+  const pinnedMap = yield* Effect.serviceOption(PrinterPinnedAddresses);
+  if (Option.isSome(pinnedMap)) {
+    const pinned = pinnedMap.value.get(bareHost);
+    if (pinned && pinned.length > 0) {
+      return pinned;
+    }
+  }
   const customLookup = yield* Effect.serviceOption(PrinterDnsLookup);
   const resolved = yield* Option.isSome(customLookup)
     ? customLookup.value(bareHost)
@@ -162,6 +182,22 @@ const resolveCheckedAddresses = Effect.fn("PrinterUrlGuard.resolveCheckedAddress
     }
   }
   return resolved;
+});
+
+/** Resolves and pins a single verified address for a backend host across an entire action's poll + write sequence. */
+export const pinPrinterHostAddress = Effect.fn("PrinterUrlGuard.pinPrinterHostAddress")(function* (
+  rawUrl: string,
+  operation: string,
+  printerId?: string,
+): Effect.fn.Return<ReadonlyMap<string, ReadonlyArray<ResolvedAddress>>, PrinterOperationError> {
+  const parsed = yield* validatePrinterBaseUrl(rawUrl, operation, printerId);
+  const resolved = yield* resolveCheckedAddresses(parsed, operation, printerId);
+  if (resolved === null || resolved.length === 0) {
+    return new Map();
+  }
+  const bareHost = normalizeHost(parsed.hostname);
+  // Pin the single primary resolved IP so preflight poll and hardware write cannot land on different backends.
+  return new Map([[bareHost, [resolved[0]!]]]);
 });
 
 function acquirePinnedDispatcher(

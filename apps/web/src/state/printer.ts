@@ -4,7 +4,11 @@ import {
   resolveDeviceHubAccess,
 } from "@t3tools/client-runtime/state/deviceHubAccess";
 import { createPrinterEnvironmentAtoms } from "@t3tools/client-runtime/state/printer";
-import type { EnvironmentId, PrinterServiceState } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  PRINTER_MEDIA_ROUTE_PREFIX,
+  type PrinterServiceState,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -38,7 +42,7 @@ const MEDIA_TICKET_RETRY_INTERVAL_MS = 15_000;
 const EMPTY_PRINTER_STATE: PrinterServiceState = {
   enabled: false,
   agentAccessEnabled: false,
-  mediaBasePath: "/api/printer-media",
+  mediaBasePath: PRINTER_MEDIA_ROUTE_PREFIX,
   printers: [],
   sessions: [],
   revision: 0,
@@ -77,6 +81,8 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
   readonly localState: PrinterServiceState;
   readonly loaded: boolean;
   readonly error: string | null;
+  readonly loadingEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly unreachableEnvironmentCount: number;
 } {
   const resolve = useMessages();
   const { environments } = useEnvironments();
@@ -85,7 +91,7 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
   const envIds: Array<EnvironmentId> = [];
   const envMeta = new Map<
     EnvironmentId,
-    { readonly label: string; readonly relayManaged: boolean }
+    { readonly label: string; readonly relayManaged: boolean; readonly connecting: boolean }
   >();
   if (threadEnvironmentId !== null) {
     const match = environments.find((env) => env.environmentId === threadEnvironmentId);
@@ -93,6 +99,8 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
     envMeta.set(threadEnvironmentId, {
       label: match?.label ?? threadEnvironmentId,
       relayManaged: match?.relayManaged ?? false,
+      connecting:
+        match?.connection.phase === "connecting" || match?.connection.phase === "reconnecting",
     });
   }
   for (const env of connected) {
@@ -101,6 +109,7 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
     envMeta.set(env.environmentId, {
       label: env.label,
       relayManaged: env.relayManaged,
+      connecting: false,
     });
   }
 
@@ -109,13 +118,31 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
   let localState = EMPTY_PRINTER_STATE;
   let localLoaded = threadEnvironmentId === null;
   let localError: string | null = null;
-  let anyOtherLoaded = false;
+  let settledCount = 0;
+  let unreachableEnvironmentCount = 0;
+  const loadingEnvironmentIds = new Set<EnvironmentId>();
+
+  for (const env of environments) {
+    if (env.connection.phase === "connecting" || env.connection.phase === "reconnecting") {
+      loadingEnvironmentIds.add(env.environmentId);
+    }
+  }
 
   for (let index = 0; index < envIds.length; index += 1) {
     const environmentId = envIds[index]!;
     const result = results[index];
     const meta = envMeta.get(environmentId)!;
     const data = result && AsyncResult.isSuccess(result) ? result.value : null;
+    const failed = result !== undefined && AsyncResult.isFailure(result);
+    if (data !== null || failed) {
+      settledCount += 1;
+      loadingEnvironmentIds.delete(environmentId);
+    } else {
+      loadingEnvironmentIds.add(environmentId);
+    }
+    if (failed) {
+      unreachableEnvironmentCount += 1;
+    }
     sources.push({
       environmentId,
       label: meta.label,
@@ -126,23 +153,23 @@ export function useFleetPrinters(threadEnvironmentId: EnvironmentId | null): {
       if (data !== null) {
         localState = data;
         localLoaded = true;
-      } else if (result && AsyncResult.isFailure(result)) {
+      } else if (failed) {
         localLoaded = true;
         localError = formatEnvironmentQueryError(result.cause, resolve);
       }
-    } else if (data !== null || (result && AsyncResult.isFailure(result))) {
-      anyOtherLoaded = true;
     }
   }
 
   const entries = collectFleetPrinters(sources, threadEnvironmentId);
-  const loaded = entries.length > 0 || (localLoaded && (envIds.length <= 1 || anyOtherLoaded));
+  const loaded = entries.length > 0 || localLoaded || settledCount > 0;
 
   return {
     entries,
     localState,
     loaded,
     error: entries.length === 0 ? localError : null,
+    loadingEnvironmentIds,
+    unreachableEnvironmentCount,
   };
 }
 

@@ -228,6 +228,46 @@ describe("reopenClosedView", () => {
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces,
     ).toEqual([]);
   });
+
+  it("preserves proxyEnvironmentId and title when reopening a closed proxied printer tab", async () => {
+    const proxyEnv = "env-home-proxy" as ScopedThreadRef["environmentId"];
+    const panels = useRightPanelStore.getState();
+    panels.openPrinter(threadRef, {
+      printerId: "p1s-studio",
+      proxyEnvironmentId: proxyEnv,
+      label: "Studio P1S",
+    });
+    const surfaceId = `printer:${encodeURIComponent(proxyEnv)}:${encodeURIComponent("p1s-studio")}`;
+    panels.closeSurface(threadRef, surfaceId);
+    const entry = useClosedViewStore.getState().entries[0];
+    expect(entry).toMatchObject({
+      kind: "panel-tab",
+      surface: {
+        id: surfaceId,
+        kind: "printer",
+        printerId: "p1s-studio",
+        proxyEnvironmentId: proxyEnv,
+        title: "Studio P1S",
+      },
+    });
+
+    const openPreview = vi.fn();
+    expect(await reopenClosedView(entry!, { openPreview, workspaceAvailable: false })).toBe(true);
+    const reopened = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      threadRef,
+    );
+    expect(reopened.activeSurfaceId).toBe(surfaceId);
+    expect(reopened.surfaces).toEqual([
+      {
+        id: surfaceId,
+        kind: "printer",
+        printerId: "p1s-studio",
+        proxyEnvironmentId: proxyEnv,
+        title: "Studio P1S",
+      },
+    ]);
+  });
 });
 
 describe("planNextReopen", () => {

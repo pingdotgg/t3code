@@ -76,6 +76,7 @@ describe("PrinterMediaProxy", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("image/jpeg");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(response.headers.get("cache-control")).toBe("no-store, no-transform");
     expect(response.headers.get("x-printer-captured-at")).toBe("2026-11-21T01:00:00.000Z");
     expect(response.headers.get("x-printer-frame-stale")).toBe("false");

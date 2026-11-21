@@ -40,8 +40,23 @@ interface HaEntityState {
   readonly entity_id: string;
   readonly state: string;
   readonly attributes?: Readonly<Record<string, unknown>>;
+  readonly last_reported?: string;
   readonly last_updated?: string;
   readonly last_changed?: string;
+}
+
+/** Max age of HA control-entity updates (`last_reported` or `last_updated`) before motion fails closed. */
+const HA_CONTROL_STALE_MS = 5 * 60 * 1000;
+
+function haEntityFreshnessMs(entity: HaEntityState | undefined): number | null {
+  if (!entity) return null;
+  for (const candidate of [entity.last_reported, entity.last_updated]) {
+    if (typeof candidate === "string") {
+      const parsed = Date.parse(candidate);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
 }
 
 const SPEED_PROFILES: ReadonlySet<PrinterSpeedProfile> = new Set([
@@ -738,12 +753,22 @@ export function parseHomeAssistantBambuStates(input: {
     nowMs - cache.lastCameraChangedAtMs > 30_000;
   const cameraStale = !cameraEntityHealthy || cameraHashStale;
 
-  const stale = !online || status === "offline" || status === "unknown";
+  const onlineTsMs = haEntityFreshnessMs(onlineEntity);
+  const printStatusTsMs = haEntityFreshnessMs(printStatusEntity);
+  const controlTimestampsFresh =
+    printStatusTsMs !== null &&
+    nowMs - printStatusTsMs <= HA_CONTROL_STALE_MS &&
+    (onlineEntity === undefined ||
+      (onlineTsMs !== null && nowMs - onlineTsMs <= HA_CONTROL_STALE_MS));
+
+  const stale = !online || status === "offline" || status === "unknown" || !controlTimestampsFresh;
   const staleReason = !online
     ? "Printer is offline; displayed metrics and camera frame may be from the last session."
     : status === "unknown"
       ? "Home Assistant reported an unknown printer state."
-      : undefined;
+      : !controlTimestampsFresh
+        ? "Home Assistant control telemetry (online/print status) is missing or stale; motion controls are locked."
+        : undefined;
 
   const filament = parseFilament(prefix, byId);
   const alerts = parseHmsAndPrintAlerts(
@@ -920,7 +945,7 @@ export function parseHomeAssistantBambuStates(input: {
           byId.has(`fan.${prefix}_chamber_fan`)),
       canSetLight: canControl && chamberLightEntity !== undefined,
       canSetSpeed: canControl && speedSelectEntity !== undefined && isJobActive,
-      canJog: canControl && (status === "idle" || status === "finish"),
+      canJog: canControl && !stale && (status === "idle" || status === "finish"),
       canSkipObjects:
         canControl && isJobActive && printableObjects.filter((o) => !o.skipped).length > 1,
     },
@@ -1059,7 +1084,7 @@ export const homeAssistantBambuAdapter: PrinterAdapter<HomeAssistantBambuPrinter
       nowMs: DateTime.toEpochMillis(now),
       nowIso: DateTime.formatIso(now),
     });
-    const deviceId = yield* resolveVerifiedHaDeviceId({
+    const verifyDeviceId = resolveVerifiedHaDeviceId({
       baseUrl,
       secret,
       prefix,
@@ -1068,7 +1093,10 @@ export const homeAssistantBambuAdapter: PrinterAdapter<HomeAssistantBambuPrinter
       cachedDeviceIdPrefix: undefined,
       printerId: config.id,
       operation: "testConnection",
-    }).pipe(Effect.orElseSucceed(() => undefined));
+    });
+    const deviceId = config.deviceId?.trim()
+      ? yield* verifyDeviceId
+      : yield* verifyDeviceId.pipe(Effect.orElseSucceed(() => undefined));
     return {
       ok: true,
       model: parsed.snapshot.hardware.model,
@@ -1304,7 +1332,14 @@ export const homeAssistantBambuAdapter: PrinterAdapter<HomeAssistantBambuPrinter
         operation: `ha.media.${kind}`,
         printerId: config.id,
       });
-      const contentType = detectImageMimeType(result.bytes, result.contentType);
+      const contentType = detectImageMimeType(result.bytes);
+      if (contentType === null) {
+        return yield* new PrinterOperationError({
+          operation: `ha.media.${kind}`,
+          printerId: config.id,
+          reason: `Home Assistant returned a non-image payload for "${kind}".`,
+        });
+      }
       const hash = fingerprintBytes(result.bytes);
       const now = yield* DateTime.now;
       const nowMs = DateTime.toEpochMillis(now);

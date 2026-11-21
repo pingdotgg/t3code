@@ -14,9 +14,11 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as PeerLinks from "./PeerLinks.ts";
@@ -55,6 +57,61 @@ export class PeerMcpClient extends Context.Service<
 >()("t3/peer/PeerMcpClient") {}
 
 const MAX_PEER_IMAGE_BASE64_LENGTH = 14 * 1024 * 1024;
+const MAX_PEER_RESPONSE_BYTES = 16 * 1024 * 1024;
+
+function readBoundedPeerResponseText(
+  response: HttpClientResponse.HttpClientResponse,
+): Effect.Effect<string, OrchestratorMcpFailure> {
+  const declaredLength = Number(response.headers["content-length"] ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_PEER_RESPONSE_BYTES) {
+    return Effect.fail(
+      new OrchestratorMcpFailure({
+        code: "orchestration_error",
+        message: `The linked environment's response exceeded the ${Math.round(MAX_PEER_RESPONSE_BYTES / (1024 * 1024))} MB transfer limit.`,
+      }),
+    );
+  }
+  return response.stream.pipe(
+    Stream.mapError(
+      () =>
+        new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "Could not read the linked environment's response.",
+        }),
+    ),
+    Stream.runFoldEffect<
+      { readonly chunks: Array<Uint8Array>; total: number },
+      Uint8Array,
+      OrchestratorMcpFailure,
+      never
+    >(
+      () => ({ chunks: [], total: 0 }),
+      (acc, chunk) => {
+        const nextTotal = acc.total + chunk.byteLength;
+        if (nextTotal > MAX_PEER_RESPONSE_BYTES) {
+          return Effect.fail(
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: `The linked environment's response exceeded the ${Math.round(MAX_PEER_RESPONSE_BYTES / (1024 * 1024))} MB transfer limit.`,
+            }),
+          );
+        }
+        acc.chunks.push(chunk);
+        acc.total = nextTotal;
+        return Effect.succeed(acc);
+      },
+    ),
+    Effect.map(({ chunks, total }) => {
+      const merged = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      return new TextDecoder().decode(merged);
+    }),
+  );
+}
 
 const ToolCallResponse = Schema.Struct({
   result: Schema.optional(
@@ -265,8 +322,9 @@ const make = Effect.gen(function* () {
         });
       }
       yield* recordLinkExpiry(resolved.link, response.headers);
+      const rawResponseText = yield* readBoundedPeerResponseText(response);
       const body = yield* decodeToolCallResponse(
-        responseJson(response.headers["content-type"], yield* response.text),
+        responseJson(response.headers["content-type"], rawResponseText),
       ).pipe(
         Effect.mapError(
           () =>
@@ -303,12 +361,22 @@ const make = Effect.gen(function* () {
               }),
         );
       }
-      const imagePart = body.result.content.find(
+      const oversizedImagePart = body.result.content.find(
         (part) =>
           part.type === "image" &&
           typeof part.data === "string" &&
-          part.data.length > 0 &&
-          part.data.length <= MAX_PEER_IMAGE_BASE64_LENGTH,
+          part.data.length > MAX_PEER_IMAGE_BASE64_LENGTH,
+      );
+      if (oversizedImagePart !== undefined) {
+        return Result.fail(
+          new OrchestratorMcpFailure({
+            code: "orchestration_error",
+            message: "The linked environment's image response exceeded the transfer size limit.",
+          }),
+        );
+      }
+      const imagePart = body.result.content.find(
+        (part) => part.type === "image" && typeof part.data === "string" && part.data.length > 0,
       );
       let payloadText = text;
       if (imagePart?.data !== undefined) {
@@ -349,6 +417,27 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
+      } else if (text.includes('"screenshot"')) {
+        const parsed = yield* decodeUnknownJson(text).pipe(Effect.orElseSucceed(() => null));
+        if (
+          parsed !== null &&
+          typeof parsed === "object" &&
+          !Array.isArray(parsed) &&
+          "screenshot" in parsed &&
+          parsed.screenshot !== null &&
+          typeof parsed.screenshot === "object" &&
+          !Array.isArray(parsed.screenshot) &&
+          "data" in parsed.screenshot &&
+          typeof parsed.screenshot.data === "string" &&
+          parsed.screenshot.data.length > MAX_PEER_IMAGE_BASE64_LENGTH
+        ) {
+          return Result.fail(
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: "The linked environment's image response exceeded the transfer size limit.",
+            }),
+          );
+        }
       }
       const success = Schema.fromJsonString(input.success);
       return yield* Schema.decodeEffect(success)(payloadText).pipe(

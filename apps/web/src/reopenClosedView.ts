@@ -159,6 +159,7 @@ export async function reopenClosedView(
       if (surface.printerId) {
         panels.openPrinter(ref, {
           printerId: surface.printerId,
+          ...(surface.proxyEnvironmentId ? { proxyEnvironmentId: surface.proxyEnvironmentId } : {}),
           ...(surface.title ? { label: surface.title } : {}),
         });
       } else panels.open(ref, "printer");

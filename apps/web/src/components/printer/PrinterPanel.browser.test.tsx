@@ -71,6 +71,8 @@ vi.mock("~/state/printer", async (importOriginal) => {
         entries,
         localState: mockStateRef.proxyEnv ? { ...state, printers: [] } : state,
         loaded: true,
+        loadingEnvironmentIds: new Set<EnvironmentId>(),
+        unreachableEnvironmentCount: 0,
         error: null,
       };
     },
@@ -360,5 +362,179 @@ describe("PrinterPanel", () => {
         },
       }),
     );
+  });
+
+  it("closes the Stop dialog if the active job changes before confirmation and includes expectedJobFileName on skip object", async () => {
+    mockRunCommand.mockReset();
+    mockRunCommand.mockResolvedValue(Exit.succeed(makePrinter()));
+    mockNavigate.mockReset();
+    const jobA = makePrinter();
+    mockStateRef.current = {
+      enabled: true,
+      agentAccessEnabled: true,
+      mediaBasePath: "/api/printer-media",
+      printers: [jobA],
+      sessions: [],
+      revision: 1,
+    };
+
+    await using screen = await render(
+      <div style={{ width: 480, height: 820, display: "flex" }}>
+        <PrinterPanel
+          mode="embedded"
+          threadRef={threadRef}
+          surface={{ id: "printer:p1s-studio", kind: "printer", printerId: "p1s-studio" }}
+          visible
+        />
+      </div>,
+    );
+
+    // Open Stop confirmation bound to jobA.
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await expect.element(page.getByText("Stop active print?"), { timeout: 2500 }).toBeVisible();
+
+    // Job changes on the printer while dialog is open -> dialog closes cleanly without stopping jobB.
+    const jobB = makePrinter({
+      job: {
+        ...jobA.job,
+        fileName: "next-plate.gcode.3mf",
+        displayName: "next-plate",
+      },
+    });
+    mockStateRef.current = {
+      enabled: true,
+      agentAccessEnabled: true,
+      mediaBasePath: "/api/printer-media",
+      printers: [jobB],
+      sessions: [],
+      revision: 2,
+    };
+    await screen.rerender(
+      <div style={{ width: 480, height: 820, display: "flex" }}>
+        <PrinterPanel
+          mode="embedded"
+          threadRef={threadRef}
+          surface={{ id: "printer:p1s-studio", kind: "printer", printerId: "p1s-studio" }}
+          visible
+        />
+      </div>,
+    );
+    await expect.element(page.getByText("Stop active print?")).not.toBeInTheDocument();
+    expect(mockRunCommand).not.toHaveBeenCalled();
+
+    // Skip object confirmation includes expectedJobFileName for the captured job.
+    const skipButtons = screen.getByRole("button", { name: "Skip" });
+    await userEvent.click(skipButtons.first());
+    await expect
+      .element(page.getByText("Skip object for rest of print?"), { timeout: 2500 })
+      .toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Skip object" }));
+    expect(mockRunCommand).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          printerId: "p1s-studio",
+          action: {
+            kind: "skipObjects",
+            objectIds: [1],
+            expectedJobFileName: "next-plate.gcode.3mf",
+          },
+        },
+      }),
+    );
+  });
+
+  it("resets motion unlock when switching printers and shows unavailable state for missing pinned printer", async () => {
+    mockRunCommand.mockReset();
+    mockRunCommand.mockResolvedValue(Exit.succeed(makePrinter()));
+    const idleCapabilities = {
+      canPause: false,
+      canResume: false,
+      canStop: false,
+      canSetTemps: true,
+      canSetFans: true,
+      canSetLight: true,
+      canSetSpeed: false,
+      canJog: true,
+      canSkipObjects: false,
+    };
+    const idleJob = {
+      status: "idle" as const,
+      stage: "idle",
+      stageLabel: "Idle",
+      fileName: null,
+      displayName: null,
+      progressPercent: null,
+      currentLayer: null,
+      totalLayers: null,
+      remainingSeconds: null,
+      elapsedSeconds: null,
+      startedAt: null,
+      estimatedFinishAt: null,
+      weightGrams: null,
+      lengthMeters: null,
+      timelapse: null,
+      printableObjects: [],
+    };
+    const printerA = makePrinter({
+      id: PrinterId.make("p1s-a"),
+      label: "Printer A",
+      job: idleJob,
+      capabilities: idleCapabilities,
+    });
+    const printerB = makePrinter({
+      id: PrinterId.make("p1s-b"),
+      label: "Printer B",
+      job: idleJob,
+      capabilities: idleCapabilities,
+    });
+    mockStateRef.current = {
+      enabled: true,
+      agentAccessEnabled: true,
+      mediaBasePath: "/api/printer-media",
+      printers: [printerA, printerB],
+      sessions: [],
+      revision: 3,
+    };
+
+    await using screen = await render(
+      <div style={{ width: 480, height: 820, display: "flex" }}>
+        <PrinterPanel
+          mode="embedded"
+          threadRef={threadRef}
+          surface={{ id: "printer:p1s-a", kind: "printer", printerId: "p1s-a" }}
+          visible
+        />
+      </div>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Controls" }));
+    await userEvent.click(screen.getByRole("switch", { name: "Unlock motion controls" }));
+    await expect.element(screen.getByRole("button", { name: "Move Y +1 mm" })).toBeEnabled();
+
+    // Switching to another printer remounts ControlsDeck so motion starts locked again.
+    await screen.rerender(
+      <div style={{ width: 480, height: 820, display: "flex" }}>
+        <PrinterPanel
+          mode="embedded"
+          threadRef={threadRef}
+          surface={{ id: "printer:p1s-b", kind: "printer", printerId: "p1s-b" }}
+          visible
+        />
+      </div>,
+    );
+    await expect.element(screen.getByRole("button", { name: "Move Y +1 mm" })).toBeDisabled();
+
+    // Pinned missing printer renders unavailable state instead of silently falling back to Printer A.
+    await screen.rerender(
+      <div style={{ width: 480, height: 820, display: "flex" }}>
+        <PrinterPanel
+          mode="embedded"
+          threadRef={threadRef}
+          surface={{ id: "printer:gone", kind: "printer", printerId: "gone" }}
+          visible
+        />
+      </div>,
+    );
+    await expect.element(screen.getByText("gone is unavailable"), { timeout: 2500 }).toBeVisible();
   });
 });

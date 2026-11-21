@@ -27,6 +27,8 @@ import {
   validatePrinterBaseUrl,
 } from "./PrinterUrlGuard.ts";
 
+const FRESH_REPORTED_AT = "1970-01-01T00:00:00.000Z";
+
 const P1S_CONFIG: HomeAssistantBambuPrinterConfig = {
   kind: "home-assistant-bambu",
   id: PrinterId.make("studio-p1s"),
@@ -48,48 +50,59 @@ function makeMockHaHttpClient(options: {
   readonly onServiceCall?: (path: string, body: unknown, authHeader: string | null) => void;
 }) {
   const prefix = options.entityPrefix ?? "p1s_test";
-  const states = [
-    { entity_id: `binary_sensor.${prefix}_online`, state: options.online === false ? "off" : "on" },
-    {
-      entity_id: `binary_sensor.${prefix}_hybrid_mqtt_control_blocked`,
-      state: options.controlBlocked ? "on" : "off",
-    },
-    { entity_id: `sensor.${prefix}_print_status`, state: options.status },
-    ...(options.fileName === null
-      ? []
-      : [
-          {
-            entity_id: `sensor.${prefix}_gcode_filename`,
-            state: options.fileName ?? "part-a.gcode.3mf",
-          },
-        ]),
-    { entity_id: `sensor.${prefix}_nozzle_temperature`, state: "215" },
-    {
-      entity_id: `number.${prefix}_nozzle_target_temperature`,
-      state: "215",
-      attributes: { min: 0, max: 300 },
-    },
-    { entity_id: `sensor.${prefix}_bed_temperature`, state: "70" },
-    {
-      entity_id: `number.${prefix}_bed_target_temperature`,
-      state: "70",
-      attributes: { min: 0, max: 120 },
-    },
-    { entity_id: `fan.${prefix}_cooling_fan`, state: "on", attributes: { percentage: 60 } },
-    { entity_id: `fan.${prefix}_aux_fan`, state: "on", attributes: { percentage: 40 } },
-    { entity_id: `fan.${prefix}_chamber_fan`, state: "off", attributes: { percentage: 0 } },
-    { entity_id: `select.${prefix}_printing_speed`, state: "standard" },
-    { entity_id: `light.${prefix}_chamber_light`, state: "on" },
-    { entity_id: `button.${prefix}_pause`, state: "unknown" },
-    { entity_id: `button.${prefix}_resume`, state: "unknown" },
-    { entity_id: `button.${prefix}_stop`, state: "unknown" },
-    {
-      entity_id: `sensor.${prefix}_printable_objects`,
-      state: "2",
-      attributes: { objects: { "1": "part-1.stl", "2": "part-2.stl" } },
-    },
-    { entity_id: `camera.${prefix}_camera`, state: "streaming" },
-  ];
+  const makeStates = () => {
+    const reported = FRESH_REPORTED_AT;
+    return [
+      {
+        entity_id: `binary_sensor.${prefix}_online`,
+        state: options.online === false ? "off" : "on",
+        last_reported: reported,
+      },
+      {
+        entity_id: `binary_sensor.${prefix}_hybrid_mqtt_control_blocked`,
+        state: options.controlBlocked ? "on" : "off",
+      },
+      {
+        entity_id: `sensor.${prefix}_print_status`,
+        state: options.status,
+        last_reported: reported,
+      },
+      ...(options.fileName === null
+        ? []
+        : [
+            {
+              entity_id: `sensor.${prefix}_gcode_filename`,
+              state: options.fileName ?? "part-a.gcode.3mf",
+            },
+          ]),
+      { entity_id: `sensor.${prefix}_nozzle_temperature`, state: "215" },
+      {
+        entity_id: `number.${prefix}_nozzle_target_temperature`,
+        state: "215",
+        attributes: { min: 0, max: 300 },
+      },
+      { entity_id: `sensor.${prefix}_bed_temperature`, state: "70" },
+      {
+        entity_id: `number.${prefix}_bed_target_temperature`,
+        state: "70",
+        attributes: { min: 0, max: 120 },
+      },
+      { entity_id: `fan.${prefix}_cooling_fan`, state: "on", attributes: { percentage: 60 } },
+      { entity_id: `fan.${prefix}_aux_fan`, state: "on", attributes: { percentage: 40 } },
+      { entity_id: `fan.${prefix}_chamber_fan`, state: "off", attributes: { percentage: 0 } },
+      { entity_id: `select.${prefix}_printing_speed`, state: "standard" },
+      { entity_id: `light.${prefix}_chamber_light`, state: "on" },
+      { entity_id: `button.${prefix}_pause`, state: "unknown" },
+      { entity_id: `button.${prefix}_resume`, state: "unknown" },
+      { entity_id: `button.${prefix}_stop`, state: "unknown" },
+      {
+        entity_id: `sensor.${prefix}_printable_objects`,
+        state: "2",
+        attributes: { objects: { "1": "part-1.stl", "2": "part-2.stl" } },
+      },
+      { entity_id: `camera.${prefix}_camera`, state: "streaming" },
+    ];
+  };
 
   const client = HttpClient.make((request) => {
     const url = new URL(request.url);
@@ -99,7 +112,7 @@ function makeMockHaHttpClient(options: {
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
-          new Response(JSON.stringify(states), {
+          new Response(JSON.stringify(makeStates()), {
             status: 200,
             headers: { "content-type": "application/json" },
           }),
@@ -545,8 +558,16 @@ describe("PrinterService safety guards & lifecycle", () => {
                   request,
                   new Response(
                     JSON.stringify([
-                      { entity_id: "binary_sensor.p1s_test_online", state: "on" },
-                      { entity_id: "sensor.p1s_test_print_status", state: "idle" },
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: "idle",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
                       { entity_id: "sensor.p1s_test_nozzle_temperature", state: "25" },
                       { entity_id: "sensor.p1s_test_bed_temperature", state: "25" },
                     ]),
@@ -631,8 +652,16 @@ describe("PrinterService safety guards & lifecycle", () => {
                   request,
                   new Response(
                     JSON.stringify([
-                      { entity_id: "binary_sensor.p1s_test_online", state: "on" },
-                      { entity_id: "sensor.p1s_test_print_status", state: "idle" },
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: "idle",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
                       { entity_id: "sensor.p1s_test_nozzle_temperature", state: "25" },
                       { entity_id: "sensor.p1s_test_bed_temperature", state: "25" },
                     ]),
@@ -700,33 +729,78 @@ describe("PrinterService safety guards & lifecycle", () => {
   );
 
   it.effect(
-    "aborts hardware dispatch if printer config changes while awaiting DNS lookup before client.execute",
+    "aborts hardware dispatch if printer config changes between preflight and move_axis dispatch",
     () =>
       Effect.gen(function* () {
         const serviceCalls: Array<{ path: string; body: unknown }> = [];
-        const enteredDispatchDns = yield* Deferred.make<void>();
-        const releaseDispatchDns = yield* Deferred.make<void>();
+        const enteredPreDispatch = yield* Deferred.make<void>();
+        const releasePreDispatch = yield* Deferred.make<void>();
         let armed = false;
-        let actionLookupCount = 0;
 
         const mockDnsLayer = Layer.succeed(PrinterDnsLookup, () =>
-          Effect.gen(function* () {
-            if (armed) {
-              actionLookupCount += 1;
-              // 1: safety poll /api/states, 2: live pre-dispatch /api/template, 3: move_axis service call DNS.
-              if (actionLookupCount === 3) {
-                yield* Deferred.succeed(enteredDispatchDns, undefined);
-                yield* Deferred.await(releaseDispatchDns);
-              }
-            }
-            return [{ address: "192.168.1.50", family: 4 }];
-          }),
+          Effect.succeed([{ address: "192.168.1.50", family: 4 }]),
         );
 
         const raceConfig: HomeAssistantBambuPrinterConfig = {
           ...P1S_CONFIG,
           baseUrl: "http://printer-race-test.local:8123",
         };
+        const raceClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/states") {
+              const now = FRESH_REPORTED_AT;
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify([
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: now,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: "idle",
+                        last_reported: now,
+                      },
+                      { entity_id: "sensor.p1s_test_nozzle_temperature", state: "25" },
+                      { entity_id: "sensor.p1s_test_bed_temperature", state: "25" },
+                    ]),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            if (url.pathname === "/api/template") {
+              return Effect.gen(function* () {
+                if (armed) {
+                  armed = false;
+                  yield* Deferred.succeed(enteredPreDispatch, undefined);
+                  yield* Deferred.await(releasePreDispatch);
+                }
+                return HttpClientResponse.fromWeb(
+                  request,
+                  new Response(raceConfig.deviceId!, {
+                    status: 200,
+                    headers: { "content-type": "text/plain" },
+                  }),
+                );
+              });
+            }
+            if (url.pathname.startsWith("/api/services/")) {
+              serviceCalls.push({ path: url.pathname, body: null });
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("[]", { status: 200 })),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("Not Found", { status: 404 })),
+            );
+          }),
+        );
         const testLayer = PrinterService.layer.pipe(
           Layer.provide(
             ServerSettings.layerTest({
@@ -736,18 +810,12 @@ describe("PrinterService safety guards & lifecycle", () => {
           ),
           Layer.provide(mockSecretResolverLayer),
           Layer.provide(mockDnsLayer),
-          Layer.provide(
-            makeMockHaHttpClient({
-              status: "idle",
-              onServiceCall: (path, body) => serviceCalls.push({ path, body }),
-            }),
-          ),
+          Layer.provide(raceClient),
         );
 
         yield* Effect.scoped(
           Effect.gen(function* () {
             const service = yield* PrinterService.PrinterService;
-            // Warm up initial poll so cache has verified device_id (only /api/states + live /api/template + move_axis run during action).
             yield* service.list({ refresh: true });
             armed = true;
 
@@ -760,9 +828,9 @@ describe("PrinterService safety guards & lifecycle", () => {
               ),
             );
 
-            yield* Deferred.await(enteredDispatchDns);
+            yield* Deferred.await(enteredPreDispatch);
 
-            // Retarget the printer while move_axis is waiting on DNS resolution!
+            // Retarget the printer right before move_axis dispatches!
             yield* service.configure({
               printers: [
                 {
@@ -772,7 +840,7 @@ describe("PrinterService safety guards & lifecycle", () => {
               ],
             });
 
-            yield* Deferred.succeed(releaseDispatchDns, undefined);
+            yield* Deferred.succeed(releasePreDispatch, undefined);
             const actionExit = yield* Fiber.join(actionFiber);
             expect(Exit.isFailure(actionExit)).toBe(true);
             expect(serviceCalls).toHaveLength(0);
@@ -862,8 +930,16 @@ describe("PrinterService safety guards & lifecycle", () => {
               );
             }
             const states = [
-              { entity_id: "binary_sensor.p1s_test_online", state: "on" },
-              { entity_id: "sensor.p1s_test_print_status", state: "running" },
+              {
+                entity_id: "binary_sensor.p1s_test_online",
+                state: "on",
+                last_reported: FRESH_REPORTED_AT,
+              },
+              {
+                entity_id: "sensor.p1s_test_print_status",
+                state: "running",
+                last_reported: FRESH_REPORTED_AT,
+              },
               { entity_id: "sensor.p1s_test_gcode_filename", state: "old-printer-job.gcode.3mf" },
               { entity_id: "sensor.p1s_test_nozzle_temperature", state: "215" },
               { entity_id: "sensor.p1s_test_bed_temperature", state: "70" },
@@ -933,8 +1009,16 @@ describe("PrinterService safety guards & lifecycle", () => {
                   request,
                   new Response(
                     JSON.stringify([
-                      { entity_id: "binary_sensor.p1s_test_online", state: "on" },
-                      { entity_id: "sensor.p1s_test_print_status", state: currentStatus },
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: FRESH_REPORTED_AT,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: currentStatus,
+                        last_reported: FRESH_REPORTED_AT,
+                      },
                       { entity_id: "sensor.p1s_test_gcode_filename", state: "plate-1.gcode.3mf" },
                       { entity_id: "sensor.p1s_test_nozzle_temperature", state: "215" },
                       { entity_id: "number.p1s_test_nozzle_target_temperature", state: "215" },
@@ -1204,13 +1288,13 @@ describe("PrinterService safety guards & lifecycle", () => {
   );
 
   it.effect(
-    "rechecks motion readiness at dispatch guard if a concurrent poll observes printing before write DNS completes",
+    "rechecks motion readiness at dispatch guard if a concurrent poll observes printing before move_axis dispatches",
     () =>
       Effect.gen(function* () {
         let currentStatus: "idle" | "running" = "idle";
-        let dnsCallCount = 0;
-        const enteredWriteDns = yield* Deferred.make<void>();
-        const releaseWriteDns = yield* Deferred.make<void>();
+        let armed = false;
+        const enteredPreDispatch = yield* Deferred.make<void>();
+        const releasePreDispatch = yield* Deferred.make<void>();
         const serviceCalls: Array<{ path: string; body: unknown }> = [];
         const hostConfig: HomeAssistantBambuPrinterConfig = {
           ...P1S_CONFIG,
@@ -1221,13 +1305,22 @@ describe("PrinterService safety guards & lifecycle", () => {
           HttpClient.make((request) => {
             const url = new URL(request.url);
             if (url.pathname === "/api/states") {
+              const now = FRESH_REPORTED_AT;
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
                   request,
                   new Response(
                     JSON.stringify([
-                      { entity_id: "binary_sensor.p1s_test_online", state: "on" },
-                      { entity_id: "sensor.p1s_test_print_status", state: currentStatus },
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: now,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: currentStatus,
+                        last_reported: now,
+                      },
                       { entity_id: "sensor.p1s_test_nozzle_temperature", state: "25" },
                       { entity_id: "sensor.p1s_test_bed_temperature", state: "25" },
                     ]),
@@ -1237,15 +1330,20 @@ describe("PrinterService safety guards & lifecycle", () => {
               );
             }
             if (url.pathname === "/api/template") {
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(
+              return Effect.gen(function* () {
+                if (armed) {
+                  armed = false;
+                  yield* Deferred.succeed(enteredPreDispatch, undefined);
+                  yield* Deferred.await(releasePreDispatch);
+                }
+                return HttpClientResponse.fromWeb(
                   request,
                   new Response(hostConfig.deviceId!, {
                     status: 200,
                     headers: { "content-type": "text/plain" },
                   }),
-                ),
-              );
+                );
+              });
             }
             if (url.pathname.startsWith("/api/services/")) {
               serviceCalls.push({ path: url.pathname, body: null });
@@ -1269,15 +1367,7 @@ describe("PrinterService safety guards & lifecycle", () => {
           Layer.provide(dynamicClient),
           Layer.provide(
             Layer.succeed(PrinterDnsLookup, () =>
-              Effect.gen(function* () {
-                dnsCallCount += 1;
-                // Call 1: safety poll /api/states, Call 2: safety poll /api/template, Call 3: live device_id /api/template, Call 4: move_axis POST!
-                if (dnsCallCount === 4) {
-                  yield* Deferred.succeed(enteredWriteDns, undefined);
-                  yield* Deferred.await(releaseWriteDns);
-                }
-                return [{ address: "192.168.1.50", family: 4 }];
-              }),
+              Effect.succeed([{ address: "192.168.1.50", family: 4 }]),
             ),
           ),
         );
@@ -1285,9 +1375,8 @@ describe("PrinterService safety guards & lifecycle", () => {
         yield* Effect.scoped(
           Effect.gen(function* () {
             const service = yield* PrinterService.PrinterService;
-            // Wait for startup poll to settle before resetting dnsCallCount.
             yield* service.list({ refresh: true });
-            dnsCallCount = 0;
+            armed = true;
 
             const moveFiber = yield* Effect.forkChild(
               Effect.exit(
@@ -1297,17 +1386,318 @@ describe("PrinterService safety guards & lifecycle", () => {
                 }),
               ),
             );
-            yield* Deferred.await(enteredWriteDns);
+            yield* Deferred.await(enteredPreDispatch);
 
             // Printer starts printing on the SAME target before the motion POST leaves the socket!
             currentStatus = "running";
             yield* service.list({ refresh: true });
 
-            yield* Deferred.succeed(releaseWriteDns, undefined);
+            yield* Deferred.succeed(releasePreDispatch, undefined);
             const moveExit = yield* Fiber.join(moveFiber);
             expect(Exit.isFailure(moveExit)).toBe(true);
             expect(serviceCalls).toHaveLength(0);
           }).pipe(Effect.provide(testLayer)),
+        );
+      }),
+  );
+
+  it.effect(
+    "pins one DNS lookup across preflight poll and write action, rejects query/hash backend URLs, and blocks open() when disabled",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(validatePrinterBaseUrl("http://192.168.1.50:8123/?token=1", "test")),
+          ),
+        ).toBe(true);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(validatePrinterBaseUrl("http://192.168.1.50:8123/#frag", "test")),
+          ),
+        ).toBe(true);
+
+        // Disabled printer support refuses open() and makes zero outbound requests.
+        let disabledRequests = 0;
+        const disabledLayer = PrinterService.layer.pipe(
+          Layer.provide(
+            ServerSettings.layerTest({
+              enablePrinterSupport: false,
+              printers: [P1S_CONFIG],
+            }),
+          ),
+          Layer.provide(mockSecretResolverLayer),
+          Layer.provide(
+            makeMockHaHttpClient({
+              status: "idle",
+              onRequest: () => {
+                disabledRequests += 1;
+              },
+            }),
+          ),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            const openExit = yield* Effect.exit(
+              service.open({
+                threadId: ThreadId.make("thread-disabled"),
+                printerId: P1S_CONFIG.id,
+              }),
+            );
+            expect(Exit.isFailure(openExit)).toBe(true);
+            expect(disabledRequests).toBe(0);
+          }).pipe(Effect.provide(disabledLayer)),
+        );
+
+        // Action pins ONE DNS lookup across preflight poll + device_id check + write dispatch.
+        let dnsLookupsDuringAction = 0;
+        let countingDns = false;
+        const serviceCalls: Array<{ path: string; body: unknown }> = [];
+        const hostConfig: HomeAssistantBambuPrinterConfig = {
+          ...P1S_CONFIG,
+          baseUrl: "http://pin-once.lan.test:8123",
+        };
+        const pinnedLayer = PrinterService.layer.pipe(
+          Layer.provide(
+            ServerSettings.layerTest({
+              enablePrinterSupport: true,
+              printers: [hostConfig],
+            }),
+          ),
+          Layer.provide(mockSecretResolverLayer),
+          Layer.provide(
+            Layer.succeed(PrinterDnsLookup, () =>
+              Effect.sync(() => {
+                if (countingDns) dnsLookupsDuringAction += 1;
+                return [{ address: "192.168.1.50", family: 4 }];
+              }),
+            ),
+          ),
+          Layer.provide(
+            makeMockHaHttpClient({
+              status: "idle",
+              onServiceCall: (path, body) => serviceCalls.push({ path, body }),
+            }),
+          ),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            yield* service.list({ refresh: true });
+            countingDns = true;
+            yield* service.action({
+              printerId: hostConfig.id,
+              action: { kind: "moveAxis", axis: "X", distanceMm: 1 },
+            });
+            expect(dnsLookupsDuringAction).toBe(1);
+            expect(serviceCalls).toHaveLength(1);
+          }).pipe(Effect.provide(pinnedLayer)),
+        );
+      }),
+  );
+
+  it.effect(
+    "serializes concurrent actions per printer, fails closed on skipObjects without printable objects, and keeps media freshness across slow polls",
+    () =>
+      Effect.gen(function* () {
+        // 1. skipObjects fails closed when printableObjects is empty.
+        const emptyObjectsClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/states") {
+              const now = FRESH_REPORTED_AT;
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify([
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: now,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: "running",
+                        last_reported: now,
+                      },
+                      { entity_id: "sensor.p1s_test_gcode_filename", state: "plate.gcode.3mf" },
+                    ]),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            if (url.pathname === "/api/template") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(P1S_CONFIG.deviceId!, { status: 200 }),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("[]", { status: 200 })),
+            );
+          }),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            const exit = yield* Effect.exit(
+              service.action({
+                printerId: P1S_CONFIG.id,
+                action: {
+                  kind: "skipObjects",
+                  objectIds: [1],
+                  expectedJobFileName: "plate.gcode.3mf",
+                },
+              }),
+            );
+            expect(Exit.isFailure(exit)).toBe(true);
+          }).pipe(
+            Effect.provide(
+              PrinterService.layer.pipe(
+                Layer.provide(
+                  ServerSettings.layerTest({
+                    enablePrinterSupport: true,
+                    printers: [P1S_CONFIG],
+                  }),
+                ),
+                Layer.provide(mockSecretResolverLayer),
+                Layer.provide(emptyObjectsClient),
+              ),
+            ),
+          ),
+        );
+
+        // 2. Concurrent actions on the same printer serialize strictly via per-printer semaphore,
+        // and a slow poll finishing after fetchMedia never regresses newer camera freshness.
+        const firstWriteEntered = yield* Deferred.make<void>();
+        const releaseFirstWrite = yield* Deferred.make<void>();
+        const slowPollEntered = yield* Deferred.make<void>();
+        const releaseSlowPoll = yield* Deferred.make<void>();
+        let holdNextWrite = false;
+        let holdNextPoll = false;
+        let inFlightActions = 0;
+        let maxConcurrentActions = 0;
+        let jpegByte = 0x10;
+
+        const overlapClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/states") {
+              return Effect.gen(function* () {
+                if (holdNextPoll) {
+                  holdNextPoll = false;
+                  yield* Deferred.succeed(slowPollEntered, undefined);
+                  yield* Deferred.await(releaseSlowPoll);
+                }
+                const now = FRESH_REPORTED_AT;
+                return HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify([
+                      {
+                        entity_id: "binary_sensor.p1s_test_online",
+                        state: "on",
+                        last_reported: now,
+                      },
+                      {
+                        entity_id: "sensor.p1s_test_print_status",
+                        state: "idle",
+                        last_reported: now,
+                      },
+                      { entity_id: "light.p1s_test_chamber_light", state: "on" },
+                      { entity_id: "camera.p1s_test_camera", state: "streaming" },
+                    ]),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                );
+              });
+            }
+            if (url.pathname.startsWith("/api/services/")) {
+              return Effect.gen(function* () {
+                inFlightActions += 1;
+                maxConcurrentActions = Math.max(maxConcurrentActions, inFlightActions);
+                if (holdNextWrite) {
+                  holdNextWrite = false;
+                  yield* Deferred.succeed(firstWriteEntered, undefined);
+                  yield* Deferred.await(releaseFirstWrite);
+                }
+                inFlightActions -= 1;
+                return HttpClientResponse.fromWeb(request, new Response("[]", { status: 200 }));
+              });
+            }
+            if (url.pathname.startsWith("/api/camera_proxy/")) {
+              jpegByte += 1;
+              const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, jpegByte, 0xff, 0xd9]);
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(jpeg, { status: 200, headers: { "content-type": "image/jpeg" } }),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(P1S_CONFIG.deviceId!, { status: 200 }),
+              ),
+            );
+          }),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            yield* service.list({ refresh: true });
+
+            // Launch two concurrent actions on the same printer: semaphore guarantees maxConcurrentActions === 1.
+            holdNextWrite = true;
+            const action1 = yield* Effect.forkChild(
+              service.action({
+                printerId: P1S_CONFIG.id,
+                action: { kind: "setChamberLight", on: false },
+              }),
+            );
+            yield* Deferred.await(firstWriteEntered);
+            const action2 = yield* Effect.forkChild(
+              service.action({
+                printerId: P1S_CONFIG.id,
+                action: { kind: "setChamberLight", on: true },
+              }),
+            );
+            yield* Deferred.succeed(releaseFirstWrite, undefined);
+            yield* Fiber.join(action1);
+            yield* Fiber.join(action2);
+            expect(maxConcurrentActions).toBe(1);
+
+            // Start a slow poll, fetch a fresh camera frame while it is in flight, then complete the slow poll.
+            holdNextPoll = true;
+            const slowPoll = yield* Effect.forkChild(service.list({ refresh: true }));
+            yield* Deferred.await(slowPollEntered);
+            const media1 = yield* service.fetchMedia(P1S_CONFIG.id, "camera");
+            expect(media1.stale).toBe(false);
+            yield* Deferred.succeed(releaseSlowPoll, undefined);
+            const afterSlowPoll = yield* Fiber.join(slowPoll);
+            expect(afterSlowPoll.printers[0]?.media.cameraStale).toBe(false);
+          }).pipe(
+            Effect.provide(
+              PrinterService.layer.pipe(
+                Layer.provide(
+                  ServerSettings.layerTest({
+                    enablePrinterSupport: true,
+                    printers: [P1S_CONFIG],
+                  }),
+                ),
+                Layer.provide(mockSecretResolverLayer),
+                Layer.provide(overlapClient),
+              ),
+            ),
+          ),
         );
       }),
   );

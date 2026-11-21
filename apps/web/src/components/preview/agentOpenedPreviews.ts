@@ -220,21 +220,56 @@ export function resetDeviceSessionBaselinesForTests(): void {
   printerSessionBaselines.clear();
 }
 
-const printerSessionBaselines = new Map<EnvironmentId, ReadonlySet<string>>();
+const printerSessionBaselines = new Map<
+  EnvironmentId,
+  ReadonlyMap<string, PrinterServiceState["sessions"][number]>
+>();
 
 const printerSessionKey = (session: PrinterServiceState["sessions"][number]) =>
   `${session.threadId}:${session.proxyEnvironmentId ?? ""}:${session.printerId}:${session.openedAt}`;
 
-function applyPrinterSnapshot(
+function printerSurfaceIdForSession(
+  originEnvironmentId: EnvironmentId,
+  session: PrinterServiceState["sessions"][number],
+): string {
+  const ownerEnvironmentId = session.proxyEnvironmentId ?? originEnvironmentId;
+  return ownerEnvironmentId !== originEnvironmentId
+    ? `printer:${encodeURIComponent(ownerEnvironmentId)}:${encodeURIComponent(session.printerId)}`
+    : `printer:${encodeURIComponent(session.printerId)}`;
+}
+
+export function applyPrinterSnapshot(
   environmentId: EnvironmentId,
   state: PrinterServiceState,
   options: { readonly sheetLayout: boolean },
 ): void {
   const previous = printerSessionBaselines.get(environmentId);
-  printerSessionBaselines.set(environmentId, new Set(state.sessions.map(printerSessionKey)));
-  if (!previous || options.sheetLayout) return;
-  for (const session of state.sessions) {
-    if (previous.has(printerSessionKey(session))) continue;
+  const next = new Map(state.sessions.map((session) => [printerSessionKey(session), session]));
+  printerSessionBaselines.set(environmentId, next);
+  if (!previous) return;
+
+  // Close printer panel tabs whose agent session explicitly ended on this environment.
+  for (const [key, ended] of previous) {
+    if (next.has(key)) continue;
+    const threadRef = scopeThreadRef(environmentId, ended.threadId);
+    const surfaceId = printerSurfaceIdForSession(environmentId, ended);
+    const stillActive = state.sessions.some(
+      (session) =>
+        session.threadId === ended.threadId &&
+        printerSurfaceIdForSession(environmentId, session) === surfaceId,
+    );
+    if (!stillActive) {
+      const store = useRightPanelStore.getState();
+      const threadState = store.byThreadKey[scopedThreadKey(threadRef)];
+      if (threadState?.surfaces.some((surface) => surface.id === surfaceId)) {
+        store.closePrinterSessionSurface(threadRef, surfaceId);
+      }
+    }
+  }
+
+  if (options.sheetLayout) return;
+  for (const [key, session] of next) {
+    if (previous.has(key)) continue;
     const printer = state.printers.find((entry) => entry.id === session.printerId);
     const threadRef = scopeThreadRef(environmentId, session.threadId);
     const label = session.printerLabel ?? printer?.label;
@@ -277,6 +312,8 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
   return () => {
     stopDevices();
     stopPrinters();
+    deviceSessionBaselines.delete(environmentId);
+    printerSessionBaselines.delete(environmentId);
   };
 }
 

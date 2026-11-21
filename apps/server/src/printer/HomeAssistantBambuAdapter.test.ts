@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
+import { it as effectIt } from "@effect/vitest";
 import type { HomeAssistantBambuPrinterConfig } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import { HttpClient, HttpClientResponse } from "effect/http";
 
 import {
   discoverBambuEntityPrefix,
+  homeAssistantBambuAdapter,
   parseHomeAssistantBambuStates,
 } from "./adapters/HomeAssistantBambuAdapter.ts";
 
@@ -16,7 +22,11 @@ const P1S_CONFIG: HomeAssistantBambuPrinterConfig = {
 };
 
 const LIVE_P1S_STATES = [
-  { entity_id: "binary_sensor.p1s_01p00a000000001_online", state: "on" },
+  {
+    entity_id: "binary_sensor.p1s_01p00a000000001_online",
+    state: "on",
+    last_reported: "2026-11-21T00:18:05.000Z",
+  },
   { entity_id: "binary_sensor.p1s_01p00a000000001_hybrid_mqtt_control_blocked", state: "off" },
   { entity_id: "binary_sensor.p1s_01p00a000000001_extruder_filament", state: "on" },
   { entity_id: "binary_sensor.p1s_01p00a000000001_externalspool_active", state: "on" },
@@ -79,7 +89,11 @@ const LIVE_P1S_STATES = [
     state: "standard",
     attributes: { modifier: 100 },
   },
-  { entity_id: "sensor.p1s_01p00a000000001_print_status", state: "running" },
+  {
+    entity_id: "sensor.p1s_01p00a000000001_print_status",
+    state: "running",
+    last_reported: "2026-11-21T00:18:05.000Z",
+  },
   { entity_id: "sensor.p1s_01p00a000000001_current_stage", state: "cleaning_nozzle_tip" },
   { entity_id: "sensor.p1s_01p00a000000001_print_progress", state: "28" },
   { entity_id: "sensor.p1s_01p00a000000001_current_layer", state: "28" },
@@ -312,4 +326,108 @@ describe("HomeAssistantBambuAdapter parsing", () => {
     });
     expect(stale.snapshot.media.cameraStale).toBe(true);
   });
+
+  it("marks HA telemetry stale and disables jogging when online or print_status timestamps are missing or older than 5 minutes", () => {
+    const nowMs = Date.parse("2026-11-21T00:25:00.000Z");
+    const idleWithOldStatus = LIVE_P1S_STATES.map((entity) =>
+      entity.entity_id === "sensor.p1s_01p00a000000001_print_status"
+        ? { ...entity, state: "idle", last_reported: "2026-11-21T00:18:00.000Z" }
+        : entity.entity_id === "binary_sensor.p1s_01p00a000000001_online"
+          ? { ...entity, state: "on", last_reported: "2026-11-21T00:24:55.000Z" }
+          : entity,
+    );
+    const oldResult = parseHomeAssistantBambuStates({
+      config: P1S_CONFIG,
+      states: idleWithOldStatus,
+      previous: undefined,
+      cache: {},
+      nowMs,
+      nowIso: "2026-11-21T00:25:00.000Z",
+    });
+    expect(oldResult.snapshot.stale).toBe(true);
+    expect(oldResult.snapshot.capabilities.canJog).toBe(false);
+
+    const idleMissingTimestamps = LIVE_P1S_STATES.map((entity) =>
+      entity.entity_id === "sensor.p1s_01p00a000000001_print_status"
+        ? { entity_id: entity.entity_id, state: "idle" }
+        : entity,
+    );
+    const missingResult = parseHomeAssistantBambuStates({
+      config: P1S_CONFIG,
+      states: idleMissingTimestamps,
+      previous: undefined,
+      cache: {},
+      nowMs,
+      nowIso: "2026-11-21T00:25:00.000Z",
+    });
+    expect(missingResult.snapshot.stale).toBe(true);
+    expect(missingResult.snapshot.capabilities.canJog).toBe(false);
+  });
+
+  effectIt.effect(
+    "fails testConnection on explicit deviceId mismatch and rejects non-image bytes from camera proxy",
+    () =>
+      Effect.gen(function* () {
+        const mockClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/states") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(JSON.stringify(LIVE_P1S_STATES), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                  }),
+                ),
+              );
+            }
+            if (url.pathname === "/api/template") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response("actual-ha-device-id", {
+                    status: 200,
+                    headers: { "content-type": "text/plain" },
+                  }),
+                ),
+              );
+            }
+            if (url.pathname.startsWith("/api/camera_proxy/")) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response("<html>login page</html>", {
+                    status: 200,
+                    headers: { "content-type": "text/html" },
+                  }),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("Not Found", { status: 404 })),
+            );
+          }),
+        );
+
+        const mismatchExit = yield* Effect.exit(
+          homeAssistantBambuAdapter
+            .testConnection({ ...P1S_CONFIG, deviceId: "wrong-device-id" }, "test-token")
+            .pipe(Effect.provide(mockClient)),
+        );
+        expect(Exit.isFailure(mismatchExit)).toBe(true);
+        expect(String(mismatchExit)).toContain("does not match");
+
+        const polled = yield* homeAssistantBambuAdapter
+          .poll(P1S_CONFIG, "test-token", undefined, {})
+          .pipe(Effect.provide(mockClient));
+        const mediaExit = yield* Effect.exit(
+          homeAssistantBambuAdapter
+            .fetchMedia(P1S_CONFIG, "test-token", "camera", polled.snapshot, polled.cache)
+            .pipe(Effect.provide(mockClient)),
+        );
+        expect(Exit.isFailure(mediaExit)).toBe(true);
+      }),
+  );
 });

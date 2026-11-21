@@ -40,6 +40,7 @@ const handler = Effect.gen(function* () {
     contentType: asset.value.contentType,
     headers: {
       "cache-control": "no-store, no-transform",
+      "x-content-type-options": "nosniff",
       "x-printer-captured-at": asset.value.capturedAt,
       "x-printer-frame-stale": asset.value.stale ? "true" : "false",
       "x-printer-online": asset.value.online ? "true" : "false",

@@ -1,5 +1,6 @@
 import {
   isSecretReference,
+  PRINTER_MEDIA_ROUTE_PREFIX,
   type PrinterActionInput,
   type PrinterCloseInput,
   type PrinterConfig,
@@ -31,6 +32,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
 
@@ -42,12 +44,18 @@ import {
   type PrinterMediaAssetKind,
   type PrinterRuntimeCache,
 } from "./PrinterAdapter.ts";
-import { PrinterDnsLookup, PrinterRequestGuard } from "./PrinterUrlGuard.ts";
+import {
+  pinPrinterHostAddress,
+  PrinterDnsLookup,
+  PrinterPinnedAddresses,
+  PrinterRequestGuard,
+  type ResolvedAddress,
+} from "./PrinterUrlGuard.ts";
 import { homeAssistantBambuAdapter } from "./adapters/HomeAssistantBambuAdapter.ts";
 import { moonrakerAdapter } from "./adapters/MoonrakerAdapter.ts";
 import { octoPrintAdapter } from "./adapters/OctoPrintAdapter.ts";
 
-export const PRINTER_MEDIA_ROUTE_PREFIX = "/api/printer-media";
+export { PRINTER_MEDIA_ROUTE_PREFIX };
 
 function adapterFor(config: PrinterConfig): PrinterAdapter {
   switch (config.kind) {
@@ -260,28 +268,36 @@ function validateSafetyGuards(
         }),
       );
     }
-    if (snapshot.job.printableObjects.length > 0) {
-      const byId = new Map(snapshot.job.printableObjects.map((obj) => [obj.id, obj]));
-      for (const objectId of action.objectIds) {
-        const matched = byId.get(objectId);
-        if (!matched) {
-          return Effect.fail(
-            new PrinterSafetyError({
-              action: action.kind,
-              printerId,
-              reason: `Object ${objectId} does not belong to the active print job. Refresh before retrying.`,
-            }),
-          );
-        }
-        if (matched.skipped) {
-          return Effect.fail(
-            new PrinterSafetyError({
-              action: action.kind,
-              printerId,
-              reason: `Object "${matched.name}" is already skipped in this print job.`,
-            }),
-          );
-        }
+    if (snapshot.job.printableObjects.length === 0) {
+      return Effect.fail(
+        new PrinterSafetyError({
+          action: action.kind,
+          printerId,
+          reason:
+            "Printable object metadata is unavailable from fresh telemetry; cannot verify object selection.",
+        }),
+      );
+    }
+    const byId = new Map(snapshot.job.printableObjects.map((obj) => [obj.id, obj]));
+    for (const objectId of action.objectIds) {
+      const matched = byId.get(objectId);
+      if (!matched) {
+        return Effect.fail(
+          new PrinterSafetyError({
+            action: action.kind,
+            printerId,
+            reason: `Object ${objectId} does not belong to the active print job. Refresh before retrying.`,
+          }),
+        );
+      }
+      if (matched.skipped) {
+        return Effect.fail(
+          new PrinterSafetyError({
+            action: action.kind,
+            printerId,
+            reason: `Object "${matched.name}" is already skipped in this print job.`,
+          }),
+        );
       }
     }
   }
@@ -356,23 +372,69 @@ const make = Effect.gen(function* () {
   );
   const pollSeqById = new Map<string, number>();
   const committedPollSeqById = new Map<string, number>();
+  const mediaSeqById = new Map<string, number>();
+  const committedMediaSeqById = new Map<string, number>();
+  const actionLocksById = new Map<string, Semaphore.Semaphore>();
+  let supportEnabled = initialSettings.enablePrinterSupport;
+
+  const actionLockFor = (id: string): Semaphore.Semaphore => {
+    let lock = actionLocksById.get(id);
+    if (!lock) {
+      lock = Semaphore.makeUnsafe(1);
+      actionLocksById.set(id, lock);
+    }
+    return lock;
+  };
   const bumpGeneration = (id: string): number => {
     const next = (generationsById.get(id) ?? 0) + 1;
     generationsById.set(id, next);
-    const currentPollSeq = pollSeqById.get(id) ?? 0;
-    committedPollSeqById.set(id, currentPollSeq);
+    committedPollSeqById.set(id, pollSeqById.get(id) ?? 0);
+    committedMediaSeqById.set(id, mediaSeqById.get(id) ?? 0);
     return next;
   };
   const makeTargetGuard = (config: PrinterConfig, generation: number, operation: string) => () =>
-    configsById.get(config.id) === config && generationsById.get(config.id) === generation
+    supportEnabled &&
+    configsById.get(config.id) === config &&
+    generationsById.get(config.id) === generation
       ? Effect.void
       : Effect.fail(
           new PrinterOperationError({
             operation,
             printerId: config.id,
-            reason: "Printer configuration changed before sending request. Retry after refreshing.",
+            reason: !supportEnabled
+              ? "3D Printer support was disabled before sending request."
+              : "Printer configuration changed before sending request. Retry after refreshing.",
           }),
         );
+
+  const mergePollCache = (id: string, pollCache: PrinterRuntimeCache): PrinterRuntimeCache => {
+    const current = caches.get(id) ?? {};
+    const merged: PrinterRuntimeCache = {
+      ...pollCache,
+      // Media freshness fields are owned exclusively by fetchMedia so slow polls never regress camera change tracking.
+      ...(current.lastCameraHash !== undefined ? { lastCameraHash: current.lastCameraHash } : {}),
+      ...(current.lastCameraChangedAtMs !== undefined
+        ? { lastCameraChangedAtMs: current.lastCameraChangedAtMs }
+        : {}),
+    };
+    caches.set(id, merged);
+    return merged;
+  };
+
+  const mergeMediaCache = (id: string, mediaCache: PrinterRuntimeCache): PrinterRuntimeCache => {
+    const current = caches.get(id) ?? {};
+    const merged: PrinterRuntimeCache = {
+      ...current,
+      ...(mediaCache.lastCameraHash !== undefined
+        ? { lastCameraHash: mediaCache.lastCameraHash }
+        : {}),
+      ...(mediaCache.lastCameraChangedAtMs !== undefined
+        ? { lastCameraChangedAtMs: mediaCache.lastCameraChangedAtMs }
+        : {}),
+    };
+    caches.set(id, merged);
+    return merged;
+  };
 
   /* Internal state mutation helper covered by each caller's span. */
   const publish = Effect.fnUntraced(function* (
@@ -463,6 +525,7 @@ const make = Effect.gen(function* () {
   const pollOne = Effect.fn("PrinterService.pollOne")(function* (
     config: PrinterConfig,
     expectedGeneration?: number,
+    pinnedAddresses?: ReadonlyMap<string, ReadonlyArray<ResolvedAddress>>,
   ) {
     const generation = expectedGeneration ?? generationsById.get(config.id) ?? 0;
     const pollSeq = (pollSeqById.get(config.id) ?? 0) + 1;
@@ -470,7 +533,11 @@ const make = Effect.gen(function* () {
     const currentState = yield* Ref.get(stateRef);
     const previous = currentState.printers.find((printer) => printer.id === config.id);
     const cache = caches.get(config.id) ?? {};
-    if (configsById.get(config.id) !== config || generationsById.get(config.id) !== generation) {
+    if (
+      !supportEnabled ||
+      configsById.get(config.id) !== config ||
+      generationsById.get(config.id) !== generation
+    ) {
       return {
         snapshot: previous ?? placeholderSnapshot(config),
         cache,
@@ -487,12 +554,24 @@ const make = Effect.gen(function* () {
             stale: true,
             staleReason: message,
             error: message,
+            capabilities: {
+              canPause: false,
+              canResume: false,
+              canStop: false,
+              canSetTemps: false,
+              canSetFans: false,
+              canSetLight: false,
+              canSetSpeed: false,
+              canJog: false,
+              canSkipObjects: false,
+            },
           }
         : placeholderSnapshot(config, message),
       cache,
     });
     const secretResult = yield* Effect.result(resolvePrinterSecret(config));
     if (
+      !supportEnabled ||
       configsById.get(config.id) !== config ||
       generationsById.get(config.id) !== generation ||
       pollSeq <= (committedPollSeqById.get(config.id) ?? 0)
@@ -504,21 +583,22 @@ const make = Effect.gen(function* () {
         committed: false,
       };
     }
+    const runPoll = adapterFor(config)
+      .poll(config, secretResult._tag === "Success" ? secretResult.success : "", previous, cache)
+      .pipe(
+        Effect.provideService(PrinterRequestGuard, makeTargetGuard(config, generation, "poll")),
+      );
     const result =
       secretResult._tag === "Failure"
         ? makeErrorResult(secretResult.failure.message)
         : yield* withHttp(
-            adapterFor(config)
-              .poll(config, secretResult.success, previous, cache)
-              .pipe(
-                Effect.provideService(
-                  PrinterRequestGuard,
-                  makeTargetGuard(config, generation, "poll"),
-                ),
-              ),
+            pinnedAddresses && pinnedAddresses.size > 0
+              ? Effect.provideService(runPoll, PrinterPinnedAddresses, pinnedAddresses)
+              : runPoll,
           ).pipe(Effect.catch((error) => Effect.succeed(makeErrorResult(error.message))));
 
     if (
+      !supportEnabled ||
       configsById.get(config.id) !== config ||
       generationsById.get(config.id) !== generation ||
       pollSeq <= (committedPollSeqById.get(config.id) ?? 0)
@@ -526,7 +606,7 @@ const make = Effect.gen(function* () {
       return { snapshot: result.snapshot, cache: result.cache, generation, committed: false };
     }
     committedPollSeqById.set(config.id, pollSeq);
-    caches.set(config.id, result.cache);
+    const mergedCache = mergePollCache(config.id, result.cache);
     yield* publish((current) => {
       const exists = current.printers.some((entry) => entry.id === config.id);
       return {
@@ -536,7 +616,7 @@ const make = Effect.gen(function* () {
           : [...current.printers, result.snapshot],
       };
     });
-    return { snapshot: result.snapshot, cache: result.cache, generation, committed: true };
+    return { snapshot: result.snapshot, cache: mergedCache, generation, committed: true };
   });
 
   const applySettingsState = Effect.fn("PrinterService.applySettingsState")(
@@ -545,11 +625,13 @@ const make = Effect.gen(function* () {
       readonly enableAgentPrinterAccess: boolean;
       readonly printers: ReadonlyArray<PrinterConfig>;
     }) {
+      supportEnabled = nextSettings.enablePrinterSupport;
       const nextIds = new Set(nextSettings.printers.map((printer) => printer.id));
       for (const id of configsById.keys()) {
         if (!nextIds.has(id as PrinterId)) {
           configsById.delete(id);
           caches.delete(id);
+          actionLocksById.delete(id);
           bumpGeneration(id);
         }
       }
@@ -717,6 +799,14 @@ const make = Effect.gen(function* () {
 
   const open: PrinterService["Service"]["open"] = Effect.fn("PrinterService.open")(
     function* (input) {
+      const currentState = yield* Ref.get(stateRef);
+      if (!input.proxyEnvironmentId && !currentState.enabled) {
+        return yield* new PrinterOperationError({
+          operation: "open",
+          printerId: input.printerId,
+          reason: "3D Printer support is disabled in Settings.",
+        });
+      }
       const config = input.proxyEnvironmentId ? undefined : configsById.get(input.printerId);
       if (!input.proxyEnvironmentId && !config) {
         return yield* new PrinterOperationError({
@@ -725,7 +815,7 @@ const make = Effect.gen(function* () {
           reason: `Printer "${input.printerId}" is not configured.`,
         });
       }
-      const existing = (yield* Ref.get(stateRef)).sessions.find(
+      const existing = currentState.sessions.find(
         (session) =>
           session.threadId === input.threadId &&
           session.printerId === input.printerId &&
@@ -745,7 +835,7 @@ const make = Effect.gen(function* () {
           sessions: [...current.sessions, session],
         }));
       }
-      if (config) {
+      if (config && supportEnabled) {
         const generation = generationsById.get(config.id) ?? 0;
         yield* pollOne(config, generation).pipe(Effect.ignore);
       }
@@ -778,89 +868,112 @@ const make = Effect.gen(function* () {
 
   const action: PrinterService["Service"]["action"] = Effect.fn("PrinterService.action")(
     function* (input) {
-      const current = yield* Ref.get(stateRef);
-      if (!current.enabled) {
-        return yield* new PrinterOperationError({
-          operation: input.action.kind,
-          printerId: input.printerId,
-          reason: "3D Printer support is disabled in Settings.",
-        });
-      }
-      const config = configsById.get(input.printerId);
-      if (!config) {
-        return yield* new PrinterOperationError({
-          operation: input.action.kind,
-          printerId: input.printerId,
-          reason: `Printer "${input.printerId}" is not configured.`,
-        });
-      }
-      const generation = generationsById.get(config.id) ?? 0;
-      const fresh = yield* pollOne(config, generation);
-      if (
-        !fresh.committed ||
-        configsById.get(config.id) !== config ||
-        generationsById.get(config.id) !== generation
-      ) {
-        return yield* new PrinterSafetyError({
-          action: input.action.kind,
-          printerId: input.printerId,
-          reason:
-            "Printer state or configuration changed while verifying readiness. Retry after refreshing.",
-        });
-      }
-      yield* validateSafetyGuards(fresh.snapshot, input);
-      const secret = yield* resolvePrinterSecret(config);
-      let guardSafetyError: PrinterSafetyError | undefined;
-      const baseGuard = makeTargetGuard(config, generation, input.action.kind);
-      const requestGuard = Effect.fn("PrinterService.actionRequestGuard")(function* () {
-        yield* baseGuard();
-        const latestSnapshot = (yield* Ref.get(stateRef)).printers.find(
-          (entry) => entry.id === config.id,
-        );
-        if (!latestSnapshot) {
-          guardSafetyError = new PrinterSafetyError({
-            action: input.action.kind,
-            printerId: input.printerId,
-            reason:
-              "Printer telemetry disappeared before dispatching action. Retry after refreshing.",
+      return yield* actionLockFor(input.printerId).withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* Ref.get(stateRef);
+          if (!current.enabled) {
+            return yield* new PrinterOperationError({
+              operation: input.action.kind,
+              printerId: input.printerId,
+              reason: "3D Printer support is disabled in Settings.",
+            });
+          }
+          const config = configsById.get(input.printerId);
+          if (!config) {
+            return yield* new PrinterOperationError({
+              operation: input.action.kind,
+              printerId: input.printerId,
+              reason: `Printer "${input.printerId}" is not configured.`,
+            });
+          }
+          const generation = generationsById.get(config.id) ?? 0;
+          const pinnedAddresses = yield* Option.isSome(dnsLookupOption)
+            ? Effect.provideService(
+                pinPrinterHostAddress(config.baseUrl, input.action.kind, config.id),
+                PrinterDnsLookup,
+                dnsLookupOption.value,
+              )
+            : pinPrinterHostAddress(config.baseUrl, input.action.kind, config.id);
+          const fresh = yield* pollOne(config, generation, pinnedAddresses);
+          if (
+            !fresh.committed ||
+            !supportEnabled ||
+            configsById.get(config.id) !== config ||
+            generationsById.get(config.id) !== generation
+          ) {
+            return yield* new PrinterSafetyError({
+              action: input.action.kind,
+              printerId: input.printerId,
+              reason:
+                "Printer state or configuration changed while verifying readiness. Retry after refreshing.",
+            });
+          }
+          yield* validateSafetyGuards(fresh.snapshot, input);
+          const secret = yield* resolvePrinterSecret(config);
+          let guardSafetyError: PrinterSafetyError | undefined;
+          const baseGuard = makeTargetGuard(config, generation, input.action.kind);
+          const requestGuard = Effect.fn("PrinterService.actionRequestGuard")(function* () {
+            yield* baseGuard();
+            const latestSnapshot = (yield* Ref.get(stateRef)).printers.find(
+              (entry) => entry.id === config.id,
+            );
+            if (!latestSnapshot) {
+              guardSafetyError = new PrinterSafetyError({
+                action: input.action.kind,
+                printerId: input.printerId,
+                reason:
+                  "Printer telemetry disappeared before dispatching action. Retry after refreshing.",
+              });
+              return yield* new PrinterOperationError({
+                operation: input.action.kind,
+                printerId: input.printerId,
+                reason: guardSafetyError.reason,
+              });
+            }
+            const safetyCheck = yield* Effect.result(validateSafetyGuards(latestSnapshot, input));
+            if (safetyCheck._tag === "Failure") {
+              guardSafetyError = safetyCheck.failure;
+              return yield* new PrinterOperationError({
+                operation: input.action.kind,
+                printerId: input.printerId,
+                reason: safetyCheck.failure.reason,
+              });
+            }
           });
-          return yield* new PrinterOperationError({
-            operation: input.action.kind,
-            printerId: input.printerId,
-            reason: guardSafetyError.reason,
-          });
-        }
-        const safetyCheck = yield* Effect.result(validateSafetyGuards(latestSnapshot, input));
-        if (safetyCheck._tag === "Failure") {
-          guardSafetyError = safetyCheck.failure;
-          return yield* new PrinterOperationError({
-            operation: input.action.kind,
-            printerId: input.printerId,
-            reason: safetyCheck.failure.reason,
-          });
-        }
-      });
-      if (configsById.get(config.id) !== config || generationsById.get(config.id) !== generation) {
-        return yield* new PrinterSafetyError({
-          action: input.action.kind,
-          printerId: input.printerId,
-          reason:
-            "Printer configuration changed before dispatching action. Retry after refreshing.",
-        });
-      }
-      yield* withHttp(
-        adapterFor(config)
-          .executeAction(config, secret, input.action, fresh.snapshot, fresh.cache)
-          .pipe(Effect.provideService(PrinterRequestGuard, requestGuard)),
-      ).pipe(
-        Effect.catch((error) =>
-          guardSafetyError ? Effect.fail(guardSafetyError) : Effect.fail(error),
-        ),
+          if (
+            !supportEnabled ||
+            configsById.get(config.id) !== config ||
+            generationsById.get(config.id) !== generation
+          ) {
+            return yield* new PrinterSafetyError({
+              action: input.action.kind,
+              printerId: input.printerId,
+              reason:
+                "Printer configuration changed before dispatching action. Retry after refreshing.",
+            });
+          }
+          const runAction = adapterFor(config)
+            .executeAction(config, secret, input.action, fresh.snapshot, fresh.cache)
+            .pipe(Effect.provideService(PrinterRequestGuard, requestGuard));
+          yield* withHttp(
+            pinnedAddresses.size > 0
+              ? Effect.provideService(runAction, PrinterPinnedAddresses, pinnedAddresses)
+              : runAction,
+          ).pipe(
+            Effect.catch((error) =>
+              guardSafetyError ? Effect.fail(guardSafetyError) : Effect.fail(error),
+            ),
+          );
+          if (
+            !supportEnabled ||
+            configsById.get(config.id) !== config ||
+            generationsById.get(config.id) !== generation
+          ) {
+            return fresh.snapshot;
+          }
+          return (yield* pollOne(config, generation, pinnedAddresses)).snapshot;
+        }),
       );
-      if (configsById.get(config.id) !== config || generationsById.get(config.id) !== generation) {
-        return fresh.snapshot;
-      }
-      return (yield* pollOne(config, generation)).snapshot;
     },
   );
 
@@ -884,10 +997,16 @@ const make = Effect.gen(function* () {
       });
     }
     const generation = generationsById.get(printerId) ?? 0;
+    const mediaSeq = (mediaSeqById.get(printerId) ?? 0) + 1;
+    mediaSeqById.set(printerId, mediaSeq);
     const snapshot = current.printers.find((entry) => entry.id === printerId);
     const cache = caches.get(printerId) ?? {};
     const secret = yield* resolvePrinterSecret(config);
-    if (configsById.get(printerId) !== config || generationsById.get(printerId) !== generation) {
+    if (
+      !supportEnabled ||
+      configsById.get(printerId) !== config ||
+      generationsById.get(printerId) !== generation
+    ) {
       return yield* new PrinterOperationError({
         operation: `media.${kind}`,
         printerId,
@@ -904,42 +1023,60 @@ const make = Effect.gen(function* () {
           ),
         ),
     );
-    if (configsById.get(printerId) !== config || generationsById.get(printerId) !== generation) {
+    if (
+      !supportEnabled ||
+      configsById.get(printerId) !== config ||
+      generationsById.get(printerId) !== generation
+    ) {
       return yield* new PrinterOperationError({
         operation: `media.${kind}`,
         printerId,
         reason: "Printer configuration changed while fetching media.",
       });
     }
-    caches.set(printerId, nextCache);
-    const frameChanged =
-      kind === "camera" &&
-      nextCache.lastCameraChangedAtMs !== undefined &&
-      nextCache.lastCameraChangedAtMs !== cache.lastCameraChangedAtMs;
-    if (
-      kind === "camera" &&
-      snapshot &&
-      (snapshot.media.cameraStale !== asset.stale || frameChanged)
-    ) {
-      const updatedIso =
-        nextCache.lastCameraChangedAtMs !== undefined
-          ? DateTime.formatIso(DateTime.makeUnsafe(nextCache.lastCameraChangedAtMs))
-          : asset.capturedAt;
-      yield* publish((state) => ({
-        ...state,
-        printers: state.printers.map((entry) =>
-          entry.id === printerId
-            ? {
-                ...entry,
-                media: {
-                  ...entry.media,
-                  cameraStale: asset.stale,
-                  cameraUpdatedAt: updatedIso,
-                },
-              }
-            : entry,
-        ),
-      }));
+    if (mediaSeq > (committedMediaSeqById.get(printerId) ?? 0)) {
+      committedMediaSeqById.set(printerId, mediaSeq);
+      const prevChangedAtMs = caches.get(printerId)?.lastCameraChangedAtMs;
+      const mergedCache = mergeMediaCache(printerId, nextCache);
+      const frameChanged =
+        kind === "camera" &&
+        mergedCache.lastCameraChangedAtMs !== undefined &&
+        mergedCache.lastCameraChangedAtMs !== prevChangedAtMs;
+      if (kind === "camera") {
+        const updatedIso =
+          mergedCache.lastCameraChangedAtMs !== undefined
+            ? DateTime.formatIso(DateTime.makeUnsafe(mergedCache.lastCameraChangedAtMs))
+            : asset.capturedAt;
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        const latestState = yield* Ref.get(stateRef);
+        const latestEntry = latestState.printers.find((entry) => entry.id === printerId);
+        if (latestEntry) {
+          const cameraHealthy = mergedCache.cameraEntityHealthy ?? latestEntry.online;
+          const computedStale =
+            !latestEntry.online ||
+            !cameraHealthy ||
+            (latestEntry.job.status === "running" &&
+              mergedCache.lastCameraChangedAtMs !== undefined &&
+              nowMs - mergedCache.lastCameraChangedAtMs > 30_000);
+          if (latestEntry.media.cameraStale !== computedStale || frameChanged) {
+            yield* publish((state) => ({
+              ...state,
+              printers: state.printers.map((entry) =>
+                entry.id === printerId
+                  ? {
+                      ...entry,
+                      media: {
+                        ...entry.media,
+                        cameraStale: computedStale,
+                        cameraUpdatedAt: updatedIso,
+                      },
+                    }
+                  : entry,
+              ),
+            }));
+          }
+        }
+      }
     }
     return asset;
   });

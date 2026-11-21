@@ -160,8 +160,28 @@ describe("printerFleet T3 Connect proxy routing", () => {
     expect(pinnedLab?.proxyEnvironmentId).toBe(labProxy);
     expect(pinnedLab?.printer.label).toBe("Lab P1S");
 
-    const defaultOnline = selectFleetPrinter(entries, "shared-id");
-    expect(defaultOnline?.proxyEnvironmentId).toBe(homeProxy);
+    // Legacy pin without proxyEnvironmentId must fail closed when multiple environments share the same printerId.
+    expect(selectFleetPrinter(entries, "shared-id")).toBeUndefined();
+
+    // Unique legacy printerId without proxyEnvironmentId still resolves cleanly.
+    const uniqueEntries = collectFleetPrinters(
+      [
+        {
+          environmentId: homeProxy,
+          label: "Home LAN",
+          relayManaged: true,
+          state: makeState([makeSnapshot("unique-p1s", "Home P1S", true)]),
+        },
+        {
+          environmentId: labProxy,
+          label: "Lab Box",
+          relayManaged: true,
+          state: makeState([makeSnapshot("other-id", "Lab Voron", true)]),
+        },
+      ],
+      remoteVps,
+    );
+    expect(selectFleetPrinter(uniqueEntries, "unique-p1s")?.proxyEnvironmentId).toBe(homeProxy);
 
     // Pinned surfaces must never silently fall back to another printer or environment when their target disappears.
     expect(selectFleetPrinter(entries, "shared-id", remoteVps)).toBeUndefined();

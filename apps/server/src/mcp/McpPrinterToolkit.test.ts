@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  OrchestratorMcpFailure,
   PrinterId,
   type PrinterServiceState,
   type PrinterSnapshot,
+  ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -16,6 +18,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PrinterService from "../printer/PrinterService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "./McpToolAccess.testkit.ts";
@@ -600,7 +603,196 @@ describe("McpPrinterToolkit", () => {
               .pipe(linkedCaller, Effect.provideService(McpSchema.McpServerClient, client));
             expect(peerStatus.isError).toBe(true);
             expect(forwardedCalls.length).toBe(callsBeforePeer);
+
+            // Explicit local environmentId stays strictly local and never returns a remote open session or peer printers.
+            localEnabled = true;
+            localAgentAccessEnabled = true;
+            localPrinters = [];
+            openedSessions.length = 0;
+            openedSessions.push({
+              threadId,
+              printerId,
+              proxyEnvironmentId: proxyEnvId,
+              openedAt: "2026-11-21T07:10:00.000Z",
+            });
+            const callsBeforeExplicitLocal = forwardedCalls.length;
+            const localOnlyList = yield* server
+              .callTool({ name: "printer_list", arguments: { environmentId } })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(localOnlyList.isError).toBe(false);
+            expect(localOnlyList.structuredContent).toEqual({ enabled: true, printers: [] });
+
+            const localOnlyStatus = yield* server
+              .callTool({ name: "printer_status", arguments: { environmentId } })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(localOnlyStatus.isError).toBe(true);
+
+            const localOnlySnap = yield* server
+              .callTool({ name: "printer_camera_snapshot", arguments: { environmentId } })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(localOnlySnap.isError).toBe(true);
+            expect(forwardedCalls.length).toBe(callsBeforeExplicitLocal);
           }).pipe(Effect.provide(layerRemoteNode));
+        }),
+      ),
+  );
+
+  it.effect(
+    "enforces invocation-time project deny across both local reads and explicit peer forwarding, rejects 0x0 images, and reports unreachable peers",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const proxyEnvId = EnvironmentId.make("env-home-proxy");
+          const flakyEnvId = EnvironmentId.make("env-flaky-proxy");
+          const forwardedCalls: Array<{ readonly tool: string; readonly env: EnvironmentId }> = [];
+
+          // 1. Project override enableAgentPrinterAccess=false blocks BOTH local and explicit remote forwarding.
+          const projectDeniedLayer = McpHttpServer.layerPrinterToolkit.pipe(
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+            Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+            Layer.provideMerge(layerPrinterServiceMock),
+            Layer.provideMerge(
+              ServerSettings.layerTest({
+                enablePrinterSupport: true,
+                enableAgentPrinterAccess: true,
+                projectSettingsOverrides: {
+                  [ProjectId.make("project:mcp-test")]: { enableAgentPrinterAccess: false },
+                },
+              }),
+            ),
+            Layer.provideMerge(
+              Layer.mock(PeerForwarding.PeerForwarding)({
+                call: (_scope, tool, targetEnvId) => {
+                  forwardedCalls.push({ tool: tool.name, env: targetEnvId });
+                  return Effect.succeed({ enabled: true, printers: [] }) as never;
+                },
+              }),
+            ),
+          );
+
+          yield* Effect.gen(function* () {
+            const server = yield* McpServer.McpServer;
+            const callAsThread = Effect.provideService(McpInvocationContext.McpInvocationContext, {
+              ...invocation(["printer"]),
+              linkedEnvironments: true,
+            });
+            const localStatus = yield* server
+              .callTool({ name: "printer_status", arguments: {} })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(localStatus.isError).toBe(true);
+
+            const forwardedStatus = yield* server
+              .callTool({ name: "printer_status", arguments: { environmentId: proxyEnvId } })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(forwardedStatus.isError).toBe(true);
+
+            const forwardedSnap = yield* server
+              .callTool({
+                name: "printer_camera_snapshot",
+                arguments: { environmentId: proxyEnvId },
+              })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(forwardedSnap.isError).toBe(true);
+            expect(forwardedCalls).toHaveLength(0);
+          }).pipe(Effect.provide(projectDeniedLayer));
+
+          // 2. Truncated 0x0 image bytes fail printer_camera_snapshot instead of returning width=0/height=0.
+          const truncatedImageLayer = McpHttpServer.layerPrinterToolkit.pipe(
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+            Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+            Layer.provideMerge(
+              Layer.mock(PrinterService.PrinterService)({
+                state: Effect.succeed(mockState),
+                list: () => Effect.succeed(mockState),
+                sessionsForThread: () => Effect.succeed([]),
+                fetchMedia: () =>
+                  Effect.succeed({
+                    bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+                    contentType: "image/jpeg",
+                    capturedAt: "2026-11-21T01:00:00.000Z",
+                    stale: false,
+                    online: true,
+                    hash: "tiny",
+                  }),
+              }),
+            ),
+          );
+          yield* Effect.gen(function* () {
+            const server = yield* McpServer.McpServer;
+            const snap = yield* server
+              .callTool({ name: "printer_camera_snapshot", arguments: {} })
+              .pipe(
+                Effect.provideService(
+                  McpInvocationContext.McpInvocationContext,
+                  invocation(["printer"]),
+                ),
+                Effect.provideService(McpSchema.McpServerClient, client),
+              );
+            expect(snap.isError).toBe(true);
+          }).pipe(Effect.provide(truncatedImageLayer));
+
+          // 3. Unreachable peer is surfaced clearly when no peers respond.
+          const emptyLocal: PrinterServiceState = {
+            enabled: false,
+            agentAccessEnabled: false,
+            mediaBasePath: "/api/printer-media",
+            printers: [],
+            sessions: [],
+            revision: 1,
+          };
+          const unreachableLayer = McpHttpServer.layerPrinterToolkit.pipe(
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+            Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+            Layer.provideMerge(
+              Layer.mock(PrinterService.PrinterService)({
+                state: Effect.succeed(emptyLocal),
+                list: () => Effect.succeed(emptyLocal),
+                sessionsForThread: () => Effect.succeed([]),
+              }),
+            ),
+            Layer.provideMerge(
+              Layer.mock(PeerLinks.PeerLinks)({
+                enabled: Effect.succeed(true),
+                list: Effect.succeed([
+                  {
+                    environmentId: flakyEnvId,
+                    label: "Garage Proxy",
+                    urls: ["https://garage.t3.test"],
+                    status: "reachable",
+                    access: "read-only",
+                    linkedAt: DateTime.makeUnsafe(0),
+                    expiresAt: DateTime.makeUnsafe("2099-01-01T00:00:00.000Z"),
+                    lastReachedAt: null,
+                    lastError: null,
+                  },
+                ]),
+                get: () => Effect.succeedNone,
+              }),
+            ),
+            Layer.provideMerge(
+              Layer.mock(PeerForwarding.PeerForwarding)({
+                call: () =>
+                  Effect.fail(
+                    new OrchestratorMcpFailure({
+                      code: "orchestration_error",
+                      message: "Connection refused",
+                    }),
+                  ),
+              }),
+            ),
+          );
+          yield* Effect.gen(function* () {
+            const server = yield* McpServer.McpServer;
+            const status = yield* server.callTool({ name: "printer_status", arguments: {} }).pipe(
+              Effect.provideService(McpInvocationContext.McpInvocationContext, {
+                ...invocation(["printer"]),
+                linkedEnvironments: true,
+              }),
+              Effect.provideService(McpSchema.McpServerClient, client),
+            );
+            expect(status.isError).toBe(true);
+            expect(JSON.stringify(status.content)).toContain("Garage Proxy");
+          }).pipe(Effect.provide(unreachableLayer));
         }),
       ),
   );

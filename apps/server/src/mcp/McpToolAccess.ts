@@ -152,9 +152,20 @@ export const reads = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>)
     () => Effect.void,
   );
 
+/** True when a routed tool was invoked with `environmentId` explicitly naming this environment. */
+export const ExplicitLocalEnvironment = Context.Reference<boolean>(
+  "t3/mcp/McpToolAccess/ExplicitLocalEnvironment",
+  { defaultValue: () => false },
+);
+
 export const readsWithCapability = <P, A, E, R>(
   capability: McpInvocationContext.McpCapability,
   handle: (params: P) => Effect.Effect<A, E, R>,
+  extraRemoteCheck?: () => Effect.Effect<
+    unknown,
+    OrchestratorMcpFailure,
+    Effect.Services<typeof writingCaller>
+  >,
 ) => {
   const check = McpInvocationContext.McpInvocationContext.pipe(
     Effect.flatMap((scope) =>
@@ -171,7 +182,7 @@ export const readsWithCapability = <P, A, E, R>(
   );
   return declare(
     (params: P) => check.pipe(Effect.flatMap(() => handle(params))),
-    () => check,
+    () => (extraRemoteCheck ? check.pipe(Effect.andThen(extraRemoteCheck())) : check),
   );
 };
 
@@ -482,7 +493,11 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const target = PeerForwarding.remoteTarget(scope, environmentId);
-        if (target === undefined) return yield* here(params);
+        if (target === undefined) {
+          return yield* environmentId !== undefined
+            ? Effect.provideService(here(params), ExplicitLocalEnvironment, true)
+            : here(params);
+        }
         if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
         yield* (remote as RemoteCheck<typeof params>)(params);
         if (Option.isNone(forwarding)) return yield* linksUnavailable;

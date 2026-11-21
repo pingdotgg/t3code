@@ -66,6 +66,24 @@ describe("closedViewStore", () => {
       threadRef: refA,
       surface: { kind: "linked-thread", id: "linked-thread:x", viaEnvironmentId: "env-1" },
     },
+    {
+      id: "bad",
+      kind: "panel-tab",
+      threadRef: refA,
+      surface: { kind: "printer", id: "printer:x", printerId: "" },
+    },
+    {
+      id: "bad",
+      kind: "panel-tab",
+      threadRef: refA,
+      surface: { kind: "printer", id: "printer:x", proxyEnvironmentId: "" },
+    },
+    {
+      id: "bad",
+      kind: "panel-tab",
+      threadRef: refA,
+      surface: { kind: "printer", id: "printer:x", title: 123 },
+    },
   ])("discards incomplete saved views %j while retaining valid history", async (entry) => {
     const id = useClosedViewStore.getState().remember(diff(refA));
     const { storage, name } = useClosedViewStore.persist.getOptions();

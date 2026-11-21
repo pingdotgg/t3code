@@ -252,37 +252,43 @@ function PrinterEditorForm({
     if (!canTest || testing || !secretValid) return;
     setTesting(true);
     setTestResult(null);
-    const config = configFromDraft(draft, existingPrinters);
-    const result = await testConnection({
-      environmentId,
-      input: {
-        config,
-        ...(draft.existingId && draft.secret.kind === "saved"
-          ? { existingPrinterId: draft.existingId }
-          : {}),
-      },
-    });
-    setTesting(false);
-    if (result._tag === "Failure") {
-      setTestResult({ ok: false, summary: formatEnvironmentQueryError(result.cause) });
-      return;
-    }
-    setTestResult({ ok: true, summary: result.value.summary });
-    if (draft.kind === "home-assistant-bambu") {
-      setDraft((current) => ({
-        ...current,
-        entityPrefix: current.entityPrefix || result.value.detectedEntityPrefix || "",
-        deviceId: current.deviceId || result.value.detectedDeviceId || "",
-      }));
+    try {
+      const config = configFromDraft(draft, existingPrinters);
+      const result = await testConnection({
+        environmentId,
+        input: {
+          config,
+          ...(draft.existingId && draft.secret.kind === "saved"
+            ? { existingPrinterId: draft.existingId }
+            : {}),
+        },
+      });
+      if (result._tag === "Failure") {
+        setTestResult({ ok: false, summary: formatEnvironmentQueryError(result.cause) });
+        return;
+      }
+      setTestResult({ ok: true, summary: result.value.summary });
+      if (draft.kind === "home-assistant-bambu") {
+        setDraft((current) => ({
+          ...current,
+          entityPrefix: current.entityPrefix || result.value.detectedEntityPrefix || "",
+          deviceId: current.deviceId || result.value.detectedDeviceId || "",
+        }));
+      }
+    } finally {
+      setTesting(false);
     }
   };
 
   const handleSubmit = async () => {
     if (saving || disabled || !secretValid) return;
     setSaving(true);
-    const config = configFromDraft(draft, existingPrinters);
-    await onSave(config, draft.existingId);
-    setSaving(false);
+    try {
+      const config = configFromDraft(draft, existingPrinters);
+      await onSave(config, draft.existingId);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const backendId = `${fieldPrefix}-backend`;
@@ -305,10 +311,19 @@ function PrinterEditorForm({
             onValueChange={(value) => {
               if (!value) return;
               setTestResult(null);
-              setDraft((current) => ({
-                ...current,
-                kind: value as PrinterKind,
-              }));
+              setDraft((current) =>
+                current.kind === value
+                  ? current
+                  : {
+                      ...current,
+                      kind: value as PrinterKind,
+                      // Clear backend-specific credentials and fields so an HA token never carries over to Moonraker/OctoPrint.
+                      secret: { kind: "cleared" },
+                      entityPrefix: "",
+                      deviceId: "",
+                      webcamUrl: "",
+                    },
+              );
             }}
           >
             <SelectTrigger id={backendId}>
@@ -542,17 +557,20 @@ function PrinterSettingsContent() {
   }): Promise<boolean> => {
     if (!environmentId || !canConfigure) return false;
     setPending(true);
-    const result = await configure({ environmentId, input: patch });
-    setPending(false);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: gt("Could not save 3D printer settings"),
-        description: formatEnvironmentQueryError(result.cause),
-      });
-      return false;
+    try {
+      const result = await configure({ environmentId, input: patch });
+      if (result._tag === "Failure") {
+        toastManager.add({
+          type: "error",
+          title: gt("Could not save 3D printer settings"),
+          description: formatEnvironmentQueryError(result.cause),
+        });
+        return false;
+      }
+      return true;
+    } finally {
+      setPending(false);
     }
-    return true;
   };
 
   const handleSavePrinter = async (

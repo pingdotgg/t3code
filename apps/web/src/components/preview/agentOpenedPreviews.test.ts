@@ -3,6 +3,8 @@ import {
   type DeviceServiceState,
   type EnvironmentId,
   type PreviewSessionSnapshot,
+  PrinterId,
+  type PrinterServiceState,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -20,6 +22,7 @@ import {
 import { useRightPanelStore } from "../../rightPanelStore";
 import {
   applyDeviceSnapshot,
+  applyPrinterSnapshot,
   floatDeviceSurface,
   followPreviewSessions,
   resetDeviceSessionBaselinesForTests,
@@ -404,5 +407,60 @@ describe("startAgentOpenedPreviews", () => {
       revision: 3,
     });
     expect(floatingTabId()).toBeNull();
+  });
+});
+
+describe("applyPrinterSnapshot", () => {
+  const proxyEnvId = "env-home-proxy" as EnvironmentId;
+  const printerState = (sessions: PrinterServiceState["sessions"]): PrinterServiceState => ({
+    enabled: true,
+    agentAccessEnabled: true,
+    mediaBasePath: "/api/printer-media",
+    printers: [],
+    sessions,
+    revision: 1,
+  });
+
+  it("opens new agent printer sessions, closes ended ones without dismissing, and honors user dismissal", () => {
+    setup();
+    const sessionA = {
+      threadId: ref.threadId,
+      printerId: PrinterId.make("p1s-studio"),
+      proxyEnvironmentId: proxyEnvId,
+      printerLabel: "Studio P1S",
+      openedAt: "2026-11-21T01:00:00.000Z",
+    };
+    const expectedSurfaceId = `printer:${encodeURIComponent(proxyEnvId)}:${encodeURIComponent("p1s-studio")}`;
+
+    // First snapshot establishes baseline without auto-opening.
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionA]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]).toBeUndefined();
+
+    // New session opens proxied printer surface.
+    const sessionB = { ...sessionA, openedAt: "2026-11-21T01:05:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionB]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
+
+    // Ending the session removes the surface WITHOUT marking it user-dismissed.
+    applyPrinterSnapshot(ref.environmentId, printerState([]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces ?? []).toEqual([]);
+    expect(
+      useRightPanelStore.getState().byThreadKey[threadKey]?.dismissedPrinterSurfaceIds,
+    ).toBeUndefined();
+
+    // A later agent session can re-open it because the user did not dismiss it.
+    const sessionC = { ...sessionA, openedAt: "2026-11-21T01:10:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionC]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces.map((s) => s.id)).toEqual(
+      [expectedSurfaceId],
+    );
+
+    // Explicit user close suppresses later automatic re-opening.
+    useRightPanelStore.getState().closeSurface(ref, expectedSurfaceId);
+    const sessionD = { ...sessionA, openedAt: "2026-11-21T01:15:00.000Z" };
+    applyPrinterSnapshot(ref.environmentId, printerState([sessionD]), { sheetLayout: false });
+    expect(useRightPanelStore.getState().byThreadKey[threadKey]?.surfaces).toEqual([]);
   });
 });

@@ -20,6 +20,8 @@ import {
   validatePrinterBaseUrl,
 } from "../PrinterUrlGuard.ts";
 
+let jogStateSeq = 0;
+
 interface MoonrakerQueryResponse {
   readonly result?: {
     readonly status?: {
@@ -411,24 +413,30 @@ export const moonrakerAdapter: PrinterAdapter<MoonrakerPrinterConfig> = {
         );
       case "homeAxes":
         return yield* runMoonrakerGcode(baseUrl, secret, "G28", config.id, "moonraker.homeAxes");
-      case "moveAxis":
+      case "moveAxis": {
+        const nowMs = (yield* DateTime.now).epochMilliseconds;
+        const stateName = `T3_JOG_${nowMs.toString(36)}_${(++jogStateSeq).toString(36)}`;
         return yield* runMoonrakerGcode(
           baseUrl,
           secret,
-          `SAVE_GCODE_STATE NAME=T3_JOG\nG91\nG0 ${action.axis}${action.distanceMm} F3000\nRESTORE_GCODE_STATE NAME=T3_JOG`,
+          `SAVE_GCODE_STATE NAME=${stateName}\nG91\nG0 ${action.axis}${action.distanceMm} F3000\nRESTORE_GCODE_STATE NAME=${stateName}`,
           config.id,
           "moonraker.moveAxis",
         ).pipe(
-          Effect.tapError(() =>
-            runMoonrakerGcode(
-              baseUrl,
-              secret,
-              "RESTORE_GCODE_STATE NAME=T3_JOG",
-              config.id,
-              "moonraker.moveAxis.restore",
-            ).pipe(Effect.ignore),
+          Effect.tapError((error) =>
+            // Only attempt restore if Moonraker answered (HTTP error); a unique state name ensures we never restore an unrelated prior jog.
+            error.reason.includes("returned HTTP ")
+              ? runMoonrakerGcode(
+                  baseUrl,
+                  secret,
+                  `RESTORE_GCODE_STATE NAME=${stateName}`,
+                  config.id,
+                  "moonraker.moveAxis.restore",
+                ).pipe(Effect.ignore)
+              : Effect.void,
           ),
         );
+      }
       case "refresh":
         return;
       case "setChamberLight":
@@ -451,14 +459,28 @@ export const moonrakerAdapter: PrinterAdapter<MoonrakerPrinterConfig> = {
         });
       }
       const baseUrl = yield* validatePrinterBaseUrl(config.baseUrl, "moonraker.camera", config.id);
-      const camUrl = yield* validatePrinterBaseUrl(config.webcamUrl, "moonraker.camera", config.id);
+      const camUrl = yield* validatePrinterBaseUrl(
+        config.webcamUrl,
+        "moonraker.camera",
+        config.id,
+        {
+          allowQuery: true,
+        },
+      );
       const result = yield* fetchPrinterBinary(camUrl, {
         // Never leak the printer API key to a different webcam origin.
         ...(camUrl.origin === baseUrl.origin ? { headers: moonrakerHeaders(secret) } : {}),
         operation: "moonraker.camera",
         printerId: config.id,
       });
-      const contentType = detectImageMimeType(result.bytes, result.contentType);
+      const contentType = detectImageMimeType(result.bytes);
+      if (contentType === null) {
+        return yield* new PrinterOperationError({
+          operation: "moonraker.camera",
+          printerId: config.id,
+          reason: "Moonraker webcam endpoint returned a non-image payload.",
+        });
+      }
       const hash = fingerprintBytes(result.bytes);
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       return {

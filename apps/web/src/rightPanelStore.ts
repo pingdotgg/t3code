@@ -163,6 +163,7 @@ export interface ThreadRightPanelState {
   activeSurfaceId: string | null;
   surfaces: RightPanelSurface[];
   dismissedDeviceSurfaceIds?: string[];
+  dismissedPrinterSurfaceIds?: string[];
   maximized?: true;
   proactiveDiffTurnId?: RunId;
 }
@@ -213,6 +214,7 @@ interface RightPanelStoreState {
     },
     automatic?: boolean,
   ) => void;
+  closePrinterSessionSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
@@ -457,6 +459,7 @@ const updateThreadStateMap = (
     next.activeSurfaceId === null &&
     next.surfaces.length === 0 &&
     !next.dismissedDeviceSurfaceIds?.length &&
+    !next.dismissedPrinterSurfaceIds?.length &&
     next.proactiveDiffTurnId === undefined
   ) {
     if (!(threadKey in byThreadKey)) return byThreadKey;
@@ -567,15 +570,33 @@ const userActionOnThread = (
       (surface) =>
         surface.kind === "device" && !next.surfaces.some((entry) => entry.id === surface.id),
     );
-    if (removedDevices.length === 0) return next;
+    const removedPrinters = current.surfaces.filter(
+      (surface) =>
+        surface.kind === "printer" && !next.surfaces.some((entry) => entry.id === surface.id),
+    );
+    if (removedDevices.length === 0 && removedPrinters.length === 0) return next;
     return {
       ...next,
-      dismissedDeviceSurfaceIds: [
-        ...new Set([
-          ...(next.dismissedDeviceSurfaceIds ?? []),
-          ...removedDevices.map((surface) => surface.id),
-        ]),
-      ],
+      ...(removedDevices.length > 0
+        ? {
+            dismissedDeviceSurfaceIds: [
+              ...new Set([
+                ...(next.dismissedDeviceSurfaceIds ?? []),
+                ...removedDevices.map((surface) => surface.id),
+              ]),
+            ],
+          }
+        : {}),
+      ...(removedPrinters.length > 0
+        ? {
+            dismissedPrinterSurfaceIds: [
+              ...new Set([
+                ...(next.dismissedPrinterSurfaceIds ?? []),
+                ...removedPrinters.map((surface) => surface.id),
+              ]),
+            ],
+          }
+        : {}),
     };
   }),
   userActionRevisionByThreadKey: {
@@ -799,6 +820,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           ),
                       }
                     : {}),
+                  ...(Array.isArray(validThreadState?.dismissedPrinterSurfaceIds)
+                    ? {
+                        dismissedPrinterSurfaceIds:
+                          validThreadState.dismissedPrinterSurfaceIds.filter(
+                            (id): id is string => typeof id === "string",
+                          ),
+                      }
+                    : {}),
                   ...(validThreadState?.maximized === true ? { maximized: true as const } : {}),
                 },
               ];
@@ -930,6 +959,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const id = isRemoteProxy
               ? (`printer:${encodeURIComponent(ownerEnvironmentId)}:${encodeURIComponent(target.printerId)}` as const)
               : (`printer:${encodeURIComponent(target.printerId)}` as const);
+            if (automatic && current.dismissedPrinterSurfaceIds?.includes(id)) return current;
             const surface: RightPanelSurface = {
               id,
               kind: "printer",
@@ -951,7 +981,40 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   .filter((entry) => entry.id !== "printer")
                   .map((entry) => (entry.id === id && updatedExisting ? updatedExisting : entry))
               : current.surfaces.map((entry) => (entry.id === "printer" ? surface : entry));
-            return upsertSurface({ ...current, surfaces }, updatedExisting ?? surface);
+            const remainingDismissed = (current.dismissedPrinterSurfaceIds ?? []).filter(
+              (entry) => entry !== id,
+            );
+            const { dismissedPrinterSurfaceIds: _dropped, ...rest } = current;
+            return upsertSurface(
+              {
+                ...rest,
+                surfaces,
+                ...(remainingDismissed.length > 0
+                  ? { dismissedPrinterSurfaceIds: remainingDismissed }
+                  : {}),
+              },
+              updatedExisting ?? surface,
+            );
+          }),
+        ),
+      closePrinterSessionSurface: (ref, surfaceId) =>
+        set((state) =>
+          automaticUpdate(state, scopedThreadKey(ref), (current) => {
+            const index = current.surfaces.findIndex(
+              (surface) => surface.id === surfaceId && surface.kind === "printer",
+            );
+            if (index < 0) return current;
+            const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
+            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
+            return {
+              ...current,
+              isOpen: surfaces.length > 0 && current.isOpen,
+              surfaces,
+              activeSurfaceId:
+                current.activeSurfaceId === surfaceId
+                  ? (fallback?.id ?? null)
+                  : current.activeSurfaceId,
+            };
           }),
         ),
       openThread: (ref, threadId) =>

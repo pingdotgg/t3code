@@ -5,6 +5,8 @@ import { EnvironmentId, ThreadId, TrimmedNonEmptyString, TrimmedString } from ".
 import { OrchestratorMcpEnvironmentTarget } from "./orchestratorMcp.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
 
+export const PRINTER_MEDIA_ROUTE_PREFIX = "/api/printer-media";
+
 export const PrinterId = TrimmedNonEmptyString.check(
   Schema.isMaxLength(128),
   Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/),

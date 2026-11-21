@@ -157,24 +157,27 @@ describe("MoonrakerAdapter", () => {
   );
 
   it.effect(
-    "preserves Klipper coordinate mode with SAVE/RESTORE_GCODE_STATE and restores on jog failure",
+    "preserves Klipper coordinate mode with unique per-attempt SAVE/RESTORE_GCODE_STATE and restores only on HTTP error",
     () =>
       Effect.gen(function* () {
         const scripts: Array<string> = [];
-        let failFirst = false;
+        let mode: "ok" | "http400" | "transport" = "ok";
         const mockClient = Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) => {
             const url = new URL(request.url);
             const script = url.searchParams.get("script") ?? "";
             scripts.push(script);
-            if (failFirst && script.includes("G0 ")) {
+            if (mode === "http400" && script.includes("G0 ")) {
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
                   request,
                   new Response("Move out of range", { status: 400 }),
                 ),
               );
+            }
+            if (mode === "transport" && script.includes("G0 ")) {
+              return Effect.fail(new Error("ECONNREFUSED") as never);
             }
             return Effect.succeed(
               HttpClientResponse.fromWeb(request, new Response("ok", { status: 200 })),
@@ -191,12 +194,16 @@ describe("MoonrakerAdapter", () => {
             {},
           )
           .pipe(Effect.provide(mockClient));
-        expect(scripts).toEqual([
-          "SAVE_GCODE_STATE NAME=T3_JOG\nG91\nG0 X5 F3000\nRESTORE_GCODE_STATE NAME=T3_JOG",
-        ]);
+        expect(scripts).toHaveLength(1);
+        const firstMatch =
+          /^SAVE_GCODE_STATE NAME=(T3_JOG_[a-z0-9_]+)\nG91\nG0 X5 F3000\nRESTORE_GCODE_STATE NAME=(T3_JOG_[a-z0-9_]+)$/.exec(
+            scripts[0]!,
+          );
+        expect(firstMatch).not.toBeNull();
+        expect(firstMatch?.[1]).toBe(firstMatch?.[2]);
 
         scripts.length = 0;
-        failFirst = true;
+        mode = "http400";
         const exit = yield* Effect.exit(
           moonrakerAdapter
             .executeAction(
@@ -209,11 +216,58 @@ describe("MoonrakerAdapter", () => {
             .pipe(Effect.provide(mockClient)),
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(scripts).toEqual([
-          "SAVE_GCODE_STATE NAME=T3_JOG\nG91\nG0 Z-2 F3000\nRESTORE_GCODE_STATE NAME=T3_JOG",
-          "RESTORE_GCODE_STATE NAME=T3_JOG",
-        ]);
+        expect(scripts).toHaveLength(2);
+        const secondMatch =
+          /^SAVE_GCODE_STATE NAME=(T3_JOG_[a-z0-9_]+)\nG91\nG0 Z-2 F3000\nRESTORE_GCODE_STATE NAME=(T3_JOG_[a-z0-9_]+)$/.exec(
+            scripts[0]!,
+          );
+        expect(secondMatch).not.toBeNull();
+        expect(secondMatch?.[1]).toBe(secondMatch?.[2]);
+        expect(secondMatch?.[1]).not.toBe(firstMatch?.[1]);
+        expect(scripts[1]).toBe(`RESTORE_GCODE_STATE NAME=${secondMatch?.[1]}`);
+
+        // Pre-request transport failure must NOT send RESTORE_GCODE_STATE.
+        scripts.length = 0;
+        mode = "transport";
+        const transportExit = yield* Effect.exit(
+          moonrakerAdapter
+            .executeAction(
+              MOONRAKER_CONFIG,
+              "moonraker-secret",
+              { kind: "moveAxis", axis: "Y", distanceMm: 1 },
+              {} as never,
+              {},
+            )
+            .pipe(Effect.provide(mockClient)),
+        );
+        expect(Exit.isFailure(transportExit)).toBe(true);
+        expect(scripts).toHaveLength(1);
       }),
+  );
+
+  it.effect("rejects non-image HTML payload returned by Moonraker webcam URL", () =>
+    Effect.gen(function* () {
+      const mockClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response("<html>404</html>", {
+                status: 200,
+                headers: { "content-type": "text/html" },
+              }),
+            ),
+          ),
+        ),
+      );
+      const exit = yield* Effect.exit(
+        moonrakerAdapter
+          .fetchMedia(MOONRAKER_CONFIG, "moonraker-secret", "camera", {} as never, {})
+          .pipe(Effect.provide(mockClient)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
   );
 });
 
@@ -312,12 +366,15 @@ describe("OctoPrintAdapter", () => {
           }),
         );
 
-        // 1. Cancelling & resuming must block jogging.
+        // 1. Cancelling & resuming must suppress settled print/motion controls.
         const cancelling = yield* octoPrintAdapter
           .poll(OCTOPRINT_CONFIG, "octo-secret", undefined, {})
           .pipe(Effect.provide(mockClient));
         expect(cancelling.snapshot.job.status).toBe("running");
         expect(cancelling.snapshot.capabilities.canJog).toBe(false);
+        expect(cancelling.snapshot.capabilities.canPause).toBe(false);
+        expect(cancelling.snapshot.capabilities.canResume).toBe(false);
+        expect(cancelling.snapshot.capabilities.canStop).toBe(false);
 
         authMode = "resuming";
         const resuming = yield* octoPrintAdapter
@@ -325,6 +382,9 @@ describe("OctoPrintAdapter", () => {
           .pipe(Effect.provide(mockClient));
         expect(resuming.snapshot.job.status).toBe("pause");
         expect(resuming.snapshot.capabilities.canJog).toBe(false);
+        expect(resuming.snapshot.capabilities.canPause).toBe(false);
+        expect(resuming.snapshot.capabilities.canResume).toBe(false);
+        expect(resuming.snapshot.capabilities.canStop).toBe(false);
 
         // 2. Cross-origin webcam omits X-Api-Key; same-origin webcam includes it.
         yield* octoPrintAdapter
@@ -379,10 +439,10 @@ describe("OctoPrintAdapter", () => {
   );
 
   it.effect(
-    "blocks jogging when OctoPrint is operational but not ready, and maps JSON null to PrinterOperationError",
+    "requires settled operational+ready flags for idle/jog, rejects ready without operational, and maps JSON null to PrinterOperationError",
     () =>
       Effect.gen(function* () {
-        let mode: "unready" | "ready" | "null" = "unready";
+        let mode: "unready" | "readyNotOperational" | "pausing" | "ready" | "null" = "unready";
         const mockClient = Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) => {
@@ -399,14 +459,27 @@ describe("OctoPrintAdapter", () => {
                   ),
                 );
               }
+              const flags =
+                mode === "ready"
+                  ? { operational: true, ready: true }
+                  : mode === "readyNotOperational"
+                    ? { operational: false, ready: true }
+                    : mode === "pausing"
+                      ? { operational: true, pausing: true, printing: true }
+                      : { operational: true, ready: false };
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
                   request,
                   new Response(
                     JSON.stringify({
                       state: {
-                        text: mode === "ready" ? "Operational" : "Transferring file to SD",
-                        flags: { operational: true, ready: mode === "ready" },
+                        text:
+                          mode === "ready"
+                            ? "Operational"
+                            : mode === "pausing"
+                              ? "Pausing"
+                              : "Transferring file to SD",
+                        flags,
                       },
                     }),
                     { status: 200, headers: { "content-type": "application/json" } },
@@ -431,6 +504,23 @@ describe("OctoPrintAdapter", () => {
           .pipe(Effect.provide(mockClient));
         expect(unready.snapshot.job.status).toBe("prepare");
         expect(unready.snapshot.capabilities.canJog).toBe(false);
+
+        mode = "readyNotOperational";
+        const notOp = yield* octoPrintAdapter
+          .poll(OCTOPRINT_CONFIG, "octo-secret", undefined, {})
+          .pipe(Effect.provide(mockClient));
+        expect(notOp.snapshot.job.status).toBe("offline");
+        expect(notOp.snapshot.capabilities.canJog).toBe(false);
+
+        mode = "pausing";
+        const pausing = yield* octoPrintAdapter
+          .poll(OCTOPRINT_CONFIG, "octo-secret", undefined, {})
+          .pipe(Effect.provide(mockClient));
+        expect(pausing.snapshot.capabilities.canPause).toBe(false);
+        expect(pausing.snapshot.capabilities.canResume).toBe(false);
+        // Stop/cancel remains available while pausing an active print, but not while already cancelling.
+        expect(pausing.snapshot.capabilities.canStop).toBe(true);
+        expect(pausing.snapshot.capabilities.canJog).toBe(false);
 
         mode = "ready";
         const ready = yield* octoPrintAdapter

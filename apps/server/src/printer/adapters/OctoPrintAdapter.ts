@@ -64,8 +64,8 @@ function mapOctoStatus(
   if (flags.error) return "failed";
   if (flags.paused || flags.pausing || flags.resuming) return "pause";
   if (flags.printing || flags.cancelling) return "running";
-  if (flags.ready === true) return "idle";
-  if (flags.operational) return "prepare";
+  if (flags.operational === true && flags.ready === true) return "idle";
+  if (flags.operational === true) return "prepare";
   return "offline";
 }
 
@@ -141,6 +141,17 @@ export const octoPrintAdapter: PrinterAdapter<OctoPrintPrinterConfig> = {
       typeof jobData.progress?.printTimeLeft === "number"
         ? Math.round(jobData.progress.printTimeLeft)
         : null;
+
+    const isTransitional = Boolean(flags?.pausing || flags?.resuming || flags?.cancelling);
+    const isSettledReadyIdle = Boolean(
+      online &&
+      flags?.operational === true &&
+      flags?.ready === true &&
+      !flags?.printing &&
+      !flags?.paused &&
+      !isTransitional &&
+      !flags?.error,
+    );
 
     const snapshot: PrinterSnapshot = {
       id: config.id,
@@ -230,14 +241,27 @@ export const octoPrintAdapter: PrinterAdapter<OctoPrintPrinterConfig> = {
         coverUpdatedAt: null,
       },
       capabilities: {
-        canPause: online && status === "running",
-        canResume: online && status === "pause",
-        canStop: online && isActive,
-        canSetTemps: online,
+        canPause: Boolean(
+          online &&
+          flags?.operational === true &&
+          flags?.printing === true &&
+          !flags?.paused &&
+          !isTransitional,
+        ),
+        canResume: Boolean(
+          online && flags?.operational === true && flags?.paused === true && !isTransitional,
+        ),
+        canStop: Boolean(
+          online &&
+          flags?.operational === true &&
+          (flags?.printing === true || flags?.paused === true) &&
+          !flags?.cancelling,
+        ),
+        canSetTemps: Boolean(online && flags?.operational === true),
         canSetFans: false,
         canSetLight: false,
         canSetSpeed: false,
-        canJog: online && flags?.ready === true && (status === "idle" || status === "finish"),
+        canJog: isSettledReadyIdle,
         canSkipObjects: false,
       },
     };
@@ -340,14 +364,28 @@ export const octoPrintAdapter: PrinterAdapter<OctoPrintPrinterConfig> = {
         });
       }
       const baseUrl = yield* validatePrinterBaseUrl(config.baseUrl, "octoprint.camera", config.id);
-      const camUrl = yield* validatePrinterBaseUrl(config.webcamUrl, "octoprint.camera", config.id);
+      const camUrl = yield* validatePrinterBaseUrl(
+        config.webcamUrl,
+        "octoprint.camera",
+        config.id,
+        {
+          allowQuery: true,
+        },
+      );
       const result = yield* fetchPrinterBinary(camUrl, {
         // Never leak the OctoPrint API key to a different webcam origin.
         ...(secret && camUrl.origin === baseUrl.origin ? { headers: { "X-Api-Key": secret } } : {}),
         operation: "octoprint.camera",
         printerId: config.id,
       });
-      const contentType = detectImageMimeType(result.bytes, result.contentType);
+      const contentType = detectImageMimeType(result.bytes);
+      if (contentType === null) {
+        return yield* new PrinterOperationError({
+          operation: "octoprint.camera",
+          printerId: config.id,
+          reason: "OctoPrint webcam endpoint returned a non-image payload.",
+        });
+      }
       const hash = fingerprintBytes(result.bytes);
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       return {
