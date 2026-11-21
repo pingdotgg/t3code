@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as SchemaAST from "effect/SchemaAST";
 import * as SqlClient from "effect/sql/SqlClient";
 import { Activity, DurableClock, DurableDeferred, Workflow, WorkflowEngine } from "effect/workflow";
 
@@ -365,8 +366,67 @@ export const sleep = Effect.fn("workflow.sleep")(function* (
 
 export const Woke = Schema.Struct({ expired: Schema.Boolean, value: Schema.Json });
 export const wakeOf = (name: string) => DurableDeferred.make(`wait/${name}`, { success: Woke });
-export const jsonSchemaOf = (schema: Schema.Top): Record<string, Schema.Json> => {
-  const document = Schema.toJsonSchemaDocument(schema);
+const finite = [Schema.isFinite()] as const;
+// JSON carries a bare `Schema.Number` as a number or the text "Infinity", "-Infinity" or "NaN",
+// and that form drops the number's own checks. Whoever writes the value is told a finite number
+// with its checks instead. Transformations and recursion keep their own form.
+const finiteNumbers = (ast: SchemaAST.AST): SchemaAST.AST => {
+  if (ast.encoding !== undefined) return ast;
+  if (SchemaAST.isNumber(ast)) {
+    return new SchemaAST.Number(
+      ast.annotations,
+      ast.checks === undefined ? finite : [...ast.checks, ...finite],
+      undefined,
+      ast.context,
+    );
+  }
+  if (SchemaAST.isObjects(ast)) {
+    return new SchemaAST.Objects(
+      ast.propertySignatures.map(
+        (field) => new SchemaAST.PropertySignature(field.name, finiteNumbers(field.type)),
+      ),
+      ast.indexSignatures.map(
+        (index) => new SchemaAST.IndexSignature(index.parameter, finiteNumbers(index.type)),
+      ),
+      ast.annotations,
+      ast.checks,
+      undefined,
+      ast.context,
+      ast.encodingChecks,
+    );
+  }
+  if (SchemaAST.isArrays(ast)) {
+    return new SchemaAST.Arrays(
+      ast.isMutable,
+      ast.elements.map(finiteNumbers),
+      ast.rest.map(finiteNumbers),
+      ast.annotations,
+      ast.checks,
+      undefined,
+      ast.context,
+      ast.encodingChecks,
+    );
+  }
+  if (SchemaAST.isUnion(ast)) {
+    return new SchemaAST.Union(
+      ast.types.map(finiteNumbers),
+      ast.options,
+      ast.annotations,
+      ast.checks,
+      undefined,
+      ast.context,
+      ast.encodingChecks,
+    );
+  }
+  return ast;
+};
+
+/** What a value must look like, as JSON Schema; `closed` objects turn down keys they do not name. */
+export const jsonSchemaOf = (schema: Schema.Top, closed = false): Record<string, Schema.Json> => {
+  const document = Schema.toJsonSchemaDocument(
+    Schema.make(finiteNumbers(schema.ast)),
+    closed ? { onExcessProperty: "error" } : undefined,
+  );
   return { ...document.schema, $defs: document.definitions } as Record<string, Schema.Json>;
 };
 

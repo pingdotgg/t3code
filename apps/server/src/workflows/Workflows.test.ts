@@ -406,7 +406,10 @@ const fix = workflow(
         brief: "Write the fix.",
         project: payload.project,
         ...(payload.environment === undefined ? {} : { environment: payload.environment }),
-        returns: Schema.Struct({ branch: Schema.String }),
+        returns: Schema.Struct({
+          branch: Schema.String,
+          commits: Schema.optional(Schema.Number.check(Schema.isGreaterThan(0))),
+        }),
       });
       const answer = yield* ask("merge", {
         title: `Merge ${written.value.branch}?`,
@@ -1216,12 +1219,25 @@ it.effect(
           const write = yield* agents.started(runId, "write/0");
           assert.equal(write.project, "p1");
           assert.equal(write.thread, undefined);
-          assert.deepStrictEqual(write.outputSchema?.required, ["branch"]);
+          assert.deepStrictEqual(
+            [write.outputSchema?.required, write.outputSchema?.additionalProperties],
+            [["branch"], false],
+          );
+          // The number's own check reaches the agent, without the text JSON spells Infinity in.
+          assert.deepStrictEqual(
+            (write.outputSchema?.properties as Record<string, unknown> | undefined)?.commits,
+            { anyOf: [{ type: "number", exclusiveMinimum: 0 }, { type: "null" }] },
+          );
           // It ended its turn without a result: the same thread is asked for it, not for the work.
           yield* agents.end(runId, "write/0", { reply: "done" });
           const correction = yield* agents.started(runId, "write/0/correct/0");
           assert.equal(correction.thread, "thread-1");
-          yield* agents.end(runId, "write/0/correct/0", {
+          assert.include(correction.prompt, "without a submitted result");
+          // What it then submitted does not fit, and it is told so, not that nothing came.
+          yield* agents.end(runId, "write/0/correct/0", { output: { branch: 1 } });
+          const misfit = yield* agents.started(runId, "write/0/correct/1");
+          assert.include(misfit.prompt, "The result you submitted does not fit: Expected string");
+          yield* agents.end(runId, "write/0/correct/1", {
             output: { branch: "fix/1" },
             reply: "Pushed fix/1.",
           });
