@@ -41,15 +41,19 @@ const DEFAULT_TIMEOUT = Duration.seconds(8);
 const MEDIA_TIMEOUT = Duration.seconds(10);
 const MAX_TEXT_BYTES = 8 * 1024 * 1024;
 const MAX_MEDIA_BYTES = 16 * 1024 * 1024;
+/** Max raw snapshot bytes so base64 (~13.33 MiB) fits within PeerMcpClient's 14 MiB image limit. */
+export const MAX_PRINTER_SNAPSHOT_BYTES = 10 * 1024 * 1024;
 
 // Preserve LAN, Tailscale, and loopback for local printers, while blocking cloud metadata & link-local ranges.
 const BLOCKED_ADDRESSES = new NodeNet.BlockList();
 BLOCKED_ADDRESSES.addSubnet("0.0.0.0", 8, "ipv4");
+BLOCKED_ADDRESSES.addAddress("100.100.100.200", "ipv4");
 BLOCKED_ADDRESSES.addSubnet("169.254.0.0", 16, "ipv4");
 BLOCKED_ADDRESSES.addAddress("::", "ipv6");
 BLOCKED_ADDRESSES.addSubnet("fe80::", 10, "ipv6");
 BLOCKED_ADDRESSES.addSubnet("fd00:ec2::", 32, "ipv6");
 BLOCKED_ADDRESSES.addSubnet("::ffff:0.0.0.0", 104, "ipv6");
+BLOCKED_ADDRESSES.addAddress("::ffff:100.100.100.200", "ipv6");
 BLOCKED_ADDRESSES.addSubnet("::ffff:169.254.0.0", 112, "ipv6");
 
 const BLOCKED_HOSTNAMES = new Set([
@@ -169,7 +173,7 @@ function acquirePinnedDispatcher(
     Effect.try({
       try: () => {
         const undici = requireUndici("undici") as typeof Undici;
-        return new undici.Agent({
+        const agent = new undici.Agent({
           allowH2: false,
           connect: {
             lookup: (_hostname, lookupOptions, callback) => {
@@ -211,6 +215,11 @@ function acquirePinnedDispatcher(
             },
           },
         });
+        // Pair undici's Agent with its own fetch implementation so Node's built-in undici version cannot reject the dispatcher.
+        return {
+          agent,
+          fetch: undici.fetch as unknown as typeof globalThis.fetch,
+        };
       },
       catch: () =>
         new PrinterOperationError({
@@ -219,7 +228,7 @@ function acquirePinnedDispatcher(
           reason: "Could not initialize pinned network dispatcher for printer host.",
         }),
     }),
-    (agent) => Effect.promise(() => agent.close()).pipe(Effect.ignore),
+    ({ agent }) => Effect.promise(() => agent.close()).pipe(Effect.ignore),
   );
 }
 
@@ -396,7 +405,7 @@ const executeBoundedRequest = Effect.fn("PrinterUrlGuard.executeBoundedRequest")
         options.operation,
         options.printerId,
       );
-      const pinnedDispatcher =
+      const pinned =
         resolvedAddresses !== null
           ? yield* acquirePinnedDispatcher(resolvedAddresses, options.operation, options.printerId)
           : undefined;
@@ -406,17 +415,20 @@ const executeBoundedRequest = Effect.fn("PrinterUrlGuard.executeBoundedRequest")
       }
       const requestInit: globalThis.RequestInit = {
         redirect: "manual",
-        ...(pinnedDispatcher
+        ...(pinned
           ? {
-              dispatcher: pinnedDispatcher as unknown as NonNullable<
+              dispatcher: pinned.agent as unknown as NonNullable<
                 globalThis.RequestInit["dispatcher"]
               >,
             }
           : {}),
       };
-      const response = yield* client
+      const execute = client
         .execute(buildRequest(url, options))
         .pipe(Effect.provideService(FetchHttpClient.RequestInit, requestInit));
+      const response = yield* pinned
+        ? Effect.provideService(execute, FetchHttpClient.Fetch, pinned.fetch)
+        : execute;
       yield* checkStatus(response.status, url.host, options.operation, options.printerId);
       const bytes = yield* readBoundedResponseBytes(response, maxBytes, url, options);
       const contentType = response.headers["content-type"] ?? "application/octet-stream";
@@ -439,11 +451,15 @@ const executeBoundedRequest = Effect.fn("PrinterUrlGuard.executeBoundedRequest")
 const UnknownJsonString = Schema.fromJsonString(Schema.Unknown);
 const decodeUnknownJson = Schema.decodeEffect(UnknownJsonString);
 
+export interface PrinterJsonOptions extends PrinterHttpOptions {
+  readonly expectedType?: "object" | "array";
+}
+
 export const fetchPrinterJson = Effect.fn("PrinterUrlGuard.fetchPrinterJson")(function* <
   T = unknown,
 >(
   url: URL,
-  options: PrinterHttpOptions,
+  options: PrinterJsonOptions,
 ): Effect.fn.Return<T, PrinterOperationError, HttpClient.HttpClient> {
   const { bytes } = yield* executeBoundedRequest(url, options, DEFAULT_TIMEOUT, MAX_TEXT_BYTES);
   const parsed = yield* decodeUnknownJson(new TextDecoder().decode(bytes)).pipe(
@@ -456,6 +472,18 @@ export const fetchPrinterJson = Effect.fn("PrinterUrlGuard.fetchPrinterJson")(fu
         }),
     ),
   );
+  const expectedType = options.expectedType ?? "object";
+  const validShape =
+    expectedType === "array"
+      ? Array.isArray(parsed)
+      : parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+  if (!validShape) {
+    return yield* new PrinterOperationError({
+      operation: options.operation,
+      ...(options.printerId ? { printerId: options.printerId } : {}),
+      reason: `Printer host ${url.host} returned an unexpected JSON ${expectedType === "array" ? "array" : "object"} payload.`,
+    });
+  }
   return parsed as T;
 });
 

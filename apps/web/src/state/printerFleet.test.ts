@@ -162,5 +162,13 @@ describe("printerFleet T3 Connect proxy routing", () => {
 
     const defaultOnline = selectFleetPrinter(entries, "shared-id");
     expect(defaultOnline?.proxyEnvironmentId).toBe(homeProxy);
+
+    // Pinned surfaces must never silently fall back to another printer or environment when their target disappears.
+    expect(selectFleetPrinter(entries, "shared-id", remoteVps)).toBeUndefined();
+    expect(selectFleetPrinter(entries, "missing-id", homeProxy)).toBeUndefined();
+    expect(selectFleetPrinter(entries, "missing-id")).toBeUndefined();
+    expect(selectFleetPrinter(entries, undefined, remoteVps)).toBeUndefined();
+    // Unpinned surface still auto-selects the best available fleet printer.
+    expect(selectFleetPrinter(entries)?.proxyEnvironmentId).toBe(homeProxy);
   });
 });

@@ -155,6 +155,66 @@ describe("MoonrakerAdapter", () => {
       expect(polled.snapshot.capabilities.canJog).toBe(false);
     }),
   );
+
+  it.effect(
+    "preserves Klipper coordinate mode with SAVE/RESTORE_GCODE_STATE and restores on jog failure",
+    () =>
+      Effect.gen(function* () {
+        const scripts: Array<string> = [];
+        let failFirst = false;
+        const mockClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            const script = url.searchParams.get("script") ?? "";
+            scripts.push(script);
+            if (failFirst && script.includes("G0 ")) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response("Move out of range", { status: 400 }),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("ok", { status: 200 })),
+            );
+          }),
+        );
+
+        yield* moonrakerAdapter
+          .executeAction(
+            MOONRAKER_CONFIG,
+            "moonraker-secret",
+            { kind: "moveAxis", axis: "X", distanceMm: 5 },
+            {} as never,
+            {},
+          )
+          .pipe(Effect.provide(mockClient));
+        expect(scripts).toEqual([
+          "SAVE_GCODE_STATE NAME=T3_JOG\nG91\nG0 X5 F3000\nRESTORE_GCODE_STATE NAME=T3_JOG",
+        ]);
+
+        scripts.length = 0;
+        failFirst = true;
+        const exit = yield* Effect.exit(
+          moonrakerAdapter
+            .executeAction(
+              MOONRAKER_CONFIG,
+              "moonraker-secret",
+              { kind: "moveAxis", axis: "Z", distanceMm: -2 },
+              {} as never,
+              {},
+            )
+            .pipe(Effect.provide(mockClient)),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(scripts).toEqual([
+          "SAVE_GCODE_STATE NAME=T3_JOG\nG91\nG0 Z-2 F3000\nRESTORE_GCODE_STATE NAME=T3_JOG",
+          "RESTORE_GCODE_STATE NAME=T3_JOG",
+        ]);
+      }),
+  );
 });
 
 describe("OctoPrintAdapter", () => {
@@ -315,6 +375,77 @@ describe("OctoPrintAdapter", () => {
           .poll(OCTOPRINT_CONFIG, "octo-secret", undefined, {})
           .pipe(Effect.provide(mockClient));
         expect(disconnected.snapshot.online).toBe(false);
+      }),
+  );
+
+  it.effect(
+    "blocks jogging when OctoPrint is operational but not ready, and maps JSON null to PrinterOperationError",
+    () =>
+      Effect.gen(function* () {
+        let mode: "unready" | "ready" | "null" = "unready";
+        const mockClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/printer") {
+              if (mode === "null") {
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response("null", {
+                      status: 200,
+                      headers: { "content-type": "application/json" },
+                    }),
+                  ),
+                );
+              }
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify({
+                      state: {
+                        text: mode === "ready" ? "Operational" : "Transferring file to SD",
+                        flags: { operational: true, ready: mode === "ready" },
+                      },
+                    }),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(JSON.stringify({ job: {}, progress: {} }), {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                }),
+              ),
+            );
+          }),
+        );
+
+        const unready = yield* octoPrintAdapter
+          .poll(OCTOPRINT_CONFIG, "octo-secret", undefined, {})
+          .pipe(Effect.provide(mockClient));
+        expect(unready.snapshot.job.status).toBe("prepare");
+        expect(unready.snapshot.capabilities.canJog).toBe(false);
+
+        mode = "ready";
+        const ready = yield* octoPrintAdapter
+          .poll(OCTOPRINT_CONFIG, "octo-secret", undefined, {})
+          .pipe(Effect.provide(mockClient));
+        expect(ready.snapshot.job.status).toBe("idle");
+        expect(ready.snapshot.capabilities.canJog).toBe(true);
+
+        mode = "null";
+        const nullExit = yield* Effect.exit(
+          octoPrintAdapter
+            .poll(OCTOPRINT_CONFIG, "octo-secret", undefined, {})
+            .pipe(Effect.provide(mockClient)),
+        );
+        expect(Exit.isFailure(nullExit)).toBe(true);
       }),
   );
 });

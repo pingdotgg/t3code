@@ -62,6 +62,19 @@ const printerSecretFieldsByKind = new Map([
 ]);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
 
+function printerSecretDestination(printer: PrinterConfig): string {
+  const originOf = (raw: string | undefined) => {
+    if (!raw?.trim()) return "";
+    try {
+      return new URL(raw.trim()).origin;
+    } catch {
+      return raw.trim();
+    }
+  };
+  const webcam = printer.kind === "home-assistant-bambu" ? "" : originOf(printer.webcamUrl);
+  return `${printer.kind}|${originOf(printer.baseUrl)}|${webcam}`;
+}
+
 export interface SettingsSecret {
   readonly secretName: string;
   readonly kind: "field" | "environment";
@@ -256,16 +269,16 @@ function mapSecretFieldGroups(
       ) as SimlockDeviceHostConfig,
   );
 
-  const printers = settings.printers.map(
-    (printer) =>
-      mapFields(
-        printer,
-        printerSecretFieldsByKind.get(printer.kind) ?? [],
-        (field, serverHost) =>
-          `printer-${encode(printer.id)}-${encode(field)}` +
-          (serverHost === null ? "" : `-${encode(serverHost)}`),
-      ) as PrinterConfig,
-  );
+  const printers = settings.printers.map((printer) => {
+    const destination = encode(printerSecretDestination(printer));
+    return mapFields(
+      printer,
+      printerSecretFieldsByKind.get(printer.kind) ?? [],
+      (field, serverHost) =>
+        `printer-${encode(printer.id)}-${destination}-${encode(field)}` +
+        (serverHost === null ? "" : `-${encode(serverHost)}`),
+    ) as PrinterConfig;
+  });
 
   return {
     ...settings,

@@ -31,7 +31,8 @@ export const PrinterListTool = Tool.make("printer_list", {
     environmentId: OrchestratorMcpEnvironmentTarget,
     refresh: Schema.optional(
       Schema.Boolean.annotate({
-        description: "Force a fresh poll from each printer. Default true.",
+        description:
+          "Force a fresh poll. Default refreshes local printers and reads cached linked-peer telemetry; pass true to refresh both.",
       }),
     ),
   }),

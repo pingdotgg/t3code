@@ -812,9 +812,10 @@ function PrinterSettingsContent() {
 }
 
 export function PrintersSettingsPanel() {
+  const { environment } = useSettingsScope();
   return (
     <SettingsPageContainer>
-      <PrinterSettingsContent />
+      <PrinterSettingsContent key={environment?.environmentId ?? "none"} />
     </SettingsPageContainer>
   );
 }

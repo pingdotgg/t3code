@@ -6,14 +6,18 @@ import {
   PrinterToolUnavailableError,
   type ThreadId,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { imageDimensions } from "../../../printer/PrinterAdapter.ts";
-import * as PrinterService from "../../../printer/PrinterService.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import { imageDimensions } from "../../../printer/PrinterAdapter.ts";
+import * as PrinterService from "../../../printer/PrinterService.ts";
+import { MAX_PRINTER_SNAPSHOT_BYTES } from "../../../printer/PrinterUrlGuard.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -45,10 +49,6 @@ const requirePrinterThreadAccess = McpInvocationContext.requireThreadMcpCapabili
   Effect.mapError(() => printerAccessDisabledError),
 );
 
-function localPrinterAccessAllowed(state: PrinterServiceState): boolean {
-  return state.enabled && state.agentAccessEnabled;
-}
-
 type LocalPrinterMatch =
   | { readonly kind: "found"; readonly printer: PrinterSnapshot }
   | { readonly kind: "none" }
@@ -56,10 +56,11 @@ type LocalPrinterMatch =
 
 function matchLocalPrinter(
   state: PrinterServiceState,
+  localAllowed: boolean,
   threadId: ThreadId | undefined,
   requested: string | undefined,
 ): LocalPrinterMatch {
-  if (!localPrinterAccessAllowed(state) || state.printers.length === 0) {
+  if (!localAllowed || state.printers.length === 0) {
     return { kind: "none" };
   }
   const trimmed = requested?.trim();
@@ -107,6 +108,12 @@ function matchLocalPrinter(
 function cameraAgeSeconds(printer: PrinterSnapshot, nowMs: number): number | null {
   if (!printer.media.cameraUpdatedAt) return null;
   const parsed = Date.parse(printer.media.cameraUpdatedAt);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.round((nowMs - parsed) / 1000));
+}
+
+function capturedAgeSeconds(capturedAt: string, nowMs: number): number | null {
+  const parsed = Date.parse(capturedAt);
   if (!Number.isFinite(parsed)) return null;
   return Math.max(0, Math.round((nowMs - parsed) / 1000));
 }
@@ -270,10 +277,14 @@ function findMatchingOpenProxySession(
   state: PrinterServiceState,
   threadId: ThreadId | undefined,
   requested: string | undefined,
+  environmentId?: EnvironmentId,
 ) {
   if (threadId === undefined) return undefined;
   const openProxied = state.sessions.filter(
-    (session) => session.threadId === threadId && session.proxyEnvironmentId !== undefined,
+    (session) =>
+      session.threadId === threadId &&
+      session.proxyEnvironmentId !== undefined &&
+      (environmentId === undefined || session.proxyEnvironmentId === environmentId),
   );
   if (openProxied.length === 0) return undefined;
   const trimmed = requested?.trim();
@@ -290,10 +301,137 @@ function findMatchingOpenProxySession(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+type ResolvedReadTarget =
+  | { readonly kind: "local"; readonly printer: PrinterSnapshot }
+  | {
+      readonly kind: "remote";
+      readonly environmentId: EnvironmentId;
+      readonly environmentLabel: string | undefined;
+      readonly printerId: PrinterId;
+    };
+
 const buildHandlers = Effect.gen(function* () {
   const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
   const links = yield* Effect.serviceOption(PeerLinks.PeerLinks);
+  const settingsService = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const peers: PeerRuntime = { forwarding, links };
+
+  const resolveLocalPrinterAccess = Effect.fn("McpPrinterHandlers.resolveLocalPrinterAccess")(
+    function* (
+      scope: McpInvocationContext.McpInvocationScope,
+      state: PrinterServiceState,
+    ): Effect.fn.Return<boolean, never, ThreadManagementService.ThreadManagementService> {
+      if (!state.enabled) return false;
+      if (scope.client?.linked === true || scope.thread === undefined) {
+        return state.agentAccessEnabled;
+      }
+      if (Option.isNone(settingsService)) {
+        return state.agentAccessEnabled;
+      }
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const [settings, threadShell] = yield* Effect.all([
+        settingsService.value.getSettings.pipe(Effect.orElseSucceed(() => null)),
+        threads.getThreadShell(scope.thread.threadId).pipe(Effect.orElseSucceed(() => null)),
+      ]);
+      if (settings === null || threadShell === null) {
+        return state.agentAccessEnabled;
+      }
+      return resolveProjectSettings(settings, threadShell.projectId).settings
+        .enableAgentPrinterAccess;
+    },
+  );
+
+  const resolveReadTarget = Effect.fn("McpPrinterHandlers.resolveReadTarget")(function* (
+    scope: McpInvocationContext.McpInvocationScope,
+    state: PrinterServiceState,
+    localAllowed: boolean,
+    requested: string | undefined,
+  ): Effect.fn.Return<ResolvedReadTarget, PrinterToolUnavailableError> {
+    if (scope.client?.linked === true && !localAllowed) {
+      return yield* printerAccessDisabledError;
+    }
+
+    const peerForwarding = Option.getOrUndefined(peers.forwarding);
+    const peerDiscoveryAllowed = canDiscoverPeers(scope, peers) && peerForwarding !== undefined;
+    const trimmed = requested?.trim();
+
+    // When no selector is supplied, prefer the thread's sole open printer (local or proxied) before falling back.
+    if (!trimmed && scope.thread !== undefined) {
+      const openTargets: Array<ResolvedReadTarget> = [];
+      for (const session of state.sessions) {
+        if (session.threadId !== scope.thread.threadId) continue;
+        if (session.proxyEnvironmentId === undefined) {
+          if (!localAllowed) continue;
+          const localPrinter = state.printers.find((p) => p.id === session.printerId);
+          if (localPrinter) {
+            openTargets.push({ kind: "local", printer: localPrinter });
+          }
+        } else if (peerDiscoveryAllowed) {
+          const label = yield* lookupPeerLabel(peers, session.proxyEnvironmentId);
+          openTargets.push({
+            kind: "remote",
+            environmentId: session.proxyEnvironmentId,
+            environmentLabel: label,
+            printerId: session.printerId,
+          });
+        }
+      }
+      if (openTargets.length === 1) {
+        return openTargets[0]!;
+      }
+      if (openTargets.length > 1) {
+        const candidates = openTargets
+          .map((target) =>
+            target.kind === "local"
+              ? `${target.printer.id} (${target.printer.label})`
+              : `${target.printerId} via ${target.environmentLabel ?? target.environmentId}`,
+          )
+          .join(", ");
+        return yield* new PrinterToolUnavailableError({
+          reason: `Multiple 3D printers are open in this thread (${candidates}). Pass printerId (and environmentId if needed).`,
+        });
+      }
+    }
+
+    const localMatch = matchLocalPrinter(state, localAllowed, scope.thread?.threadId, requested);
+    if (localMatch.kind === "ambiguous") {
+      return yield* new PrinterToolUnavailableError({ reason: localMatch.message });
+    }
+    if (localMatch.kind === "found") {
+      return { kind: "local", printer: localMatch.printer };
+    }
+
+    if (peerDiscoveryAllowed) {
+      const openProxy = findMatchingOpenProxySession(state, scope.thread?.threadId, requested);
+      if (openProxy?.proxyEnvironmentId !== undefined) {
+        const label = yield* lookupPeerLabel(peers, openProxy.proxyEnvironmentId);
+        return {
+          kind: "remote",
+          environmentId: openProxy.proxyEnvironmentId,
+          environmentLabel: label,
+          printerId: openProxy.printerId,
+        };
+      }
+
+      const discovered = yield* discoverPeerPrinters(scope, peers, false);
+      const chosen = yield* matchDiscoveredPeerPrinter(discovered, requested);
+      return {
+        kind: "remote",
+        environmentId: chosen.environmentId,
+        environmentLabel: chosen.environmentLabel,
+        printerId: chosen.printer.id,
+      };
+    }
+
+    const available = state.printers.map((p) => `${p.id} (${p.label})`).join(", ");
+    return yield* new PrinterToolUnavailableError({
+      reason: !localAllowed
+        ? "3D Printer support is disabled in Settings -> 3D Printers."
+        : state.printers.length === 0
+          ? "No 3D printers are configured. Add one in Settings -> 3D Printers."
+          : `Printer "${requested ?? ""}" was not found. Available printers: ${available}.`,
+    });
+  });
 
   const resolveStatusLocally = Effect.fn("McpPrinterHandlers.resolveStatusLocally")(function* (
     scope: McpInvocationContext.McpInvocationScope,
@@ -301,7 +439,12 @@ const buildHandlers = Effect.gen(function* () {
     target: PrinterSnapshot,
   ) {
     const refreshed = yield* printers.list({ printerId: target.id, refresh: true });
-    const updated = refreshed.printers.find((p) => p.id === target.id) ?? target;
+    const updated = refreshed.printers.find((p) => p.id === target.id);
+    if (!updated) {
+      return yield* new PrinterToolUnavailableError({
+        reason: `Printer "${target.id}" is no longer configured.`,
+      });
+    }
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const age = cameraAgeSeconds(updated, nowMs);
     const note = updated.stale
@@ -327,16 +470,14 @@ const buildHandlers = Effect.gen(function* () {
       });
     }
     const asset = yield* printers.fetchMedia(target.id, "camera");
+    if (asset.bytes.byteLength > MAX_PRINTER_SNAPSHOT_BYTES) {
+      return yield* new PrinterToolUnavailableError({
+        reason: `Camera snapshot (${(asset.bytes.byteLength / (1024 * 1024)).toFixed(1)} MB) exceeded the ${Math.round(MAX_PRINTER_SNAPSHOT_BYTES / (1024 * 1024))} MB transfer limit.`,
+      });
+    }
     const dims = imageDimensions(asset.bytes, asset.contentType);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-    const latestState = yield* printers.state;
-    const updatedTarget = latestState.printers.find((p) => p.id === target.id) ?? target;
-    const parsedCapturedMs = Date.parse(asset.capturedAt);
-    const age =
-      cameraAgeSeconds(updatedTarget, nowMs) ??
-      (Number.isFinite(parsedCapturedMs)
-        ? Math.max(0, Math.round((nowMs - parsedCapturedMs) / 1000))
-        : null);
+    const age = capturedAgeSeconds(asset.capturedAt, nowMs);
     return {
       printerId: target.id,
       printerLabel: target.label,
@@ -355,66 +496,97 @@ const buildHandlers = Effect.gen(function* () {
   });
 
   const handlers = {
-    printer_list: McpToolAccess.reads((input) =>
-      Effect.gen(function* () {
-        const scope = yield* requirePrinterReadAccess;
-        const printers = yield* PrinterService.PrinterService;
-        const currentState = yield* printers.state;
-        const localAllowed = localPrinterAccessAllowed(currentState);
-        const state = localAllowed
-          ? yield* printers.list({ refresh: input.refresh ?? true })
-          : currentState;
-        const threadId = scope.thread?.threadId;
-        const openLocalIds = new Set(
-          threadId === undefined
-            ? []
-            : state.sessions
-                .filter(
-                  (session) =>
-                    session.threadId === threadId && session.proxyEnvironmentId === undefined,
-                )
-                .map((session) => session.printerId),
-        );
-        const openProxiedKeys = new Set(
-          threadId === undefined
-            ? []
-            : state.sessions
-                .filter(
-                  (session) =>
-                    session.threadId === threadId && session.proxyEnvironmentId !== undefined,
-                )
-                .map((session) => `${session.proxyEnvironmentId}\u0000${session.printerId}`),
-        );
-        const localEntries = localAllowed
-          ? state.printers.map((printer) => ({
-              id: printer.id,
-              label: printer.label,
-              kind: printer.kind,
-              model: printer.hardware.model,
-              online: printer.online,
-              stale: printer.stale,
-              status: printer.job.status,
-              stageLabel: printer.job.stageLabel,
-              fileName: printer.job.fileName,
-              progressPercent: printer.job.progressPercent,
-              hasCamera: printer.media.hasCamera,
-              openInThread: openLocalIds.has(printer.id),
-              environmentId: scope.environmentId,
-            }))
-          : [];
-        const peerEntries = (yield* discoverPeerPrinters(scope, peers, input.refresh ?? false)).map(
-          ({ environmentId, environmentLabel, printer }) => ({
+    printer_list: McpToolAccess.afterForwarding(
+      McpToolAccess.readsWithCapability("printer", (input) =>
+        Effect.gen(function* () {
+          const scope = yield* requirePrinterReadAccess;
+          const printers = yield* PrinterService.PrinterService;
+          const currentState = yield* printers.state;
+          const localAllowed = yield* resolveLocalPrinterAccess(scope, currentState);
+          const state = localAllowed
+            ? yield* printers.list({ refresh: input.refresh ?? true })
+            : currentState;
+          const threadId = scope.thread?.threadId;
+          const openLocalIds = new Set(
+            threadId === undefined
+              ? []
+              : state.sessions
+                  .filter(
+                    (session) =>
+                      session.threadId === threadId && session.proxyEnvironmentId === undefined,
+                  )
+                  .map((session) => session.printerId),
+          );
+          const openProxiedKeys = new Set(
+            threadId === undefined
+              ? []
+              : state.sessions
+                  .filter(
+                    (session) =>
+                      session.threadId === threadId && session.proxyEnvironmentId !== undefined,
+                  )
+                  .map((session) => `${session.proxyEnvironmentId}\u0000${session.printerId}`),
+          );
+          const localEntries = localAllowed
+            ? state.printers.map((printer) => ({
+                id: printer.id,
+                label: printer.label,
+                kind: printer.kind,
+                model: printer.hardware.model,
+                online: printer.online,
+                stale: printer.stale,
+                status: printer.job.status,
+                stageLabel: printer.job.stageLabel,
+                fileName: printer.job.fileName,
+                progressPercent: printer.job.progressPercent,
+                hasCamera: printer.media.hasCamera,
+                openInThread: openLocalIds.has(printer.id),
+                environmentId: scope.environmentId,
+              }))
+            : [];
+          const peerEntries = (yield* discoverPeerPrinters(
+            scope,
+            peers,
+            input.refresh ?? false,
+          )).map(({ environmentId, environmentLabel, printer }) => ({
             ...printer,
             environmentId,
             environmentLabel,
             openInThread: openProxiedKeys.has(`${environmentId}\u0000${printer.id}`),
-          }),
-        );
-        return {
-          enabled: localAllowed || peerEntries.length > 0,
-          printers: [...localEntries, ...peerEntries],
-        };
-      }),
+          }));
+          return {
+            enabled: localAllowed || peerEntries.length > 0,
+            printers: [...localEntries, ...peerEntries],
+          };
+        }),
+      ),
+      (_input, targetEnvId, result) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const printers = yield* PrinterService.PrinterService;
+          const state = yield* printers.state;
+          const threadId = scope.thread?.threadId;
+          const openProxiedIds = new Set(
+            threadId === undefined
+              ? []
+              : state.sessions
+                  .filter(
+                    (session) =>
+                      session.threadId === threadId && session.proxyEnvironmentId === targetEnvId,
+                  )
+                  .map((session) => session.printerId),
+          );
+          const label = yield* lookupPeerLabel(peers, targetEnvId);
+          return {
+            ...result,
+            printers: result.printers.map((printer) => ({
+              ...printer,
+              environmentId: targetEnvId,
+              ...(label ? { environmentLabel: label } : {}),
+              openInThread: openProxiedIds.has(printer.id),
+            })),
+          };
+        }),
     ),
 
     printer_open: McpToolAccess.actsAsCaller((input) =>
@@ -422,6 +594,7 @@ const buildHandlers = Effect.gen(function* () {
         const scope = yield* requirePrinterThreadAccess;
         const printers = yield* PrinterService.PrinterService;
         const state = yield* printers.list({ refresh: false });
+        const localAllowed = yield* resolveLocalPrinterAccess(scope, state);
         const remoteEnvId = PeerForwarding.remoteTarget(scope, input.environmentId);
 
         if (remoteEnvId !== undefined) {
@@ -453,7 +626,12 @@ const buildHandlers = Effect.gen(function* () {
           };
         }
 
-        const localMatch = matchLocalPrinter(state, scope.thread.threadId, input.printerId);
+        const localMatch = matchLocalPrinter(
+          state,
+          localAllowed,
+          scope.thread.threadId,
+          input.printerId,
+        );
         if (localMatch.kind === "ambiguous") {
           return yield* new PrinterToolUnavailableError({ reason: localMatch.message });
         }
@@ -463,9 +641,12 @@ const buildHandlers = Effect.gen(function* () {
             printerId: localMatch.printer.id,
           });
           const refreshedState = yield* printers.state;
-          const updated =
-            refreshedState.printers.find((p) => p.id === localMatch.printer.id) ??
-            localMatch.printer;
+          const updated = refreshedState.printers.find((p) => p.id === localMatch.printer.id);
+          if (!updated) {
+            return yield* new PrinterToolUnavailableError({
+              reason: `Printer "${localMatch.printer.id}" is no longer configured.`,
+            });
+          }
           return {
             printer: updated,
             environmentId: scope.environmentId,
@@ -476,7 +657,7 @@ const buildHandlers = Effect.gen(function* () {
         const peerForwarding = Option.getOrUndefined(peers.forwarding);
         if (!canDiscoverPeers(scope, peers) || !peerForwarding) {
           return yield* new PrinterToolUnavailableError({
-            reason: state.enabled
+            reason: localAllowed
               ? state.printers.length === 0
                 ? "No 3D printers are configured. Add one in Settings -> 3D Printers."
                 : `Printer "${input.printerId ?? ""}" was not found.`
@@ -510,151 +691,73 @@ const buildHandlers = Effect.gen(function* () {
       }),
     ),
 
-    printer_status: McpToolAccess.reads((input) =>
+    printer_status: McpToolAccess.readsWithCapability("printer", (input) =>
       Effect.gen(function* () {
         const scope = yield* requirePrinterReadAccess;
         const printers = yield* PrinterService.PrinterService;
         const state = yield* printers.list({ refresh: false });
+        const localAllowed = yield* resolveLocalPrinterAccess(scope, state);
+        const target = yield* resolveReadTarget(scope, state, localAllowed, input.printerId);
 
-        if (scope.client?.linked === true) {
-          if (!localPrinterAccessAllowed(state)) {
-            return yield* printerAccessDisabledError;
-          }
-        }
-
-        const localMatch = matchLocalPrinter(state, scope.thread?.threadId, input.printerId);
-        if (localMatch.kind === "ambiguous") {
-          return yield* new PrinterToolUnavailableError({ reason: localMatch.message });
-        }
-        if (localMatch.kind === "found") {
-          return yield* resolveStatusLocally(scope, printers, localMatch.printer);
+        if (target.kind === "local") {
+          return yield* resolveStatusLocally(scope, printers, target.printer);
         }
 
         const peerForwarding = Option.getOrUndefined(peers.forwarding);
-        if (canDiscoverPeers(scope, peers) && peerForwarding) {
-          const openProxy = findMatchingOpenProxySession(
-            state,
-            scope.thread?.threadId,
-            input.printerId,
-          );
-          if (openProxy?.proxyEnvironmentId !== undefined) {
-            const label = yield* lookupPeerLabel(peers, openProxy.proxyEnvironmentId);
-            const forwarded = yield* peerForwarding.call(
-              scope,
-              PrinterStatusTool,
-              openProxy.proxyEnvironmentId,
-              {
-                environmentId: openProxy.proxyEnvironmentId,
-                printerId: openProxy.printerId,
-              },
-            );
-            return {
-              ...forwarded,
-              environmentId: openProxy.proxyEnvironmentId,
-              ...(label ? { environmentLabel: label } : {}),
-            };
-          }
-
-          const discovered = yield* discoverPeerPrinters(scope, peers, false);
-          const chosen = yield* matchDiscoveredPeerPrinter(discovered, input.printerId);
-          const forwarded = yield* peerForwarding.call(
-            scope,
-            PrinterStatusTool,
-            chosen.environmentId,
-            {
-              environmentId: chosen.environmentId,
-              printerId: chosen.printer.id,
-            },
-          );
-          return {
-            ...forwarded,
-            environmentId: chosen.environmentId,
-            environmentLabel: chosen.environmentLabel,
-          };
+        if (!peerForwarding) {
+          return yield* new PrinterToolUnavailableError({
+            reason: "Linked environments are not available on this server.",
+          });
         }
-
-        const available = state.printers.map((p) => `${p.id} (${p.label})`).join(", ");
-        return yield* new PrinterToolUnavailableError({
-          reason: !localPrinterAccessAllowed(state)
-            ? "3D Printer support is disabled in Settings -> 3D Printers."
-            : state.printers.length === 0
-              ? "No 3D printers are configured. Add one in Settings -> 3D Printers."
-              : `Printer "${input.printerId ?? ""}" was not found. Available printers: ${available}.`,
-        });
+        const forwarded = yield* peerForwarding.call(
+          scope,
+          PrinterStatusTool,
+          target.environmentId,
+          {
+            environmentId: target.environmentId,
+            printerId: target.printerId,
+          },
+        );
+        return {
+          ...forwarded,
+          environmentId: target.environmentId,
+          ...(target.environmentLabel ? { environmentLabel: target.environmentLabel } : {}),
+        };
       }),
     ),
 
-    printer_camera_snapshot: McpToolAccess.reads((input) =>
+    printer_camera_snapshot: McpToolAccess.readsWithCapability("printer", (input) =>
       Effect.gen(function* () {
         const scope = yield* requirePrinterReadAccess;
         const printers = yield* PrinterService.PrinterService;
         const state = yield* printers.list({ refresh: false });
+        const localAllowed = yield* resolveLocalPrinterAccess(scope, state);
+        const target = yield* resolveReadTarget(scope, state, localAllowed, input.printerId);
 
-        if (scope.client?.linked === true) {
-          if (!localPrinterAccessAllowed(state)) {
-            return yield* printerAccessDisabledError;
-          }
-        }
-
-        const localMatch = matchLocalPrinter(state, scope.thread?.threadId, input.printerId);
-        if (localMatch.kind === "ambiguous") {
-          return yield* new PrinterToolUnavailableError({ reason: localMatch.message });
-        }
-        if (localMatch.kind === "found") {
-          return yield* resolveSnapshotLocally(scope, printers, localMatch.printer);
+        if (target.kind === "local") {
+          return yield* resolveSnapshotLocally(scope, printers, target.printer);
         }
 
         const peerForwarding = Option.getOrUndefined(peers.forwarding);
-        if (canDiscoverPeers(scope, peers) && peerForwarding) {
-          const openProxy = findMatchingOpenProxySession(
-            state,
-            scope.thread?.threadId,
-            input.printerId,
-          );
-          if (openProxy?.proxyEnvironmentId !== undefined) {
-            const label = yield* lookupPeerLabel(peers, openProxy.proxyEnvironmentId);
-            const forwarded = yield* peerForwarding.call(
-              scope,
-              PrinterCameraSnapshotTool,
-              openProxy.proxyEnvironmentId,
-              {
-                environmentId: openProxy.proxyEnvironmentId,
-                printerId: openProxy.printerId,
-              },
-            );
-            return {
-              ...forwarded,
-              environmentId: openProxy.proxyEnvironmentId,
-              ...(label ? { environmentLabel: label } : {}),
-            };
-          }
-
-          const discovered = yield* discoverPeerPrinters(scope, peers, false);
-          const chosen = yield* matchDiscoveredPeerPrinter(discovered, input.printerId);
-          const forwarded = yield* peerForwarding.call(
-            scope,
-            PrinterCameraSnapshotTool,
-            chosen.environmentId,
-            {
-              environmentId: chosen.environmentId,
-              printerId: chosen.printer.id,
-            },
-          );
-          return {
-            ...forwarded,
-            environmentId: chosen.environmentId,
-            environmentLabel: chosen.environmentLabel,
-          };
+        if (!peerForwarding) {
+          return yield* new PrinterToolUnavailableError({
+            reason: "Linked environments are not available on this server.",
+          });
         }
-
-        const available = state.printers.map((p) => `${p.id} (${p.label})`).join(", ");
-        return yield* new PrinterToolUnavailableError({
-          reason: !localPrinterAccessAllowed(state)
-            ? "3D Printer support is disabled in Settings -> 3D Printers."
-            : state.printers.length === 0
-              ? "No 3D printers are configured. Add one in Settings -> 3D Printers."
-              : `Printer "${input.printerId ?? ""}" was not found. Available printers: ${available}.`,
-        });
+        const forwarded = yield* peerForwarding.call(
+          scope,
+          PrinterCameraSnapshotTool,
+          target.environmentId,
+          {
+            environmentId: target.environmentId,
+            printerId: target.printerId,
+          },
+        );
+        return {
+          ...forwarded,
+          environmentId: target.environmentId,
+          ...(target.environmentLabel ? { environmentLabel: target.environmentLabel } : {}),
+        };
       }),
     ),
 
@@ -662,13 +765,68 @@ const buildHandlers = Effect.gen(function* () {
       Effect.gen(function* () {
         const scope = yield* requirePrinterThreadAccess;
         const printers = yield* PrinterService.PrinterService;
+        const state = yield* printers.state;
+
+        if (input.environmentId !== undefined) {
+          const remoteEnvId = PeerForwarding.remoteTarget(scope, input.environmentId);
+          if (remoteEnvId !== undefined) {
+            const openProxy = input.printerId
+              ? findMatchingOpenProxySession(
+                  state,
+                  scope.thread.threadId,
+                  input.printerId,
+                  remoteEnvId,
+                )
+              : undefined;
+            yield* printers.close({
+              threadId: scope.thread.threadId,
+              ...(input.printerId
+                ? { printerId: (openProxy?.printerId ?? input.printerId.trim()) as PrinterId }
+                : {}),
+              proxyEnvironmentId: remoteEnvId,
+            });
+            return {};
+          }
+          const localAllowed = yield* resolveLocalPrinterAccess(scope, state);
+          const localMatch = input.printerId
+            ? matchLocalPrinter(state, localAllowed, scope.thread.threadId, input.printerId)
+            : { kind: "none" as const };
+          yield* printers.close({
+            threadId: scope.thread.threadId,
+            ...(input.printerId
+              ? {
+                  printerId:
+                    localMatch.kind === "found"
+                      ? localMatch.printer.id
+                      : (input.printerId.trim() as PrinterId),
+                }
+              : {}),
+            proxyEnvironmentId: null,
+          });
+          return {};
+        }
+
         if (input.printerId) {
-          const state = yield* printers.state;
-          const localMatch = matchLocalPrinter(state, scope.thread.threadId, input.printerId);
-          if (localMatch.kind === "found") {
+          const localAllowed = yield* resolveLocalPrinterAccess(scope, state);
+          const localMatch = matchLocalPrinter(
+            state,
+            localAllowed,
+            scope.thread.threadId,
+            input.printerId,
+          );
+          const hasOpenLocal =
+            localMatch.kind === "found" &&
+            state.sessions.some(
+              (session) =>
+                session.threadId === scope.thread.threadId &&
+                session.proxyEnvironmentId === undefined &&
+                session.printerId === localMatch.printer.id,
+            );
+          if (hasOpenLocal) {
             yield* printers.close({
               threadId: scope.thread.threadId,
               printerId: localMatch.printer.id,
+              proxyEnvironmentId: null,
             });
           } else {
             const openProxy = findMatchingOpenProxySession(
@@ -676,10 +834,18 @@ const buildHandlers = Effect.gen(function* () {
               scope.thread.threadId,
               input.printerId,
             );
-            yield* printers.close({
-              threadId: scope.thread.threadId,
-              printerId: (openProxy?.printerId ?? input.printerId.trim()) as PrinterId,
-            });
+            if (openProxy?.proxyEnvironmentId !== undefined) {
+              yield* printers.close({
+                threadId: scope.thread.threadId,
+                printerId: openProxy.printerId,
+                proxyEnvironmentId: openProxy.proxyEnvironmentId,
+              });
+            } else {
+              yield* printers.close({
+                threadId: scope.thread.threadId,
+                printerId: input.printerId.trim() as PrinterId,
+              });
+            }
           }
         } else {
           yield* printers.close({ threadId: scope.thread.threadId });

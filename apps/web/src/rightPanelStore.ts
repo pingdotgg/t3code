@@ -925,25 +925,33 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       openPrinter: (ref, target, automatic = false) =>
         set((state) =>
           (automatic ? automaticUpdate : userAction)(state, scopedThreadKey(ref), (current) => {
-            const proxyEnvironmentId =
-              target.proxyEnvironmentId && target.proxyEnvironmentId !== ref.environmentId
-                ? target.proxyEnvironmentId
-                : undefined;
-            const id = proxyEnvironmentId
-              ? (`printer:${encodeURIComponent(proxyEnvironmentId)}:${encodeURIComponent(target.printerId)}` as const)
+            const ownerEnvironmentId = target.proxyEnvironmentId ?? ref.environmentId;
+            const isRemoteProxy = ownerEnvironmentId !== ref.environmentId;
+            const id = isRemoteProxy
+              ? (`printer:${encodeURIComponent(ownerEnvironmentId)}:${encodeURIComponent(target.printerId)}` as const)
               : (`printer:${encodeURIComponent(target.printerId)}` as const);
             const surface: RightPanelSurface = {
               id,
               kind: "printer",
               printerId: target.printerId,
-              ...(proxyEnvironmentId ? { proxyEnvironmentId } : {}),
+              proxyEnvironmentId: ownerEnvironmentId,
               ...(target.label ? { title: target.label } : {}),
             };
             const existing = current.surfaces.find((entry) => entry.id === id);
+            const updatedExisting =
+              existing && existing.kind === "printer"
+                ? {
+                    ...existing,
+                    proxyEnvironmentId: ownerEnvironmentId,
+                    ...(target.label ? { title: target.label } : {}),
+                  }
+                : undefined;
             const surfaces = existing
-              ? current.surfaces.filter((entry) => entry.id !== "printer")
+              ? current.surfaces
+                  .filter((entry) => entry.id !== "printer")
+                  .map((entry) => (entry.id === id && updatedExisting ? updatedExisting : entry))
               : current.surfaces.map((entry) => (entry.id === "printer" ? surface : entry));
-            return upsertSurface({ ...current, surfaces }, existing ?? surface);
+            return upsertSurface({ ...current, surfaces }, updatedExisting ?? surface);
           }),
         ),
       openThread: (ref, threadId) =>

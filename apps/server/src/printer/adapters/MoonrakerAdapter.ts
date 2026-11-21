@@ -415,9 +415,19 @@ export const moonrakerAdapter: PrinterAdapter<MoonrakerPrinterConfig> = {
         return yield* runMoonrakerGcode(
           baseUrl,
           secret,
-          `G91\nG0 ${action.axis}${action.distanceMm} F3000\nG90`,
+          `SAVE_GCODE_STATE NAME=T3_JOG\nG91\nG0 ${action.axis}${action.distanceMm} F3000\nRESTORE_GCODE_STATE NAME=T3_JOG`,
           config.id,
           "moonraker.moveAxis",
+        ).pipe(
+          Effect.tapError(() =>
+            runMoonrakerGcode(
+              baseUrl,
+              secret,
+              "RESTORE_GCODE_STATE NAME=T3_JOG",
+              config.id,
+              "moonraker.moveAxis.restore",
+            ).pipe(Effect.ignore),
+          ),
         );
       case "refresh":
         return;

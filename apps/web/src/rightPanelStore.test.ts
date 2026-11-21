@@ -1410,7 +1410,32 @@ describe("rightPanelStore", () => {
         id: "printer:p1s-studio",
         kind: "printer",
         printerId: "p1s-studio",
+        proxyEnvironmentId: refA.environmentId,
         title: "Studio P1S",
+      },
+    ]);
+
+    store.openPrinter(refA, {
+      printerId: "p1s-studio",
+      proxyEnvironmentId: "env-2" as EnvironmentId,
+      label: "Remote P1S",
+    });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      {
+        id: "printer:p1s-studio",
+        kind: "printer",
+        printerId: "p1s-studio",
+        proxyEnvironmentId: refA.environmentId,
+        title: "Studio P1S",
+      },
+      {
+        id: "printer:env-2:p1s-studio",
+        kind: "printer",
+        printerId: "p1s-studio",
+        proxyEnvironmentId: "env-2",
+        title: "Remote P1S",
       },
     ]);
 

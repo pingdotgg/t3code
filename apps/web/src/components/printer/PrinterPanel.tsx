@@ -445,7 +445,10 @@ export function PrinterPanel(props: {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [confirmStopOpen, setConfirmStopOpen] = useState(false);
-  const [skipTarget, setSkipTarget] = useState<PrinterObject | null>(null);
+  const [skipTarget, setSkipTarget] = useState<{
+    readonly object: PrinterObject;
+    readonly jobFileName: string | null;
+  } | null>(null);
   const [isWide, setIsWide] = useState(false);
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null);
   const lastMediaRefreshMsRef = useRef(0);
@@ -515,7 +518,7 @@ export function PrinterPanel(props: {
     if (!match) return;
     useRightPanelStore.getState().openPrinter(props.threadRef, {
       printerId: match.printer.id as PrinterId,
-      ...(match.isProxied ? { proxyEnvironmentId: match.proxyEnvironmentId } : {}),
+      proxyEnvironmentId: match.proxyEnvironmentId,
       label: match.printer.label,
     });
   };
@@ -525,6 +528,49 @@ export function PrinterPanel(props: {
       return (
         <div className="flex flex-1 items-center justify-center p-6">
           <Spinner />
+        </div>
+      );
+    }
+    if (props.surface.printerId !== undefined) {
+      const pinnedName = props.surface.title ?? props.surface.printerId;
+      return (
+        <div className="scrollbar-gutter-both flex flex-1 flex-col items-center justify-center gap-3 overflow-y-auto p-6 text-center">
+          <div className="flex size-11 items-center justify-center rounded-xl border border-border/70 bg-card text-muted-foreground">
+            <Printer className="size-5" />
+          </div>
+          <div className="max-w-xs space-y-1">
+            <h3 className="text-sm font-semibold text-foreground">
+              {gt("{printer} is unavailable", { printer: pinnedName })}
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              {gt(
+                "This pinned printer is removed or its hosting T3 Connect environment is disconnected. Commands are paused to avoid targeting a different printer.",
+              )}
+            </p>
+          </div>
+          {fleetPrinters.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {fleetPrinters.slice(0, 3).map((entry) => (
+                <Button
+                  key={entry.key}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleSelectPrinter(entry.key)}
+                >
+                  {gt("Open {printer}", {
+                    printer: entry.isProxied
+                      ? `${entry.printer.label} (${entry.proxyEnvironmentLabel})`
+                      : entry.printer.label,
+                  })}
+                </Button>
+              ))}
+            </div>
+          ) : (
+            <Button size="sm" onClick={openSettings}>
+              <Settings className="size-3.5" />
+              {gt("Configure 3D Printers")}
+            </Button>
+          )}
         </div>
       );
     }
@@ -739,7 +785,9 @@ export function PrinterPanel(props: {
       busy={pendingAction !== null}
       hasPickImage={activePrinter.media.hasPickImage}
       onSelectObject={() => setViewMode("pick")}
-      onRequestSkip={(obj) => setSkipTarget(obj)}
+      onRequestSkip={(obj) =>
+        setSkipTarget({ object: obj, jobFileName: activePrinter.job.fileName })
+      }
     />
   );
 
@@ -1041,7 +1089,7 @@ export function PrinterPanel(props: {
             <AlertDialogDescription>
               {gt(
                 "Skipping {object} prevents the printer from printing it on remaining layers. This cannot be undone during this print.",
-                { object: skipTarget?.name ?? "" },
+                { object: skipTarget?.object.name ?? "" },
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1051,9 +1099,13 @@ export function PrinterPanel(props: {
               variant="destructive"
               onClick={() => {
                 if (!skipTarget) return;
-                const objectId = skipTarget.id;
+                const { object, jobFileName } = skipTarget;
                 setSkipTarget(null);
-                void handleAction({ kind: "skipObjects", objectIds: [objectId] });
+                void handleAction({
+                  kind: "skipObjects",
+                  objectIds: [object.id],
+                  ...(jobFileName !== null ? { expectedJobFileName: jobFileName } : {}),
+                });
               }}
             >
               {gt("Skip object")}

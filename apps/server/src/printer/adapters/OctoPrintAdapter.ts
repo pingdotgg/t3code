@@ -64,7 +64,8 @@ function mapOctoStatus(
   if (flags.error) return "failed";
   if (flags.paused || flags.pausing || flags.resuming) return "pause";
   if (flags.printing || flags.cancelling) return "running";
-  if (flags.operational || flags.ready) return "idle";
+  if (flags.ready === true) return "idle";
+  if (flags.operational) return "prepare";
   return "offline";
 }
 
@@ -236,7 +237,7 @@ export const octoPrintAdapter: PrinterAdapter<OctoPrintPrinterConfig> = {
         canSetFans: false,
         canSetLight: false,
         canSetSpeed: false,
-        canJog: online && (status === "idle" || status === "finish"),
+        canJog: online && flags?.ready === true && (status === "idle" || status === "finish"),
         canSkipObjects: false,
       },
     };

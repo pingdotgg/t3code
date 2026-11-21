@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - real local HTTP server test verifies undici Agent + fetch hostname pinning on Node 24.
+import * as NodeHttp from "node:http";
 import {
   type HomeAssistantBambuPrinterConfig,
   type MoonrakerPrinterConfig,
@@ -12,13 +14,18 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 import { describe, expect } from "vite-plus/test";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import * as PrinterService from "./PrinterService.ts";
-import { fetchPrinterBinary, PrinterDnsLookup, validatePrinterBaseUrl } from "./PrinterUrlGuard.ts";
+import {
+  fetchPrinterBinary,
+  fetchPrinterJson,
+  PrinterDnsLookup,
+  validatePrinterBaseUrl,
+} from "./PrinterUrlGuard.ts";
 
 const P1S_CONFIG: HomeAssistantBambuPrinterConfig = {
   kind: "home-assistant-bambu",
@@ -915,6 +922,78 @@ describe("PrinterService safety guards & lifecycle", () => {
     () =>
       Effect.gen(function* () {
         const serviceCalls: Array<{ path: string; body: unknown }> = [];
+        let currentStatus: "idle" | "running" = "idle";
+        const dynamicClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/states") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify([
+                      { entity_id: "binary_sensor.p1s_test_online", state: "on" },
+                      { entity_id: "sensor.p1s_test_print_status", state: currentStatus },
+                      { entity_id: "sensor.p1s_test_gcode_filename", state: "plate-1.gcode.3mf" },
+                      { entity_id: "sensor.p1s_test_nozzle_temperature", state: "215" },
+                      { entity_id: "number.p1s_test_nozzle_target_temperature", state: "215" },
+                      { entity_id: "sensor.p1s_test_bed_temperature", state: "70" },
+                      { entity_id: "number.p1s_test_bed_target_temperature", state: "70" },
+                      { entity_id: "fan.p1s_test_cooling_fan", state: "on" },
+                      { entity_id: "select.p1s_test_printing_speed", state: "standard" },
+                      { entity_id: "button.p1s_test_pause", state: "unknown" },
+                      { entity_id: "button.p1s_test_resume", state: "unknown" },
+                      { entity_id: "button.p1s_test_stop", state: "unknown" },
+                      {
+                        entity_id: "sensor.p1s_test_printable_objects",
+                        state: "2",
+                        attributes: { objects: { "1": "part-1.stl", "2": "part-2.stl" } },
+                      },
+                      { entity_id: "camera.p1s_test_camera", state: "streaming" },
+                    ]),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            if (url.pathname === "/api/template") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(P1S_CONFIG.deviceId!, {
+                    status: 200,
+                    headers: { "content-type": "text/plain" },
+                  }),
+                ),
+              );
+            }
+            if (url.pathname.startsWith("/api/services/")) {
+              const bodyText =
+                request.body._tag === "Uint8Array"
+                  ? new TextDecoder().decode(request.body.body)
+                  : "{}";
+              serviceCalls.push({ path: url.pathname, body: JSON.parse(bodyText) });
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("[]", { status: 200 })),
+              );
+            }
+            if (url.pathname.startsWith("/api/camera_proxy/")) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), {
+                    status: 200,
+                    headers: { "content-type": "image/jpeg" },
+                  }),
+                ),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("Not Found", { status: 404 })),
+            );
+          }),
+        );
         const testLayer = PrinterService.layer.pipe(
           Layer.provide(
             ServerSettings.layerTest({
@@ -923,13 +1002,7 @@ describe("PrinterService safety guards & lifecycle", () => {
             }),
           ),
           Layer.provide(mockSecretResolverLayer),
-          Layer.provide(
-            makeMockHaHttpClient({
-              status: "idle",
-              fileName: "plate-1.gcode.3mf",
-              onServiceCall: (path, body) => serviceCalls.push({ path, body }),
-            }),
-          ),
+          Layer.provide(dynamicClient),
         );
 
         yield* Effect.scoped(
@@ -975,11 +1048,51 @@ describe("PrinterService safety guards & lifecycle", () => {
               printerId: P1S_CONFIG.id,
               action: { kind: "stop", expectedJobFileName: "plate-1.gcode.3mf" },
             });
+
+            // Skip objects requires an active print AND matching job filename & object membership.
+            const idleSkipExit = yield* Effect.exit(
+              service.action({
+                printerId: P1S_CONFIG.id,
+                action: {
+                  kind: "skipObjects",
+                  objectIds: [1],
+                  expectedJobFileName: "plate-1.gcode.3mf",
+                },
+              }),
+            );
+            expect(Exit.isFailure(idleSkipExit)).toBe(true);
+
+            currentStatus = "running";
+            const wrongJobSkipExit = yield* Effect.exit(
+              service.action({
+                printerId: P1S_CONFIG.id,
+                action: {
+                  kind: "skipObjects",
+                  objectIds: [1],
+                  expectedJobFileName: "different-job.gcode.3mf",
+                },
+              }),
+            );
+            expect(Exit.isFailure(wrongJobSkipExit)).toBe(true);
+
+            const unknownObjSkipExit = yield* Effect.exit(
+              service.action({
+                printerId: P1S_CONFIG.id,
+                action: {
+                  kind: "skipObjects",
+                  objectIds: [999],
+                  expectedJobFileName: "plate-1.gcode.3mf",
+                },
+              }),
+            );
+            expect(Exit.isFailure(unknownObjSkipExit)).toBe(true);
+
             yield* service.action({
               printerId: P1S_CONFIG.id,
               action: {
                 kind: "skipObjects",
                 objectIds: [1],
+                expectedJobFileName: "plate-1.gcode.3mf",
               },
             });
 
@@ -1032,6 +1145,168 @@ describe("PrinterService safety guards & lifecycle", () => {
 
             yield* service.close({ threadId, printerId: P1S_CONFIG.id });
             expect(yield* service.sessionsForThread(threadId)).toHaveLength(0);
+          }).pipe(Effect.provide(testLayer)),
+        );
+      }),
+  );
+
+  it.effect(
+    "blocks Alibaba Cloud metadata 100.100.100.200 while preserving Tailscale CGNAT and supports hostname DNS pinning on Node fetch",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(validatePrinterBaseUrl("http://100.100.100.200/latest", "test")),
+          ),
+        ).toBe(true);
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(
+              validatePrinterBaseUrl("http://[::ffff:100.100.100.200]/latest", "test"),
+            ),
+          ),
+        ).toBe(true);
+        expect(
+          Exit.isSuccess(
+            yield* Effect.exit(validatePrinterBaseUrl("http://100.64.1.25:8123", "test")),
+          ),
+        ).toBe(true);
+
+        // Real FetchHttpClient + local HTTP server + hostname DNS pinning proves undici Agent + undici fetch compatibility.
+        const server = NodeHttp.createServer((_req, res) => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
+        });
+        const port = yield* Effect.acquireRelease(
+          Effect.promise(
+            () =>
+              new Promise<number>((resolve) => {
+                server.listen(0, "127.0.0.1", () => {
+                  const address = server.address();
+                  resolve(typeof address === "object" && address !== null ? address.port : 0);
+                });
+              }),
+          ),
+          () => Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+        );
+
+        const body = yield* fetchPrinterJson<{ readonly ok: boolean }>(
+          new URL(`http://printer.lan.test:${port}/api/version`),
+          { operation: "dns.pin.test" },
+        ).pipe(
+          Effect.provide(FetchHttpClient.layer),
+          Effect.provideService(PrinterDnsLookup, () =>
+            Effect.succeed([{ address: "127.0.0.1", family: 4 }]),
+          ),
+        );
+        expect(body).toEqual({ ok: true });
+      }),
+  );
+
+  it.effect(
+    "rechecks motion readiness at dispatch guard if a concurrent poll observes printing before write DNS completes",
+    () =>
+      Effect.gen(function* () {
+        let currentStatus: "idle" | "running" = "idle";
+        let dnsCallCount = 0;
+        const enteredWriteDns = yield* Deferred.make<void>();
+        const releaseWriteDns = yield* Deferred.make<void>();
+        const serviceCalls: Array<{ path: string; body: unknown }> = [];
+        const hostConfig: HomeAssistantBambuPrinterConfig = {
+          ...P1S_CONFIG,
+          baseUrl: "http://printer-status-race.lan.test:8123",
+        };
+        const dynamicClient = Layer.succeed(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            const url = new URL(request.url);
+            if (url.pathname === "/api/states") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify([
+                      { entity_id: "binary_sensor.p1s_test_online", state: "on" },
+                      { entity_id: "sensor.p1s_test_print_status", state: currentStatus },
+                      { entity_id: "sensor.p1s_test_nozzle_temperature", state: "25" },
+                      { entity_id: "sensor.p1s_test_bed_temperature", state: "25" },
+                    ]),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
+                ),
+              );
+            }
+            if (url.pathname === "/api/template") {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(hostConfig.deviceId!, {
+                    status: 200,
+                    headers: { "content-type": "text/plain" },
+                  }),
+                ),
+              );
+            }
+            if (url.pathname.startsWith("/api/services/")) {
+              serviceCalls.push({ path: url.pathname, body: null });
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("[]", { status: 200 })),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("Not Found", { status: 404 })),
+            );
+          }),
+        );
+        const testLayer = PrinterService.layer.pipe(
+          Layer.provide(
+            ServerSettings.layerTest({
+              enablePrinterSupport: true,
+              printers: [hostConfig],
+            }),
+          ),
+          Layer.provide(mockSecretResolverLayer),
+          Layer.provide(dynamicClient),
+          Layer.provide(
+            Layer.succeed(PrinterDnsLookup, () =>
+              Effect.gen(function* () {
+                dnsCallCount += 1;
+                // Call 1: safety poll /api/states, Call 2: safety poll /api/template, Call 3: live device_id /api/template, Call 4: move_axis POST!
+                if (dnsCallCount === 4) {
+                  yield* Deferred.succeed(enteredWriteDns, undefined);
+                  yield* Deferred.await(releaseWriteDns);
+                }
+                return [{ address: "192.168.1.50", family: 4 }];
+              }),
+            ),
+          ),
+        );
+
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const service = yield* PrinterService.PrinterService;
+            // Wait for startup poll to settle before resetting dnsCallCount.
+            yield* service.list({ refresh: true });
+            dnsCallCount = 0;
+
+            const moveFiber = yield* Effect.forkChild(
+              Effect.exit(
+                service.action({
+                  printerId: hostConfig.id,
+                  action: { kind: "moveAxis", axis: "X", distanceMm: 1 },
+                }),
+              ),
+            );
+            yield* Deferred.await(enteredWriteDns);
+
+            // Printer starts printing on the SAME target before the motion POST leaves the socket!
+            currentStatus = "running";
+            yield* service.list({ refresh: true });
+
+            yield* Deferred.succeed(releaseWriteDns, undefined);
+            const moveExit = yield* Fiber.join(moveFiber);
+            expect(Exit.isFailure(moveExit)).toBe(true);
+            expect(serviceCalls).toHaveLength(0);
           }).pipe(Effect.provide(testLayer)),
         );
       }),

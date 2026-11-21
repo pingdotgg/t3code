@@ -152,6 +152,29 @@ export const reads = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>)
     () => Effect.void,
   );
 
+export const readsWithCapability = <P, A, E, R>(
+  capability: McpInvocationContext.McpCapability,
+  handle: (params: P) => Effect.Effect<A, E, R>,
+) => {
+  const check = McpInvocationContext.McpInvocationContext.pipe(
+    Effect.flatMap((scope) =>
+      (scope.thread !== undefined || scope.client?.linked === true) &&
+      scope.capabilities.has(capability)
+        ? Effect.void
+        : Effect.fail(
+            new OrchestratorMcpFailure({
+              code: "capability_denied",
+              message: `This caller does not have the "${capability}" MCP capability.`,
+            }),
+          ),
+    ),
+  );
+  return declare(
+    (params: P) => check.pipe(Effect.flatMap(() => handle(params))),
+    () => check,
+  );
+};
+
 export const readsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare((params: P) => requireThreadCaller.pipe(Effect.flatMap(() => handle(params))), undefined);
 

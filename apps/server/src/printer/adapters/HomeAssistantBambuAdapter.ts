@@ -941,17 +941,35 @@ export function parseHomeAssistantBambuStates(input: {
   };
 }
 
+function filterValidHaEntityStates(raw: ReadonlyArray<unknown>): ReadonlyArray<HaEntityState> {
+  const valid: Array<HaEntityState> = [];
+  for (const entry of raw) {
+    if (
+      entry !== null &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      typeof (entry as { entity_id?: unknown }).entity_id === "string" &&
+      typeof (entry as { state?: unknown }).state === "string"
+    ) {
+      valid.push(entry as HaEntityState);
+    }
+  }
+  return valid;
+}
+
 export const homeAssistantBambuAdapter: PrinterAdapter<HomeAssistantBambuPrinterConfig> = {
   poll: Effect.fn("HomeAssistantBambuAdapter.poll")(function* (config, secret, previous, cache) {
     const baseUrl = yield* validatePrinterBaseUrl(config.baseUrl, "poll", config.id);
-    const states = yield* fetchPrinterJson<ReadonlyArray<HaEntityState>>(
+    const rawStates = yield* fetchPrinterJson<ReadonlyArray<unknown>>(
       buildPrinterEndpoint(baseUrl, "/api/states"),
       {
         headers: haHeaders(secret),
         operation: "ha.states",
         printerId: config.id,
+        expectedType: "array",
       },
     );
+    const states = filterValidHaEntityStates(rawStates);
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
     const nowIso = DateTime.formatIso(now);
@@ -1013,14 +1031,16 @@ export const homeAssistantBambuAdapter: PrinterAdapter<HomeAssistantBambuPrinter
           "Entity prefix may only contain letters, digits, and underscores (with an optional trailing dot).",
       });
     }
-    const states = yield* fetchPrinterJson<ReadonlyArray<HaEntityState>>(
+    const rawStates = yield* fetchPrinterJson<ReadonlyArray<unknown>>(
       buildPrinterEndpoint(baseUrl, "/api/states"),
       {
         headers: haHeaders(secret),
         operation: "ha.testConnection",
         printerId: config.id,
+        expectedType: "array",
       },
     );
+    const states = filterValidHaEntityStates(rawStates);
     const prefix = discoverBambuEntityPrefix(states, config.entityPrefix);
     if (!prefix) {
       return yield* new PrinterOperationError({
@@ -1294,6 +1314,7 @@ export const homeAssistantBambuAdapter: PrinterAdapter<HomeAssistantBambuPrinter
       let nextCache = cache;
       const cameraEntityHealthy = cache.cameraEntityHealthy ?? online;
       let stale = !online || (kind === "camera" && !cameraEntityHealthy);
+      let capturedAt = nowIso;
       if (kind === "camera") {
         const changed = cache.lastCameraHash !== hash;
         const lastChangedAtMs =
@@ -1303,6 +1324,7 @@ export const homeAssistantBambuAdapter: PrinterAdapter<HomeAssistantBambuPrinter
           lastCameraHash: hash,
           lastCameraChangedAtMs: lastChangedAtMs,
         };
+        capturedAt = DateTime.formatIso(DateTime.makeUnsafe(lastChangedAtMs));
         // If printer or HA camera entity is offline/unavailable, camera proxy serves a cached frame forever; mark stale honestly.
         // If printer is actively running and frame hash hasn't moved for >30s, flag stale too.
         if (!online || !cameraEntityHealthy) {
@@ -1316,7 +1338,7 @@ export const homeAssistantBambuAdapter: PrinterAdapter<HomeAssistantBambuPrinter
         asset: {
           bytes: result.bytes,
           contentType,
-          capturedAt: nowIso,
+          capturedAt,
           stale,
           online,
           hash,

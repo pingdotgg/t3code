@@ -230,7 +230,10 @@ function validateSafetyGuards(
   }
 
   if (
-    (action.kind === "pause" || action.kind === "resume" || action.kind === "stop") &&
+    (action.kind === "pause" ||
+      action.kind === "resume" ||
+      action.kind === "stop" ||
+      action.kind === "skipObjects") &&
     action.expectedJobFileName !== undefined &&
     action.expectedJobFileName !== null &&
     (snapshot.job.fileName === null || action.expectedJobFileName !== snapshot.job.fileName)
@@ -245,6 +248,42 @@ function validateSafetyGuards(
             : `Active print job changed to "${snapshot.job.fileName}". Refresh before retrying ${action.kind}.`,
       }),
     );
+  }
+
+  if (action.kind === "skipObjects") {
+    if (snapshot.job.status !== "running" && snapshot.job.status !== "pause") {
+      return Effect.fail(
+        new PrinterSafetyError({
+          action: action.kind,
+          printerId,
+          reason: "Objects can only be skipped during an active or paused print.",
+        }),
+      );
+    }
+    if (snapshot.job.printableObjects.length > 0) {
+      const byId = new Map(snapshot.job.printableObjects.map((obj) => [obj.id, obj]));
+      for (const objectId of action.objectIds) {
+        const matched = byId.get(objectId);
+        if (!matched) {
+          return Effect.fail(
+            new PrinterSafetyError({
+              action: action.kind,
+              printerId,
+              reason: `Object ${objectId} does not belong to the active print job. Refresh before retrying.`,
+            }),
+          );
+        }
+        if (matched.skipped) {
+          return Effect.fail(
+            new PrinterSafetyError({
+              action: action.kind,
+              printerId,
+              reason: `Object "${matched.name}" is already skipped in this print job.`,
+            }),
+          );
+        }
+      }
+    }
   }
 
   return Effect.void;
@@ -315,9 +354,13 @@ const make = Effect.gen(function* () {
   const generationsById = new Map<string, number>(
     initialSettings.printers.map((config) => [config.id, 1]),
   );
+  const pollSeqById = new Map<string, number>();
+  const committedPollSeqById = new Map<string, number>();
   const bumpGeneration = (id: string): number => {
     const next = (generationsById.get(id) ?? 0) + 1;
     generationsById.set(id, next);
+    const currentPollSeq = pollSeqById.get(id) ?? 0;
+    committedPollSeqById.set(id, currentPollSeq);
     return next;
   };
   const makeTargetGuard = (config: PrinterConfig, generation: number, operation: string) => () =>
@@ -422,6 +465,8 @@ const make = Effect.gen(function* () {
     expectedGeneration?: number,
   ) {
     const generation = expectedGeneration ?? generationsById.get(config.id) ?? 0;
+    const pollSeq = (pollSeqById.get(config.id) ?? 0) + 1;
+    pollSeqById.set(config.id, pollSeq);
     const currentState = yield* Ref.get(stateRef);
     const previous = currentState.printers.find((printer) => printer.id === config.id);
     const cache = caches.get(config.id) ?? {};
@@ -447,7 +492,11 @@ const make = Effect.gen(function* () {
       cache,
     });
     const secretResult = yield* Effect.result(resolvePrinterSecret(config));
-    if (configsById.get(config.id) !== config || generationsById.get(config.id) !== generation) {
+    if (
+      configsById.get(config.id) !== config ||
+      generationsById.get(config.id) !== generation ||
+      pollSeq <= (committedPollSeqById.get(config.id) ?? 0)
+    ) {
       return {
         snapshot: previous ?? placeholderSnapshot(config),
         cache,
@@ -469,9 +518,14 @@ const make = Effect.gen(function* () {
               ),
           ).pipe(Effect.catch((error) => Effect.succeed(makeErrorResult(error.message))));
 
-    if (configsById.get(config.id) !== config || generationsById.get(config.id) !== generation) {
+    if (
+      configsById.get(config.id) !== config ||
+      generationsById.get(config.id) !== generation ||
+      pollSeq <= (committedPollSeqById.get(config.id) ?? 0)
+    ) {
       return { snapshot: result.snapshot, cache: result.cache, generation, committed: false };
     }
+    committedPollSeqById.set(config.id, pollSeq);
     caches.set(config.id, result.cache);
     yield* publish((current) => {
       const exists = current.printers.some((entry) => entry.id === config.id);
@@ -485,66 +539,82 @@ const make = Effect.gen(function* () {
     return { snapshot: result.snapshot, cache: result.cache, generation, committed: true };
   });
 
-  const syncFromSettings = Effect.fn("PrinterService.syncFromSettings")(function* (nextSettings: {
+  const applySettingsState = Effect.fn("PrinterService.applySettingsState")(
+    function* (nextSettings: {
+      readonly enablePrinterSupport: boolean;
+      readonly enableAgentPrinterAccess: boolean;
+      readonly printers: ReadonlyArray<PrinterConfig>;
+    }) {
+      const nextIds = new Set(nextSettings.printers.map((printer) => printer.id));
+      for (const id of configsById.keys()) {
+        if (!nextIds.has(id as PrinterId)) {
+          configsById.delete(id);
+          caches.delete(id);
+          bumpGeneration(id);
+        }
+      }
+      const retargetedIds = new Set<string>();
+      for (const config of nextSettings.printers) {
+        const previousConfig = configsById.get(config.id);
+        if (
+          !previousConfig ||
+          configTargetSignature(previousConfig) !== configTargetSignature(config)
+        ) {
+          caches.delete(config.id);
+          bumpGeneration(config.id);
+          if (previousConfig) {
+            retargetedIds.add(config.id);
+          }
+        }
+        configsById.set(config.id, config);
+      }
+      yield* publish((current) => {
+        const existingById = new Map(current.printers.map((entry) => [entry.id, entry]));
+        return {
+          ...current,
+          enabled: nextSettings.enablePrinterSupport,
+          agentAccessEnabled: nextSettings.enableAgentPrinterAccess,
+          printers: nextSettings.printers.map((config) => {
+            const existing = existingById.get(config.id);
+            return existing && existing.kind === config.kind && !retargetedIds.has(config.id)
+              ? { ...existing, label: config.label }
+              : placeholderSnapshot(config);
+          }),
+          sessions: current.sessions.filter(
+            (session) => session.proxyEnvironmentId !== undefined || nextIds.has(session.printerId),
+          ),
+        };
+      });
+      return nextSettings.enablePrinterSupport
+        ? nextSettings.printers.map((config) => ({
+            config,
+            generation: generationsById.get(config.id) ?? 0,
+          }))
+        : [];
+    },
+  );
+
+  const syncLatestSettings = Effect.fn("PrinterService.syncLatestSettings")(function* (fallback: {
     readonly enablePrinterSupport: boolean;
     readonly enableAgentPrinterAccess: boolean;
     readonly printers: ReadonlyArray<PrinterConfig>;
   }) {
-    const nextIds = new Set(nextSettings.printers.map((printer) => printer.id));
-    for (const id of configsById.keys()) {
-      if (!nextIds.has(id as PrinterId)) {
-        configsById.delete(id);
-        caches.delete(id);
-        bumpGeneration(id);
-      }
-    }
-    const retargetedIds = new Set<string>();
-    for (const config of nextSettings.printers) {
-      const previousConfig = configsById.get(config.id);
-      if (
-        !previousConfig ||
-        configTargetSignature(previousConfig) !== configTargetSignature(config)
-      ) {
-        caches.delete(config.id);
-        bumpGeneration(config.id);
-        if (previousConfig) {
-          retargetedIds.add(config.id);
-        }
-      }
-      configsById.set(config.id, config);
-    }
-    yield* publish((current) => {
-      const existingById = new Map(current.printers.map((entry) => [entry.id, entry]));
-      return {
-        ...current,
-        enabled: nextSettings.enablePrinterSupport,
-        agentAccessEnabled: nextSettings.enableAgentPrinterAccess,
-        printers: nextSettings.printers.map((config) => {
-          const existing = existingById.get(config.id);
-          return existing && existing.kind === config.kind && !retargetedIds.has(config.id)
-            ? { ...existing, label: config.label }
-            : placeholderSnapshot(config);
-        }),
-        sessions: current.sessions.filter(
-          (session) => session.proxyEnvironmentId !== undefined || nextIds.has(session.printerId),
-        ),
-      };
-    });
-    if (nextSettings.enablePrinterSupport) {
-      const targets = nextSettings.printers.map((config) => ({
-        config,
-        generation: generationsById.get(config.id) ?? 0,
-      }));
-      yield* Effect.forEach(targets, ({ config, generation }) => pollOne(config, generation), {
-        concurrency: 4,
-      }).pipe(Effect.ignore);
-    }
+    // Always read the authoritative current settings so queued subscriber events never reinstall an older revision.
+    const latest = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => fallback));
+    return yield* applySettingsState(latest);
   });
 
   const settingsStream = yield* settingsService.subscribeChanges;
-  yield* Stream.runForEach(settingsStream, (updated) => syncFromSettings(updated)).pipe(
-    Effect.forkIn(serviceScope),
-  );
+  yield* Stream.runForEach(settingsStream, (updated) =>
+    Effect.gen(function* () {
+      const targets = yield* syncLatestSettings(updated);
+      if (targets.length > 0) {
+        yield* Effect.forEach(targets, ({ config, generation }) => pollOne(config, generation), {
+          concurrency: 4,
+        }).pipe(Effect.ignore, Effect.forkIn(serviceScope));
+      }
+    }),
+  ).pipe(Effect.forkIn(serviceScope));
 
   const pollLoop = Effect.gen(function* () {
     const current = yield* Ref.get(stateRef);
@@ -608,7 +678,12 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
-      yield* syncFromSettings(updated);
+      const targets = yield* syncLatestSettings(updated);
+      if (targets.length > 0) {
+        yield* Effect.forEach(targets, ({ config, generation }) => pollOne(config, generation), {
+          concurrency: 4,
+        }).pipe(Effect.ignore);
+      }
       return yield* Ref.get(stateRef);
     },
   );
@@ -682,11 +757,21 @@ const make = Effect.gen(function* () {
     function* (input) {
       yield* publish((current) => ({
         ...current,
-        sessions: current.sessions.filter(
-          (session) =>
-            session.threadId !== input.threadId ||
-            (input.printerId !== undefined && session.printerId !== input.printerId),
-        ),
+        sessions: current.sessions.filter((session) => {
+          if (session.threadId !== input.threadId) return true;
+          if (input.printerId !== undefined && session.printerId !== input.printerId) return true;
+          if (input.proxyEnvironmentId === null && session.proxyEnvironmentId !== undefined) {
+            return true;
+          }
+          if (
+            input.proxyEnvironmentId !== undefined &&
+            input.proxyEnvironmentId !== null &&
+            session.proxyEnvironmentId !== input.proxyEnvironmentId
+          ) {
+            return true;
+          }
+          return false;
+        }),
       }));
     },
   );
@@ -719,12 +804,42 @@ const make = Effect.gen(function* () {
         return yield* new PrinterSafetyError({
           action: input.action.kind,
           printerId: input.printerId,
-          reason: "Printer configuration changed while verifying state. Retry after refreshing.",
+          reason:
+            "Printer state or configuration changed while verifying readiness. Retry after refreshing.",
         });
       }
       yield* validateSafetyGuards(fresh.snapshot, input);
       const secret = yield* resolvePrinterSecret(config);
-      const requestGuard = makeTargetGuard(config, generation, input.action.kind);
+      let guardSafetyError: PrinterSafetyError | undefined;
+      const baseGuard = makeTargetGuard(config, generation, input.action.kind);
+      const requestGuard = Effect.fn("PrinterService.actionRequestGuard")(function* () {
+        yield* baseGuard();
+        const latestSnapshot = (yield* Ref.get(stateRef)).printers.find(
+          (entry) => entry.id === config.id,
+        );
+        if (!latestSnapshot) {
+          guardSafetyError = new PrinterSafetyError({
+            action: input.action.kind,
+            printerId: input.printerId,
+            reason:
+              "Printer telemetry disappeared before dispatching action. Retry after refreshing.",
+          });
+          return yield* new PrinterOperationError({
+            operation: input.action.kind,
+            printerId: input.printerId,
+            reason: guardSafetyError.reason,
+          });
+        }
+        const safetyCheck = yield* Effect.result(validateSafetyGuards(latestSnapshot, input));
+        if (safetyCheck._tag === "Failure") {
+          guardSafetyError = safetyCheck.failure;
+          return yield* new PrinterOperationError({
+            operation: input.action.kind,
+            printerId: input.printerId,
+            reason: safetyCheck.failure.reason,
+          });
+        }
+      });
       if (configsById.get(config.id) !== config || generationsById.get(config.id) !== generation) {
         return yield* new PrinterSafetyError({
           action: input.action.kind,
@@ -737,6 +852,10 @@ const make = Effect.gen(function* () {
         adapterFor(config)
           .executeAction(config, secret, input.action, fresh.snapshot, fresh.cache)
           .pipe(Effect.provideService(PrinterRequestGuard, requestGuard)),
+      ).pipe(
+        Effect.catch((error) =>
+          guardSafetyError ? Effect.fail(guardSafetyError) : Effect.fail(error),
+        ),
       );
       if (configsById.get(config.id) !== config || generationsById.get(config.id) !== generation) {
         return fresh.snapshot;

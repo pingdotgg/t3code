@@ -66,12 +66,7 @@ export function collectFleetPrinters(
   });
 }
 
-/**
- * Resolves the active fleet printer for a right-panel surface:
- * 1. Exact match on `(proxyEnvironmentId, printerId)` when both are pinned.
- * 2. Match on `printerId` (preferring the thread's own environment, then the best T3 Connect proxy).
- * 3. First available fleet printer (local first, else best online T3 Connect proxy).
- */
+/** Resolves an exact pinned fleet printer (never falling back across pins), or the best fleet entry when unpinned. */
 export function selectFleetPrinter(
   entries: ReadonlyArray<FleetPrinterEntry>,
   preferredPrinterId?: string,
@@ -79,20 +74,17 @@ export function selectFleetPrinter(
 ): FleetPrinterEntry | undefined {
   if (entries.length === 0) return undefined;
   if (preferredProxyEnvironmentId !== undefined && preferredPrinterId !== undefined) {
-    const exact = entries.find(
+    return entries.find(
       (entry) =>
         entry.proxyEnvironmentId === preferredProxyEnvironmentId &&
         entry.printer.id === preferredPrinterId,
     );
-    if (exact) return exact;
   }
   if (preferredPrinterId !== undefined) {
-    const byId = entries.find((entry) => entry.printer.id === preferredPrinterId);
-    if (byId) return byId;
+    return entries.find((entry) => entry.printer.id === preferredPrinterId);
   }
   if (preferredProxyEnvironmentId !== undefined) {
-    const byEnv = entries.find((entry) => entry.proxyEnvironmentId === preferredProxyEnvironmentId);
-    if (byEnv) return byEnv;
+    return entries.find((entry) => entry.proxyEnvironmentId === preferredProxyEnvironmentId);
   }
   return entries[0];
 }

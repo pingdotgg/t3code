@@ -33,6 +33,7 @@ export {
 export const printerEnvironment = createPrinterEnvironmentAtoms(connectionAtomRuntime);
 
 const MEDIA_TICKET_REFRESH_INTERVAL_MS = 210_000;
+const MEDIA_TICKET_RETRY_INTERVAL_MS = 15_000;
 
 const EMPTY_PRINTER_STATE: PrinterServiceState = {
   enabled: false,
@@ -164,22 +165,34 @@ const EMPTY_MEDIA_ACCESS_ATOM = Atom.make(AsyncResult.initial<DeviceHubAccess, n
   Atom.withLabel("printer-media-access:empty"),
 );
 
+const EMPTY_PREPARED_CONNECTION_ATOM = Atom.make(
+  Option.none<{ readonly httpAuthorization: unknown }>(),
+).pipe(Atom.withLabel("printer-media-prepared:empty"));
+
 export function usePrinterMediaAccess(environmentId: EnvironmentId | null): DeviceHubAccess | null {
   const result = useAtomValue(
     environmentId === null ? EMPTY_MEDIA_ACCESS_ATOM : printerMediaAccessAtom(environmentId),
   );
+  const prepared = useAtomValue(
+    environmentId === null
+      ? EMPTY_PREPARED_CONNECTION_ATOM
+      : environmentSession.preparedConnectionValueAtom(environmentId),
+  );
   const access = AsyncResult.isSuccess(result) ? result.value : null;
-  const usesMediaTicket = access?.query.wsTicket !== undefined;
+  const failed = AsyncResult.isFailure(result);
+  // Keep renewal active whenever the environment uses bearer/DPoP media tickets, even after a transient refresh failure.
+  const usesMediaTicket = Option.isSome(prepared) && prepared.value.httpAuthorization !== null;
 
   // Proactively renew 5-minute media wsTickets on long-lived T3 Connect sessions before expiry.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules periodic renewal of short-lived media wsTickets for remote/T3 Connect environments while mounted
   useEffect(() => {
     if (environmentId === null || !usesMediaTicket) return;
+    const intervalMs = failed ? MEDIA_TICKET_RETRY_INTERVAL_MS : MEDIA_TICKET_REFRESH_INTERVAL_MS;
     const timer = window.setInterval(() => {
       refreshPrinterMediaAccess(environmentId);
-    }, MEDIA_TICKET_REFRESH_INTERVAL_MS);
+    }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [environmentId, usesMediaTicket]);
+  }, [environmentId, usesMediaTicket, failed]);
 
   return access;
 }

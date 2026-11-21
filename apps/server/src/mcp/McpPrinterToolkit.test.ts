@@ -288,11 +288,14 @@ describe("McpPrinterToolkit", () => {
           const openedSessions: Array<PrinterServiceState["sessions"][number]> = [];
           const forwardedCalls: Array<{ readonly tool: string; readonly env: EnvironmentId }> = [];
 
+          let localEnabled = false;
+          let localAgentAccessEnabled = false;
+          let localPrinters: ReadonlyArray<PrinterSnapshot> = [];
           const emptyLocalState = (): PrinterServiceState => ({
-            enabled: false,
-            agentAccessEnabled: false,
+            enabled: localEnabled,
+            agentAccessEnabled: localAgentAccessEnabled,
             mediaBasePath: "/api/printer-media",
-            printers: [],
+            printers: localPrinters,
             sessions: [...openedSessions],
             revision: 1,
           });
@@ -318,7 +321,30 @@ describe("McpPrinterToolkit", () => {
                     openedSessions.push(session);
                     return session;
                   }),
-                close: () => Effect.void,
+                close: (input) =>
+                  Effect.sync(() => {
+                    for (let i = openedSessions.length - 1; i >= 0; i -= 1) {
+                      const session = openedSessions[i]!;
+                      if (session.threadId !== input.threadId) continue;
+                      if (input.printerId !== undefined && session.printerId !== input.printerId) {
+                        continue;
+                      }
+                      if (
+                        input.proxyEnvironmentId === null &&
+                        session.proxyEnvironmentId !== undefined
+                      ) {
+                        continue;
+                      }
+                      if (
+                        input.proxyEnvironmentId !== undefined &&
+                        input.proxyEnvironmentId !== null &&
+                        session.proxyEnvironmentId !== input.proxyEnvironmentId
+                      ) {
+                        continue;
+                      }
+                      openedSessions.splice(i, 1);
+                    }
+                  }),
                 sessionsForThread: () => Effect.sync(() => [...openedSessions]),
               }),
             ),
@@ -476,7 +502,79 @@ describe("McpPrinterToolkit", () => {
               { tool: "printer_camera_snapshot", env: proxyEnvId },
             ]);
 
-            // Linked peer callers never hop onward (single-hop fence) and require local opt-in.
+            // Explicit environmentId printer_list preserves openInThread for the originating thread.
+            const targetedList = yield* server
+              .callTool({ name: "printer_list", arguments: { environmentId: proxyEnvId } })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(targetedList.isError, JSON.stringify(targetedList.content)).toBe(false);
+            expect(targetedList.structuredContent).toMatchObject({
+              enabled: true,
+              printers: [
+                {
+                  id: "p1s-studio",
+                  environmentId: proxyEnvId,
+                  environmentLabel: "Home Proxy",
+                  openInThread: true,
+                },
+              ],
+            });
+
+            // A caller without the "printer" capability cannot bypass it via explicit environmentId.
+            const withoutPrinterCap = Effect.provideService(
+              McpInvocationContext.McpInvocationContext,
+              {
+                ...invocation([]),
+                linkedEnvironments: true,
+              },
+            );
+            const callsBeforeDenied = forwardedCalls.length;
+            const deniedTargeted = yield* server
+              .callTool({ name: "printer_status", arguments: { environmentId: proxyEnvId } })
+              .pipe(withoutPrinterCap, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(deniedTargeted.isError).toBe(true);
+            expect(forwardedCalls.length).toBe(callsBeforeDenied);
+
+            // When an unrelated local printer is also configured, an untargeted read prefers the thread's sole open proxy printer.
+            localEnabled = true;
+            localAgentAccessEnabled = true;
+            localPrinters = [
+              {
+                ...mockPrinterSnapshot,
+                id: PrinterId.make("local-other"),
+                label: "Local Other",
+              },
+            ];
+            const callsBeforeMixed = forwardedCalls.length;
+            const mixedStatus = yield* server
+              .callTool({ name: "printer_status", arguments: {} })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(mixedStatus.isError, JSON.stringify(mixedStatus.content)).toBe(false);
+            expect(mixedStatus.structuredContent).toMatchObject({
+              printer: { id: "p1s-studio" },
+              environmentId: proxyEnvId,
+            });
+            expect(forwardedCalls.slice(callsBeforeMixed)).toEqual([
+              { tool: "printer_status", env: proxyEnvId },
+            ]);
+
+            // printer_close scoped by environmentId closes only that environment's session.
+            openedSessions.push({
+              threadId,
+              printerId,
+              openedAt: "2026-11-21T07:05:00.000Z",
+            });
+            yield* server
+              .callTool({
+                name: "printer_close",
+                arguments: { printerId: "p1s-studio", environmentId: proxyEnvId },
+              })
+              .pipe(callAsThread, Effect.provideService(McpSchema.McpServerClient, client));
+            expect(openedSessions).toHaveLength(1);
+            expect(openedSessions[0]?.proxyEnvironmentId).toBeUndefined();
+
+            // Linked peer callers never hop onward (single-hop fence) and require local agentAccessEnabled opt-in even when printer support is on with a configured printer.
+            localEnabled = true;
+            localAgentAccessEnabled = false;
             const linkedCaller = Effect.provideService(McpInvocationContext.McpInvocationContext, {
               environmentId,
               requestNamespace: "client:peer-1",

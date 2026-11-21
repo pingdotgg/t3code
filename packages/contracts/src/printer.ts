@@ -366,6 +366,8 @@ export type PrinterOpenInput = typeof PrinterOpenInput.Type;
 export const PrinterCloseInput = Schema.Struct({
   threadId: ThreadId,
   printerId: Schema.optional(PrinterId),
+  /** `EnvironmentId` targets that proxy environment; `null` targets local sessions only; omitted matches any environment. */
+  proxyEnvironmentId: Schema.optional(Schema.NullOr(EnvironmentId)),
 });
 export type PrinterCloseInput = typeof PrinterCloseInput.Type;
 
@@ -414,6 +416,7 @@ export const PrinterAction = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("skipObjects"),
     objectIds: Schema.Array(Schema.Int).check(Schema.isMinLength(1)),
+    expectedJobFileName: Schema.optional(Schema.NullOr(Schema.String)),
   }),
   Schema.Struct({
     kind: Schema.Literal("refresh"),
