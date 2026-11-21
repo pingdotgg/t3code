@@ -5242,55 +5242,58 @@ it.effect("drops a child's held text once the child is handed to another run", (
   }),
 );
 
+// Real SQLite projections and ingestion, so legacy subagent rows resolve the way they do in production.
+const makeLegacySubagentLayer = () => {
+  const layerDb = SqlitePersistence.layerMemory;
+  const layerStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
+    Layer.provide(layerDb),
+  );
+  const layerSink = EventSink.layer.pipe(Layer.provide(Layer.mergeAll(layerStores, layerDb)));
+  const layerInstances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+    getInstance: () => Effect.undefined,
+  });
+  const layerGit = Layer.mock(GitVcsDriver.GitVcsDriver)({});
+  const layerIngestor = ProviderEventIngestor.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerInstances,
+        layerStores,
+        layerSink,
+        IdAllocator.layer,
+        ThreadCommandExecutor.layer,
+        layerGit,
+      ),
+    ),
+  );
+  const layerRunExecution = RunExecutionService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        McpAppModelContext.layerEmpty,
+        PreviewAgentActivity.layer,
+        Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+        layerTurnItemPositionsTest,
+        layerSink,
+        IdAllocator.layer,
+        ThreadCommandExecutor.layer,
+        layerIngestor,
+        ServerSettings.layerTest(),
+      ),
+    ),
+  );
+  return Layer.mergeAll(
+    layerDb,
+    layerStores,
+    layerSink,
+    IdAllocator.layer,
+    ThreadCommandExecutor.layer,
+    layerIngestor,
+    layerRunExecution,
+  );
+};
+
 it.effect(
   "terminalizes a cold-resumed legacy subagent in place when the resuming run stream fails",
   () => {
-    const layerDb = SqlitePersistence.layerMemory;
-    const layerStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-      Layer.provide(layerDb),
-    );
-    const layerSink = EventSink.layer.pipe(Layer.provide(Layer.mergeAll(layerStores, layerDb)));
-    const layerInstances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-      getInstance: () => Effect.undefined,
-    });
-    const layerGit = Layer.mock(GitVcsDriver.GitVcsDriver)({});
-    const layerIngestor = ProviderEventIngestor.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          layerInstances,
-          layerStores,
-          layerSink,
-          IdAllocator.layer,
-          ThreadCommandExecutor.layer,
-          layerGit,
-        ),
-      ),
-    );
-    const layerRunExecution = RunExecutionService.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          McpAppModelContext.layerEmpty,
-          PreviewAgentActivity.layer,
-          Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
-          layerTurnItemPositionsTest,
-          layerSink,
-          IdAllocator.layer,
-          ThreadCommandExecutor.layer,
-          layerIngestor,
-          ServerSettings.layerTest(),
-        ),
-      ),
-    );
-    const layerFull = Layer.mergeAll(
-      layerDb,
-      layerStores,
-      layerSink,
-      IdAllocator.layer,
-      ThreadCommandExecutor.layer,
-      layerIngestor,
-      layerRunExecution,
-    );
-
     return Effect.gen(function* () {
       const now = yield* DateTime.now;
       const t2 = DateTime.add(now, { seconds: 5 });
@@ -5850,58 +5853,13 @@ it.effect(
       assert.equal(subagentItems[0]?.title, "Sleep");
       assert.equal(subagentItems[0]?.prompt, "sleep 180");
       assert.equal(childProjection.providerThreads[0]?.ownerNodeId, legacyNodeId);
-    }).pipe(Effect.provide(layerFull));
+    }).pipe(Effect.provide(makeLegacySubagentLayer()));
   },
 );
 
 it.effect(
   "detaches a cold-resumed legacy subagent from the owning run on cross-run handoff",
   () => {
-    const layerDb = SqlitePersistence.layerMemory;
-    const layerStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
-      Layer.provide(layerDb),
-    );
-    const layerSink = EventSink.layer.pipe(Layer.provide(Layer.mergeAll(layerStores, layerDb)));
-    const layerInstances = Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-      getInstance: () => Effect.undefined,
-    });
-    const layerGit = Layer.mock(GitVcsDriver.GitVcsDriver)({});
-    const layerIngestor = ProviderEventIngestor.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          layerInstances,
-          layerStores,
-          layerSink,
-          IdAllocator.layer,
-          ThreadCommandExecutor.layer,
-          layerGit,
-        ),
-      ),
-    );
-    const layerRunExecution = RunExecutionService.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          McpAppModelContext.layerEmpty,
-          PreviewAgentActivity.layer,
-          Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
-          layerTurnItemPositionsTest,
-          layerSink,
-          IdAllocator.layer,
-          ThreadCommandExecutor.layer,
-          layerIngestor,
-          ServerSettings.layerTest(),
-        ),
-      ),
-    );
-    const layerFull = Layer.mergeAll(
-      layerDb,
-      layerStores,
-      layerSink,
-      IdAllocator.layer,
-      ThreadCommandExecutor.layer,
-      layerIngestor,
-      layerRunExecution,
-    );
     return Effect.gen(function* () {
       const key = "legacy-cross-run-handoff";
       const ids = backgroundScenarioIds(key);
@@ -6395,6 +6353,6 @@ it.effect(
       const parentProjection = yield* projectionStore.getThreadProjection(ids.threadId);
       assert.equal(parentProjection.subagents[0]?.id, legacyNodeId);
       assert.equal(parentProjection.subagents[0]?.status, "running");
-    }).pipe(Effect.provide(layerFull));
+    }).pipe(Effect.provide(makeLegacySubagentLayer()));
   },
 );
