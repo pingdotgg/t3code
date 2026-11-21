@@ -9,6 +9,8 @@ mod fixture;
 mod header;
 mod icons;
 mod live;
+mod palette;
+mod settings;
 mod shell;
 mod sidebar;
 mod theme;
