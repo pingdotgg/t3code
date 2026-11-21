@@ -27,6 +27,7 @@ import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
 import { MessageId, RunId } from "@t3tools/contracts";
 import {
+  citationSourceId,
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
   timelineTurnFoldRunIdsByEntryId,
@@ -5182,5 +5183,13 @@ describe("workEntryReadOutput", () => {
         "/workspace/t3code",
       ),
     ).toBe("/workspace/t3code/src/app.ts\n~/.claude/CLAUDE.md\n~/.gitconfig");
+  });
+});
+
+describe("citationSourceId", () => {
+  it("identifies messages and proposed plans, not other rows", () => {
+    expect(citationSourceId({ kind: "message", message: { id: "m1" } })).toBe("m1");
+    expect(citationSourceId({ kind: "proposed-plan", id: "plan-item" })).toBe("plan-item");
+    expect(citationSourceId({ kind: "event" })).toBeNull();
   });
 });

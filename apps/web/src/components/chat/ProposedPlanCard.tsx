@@ -12,7 +12,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
-  buildCollapsedProposedPlanPreviewMarkdown,
+  buildCollapsedProposedPlanPreview,
   buildProposedPlanMarkdownFilename,
   downloadPlanAsTextFile,
   normalizePlanMarkdownForExport,
@@ -46,6 +46,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   findActive = false,
+  expandKey = null,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -53,10 +54,17 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
+  /** Expands the card each time a new citation activation targets it. */
+  expandKey?: string | null;
 }) {
   const gt = useGT();
   const messages = useMessages();
   const [expanded, setExpanded] = useState(false);
+  const [lastExpandKey, setLastExpandKey] = useState<string | null>(null);
+  if (expandKey !== lastExpandKey) {
+    setLastExpandKey(expandKey);
+    if (expandKey !== null) setExpanded(true);
+  }
   const canWriteFiles = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [lastSavePath, setLastSavePath] = useState("");
@@ -86,7 +94,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const canCollapse = planMarkdown.length > 900 || lineCount > 20;
   const displayedPlanMarkdown = stripDisplayedPlanMarkdown(planMarkdown);
   const collapsedPreview = canCollapse
-    ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 }, messages)
+    ? buildCollapsedProposedPlanPreview(planMarkdown, { maxLines: 10 }, messages)
     : null;
   const isCollapsed = canCollapse && !expanded;
   // Mount clipped plans during find to count hidden matches without revealing them.
@@ -206,14 +214,24 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
           data-thread-find-fold={isCollapsed ? "" : undefined}
         >
           {showPreview ? (
-            <ChatMarkdown
-              text={collapsedPreview ?? ""}
-              cwd={cwd}
-              environmentId={environmentId}
-              threadRef={threadRef}
-              isStreaming={false}
-              headingLevelOffset={3}
-            />
+            <>
+              <ChatMarkdown
+                text={collapsedPreview?.markdown ?? ""}
+                cwd={cwd}
+                environmentId={environmentId}
+                threadRef={threadRef}
+                isStreaming={false}
+                headingLevelOffset={3}
+              />
+              {collapsedPreview?.truncated ? (
+                <p
+                  aria-hidden="true"
+                  className="mt-[0.65rem] select-none text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]"
+                >
+                  ...
+                </p>
+              ) : null}
+            </>
           ) : (
             <ChatMarkdown
               text={displayedPlanMarkdown}

@@ -181,6 +181,21 @@ describe("resolveCitationPhase", () => {
     });
   });
 
+  it("treats a proposed plan as a citation source", () => {
+    const planEntry = {
+      kind: "proposed-plan",
+      id: "cited",
+      createdAt: at,
+      proposedPlan: { runId },
+    } as TimelineEntry;
+    const planRow = { kind: "proposed-plan", id: "cited" } as MessagesTimelineRow;
+    expect(phase({ entries: [planEntry] })).toEqual({ _tag: "expanding" });
+    expect(phase({ entries: [planEntry], rows: [planRow] })).toEqual({
+      _tag: "ready",
+      rowId: "cited",
+    });
+  });
+
   it("finds text an agent sent with send_to_user by its item id", () => {
     const sent: TimelineEntry = {
       kind: "sent-message",

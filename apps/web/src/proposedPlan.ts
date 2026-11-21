@@ -3,13 +3,13 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "./i18n/messages";
 
-export function buildCollapsedProposedPlanPreviewMarkdown(
+export function buildCollapsedProposedPlanPreview(
   planMarkdown: string,
   options?: {
     maxLines?: number;
   },
   resolve: MessageResolver = m,
-): string {
+) {
   const maxLines = options?.maxLines ?? 8;
   const lines = stripDisplayedPlanMarkdown(planMarkdown)
     .trimEnd()
@@ -36,14 +36,13 @@ export function buildCollapsedProposedPlanPreviewMarkdown(
   }
 
   if (previewLines.length === 0) {
-    return proposedPlanTitle(planMarkdown) ?? resolve(msg("Plan preview unavailable."));
+    return {
+      markdown: proposedPlanTitle(planMarkdown) ?? resolve(msg("Plan preview unavailable.")),
+      truncated: false,
+    };
   }
 
-  if (hasMoreContent) {
-    previewLines.push("", "...");
-  }
-
-  return previewLines.join("\n");
+  return { markdown: previewLines.join("\n"), truncated: hasMoreContent };
 }
 
 function sanitizePlanFileSegment(input: string): string {
