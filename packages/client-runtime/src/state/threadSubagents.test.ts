@@ -303,6 +303,18 @@ describe("deriveThreadTurnSubagents", () => {
     expect(resolveSubagentPillSegment(turn)?.label).toBe("2 done");
   });
 
+  it("does not label a turn whose only agent went idle as 0 done", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [finishedRun],
+      subagents: [
+        subagent({ id: "a", status: "idle", completedAt: at("2026-06-20T00:00:05.000Z") }),
+      ],
+    });
+
+    expect(turn?.subagents).toHaveLength(1);
+    expect(resolveSubagentPillSegment(turn)?.label).not.toBe("0 done");
+  });
+
   it("keeps settled workflows reachable without counting idle agents as done", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [finishedRun, run("run-2", "completed")],
