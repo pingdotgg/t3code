@@ -17,6 +17,10 @@ import {
   deriveThreadStructureRuntime,
 } from "./state/threadExecution.ts";
 import {
+  mergeOlderHistoryIntoProjection,
+  mergeOlderSubagentsIntoProjection,
+} from "./state/threadHistoryMerge.ts";
+import {
   applyThreadHistoryPage,
   applyThreadStreamItem,
   initialThreadStreamState,
@@ -218,6 +222,11 @@ export interface LinkedThreadView {
   /** Why the stream stopped, while the view waits to ask again; the next item clears it. */
   readonly error: unknown;
   readonly history: { readonly loading: boolean; readonly failed: boolean };
+  /** Pagination progress survives the temporary view that hides the cursor during reconnect. */
+  readonly loadedHistory: {
+    readonly snapshotCursor: string;
+    readonly nextCursor: string | null;
+  } | null;
   /** Loads the turns before the ones shown. Does nothing while a page loads or none is left. */
   readonly loadEarlier: () => void;
 }
@@ -233,7 +242,11 @@ export const keepLinkedThreadView = (
 ): LinkedThreadView =>
   next.thread.projection !== null || kept === null || kept.thread.projection === null
     ? next
-    : { ...next, thread: { ...kept.thread, historyCursor: null } };
+    : {
+        ...next,
+        thread: { ...kept.thread, historyCursor: null },
+        loadedHistory: kept.loadedHistory,
+      };
 
 /**
  * Follows a linked environment's thread for as long as something consumes the result. The thread
@@ -244,16 +257,20 @@ export const keepLinkedThreadView = (
 export const followLinkedThread = <E, R, E2, R2>(source: {
   readonly items: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>;
   readonly historyPage: (cursor: string) => Effect.Effect<OrchestrationV2ThreadHistoryPage, E2, R2>;
+  readonly readPrevious?: () => LinkedThreadView | null;
 }): Stream.Stream<LinkedThreadView, E, R | R2> =>
   Stream.unwrap(
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<void>();
       let requested = false;
+      let previous = source.readPrevious?.() ?? null;
+      let snapshotCursor: string | null = null;
       // Both halves below run one step at a time, so each reads the view the other left.
       let view: LinkedThreadView = {
         thread: initialThreadStreamState,
         error: null,
         history: { loading: false, failed: false },
+        loadedHistory: null,
         loadEarlier: () => {
           if (requested || view.thread.historyCursor === null) return;
           requested = true;
@@ -264,11 +281,43 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
         view = { ...view, ...patch };
         return view;
       };
+      const onItem = (item: OrchestrationV2ThreadStreamItem) => {
+        const thread = applyThreadStreamItem(view.thread, item);
+        if (item.kind !== "snapshot") return show({ thread, error: null });
+
+        const kept = view.thread.projection === null ? previous : view;
+        previous = null;
+        snapshotCursor = thread.historyCursor;
+        const loaded = kept?.loadedHistory;
+        // A different revision or window can invalidate both the old rows and their cursor.
+        if (
+          kept?.thread.projection &&
+          thread.projection &&
+          kept.thread.sequence === thread.sequence &&
+          loaded &&
+          loaded.snapshotCursor === snapshotCursor
+        ) {
+          return show({
+            thread: {
+              ...thread,
+              projection: mergeOlderSubagentsIntoProjection(
+                mergeOlderHistoryIntoProjection(
+                  thread.projection,
+                  kept.thread.projection.visibleTurnItems,
+                ),
+                kept.thread.projection.subagents,
+              ),
+              historyCursor: loaded.nextCursor,
+            },
+            loadedHistory: loaded,
+            error: null,
+          });
+        }
+        return show({ thread, loadedHistory: null, error: null });
+      };
       const attempt = (): Stream.Stream<LinkedThreadView, E, R> =>
         source.items.pipe(
-          Stream.map((item) =>
-            show({ thread: applyThreadStreamItem(view.thread, item), error: null }),
-          ),
+          Stream.map(onItem),
           Stream.catch((error) =>
             isLinkedThreadUnreachable(error)
               ? Stream.make(show({ error })).pipe(
@@ -292,11 +341,17 @@ export const followLinkedThread = <E, R, E2, R2>(source: {
                 Stream.fromEffect(
                   source.historyPage(cursor).pipe(
                     Effect.match({
-                      onSuccess: (page) =>
-                        show({
-                          thread: applyThreadHistoryPage(view.thread, cursor, page),
+                      onSuccess: (page) => {
+                        const thread = applyThreadHistoryPage(view.thread, cursor, page);
+                        return show({
+                          thread,
+                          loadedHistory:
+                            thread !== view.thread && snapshotCursor !== null
+                              ? { snapshotCursor, nextCursor: thread.historyCursor }
+                              : view.loadedHistory,
                           history: { loading: false, failed: false },
-                        }),
+                        });
+                      },
                       onFailure: () => show({ history: { loading: false, failed: true } }),
                     }),
                     Effect.ensuring(
