@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
+  antigravitySwarmAtWork,
   describeAntigravitySubagentLaunches,
   readAntigravityChildrenAtWork,
   readAntigravityChildWork,
@@ -538,6 +539,76 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
           toolCallIds: ["call_alive", "call_killed"],
         }),
       ).toEqual(["call_alive"]);
+    }),
+  );
+
+  it.effect("counts a parked swarm worker at work only while its calls or tasks run", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-swarm-" });
+      const brain = path.join(profile, "antigravity-acp", "brain");
+      const swarm = path.join(brain, ROOT, ".system_generated", "swarm");
+      const logs = path.join(brain, CHILD, ".system_generated", "logs");
+      yield* fs.makeDirectory(swarm, { recursive: true });
+      yield* fs.makeDirectory(logs, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(swarm, "members.json"),
+        JSON.stringify({
+          members: {
+            coordinator: { conversation_id: ROOT, wake_mode: "mentions" },
+            writer: { conversation_id: CHILD, wake_mode: "mentions" },
+          },
+        }),
+      );
+      const writeSteps = (steps: ReadonlyArray<object>) =>
+        fs.writeFileString(
+          path.join(logs, "transcript.jsonl"),
+          [{ step_index: 0, type: "SYSTEM_MESSAGE", status: "DONE" }, ...steps]
+            .map((step, index) => JSON.stringify({ ...step, step_index: index }))
+            .join("\n") + "\n",
+        );
+      // agy 1.5.13 parks a worker with swarm_wait after the call it ran beside it.
+      const parked = (sibling: string, siblingStatus: string) => [
+        {
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          tool_calls: [{ name: sibling }, { name: "swarm_wait" }],
+        },
+        { type: "GENERIC", status: siblingStatus },
+        { type: "GENERIC", status: "DONE" },
+      ];
+      // A long command moves to a background task and the worker's reply ends without a call.
+      const task = `${CHILD}/task-2`;
+      const backgrounded = [
+        { type: "PLANNER_RESPONSE", status: "DONE", tool_calls: [{ name: "run_command" }] },
+        {
+          type: "GENERIC",
+          status: "RUNNING",
+          content: `Tool is running as a background task with task id: ${task}\nTask Description: sleep 120`,
+        },
+        { type: "PLANNER_RESPONSE", status: "DONE", content: "Waiting for sleep 120." },
+      ];
+      const finished = {
+        type: "SYSTEM_MESSAGE",
+        status: "DONE",
+        content: `[Message] sender=${task} content=Task id "${task}" finished with result:\nCommand exited with code 0.`,
+      };
+
+      for (const [label, steps, atWork] of [
+        ["post_message DONE", parked("post_message", "DONE"), false],
+        ["run_command ERROR", parked("run_command", "ERROR"), false],
+        ["run_command RUNNING", parked("run_command", "RUNNING"), true],
+        ["background task running", backgrounded, true],
+        [
+          "background task finished",
+          [...backgrounded, finished, ...parked("post_message", "DONE")],
+          false,
+        ],
+      ] as const) {
+        yield* writeSteps(steps);
+        expect(yield* antigravitySwarmAtWork(profile, ROOT), label).toBe(atWork);
+      }
     }),
   );
 
