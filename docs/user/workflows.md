@@ -22,7 +22,10 @@ export default workflow(
   Effect.fn(function* (payload) {
     yield* title(`Release ${payload.name}`);
     const notes = yield* step("notes", { returns: Schema.String }, Effect.succeed("3 fixes"));
-    const answer = yield* ask("ship", { title: `Ship ${payload.name}? ${notes}`, choices: ["Ship", "Hold"] });
+    const answer = yield* ask("ship", {
+      title: `Ship ${payload.name}? ${notes}`,
+      choices: ["Ship", "Hold"],
+    });
     if (Option.isNone(answer) || answer.value.choice !== "Ship") return yield* stop("held back");
     return { shipped: payload.name };
   }),
@@ -61,7 +64,7 @@ Every start needs a `--key`: starting twice with the same key returns the same r
 
 ## Follow runs in the app
 
-Once a connected server has runs, **Workflows** appears in the sidebar with a count of open questions and paused runs waiting on you; before that, open it with **Open workflows** in the command palette. On mobile, use the **Workflows** tab. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads).
+Open the Workflows page with **Open workflows** in the command palette; on mobile, use the **Workflows** tab. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads).
 
 ### Agent threads
 
