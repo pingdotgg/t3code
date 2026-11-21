@@ -76,6 +76,8 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         deletions: 0,
         changedFiles: 0,
         mergedAt: null,
+        mergeCommit: null,
+        mergedBy: null,
         closedAt: null,
         isCrossRepository: false,
         maintainerCanModify: true,
@@ -792,6 +794,121 @@ layer("GitHubPullRequestApi.layer", (it) => {
       yield* api.updatePullRequest({ ...pullRequestInput, maintainerCanModify: false });
       expect(variablesOf("mutation UpdatePullRequest")).toEqual([
         { pullRequestId: "PR_7", maintainerCanModify: false },
+      ]);
+    }),
+  );
+
+  it.effect("tails Actions job logs and re-runs a run's failed jobs together", () =>
+    Effect.gen(function* () {
+      const runOf: Record<string, number> = {
+        "11": 10,
+        "12": 10,
+        "21": 20,
+        "41": 40,
+        "42": 40,
+        "51": 50,
+        "52": 50,
+      };
+      const runJobs: Record<string, Array<{ id: number; conclusion: string }>> = {
+        "10": [
+          { id: 11, conclusion: "failure" },
+          { id: 12, conclusion: "cancelled" },
+        ],
+        // 41 passed and is asked for by name; 43 failed but was not selected.
+        "40": [
+          { id: 41, conclusion: "success" },
+          { id: 42, conclusion: "failure" },
+          { id: 43, conclusion: "failure" },
+        ],
+        "50": [
+          { id: 51, conclusion: "failure" },
+          { id: 52, conclusion: "failure" },
+        ],
+      };
+      mockedExecute.mockImplementation((call) => {
+        if (call.kind !== "rest") return Effect.succeed(output("{}"));
+        const log = /actions\/jobs\/(\d+)\/logs$/.exec(call.path);
+        if (log?.[1] === "13") return Effect.succeed(output("one long line", true));
+        if (log?.[1] === "15") return Effect.succeed(output("x".repeat(100_000)));
+        if (log?.[1] === "14") {
+          return Effect.fail(
+            new GitHubRequestPolicy.GitHubApiAuthenticationError({
+              host: "github.com",
+              operation: "readCheckLog",
+            }),
+          );
+        }
+        if (log) return Effect.succeed(output("setup\nbuild\nError: boom\n"));
+        const job = /actions\/jobs\/(\d+)$/.exec(call.path);
+        if (job) return Effect.succeed(output(encodeJson({ run_id: runOf[job[1]!] })));
+        const run = /actions\/runs\/(\d+)\/jobs\?/.exec(call.path);
+        if (run) {
+          const jobs = runJobs[run[1]!] ?? [];
+          // Run 50 has more jobs than one page shows.
+          const total = run[1] === "50" ? 150 : jobs.length;
+          return Effect.succeed(output(encodeJson({ total_count: total, jobs })));
+        }
+        return Effect.succeed(output("{}"));
+      });
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const job = (id: number, run: number) => ({
+        name: `job ${id}`,
+        url: `https://github.com/octo/repo/actions/runs/${run}/job/${id}`,
+      });
+      const external = { name: "Vercel", url: "https://vercel.com/octo/repo/deployments/1" };
+      const logs = yield* api.readCheckLogs({
+        host: "github.com",
+        repository: "octo/repo",
+        checks: [job(11, 10), external],
+        tailLines: 2,
+      });
+      expect(logs).toMatchObject([
+        { name: "job 11", log: "build\nError: boom", truncated: true, detail: null },
+        { name: "Vercel", log: null },
+      ]);
+      const capped = { host: "github.com", repository: "octo/repo", tailLines: 5 };
+      expect(yield* api.readCheckLogs({ ...capped, checks: [job(13, 30)] })).toMatchObject([
+        { log: "one long line", truncated: true },
+      ]);
+      const refused = yield* Effect.flip(api.readCheckLogs({ ...capped, checks: [job(14, 30)] }));
+      const [huge] = yield* api.readCheckLogs({ ...capped, checks: [job(15, 30)] });
+      expect(huge?.log?.length).toBe(32_000);
+      expect(huge?.truncated).toBe(true);
+      expect(refused._tag).toBe("GitHubApiAuthenticationError");
+
+      const reruns = yield* api.rerunChecks({
+        host: "github.com",
+        repository: "octo/repo",
+        checks: [
+          job(11, 10),
+          job(12, 10),
+          { name: "solo", url: "https://github.com/octo/repo/runs/21" },
+          external,
+          job(41, 40),
+          { name: "job 42", url: "https://github.com/octo/repo/actions/runs/40/jobs/42" },
+          job(51, 50),
+          job(52, 50),
+        ],
+      });
+      expect(reruns.map(({ name, rerun }) => [name, rerun])).toEqual([
+        ["job 11", true],
+        ["job 12", true],
+        ["solo", true],
+        ["Vercel", false],
+        ["job 41", true],
+        ["job 42", false],
+        ["job 51", true],
+        ["job 52", false],
+      ]);
+      expect(
+        mockedExecute.mock.calls.flatMap(([call]) =>
+          call.kind === "rest" && call.method === "POST" ? [call.path] : [],
+        ),
+      ).toEqual([
+        "repos/octo/repo/actions/runs/10/rerun-failed-jobs",
+        "repos/octo/repo/actions/jobs/21/rerun",
+        "repos/octo/repo/actions/jobs/41/rerun",
+        "repos/octo/repo/actions/jobs/51/rerun",
       ]);
     }),
   );
@@ -2163,6 +2280,60 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       assert.strictEqual(batch.items.length, 0);
       assert.strictEqual(mockedExecute.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("lists the repository when GitHub's search answers with a bad gateway", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          matches(call, "PullRequestSearch")
+            ? output('{"message":"Server Error"}', false, false, {}, 502)
+            : output(listedPullRequests(2, 1)),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
+    }),
+  );
+
+  it.effect("fails a text search GitHub answers with a bad gateway, not with unfiltered rows", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          matches(call, "PullRequestSearch")
+            ? output('{"message":"Server Error"}', false, false, {}, 502)
+            : output(listedPullRequests(2, 1)),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const error = yield* Effect.flip(
+        cli.listPullRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          state: "open",
+          involvement: "all",
+          viewer: "bilal",
+          limit: 10,
+          query: "flaky",
+        }),
+      );
+
+      expect(error).toMatchObject({ _tag: "GitHubApiResponseError", status: 502 });
+      assert.isFalse(mockedExecute.mock.calls.some(([call]) => matches(call, "PullRequestList")));
     }),
   );
 

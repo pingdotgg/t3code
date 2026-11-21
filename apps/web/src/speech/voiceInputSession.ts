@@ -4,6 +4,7 @@ import {
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
+  type VoiceInputErrorCode,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
@@ -12,6 +13,7 @@ import type {
   CloudSpeechProvider,
   ClientSettings,
   EnvironmentId,
+  EnvironmentSpeechStatus,
   SpeechCustomWords,
   SpeechPostProcessingOptions,
   SpeechStreamText,
@@ -23,9 +25,14 @@ import { useEffect, useSyncExternalStore } from "react";
 
 import { toastManager } from "../components/ui/toast";
 import { chooseRecordingMicrophone } from "./browserMicrophones";
-import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import {
+  createAppleSpeechVoiceInputPlatform,
+  createBrowserVoiceInputPlatform,
+} from "./browserVoiceInput";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant } from "./voiceConsent";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 
 export const IDLE_VOICE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 
@@ -69,7 +76,8 @@ export type VoiceInputSessionActivity = {
 };
 
 type SessionKey = {
-  readonly prepared: PreparedConnection;
+  /** Null is Apple Speech, which transcribes on this Mac without an environment. */
+  readonly prepared: PreparedConnection | null;
   readonly grantId: string;
   readonly cloudProvider: CloudSpeechProvider | undefined;
   readonly cloudModel: CloudSpeechModelId | undefined;
@@ -106,6 +114,7 @@ export class VoiceInputSession {
   private readonly listeners = new Set<() => void>();
   private readonly activityListeners = new Set<() => void>();
   private disposed = false;
+  private onSpeechStatus: ((status: EnvironmentSpeechStatus) => void) | undefined;
 
   constructor(key: SessionKey) {
     this.key = key;
@@ -117,22 +126,20 @@ export class VoiceInputSession {
           readonly cleanupPrepared: PreparedConnection | null;
         }
       | undefined;
-    const platform = createBrowserVoiceInputPlatform({
-      prepared: key.prepared,
-      cloudProvider: key.cloudProvider,
-      cloudModel: key.cloudModel,
+    const platformInput = {
       hasAudioConsent,
+      getStatusListener: () => this.onSpeechStatus,
       getStreamingEnabled: () =>
         this.target?.readContext().clientSettings.speechStreaming ??
         DEFAULT_CLIENT_SETTINGS.speechStreaming,
       getTranscriptionOptions: (): SpeechTranscriptionOptions => {
         const context = this.target?.readContext();
-        if (!context) throw new Error("Voice input has no draft to record into.");
+        if (!context) throw new Error(m(msg("Voice input has no draft to record into.")));
         const settings = context.clientSettings;
         const cleanupGrant = context.cleanup ? readCleanupGrant() : null;
         const cleanupEnabled = cleanupGrant !== null;
         const cue = cleanupEnabled && context.cleanupPrepared ? settings.speechCorrectionWord : "";
-        const speechCustomWords = resolveSpeechVocabulary({
+        const { speechCustomWords, speechHints } = resolveSpeechVocabulary({
           personal: settings.speechCustomWords,
           project: context.projectWords,
           hints: [cue, context.projectName ?? ""],
@@ -152,21 +159,30 @@ export class VoiceInputSession {
           speechLanguage: settings.speechLanguage,
           speechTranslateToEnglish: settings.speechTranslateToEnglish,
           speechCustomWords,
+          ...(speechHints.length > 0 ? { speechHints } : {}),
           speechRemoveFillerWords: settings.speechRemoveFillerWords,
           ...(cue.trim() ? { speechCorrectionWord: cue } : {}),
           speechSilenceFiltering: settings.speechSilenceFiltering,
         };
       },
       getMicrophoneId: chooseRecordingMicrophone,
-      onLevel: (level) => this.publishActivity({ ...this.activity, level }),
+      onLevel: (level: number) => this.publishActivity({ ...this.activity, level }),
       onDurationLimit: () => void this.controller.stop(),
-      onText: (preview) => {
-        if (!this.disposed) this.publishActivity({ ...this.activity, preview });
+      onError: (message: string, code?: VoiceInputErrorCode) => {
+        if (!this.disposed) void this.controller.interruptRecording(message, null, code);
       },
-      onError: (message) => {
-        if (!this.disposed) void this.controller.interruptRecording(message);
-      },
-    });
+    };
+    const platform = key.prepared
+      ? createBrowserVoiceInputPlatform({
+          ...platformInput,
+          prepared: key.prepared,
+          cloudProvider: key.cloudProvider,
+          cloudModel: key.cloudModel,
+          onText: (preview) => {
+            if (!this.disposed) this.publishActivity({ ...this.activity, preview });
+          },
+        })
+      : createAppleSpeechVoiceInputPlatform(platformInput);
     const postProcess: NonNullable<VoiceInputControllerDependencies["postProcess"]> = (
       transcript,
       options,
@@ -181,7 +197,7 @@ export class VoiceInputSession {
         return null;
       if (!preferences.cleanupPrepared)
         return Promise.reject(
-          new Error("The draft's environment is unavailable for transcript cleanup."),
+          new Error(m(msg("The draft's environment is unavailable for transcript cleanup."))),
         );
       return runEnvironmentSpeech(
         postProcessEnvironmentTranscript(
@@ -195,6 +211,7 @@ export class VoiceInputSession {
       ).then((result) => result.text);
     };
     this.controller = new VoiceInputController({
+      resolve: m,
       retryFailedRecording: true,
       recorder: platform.recorder,
       getTranscriber: () => platform.transcriber,
@@ -206,8 +223,8 @@ export class VoiceInputSession {
       onPostProcessingError: () =>
         toastManager.add({
           type: "warning",
-          title: "Transcript cleanup failed",
-          description: "The original transcript was added.",
+          title: m(msg("Transcript cleanup failed")),
+          description: m(msg("The original transcript was added.")),
         }),
       readDraft: (): VoiceDraftSnapshot | null => {
         const target = this.target;
@@ -249,13 +266,17 @@ export class VoiceInputSession {
   readonly getActivity = (): VoiceInputSessionActivity => this.activity;
 
   /** Starts recording into `target`, or does nothing while another draft holds the microphone. */
-  start(target: VoiceInputTarget): Promise<void> {
+  start(
+    target: VoiceInputTarget,
+    onSpeechStatus?: (status: EnvironmentSpeechStatus) => void,
+  ): Promise<void> {
     if (this.disposed) return Promise.resolve();
     const busyElsewhere =
       voiceInputBlocksSubmission(this.controller.currentState) &&
       this.target?.ownerKey !== target.ownerKey;
     if (busyElsewhere) return Promise.resolve();
     this.target = target;
+    this.onSpeechStatus = onSpeechStatus;
     this.publishActivity(SILENT_ACTIVITY);
     this.publish({ ...this.snapshot, target });
     return this.controller.start();
@@ -352,17 +373,20 @@ function subscribeRegistry(listener: () => void): () => void {
 export function useRetainedVoiceInputSession(input: {
   readonly prepared: PreparedConnection | null;
   readonly grantId: string | null;
+  readonly onDevice?: boolean | undefined;
   readonly cloudProvider?: CloudSpeechProvider | undefined;
   readonly cloudModel?: CloudSpeechModelId | undefined;
 }): VoiceInputSession | null {
-  const { prepared, grantId, cloudProvider, cloudModel } = input;
+  const { grantId, cloudProvider, cloudModel } = input;
+  const prepared = input.onDevice ? null : input.prepared;
+  const ready = (input.onDevice === true || prepared !== null) && grantId !== null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains the shared recording session for this destination while mounted
   useEffect(() => {
-    if (!prepared || !grantId || typeof navigator === "undefined") return;
+    if (!ready || !grantId || typeof navigator === "undefined") return;
     return retainVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
-  }, [prepared, grantId, cloudProvider, cloudModel]);
+  }, [ready, prepared, grantId, cloudProvider, cloudModel]);
   return useSyncExternalStore(subscribeRegistry, () =>
-    prepared && grantId ? findSession({ prepared, grantId, cloudProvider, cloudModel }) : null,
+    ready && grantId ? findSession({ prepared, grantId, cloudProvider, cloudModel }) : null,
   );
 }
 
