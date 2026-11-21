@@ -55,6 +55,7 @@ export function useThreadPullNewThread(enabled: boolean) {
 
   const begin = () => {
     "worklet";
+    armedAt.set(null);
     drag.set(keyboard.get() < 0.01 ? "pulling" : "keyboard");
   };
   const update = (next: number) => {
