@@ -7,7 +7,6 @@ import {
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpTaskCancelResult,
-  type OrchestratorMcpThreadReadResult,
   type OrchestratorMcpThreadRun,
   type OrchestratorMcpThreadSendInput,
   type OrchestratorMcpThreadSendResult,
@@ -620,25 +619,22 @@ const make = Effect.gen(function* () {
   ) {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
-    let afterPosition: number | null | undefined = -1;
+    // Linked peers read newest first without a cursor; this scan runs forward.
+    let afterPosition = -1;
     let run: OrchestratorMcpThreadRun | undefined;
     let remainingItems = 0;
     let tailProbed = false;
     while (true) {
-      const read: OrchestratorMcpThreadReadResult = yield* forwarding.readThread(
-        scope,
-        remote.environmentId,
-        {
-          threadId: remote.threadId,
-          view: failed ? "activity" : "messages",
-          limit: 100,
-          runLimit: 50,
-          // Keep the first and expected final activity pages whole. A result on a
-          // middle page then needs an extra text read after the scan.
-          maxCharsPerItem: failed && remainingItems > 100 ? 1 : 20_000,
-          ...(afterPosition === undefined || afterPosition === null ? {} : { afterPosition }),
-        },
-      );
+      const read = yield* forwarding.readThread(scope, remote.environmentId, {
+        threadId: remote.threadId,
+        view: failed ? "activity" : "messages",
+        limit: 100,
+        runLimit: 50,
+        // Keep the first and expected final activity pages whole. A result on a
+        // middle page then needs an extra text read after the scan.
+        maxCharsPerItem: failed && remainingItems > 100 ? 1 : 20_000,
+        afterPosition,
+      });
       run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
       reply =
         read.items.findLast(
@@ -672,7 +668,7 @@ const make = Effect.gen(function* () {
         }
       }
       afterPosition = read.nextPosition;
-      remainingItems = read.thread.itemCount - (afterPosition ?? 0) - 1;
+      remainingItems = read.thread.itemCount - afterPosition - 1;
     }
     reply = error ?? reply;
     const executedModel = run?.executedModel ?? undefined;
