@@ -5,7 +5,8 @@
     "appDelegateSubscribers": [
       "T3WorkspaceOrientationSubscriber",
       "T3MenuDismissTouchGateSubscriber",
-      "T3BackgroundGraceSubscriber"
+      "T3BackgroundGraceSubscriber",
+      "T3RailPocketBlurSubscriber"
     ]
   },
   "android": {
