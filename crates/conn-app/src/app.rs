@@ -7,27 +7,17 @@ use conn_state::{LayoutState, RightPanelTab, ShellState, ThreadState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, KeyBinding, ParentElement as _, Render, StatefulInteractiveElement as _,
-    Styled as _, Window, WindowControlArea, actions, div, px,
+    IntoElement, KeyBinding, ParentElement as _, Render, Styled as _, Window, actions, div, px,
 };
 
 use crate::fixture::demo_shell_state;
 use crate::header::render_chat_header;
-use crate::icons;
 use crate::shell::{CardJoin, inset_card, two_tone_divider};
 use crate::sidebar::rail::render_workspace_rail;
 use crate::sidebar::thread_list::render_thread_sidebar;
 use crate::theme::{apply_kit_theme, hsla};
 
 actions!(conn_app, [ToggleSidebar, ToggleRightPanel, NewThread]);
-
-/// The tabs Conn shows in the right panel's header row.
-const ALL_RIGHT_PANEL_TABS: [RightPanelTab; 4] = [
-    RightPanelTab::Files,
-    RightPanelTab::Diff,
-    RightPanelTab::Terminal,
-    RightPanelTab::Browser,
-];
 
 /// Registers global shell keyboard shortcuts (`Cmd+B` and `Cmd+Alt+B`).
 pub(crate) fn register_keybindings(cx: &mut App) {
@@ -63,6 +53,10 @@ pub(crate) struct ConnApp {
     draft_project: Option<String>,
     /// Runtime mode for the draft, when set (else the project's latest thread's mode).
     draft_runtime_mode: Option<String>,
+    /// Right panel tabs the user has open, in order (Conn's `RightPanelTabs`).
+    right_panel_open_tabs: Vec<RightPanelTab>,
+    right_panel_add_menu_open: bool,
+    right_panel_maximized: bool,
     command_palette: Option<Entity<crate::palette::CommandPalette>>,
     settings_modal: Option<Entity<crate::settings::SettingsModal>>,
     overlay_subscriptions: Vec<gpui_kit::Subscription>,
@@ -151,6 +145,9 @@ impl ConnApp {
             ended_threads: HashSet::new(),
             draft_project: None,
             draft_runtime_mode: None,
+            right_panel_open_tabs: vec![RightPanelTab::Files],
+            right_panel_add_menu_open: false,
+            right_panel_maximized: false,
             command_palette: None,
             settings_modal: None,
             overlay_subscriptions: Vec::new(),
@@ -671,11 +668,32 @@ impl ConnApp {
         tab: RightPanelTab,
         cx: &mut Context<'_, Self>,
     ) {
+        if !self.right_panel_open_tabs.contains(&tab) {
+            self.right_panel_open_tabs.push(tab);
+        }
+        self.right_panel_add_menu_open = false;
         self.layout.right_panel_tab = tab;
         self.layout.right_panel_open = true;
         self.sync_chat(cx);
         self.sync_browser_visibility(cx);
         cx.notify();
+    }
+
+    /// Closes a right panel tab; the last open tab stays.
+    fn close_right_panel_tab(&mut self, tab: RightPanelTab, cx: &mut Context<'_, Self>) {
+        if self.right_panel_open_tabs.len() <= 1 {
+            return;
+        }
+        let Some(pos) = self.right_panel_open_tabs.iter().position(|&t| t == tab) else {
+            return;
+        };
+        self.right_panel_open_tabs.remove(pos);
+        if self.layout.right_panel_tab == tab {
+            let next = self.right_panel_open_tabs[pos.saturating_sub(1)];
+            self.select_right_panel_tab(next, cx);
+        } else {
+            cx.notify();
+        }
     }
 
     /// Toggles the right panel when clicking the already-active tab toggle, or
@@ -781,52 +799,67 @@ impl ConnApp {
     }
 
     fn render_right_panel_column(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let fg = hsla(self.tokens.foreground);
-        let muted = hsla(self.tokens.muted_foreground);
-        let highlight = hsla(self.tokens.shell_highlight);
-
-        let mut tab_items = Vec::with_capacity(ALL_RIGHT_PANEL_TABS.len());
-        for (idx, tab) in ALL_RIGHT_PANEL_TABS.into_iter().enumerate() {
-            let active = self.layout.right_panel_tab == tab;
-            let text_color = if active { fg } else { muted };
-            let mut item = div()
-                .id(("right-panel-tab", idx))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.0))
-                .h(px(28.0))
-                .px(px(8.0))
-                .rounded(px(6.0))
-                .cursor_pointer()
-                .text_size(px(14.0))
-                .text_color(text_color)
-                .hover(move |s| s.bg(highlight))
-                .on_click(cx.listener(move |app, _event, _window, cx| {
-                    app.select_right_panel_tab(tab, cx);
-                }))
-                .child(icons::chrome(icons::right_panel_tab_icon(tab), text_color))
-                .child(right_panel_tab_label(tab));
-
-            if active {
-                item = item.bg(highlight).font_weight(gpui_kit::FontWeight::MEDIUM);
-            }
-
-            tab_items.push(item);
-        }
-
-        let header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(4.0))
-            .w_full()
-            .h(px(self.geometry.header_height_px))
-            .flex_shrink_0()
-            .px(px(12.0))
-            .overflow_hidden()
-            .window_control_area(WindowControlArea::Drag)
-            .children(tab_items);
+        use crate::panels::header::{PanelHeaderCallbacks, PanelHeaderProps, render_panel_header};
+        use std::rc::Rc;
+        let app = cx.entity();
+        let header = render_panel_header(
+            PanelHeaderProps {
+                open_tabs: &self.right_panel_open_tabs,
+                active_tab: self.layout.right_panel_tab,
+                maximized: self.right_panel_maximized,
+                bottom_dock_open: false,
+                panel_open: self.layout.right_panel_open,
+                add_menu_open: self.right_panel_add_menu_open,
+                tokens: &self.tokens,
+            },
+            PanelHeaderCallbacks {
+                on_select_tab: {
+                    let app = app.clone();
+                    Rc::new(move |tab, _, cx| {
+                        app.update(cx, |this, cx| this.select_right_panel_tab(tab, cx));
+                    })
+                },
+                on_close_tab: Some({
+                    let app = app.clone();
+                    Rc::new(move |tab, _, cx| {
+                        app.update(cx, |this, cx| this.close_right_panel_tab(tab, cx));
+                    })
+                }),
+                on_toggle_add_menu: {
+                    let app = app.clone();
+                    Rc::new(move |_, cx| {
+                        app.update(cx, |this, cx| {
+                            this.right_panel_add_menu_open = !this.right_panel_add_menu_open;
+                            cx.notify();
+                        });
+                    })
+                },
+                on_add_tab: {
+                    let app = app.clone();
+                    Rc::new(move |tab, _, cx| {
+                        app.update(cx, |this, cx| this.select_right_panel_tab(tab, cx));
+                    })
+                },
+                on_toggle_maximize: {
+                    let app = app.clone();
+                    Rc::new(move |_, cx| {
+                        app.update(cx, |this, cx| {
+                            this.right_panel_maximized = !this.right_panel_maximized;
+                            cx.notify();
+                        });
+                    })
+                },
+                on_toggle_dock_bottom: Rc::new(|_, _| {
+                    eprintln!("right panel: dock to bottom is not implemented yet");
+                }),
+                on_toggle_panel: Rc::new(move |_, cx| {
+                    app.update(cx, |this, cx| {
+                        this.right_panel_add_menu_open = false;
+                        this.toggle_right_panel(cx);
+                    });
+                }),
+            },
+        );
 
         let card = inset_card(
             &self.tokens,
@@ -838,14 +871,13 @@ impl ConnApp {
         )
         .child(self.right_panel.clone());
 
-        div()
-            .flex()
-            .flex_col()
-            .w(px(self.layout.right_panel_width))
-            .h_full()
-            .flex_shrink_0()
-            .child(header)
-            .child(card)
+        let column = div().flex().flex_col().h_full();
+        let column = if self.right_panel_maximized {
+            column.flex_1().min_w_0()
+        } else {
+            column.w(px(self.layout.right_panel_width)).flex_shrink_0()
+        };
+        column.child(header).child(card)
     }
 }
 
@@ -965,12 +997,16 @@ impl Render for ConnApp {
                 .child(two_tone_divider(&self.tokens, &self.geometry));
         }
 
-        root = root.child(self.render_chat_column(cx));
+        let maximized = self.layout.right_panel_open && self.right_panel_maximized;
+        if !maximized {
+            root = root.child(self.render_chat_column(cx));
+        }
 
         if self.layout.right_panel_open {
-            root = root
-                .child(two_tone_divider(&self.tokens, &self.geometry))
-                .child(self.render_right_panel_column(cx));
+            if !maximized {
+                root = root.child(two_tone_divider(&self.tokens, &self.geometry));
+            }
+            root = root.child(self.render_right_panel_column(cx));
         }
 
         if let Some(modal) = &self.settings_modal {
@@ -981,17 +1017,5 @@ impl Render for ConnApp {
         }
 
         root
-    }
-}
-
-fn right_panel_tab_label(tab: RightPanelTab) -> &'static str {
-    match tab {
-        RightPanelTab::Files => "Files",
-        RightPanelTab::Diff => "Diff",
-        RightPanelTab::Terminal => "Terminal",
-        RightPanelTab::Browser => "Browser",
-        RightPanelTab::Database => "Database",
-        RightPanelTab::Mcp => "MCP",
-        RightPanelTab::Device => "Device",
     }
 }

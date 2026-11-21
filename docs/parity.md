@@ -16,45 +16,32 @@ every known gap. Update it as gaps close; never mark a surface done without a si
 - **Theme:** Nick's dark theme is Dark Mono (built in, the default); light is T3 Code Light.
 - **Ours:** `scripts/run-app.sh` + `scripts/automate.py` screenshot at the same window size.
 
-## Gaps (2026-11-21, from lab vs `.shots/parity/ours-dark.png`)
+## Gaps (updated 2026-11-21, after the parity pass; compare `.shots/parity/ours2-*.png` with `.shots/ref-lab/`)
 
-### Shell and chrome
-- Chat header: Conn has a document/notes button at the right of the chat header; ours has a
-  ToolbarGroup of four panel toggles there instead.
-- Right panel header: Conn shows open panel tabs (`Tasks`, ...) with a `+` add-panel menu and,
-  at the far right, expand, dock-to-bottom and toggle buttons. Ours shows fixed Files, Diff,
-  Terminal, Browser tabs.
-- Rail: Conn has Usage, Pull requests and Settings at the bottom; ours lacks Pull requests.
-  Rail tiles: Conn shows only the active-workspace tile and `+` when there are no saved workspaces.
+### Look
+- Provider icons: Conn shows provider logos (Claude starburst, OpenAI knot); superheroicons has
+  none, so rows and the composer use generic concepts.
+- Status dot on the project badge approximates Conn's radial cutout with a ring.
+- "Worked for <duration>": durations need run/item timestamps in `conn-state`.
+- Orbit task cards in the timeline; changed-files summary.
 
-### Sidebar
-- Thread rows: Conn's row is two lines: project monogram + title, then provider icon · project ·
-  branch · age (muted). Ours is a three-line card.
-- Status glyphs (plan/idea bulb, working, approval) placed like Conn's.
+### Buttons that exist but do nothing yet
+- Sidebar: Search field, Filter, Add project. Rail: `+` (workspace), Usage, Pull requests.
+- Chat header: thread details (notes). Right panel: dock to bottom.
+- Composer: `/` commands are listed but not executed; microphone has no dictation.
 
-### Timeline
-- "Worked for X" collapsible work group with a divider; tool rows grouped inside it.
-- Task cards (Orbit tasks) and their meta line.
-- Chat lane width and spacing (Conn's lane is narrower; bubble and text sizes).
-
-### Composer
-- Footer: provider icon + model name, microphone, send on the right; Conn has no model chip on
-  the left.
-- Model/effort picker, attachments, `/` commands, `@` files, `$` skills menus.
-
-### Features missing entirely
-- Thread search, settle/archive, rename. (New thread works via Cmd+N; the sidebar compose
-  button still needs wiring to `ConnApp::start_new_thread`.)
-- Approve/deny approval cards (`runtime-request.respond`).
-- Add project; workspaces.
-- Tasks, Pull requests, Usage surfaces.
+### Features missing
+- Thread search, settle/archive, rename; add project; workspaces.
+- Tasks, Pull requests, Usage surfaces; Database/MCP/Device panels.
+- Diff scopes (uncommitted, latest turn, commits), split diff, resizable splits; terminal tabs/splits.
 
 ### Built, not yet verified live
-- Approve/deny (`runtime-request.respond`): `ConnApp::respond_approval`, request ids kept in
-  `ThreadState::approval_requests`, automation `approve`/`deny`. The disposable server's Claude
-  provider wrote a file in `approval-required` mode without asking, so no live approval was
-  seen yet. The timeline's approval card buttons still need wiring to it.
+- Approvals: Approve/Decline on approval rows dispatch `runtime-request.respond`. The dev server's
+  Claude provider never asked for approval in `approval-required` mode, so no live approval yet.
+- Model picker (`server.getConfig` providers; selection dispatches `thread.model-selection.set`)
+  and `/`, `@` menus: not clicked through yet (automation has no click command).
 
-### Fixed
-- Browser flicker on every click (visibility was guessed from repaints; now explicit).
-- Dark Mono theme added and made default.
+### Done in this pass
+- Sidebar rows, rail, chat header, timeline, composer and right panel header rebuilt against
+  the lab's code and captures; Dark Mono default theme; browser flicker fixed; new thread
+  (Cmd+N and the sidebar compose button) via `orchestration.launchThread`.

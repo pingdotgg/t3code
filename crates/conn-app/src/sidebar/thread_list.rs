@@ -155,7 +155,7 @@ pub(crate) fn render_thread_sidebar(
         "sidebar-new-thread",
         IconName::SquarePen,
         tokens,
-        cx.listener(|_app, _event, _window, _cx| {}),
+        cx.listener(|app, _event, _window, cx| app.start_new_thread(None, cx)),
     ));
 
     let top_row = div()
