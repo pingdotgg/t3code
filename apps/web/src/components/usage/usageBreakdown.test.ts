@@ -1,7 +1,34 @@
-import type { ModelTotals } from "@t3tools/shared/usageMerge";
+import type { DailyTotals, ModelTotals } from "@t3tools/shared/usageMerge";
 import { describe, expect, it } from "vite-plus/test";
 
-import { cacheHitRate, costPerMillionTokens } from "./usageBreakdown";
+import { cacheHitRate, costPerMillionTokens, timeBreakdownMetric } from "./usageBreakdown";
+
+describe("time breakdown metric", () => {
+  const period: DailyTotals = {
+    day: "2026-10-22",
+    costUsd: 3.5,
+    totalTokens: 2_500_000,
+    byProvider: new Map([["codex", { costUsd: 3.5, totalTokens: 2_500_000 }]]),
+  };
+
+  it.each([
+    {
+      metric: "cost",
+      value: "$3.50",
+      missing: "$0.00",
+      secondaryLabel: "Tokens",
+      secondary: "2.50M",
+    },
+    { metric: "tokens", value: "2.50M", missing: "0", secondaryLabel: "Cost", secondary: "$3.50" },
+  ] as const)("shows $metric figures with the other metric trailing", (row) => {
+    const figures = timeBreakdownMetric(row.metric);
+    expect(figures.formatValue(period.byProvider.get("codex"))).toBe(row.value);
+    expect(figures.formatValue(period.byProvider.get("claude"))).toBe(row.missing);
+    expect(figures.formatValue(period)).toBe(row.value);
+    expect(figures.secondaryLabel).toBe(row.secondaryLabel);
+    expect(figures.formatSecondaryValue(period)).toBe(row.secondary);
+  });
+});
 
 const model = (
   name: string,

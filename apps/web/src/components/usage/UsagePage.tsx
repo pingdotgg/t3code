@@ -87,6 +87,7 @@ import {
   modelShare,
   sortModelsByTokens,
   speedCostSegments,
+  timeBreakdownMetric,
   tokenTypeSegments,
 } from "./usageBreakdown";
 import {
@@ -661,6 +662,7 @@ function UsageOverview({
   const breakdownPeriods: readonly (DailyTotals | HourlyTotals)[] = (
     shownHourly ? merged.hourly : merged.daily
   ).toReversed();
+  const timeMetric = timeBreakdownMetric(metric, locale);
   const breakdownModels =
     breakdown === "model" && metric === "tokens"
       ? sortModelsByTokens(merged.models)
@@ -1023,7 +1025,7 @@ function UsageOverview({
                     <T>Total</T>
                   </th>
                   <th className="py-2 pr-2 pl-4 text-right font-normal">
-                    <T>Tokens</T>
+                    {m(timeMetric.secondaryLabel)}
                   </th>
                 </tr>
               </thead>
@@ -1056,7 +1058,7 @@ function UsageOverview({
                             figureClass(loadingProviders.has(provider)),
                           )}
                         >
-                          {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0, locale)}
+                          {timeMetric.formatValue(period.byProvider.get(provider))}
                         </td>
                       ))}
                       <td
@@ -1065,7 +1067,7 @@ function UsageOverview({
                           figureClass(loadingPartial),
                         )}
                       >
-                        {formatUsd(period.costUsd, locale)}
+                        {timeMetric.formatValue(period)}
                       </td>
                       <td
                         className={cn(
@@ -1073,7 +1075,7 @@ function UsageOverview({
                           figureClass(loadingPartial),
                         )}
                       >
-                        {formatTokens(period.totalTokens)}
+                        {timeMetric.formatSecondaryValue(period)}
                       </td>
                     </tr>
                   ))
