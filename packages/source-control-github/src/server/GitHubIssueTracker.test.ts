@@ -416,6 +416,21 @@ describe("GitHubIssueTracker", () => {
       expect(seen[0]).toMatchObject({
         q: 'is:issue repo:acme/web is:open label:"needs \\"repro\\"" assignee:"theo" sort:created-desc',
       });
+      // Enterprise Managed User logins are always `handle_shortcode`.
+      yield* api
+        .listIssues({
+          cwd: "/w",
+          host: "github.com",
+          scope: "alice_acme/widgets",
+          state: "open",
+          involvement: "all",
+          sort: "created",
+          limit: 10,
+        })
+        .pipe(Effect.exit);
+      expect(seen[1]).toMatchObject({
+        q: "is:issue repo:alice_acme/widgets is:open sort:created-desc",
+      });
     }),
   );
 
