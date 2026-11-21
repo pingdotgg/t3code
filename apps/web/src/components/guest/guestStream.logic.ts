@@ -154,7 +154,7 @@ export function unplacedGuestMessages(
     .toSorted((a, b) => a.submittedAt.localeCompare(b.submittedAt));
 }
 
-/** "23h left" or "5m left", rounded down (clamped to "1m left" under a minute), for the guest page header. */
+/** "23h left" or "5m left", rounded down but never below "1m left" before expiry. */
 export function formatGuestExpiry(
   expiresAt: string,
   nowMs: number,

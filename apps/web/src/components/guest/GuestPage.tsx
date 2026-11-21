@@ -467,9 +467,7 @@ function GuestThread({
 }
 
 function ExpiryLabel({ expiresAt }: { readonly expiresAt: string }) {
-  const parsedExpiresAt = Date.parse(expiresAt);
-  const expiresAtMs = Number.isFinite(parsedExpiresAt) ? parsedExpiresAt : null;
-  const expired = useDeadlinePassed(expiresAtMs);
+  const expired = useDeadlinePassed(Date.parse(expiresAt));
   const nowMinute = useNowMinute();
   const m = useMessages();
   return (

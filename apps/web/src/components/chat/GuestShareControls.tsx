@@ -218,9 +218,7 @@ export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedT
 
 function GuestShareStatus({ share }: { readonly share: ThreadGuestShare }) {
   const gt = useGT();
-  const parsedExpiresAt = Date.parse(share.expiresAt);
-  const expiresAtMs = Number.isFinite(parsedExpiresAt) ? parsedExpiresAt : null;
-  const expired = useDeadlinePassed(expiresAtMs);
+  const expired = useDeadlinePassed(Date.parse(share.expiresAt));
   // The share stays on the thread after it expires, until the owner clears it.
   if (expired) {
     return (

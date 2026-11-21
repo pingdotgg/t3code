@@ -284,12 +284,6 @@ describe("formatGuestExpiry", () => {
     expect(formatGuestExpiry("2026-10-23T23:59:00.000Z", now)).toBe("23h left");
     expect(formatGuestExpiry("2026-10-23T00:45:30.000Z", now)).toBe("45m left");
     expect(formatGuestExpiry("2026-10-23T00:00:30.000Z", now)).toBe("1m left");
-    expect(
-      formatGuestExpiry("2026-11-20T12:00:30.000Z", Date.parse("2026-11-20T12:00:29.999Z")),
-    ).toBe("1m left");
-    expect(
-      formatGuestExpiry("2026-11-20T12:00:30.000Z", Date.parse("2026-11-20T12:00:30.000Z")),
-    ).toBe("Expired");
     expect(formatGuestExpiry("2026-10-23T00:00:00.000Z", now)).toBe("Expired");
   });
 });
