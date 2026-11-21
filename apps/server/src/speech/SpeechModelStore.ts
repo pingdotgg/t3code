@@ -20,7 +20,9 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "../os-jank.ts";
 import type { SpeechModel } from "./model.ts";
 
-type ModelFile = Pick<SpeechModel, "id" | "filename" | "revision" | "size" | "sha256">;
+type ModelFile = Pick<SpeechModel, "id" | "filename" | "revision" | "size" | "sha256"> & {
+  readonly sourceFilename?: string;
+};
 
 class SpeechModelDownloadError extends Schema.TaggedError<SpeechModelDownloadError>()(
   "SpeechModelDownloadError",
@@ -72,7 +74,7 @@ export class SpeechModelStore extends Context.Service<
 
 const DOWNLOAD_ATTEMPTS = 3;
 const PARTIAL_FILENAME =
-  /\.gguf\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.part$/i;
+  /\.(?:gguf|onnx(?:\.json)?|modelcard)\.[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.part$/i;
 
 const LINK_SEARCH_DEPTH = 5;
 const LINK_SEARCH_ENTRIES = 5_000;
@@ -109,7 +111,7 @@ const make = Effect.gen(function* () {
       `models--${model.id.replace("/", "--")}`,
       "snapshots",
       model.revision,
-      model.filename,
+      model.sourceFilename ?? model.filename,
     ),
     ...appDataDirectories.map((appData) =>
       path.join(appData, "com.pais.handy", "models", model.filename),
@@ -297,7 +299,7 @@ const make = Effect.gen(function* () {
         if (linked.length > 0) return finalPath;
       }
       const partialPath = `${finalPath}.${yield* random.uuidV4()}.part`;
-      const url = `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.filename}`;
+      const url = `https://huggingface.co/${model.id}/resolve/${model.revision}/${model.sourceFilename ?? model.filename}`;
       return yield* Effect.gen(function* () {
         for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
           const offset = Number((yield* statFile(partialPath))?.size ?? 0);

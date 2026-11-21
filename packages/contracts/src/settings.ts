@@ -62,6 +62,10 @@ import {
   SpeechLanguage,
   SpeechModelUnloadTimeout,
   SpeechPostProcessingPromptSettings,
+  SpeechOutputSettings,
+  SpeechOutputDestination,
+  SpeechPlaybackRate,
+  DEFAULT_SPEECH_OUTPUT_SETTINGS,
 } from "./speech.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
@@ -410,6 +414,10 @@ export const VoiceTranscriptionDestination = Schema.Union([
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
+  speechPlaybackRate: SpeechPlaybackRate.pipe(Schema.withDecodingDefault(Effect.succeed(1))),
+  speechOutputDestination: Schema.NullOr(SpeechOutputDestination).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1208,6 +1216,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
   "speechProjectCustomWords",
+  "speechPlaybackDestination",
+  "speechPlaybackRate",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1219,6 +1229,8 @@ export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOver
 /** Absent keys inherit; null is a value for nullable settings.
  * providerInstances overrides fields per instance; other keys replace the whole setting. */
 export const ProjectSettingsOverrides = Schema.Struct({
+  speechPlaybackDestination: Schema.optionalKey(Schema.NullOr(SpeechOutputDestination)),
+  speechPlaybackRate: Schema.optionalKey(SpeechPlaybackRate),
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
@@ -1276,6 +1288,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   "reviewGuideModelSelection",
   "pullRequestMergeMethod",
   "sidebarAutoSettleAfterDays",
+  "speechPlaybackDestination",
 ]);
 
 /** Reclaimable bytes from which the offline `t3 doctor` repair is worth suggesting. */
@@ -1410,6 +1423,11 @@ export const ServerSettings = Schema.Struct({
   enablePreviewTunnel: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
+  ),
+  speechPlaybackDestination: Schema.optionalKey(Schema.NullOr(SpeechOutputDestination)),
+  speechPlaybackRate: Schema.optionalKey(SpeechPlaybackRate),
+  speechOutput: SpeechOutputSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SPEECH_OUTPUT_SETTINGS)),
   ),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
@@ -1878,6 +1896,18 @@ export const ServerSettingsPatch = Schema.Struct({
       openrouter: Schema.optionalKey(SettingsSecretValue),
     }),
   ),
+  speechPlaybackDestination: Schema.optionalKey(Schema.NullOr(SpeechOutputDestination)),
+  speechPlaybackRate: Schema.optionalKey(SpeechPlaybackRate),
+  speechOutput: Schema.optionalKey(
+    Schema.Struct({
+      elevenLabsApiKey: Schema.optionalKey(SettingsSecretValue),
+      elevenLabsVoiceId: Schema.optionalKey(
+        Schema.toType(SpeechOutputSettings.fields.elevenLabsVoiceId),
+      ),
+      piperVoiceId: Schema.optionalKey(Schema.toType(SpeechOutputSettings.fields.piperVoiceId)),
+      voice: Schema.optionalKey(SpeechOutputSettings.fields.voice),
+    }),
+  ),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
@@ -2129,6 +2159,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  speechPlaybackRate: Schema.optionalKey(SpeechPlaybackRate),
+  speechOutputDestination: Schema.optionalKey(Schema.NullOr(SpeechOutputDestination)),
   voiceMicrophone: Schema.optionalKey(Schema.String),
   voiceMicrophones: Schema.optionalKey(Schema.Array(VoiceMicrophoneEntry)),
   voiceShortcutMode: Schema.optionalKey(VoiceShortcutMode),

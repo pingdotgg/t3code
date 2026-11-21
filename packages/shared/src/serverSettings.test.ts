@@ -1,5 +1,7 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  type SpeechOutputDestination,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -91,6 +93,31 @@ describe("fallbackTextGenerationModelSelection", () => {
 });
 
 describe("serverSettings helpers", () => {
+  it("replaces speech destinations without carrying a voice across engines and preserves unrelated patches", () => {
+    const environmentId = EnvironmentId.make("speech");
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      speechPlaybackDestination: { environmentId, engine: "piper", voice: "pt_BR-faber-medium" },
+    });
+    const destinations: readonly (SpeechOutputDestination | null)[] = [
+      { environmentId, engine: "openai" },
+      { environmentId: null, engine: "system" },
+      { environmentId, engine: "openai", voice: null },
+      null,
+    ];
+    for (const destination of destinations) {
+      const patch = decodeServerSettingsPatch({ speechPlaybackDestination: destination });
+      expect(applyServerSettingsPatch(current, patch).speechPlaybackDestination).toEqual(
+        destination,
+      );
+    }
+    expect(
+      applyServerSettingsPatch(current, { speechPlaybackRate: 1.5 }).speechPlaybackDestination,
+    ).toEqual(current.speechPlaybackDestination);
+    expect(
+      applyServerSettingsPatch(current, { speechOutput: { elevenLabsVoiceId: "new-voice" } })
+        .speechOutput,
+    ).toEqual({ ...current.speechOutput, elevenLabsVoiceId: "new-voice" });
+  });
   it("translates a shipped client's idle compaction switch into a mode", () => {
     const off = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { idleCompaction: "off" });
     expect([off.idleCompaction, off.compactIdleThreads]).toEqual(["off", false]);

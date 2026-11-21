@@ -137,6 +137,17 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
     const requestsBeforeReuse = h.requests.length;
     expect(yield* h.store.download(h.model)).toBe(installed);
     expect(h.requests).toHaveLength(requestsBeforeReuse);
+    const voice = {
+      ...h.model,
+      filename: "piper-voice.onnx",
+      sourceFilename: "pt/pt_BR/faber/medium/voice.onnx",
+    };
+    const voicePath = yield* h.store.download(voice);
+    expect(voicePath).toBe(`${h.directory}/piper-voice.onnx`);
+    expect(h.requests.at(-1)?.url).toBe(
+      `https://huggingface.co/${voice.id}/resolve/${voice.revision}/${voice.sourceFilename}`,
+    );
+    expect(yield* h.store.installedPath(voice)).toBe(voicePath);
   }).pipe(Effect.provide(dependencies)),
 );
 
@@ -162,6 +173,11 @@ it.effect("cleans only download partials on cancellation or restart", () =>
     expect([...(yield* h.fs.readFile(h.stale))]).toEqual([...new Uint8Array(bytes.length)]);
     const orphan = `${h.stale}.f660de6c-e172-4146-8ffe-d3c32eb48cd4.part`;
     yield* h.fs.writeFile(orphan, bytes.subarray(0, SPLIT));
+    for (const extension of ["onnx", "onnx.json", "modelcard"])
+      yield* h.fs.writeFile(
+        `${h.directory}/voice.${extension}.f660de6c-e172-4146-8ffe-d3c32eb48cd4.part`,
+        bytes.subarray(0, SPLIT),
+      );
     yield* h.fs.writeFileString(`${h.stale}.notes.part`, "not a download");
     yield* h.openStore;
     expect((yield* h.fs.readDirectory(h.directory)).sort()).toEqual([

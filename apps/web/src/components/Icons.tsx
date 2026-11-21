@@ -411,6 +411,14 @@ export const Zed: Icon = (props) => {
   );
 };
 
+// Official symbol: https://elevenlabs.io/brand
+export const ElevenLabs: Icon = (props) => (
+  <svg viewBox="288 288 300 300" fill="currentColor" {...props}>
+    <path d="M468 292H528V584H468V292Z" />
+    <path d="M348 292H408V584H348V292Z" />
+  </svg>
+);
+
 export const OpenAI: Icon = ({ className, ...props }) => (
   <svg
     {...props}

@@ -1,3 +1,4 @@
+import { ResponseSpeechButton } from "../../speech/ResponseSpeechButton";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -257,6 +258,13 @@ function AssistantMessageMeta({
       />
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
+      ) : null}
+      {!message.streaming && ctx.threadRef ? (
+        <ResponseSpeechButton
+          environmentId={ctx.threadRef.environmentId}
+          owner={`${ctx.routeThreadKey}:${message.id}`}
+          text={message.text}
+        />
       ) : null}
       {!message.streaming && projectedItem ? (
         <AssistantReplyButton message={message} itemId={projectedItem.sourceItemId} />

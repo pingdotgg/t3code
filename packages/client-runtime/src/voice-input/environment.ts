@@ -2,12 +2,14 @@ import { encodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import { CloudSpeechError, SPEECH_STREAM_PATH } from "@t3tools/contracts";
+import { CloudSpeechError, SpeechSynthesisError, SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import type {
   CloudSpeechModelId,
   CloudSpeechProvider,
   EnvironmentSpeechModelDownload,
   SettingsSecretValue,
+  SpeechSynthesisRequest,
+  ElevenLabsVoicePageRequest,
   SpeechAcceleration,
   SpeechModelUnloadTimeout,
   SpeechTranscriptionOptions,
@@ -26,6 +28,7 @@ import { VoiceTranscriptionError } from "./transcription.ts";
 
 const INFERENCE_OR_DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
 const isCloudSpeechError = Schema.is(CloudSpeechError);
+const isSpeechSynthesisError = Schema.is(SpeechSynthesisError);
 type EnvironmentApiClient<G extends "voice" | "auth"> = Effect.Success<
   ReturnType<typeof makeEnvironmentHttpApiGroupClient<G>>
 >;
@@ -330,4 +333,124 @@ export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, model
     method: "POST",
     path: (urls) => urls.removeModel(),
     run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
+  });
+
+export const synthesizeEnvironmentSpeech = (
+  prepared: PreparedConnection,
+  payload: SpeechSynthesisRequest,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: 130_000,
+    path: (urls) => urls.synthesize(),
+    run: ({ client, headers }) => client.synthesize({ headers, payload }),
+  }).pipe(
+    Effect.mapError((error) =>
+      error._tag === "RemoteEnvironmentAuthFetchError" && isSpeechSynthesisError(error.cause)
+        ? error.cause
+        : error,
+    ),
+  );
+
+export const getElevenLabsSpeechVoices = (
+  prepared: PreparedConnection,
+  payload: ElevenLabsVoicePageRequest = {},
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.elevenLabsVoices(),
+    run: ({ client, headers }) => client.elevenLabsVoices({ headers, payload }),
+  }).pipe(
+    Effect.mapError((error) =>
+      error._tag === "RemoteEnvironmentAuthFetchError" && isSpeechSynthesisError(error.cause)
+        ? error.cause
+        : error,
+    ),
+  );
+
+export const getEnvironmentSpeechVoices = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.synthesisVoices(),
+    run: ({ client, headers }) => client.synthesisVoices({ headers }),
+  });
+
+export const downloadEnvironmentSpeechVoice = (prepared: PreparedConnection, voiceId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.downloadSynthesisVoice(),
+    run: ({ client, headers }) => client.downloadSynthesisVoice({ headers, payload: { voiceId } }),
+  });
+
+export const cancelEnvironmentSpeechVoiceDownload = (
+  prepared: PreparedConnection,
+  voiceId: string,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.cancelSynthesisVoiceDownload(),
+    run: ({ client, headers }) =>
+      client.cancelSynthesisVoiceDownload({ headers, payload: { voiceId } }),
+  });
+
+export const selectEnvironmentSpeechVoice = (prepared: PreparedConnection, voiceId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.selectSynthesisVoice(),
+    run: ({ client, headers }) => client.selectSynthesisVoice({ headers, payload: { voiceId } }),
+  });
+
+export const removeEnvironmentSpeechVoice = (prepared: PreparedConnection, voiceId: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.removeSynthesisVoice(),
+    run: ({ client, headers }) => client.removeSynthesisVoice({ headers, payload: { voiceId } }),
+  });
+
+export const installEnvironmentSpeechRuntime = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.installSynthesisRuntime(),
+    run: ({ client, headers }) => client.installSynthesisRuntime({ headers }),
+  });
+
+export const cancelEnvironmentSpeechRuntime = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.cancelSynthesisRuntime(),
+    run: ({ client, headers }) => client.cancelSynthesisRuntime({ headers }),
+  });
+
+export const removeEnvironmentSpeechRuntime = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.removeSynthesisRuntime(),
+    run: ({ client, headers }) => client.removeSynthesisRuntime({ headers }),
   });

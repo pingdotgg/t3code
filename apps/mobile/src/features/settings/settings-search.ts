@@ -59,6 +59,18 @@ const SETTINGS_SEARCH_TERMS = {
     msg("new line", { $context: "settings search keyword" }),
     msg("hardware keyboard", { $context: "settings search keyword" }),
   ],
+  SettingsSpeech: [
+    "tts",
+    msg("text to speech", { $context: "settings search keyword" }),
+    msg("read aloud", { $context: "settings search keyword" }),
+    msg("response playback", { $context: "settings search keyword" }),
+    msg("playback speed", { $context: "settings search keyword" }),
+    "Piper",
+    "OpenAI",
+    "ElevenLabs",
+    msg("voice", { $context: "settings search keyword" }),
+    msg("speaker", { $context: "settings search keyword" }),
+  ],
   SettingsVoice: [
     msg("microphone", { $context: "settings search keyword" }),
     msg("dictation", { $context: "settings search keyword" }),

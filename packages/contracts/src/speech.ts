@@ -1,7 +1,8 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { SettingsSecretValue } from "./settingsSecretValue.ts";
+import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isMaxLength(4096),
@@ -364,3 +365,142 @@ export const SpeechStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
+
+export const SpeechPlaybackRate = Schema.Literals([0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]);
+export type SpeechPlaybackRate = typeof SpeechPlaybackRate.Type;
+
+export const SpeechOutputSettings = Schema.Struct({
+  elevenLabsApiKey: SettingsSecretValue.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  elevenLabsVoiceId: Schema.String.check(
+    Schema.isMaxLength(128),
+    Schema.isPattern(/^[a-zA-Z0-9_-]+$/),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed("JBFqnCBsd6RMkjVDRZzb"))),
+  piperVoiceId: Schema.String.check(Schema.isMaxLength(128)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  voice: Schema.Literals(["alloy", "coral", "nova", "onyx", "sage", "shimmer"]),
+});
+export type SpeechOutputSettings = typeof SpeechOutputSettings.Type;
+export const DEFAULT_SPEECH_OUTPUT_SETTINGS: SpeechOutputSettings = {
+  elevenLabsApiKey: "",
+  elevenLabsVoiceId: "JBFqnCBsd6RMkjVDRZzb",
+  piperVoiceId: "",
+  voice: "coral",
+};
+
+export const SpeechSynthesisRequest = Schema.Struct({
+  text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
+  engine: Schema.Literals(["piper", "openai", "elevenlabs"]),
+  voice: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256))),
+});
+export type SpeechSynthesisRequest = typeof SpeechSynthesisRequest.Type;
+
+const SpeechVoicePreference = Schema.optionalKey(
+  Schema.NullOr(Schema.String.check(Schema.isMaxLength(256))),
+);
+export const SpeechOutputDestination = Schema.Union([
+  Schema.Struct({
+    environmentId: EnvironmentId,
+    engine: SpeechSynthesisRequest.fields.engine,
+    voice: SpeechVoicePreference,
+  }),
+  Schema.Struct({
+    environmentId: Schema.Null,
+    engine: Schema.Literal("system"),
+    voice: SpeechVoicePreference,
+  }),
+]);
+export type SpeechOutputDestination = typeof SpeechOutputDestination.Type;
+
+export const SpeechSynthesisProvider = Schema.Struct({
+  id: SpeechSynthesisRequest.fields.engine,
+  name: Schema.String,
+  configured: Schema.Boolean,
+  defaultVoice: Schema.String,
+  voices: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+  model: Schema.optionalKey(Schema.String),
+});
+export type SpeechSynthesisProvider = typeof SpeechSynthesisProvider.Type;
+
+export const PiperRuntimeStatus = Schema.Struct({
+  state: Schema.Literals(["unsupported", "not-installed", "installing", "ready"]),
+  platform: Schema.String,
+  reason: Schema.optionalKey(Schema.String),
+});
+export type PiperRuntimeStatus = typeof PiperRuntimeStatus.Type;
+
+export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisError>()(
+  "SpeechSynthesisError",
+  {
+    reason: Schema.Literals([
+      "not-configured",
+      "configuration-changed",
+      "invalid-text",
+      "unavailable",
+      "invalid-audio",
+      "rejected-key",
+      "rate-limit",
+      "voice-not-found",
+      "voice-not-installed",
+      "busy",
+    ]),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "rejected-key":
+        return "The speech provider rejected this API key. Check its permissions and billing.";
+      case "rate-limit":
+        return "The speech provider reached a usage limit. Check your quota or try again later.";
+      case "not-configured":
+        return "Configure response playback in Settings → Speech on this environment first.";
+      case "configuration-changed":
+        return "The speech configuration changed. Start playback again.";
+      case "invalid-text":
+        return "This response has no readable text or exceeds the speech limit.";
+      case "invalid-audio":
+        return "The speech engine returned invalid audio.";
+      case "voice-not-found":
+        return "This voice is not in the speech catalog.";
+      case "voice-not-installed":
+        return "Download this voice in Settings → Speech before using it.";
+      case "busy":
+        return "Another voice download or playback operation is running. Try again when it finishes.";
+      case "unavailable":
+        return "Speech synthesis failed. Check the engine and voice in Settings → Speech.";
+    }
+  }
+}
+
+export const ElevenLabsVoicePageRequest = Schema.Struct({
+  pageToken: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(4096))),
+});
+export type ElevenLabsVoicePageRequest = typeof ElevenLabsVoicePageRequest.Type;
+export const ElevenLabsVoicePage = Schema.Struct({
+  voices: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+  nextPageToken: Schema.optionalKey(Schema.String),
+});
+export type ElevenLabsVoicePage = typeof ElevenLabsVoicePage.Type;
+
+export const SpeechSynthesisVoice = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  language: Schema.String,
+  languageName: Schema.String,
+  quality: Schema.String,
+  size: Schema.Number,
+  modelCardUrl: Schema.String,
+  active: Schema.Boolean,
+  state: Schema.Literals(["downloadable", "downloading", "verifying", "installed"]),
+  downloaded: Schema.optionalKey(Schema.Number),
+});
+export type SpeechSynthesisVoice = typeof SpeechSynthesisVoice.Type;
+export const SpeechSynthesisVoices = Schema.Struct({
+  voices: Schema.Array(SpeechSynthesisVoice),
+  runtime: Schema.optionalKey(PiperRuntimeStatus),
+  providers: Schema.optionalKey(Schema.Array(SpeechSynthesisProvider)),
+});
+export type SpeechSynthesisVoices = typeof SpeechSynthesisVoices.Type;
+export const SpeechSynthesisVoiceRequest = Schema.Struct({
+  voiceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+});

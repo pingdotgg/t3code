@@ -1,3 +1,4 @@
+import { ResponseSpeechButton, useResponseSpeechScope } from "../voice-output/ResponseSpeechButton";
 import { CollapsibleUserMessageBody } from "./CollapsibleUserMessageBody";
 import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
@@ -2717,6 +2718,17 @@ function renderFeedEntry(
               buttonSize={props.replyActionSize.button}
               iconSize={props.replyActionSize.icon}
             />
+            {!message.streaming ? (
+              <ResponseSpeechButton
+                threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
+                environmentId={props.environmentId}
+                owner={`${props.environmentId}:${props.threadId}:${message.id}`}
+                text={renderedText}
+                tintColor={iconSubtleColor}
+                buttonSize={props.replyActionSize.button}
+                iconSize={props.replyActionSize.icon}
+              />
+            ) : null}
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
@@ -3161,6 +3173,10 @@ const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
 let lastSplitViewport: { windowWidth: number; width: number; height: number } | null = null;
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+  useResponseSpeechScope(`${props.environmentId}:${props.threadId}`, {
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+  });
   const gt = useGT();
   const m = useMessages();
   const formatMessageTime = useMessageTimeFormatter();

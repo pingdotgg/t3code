@@ -28,6 +28,8 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type * as NetAddress from "effect/net/NetAddress";
 import * as SpeechService from "./SpeechService.ts";
+import * as PiperRuntime from "./PiperRuntime.ts";
+import * as SpeechSynthesisService from "./SpeechSynthesisService.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -49,6 +51,7 @@ const principal = (...scopes: AuthEnvironmentScope[]) =>
   );
 
 const dependencies = Layer.mergeAll(
+  Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({}),
   Layer.mock(CloudSpeech.CloudSpeech)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
@@ -376,4 +379,159 @@ effectIt.effect.each([
         reason,
       });
     }),
+);
+
+effectIt.effect.each([false, true])(
+  "authorizes synthesis and returns binary audio (operate=%s)",
+  (operate) =>
+    Effect.gen(function* () {
+      const audio = new Uint8Array([1, 2, 3, 4]);
+      const synthesize = vi.fn(() => Effect.succeed(audio));
+      const elevenLabsVoices = vi.fn(() =>
+        Effect.succeed({ voices: [{ id: "george", name: "George" }] }),
+      );
+      const { handler, dispose } = HttpRouter.toWebHandler(
+        HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+          Layer.provide(speechHttpApiLayer),
+          Layer.provide(principal(...(operate ? [AuthOrchestrationOperateScope] : []))),
+          Layer.provide(
+            Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({
+              synthesize,
+              elevenLabsVoices,
+            }),
+          ),
+          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(dependencies),
+          Layer.provide(HttpServer.layerServices),
+          Layer.provide(NodeServices.layer),
+        ),
+        { disableLogger: true },
+      );
+      yield* Effect.addFinalizer(() => Effect.promise(dispose));
+      const context = yield* Layer.build(NodeServices.layer);
+      const call = (text: string) =>
+        Effect.promise(() =>
+          handler(
+            new Request("http://localhost/api/voice/synthesize", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ text, engine: "piper" }),
+            }),
+            context,
+          ),
+        );
+      const response = yield* call("Olá");
+      expect(response.status).toBe(operate ? 200 : 403);
+      if (operate) {
+        expect(response.headers.get("content-type")).toContain("audio/wav");
+        expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(audio);
+        expect(synthesize).toHaveBeenCalledOnce();
+        synthesize.mockClear();
+        expect((yield* call("a".repeat(2001))).status).toBe(400);
+      }
+      expect(synthesize).not.toHaveBeenCalled();
+      const catalog = yield* Effect.promise(() =>
+        handler(
+          new Request("http://localhost/api/voice/synthesis/elevenlabs/voices", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ pageToken: "cursor" }),
+          }),
+          context,
+        ),
+      );
+      expect(catalog.status).toBe(operate ? 200 : 403);
+      if (operate) {
+        expect(elevenLabsVoices).toHaveBeenCalledWith("cursor");
+        expect(yield* Effect.promise(() => catalog.json())).toEqual({
+          voices: [{ id: "george", name: "George" }],
+        });
+      } else expect(elevenLabsVoices).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
+);
+
+effectIt.effect.each([false, true])(
+  "guards voice management with settings permission (write=%s)",
+  (write) =>
+    Effect.gen(function* () {
+      const voices = { voices: [] };
+      let runtimeFailure: PiperRuntime.PiperRuntimeOperationError | undefined;
+      const runtimeMutation = Effect.suspend(() =>
+        runtimeFailure ? Effect.fail(runtimeFailure) : Effect.succeed(voices),
+      );
+      const mutation = vi.fn(() => Effect.succeed(voices));
+      const { handler, dispose } = HttpRouter.toWebHandler(
+        HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+          Layer.provide(speechHttpApiLayer),
+          Layer.provide(
+            principal(AuthOrchestrationOperateScope, ...(write ? [AuthSettingsWriteScope] : [])),
+          ),
+          Layer.provide(
+            Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({
+              voices: Effect.succeed(voices),
+              installRuntime: runtimeMutation,
+              cancelRuntime: Effect.suspend(mutation),
+              removeRuntime: runtimeMutation,
+              downloadVoice: mutation,
+              selectVoice: mutation,
+              removeVoice: mutation,
+              cancelVoiceDownload: mutation,
+            }),
+          ),
+          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(dependencies),
+          Layer.provide(HttpServer.layerServices),
+          Layer.provide(NodeServices.layer),
+        ),
+        { disableLogger: true },
+      );
+      yield* Effect.addFinalizer(() => Effect.promise(dispose));
+      const context = yield* Layer.build(NodeServices.layer);
+      const listing = yield* Effect.promise(() =>
+        handler(new Request("http://localhost/api/voice/synthesis/voices"), context),
+      );
+      expect(listing.status).toBe(200);
+      for (const action of ["download", "select", "remove", "cancel-download"]) {
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request(`http://localhost/api/voice/synthesis/voices/${action}`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ voiceId: "pt_BR-faber-medium" }),
+            }),
+            context,
+          ),
+        );
+        expect(response.status).toBe(write ? 200 : 403);
+      }
+      for (const action of ["install", "cancel", "remove"]) {
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request(`http://localhost/api/voice/synthesis/runtime/${action}`, {
+              method: "POST",
+            }),
+            context,
+          ),
+        );
+        expect(response.status).toBe(write ? 200 : 403);
+      }
+      if (write) {
+        runtimeFailure = new PiperRuntime.PiperRuntimeOperationError({
+          operation: "install",
+          cause: new Error("private filesystem path"),
+        });
+        const failed = yield* Effect.promise(() =>
+          handler(
+            new Request("http://localhost/api/voice/synthesis/runtime/install", { method: "POST" }),
+            context,
+          ),
+        );
+        expect(failed.status).toBe(400);
+        expect(yield* Effect.promise(() => failed.json())).toEqual({
+          _tag: "SpeechSynthesisError",
+          reason: "unavailable",
+        });
+      }
+      if (!write) expect(mutation).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
 );

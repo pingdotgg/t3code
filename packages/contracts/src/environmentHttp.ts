@@ -53,6 +53,12 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
+  SpeechSynthesisRequest,
+  ElevenLabsVoicePageRequest,
+  ElevenLabsVoicePage,
+  SpeechSynthesisVoices,
+  SpeechSynthesisVoiceRequest,
+  SpeechSynthesisError,
   CloudSpeechApiKey,
   CloudSpeechError,
   CloudSpeechKeys,
@@ -843,6 +849,117 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 ) {}
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.post("elevenLabsVoices", "/api/voice/synthesis/elevenlabs/voices", {
+      headers: OptionalBearerHeaders,
+      payload: ElevenLabsVoicePageRequest,
+      success: ElevenLabsVoicePage,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.get("synthesisVoices", "/api/voice/synthesis/voices", {
+      headers: OptionalBearerHeaders,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("installSynthesisRuntime", "/api/voice/synthesis/runtime/install", {
+      headers: OptionalBearerHeaders,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelSynthesisRuntime", "/api/voice/synthesis/runtime/cancel", {
+      headers: OptionalBearerHeaders,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeSynthesisRuntime", "/api/voice/synthesis/runtime/remove", {
+      headers: OptionalBearerHeaders,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("downloadSynthesisVoice", "/api/voice/synthesis/voices/download", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisVoiceRequest,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post(
+      "cancelSynthesisVoiceDownload",
+      "/api/voice/synthesis/voices/cancel-download",
+      {
+        headers: OptionalBearerHeaders,
+        payload: SpeechSynthesisVoiceRequest,
+        success: SpeechSynthesisVoices,
+        error: [
+          ...EnvironmentScopedOperationErrors,
+          SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+        ],
+      },
+    ).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("selectSynthesisVoice", "/api/voice/synthesis/voices/select", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisVoiceRequest,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeSynthesisVoice", "/api/voice/synthesis/voices/remove", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisVoiceRequest,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+
+  .add(
+    HttpApiEndpoint.post("synthesize", "/api/voice/synthesize", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisRequest,
+      success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array({ contentType: "audio/wav" })),
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("cloudKeys", "/api/voice/cloud/keys", {
       headers: OptionalBearerHeaders,

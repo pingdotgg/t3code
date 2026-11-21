@@ -170,3 +170,8 @@ same environment, language, and dictionary as the composer, but skips transcript
 cleanup even when it is on, so you see what the model heard. Browser recording
 needs HTTPS or localhost and microphone permission; for a remote server over
 plain HTTP, use the desktop app.
+
+## Listen to assistant responses
+
+[Speech](./speech.md) reads assistant responses aloud. Configure it separately in
+**Settings → Speech**; dictation remains under **Settings → Voice**.

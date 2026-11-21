@@ -1,3 +1,4 @@
+import { setVoiceRecordingActive } from "./voiceOutput";
 import {
   VoiceTranscriptionError,
   type PreparedVoiceTranscription,
@@ -39,11 +40,16 @@ export function createBrowserPcmCapture(
   let signal: AbortSignal | undefined;
   let stopAcceptingAudio: (() => void) | undefined;
   let feed: ((pcm: Float32Array) => void) | undefined;
+  let ownsRecordingFlag = false;
   let stopped:
     | { readonly resolve: () => void; readonly reject: (error: Error) => void }
     | undefined;
 
   const cleanupCapture = () => {
+    if (ownsRecordingFlag) {
+      ownsRecordingFlag = false;
+      setVoiceRecordingActive(false);
+    }
     if (durationTimer) clearTimeout(durationTimer);
     durationTimer = undefined;
     worklet?.disconnect();
@@ -145,6 +151,8 @@ export function createBrowserPcmCapture(
       }
     },
     record: ({ forDuration }) => {
+      ownsRecordingFlag = true;
+      setVoiceRecordingActive(true);
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
       worklet?.port.postMessage("start");
       durationTimer = setTimeout(input.onDurationLimit, forDuration * 1_000);

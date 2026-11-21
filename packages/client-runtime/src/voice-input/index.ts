@@ -1,4 +1,9 @@
 export {
+  installEnvironmentSpeechRuntime,
+  cancelEnvironmentSpeechRuntime,
+  removeEnvironmentSpeechRuntime,
+} from "./environment.ts";
+export {
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
   MICROPHONE_PERMISSION_ERROR,
@@ -12,6 +17,13 @@ export {
   type VoiceRecorderStatus,
 } from "./controller.ts";
 export {
+  synthesizeEnvironmentSpeech,
+  getEnvironmentSpeechVoices,
+  getElevenLabsSpeechVoices,
+  downloadEnvironmentSpeechVoice,
+  cancelEnvironmentSpeechVoiceDownload,
+  selectEnvironmentSpeechVoice,
+  removeEnvironmentSpeechVoice,
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
   getEnvironmentSpeechModels,

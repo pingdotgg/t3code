@@ -8,6 +8,8 @@ import * as Semaphore from "effect/Semaphore";
 import { SavedViewIdentity } from "@t3tools/client-runtime/saved-views";
 import {
   EnvironmentId,
+  SpeechOutputDestination,
+  SpeechPlaybackRate,
   IssueInvolvement,
   IssueListSort,
   IssueListState,
@@ -123,6 +125,8 @@ const PullRequestActivityVisibility = Schema.Struct({
 });
 export type PullRequestActivityVisibility = typeof PullRequestActivityVisibility.Type;
 
+const isSpeechPlaybackRate = Schema.is(SpeechPlaybackRate);
+const isSpeechOutputDestination = Schema.is(SpeechOutputDestination);
 const isThreadListFilters = Schema.is(ThreadListFilters);
 const isPullRequestActivityVisibility = Schema.is(PullRequestActivityVisibility);
 const isWorkspaceSelections = Schema.is(WorkspaceSelections);
@@ -134,6 +138,8 @@ const ThreadProject = Schema.Struct({
 const isThreadProject = Schema.is(ThreadProject);
 
 export interface Preferences {
+  readonly speechPlaybackRate?: SpeechPlaybackRate;
+  readonly speechOutputDestination?: SpeechOutputDestination | null;
   readonly navigationTabOrder?: readonly string[];
   readonly hiddenNavigationTabs?: readonly string[];
   /** Whether pull requests or issues last held the tab bar slot they share. */
@@ -229,6 +235,8 @@ const isPullRequestMergeMethod = Schema.is(PullRequestMergeMethod);
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    speechPlaybackRate?: SpeechPlaybackRate;
+    speechOutputDestination?: SpeechOutputDestination | null;
     navigationTabOrder?: readonly string[];
     hiddenNavigationTabs?: readonly string[];
     sharedSlotTab?: "pullRequests" | "issues";
@@ -271,6 +279,15 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestSavedViews?: ReadonlyArray<PullRequestSavedView>;
     issueSavedViews?: ReadonlyArray<IssueSavedView>;
   } = {};
+
+  if (isSpeechPlaybackRate(parsed.speechPlaybackRate))
+    preferences.speechPlaybackRate = parsed.speechPlaybackRate;
+
+  if (
+    parsed.speechOutputDestination === null ||
+    isSpeechOutputDestination(parsed.speechOutputDestination)
+  )
+    preferences.speechOutputDestination = parsed.speechOutputDestination;
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
     preferences.hiddenNavigationTabs = parsed.hiddenNavigationTabs.filter(

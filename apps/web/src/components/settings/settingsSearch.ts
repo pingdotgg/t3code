@@ -22,6 +22,7 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/diagnostics"
   | "/settings/voice"
+  | "/settings/speech"
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
@@ -116,6 +117,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/labs": msg("Labs"),
   "/settings/about": msg("About"),
   "/settings/voice": msg("Voice"),
+  "/settings/speech": msg("Speech"),
   "/settings/archived": msg("Archive"),
 };
 
@@ -144,6 +146,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/diffs",
       "/settings/keybindings",
       "/settings/voice",
+      "/settings/speech",
       "/settings/snap-shot",
     ],
   },
@@ -576,6 +579,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       msg(
         "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter",
+      ),
+    ],
+  },
+  {
+    id: "speech-output",
+    title: msg("Response playback"),
+    to: "/settings/speech",
+    searchTerms: [
+      msg(
+        "tts text to speech read aloud speaker listen speed playback rate ElevenLabs piper local output OpenAI voice model destination environment off download install",
       ),
     ],
   },
@@ -1490,6 +1503,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/projects": "project",
   "/settings/general": null,
   "/settings/voice": null,
+  "/settings/speech": null,
   "/settings/appearance": null,
   "/settings/chat": null,
   "/settings/diffs": null,

@@ -13,6 +13,7 @@
 - [Appearance and themes](./user/appearance.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Voice input](./user/voice-input.md)
+- [Speech and response playback](./user/speech.md)
 - [Text generation models](./user/text-generation.md)
 - [SnapShots](./user/snap-shot.md)
 - [Visual replies](./user/html-renders.md)

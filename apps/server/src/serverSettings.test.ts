@@ -3,6 +3,8 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SPEECH_OUTPUT_SETTINGS,
+  EnvironmentId,
   globalIdleCompaction,
   type ManagedPolicyDocument,
   ModelSelection,
@@ -179,6 +181,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const fs = yield* FileSystem.FileSystem;
         const provider = ProviderInstanceId.make("codex_work");
         const patch = {
+          speechOutput: { ...DEFAULT_SPEECH_OUTPUT_SETTINGS, piperVoiceId: "pt_BR-faber-medium" },
           favorites: [{ provider, model: "sol" }],
           providerModelPreferences: {
             [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] },
@@ -193,6 +196,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           yield* fs.readFileString(config.settingsPath),
         );
         assert.deepEqual(saved.favorites, patch.favorites);
+        assert.deepEqual(saved.speechOutput, patch.speechOutput);
         assert.deepEqual(saved.providerModelPreferences, patch.providerModelPreferences);
         const hidden = yield* service.updateSettings({
           setModelsHidden: [{ provider, model: "sol", hidden: true }],
@@ -1444,6 +1448,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const store = yield* ServerSecretStore.ServerSecretStore;
         const instanceId = ProviderInstanceId.make("antigravity_secrets");
         const saved = yield* service.updateSettings({
+          speechOutput: {
+            elevenLabsApiKey: "elevenlabs-secret",
+            elevenLabsVoiceId: "custom-voice",
+          },
           providerInstances: {
             [instanceId]: {
               driver: ProviderDriverKind.make("antigravity"),
@@ -1480,6 +1488,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           ],
         });
         const values = [
+          "elevenlabs-secret",
           "config-secret",
           "env-secret",
           "github-secret",
@@ -1504,8 +1513,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           sourceControlHosts: client.sourceControlHosts,
           usageLimitSources: client.usageLimitSources,
           easDeviceHosts: client.easDeviceHosts,
+          speechOutput: client.speechOutput,
         });
         for (const value of values) assert.include(JSON.stringify(echoed), value);
+        for (const elevenLabsApiKey of ["elevenlabs-replacement", ""]) {
+          const changed = yield* service.updateSettings({ speechOutput: { elevenLabsApiKey } });
+          assert.equal(changed.speechOutput.elevenLabsApiKey, elevenLabsApiKey);
+          assert.equal(changed.speechOutput.elevenLabsVoiceId, "custom-voice");
+          assert.equal(
+            ServerSettingsModule.redactServerSettingsForClient(changed, { secretReferences: true })
+              .speechOutput.elevenLabsApiKey,
+            elevenLabsApiKey ? "••••••" : "",
+          );
+        }
         const renamed = yield* service.updateProviderInstance({
           operation: "upsert",
           instanceId,
@@ -1768,6 +1788,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const router = ProviderInstanceId.make("openrouter");
         const withUsage = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
+          speechOutput: { elevenLabsApiKey: usageReference },
           textGenerators: {
             [router]: {
               kind: "openaiCompatible",
@@ -1826,6 +1847,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           xai: SECRET_REDACTED,
           openrouter: "",
         });
+        assert.equal(legacy.speechOutput.elevenLabsApiKey, SECRET_REDACTED);
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
         assert.equal(legacy.textGenerators[router]?.apiKey, SECRET_REDACTED);
@@ -1837,6 +1859,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.equal(configOf(legacy, openCode)?.serverPassword, SECRET_REDACTED);
         const echoed = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: legacy.cloudSpeechCredentials,
+          speechOutput: legacy.speechOutput,
           sourceControlHosts: legacy.sourceControlHosts,
           usageLimitSources: legacy.usageLimitSources,
           textGenerators: legacy.textGenerators,
@@ -1849,6 +1872,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "github.com": gitHubReference,
           "ghe.acme.test": "ghp_ghe",
         });
+        assert.deepEqual(echoed.speechOutput.elevenLabsApiKey, usageReference);
         assert.deepEqual(echoed.usageLimitSources[hub]?.managementKey, usageReference);
         assert.deepEqual(echoed.textGenerators[router]?.apiKey, usageReference);
         assert.deepEqual(echoed.cloudSpeechCredentials, {
@@ -1914,6 +1938,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           github: { tokens: { "github.com": personal("GitHub/token"), "ghe.acme.test": work } },
         },
         cloudSpeechCredentials: { openai: personal("Voice/key"), xai: work },
+        speechOutput: { elevenLabsApiKey: personal("ElevenLabs/key") },
         usageLimitSources: {
           [hub]: {
             kind: "cliproxy",
@@ -1959,6 +1984,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       });
       assert.equal(removed.usageLimitSources[hub]?.managementKey, "");
       assert.deepEqual(removed.cloudSpeechCredentials, { openai: "", xai: work, openrouter: "" });
+      assert.equal(removed.speechOutput.elevenLabsApiKey, "");
       assert.equal(removed.easDeviceHosts[0]?.accessToken, "");
       assert.deepEqual(Object.keys(removed.secretProviders), ["work"]);
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
@@ -1971,6 +1997,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "cloudSpeechCredentials.openai",
         "cloudSpeechCredentials.xai",
         "cloudSpeechCredentials.openrouter",
+        "speechOutput.elevenLabsApiKey",
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
         "usageLimitSources.*.managementKey",
@@ -2472,6 +2499,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           model: "managed",
         };
         const chosenModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-mini" };
+        const speechDestination = {
+          environmentId: EnvironmentId.make("speech-policy"),
+          engine: "openai" as const,
+        };
         yield* fs.writeFileString(
           config.settingsPath,
           JSON.stringify({
@@ -2484,6 +2515,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         yield* service.updateSettings({
           defaultAutoPull: true,
           defaultModelSelection: chosenModel,
+          speechPlaybackDestination: speechDestination,
         });
         const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
         assert.deepEqual(stored.storageCleanup, {
@@ -2493,6 +2525,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         // Model selections are saved whole, never as the fields that differ from the policy's.
         assert.deepEqual(stored.textGenerationModelSelection, selection);
         assert.deepEqual(stored.defaultModelSelection, chosenModel);
+        assert.deepEqual(stored.speechPlaybackDestination, speechDestination);
+        yield* service.updateSettings({ defaultAutoPull: false });
+        const reloaded = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(reloaded.speechPlaybackDestination, speechDestination);
         // The switch the server derives from the policy's idle compaction stays out of the file.
         assert.notProperty(stored, "compactIdleThreads");
       }).pipe(
@@ -2508,6 +2546,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
               "textGenerationModelSelection.model": { value: "managed", locked: false },
               defaultModelSelection: {
                 value: { instanceId: "codex", model: "gpt-managed" },
+                locked: false,
+              },
+              speechPlaybackDestination: {
+                value: { environmentId: "speech-policy", engine: "piper" },
                 locked: false,
               },
               idleCompaction: { value: "beforeCacheExpires", locked: false },

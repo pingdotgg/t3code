@@ -88,6 +88,15 @@ export function ProviderIcon(props: ProviderIconProps) {
     return <AcpRegistryProviderIcon color={mono} iconUrl={props.iconUrl} size={size} />;
   }
 
+  if (props.provider === "elevenlabs") {
+    return (
+      <Svg width={size} height={size} viewBox="288 288 300 300" fill={mono}>
+        <Path d="M468 292H528V584H468V292Z" />
+        <Path d="M348 292H408V584H348V292Z" />
+      </Svg>
+    );
+  }
+
   if (props.provider === "claudeAgent") {
     return (
       <Svg width={size} height={size} viewBox="0 0 256 257" fill="none">

@@ -1,3 +1,4 @@
+import { voiceOutput } from "../voice-output/voiceOutput";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AudioModule, RecordingPresets, type RecordingStatus } from "expo-audio";
@@ -128,6 +129,7 @@ export const voiceInputAtom = Atom.make((get) => {
     },
     requestPermission: permission.requestPermission,
     configureRecording: async () => {
+      voiceOutput.stop();
       const token = acquireAudioSession("recording");
       audioToken = token;
       try {

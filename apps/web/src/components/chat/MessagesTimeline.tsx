@@ -1,3 +1,4 @@
+import { ResponseSpeechScope } from "../../speech/ResponseSpeechButton";
 import { T, useGT, useMessages, Var } from "gt-react";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { threadErrorText } from "@t3tools/client-runtime/state/threads";
@@ -339,11 +340,13 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
   const find = useContext(ThreadFindTimelineContext);
   const findOpen = find?.findOpen ?? props.findOpen;
   return (
-    <ConversationTimeline
-      {...props}
-      {...find}
-      liveFollowEnabled={!findOpen && props.liveFollowEnabled}
-    />
+    <ResponseSpeechScope owner={props.routeThreadKey}>
+      <ConversationTimeline
+        {...props}
+        {...find}
+        liveFollowEnabled={!findOpen && props.liveFollowEnabled}
+      />
+    </ResponseSpeechScope>
   );
 }
 

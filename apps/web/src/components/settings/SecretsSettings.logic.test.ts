@@ -41,6 +41,7 @@ const settings = Schema.decodeSync(ServerSettings)({
     },
   ],
   cloudSpeechCredentials: { openai: personal("op://voice"), xai: "" },
+  speechOutput: { voice: "coral", elevenLabsApiKey: personal("op://speech") },
 });
 
 it.each([
@@ -54,6 +55,7 @@ it.each([
       "Expo Simulators · Access Token",
       "Simlock Pool · Agent Token",
       "Voice · OpenAI",
+      "Speech · ElevenLabs",
     ],
   ],
   ["work", ["Antigravity Work · OTHER_TOKEN", "GitHub · ghe.acme.test"]],

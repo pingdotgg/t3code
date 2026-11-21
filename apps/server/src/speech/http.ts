@@ -26,6 +26,9 @@ import {
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as SpeechService from "./SpeechService.ts";
+import * as PiperRuntime from "./PiperRuntime.ts";
+import * as SpeechSynthesisService from "./SpeechSynthesisService.ts";
+import { SpeechSynthesisError } from "@t3tools/contracts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
 const parseAudio = Option.liftThrowable(decodeSpeechPcmRequest);
@@ -71,11 +74,34 @@ const withoutHostPaths = Effect.fnUntraced(function* <Fields extends Environment
   };
 });
 
+const mapSynthesisError = <A, R>(
+  effect: Effect.Effect<
+    A,
+    | SpeechSynthesisError
+    | SpeechSynthesisService.SpeechSynthesisOperationError
+    | PiperRuntime.PiperRuntimeOperationError,
+    R
+  >,
+) =>
+  effect.pipe(
+    Effect.catchTags({
+      PiperRuntimeOperationError: (error) =>
+        Effect.logWarning("Piper runtime failed", error).pipe(
+          Effect.andThen(Effect.fail(new SpeechSynthesisError({ reason: "unavailable" }))),
+        ),
+      SpeechSynthesisOperationError: (error) =>
+        Effect.logWarning("Speech synthesis failed", error).pipe(
+          Effect.andThen(Effect.fail(new SpeechSynthesisError({ reason: "unavailable" }))),
+        ),
+    }),
+  );
+
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "voice",
   Effect.fnUntraced(function* (handlers) {
     const speech = yield* SpeechService.SpeechService;
+    const synthesis = yield* SpeechSynthesisService.SpeechSynthesisService;
     const cloud = yield* CloudSpeech.CloudSpeech;
     const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
     const guard = Effect.fnUntraced(function* (
@@ -85,7 +111,78 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       yield* annotateEnvironmentRequest(endpoint);
       yield* requireEnvironmentScope(scope);
     });
+    // Transport handlers share the middleware-owned request span.
     return handlers
+      .handle(
+        "elevenLabsVoices",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* synthesis.elevenLabsVoices(args.payload.pageToken).pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "synthesisVoices",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* synthesis.voices.pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "installSynthesisRuntime",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.installRuntime.pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "cancelSynthesisRuntime",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.cancelRuntime.pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "removeSynthesisRuntime",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.removeRuntime.pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "downloadSynthesisVoice",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.downloadVoice(args.payload.voiceId).pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "cancelSynthesisVoiceDownload",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.cancelVoiceDownload(args.payload.voiceId).pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "selectSynthesisVoice",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.selectVoice(args.payload.voiceId).pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "removeSynthesisVoice",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.removeVoice(args.payload.voiceId).pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "synthesize",
+        Effect.fnUntraced(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* synthesis.synthesize(args.payload).pipe(mapSynthesisError);
+        }),
+      )
       .handle(
         "cloudKeys",
         Effect.fn("environment.voice.cloudKeys")(function* (args) {

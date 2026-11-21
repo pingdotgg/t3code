@@ -5,12 +5,13 @@ import {
   ProjectId,
   ProviderInstanceId,
   type ServerSettings,
-  type ServerSettingsPatch,
+  ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
-import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
+import * as Schema from "effect/Schema";
+import { resolveProjectSettings, resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
@@ -29,6 +30,8 @@ import {
   type PendingScopedWrite,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
+
+const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 
 function environment(
   id: string,
@@ -147,6 +150,61 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
+  it("saves speech playback only to the selected project and inherits after clearing", () => {
+    const playback = { environmentId: server.environmentId, engine: "openai", voice: "nova" };
+    const patch = decodeServerSettingsPatch({
+      speechPlaybackDestination: playback,
+      speechPlaybackRate: 1.5,
+    });
+    const plan = planScopedSettingsPatch(checkout, environments, patch);
+    expect(plan.serverWrites).toHaveLength(1);
+    const updated = applyServerSettingsPatch(
+      server.serverConfig!.settings,
+      plan.serverWrites[0]!.patch,
+    );
+    expect(updated.speechPlaybackDestination).toBeUndefined();
+    expect(resolveProjectSettings(updated, projectId).settings.speechPlaybackDestination).toEqual(
+      playback,
+    );
+    expect(
+      resolveProjectSettings(updated, laptopProjectId).settings.speechPlaybackDestination,
+    ).toBeUndefined();
+    const clear = planScopedSettingsClear(
+      checkout,
+      [{ ...server, serverConfig: { ...server.serverConfig!, settings: updated } }],
+      ["speechPlaybackDestination"],
+    );
+    const restored = applyServerSettingsPatch(updated, clear.serverWrites[0]!.patch);
+    expect(
+      resolveProjectSettings(restored, projectId).settings.speechPlaybackDestination,
+    ).toBeUndefined();
+  });
+
+  it("changes cloud voices without replacing each environment's local voice configuration", () => {
+    const targets = ["Laptop", "Server"].map((id) =>
+      environment(id, {
+        settings: {
+          speechOutput: {
+            ...DEFAULT_SERVER_SETTINGS.speechOutput,
+            piperVoiceId: `${id}-voice`,
+          },
+        },
+      }),
+    );
+    const patch = decodeServerSettingsPatch({
+      speechOutput: { voice: "nova" },
+    });
+    const plan = planScopedSettingsPatch(all, targets, patch);
+    expect(plan.serverWrites).toHaveLength(2);
+    for (const [index, write] of plan.serverWrites.entries()) {
+      const original = targets[index]!.serverConfig!.settings;
+      expect(applyServerSettingsPatch(original, write.patch).speechOutput).toEqual({
+        ...original.speechOutput,
+        voice: "nova",
+      });
+    }
+  });
+
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {

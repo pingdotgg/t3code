@@ -550,6 +550,8 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "textGenerationModelSelection",
   "fallbackModelSelection",
   "pullRequestMergeMethod",
+  "speechOutput",
+  "speechPlaybackDestination",
   // Empty by default, these hold one whole value, which a managed policy can default.
   ...Object.entries(DEFAULT_SERVER_SETTINGS).flatMap(([key, value]) =>
     value === null ? [key] : [],

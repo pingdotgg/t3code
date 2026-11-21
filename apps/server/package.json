@@ -23,6 +23,7 @@
     "typecheck": "effect-tsgo tsrs --noEmit",
     "speech:catalog:sync": "node scripts/sync-speech-catalog.ts",
     "speech:catalog:check": "node scripts/sync-speech-catalog.ts --check",
+    "speech:voices:sync": "node scripts/sync-speech-voices.ts",
     "test": "vp test run",
     "record:codex-replay": "bun scripts/record-codex-app-server-replay-fixture.ts",
     "record:claude-replay": "bun scripts/record-claude-agent-sdk-replay-fixture.ts",

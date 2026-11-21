@@ -1,3 +1,4 @@
+import IconVolume from "@tabler/icons-react-native/IconVolume";
 import type { Icon } from "@tabler/icons-react-native/types";
 /* Package-root imports eagerly register the entire Tabler icon set in Metro. */
 import IconAdjustmentsHorizontal from "@tabler/icons-react-native/IconAdjustmentsHorizontal";
@@ -276,6 +277,9 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "star.fill": IconStarFilled,
   "sun.max": IconSun,
   "stop.fill": IconPlayerStopFilled,
+  "speaker.wave.2": IconVolume,
+  "pause.fill": IconPlayerPause,
+  "play.fill": IconPlayerPlay,
   target: IconTarget,
   terminal: IconTerminal2,
   "text.alignleft": IconAlignLeft,
