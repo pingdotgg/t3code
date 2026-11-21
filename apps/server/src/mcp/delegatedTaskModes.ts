@@ -5,8 +5,11 @@ import {
   type OrchestratorMcpInteractionMode,
   type OrchestratorMcpRuntimeMode,
   type ProviderInteractionMode,
+  type ProviderOptionDescriptor,
+  type ProviderOptionSelection,
   type RuntimeMode,
 } from "@t3tools/contracts";
+import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as Effect from "effect/Effect";
 
 /** How much a runtime mode allows, narrowest first. */
@@ -86,6 +89,52 @@ export function resolveInteractionMode(
       )
     : Effect.succeed(resolved);
 }
+
+/**
+ * An agent's own session mode can skip the approvals a runtime mode asks for, and T3 cannot rank
+ * it against one. So only a full-access caller may pick one. `held` is the selection the caller
+ * already runs with or the thread already has; repeating it grants nothing new.
+ */
+export function refuseAgentModePick(input: {
+  readonly callerRuntimeMode: RuntimeMode;
+  readonly picked: ReadonlyArray<ProviderOptionSelection> | undefined;
+  readonly descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly held: ReadonlyArray<ProviderOptionSelection> | undefined;
+}): Effect.Effect<void, OrchestratorMcpFailure> {
+  if (input.callerRuntimeMode === "full-access") return Effect.void;
+  const pick = input.picked?.find(
+    (selection) =>
+      // The adapter applies the synthetic mode id whether or not the probe advertised it.
+      (selection.id === ACP_SESSION_MODE_OPTION_ID ||
+        input.descriptors.some(
+          (descriptor) => descriptor.id === selection.id && descriptor.role === "mode",
+        )) &&
+      !input.held?.some((held) => held.id === selection.id && held.value === selection.value),
+  );
+  return pick === undefined
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "runtime_mode_escalation_denied",
+          message: `Option ${pick.id} sets the agent's own mode, which T3 cannot hold to ${input.callerRuntimeMode}. Only a full-access caller may set it; leave it out.`,
+        }),
+      );
+}
+
+/** Every option a provider instance advertises, across its models. */
+export const providerOptionDescriptors = (
+  provider:
+    | {
+        readonly models: ReadonlyArray<{
+          readonly capabilities?:
+            | { readonly optionDescriptors?: ReadonlyArray<ProviderOptionDescriptor> | undefined }
+            | null
+            | undefined;
+        }>;
+      }
+    | undefined,
+): ReadonlyArray<ProviderOptionDescriptor> =>
+  provider?.models.flatMap((model) => model.capabilities?.optionDescriptors ?? []) ?? [];
 
 /** The task as its child receives it, with the role the caller asked for. */
 export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
