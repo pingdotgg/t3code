@@ -341,6 +341,41 @@ it.effect.each(["interrupt", "timeout", "success"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect.each(["darwin", "win32"] as const)(
+  "checkpoint on $0 captures a big file staged after small new files",
+  (platform) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-big-file-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* git(["config", "core.bigFileThreshold", "1m"]);
+      yield* fs.writeFileString(path.join(cwd, "a-note.txt"), "small\n");
+      const crypto = yield* SecureRandom.SecureRandom;
+      yield* fs.writeFile(
+        path.join(cwd, "b-media.bin"),
+        yield* crypto.randomBytes(2 * 1024 * 1024),
+      );
+      // More embedded repositories than staging's recovery scans, so a failed add is final.
+      const nested = path.join(cwd, "nested-0");
+      yield* fs.makeDirectory(nested);
+      yield* makeCheckpointFixture(driver, nested);
+      for (let index = 1; index <= 64; index++)
+        yield* fs.copy(nested, path.join(cwd, `nested-${index}`));
+      const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+      );
+
+      yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+      assert.strictEqual(
+        (yield* git(["rev-parse", `${checkpointRef}:b-media.bin`])).stdout.trim(),
+        (yield* git(["hash-object", "b-media.bin"])).stdout.trim(),
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect.each(["failure", "interrupt"] as const)(
   "checkpoint publication $0 preserves existing refs and permits retry",
   (stop) =>
