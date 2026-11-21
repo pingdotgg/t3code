@@ -10,6 +10,7 @@ import { cn } from "../../lib/utils";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { machineEnvironmentsAtom } from "../../state/machineStatus";
 import { environmentPresentations } from "../../state/presentation";
+import { providersIgnoringCheckedAtAtom } from "../../state/server";
 import { describeAutoRoute } from "../chat/autoRoute";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -105,6 +106,50 @@ function AccountChip({ account }: { readonly account: AccountUsage }) {
   );
 }
 
+// Usage limits ride on provider status pushes, so only this strip re-renders on them.
+function ClaudeAccounts() {
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const accounts = claudeAccountUsage(collectLimitAccounts(presentations));
+  if (accounts.length === 0) return null;
+  return (
+    <div className="hidden shrink-0 items-center gap-2.5 tabular-nums lg:flex">
+      {accounts.map((account) => (
+        <AccountChip key={account.key} account={account} />
+      ))}
+    </div>
+  );
+}
+
+function NextMachine({
+  chips,
+  now,
+}: {
+  readonly chips: ReadonlyArray<MachineChip>;
+  readonly now: number;
+}) {
+  const gt = useGT();
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const next = recommendNextMachine(chips.map((chip) => ({ id: chip.key, status: chip.status })));
+  const nextChip = next.kind === "start" ? chips.find((chip) => chip.key === next.id) : undefined;
+  const providers = nextChip
+    ? (presentations.get(nextChip.environmentId)?.serverConfig?.providers ?? EMPTY_PROVIDERS)
+    : EMPTY_PROVIDERS;
+  const route = nextChip
+    ? describeAutoRoute({ entries: deriveProviderInstanceEntries(providers), now })
+    : null;
+  return (
+    <div className="ml-auto min-w-0 truncate">
+      {nextChip
+        ? route
+          ? gt("Next → {machine} · Auto: {model}", { machine: nextChip.name, model: route.label })
+          : gt("Next → {machine}", { machine: nextChip.name })
+        : gt("Next → wait ({reason})", {
+            reason: waitReason(next.kind === "wait" ? next.limits : [], gt),
+          })}
+    </div>
+  );
+}
+
 function DetailRow({ label, value }: { readonly label: string; readonly value: string }) {
   return (
     <>
@@ -117,13 +162,12 @@ function DetailRow({ label, value }: { readonly label: string; readonly value: s
 function MachineDetails({
   chip,
   status,
-  providers,
 }: {
   readonly chip: MachineChip;
   readonly status: MachineStatus;
-  readonly providers: ReadonlyArray<ServerProvider>;
 }) {
   const gt = useGT();
+  const providers = useAtomValue(providersIgnoringCheckedAtAtom(chip.environmentId));
   const capacity = chip.capacity;
   const providerName = (instanceId: string) => {
     const provider = providers.find((candidate) => candidate.instanceId === instanceId);
@@ -178,11 +222,12 @@ function MachineDetails({
           />
         ) : null}
         {status.pressure !== null ? (
+          // The averages the room gates read: 1 minute for CPU and memory, 10 s for IO.
           <DetailRow
             label={gt("Pressure")}
             value={gt("CPU {cpu}% · memory {memory}% · IO {io}%", {
-              cpu: status.pressure.cpu.avg10.toFixed(0),
-              memory: status.pressure.memory.avg10.toFixed(0),
+              cpu: status.pressure.cpu.avg60.toFixed(0),
+              memory: status.pressure.memory.avg60.toFixed(0),
               io: status.pressure.io.avg10.toFixed(0),
             })}
           />
@@ -248,18 +293,14 @@ function MachineDetails({
   );
 }
 
-function MachineChipButton({
-  chip,
-  providers,
-}: {
-  readonly chip: MachineChip;
-  readonly providers: ReadonlyArray<ServerProvider>;
-}) {
+function MachineChipButton({ chip }: { readonly chip: MachineChip }) {
   const gt = useGT();
   const { status, capacity } = chip;
   const summary =
     status === null || capacity === null
-      ? gt("{machine}: offline or no data", { machine: chip.name })
+      ? chip.loading
+        ? gt("{machine}: waiting for data", { machine: chip.name })
+        : gt("{machine}: offline or no data", { machine: chip.name })
       : gt(
           "{machine}: {working} working, {open} open, {free} free, {more, plural, =0 {no room for more agents} one {room for # more agent} other {room for # more agents}}",
           {
@@ -287,7 +328,9 @@ function MachineChipButton({
         <span className="font-medium text-foreground/80">{chip.name}</span>
         <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", dotClassName(chip))} />
         {status === null || capacity === null ? (
-          <span>{gt("off")}</span>
+          chip.loading ? null : (
+            <span>{gt("off")}</span>
+          )
         ) : (
           <span>
             {status.maxWorkingAgents === null
@@ -300,10 +343,12 @@ function MachineChipButton({
       <PopoverPopup side="bottom" align="start" padding="compact" width="lg">
         {status === null ? (
           <p className="text-xs text-muted-foreground">
-            {gt("{machine} is offline or sent no data.", { machine: chip.name })}
+            {chip.loading
+              ? summary
+              : gt("{machine} is offline or sent no data.", { machine: chip.name })}
           </p>
         ) : (
-          <MachineDetails chip={chip} status={status} providers={providers} />
+          <MachineDetails chip={chip} status={status} />
         )}
       </PopoverPopup>
     </Popover>
@@ -314,16 +359,7 @@ function MachineChipButton({
 export function MachineBar() {
   const gt = useGT();
   const now = Date.parse(useNowMinute());
-  const chips = machineChips(useAtomValue(machineEnvironmentsAtom));
-  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
-  const accounts = claudeAccountUsage(collectLimitAccounts(presentations));
-  const providersOf = (chip: MachineChip) =>
-    presentations.get(chip.environmentId)?.serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const next = recommendNextMachine(chips.map((chip) => ({ id: chip.key, status: chip.status })));
-  const nextChip = next.kind === "start" ? chips.find((chip) => chip.key === next.id) : undefined;
-  const route = nextChip
-    ? describeAutoRoute({ entries: deriveProviderInstanceEntries(providersOf(nextChip)), now })
-    : null;
+  const chips = machineChips(useAtomValue(machineEnvironmentsAtom), now);
   return (
     <div
       aria-label={gt("Machines")}
@@ -333,28 +369,11 @@ export function MachineBar() {
     >
       <div className="flex shrink-0 items-center gap-2">
         {chips.map((chip) => (
-          <MachineChipButton key={chip.key} chip={chip} providers={providersOf(chip)} />
+          <MachineChipButton key={chip.key} chip={chip} />
         ))}
       </div>
-      {accounts.length > 0 ? (
-        <div className="hidden shrink-0 items-center gap-2.5 tabular-nums lg:flex">
-          {accounts.map((account) => (
-            <AccountChip key={account.key} account={account} />
-          ))}
-        </div>
-      ) : null}
-      <div className="ml-auto min-w-0 truncate">
-        {nextChip
-          ? route
-            ? gt("Next → {machine} · Auto: {model}", {
-                machine: nextChip.name,
-                model: route.label,
-              })
-            : gt("Next → {machine}", { machine: nextChip.name })
-          : gt("Next → wait ({reason})", {
-              reason: waitReason(next.kind === "wait" ? next.limits : [], gt),
-            })}
-      </div>
+      <ClaudeAccounts />
+      <NextMachine chips={chips} now={now} />
     </div>
   );
 }

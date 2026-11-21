@@ -26,21 +26,49 @@ function status(hostname: string, working: number): MachineStatus {
 }
 
 describe("machineChips", () => {
-  it("gives a machine reached through two environments one chip, and an offline one its label", () => {
-    const chips = machineChips([
-      { environmentId: EnvironmentId.make("local"), label: "This PC", status: status("hub2", 1) },
-      { environmentId: EnvironmentId.make("hub2"), label: "hub2", status: status("HUB2", 0) },
-      { environmentId: EnvironmentId.make("hub"), label: "hub (backup)", status: null },
-    ]);
+  const now = Date.parse("2026-11-21T21:00:00.000Z");
+  const environment = (
+    id: string,
+    label: string,
+    reported: MachineStatus | null,
+    options: { readonly ageMs?: number; readonly loading?: boolean } = {},
+  ) => ({
+    environmentId: EnvironmentId.make(id),
+    label,
+    status: reported,
+    receivedAt: now - (options.ageMs ?? 1_000),
+    loading: options.loading ?? false,
+  });
+
+  it("gives one chip per host, and names machines without fresh data by their label", () => {
+    const chips = machineChips(
+      [
+        environment("local", "This PC", status("hub2", 1)),
+        environment("hub2", "hub2", status("HUB2", 0)),
+        environment("hub", "hub (backup)", null),
+        environment("notebook", "Notebook", status("Tom_Notebook", 0), { ageMs: 120_000 }),
+        environment("starting", "Starting", null, { loading: true }),
+      ],
+      now,
+    );
     expect(
-      chips.map(({ name, environmentLabel, capacity }) => ({ name, environmentLabel, capacity })),
+      chips.map(({ name, environmentLabel, capacity, loading }) => ({
+        name,
+        environmentLabel,
+        capacity,
+        loading,
+      })),
     ).toEqual([
       {
         name: "hub2",
         environmentLabel: "This PC",
         capacity: { more: 1, limit: "cap", level: "room" },
+        loading: false,
       },
-      { name: "hub (backup)", environmentLabel: "hub (backup)", capacity: null },
+      { name: "hub (backup)", environmentLabel: "hub (backup)", capacity: null, loading: false },
+      // A server that stopped answering two minutes ago reads as off, not as its last numbers.
+      { name: "Notebook", environmentLabel: "Notebook", capacity: null, loading: false },
+      { name: "Starting", environmentLabel: "Starting", capacity: null, loading: true },
     ]);
   });
 });

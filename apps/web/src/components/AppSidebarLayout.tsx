@@ -33,6 +33,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
 import { machineBarAvailableAtom } from "../state/machineStatus";
 import { MachineBar } from "./machineBar/MachineBar";
@@ -463,7 +464,9 @@ export function AppSidebarLayout({
   ) as CSSProperties;
   const machineBarEnabled = useClientSettings((settings) => settings.machineBarEnabled);
   const machineBarAvailable = useAtomValue(machineBarAvailableAtom);
-  const machineBarShown = showSidebar && machineBarEnabled && machineBarAvailable;
+  // Narrow windows never show the bar, so they must not mount it and poll every machine.
+  const machineBarFits = useMediaQuery({ min: "md" });
+  const machineBarShown = showSidebar && machineBarEnabled && machineBarAvailable && machineBarFits;
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
