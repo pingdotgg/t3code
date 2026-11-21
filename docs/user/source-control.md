@@ -436,6 +436,10 @@ team's statuses in **Wake**, **Snooze**, or **Settle**. The rule applies to ever
 to one of the team's issues, in any project. It changes threads, never issues. Linear is the
 supported tracker.
 
+You can also ask an agent, for example "settle my threads when Engineering issues move to Done".
+It reads and changes the same rules as Settings. To change a rule, the thread must run in Full
+access.
+
 The server checks linked issues about once a minute while it runs, with or without a client
 open. Only a status change counts: saving a rule records the current statuses first, and a thread
 you organize by hand stays that way until one of its issues moves again. A thread with several

@@ -31,6 +31,8 @@ const DISPLAY_NAMES: ReadonlyMap<string, string> = new Map([
   ["Link an issue", msg("Link an issue")],
   ["Unlink an issue", msg("Unlink an issue")],
   ["Check linked issues", msg("Check linked issues")],
+  ["List issue status rules", msg("List issue status rules")],
+  ["Set an issue status rule", msg("Set an issue status rule")],
   ["Get orchestration capabilities", msg("Get orchestration capabilities")],
   ["Delegate a child task", msg("Delegate a child task")],
   ["Get delegated task status", msg("Get delegated task status")],
