@@ -34,6 +34,7 @@ import {
 } from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
+import { isMarkdownPreviewFile } from "./filePreviewMode";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import {
   areAllDirectoriesExpanded,
@@ -56,6 +57,7 @@ interface FileBrowserPanelProps {
   selectedPath: string | null;
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
+  onOpenFilePreview?: (relativePath: string) => void;
   /** Host-folder entries use absolute paths. Avoid full traversal: disable expand-all and search only
    * loaded folders. */
   hostFolder?: boolean;
@@ -162,6 +164,7 @@ export default function FileBrowserPanel({
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
+  onOpenFilePreview,
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
@@ -222,11 +225,16 @@ export default function FileBrowserPanel({
         : { x: anchorRect.left, y: anchorRect.bottom };
       const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+      const canOpenPreview =
+        onOpenFilePreview !== undefined &&
+        entryKindsRef.current.get(relativePath) === "file" &&
+        isMarkdownPreviewFile(relativePath);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
         const clicked = await api.contextMenu.show(
           [
+            ...(canOpenPreview ? [{ id: "open-preview", label: "Open preview" }] : []),
             ...fileMenuItems,
             { id: "copy-mention", label: gt("Copy mention") },
             { id: "add-to-chat", label: gt("Add to chat") },
@@ -239,6 +247,10 @@ export default function FileBrowserPanel({
           fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
         if (isFileMenuAction) {
           await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
+          return;
+        }
+        if (clicked === "open-preview") {
+          onOpenFilePreview?.(panelPath(relativePath));
           return;
         }
         if (clicked === "copy-mention") {
