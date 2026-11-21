@@ -547,10 +547,14 @@ const make = Effect.gen(function* () {
     scratchRoot: string | null,
     trigger: StorageCleanupReport["trigger"],
   ) {
+    // Matches orchestration_v2_projection_threads_worktree_path_idx (migration 089).
     const rows = yield* sql<{ worktreePath: string }>`
-      SELECT DISTINCT json_extract(payload_json, '$.worktreePath') AS "worktreePath"
+      SELECT DISTINCT
+        CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.worktreePath') END
+          AS "worktreePath"
       FROM orchestration_v2_projection_threads
-      WHERE json_extract(payload_json, '$.worktreePath') IS NOT NULL
+      WHERE CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.worktreePath') END
+        IS NOT NULL
     `.pipe(NodeSqliteClient.readOnly);
     const referenced = new Set<string>();
     for (const row of rows) {

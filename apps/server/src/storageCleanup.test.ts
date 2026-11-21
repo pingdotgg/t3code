@@ -2304,6 +2304,118 @@ describe("orphan worktree reports", () => {
       ),
   );
 
+  it.live(
+    "scans referenced worktree paths through the worktree-path index and tolerates malformed payloads",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const capturedQueries: Array<{
+            readonly query: string;
+            readonly params: ReadonlyArray<unknown>;
+          }> = [];
+          const spySql = new Proxy(sql, {
+            apply(target, thisArg, args) {
+              const strings = args[0];
+              if (Array.isArray(strings)) {
+                const query = strings.join("?");
+                if (query.includes("SELECT DISTINCT") && query.includes('AS "worktreePath"'))
+                  capturedQueries.push({ query, params: args.slice(1) });
+              }
+              return Reflect.apply(target, thisArg, args);
+            },
+          });
+          const fixture = yield* cleanupFixture(undefined, spySql);
+          const timestamp = DateTime.formatIso(at(0));
+          const activeWorktree = `${fixture.config.worktreesDir}/repository/active-ref`;
+          const deletedWorktree = `${fixture.config.worktreesDir}/repository/deleted-ref`;
+          const orphanWorktree = `${fixture.config.worktreesDir}/repository/unreferenced`;
+          for (const [branch, dir] of [
+            ["active-ref", activeWorktree],
+            ["deleted-ref", deletedWorktree],
+            ["unreferenced", orphanWorktree],
+          ] as const) {
+            yield* fixture.command(fixture.repo, ["worktree", "add", "-b", branch, dir]);
+            yield* fixture.fs.utimes(dir, 1, 1);
+          }
+          yield* sql`INSERT INTO projection_projects ${sql.insert({
+            project_id: "project-1",
+            title: "Worktree index test",
+            workspace_root: fixture.repo,
+            scripts_json: "[]",
+            created_at: timestamp,
+            updated_at: timestamp,
+            deleted_at: null,
+          })}`;
+          const insertThread = (
+            threadId: string,
+            payloadJson: string,
+            extra: { archivedAt?: string | null; deletedAt?: string | null } = {},
+          ) =>
+            sql`INSERT INTO orchestration_v2_projection_threads ${sql.insert({
+              thread_id: threadId,
+              project_id: "project-1",
+              title: threadId,
+              default_provider: "codex",
+              runtime_mode: "full-access",
+              interaction_mode: "default",
+              created_at: timestamp,
+              updated_at: timestamp,
+              archived_at: extra.archivedAt ?? null,
+              deleted_at: extra.deletedAt ?? null,
+              payload_json: payloadJson,
+            })}`;
+          yield* fixture.fs.utimes(fixture.worktree, 1, 1);
+          yield* insertThread(
+            "thread-archived",
+            JSON.stringify({ worktreePath: fixture.worktree }),
+            { archivedAt: timestamp },
+          );
+          yield* insertThread("thread-active", JSON.stringify({ worktreePath: activeWorktree }));
+          yield* insertThread(
+            "thread-deleted",
+            JSON.stringify(
+              shell({
+                id: ThreadId.make("thread-deleted"),
+                worktreePath: deletedWorktree,
+                deletedAt: at(0),
+              }),
+            ),
+            { deletedAt: timestamp },
+          );
+          yield* insertThread("thread-no-worktree", JSON.stringify({ worktreePath: null }));
+          yield* insertThread("thread-malformed", "{not-json");
+          fixture.setThreads([]);
+
+          const report = yield* fixture.service.runNow;
+          expect(report.counts.failed).toBe(0);
+          expect(
+            report.entries
+              .filter((entry) => entry.kind === "worktree" && entry.threadId === null)
+              .map((entry) => entry.path),
+          ).toEqual([orphanWorktree]);
+          expect(capturedQueries).toHaveLength(1);
+
+          const [captured] = capturedQueries;
+          expect(captured).toBeDefined();
+
+          const plan = yield* sql.unsafe<{ readonly detail: string }>(
+            `EXPLAIN QUERY PLAN ${captured!.query}`,
+            captured!.params,
+          );
+          const details = plan.map((row) => row.detail);
+          expect(
+            details.some((detail) =>
+              detail.includes(
+                "USING COVERING INDEX orchestration_v2_projection_threads_worktree_path_idx",
+              ),
+            ),
+          ).toBe(true);
+          expect(details.some((detail) => detail.includes("TEMP B-TREE"))).toBe(false);
+        }).pipe(Effect.provide(Sqlite.layerMemory)),
+      ),
+  );
+
   it.live.each(["exact", "nested", "symlink"] as const)(
     "does not report a folder containing a project checkout (%s)",
     (location) =>
