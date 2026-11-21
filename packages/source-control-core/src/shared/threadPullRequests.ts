@@ -142,7 +142,24 @@ export function makeThreadPullRequests(
     return `${normalized.host}/${normalized.repository}#${normalized.number}`;
   }
 
+  // Shells keep their links array while a run streams, and several components read the
+  // current pull request on each shell change, so resolve each array's chains once.
+  const currentByLinks = new WeakMap<
+    ReadonlyArray<ThreadPullRequestLink>,
+    ThreadCurrentPullRequest | null
+  >();
+
   function resolveThreadCurrentPullRequest(
+    links: ReadonlyArray<ThreadPullRequestLink>,
+  ): ThreadCurrentPullRequest | null {
+    const cached = currentByLinks.get(links);
+    if (cached !== undefined) return cached;
+    const current = resolveUncachedThreadCurrentPullRequest(links);
+    currentByLinks.set(links, current);
+    return current;
+  }
+
+  function resolveUncachedThreadCurrentPullRequest(
     links: ReadonlyArray<ThreadPullRequestLink>,
   ): ThreadCurrentPullRequest | null {
     const visible = visibleThreadPullRequests(links);

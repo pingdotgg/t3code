@@ -420,6 +420,34 @@ describe("applyShellStreamEvents", () => {
     expect(applyShellStreamEvents(seed, [])).toBe(seed);
   });
 
+  it("keeps an unchanged links array when a streaming row changes", () => {
+    const link: ThreadPullRequestLink = {
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 3,
+      url: "https://github.com/pingdotgg/t3code/pull/3",
+      source: "agent",
+      linkedAt: "2026-06-20T00:00:00.000Z",
+      snapshot: null,
+      stack: null,
+    };
+    const linked = { ...a, pullRequests: [link] };
+    const seed = { ...v2ShellSnapshot, threads: [linked, b], snapshotSequence: 4 };
+    const tick = { ...linked, itemCount: 9, pullRequests: [{ ...link }] };
+    const relinked = { ...linked, pullRequests: [{ ...link, number: 4 }] };
+
+    expect(applyShellStreamEvent(seed, update(5, tick)).threads[0]?.pullRequests).toBe(
+      linked.pullRequests,
+    );
+    const batched = applyShellStreamEvents(seed, [update(5, tick), update(6, { ...b })]);
+    expect(batched.threads.find((thread) => thread.id === a.id)?.pullRequests).toBe(
+      linked.pullRequests,
+    );
+    expect(applyShellStreamEvent(seed, update(5, relinked)).threads[0]?.pullRequests).toBe(
+      relinked.pullRequests,
+    );
+  });
+
   it("does not advance the cursor for an unknown future event", () => {
     const events = [
       { kind: "future.event", sequence: 99 } as never,
