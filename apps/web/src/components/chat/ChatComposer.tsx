@@ -2591,6 +2591,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           context: {
             composerFocus: true,
             terminalFocus: false,
+            terminalOpen,
             draftThreadRoute: routeKind === "draft",
           },
         });
