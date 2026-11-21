@@ -211,6 +211,18 @@ it.effect("derives discovery metadata from the origin the client reached", () =>
         registration_endpoint: `${ORIGIN}/oauth/mcp/register`,
         code_challenge_methods_supported: ["S256"],
       });
+
+      const proxied = { host: "127.0.0.1:3773", "x-forwarded-host": "box.example.ts.net" };
+      expect(
+        yield* json<unknown>(
+          yield* handler(at("/.well-known/oauth-protected-resource/mcp", { headers: proxied })),
+        ),
+      ).toMatchObject({ resource: `${ORIGIN}/mcp`, authorization_servers: [ORIGIN] });
+      expect(
+        yield* json<unknown>(
+          yield* handler(at("/.well-known/oauth-authorization-server", { headers: proxied })),
+        ),
+      ).toMatchObject({ issuer: ORIGIN, authorization_endpoint: `${ORIGIN}/oauth/mcp/authorize` });
     }),
   ),
 );
