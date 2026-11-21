@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartNoAxesColumnIcon,
+  KanbanIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
@@ -204,17 +210,25 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  isActive = false,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  isActive?: boolean;
 }) {
   return (
     <SidebarMenuItem className="shrink-0">
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+            <SidebarMenuButton
+              aria-label={label}
+              aria-current={isActive ? "page" : undefined}
+              isActive={isActive}
+              onClick={onClick}
+              size="icon"
+            >
               {icon}
             </SidebarMenuButton>
           }
@@ -233,6 +247,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
+  const isOnBoard = useLocation({ select: (location) => location.pathname === "/board" });
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
   const closeMobileSidebar = () => {
@@ -304,6 +319,15 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<ChartNoAxesColumnIcon />}
             label={gt("Usage")}
             onClick={handleUsageClick}
+          />
+          <SidebarUtilityItem
+            icon={<KanbanIcon />}
+            label={gt("Task board")}
+            isActive={isOnBoard}
+            onClick={() => {
+              closeMobileSidebar();
+              void (isOnBoard ? navigateToMainApp() : navigate({ to: "/board" }));
+            }}
           />
         </>
       )}

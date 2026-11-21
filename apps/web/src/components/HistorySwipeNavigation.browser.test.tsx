@@ -27,6 +27,13 @@ describe("HistorySwipeNavigation", () => {
     ["swiping back at a shadow-root scroller's left edge navigates", "shadow", 0, -130, true],
     ["swiping back over a panel without overflow navigates", "none", 0, -130, true],
     ["a swipe that started in a closed dialog keeps the thread", "closed-dialog", 0, -130, false],
+    [
+      "swiping back at the edge of an opted-out scroller keeps the thread",
+      "opt-out",
+      0,
+      -130,
+      false,
+    ],
   ] as const)("%s", async (_name, scroller, scrollLeft, deltaX, navigates) => {
     navigateHistory.mockReset();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
@@ -39,6 +46,7 @@ describe("HistorySwipeNavigation", () => {
     const content = viewport.appendChild(document.createElement("div"));
     content.style.cssText = `height: 20px; width: ${noOverflow ? 100 : 1000}px`;
     viewport.scrollLeft = scrollLeft;
+    if (scroller === "opt-out") viewport.dataset.historySwipe = "off";
 
     if (scroller === "closed-dialog") {
       panel.setAttribute("role", "dialog");
