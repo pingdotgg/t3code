@@ -4204,7 +4204,7 @@ describe("linked timeline resources", () => {
     expect(rows[1]).toMatchObject({ subagents: [{ item: { id: "a" } }, { item: { id: "b" } }] });
   });
 
-  it("shows a follow-up call to the same child as that one agent", () => {
+  it("shows a follow-up call to the same child in the run as that one agent", () => {
     const resumed = (id: string, childThreadId: string) => {
       const entry = event(id, "subagent");
       return {
@@ -4214,14 +4214,15 @@ describe("linked timeline resources", () => {
     };
     const rows = deriveMessagesTimelineRows({
       ...common,
-      timelineEntries: [resumed("launch", "child"), resumed("redirect", "child")],
+      timelineEntries: [
+        resumed("launch", "child"),
+        resumed("other", "other-child"),
+        event("c", "thread_created"),
+        resumed("redirect", "child"),
+      ],
       expandedRunIds: new Set([runId]),
     });
-    const group = rows.find((row) => row.id === "launch");
-    expect(group).toMatchObject({
-      projectedItem: { item: { id: "redirect" } },
-      subagents: [{ item: { id: "redirect" } }],
-    });
+    expect(rows.map((row) => row.id)).toEqual(["turn-fold:resource-run", "other", "c", "redirect"]);
   });
 
   it.each([

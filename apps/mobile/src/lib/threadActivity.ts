@@ -1055,17 +1055,7 @@ function groupAdjacentActivities(
       flushGroup();
     }
     firstActivityEntry ??= entry;
-    // A follow-up call to the same child (OpenCode's task_id) is the same agent, so it takes that slot.
-    const item = entry.activity.projectedItem.item;
-    const slot =
-      item.type === "subagent" && item.childThreadId !== null
-        ? openGroupActivities.findIndex(
-            ({ projectedItem: { item: member } }) =>
-              member.type === "subagent" && member.childThreadId === item.childThreadId,
-          )
-        : -1;
-    if (slot === -1) openGroupActivities.push(entry.activity);
-    else openGroupActivities[slot] = entry.activity;
+    openGroupActivities.push(entry.activity);
     if (isStandaloneActivity || entry.activity.prominent) {
       flushGroup();
     }
@@ -2455,6 +2445,7 @@ interface ThreadFeedBuild {
   readonly checkpointSummaries: ReadonlyArray<ThreadCheckpointSummary> | undefined;
   readonly foldedAnswerRunIdByMessageId: ReadonlyMap<string, RunId | null>;
   readonly delegatedChildrenByRun: ReadonlyMap<RunId, ReadonlySet<string>>;
+  readonly resumedSubagentIds: ReadonlySet<string>;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   /** Grouping is empty before `row`: the rows before it produced `feed.slice(0, feedLength)`. */
   readonly restarts: ReadonlyArray<{ readonly row: number; readonly feedLength: number }>;
@@ -2572,7 +2563,17 @@ export function buildThreadFeed(
   // An answer that started a later run stays a normal message at that run's position.
   const foldedAnswerRunIdByMessageId = new Map<string, RunId | null>();
   const delegatedChildrenByRun = new Map<RunId, Set<string>>();
+  // A follow-up call to the same child in a run (OpenCode's task_id) is the same agent: only its
+  // latest call keeps a card.
+  const resumedSubagentIds = new Set<string>();
+  const latestSubagentIdByChild = new Map<string, string>();
   for (const { item } of visibleTurnItems) {
+    if (item.type === "subagent" && item.childThreadId) {
+      const key = `${item.runId}:${item.childThreadId}`;
+      const earlier = latestSubagentIdByChild.get(key);
+      if (earlier !== undefined) resumedSubagentIds.add(earlier);
+      latestSubagentIdByChild.set(key, item.id);
+    }
     if (item.type === "user_input_request" && item.questionAnswer) {
       foldedAnswerRunIdByMessageId.set(`async-answer:${item.questionAnswer.requestId}`, item.runId);
     } else if (item.type === "subagent" && item.origin === "app_owned" && item.runId !== null) {
@@ -2593,7 +2594,8 @@ export function buildThreadFeed(
     previous.nodes === options?.nodes &&
     checkpointSummariesEqual(previous.checkpointSummaries, options?.checkpointSummaries) &&
     mapsEqual(previous.foldedAnswerRunIdByMessageId, foldedAnswerRunIdByMessageId) &&
-    setMapsEqual(previous.delegatedChildrenByRun, delegatedChildrenByRun)
+    setMapsEqual(previous.delegatedChildrenByRun, delegatedChildrenByRun) &&
+    setsEqual(previous.resumedSubagentIds, resumedSubagentIds)
   ) {
     const firstChanged = firstChangedIndex(previous.rows, visibleTurnItems);
     restartIndex = previous.restarts.length - 1;
@@ -2624,6 +2626,7 @@ export function buildThreadFeed(
     const item = row.item;
     if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
+    if (item.type === "subagent" && resumedSubagentIds.has(item.id)) continue;
     if (
       item.type === "user_message" &&
       item.inputIntent === "queued_turn" &&
@@ -2822,6 +2825,7 @@ export function buildThreadFeed(
             checkpointSummaries: options?.checkpointSummaries,
             foldedAnswerRunIdByMessageId,
             delegatedChildrenByRun,
+            resumedSubagentIds,
             feed,
             restarts,
           };

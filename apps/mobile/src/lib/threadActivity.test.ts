@@ -1725,7 +1725,7 @@ describe("retained v2 feed presentation", () => {
           type: "subagent",
           runId: agentRunId,
           subagentId: NodeId.make(id),
-          origin: "app_owned",
+          origin: "provider_native",
           driver: ProviderDriverKind.make("codex"),
           providerInstanceId: ProviderInstanceId.make("codex"),
           childThreadId: ThreadId.make(`child-${child}`),
@@ -1734,21 +1734,26 @@ describe("retained v2 feed presentation", () => {
         },
         index,
       );
-    const feed = buildThreadFeed([
+    const rows = [
       agent("a", 1),
       agent("b", 2),
-      agent("a-redirect", 3, runId, "a"),
-      projected(command("2026-06-20T00:00:04.000Z"), 4),
-      agent("c", 5),
-      agent("d", 6, RunId.make("other-run")),
-    ]);
+      projected(command("2026-06-20T00:00:03.000Z"), 3),
+      agent("c", 4),
+      projected(assistantMessage("2026-06-20T00:00:05.000Z"), 5),
+      agent("a-redirect", 6, runId, "a"),
+      agent("d", 7, RunId.make("other-run"), "a"),
+    ];
+    // The redirect arrives after `a` was built into the cached feed.
+    const cache = createThreadFeedCache();
+    buildThreadFeed(rows.slice(0, 5), { cache });
+    const feed = buildThreadFeed(rows, { cache });
     expect(
       feed.flatMap((entry) =>
         entry.type === "activity-group"
           ? [entry.activities.map((activity) => activity.projectedItem.item.id)]
           : [],
       ),
-    ).toEqual([["a-redirect", "b"], ["item-command"], ["c"], ["d"]]);
+    ).toEqual([["b"], ["item-command"], ["c"], ["a-redirect"], ["d"]]);
     const presented = deriveThreadFeedPresentation(
       feed,
       null,
@@ -1759,10 +1764,11 @@ describe("retained v2 feed presentation", () => {
         ? [entry]
         : [],
     );
-    expect(groups.map((entry) => entry.activities.length)).toEqual([2, 1, 1]);
-    expect(groups[0]?.activities.map((activity) => activity.projectedItem.item)).toMatchObject([
-      { childThreadId: "child-a" },
+    expect(groups.map((entry) => entry.activities[0]?.projectedItem.item)).toMatchObject([
       { childThreadId: "child-b" },
+      { childThreadId: "child-c" },
+      { childThreadId: "child-a" },
+      { childThreadId: "child-a" },
     ]);
   });
 });

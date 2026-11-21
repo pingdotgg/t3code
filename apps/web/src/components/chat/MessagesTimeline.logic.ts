@@ -1513,21 +1513,25 @@ export function liveAnswerPreview(entries: ReadonlyArray<TimelineEntry>): string
   return null;
 }
 
-// A follow-up call to the same child (OpenCode's task_id) is the same agent, so it takes that card.
-function withGroupedSubagent(
-  members: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
-  next: OrchestrationV2ProjectedTurnItem,
-): ReadonlyArray<OrchestrationV2ProjectedTurnItem> {
-  const childThreadId = next.item.type === "subagent" ? next.item.childThreadId : null;
-  const slot =
-    childThreadId === null || childThreadId === undefined
-      ? -1
-      : members.findIndex(
-          ({ item }) => item.type === "subagent" && item.childThreadId === childThreadId,
-        );
-  return slot === -1
-    ? [...members, next]
-    : members.map((member, index) => (index === slot ? next : member));
+// A follow-up call to the same child in a run (OpenCode's task_id) is the same agent: only its
+// latest call keeps a card.
+function withoutResumedSubagentRows(entries: ReadonlyArray<TimelineEntry>) {
+  const childKey = (entry: TimelineEntry) => {
+    const item = entry.kind === "event" ? entry.projectedItem.item : null;
+    return item?.type === "subagent" && item.childThreadId
+      ? `${item.runId}:${item.childThreadId}`
+      : null;
+  };
+  const latestIndexByChild = new Map<string, number>();
+  for (const [index, entry] of entries.entries()) {
+    const key = childKey(entry);
+    if (key !== null) latestIndexByChild.set(key, index);
+  }
+  const kept = entries.filter((entry, index) => {
+    const key = childKey(entry);
+    return key === null || latestIndexByChild.get(key) === index;
+  });
+  return kept.length === entries.length ? entries : kept;
 }
 
 /** Reads entries before tool visibility filters them, so hidden newer parent work still counts. */
@@ -1588,7 +1592,9 @@ function timelineRowEntries(
         entry.kind !== "work" || !workEntryHiddenByToolCallVisibility(entry.entry, visibility),
     );
   }
-  return withoutSubagentDelegationRows(settleSupersededReasoning(shown));
+  return withoutResumedSubagentRows(
+    withoutSubagentDelegationRows(settleSupersededReasoning(shown)),
+  );
 }
 
 function deriveTimelineTurnFolds(
@@ -2274,14 +2280,12 @@ export function deriveMessagesTimelineRows(
         previous.projectedItem.item.providerTurnId ===
           timelineEntry.projectedItem.item.providerTurnId
       ) {
-        const subagents = withGroupedSubagent(
-          previous.subagents ?? [previous.projectedItem],
-          timelineEntry.projectedItem,
-        );
         nextRows[nextRows.length - 1] = {
           ...previous,
-          projectedItem: subagents[0]!,
-          subagents,
+          subagents: [
+            ...(previous.subagents ?? [previous.projectedItem]),
+            timelineEntry.projectedItem,
+          ],
         };
         continue;
       }
