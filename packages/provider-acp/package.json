@@ -19,6 +19,10 @@
       "types": "./src/server/clientTerminals.ts",
       "import": "./src/server/clientTerminals.ts"
     },
+    "./server/elicitationForm": {
+      "types": "./src/server/elicitationForm.ts",
+      "import": "./src/server/elicitationForm.ts"
+    },
     "./server/mcpOverAcpBridge": {
       "types": "./src/server/mcpOverAcpBridge.ts",
       "import": "./src/server/mcpOverAcpBridge.ts"
