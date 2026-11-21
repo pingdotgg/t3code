@@ -17,8 +17,6 @@ export const SERVICE_STATE_FILE = "service-state.json";
 /** Set by the unit or launch agent to its own file name, so the launcher can
     find the definition that started it. */
 export const SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
-/** Written before explicit stop to distinguish shutdown from update handoff. */
-export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 /** Marks a repointed unit whose service still runs the old version; launcher startup clears it. */
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
 /** Held by a Windows launcher while it runs: Task Scheduler tracks only the task's console host. */

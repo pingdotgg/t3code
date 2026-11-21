@@ -243,7 +243,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         } satisfies DesktopAppSettings.DesktopAppSettings["Service"])
       : DesktopAppSettings.layer;
 
-  const updateRestartMarkers = new Set<string>();
   const updateMarkerContents = new Map<string, string>();
   const installRecords = new Map<string, string>();
   let previousInstallRecord = options.installRecord;
@@ -271,7 +270,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       Effect.sync(() => {
         if (isInstallRecord(path)) installRecords.set(path, data);
         else {
-          if (path.endsWith("/desktop-update-restart")) updateRestartMarkers.add(path);
           updateMarkerContents.set(path, data);
         }
       }),
@@ -283,7 +281,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
     remove: (path) =>
       Effect.sync(() => {
-        updateRestartMarkers.delete(path);
         updateMarkerContents.delete(path);
         installRecords.delete(path);
         if (isInstallRecord(path)) previousInstallRecord = undefined;
@@ -316,7 +313,6 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     checkCount: () => checkCount,
     quitAndInstalls: () => quitAndInstallCount,
     installSteps,
-    updateRestartMarkers,
     updateInProgressMarker: () =>
       [...updateMarkerContents].find(([path]) => path.endsWith("/desktop-update-in-progress"))?.[1],
     installRecords,

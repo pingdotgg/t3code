@@ -144,7 +144,7 @@ Optional `production` environment variables:
 
 - `RELAY_DOMAIN` when overriding the derived `relay.<RELAY_API_ZONE_NAME>` domain
 - `RELAY_TUNNEL_CLEANUP_MODE` with `off`, `dry-run`, or `enabled`. Missing and blank values use
-  `off`.
+  `enabled`.
 - `RELAY_LEGACY_TUNNEL_CLEANUP_MODE` with the same values, for tunnels whose host never registered
   recovery. Missing and blank values use `off`.
 
@@ -183,7 +183,8 @@ whose teardown failed. Fork PRs get no preview.
 
 ### Managed tunnel cleanup rollout
 
-Keep `RELAY_TUNNEL_CLEANUP_MODE=off` for the first production deploy. That deploy applies the
+Set `RELAY_TUNNEL_CLEANUP_MODE=off` explicitly before the first production deploy. An unset or
+blank value enables cleanup. That deploy applies the
 nullable allocation migration and adds the recovery endpoints. Web and mobile clients need no
 coordinated release. CLI and desktop server builds must reach users before cleanup is enabled,
 because those builds register recovery and replace a deleted tunnel after wake.
