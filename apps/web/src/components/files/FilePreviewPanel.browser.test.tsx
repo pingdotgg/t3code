@@ -201,7 +201,11 @@ function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of 
   return filePreview("tasks.md");
 }
 
-function filePreview(relativePath: string, workspaceMutationId: string | null = null) {
+function filePreview(
+  relativePath: string,
+  workspaceMutationId: string | null = null,
+  revealLine: number | null = null,
+) {
   const threadRef = testThreadRef();
   return (
     <FilePreviewPanel
@@ -214,8 +218,8 @@ function filePreview(relativePath: string, workspaceMutationId: string | null = 
       keybindings={[]}
       availableEditors={[]}
       openInShortcutEnabled={false}
-      revealLine={null}
-      revealRequestId={0}
+      revealLine={revealLine}
+      revealRequestId={revealLine === null ? 0 : 1}
       onOpenFile={vi.fn()}
       onNavigateFolder={vi.fn()}
       folderTrail={undefined}
@@ -371,15 +375,22 @@ describe("source file scroll", () => {
   });
 
   it.each([
-    { view: "code", path: "a.ts", selector: ".file-preview-virtualizer" },
+    { view: "code", path: "a.ts", selector: ".file-preview-virtualizer", revealLine: null },
+    {
+      view: "cited code",
+      path: "a.ts",
+      selector: ".file-preview-virtualizer",
+      revealLine: 10,
+    },
     {
       view: "rendered Markdown",
       path: "a.md",
       selector: ':not([data-file-breadcrumbs]) > [data-slot="scroll-area-viewport"]',
+      revealLine: null,
     },
   ])(
     "returns a $view file to where it was scrolled after its thread was left and reopened",
-    async ({ path, selector }) => {
+    async ({ path, selector, revealLine }) => {
       using _settings = setup();
       const style = document.createElement("style");
       style.textContent = appCss;
@@ -393,7 +404,7 @@ describe("source file scroll", () => {
       const panel = (shown: boolean) => (
         <StrictMode>
           <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
-            {shown ? filePreview(path) : null}
+            {shown ? filePreview(path, null, revealLine) : null}
           </div>
         </StrictMode>
       );
@@ -401,6 +412,11 @@ describe("source file scroll", () => {
 
       await using screen = await render(panel(true));
       await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+      if (revealLine !== null) {
+        await vi.waitFor(() => expect(scroller()?.scrollTop).toBeGreaterThan(0));
+        // The reader takes over from the cited line, which ends the reveal's hold on it.
+        scroller()!.dispatchEvent(new WheelEvent("wheel"));
+      }
       const scrolled = new Promise((resolve) =>
         scroller()!.addEventListener("scroll", resolve, { once: true }),
       );

@@ -617,6 +617,8 @@ interface FileRevealState {
 
 // Session-only and keyed by thread, so a file's offset outlives the panel unmounting on a thread switch.
 const scrollTopByFileKey = new Map<string, number>();
+// The surface keeps its reveal request across remounts, so a handled one must not jump again.
+const handledRevealByFileKey = new Map<string, number>();
 const fileScrollKey = (threadRef: ScopedThreadRef, relativePath: string) =>
   `${threadRef.environmentId}:${threadRef.threadId}:${relativePath}`;
 
@@ -645,11 +647,12 @@ function useFileLineReveal(
     const fileKey = fileScrollKey(threadRef, relativePath);
 
     const existingState = revealStatesByPath.get(relativePath);
+    const handledRequestId = handledRevealByFileKey.get(fileKey) ?? null;
     const state: FileRevealState = existingState ?? {
       frameId: null,
       cancelGuard: null,
-      handledRequestId: null,
-      latestRequestId: null,
+      handledRequestId,
+      latestRequestId: handledRequestId,
       scrollContainer: null,
       restoreFrameId: null,
     };
@@ -830,6 +833,7 @@ function useFileLineReveal(
 
         scrollContainer.scrollTop = targetTop;
         state.handledRequestId = revealRequestId;
+        handledRevealByFileKey.set(fileKey, revealRequestId);
         guardScrollTarget(line);
       });
     };
