@@ -287,13 +287,17 @@ interface LiveBackgroundTask {
 }
 const isMonitorTask = (task: { readonly kind: string; readonly tool?: string | undefined }) =>
   task.tool?.toLowerCase() === "monitor" || task.kind.toLowerCase().includes("monitor");
-const liveBackgroundTask = (task: {
-  readonly kind: string;
-  readonly tool?: string | undefined;
-}): LiveBackgroundTask => {
+const liveBackgroundTask = (
+  task: {
+    readonly kind: string;
+    readonly tool?: string | undefined;
+  },
+  label?: string,
+): LiveBackgroundTask => {
   const monitor = isMonitorTask(task);
   // Registry-only rows carry a `tool.<name>` kind instead of a tool name.
-  const description = task.tool ?? (monitor ? "monitor" : task.kind.replace(/^tool\./, ""));
+  const description =
+    label ?? task.tool ?? (monitor ? "monitor" : task.kind.replace(/^tool\./, ""));
   return {
     kind: monitor ? "monitor" : "command",
     ...(description ? { description } : {}),
@@ -857,7 +861,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const streaming = status === "running";
         // A backgrounded tool call completes as a call but keeps running as work.
         if (item.kind === "toolCall" && item.background === true) {
-          const task = liveBackgroundTask({ kind: item.kind, tool: item.tool });
+          const task = liveBackgroundTask(
+            { kind: item.kind, tool: item.tool },
+            item.tool ?? item.entryId,
+          );
           if (liveTasks.get(item.itemId)?.description !== task.description) {
             liveTasks.set(item.itemId, task);
             yield* syncBackground();
