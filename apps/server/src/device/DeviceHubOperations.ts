@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -13,6 +14,19 @@ import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
+// Let the hub's 30 s simctl timeout report its cause first.
+const LIST_TIMEOUT_SECONDS = 40;
+// expo-device-hub 0.19.1 reports a failed simulator listing only as text; its error ids are hashes.
+const SIMULATOR_LIST_FAILED =
+  /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
+// The hub passes numeric display IDs that Xcode 26 rejects; iOS 27 needs them for multiple displays.
+// expo-device-hub 0.22.1 returns no Android devices when avdmanager fails, before it runs adb.
+const AVDMANAGER_LIST_FAILED = "[android-utils] Failed to run `avdmanager list avd`";
+const GETPROP_LINE = /^\[([^\]]+)\]: \[(.*)\]$/;
+const runsOnXcode26Runtime = (version: string) => Number(/^iOS (\d+)/.exec(version)?.[1]) <= 26;
+const DEFAULT_DISPLAY_SCREENSHOT = `f=$(mktemp -t t3-screenshot) || exit 1
+trap 'rm -f "$f"' 0
+xcrun simctl io "$1" screenshot --type=png "$f" >/dev/null && base64 -i "$f"`;
 
 const HubDevice = Schema.Struct({
   id: Schema.String,
@@ -63,11 +77,24 @@ export const makeDeviceHubOperations = (options: {
   readonly origin: string;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
-  /** Whether to list AVDs, which the hub does not report until they boot. */
-  readonly androidAvailable: Effect.Effect<boolean>;
+  /** Android gates listing AVDs, which the hub does not report until they boot. */
+  readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
+
+  const fetchJson = Effect.fn("DeviceHubOperations.fetchJson")(function* <A, I>(
+    request: HttpClientRequest.HttpClientRequest,
+    schema: Schema.Codec<A, I>,
+  ) {
+    return yield* httpClient
+      .execute(request)
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
+        Effect.scoped,
+      );
+  });
 
   const hubJson = <A, I>(
     request: HttpClientRequest.HttpClientRequest,
@@ -75,18 +102,10 @@ export const makeDeviceHubOperations = (options: {
     operation: string,
     timeout: Duration.Input = Duration.seconds(15),
   ) =>
-    httpClient.execute(request).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
-      Effect.scoped,
+    fetchJson(request, schema).pipe(
       Effect.timeout(timeout),
       Effect.mapError(
-        (cause) =>
-          new DeviceOperationError({
-            operation,
-            reason: "request_failed",
-            cause,
-          }),
+        (cause) => new DeviceOperationError({ operation, reason: "request_failed", cause }),
       ),
     );
 
@@ -105,14 +124,73 @@ export const makeDeviceHubOperations = (options: {
       Effect.flatMap((request) => hubJson(request, HubActionResult, "attach stream", BOOT_TIMEOUT)),
     );
 
+  // Mirrors the hub's own adb discovery for when it skips it.
+  const listAdbDevices = Effect.gen(function* () {
+    const listed = yield* run("adb", ["devices", "-l"]);
+    if (listed.code !== 0) return undefined;
+    const serials = listed.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim().split(/\s+/))
+      .flatMap(([serial, state]) => (serial && state === "device" ? [serial] : []));
+    return yield* Effect.forEach(serials, (serial) =>
+      Effect.gen(function* () {
+        const getprop = yield* run("adb", ["-s", serial, "shell", "getprop"]);
+        const props = new Map(
+          getprop.stdout.split(/\r?\n/).flatMap((line) => {
+            const match = GETPROP_LINE.exec(line.trim());
+            return match ? [[match[1]!, match[2]!] as const] : [];
+          }),
+        );
+        const emulator = props.get("ro.kernel.qemu") === "1" || props.get("ro.boot.qemu") === "1";
+        const avdName = emulator
+          ? (yield* run("adb", ["-s", serial, "emu", "avd", "name"])).stdout
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .find((line) => line && line !== "OK" && !line.startsWith("KO"))
+          : undefined;
+        const model = props.get("ro.product.model");
+        const manufacturer = props.get("ro.product.manufacturer");
+        const release = props.get("ro.build.version.release");
+        return {
+          id: serial,
+          name: emulator
+            ? (avdName ?? serial)
+            : model
+              ? [manufacturer, model].filter(Boolean).join(" ")
+              : serial,
+          platform: "android",
+          version: release
+            ? `Android ${/^\d+$/.test(release) ? `${release}.0` : release}`
+            : "Android",
+          booted: true,
+          physical: !emulator,
+        } satisfies HostDevice;
+      }),
+    );
+  });
+
   const list: DeviceOperations["list"] = Effect.gen(function* () {
-    const hubList = yield* hubJson(
+    const listed = yield* fetchJson(
       HttpClientRequest.get(`${origin}/api/devices`),
       HubDeviceList,
-      "list",
+    ).pipe(
+      Effect.mapError(
+        (cause) => new DeviceOperationError({ operation: "list", reason: "request_failed", cause }),
+      ),
+      Effect.timeoutOption(Duration.seconds(LIST_TIMEOUT_SECONDS)),
     );
+    if (Option.isNone(listed)) {
+      return {
+        devices: [],
+        detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
+        incompletePlatforms: yield* Effect.filter(["ios", "android"] as const, (platform) =>
+          options.platformAvailable(platform),
+        ),
+      };
+    }
+    const hubList = listed.value;
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
-    const androidAvailable = yield* options.androidAvailable;
+    const androidAvailable = yield* options.platformAvailable("android");
     const warnings = hubList.errors?.filter(
       (error) =>
         // The host summary already explains a missing Android SDK; the hub's failed probes are noise.
@@ -131,6 +209,15 @@ export const makeDeviceHubOperations = (options: {
       }) ?? [];
     let androidDiscoveryIncomplete = false;
     if (androidAvailable) {
+      if (hubList.errors?.some((error) => error.message.startsWith(AVDMANAGER_LIST_FAILED))) {
+        const adbDevices = yield* listAdbDevices;
+        if (adbDevices === undefined) {
+          androidDiscoveryIncomplete = true;
+          details.push("Could not list Android devices (adb devices -l).");
+        } else {
+          devices.push(...adbDevices);
+        }
+      }
       const avds = yield* run("emulator", ["-list-avds"]);
       // Discovered devices stay listed; the AVDs that could not be listed are a warning.
       if (avds.code !== 0) {
@@ -155,10 +242,14 @@ export const makeDeviceHubOperations = (options: {
         }
       }
     }
+    const simulatorsUnlisted =
+      hubList.simulators.length === 0 &&
+      (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message));
     return {
       devices,
       detail: details.join("\n") || undefined,
       androidDiscoveryIncomplete,
+      ...(simulatorsUnlisted ? { incompletePlatforms: ["ios"] as const } : {}),
     };
   }).pipe(Effect.withSpan("DeviceHubOperations.list"));
 
@@ -236,6 +327,24 @@ export const makeDeviceHubOperations = (options: {
     },
   );
 
+  const defaultDisplayScreenshot = Effect.fn("DeviceHubOperations.defaultDisplayScreenshot")(
+    function* (udid: string) {
+      const capture = yield* run("sh", ["-c", DEFAULT_DISPLAY_SCREENSHOT, "sh", udid], {
+        timeoutMs: Duration.toMillis(SCREENSHOT_TIMEOUT),
+        maxOutputBytes: 64 * 1024 * 1024,
+      });
+      if (capture.code !== 0) {
+        return yield* new DeviceOperationError({
+          operation: "screenshot",
+          reason: "command_failed",
+          exitCode: capture.code,
+          cause: capture.stderr.trim(),
+        });
+      }
+      return new Uint8Array(Buffer.from(capture.stdout, "base64"));
+    },
+  );
+
   const screenshot: DeviceOperations["screenshot"] = (device) =>
     httpClient
       .execute(
@@ -259,6 +368,13 @@ export const makeDeviceHubOperations = (options: {
                   : "request_failed",
               cause,
             }),
+        ),
+        Effect.catchIf(
+          (error) =>
+            device.platform === "ios" &&
+            runsOnXcode26Runtime(device.version) &&
+            error.reason === "hub_rejected",
+          () => defaultDisplayScreenshot(device.id),
         ),
         Effect.withSpan("DeviceHubOperations.screenshot"),
       );

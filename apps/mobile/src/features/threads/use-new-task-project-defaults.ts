@@ -6,6 +6,7 @@ import { DEFAULT_SERVER_SETTINGS, T3_PROJECT_FILE_NAME } from "@t3tools/contract
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 
+import { m } from "../../i18n/messages";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useProjectHasThreads } from "../../state/project-has-threads";
@@ -28,12 +29,15 @@ export function useNewTaskProjectDefaults(project: EnvironmentProject | null) {
     hasWorkspace ? environmentSession.sessionStateAtom(project.environmentId) : null,
   );
   const fileEnvironment = useEnvironmentPresentation(project?.environmentId ?? null);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
+  const fileAccess = resolveFilesystemReadAccess(
+    {
+      isCatalogReady: fileEnvironment.isReady,
+      connection: fileEnvironment.presentation?.connection ?? null,
+      session: fileAccessSession.data,
+      sessionError: fileAccessSession.error,
+    },
+    m,
+  );
   const fileAccessPending = hasWorkspace && fileAccess.isPending;
   const t3ProjectFileQuery = useEnvironmentQuery(
     fileAccess.canReadFiles && hasWorkspace

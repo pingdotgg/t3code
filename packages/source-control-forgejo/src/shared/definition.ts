@@ -1,29 +1,42 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { canonicalRepositoryPath } from "@t3tools/shared/git";
 import {
   buildCommitUrl,
   changeRequestUrlBelow,
   type ChangeRequestHostIdentity,
-  type ChangeRequestProjectIdentity,
   defineSourceControl,
   isChangeRequestAuthorityOfProject,
   isChangeRequestInProjectRepository,
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
+  parseIssuePath,
   parseCommitPath,
+  repositoryUrlFromPagePath,
   projectChangeRequestHost,
   remoteWebOrigin,
 } from "@t3tools/source-control-core/shared/definition";
 import { icon } from "./icon.ts";
 
-const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls)\s+checkout\s+(.+)$/i;
+const CHECKOUT_COMMAND = /^tea\s+(?:pr|pulls?)\s+(?:checkout|co)\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
   /^https?:\/\/[^/\s]+\/(?:[^/\s]+\/)+[^/\s]+\/pulls\/(\d+)(?:[/?#].*)?$/i;
 
 // Forgejo and Gitea run on any hostname, possibly mounted below a path.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/commit\/([0-9a-f]+)\/?$/iu;
+const ISSUE_PATH = /^\/([^/]+(?:\/[^/]+)+)\/issues\/(\d+)(?:\/|$)/u;
+const REPOSITORY_PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/src\/(?:branch|tag|commit)\/[^/]/u;
 
 const KIND = SourceControlProviderKind.make("forgejo");
+
+function isForgejoHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "codeberg.org" ||
+    host.split(".").includes("forgejo") ||
+    host.split(".").includes("gitea")
+  );
+}
 
 const changeRequestHeadRef = (number: number) => `refs/pull/${number}/head`;
 
@@ -31,8 +44,8 @@ const changeRequestHeadRef = (number: number) => `refs/pull/${number}/head`;
  * The repository's browser URL the server resolved from the signed-in account, which is the
  * only place a Forgejo mounted below a path says so.
  */
-function resolvedWebUrl(identity: ChangeRequestProjectIdentity): URL | null {
-  if (!identity.webUrl) return null;
+function resolvedWebUrl(identity: ChangeRequestHostIdentity): URL | null {
+  if (!identity?.webUrl) return null;
   try {
     const url = new URL(identity.webUrl);
     return url.protocol === "http:" || url.protocol === "https:" ? url : null;
@@ -41,8 +54,10 @@ function resolvedWebUrl(identity: ChangeRequestProjectIdentity): URL | null {
   }
 }
 
-/** A server's identity includes its port, which only an HTTP remote names. */
+/** A server's identity includes its port, which only its web URL or an HTTP remote names. */
 function changeRequestHost(identity: ChangeRequestHostIdentity): string {
+  const web = resolvedWebUrl(identity);
+  if (web) return web.host.toLowerCase();
   try {
     const remote = new URL(identity?.locator?.remoteUrl ?? "");
     if (remote.protocol === "http:" || remote.protocol === "https:") {
@@ -84,16 +99,28 @@ export const definition = defineSourceControl({
     const link = parseChangeRequestPath(url, CHANGE_REQUEST_PATH);
     return link === null ? null : { ...link, authority: url.host.toLowerCase() };
   },
+  // `/issues/` is too generic a path to believe from a host not named after Forgejo or Gitea,
+  // unless a Forgejo project on that host vouches for it.
+  parseIssueUrl: (url, known) =>
+    known || isForgejoHost(url.hostname) ? parseIssuePath(url, ISSUE_PATH) : null,
   changeRequestUrlFromReferenceAutolink: () => null,
   commitUrl: (input) => buildCommitUrl(input, "commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
+  repositoryUrlFromPage: (url, known) => {
+    // A mount path may itself contain `src/branch/`, so a `.git` path is always the clone URL.
+    if (url.pathname.replace(/\/$/u, "").endsWith(".git")) return null;
+    const repositoryUrl = repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH);
+    // Elsewhere the same path is a GitLab project nested under groups named `src` and `branch`.
+    return repositoryUrl === null || known ? repositoryUrl : url.href;
+  },
   changeRequestActions: new Set(["merge", "close", "reopen", "update-branch"] as const),
   // Neither `fj` nor `tea` checks out by number.
   checkoutCommand: ({ number, repositoryUrl }) =>
     repositoryUrl
       ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' ${changeRequestHeadRef(number)} && git checkout -B pulls/${number} FETCH_HEAD`
       : null,
-  changeRequestCloseCommand: /\b(?:tea\s+(?:pr|pulls)|fj\s+pr)\s+(?:merge|close)\b/u,
+  // tea also takes `pull` for `pulls` and `m` for `merge`.
+  changeRequestCloseCommand: /\b(?:tea\s+(?:pr|pulls?)|fj\s+pr)\s+(?:merge|m|close)\b/u,
   authorProfileUrl: () => null,
   hardLineBreaks: true,
   // Forgejo refuses a change request review without a summary, even with inline comments.
@@ -103,9 +130,7 @@ export const definition = defineSourceControl({
   checkoutChangeRequestHost: () => null,
   changeRequestHeadRef,
   recognizeRemote: ({ remoteUrl, host, hostname }) =>
-    hostname === "codeberg.org" ||
-    hostname.split(".").includes("forgejo") ||
-    hostname.split(".").includes("gitea")
+    isForgejoHost(hostname)
       ? {
           kind: KIND,
           name: "Forgejo",
@@ -120,7 +145,8 @@ export const definition = defineSourceControl({
       return isChangeRequestInProjectRepository(changeRequestHost(identity), identity, link);
     return (
       web.host.toLowerCase() === (link.authority ?? link.host).toLowerCase() &&
-      web.pathname.replace(/^\/+|\/+$/g, "").toLowerCase() === link.repository.toLowerCase()
+      canonicalRepositoryPath(web.pathname.replace(/^\/+|\/+$/g, "")) ===
+        canonicalRepositoryPath(link.repository)
     );
   },
   // A server mounted below a path serves only repositories under that mount.

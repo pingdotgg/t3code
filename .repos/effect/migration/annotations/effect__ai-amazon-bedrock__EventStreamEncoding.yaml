@@ -1,0 +1,3 @@
+"@effect/ai-amazon-bedrock/EventStreamEncoding":
+  replacement: "none"
+  note: "The event-stream decoder is now internal, not a public module. Use AmazonBedrockClient service.converseStream to decode Bedrock streams and map exception frames to AiError. For a generic AWS event-stream decoder, supply your own implementation or use an AWS SDK; do not import the provider internal module."

@@ -1,0 +1,6 @@
+"@effect/sql-mssql/MssqlClient#MssqlClient":
+  replacement: "@effect/sql-mssql/MssqlClient#MssqlClient"
+  note: "Retained; the service value is now a Context.Service rather than a GenericTag. The MssqlClient interface no longer extends SqlClient.SqlClient. Yielding the service still gives MssqlClient & SqlClient, but an effect that requires MssqlClient no longer type-checks against a SqlClient requirement annotation, and a SqlClient-only layer no longer satisfies MssqlClient. Annotate a layer chosen between drivers as Layer.Layer<SqlClient.SqlClient, E>."
+"@effect/sql-mssql/MssqlClient#MssqlClientConfig":
+  replacement: "@effect/sql-mssql/MssqlClient#MssqlClientConfig"
+  note: "Retained; durations use Duration.Input, parameterTypes is keyed by Statement.PrimitiveKind, and v4 adds retry and timeout options."

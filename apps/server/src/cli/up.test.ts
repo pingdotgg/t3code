@@ -18,7 +18,7 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import { upsertServiceEnv } from "./service.ts";
-import { connectEnabled, planRoutes, upCommand } from "./up.ts";
+import { connectEnabled, planRoutes, statusCommand, upCommand } from "./up.ts";
 
 const none = Option.none<boolean>();
 
@@ -162,9 +162,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     readonly status?: Partial<BootService.BootServiceStatus>;
     readonly installFails?: boolean;
     readonly restartFails?: boolean;
+    readonly fails?: boolean;
+    readonly reportStatus?: boolean;
     /** Runs as if in a terminal, answering each question with this text. */
     readonly answer?: string;
-    readonly prints?: string;
+    /** Lines the run prints, with `<baseDir>` standing for the test's home. */
+    readonly prints?: ReadonlyArray<string>;
+    readonly omits?: string;
+    readonly json?: object;
     readonly env: string;
     readonly args: ReadonlyArray<string>;
     readonly installs: number;
@@ -182,6 +187,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "the local network opens",
+      prints: ["Run `t3 pair --base-dir <baseDir>`."],
       installed: true,
       env: "T3CODE_LAN=false\n",
       args: ["--lan"],
@@ -200,6 +206,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     },
     {
       label: "a route turns off with no service to run",
+      prints: ["Run `t3 --base-dir <baseDir>` to use T3 Code here."],
       installed: false,
       env: "T3CODE_LAN=true\n",
       args: ["--no-lan"],
@@ -220,7 +227,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
     {
       label: "a failed update keeps service.env matching the old service",
       // The old service still runs, so no foreground server is offered.
-      prints: "Fix that, then run `t3 up` again.",
+      prints: ["Fix that, then run `t3 up --base-dir <baseDir>` again."],
       installed: true,
       status: { current: false },
       installFails: true,
@@ -252,6 +259,59 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       envAfter: "T3CODE_LAN=false\n",
     },
     {
+      label: "a service for another home is refused without a restart",
+      installed: true,
+      status: { current: false, otherBaseDir: "/srv/t3 home" },
+      fails: true,
+      answer: "y",
+      env: "T3CODE_LAN=false\n",
+      args: ["--lan"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_LAN=false\n",
+    },
+    {
+      label: "another home's service supplies no local network default",
+      installed: true,
+      status: { current: false, otherBaseDir: "/srv/t3 home" },
+      reportStatus: true,
+      json: {
+        service: { otherBaseDir: "/srv/t3 home" },
+        lan: { enabled: false, inheritedDefault: false },
+      },
+      env: "",
+      args: ["--json"],
+      installs: 0,
+      restarts: 0,
+      envAfter: "",
+    },
+    {
+      label: "status hints keep the caller's --base-dir",
+      installed: true,
+      reportStatus: true,
+      prints: [
+        "Turn it off: `t3 up --base-dir <baseDir> --no-lan`.",
+        "Change access: `t3 up --base-dir <baseDir>`.",
+      ],
+      env: "",
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: "",
+    },
+    {
+      label: "a host override gets no --no-lan hint it would ignore",
+      installed: true,
+      reportStatus: true,
+      prints: ["overridden · T3CODE_HOST=0.0.0.0"],
+      omits: "--no-lan",
+      env: "T3CODE_HOST=0.0.0.0\n",
+      args: [],
+      installs: 0,
+      restarts: 0,
+      envAfter: "T3CODE_HOST=0.0.0.0\n",
+    },
+    {
       label: "no service manager still records the choice",
       installed: false,
       status: { supported: false },
@@ -270,7 +330,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
       restarts: 0,
       envAfter: "T3CODE_LAN=true\n",
     },
-  ])("restarts the service only when it must: $label", (input) =>
+  ])("keeps service changes and access settings consistent: $label", (input) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-up-test-" });
@@ -297,30 +357,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
               ),
             ),
             install: () =>
-              input.installFails === true
+              status.otherBaseDir !== undefined
                 ? Effect.fail(
-                    new BootService.BootServicePrerequisiteError({ problem: "linger-disabled" }),
-                  )
-                : Effect.sync(() => {
-                    installs++;
-                    return {
-                      program: ["t3"],
+                    new BootService.BootServiceOtherBaseDirError({
+                      installedBaseDir: status.otherBaseDir,
                       baseDir,
-                      unitPath: status.unitPath,
-                      logPath: status.logPath,
-                    };
-                  }),
+                    }),
+                  )
+                : input.installFails === true
+                  ? Effect.fail(
+                      new BootService.BootServicePrerequisiteError({ problem: "linger-disabled" }),
+                    )
+                  : Effect.sync(() => {
+                      installs++;
+                      return {
+                        program: ["t3"],
+                        baseDir,
+                        unitPath: status.unitPath,
+                        logPath: status.logPath,
+                      };
+                    }),
             uninstall: Effect.succeed(false),
           }),
         ),
       );
 
       if (input.answer !== undefined) yield* asTerminal;
-      const { exit, lines } = yield* Command.runWith(upCommand, { version: packageJson.version })([
-        "--base-dir",
-        baseDir,
-        ...input.args,
-      ]).pipe(
+      const run = input.reportStatus
+        ? Command.runWith(statusCommand, { version: packageJson.version })
+        : Command.runWith(upCommand, { version: packageJson.version });
+      const { exit, lines } = yield* run(["--base-dir", baseDir, ...input.args]).pipe(
         Effect.provideService(HostProcess.Environment, {}),
         input.answer === undefined
           ? (effect) => effect
@@ -336,10 +402,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, NetService.layer))
           ),
         ),
       );
-      if (input.prints !== undefined) {
-        expect(lines.join("\n")).toContain(input.prints);
+      for (const line of input.prints ?? []) {
+        expect(lines.join("\n")).toContain(line.replace("<baseDir>", baseDir));
       }
-      expect(exit._tag).toBe(input.restartFails === true ? "Failure" : "Success");
+      if (input.omits !== undefined) {
+        expect(lines.join("\n")).not.toContain(input.omits);
+      }
+      if (input.json !== undefined) {
+        expect(JSON.parse(lines.join("\n"))).toMatchObject(input.json);
+      }
+      expect(exit._tag).toBe(
+        input.restartFails === true || input.fails === true ? "Failure" : "Success",
+      );
       expect({ installs, restarts }).toEqual({
         installs: input.installs,
         restarts: input.restarts,
@@ -355,4 +429,18 @@ it("rewrites only the named service.env keys and keeps the user's lines", () => 
     ["# my settings", "T3CODE_PORT=4000", "T3CODE_LAN=true", ""].join("\n"),
   );
   expect(upsertServiceEnv("", { T3CODE_LAN: "false" })).toBe("T3CODE_LAN=false\n");
+  expect(
+    upsertServiceEnv('T3CODE_LAN="a\nb"\nCUSTOM="x\nT3CODE_LAN=y"\nT3CODE_LAN=true\n', {
+      T3CODE_LAN: "false",
+    }),
+  ).toBe('T3CODE_LAN=false\nCUSTOM="x\nT3CODE_LAN=y"\n');
+  expect(
+    upsertServiceEnv('T3CODE_LAN=\u00a0"unused\nCUSTOM=keep\nEND="\nT3CODE_LAN=true\n', {
+      T3CODE_LAN: "false",
+    }),
+  ).toBe('T3CODE_LAN=false\nCUSTOM=keep\nEND="\n');
+  const long = `CUSTOM="${"\n".repeat(130_000)}"\n`;
+  expect(upsertServiceEnv(`${long}T3CODE_LAN=true\n`, { T3CODE_LAN: "false" })).toBe(
+    `${long}T3CODE_LAN=false\n`,
+  );
 });

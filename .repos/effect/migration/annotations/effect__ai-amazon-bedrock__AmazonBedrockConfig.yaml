@@ -1,0 +1,9 @@
+"@effect/ai-amazon-bedrock/AmazonBedrockConfig":
+  replacement: "AmazonBedrockConfig"
+  note: "The optional client-transform configuration remains available and uses effect/http/HttpClient."
+"@effect/ai-amazon-bedrock/AmazonBedrockConfig#AmazonBedrockConfig":
+  replacement: "AmazonBedrockConfig.AmazonBedrockConfig"
+  note: "The tag is now a Context.Service. Use the exported service identifier rather than the old string key, which incorrectly named @effect/ai-google. getOrUndefined and withClientTransform remain available."
+"@effect/ai-amazon-bedrock/AmazonBedrockConfig#AmazonBedrockConfig.Service":
+  replacement: "AmazonBedrockConfig.AmazonBedrockConfig.Service"
+  note: "Keep the transformClient callback, updating HttpClient imports from @effect/platform/HttpClient to effect/http/HttpClient."

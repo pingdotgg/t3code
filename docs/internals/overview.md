@@ -44,8 +44,8 @@ select known environment-local checkouts; the group itself does not store inheri
 
 ## Durable intent and side effects
 
-The event log is the source of truth for orchestration state. The
-[v2 orchestrator](../../apps/server/src/orchestration-v2/Orchestrator.ts) serializes commands and
+Orchestration state is decided as events, and projections are the source of truth once they apply
+them. The [v2 orchestrator](../../apps/server/src/orchestration-v2/Orchestrator.ts) serializes commands and
 decides events without performing provider or filesystem work.
 [EventSink](../../apps/server/src/orchestration-v2/EventSink.ts) commits events, persisted projections,
 the accepted command receipt, and outbox effects in one database transaction. Subscribers receive
@@ -58,7 +58,21 @@ therefore means the intent committed, not that the provider, checkpoint, or othe
 finished. Keep external I/O out of command decisions and the database transaction. Effects tied to
 a lost provider process cannot simply replay; recovery retires them before admitting new work.
 
-Persisted events must remain decodable on replay. Changing a schema affects old environments at
+The event log only keeps what live readers need: about a day of history for reconnect replay and
+command-id retries.
+[ProjectionMaintenance](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) deletes
+older events the projections cover, so projections cannot be rebuilt from the log. It keeps each
+stream's newest event (high-water marks, stream versions, snapshot sequences), `thread.created`
+(the legacy importer's marker), every `running` run update (Codex usage history reads the first
+of each attempt), and prompt anchors that retained subagent rows reference. A client whose cursor
+is below both its thread's newest event and the recorded pruned-through sequence missed pruned
+events, so it resumes from a snapshot; an idle thread's cursor resumes without one. Resumes
+recheck that sequence after reading the replay, since a pass can prune during the read. V2 command
+receipts stay for idempotency: a retry older than the retained history is still deduplicated,
+but its replay comes back without the pruned events. Receipts of imported legacy commands are
+removed once their threads are imported.
+
+Retained events must remain decodable on replay. Changing a schema affects old environments at
 startup as well as live RPC traffic. Compatibility work must account for stored history, not just
 what the newest client sends.
 
@@ -75,6 +89,30 @@ the thread's non-default branch and that a newer run is not active.
 capture workspace state without adding commits to the user's branch. A revert must coordinate
 workspace state with the provider conversation. A provider that cannot roll back its conversation
 must reject that operation before changing the filesystem.
+
+A thread also gets one `repository` checkpoint scope per tracked Git folder it reaches, under its
+root scope. A project can track dozens of repositories while a
+turn touches a few, so these scopes are sparse: a turn costs one `git status` per repository, and
+only a repository the turn changed gets a snapshot ref, a `checkpoint.captured` record and, the
+first time, its `checkpoint-scope.created`. A missing record means the turn left the repository
+alone, and a ref does not exist for every run ordinal.
+
+A file rewind restores the thread's folder and every repository a discarded run changed, or none
+of them: each folder is snapshotted first and put back if a later restore fails. A repository
+with no checkpoint at the target returns to the baseline taken before its first later change,
+which `repositoryRewindCheckpoint` picks; one whose earlier state was never snapshotted is left as
+it is. Run ordinals are never reused, so the snapshots of discarded runs are deleted rather than
+overwritten.
+
+A worktree thread of a project that tracks Git folders works in a task folder: one directory under
+the worktrees directory that holds the project folder and a worktree of each chosen repository at
+the same relative places, all on the thread's branch. The record is keyed by that directory, not
+by thread, because subagents, forks and reused worktrees share a path. Such a thread reaches only
+those worktrees: a repository scope's `cwd` is the worktree and its `repositoryPath` the tracked
+folder. A project folder that is not a repository root is never checked out; its entries are
+linked, so they stay shared with the original. Its root checkpoints are `missing` by design, and
+a file rewind there restores the repositories alone. `TaskFolders` owns every change to a task folder,
+and removal keeps any checkout the single-worktree rules would keep.
 
 Thread settlement is server-owned. The
 [settlement service](../../apps/server/src/orchestration-v2/ThreadSettlementService.ts) evaluates PR

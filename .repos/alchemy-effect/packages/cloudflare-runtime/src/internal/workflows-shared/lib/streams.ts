@@ -39,6 +39,7 @@ export type StreamOutputMeta = {
 
 export type StoredStreamOutputPreview = { type: "text"; output: string } | { type: "binary" };
 
+// oxlint-disable-next-line effecttsgo/extends-native-error -- vendored workers-sdk Workflows code; the error `name` is part of the protocol surfaced to user code across RPC
 export class InvalidStoredStreamOutputError extends Error {
   name = "InvalidStoredStreamOutputError";
 }

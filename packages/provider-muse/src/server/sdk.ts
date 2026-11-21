@@ -10,9 +10,20 @@ import {
   type SpawnedMspConnection,
 } from "@muse-code/sdk";
 import type { RuntimeMode } from "@t3tools/contracts";
+import { envTrampoline, supportsEnvChdir } from "@t3tools/shared/envTrampoline";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+
+export class MuseSdkError extends Schema.TaggedError<MuseSdkError>()("MuseSdkError", {
+  operation: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `Muse SDK ${this.operation} failed.`;
+  }
+}
 
 export interface MuseSdkHost {
   readonly connection: Pick<
@@ -72,15 +83,19 @@ export function museVerbatimPath(path: string): string {
 
 // Native realpath corrects filesystem case as well as resolving symlinks.
 export const museCanonicalPath = Effect.fn("museCanonicalPath")(function* (path: string) {
-  return yield* Effect.tryPromise(() => NodeFSP.realpath(path)).pipe(
-    Effect.orElseSucceed(() => path),
-  );
+  return yield* Effect.tryPromise({
+    try: () => NodeFSP.realpath(path),
+    catch: (cause) => new MuseSdkError({ operation: "realpath", cause }),
+  }).pipe(Effect.orElseSucceed(() => path));
 });
 
 // Windows turn roots need verbatim form; launch cmd.exe with the plain canonical path.
 export const museWorkspaceRoot = Effect.fn("museWorkspaceRoot")(function* (path: string) {
   if ((yield* HostProcess.Platform) !== "win32") return yield* museCanonicalPath(path);
-  const canonical = yield* Effect.tryPromise(() => NodeFSP.realpath(path)).pipe(
+  const canonical = yield* Effect.tryPromise({
+    try: () => NodeFSP.realpath(path),
+    catch: (cause) => new MuseSdkError({ operation: "realpath", cause }),
+  }).pipe(
     // A verbatim path takes `/` literally, so an unresolved root needs Windows separators.
     Effect.orElseSucceed(() => path.replaceAll("/", "\\")),
   );
@@ -212,11 +227,25 @@ export const createMuseSdkHostEffect = Effect.fn("createMuseSdkHostEffect")(func
   options: Omit<MuseSdkHostOptions, "signal">,
   createHost: typeof createMuseSdkHost = createMuseSdkHost,
 ) {
-  const launch = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
+  const native = options.launch ?? (yield* museLaunch(options.binaryPath, options.environment));
+  // The Muse SDK hands libuv the cwd and the PATH search, which freeze the server while a
+  // mount under either hangs; `env` does both in the child.
+  const throughEnv =
+    (yield* HostProcess.Platform) === "linux" && (yield* Effect.promise(supportsEnvChdir))
+      ? envTrampoline(native.command, native.args, options.cwd)
+      : undefined;
+  const { cwd: _enteredByEnv, ...withoutCwd } = options;
+  const hostOptions =
+    throughEnv === undefined
+      ? { ...options, launch: native }
+      : { ...withoutCwd, launch: throughEnv };
   let startup: Promise<MuseSdkHost> | undefined;
-  return yield* Effect.tryPromise((signal) => {
-    startup = createHost({ ...options, launch, signal });
-    return startup;
+  return yield* Effect.tryPromise({
+    try: (signal) => {
+      startup = createHost({ ...hostOptions, signal });
+      return startup;
+    },
+    catch: (cause) => new MuseSdkError({ operation: "start", cause }),
   }).pipe(
     Effect.onInterrupt(() =>
       Effect.promise(async () => {

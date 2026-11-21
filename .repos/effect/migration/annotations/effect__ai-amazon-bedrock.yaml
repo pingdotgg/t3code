@@ -1,0 +1,3 @@
+"@effect/ai-amazon-bedrock":
+  replacement: "@effect/ai-amazon-bedrock"
+  note: "The Bedrock provider is available in v4. Keep this package and migrate shared AI imports from @effect/ai to effect/ai. Provide HttpClient plus the Digest and Mac crypto services when constructing its client."

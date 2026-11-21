@@ -1,8 +1,8 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Schema from "effect/Schema";
 import Users from "./Users.ts";
 
 const CreateUser = Schema.Struct({ name: Schema.String });
@@ -50,10 +50,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         );
       }).pipe(
         Effect.catchTag("EffectDrizzleQueryError", () =>
-          HttpServerResponse.json(
-            { error: "Database query failed" },
-            { status: 500 },
-          ),
+          HttpServerResponse.json({ error: "Database query failed" }, { status: 500 }),
         ),
       ),
     };

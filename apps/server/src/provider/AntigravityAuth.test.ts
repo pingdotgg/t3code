@@ -27,6 +27,8 @@ const otherOwner = "t3-auth-session-other";
 const authorizationUrl =
   "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=test-state";
 const callbackUrl = "http://127.0.0.1:51234/?state=test-state&code=test-code";
+const loginUrl =
+  "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=login-state";
 
 const initialized = {
   protocolVersion: 1,
@@ -60,8 +62,11 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
+    readonly codeLogin?: boolean;
   } = {},
 ) {
+  const loginCodes: string[] = [];
+  const loginCode = yield* Deferred.make<void>();
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
   const discovered = yield* Deferred.make<void, AcpErrors.AcpError>();
   const closed = yield* Deferred.make<void>();
@@ -84,17 +89,21 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
             yield* Deferred.succeed(closed, undefined);
           }),
         );
+        // Like AcpSessionRuntime, `start` reuses one memoized initialize handshake.
+        const initialize = yield* Effect.cached(
+          Effect.gen(function* () {
+            events.push("initialize");
+            yield* options.beforeInitialize ?? Effect.void;
+            return options.supportsLogout === false
+              ? { ...initialized, agentCapabilities: {} }
+              : initialized;
+          }),
+        );
         return {
-          initialize: () =>
-            Effect.gen(function* () {
-              events.push("initialize");
-              yield* options.beforeInitialize ?? Effect.void;
-              return options.supportsLogout === false
-                ? { ...initialized, agentCapabilities: {} }
-                : initialized;
-            }),
+          initialize: () => initialize,
           start: () =>
             Effect.gen(function* () {
+              yield* initialize;
               events.push("authenticate");
               yield* Deferred.succeed(authenticateCalled, undefined);
               if (options.interactive !== false && input.onAuthorizationUrl) {
@@ -128,6 +137,21 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
       Effect.sync(() => {
         forwarded += 1;
       }),
+    codeLogin: ({ onAuthorizationUrl }) =>
+      Effect.gen(function* () {
+        if (!options.codeLogin) return undefined;
+        events.push("login-open");
+        yield* Effect.addFinalizer(() => Effect.sync(() => events.push("login-close")));
+        yield* onAuthorizationUrl(loginUrl);
+        return {
+          submit: (response: string) =>
+            Effect.sync(() => loginCodes.push(response)).pipe(
+              Effect.andThen(Deferred.succeed(loginCode, undefined)),
+              Effect.asVoid,
+            ),
+          completed: Deferred.await(loginCode),
+        };
+      }),
   });
   return {
     auth,
@@ -138,6 +162,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
+    loginCodes,
     receiveAuthorizationUrl: (url: string) =>
       Effect.suspend(() =>
         receiveAuthorizationUrl
@@ -163,6 +188,42 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       yield* Deferred.succeed(harness.authenticated, undefined);
       yield* Deferred.succeed(harness.discovered, undefined);
       yield* phase(harness.auth, "succeeded");
+    }),
+  );
+
+  it.effect("signs in through the CLI's code login, then authenticates a fresh process", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ codeLogin: true });
+      const state = yield* harness.auth.controller.start(owner);
+      const waiting = yield* phase(harness.auth, "waiting");
+      assert.equal(waiting.authorizationUrl, loginUrl);
+      assert.equal(waiting.interaction?.type, "credentials");
+      const respond = (code: string) =>
+        harness.auth.controller.respond!(owner, {
+          instanceId,
+          flowId: state.flowId!,
+          interactionId: state.flowId!,
+          response: { type: "credentials", values: { code } },
+        });
+      for (const invalid of [callbackUrl, "two words", ""]) {
+        assert.isTrue(Exit.isFailure(yield* respond(invalid).pipe(Effect.exit)), invalid);
+      }
+      assert.equal((yield* respond("4/0Ab-code")).phase, "verifying");
+      assert.deepEqual(harness.loginCodes, ["4/0Ab-code"]);
+
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* phase(harness.auth, "succeeded");
+      assert.deepEqual(harness.events, [
+        "login-open",
+        "login-close",
+        "process-open",
+        "initialize",
+        "authenticate",
+        "session-new",
+        "catalog-published",
+        "process-close",
+      ]);
     }),
   );
 
@@ -260,6 +321,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
     }),
   );
 
+  it.effect("says Antigravity exited when its process dies during sign-in", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ interactive: false });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(harness.authenticateCalled);
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpProcessExitedError({
+          signal: "SIGILL",
+          stderr: `runtime crashed ${callbackUrl}`,
+        }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.include(failed.message ?? "", "exited");
+      assert.include(failed.message ?? "", "SIGILL");
+      assert.notInclude(failed.message ?? "", "Google sign-in failed");
+      assert.notInclude(failed.message ?? "", "runtime crashed");
+    }),
+  );
+
   it.effect("tells the user when the agent cannot reach Google", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ interactive: false });
@@ -277,6 +358,75 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       yield* TestClock.adjust("270 seconds");
       const failed = yield* phase(harness.auth, "failed");
       assert.include(failed.message ?? "", "could not reach Google");
+
+      yield* harness.auth.onSignedInElsewhere;
+      const cleared = yield* phase(harness.auth, "idle");
+      assert.isNull(cleared.message);
+    }),
+  );
+
+  it.effect("does not blame the network while the runtime is still starting", () =>
+    Effect.gen(function* () {
+      const initializing = yield* Deferred.make<void>();
+      const ready = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        interactive: false,
+        beforeInitialize: Deferred.succeed(initializing, undefined).pipe(
+          Effect.andThen(Deferred.await(ready)),
+        ),
+      });
+      const hasHint = harness.auth.controller.subscribe(owner).pipe(
+        Stream.runHead,
+        Effect.map((state) => Option.getOrThrow(state).message?.includes("Broken IPv6") === true),
+      );
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(initializing);
+
+      // A one-file runtime can take about a minute to unpack before it answers initialize.
+      yield* TestClock.adjust("60 seconds");
+      assert.isFalse(yield* hasHint);
+
+      yield* Deferred.succeed(ready, undefined);
+      yield* Deferred.await(harness.authenticateCalled);
+      yield* TestClock.adjust("29 seconds");
+      assert.isFalse(yield* hasHint);
+
+      yield* TestClock.adjust("1 second");
+      const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.message?.includes("Broken IPv6") === true),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(stalled.phase, "starting");
+    }),
+  );
+
+  it.effect("does not blame the network when the runtime never answers initialize", () =>
+    Effect.gen(function* () {
+      const initializing = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        beforeInitialize: Deferred.succeed(initializing, undefined).pipe(
+          Effect.andThen(Effect.never),
+        ),
+      });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.await(initializing);
+      const blamesNetwork = /reach(ed)? Google|network|ipv6/i;
+
+      yield* TestClock.adjust("90 seconds");
+      const stalled = yield* harness.auth.controller.subscribe(owner).pipe(
+        Stream.filter((state) => state.message !== "Starting Google sign-in."),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+      assert.equal(stalled.phase, "starting");
+      assert.notMatch(stalled.message ?? "", blamesNetwork);
+      assert.match(stalled.message ?? "", /not started|stuck/i);
+
+      yield* TestClock.adjust("210 seconds");
+      const failed = yield* phase(harness.auth, "failed");
+      assert.notMatch(failed.message ?? "", blamesNetwork);
+      assert.match(failed.message ?? "", /not respond|may not run/i);
     }),
   );
 
@@ -385,7 +535,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       assert.isTrue(Exit.isFailure(competing));
       const resumed = yield* phase(harness.auth, "waiting");
       assert.equal(resumed.flowId, first.flowId);
-      assert.deepEqual(harness.events, ["process-open", "authenticate"]);
+      assert.deepEqual(harness.events, ["process-open", "initialize", "authenticate"]);
       yield* harness.auth.controller.cancel(owner, first.flowId!);
     }),
   );

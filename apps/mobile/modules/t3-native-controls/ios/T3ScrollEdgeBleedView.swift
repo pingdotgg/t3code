@@ -4,8 +4,9 @@ import UIKit
 /// Wraps a screen's header scroll view. Where a column pads its content away from the iPhone Duo's
 /// vertical bar, this widens the scroll view under the bar, like the system apps' lists. UIKit
 /// draws the header's scroll-edge effect inside the scroll view, so the blur reaches the bar while
-/// the content stays in the safe area. Everything happens in UIKit layout, so folds move the blur
-/// and the content together.
+/// the content stays in the safe area, and the scroll indicator runs along the screen edge past the
+/// bar, as in Messages. Everything happens in UIKit layout, so folds move the blur and the content
+/// together.
 final class T3ScrollEdgeBleedView: ExpoView {
   // Fabric recycles scroll views, so everything changed here is put back before this view leaves
   // the window, which unmounting does before any recycling.
@@ -19,6 +20,10 @@ final class T3ScrollEdgeBleedView: ExpoView {
   /// React Native's clipping, saved while bleeding. React Native only rewrites it when the
   /// `overflow` style changes, so it stays off while bleeding.
   private var containerClipped: Bool?
+  /// The bar's side is read from the root view controller, whose traits can settle after this
+  /// view's own during a fold; with no size change after that, nothing else would recheck.
+  private weak var observedWindow: UIWindow?
+  private var windowTraitRegistration: (any UITraitChangeRegistration)?
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -37,7 +42,31 @@ final class T3ScrollEdgeBleedView: ExpoView {
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
+    observeWindowTraits()
     if window == nil { detach() } else { setNeedsLayout() }
+  }
+
+  override func safeAreaInsetsDidChange() {
+    super.safeAreaInsetsDidChange()
+    setNeedsLayout()
+  }
+
+  private func observeWindowTraits() {
+    guard observedWindow !== window else { return }
+    if let observedWindow, let windowTraitRegistration {
+      observedWindow.unregisterForTraitChanges(windowTraitRegistration)
+    }
+    observedWindow = window
+    windowTraitRegistration = nil
+    #if canImport(UIKit, _version: 9127.0.85)
+    if #available(iOS 27.1, *), let window {
+      windowTraitRegistration = window.registerForTraitChanges(
+        UITraitCollection.systemTraitsAffectingVerticalBarEdge
+      ) { [weak self] (_: UIWindow, _: UITraitCollection) in
+        self?.setNeedsLayout()
+      }
+    }
+    #endif
   }
 
   override func didAddSubview(_ subview: UIView) {
@@ -95,8 +124,11 @@ final class T3ScrollEdgeBleedView: ExpoView {
     // The vertical-bar API ships in the iOS 27.1 SDK (UIKit 9127.0.85); see T3LayoutMetricsView.
     #if canImport(UIKit, _version: 9127.0.85)
     if #available(iOS 27.1, *) {
+      // UIKit leaves the trait unset in a split view's inspector column, though the bar overlaps
+      // it; the flush check above still decides whether this view sits at the bar.
+      let traits = window?.rootViewController?.traitCollection ?? traitCollection
       let rtl = effectiveUserInterfaceLayoutDirection == .rightToLeft
-      switch traitCollection.verticalBarEdge {
+      switch traits.verticalBarEdge {
       case .leading: return rtl ? .right : .left
       case .trailing: return rtl ? .left : .right
       default: return nil
@@ -132,11 +164,6 @@ final class T3ScrollEdgeBleedView: ExpoView {
       // The scroll view itself still clips its content.
       containerClipped = containerClipped ?? true
       container.layer.masksToBounds = false
-    }
-    var indicators = scrollView.verticalScrollIndicatorInsets
-    if indicators.right != bleed.right {
-      indicators.right = bleed.right
-      scrollView.verticalScrollIndicatorInsets = indicators
     }
     applied = bleeding
   }
