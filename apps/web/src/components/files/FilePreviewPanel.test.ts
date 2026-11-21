@@ -214,7 +214,7 @@ describe("document preview contents", () => {
     expect(html).not.toContain("https:");
   });
 
-  it("treats a backslash before a line break as a paragraph break, as TextEdit writes them", () => {
+  it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
     const html = (rtf: string) => {
       const result = openRtf(bytes(rtf));
       if (result.type !== "document") throw new Error("Expected document");
@@ -230,6 +230,12 @@ Third}`;
     );
     expect(html(textEdit)).toEqual(expected);
     expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
+    const lineBreak = html(String.raw`{\rtf1\ansi First line\line Second line}`);
+    expect(lineBreak).toEqual(["<p>First line<br>Second line</p>"]);
+    expect(html(String.raw`{\rtf1\ansi First line\uc0\u8232 Second line}`)).toEqual(lineBreak);
+    expect(html(String.raw`{\rtf1\ansi First line\u8232?Second line{\deleted\u8232?}}`)).toEqual(
+      lineBreak,
+    );
   });
 
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
