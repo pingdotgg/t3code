@@ -58,10 +58,17 @@ const mapSpeechError = <A, R>(effect: Effect.Effect<A, SpeechService.SpeechError
 
 // A linked model's origin is a path on this machine; only filesystem readers may see it.
 // Untraced: it runs inside each handler's own span.
-const withoutHostPaths = Effect.fnUntraced(function* (result: EnvironmentSpeechModels) {
+const withoutHostPaths = Effect.fnUntraced(function* <Fields extends EnvironmentSpeechModels>({
+  models,
+  ...fields
+}: Fields) {
   const session = yield* EnvironmentAuthenticatedPrincipal;
-  if (session.scopes.has(AuthFilesystemReadScope)) return result;
-  return { models: result.models.map(({ linkedFrom: _, ...model }) => model) };
+  return {
+    ...fields,
+    models: session.scopes.has(AuthFilesystemReadScope)
+      ? models
+      : models.map(({ linkedFrom: _, ...model }) => model),
+  };
 });
 
 export const speechHttpApiLayer = HttpApiBuilder.group(

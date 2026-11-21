@@ -1,5 +1,4 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
-import { providerAuthRedirectShowsCode } from "@t3tools/shared/providerAuthReturnUrl";
 import { T, useGT, Var } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import {
@@ -15,7 +14,8 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
-import { Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
+import { Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { m } from "../../i18n/messages";
 
@@ -370,9 +370,9 @@ function ProviderAccount({
       variant="pill"
       label={gt("Docs")}
       onPress={() => {
-        void Linking.openURL(provider.setup!.documentationUrl!).catch(() =>
-          setError(gt("Could not open the provider docs.")),
-        );
+        void tryOpenExternalUrl(provider.setup!.documentationUrl!).then((opened) => {
+          if (!opened) setError(gt("Could not open the provider docs."));
+        });
       }}
     />
   ) : active && state?.flowId ? (
@@ -492,13 +492,7 @@ function ProviderAccount({
           ) : null}
           {showCallback ? (
             <>
-              {field(
-                "callback",
-                interaction?.type === "browser" && providerAuthRedirectShowsCode(interaction.url)
-                  ? gt("Paste a code")
-                  : gt("Final localhost URL"),
-                false,
-              )}
+              {field("callback", gt("Final localhost URL"), false)}
               <SettingsActionRow
                 icon="arrow.right"
                 label={gt("Continue")}
@@ -537,7 +531,8 @@ function ProviderAccount({
                 !(await send({ type: "browser", action: "accept" }))
               )
                 return;
-              await Linking.openURL(url);
+              if (!(await tryOpenExternalUrl(url, "provider-auth")))
+                setError(gt("Could not open the sign-in page."));
             })().catch(() => setError(gt("Could not open the sign-in page.")));
           }}
         />

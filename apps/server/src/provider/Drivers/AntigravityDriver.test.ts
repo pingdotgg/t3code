@@ -4,21 +4,19 @@ import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   EnvironmentId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -35,6 +33,8 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ModelManifest from "../ModelManifest.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { knownProviderFailureMessage } from "@t3tools/provider-core/server/failure";
+import { resolveProviderCompatibility } from "../providerCompatibility.ts";
 import { AntigravityDriver } from "./AntigravityDriver.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -84,6 +84,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const profileDirectory = directories.profile;
   const instancePath = `${path.join(root, "instance-bin")}:${baseEnv.PATH ?? ""}`;
 
+  const agentExecutables = new Set<string>();
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
     name: string,
     options: {
@@ -91,13 +92,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
-      /** Makes this the agy CLI, whose `acp --login` prints this link and exits on a pasted code. */
-      readonly cliLoginUrl?: string;
+      readonly agentVersion?: string;
     } = {},
   ) {
     const directory = path.join(root, name);
-    const executablePath = path.join(directory, "agy_acp_server.par");
-    const harnessPath = path.join(directory, "localharness_external");
+    const executablePath = path.join(directory, "agy");
     yield* fs.makeDirectory(directory, { recursive: true });
     const authorizationUrl =
       "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=fixture-state";
@@ -116,21 +115,15 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
-        ...(options.cliLoginUrl === undefined
-          ? []
-          : [
-              `if [ "$2" = --login ]; then printf '%s\\n' ${shellQuote(options.cliLoginUrl)}; read -r _; exit 0; fi`,
-            ]),
+        `export T3_ACP_AGENT_VERSION=${shellQuote(options.agentVersion ?? "1.5.12")}`,
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
       ].join("\n"),
     );
-    yield* fs.writeFileString(harnessPath, "#!/bin/sh\nexit 99\n");
     yield* fs.chmod(executablePath, 0o755);
-    yield* fs.chmod(harnessPath, 0o755);
+    agentExecutables.add(executablePath);
     return {
       executablePath,
-      harnessPath: options.cliLoginUrl === undefined ? harnessPath : null,
       source: "managed",
       version: name,
       managedVersionDirectory: directory,
@@ -154,7 +147,6 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     extendEnv: boolean | undefined;
     environment: Record<string, string | undefined>;
     profileDirectory: string | undefined;
-    harnessPath: string | undefined;
     forceFileStorage: string | undefined;
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
@@ -164,6 +156,14 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
+    compatibility: (version) =>
+      Effect.succeed(
+        resolveProviderCompatibility(
+          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+          ProviderDriverKind.make("antigravity"),
+          version,
+        ),
+      ),
     resolve: () =>
       Effect.gen(function* () {
         if (controls.failResolution) {
@@ -210,14 +210,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         extendEnv: command.options.extendEnv,
         environment: Object.fromEntries(Object.keys(environment).map((name) => [name, env(name)])),
         profileDirectory: env("GEMINI_HOME"),
-        harnessPath: env("ANTIGRAVITY_HARNESS_PATH"),
         forceFileStorage: env("AGY_ACP_FORCE_FILE_STORAGE"),
         credentialKeys: Object.keys(environment).filter((key) =>
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
         geminiApiKey: env("GEMINI_API_KEY"),
-        tempDirectory:
-          environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
+        tempDirectory: agentExecutables.has(command.command) ? env("TMPDIR") : undefined,
         handle,
       });
       return handle;
@@ -237,7 +235,6 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       { name: "GOOGLE_APPLICATION_CREDENTIALS", value: "/must-not-be-used.json" },
       { name: "GOOGLE_GENAI_USE_VERTEXAI", value: "true" },
       { name: "GEMINI_HOME", value: "/must-not-be-used" },
-      { name: "ANTIGRAVITY_HARNESS_PATH", value: "/must-not-be-used" },
       { name: "BROWSER", value: "must-not-run" },
       ...(options.environment ?? []),
     ].map((variable) => ({ ...variable, sensitive: false })),
@@ -339,19 +336,18 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           { binaryPath: "", path: h.instancePath },
           { binaryPath: "", path: h.instancePath },
         ]);
-        const nativeLaunches = h.launches.filter((launch) => launch.harnessPath !== undefined);
-        expect(nativeLaunches.map((launch) => launch.command)).toEqual([
+        const agentLaunches = h.launches.filter((launch) => launch.tempDirectory !== undefined);
+        expect(agentLaunches.map((launch) => launch.command)).toEqual([
           h.first.executablePath,
           h.second.executablePath,
         ]);
-        expect(nativeLaunches.map((launch) => launch.harnessPath)).toEqual([
-          h.first.harnessPath,
-          h.second.harnessPath,
-        ]);
-        for (const launch of nativeLaunches) {
+        for (const launch of agentLaunches) {
           expect(launch.args).toEqual([
-            ...(hostPlatform === "linux" ? ["--uid="] : []),
-            "--alsologtostderr",
+            "acp",
+            "--gemini-dir",
+            h.profileDirectory,
+            "--app-data-dir",
+            "antigravity-acp",
           ]);
           expect(launch.profileDirectory).toBe(h.profileDirectory);
           expect(launch.forceFileStorage).toBe("1");
@@ -425,10 +421,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         ]);
 
         // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
-        h.controls.selected = {
-          ...(yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" })),
-          harnessPath: null,
-        };
+        h.controls.selected = yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" });
         for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
           const requestsBefore = (yield* h.readRequests).length;
           const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
@@ -473,22 +466,15 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
     "gives a thread session its own T3 thread and MCP fallback environment",
     () =>
       Effect.gen(function* () {
-        // Standalone builds hide the display only from sign-in launches.
         const h = yield* makeHarness({
           environment: [
-            { name: "DISPLAY", value: ":7" },
             { name: "T3CODE_THREAD_ID", value: "thread-antigravity-ambient" },
             { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:9/ambient" },
             { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer ambient-token" },
             { name: "T3_ACP_MCP_NODE", value: "/ambient/node" },
             { name: "T3_ACP_MCP_ENTRYPOINT", value: "/ambient/entrypoint.mjs" },
           ],
-        }).pipe(
-          Effect.provideService(
-            ConfigProvider.ConfigProvider,
-            ConfigProvider.fromUnknown({ T3CODE_STANDALONE: true }),
-          ),
-        );
+        });
         yield* h.refresh();
         const endpoint = "http://127.0.0.1:43126/mcp";
         const threadId = ThreadId.make("thread-antigravity-process-environment");
@@ -531,7 +517,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         );
         expect(agentLaunches).toHaveLength(2);
         expect(agentLaunches[1]?.environment).toMatchObject({
-          DISPLAY: ":7",
           T3CODE_THREAD_ID: threadId,
           T3_ACP_MCP_ENDPOINT: endpoint,
           T3_ACP_MCP_AUTHORIZATION: "Bearer antigravity-thread-token",
@@ -540,7 +525,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         });
         // Model refresh and sign-in launches are not part of a thread.
         expect(agentLaunches[0]?.environment).toMatchObject({
-          DISPLAY: ":7",
           T3CODE_THREAD_ID: "thread-antigravity-ambient",
           T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:9/ambient",
           T3_ACP_MCP_AUTHORIZATION: "Bearer ambient-token",
@@ -552,48 +536,38 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
-    "signs in through `agy acp --login` only in standalone builds",
+    "refuses to open a session on a PATH executable older than 1.5",
     () =>
       Effect.gen(function* () {
-        const cliLoginUrl =
-          "https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=test-client" +
-          "&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=cli-state";
-        const owner = "antigravity-driver-sign-in";
-        for (const standalone of [true, false]) {
-          const h = yield* makeHarness({
-            environment: [{ name: "DISPLAY", value: ":7" }],
-          }).pipe(
-            Effect.provideService(
-              ConfigProvider.ConfigProvider,
-              ConfigProvider.fromUnknown({ T3CODE_STANDALONE: standalone }),
-            ),
-          );
-          h.controls.selected = yield* h.makeExecutable(`runtime agy ${standalone}`, {
-            cliLoginUrl,
-          });
-          const auth = h.instance.auth!;
-          const settled = (phases: ReadonlyArray<string>) =>
-            auth.subscribe(owner).pipe(
-              Stream.filter((state) => phases.includes(state.phase)),
-              Stream.runHead,
-              Effect.map((state) => Option.getOrThrow(state).phase),
-            );
-          const state = yield* auth.start(owner);
-          // An upstream build never pauses for a pasted code.
-          expect(yield* settled(["waiting", "succeeded", "failed"])).toBe(
-            standalone ? "waiting" : "succeeded",
-          );
-          if (standalone) {
-            yield* auth.complete(owner, {
-              flowId: state.flowId!,
-              callbackUrl: "https://antigravity.google/oauth-callback?state=cli-state&code=4%2F0Ab",
+        const h = yield* makeHarness();
+        const old = yield* h.makeExecutable("runtime old", { agentVersion: "1.4.5" });
+        h.controls.selected = { ...old, source: "path", version: null };
+        const threadId = ThreadId.make("thread-antigravity-old-runtime");
+        const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+        const error = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-old-runtime-" });
+            const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: workspace,
             });
-            expect(yield* settled(["succeeded", "failed"])).toBe("succeeded");
-          }
-          const logins = h.launches.filter((launch) => launch.args.includes("--login"));
-          expect(logins.length).toBe(standalone ? 1 : 0);
-          if (standalone) expect(logins[0]?.environment.DISPLAY).toBeUndefined();
-        }
+            const session = yield* h.instance.orchestrationAdapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make("provider-session-antigravity-old-runtime"),
+              modelSelection,
+              runtimePolicy,
+            });
+            yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+          }),
+        ).pipe(Effect.flip);
+        const message = `Antigravity 1.4.5 does not work with this T3 Code release. Update the Antigravity executable at ${old.executablePath} to >=1.5.12 <2, then retry.`;
+        expect(knownProviderFailureMessage(error)).toBe(message);
+        expect((yield* h.refresh().pipe(Effect.flip)).detail).toBe(message);
+        const methods = (yield* h.readRequests).map((request) => request.method);
+        expect(methods).toContain("initialize");
+        expect(methods).not.toContain("session/new");
+        yield* h.assertClosed;
       }),
   );
 

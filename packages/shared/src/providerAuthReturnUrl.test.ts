@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { providerAuthRedirectShowsCode, providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
+import { providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
 
 describe("provider auth return destinations", () => {
   it.each(["t3code", "t3code-dev"])(
@@ -40,19 +40,5 @@ describe("provider auth return destinations", () => {
     expect(
       providerAuthReturnUrl("https://evil.example/settings", hosted, "easydevcode"),
     ).toBeUndefined();
-  });
-
-  it("knows when sign-in ends on a page that shows a code", () => {
-    const signIn = (redirect: string) =>
-      `https://accounts.google.com/o/oauth2/auth?redirect_uri=${encodeURIComponent(redirect)}`;
-    expect(providerAuthRedirectShowsCode(signIn("https://antigravity.google/oauth-callback"))).toBe(
-      true,
-    );
-    expect(providerAuthRedirectShowsCode(signIn("http://127.0.0.1:4321/"))).toBe(false);
-    expect(providerAuthRedirectShowsCode(signIn("http://localhost:1455/auth/callback"))).toBe(
-      false,
-    );
-    expect(providerAuthRedirectShowsCode("https://accounts.google.com/o/oauth2/auth")).toBe(false);
-    expect(providerAuthRedirectShowsCode("not a url")).toBe(false);
   });
 });

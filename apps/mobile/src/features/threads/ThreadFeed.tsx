@@ -1,3 +1,4 @@
+import { CollapsibleUserMessageBody } from "./CollapsibleUserMessageBody";
 import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
@@ -85,7 +86,11 @@ import {
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { parseThreadLinkHref, shareableThreadLink } from "@t3tools/shared/threadLinks";
+import {
+  hasThreadLinks,
+  parseThreadLinkHref,
+  shareableThreadLink,
+} from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -289,6 +294,7 @@ import {
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import {
   resolveThreadLink,
+  useEnvironmentPreviewTunnelOff,
   useLiveThreadLinkLabels,
   useQuietThreadShell,
   useThreadChipIcons,
@@ -296,6 +302,7 @@ import {
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useEnvironmentQuery } from "../../state/query";
+import { useLinkedEnvironments } from "../../state/peerLinks";
 import { serverEnvironment } from "../../state/server";
 import { useModelMentions } from "../../state/model-mentions";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
@@ -321,6 +328,7 @@ import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { useOpenThreadLink } from "./useOpenThreadLink";
 import {
   MarkdownImageAvailableWidthContext,
   ThreadMarkdownImage,
@@ -1330,7 +1338,11 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const gt = useGT();
-  const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const liveMarkdown = useLiveThreadLinkLabels(
+    props.markdown,
+    props.environmentId,
+    useLinkedEnvironments(hasThreadLinks(props.markdown) ? props.environmentId : null),
+  );
   const [quoteSelection, setQuoteSelection] = useState<{
     markdown: string;
     selectors: ReturnType<typeof collectMobileAssistantTextSelectors>;
@@ -1995,6 +2007,7 @@ function renderFeedEntry(
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
+    readonly onToggleUserMessage: (rowId: string, anchorKey: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
@@ -2555,16 +2568,25 @@ function renderFeedEntry(
                     <MarkdownImageAvailableWidthContext
                       value={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
                     >
-                      <UserMessageContent
-                        text={renderedText}
-                        environmentId={props.environmentId}
-                        context={message.context}
-                        markdownStyles={styles}
-                        reviewCommentColors={props.reviewCommentColors}
-                        skills={props.skills}
-                        linkHandlers={props.markdownLinkHandlers}
-                        renderImage={props.renderMarkdownImage}
-                      />
+                      <CollapsibleUserMessageBody
+                        collapsible={foldRowId === null}
+                        expanded={props.expandedWorkRows[`message:${message.id}`] ?? false}
+                        onToggle={() =>
+                          props.onToggleUserMessage(`message:${message.id}`, entry.id)
+                        }
+                        bubbleColor={userBubbleColor}
+                      >
+                        <UserMessageContent
+                          text={renderedText}
+                          environmentId={props.environmentId}
+                          context={message.context}
+                          markdownStyles={styles}
+                          reviewCommentColors={props.reviewCommentColors}
+                          skills={props.skills}
+                          linkHandlers={props.markdownLinkHandlers}
+                          renderImage={props.renderMarkdownImage}
+                        />
+                      </CollapsibleUserMessageBody>
                     </MarkdownImageAvailableWidthContext>
                   ) : null}
                 </View>
@@ -2788,9 +2810,13 @@ function UserMessageContent(props: UserMessageContentProps) {
   const gt = useGT();
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
-  const openLinkedThread = useOpenLinkedThread();
+  const openThreadLink = useOpenThreadLink(props.environmentId);
   const { selectedThread } = useThreadSelection();
-  const liveText = useLiveThreadLinkLabels(props.text, props.environmentId);
+  const liveText = useLiveThreadLinkLabels(
+    props.text,
+    props.environmentId,
+    useLinkedEnvironments(hasThreadLinks(props.text) ? props.environmentId : null),
+  );
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
@@ -2808,10 +2834,7 @@ function UserMessageContent(props: UserMessageContentProps) {
       return;
     }
     if (record?.kind === "thread" && "threadId" in record) {
-      openLinkedThread({
-        environmentId: String(record.environmentId),
-        threadId: String(record.threadId),
-      });
+      openThreadLink(scopeThreadRef(record.environmentId, record.threadId));
       return;
     }
     const document = composerDocumentAttachmentRecord(record);
@@ -3130,8 +3153,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
   const openPullRequest = useOpenPullRequest();
   const navigation = useNavigation();
-  const openLinkedThread = useOpenLinkedThread();
+  const openThreadLink = useOpenThreadLink(props.environmentId);
   const openLocalPreview = useOpenLocalPreview();
+  const previewTunnelOff = useEnvironmentPreviewTunnelOff(props.environmentId);
+  // Without the tunnel, loopback links fall through to the system browser like any other link.
+  const deviceLoopbackUrl = (href: string) =>
+    previewTunnelOff ? null : loopbackUrlForDevice(href);
   // Recycling a row disposes its native audio player, so a started clip's row stays rendered.
   const [retainedMediaRowId, setRetainedMediaRowId] = useState<string | null>(null);
   const focused = useIsFocused();
@@ -3414,7 +3441,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       return;
     }
     // Safari would open the phone's own localhost, so these open on the device by default.
-    const deviceUrl = loopbackUrlForDevice(href);
+    const deviceUrl = deviceLoopbackUrl(href);
     if (deviceUrl) {
       openLocalPreview(
         { environmentId: String(props.environmentId), threadId: String(props.threadId) },
@@ -3424,12 +3451,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     if (parseThreadLinkHref(href)) {
       const target = resolveLinkedThread(href);
-      if (target) {
-        openLinkedThread({
-          environmentId: String(target.environmentId),
-          threadId: String(target.threadId),
-        });
-      }
+      if (target) openThreadLink(target);
       return;
     }
     const media = resolveMarkdownMediaPreview(href, {
@@ -3552,7 +3574,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         };
       }
       // The environment's localhost, which this device can only reach through the tunnel.
-      if (loopbackUrlForDevice(href)) {
+      if (deviceLoopbackUrl(href)) {
         return {
           title: href,
           actions: [
@@ -3579,7 +3601,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           copyTextWithHaptic(shareableThreadLink(thread, resolveHostedAppUrl()));
         return;
       }
-      const deviceUrl = loopbackUrlForDevice(href);
+      const deviceUrl = deviceLoopbackUrl(href);
       if (deviceUrl) {
         if (actionId === "open-on-device") {
           markdownLinkRequest.current?.abort();
@@ -4126,6 +4148,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     });
   };
 
+  const onToggleUserMessage = (rowId: string, anchorKey: string) => {
+    const list = listRef.current;
+    if (expandedWorkRows[rowId] && list) {
+      const anchor = list.anchorVisibleContent({ key: anchorKey, hold: false });
+      const nextKey = groupedFeed[groupedFeed.findIndex((item) => item.id === anchorKey) + 1]?.id;
+      // Once the message top is scrolled away, collapse toward it like the web: what follows stays put.
+      if (anchor && anchor.offset > 0 && nextKey) {
+        onToggleWorkRow(rowId, nextKey);
+        return;
+      }
+    }
+    onToggleWorkRow(rowId, anchorKey);
+  };
+
   const onToggleTurnFold = (runId: RunId) => {
     preserveDisclosurePosition(`run-fold:${runId}`);
     setInteractionState((current) => {
@@ -4265,6 +4301,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onCopyWorkRow,
             onToggleWorkGroup,
             onToggleWorkRow,
+            onToggleUserMessage,
             onToggleTurnFold,
             onOpenTurnDiff,
             onPressPreview,

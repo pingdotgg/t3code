@@ -22,7 +22,10 @@ import * as ServerSettings from "../serverSettings.ts";
 import { standaloneConfig } from "../standalone.ts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
-import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
+import {
+  ProviderCompatibilityPolicy,
+  resolveProviderCompatibility,
+} from "./providerCompatibility.ts";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 
 const DEFAULT_MODEL_MANIFEST_URL =
@@ -134,6 +137,15 @@ const decodeManifest = Schema.decodeUnknownEffect(ModelManifestSchema);
 
 export const BUNDLED_MODEL_MANIFEST: ModelManifestData =
   Schema.decodeUnknownSync(ModelManifestSchema)(bundledManifestJson);
+
+/** A manifest with no policy for this driver and release falls back to the bundled one. */
+export const providerCompatibility = (
+  manifest: ModelManifestData,
+  driver: ProviderDriverKind,
+  version: string | null,
+) =>
+  resolveProviderCompatibility(manifest.compatibility, driver, version) ??
+  resolveProviderCompatibility(BUNDLED_MODEL_MANIFEST.compatibility, driver, version);
 
 function manifestUpdatedAtMs(manifest: ModelManifestData): number {
   if (manifest.updatedAt === undefined) return 0;
