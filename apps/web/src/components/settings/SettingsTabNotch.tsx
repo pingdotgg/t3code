@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { isElectron } from "../../env";
 import {
+  closeLayoutTabOnMiddleClick,
   LAYOUT_TAB_ICON_CLASS,
   LAYOUT_TAB_SLOT_CLASS,
   LayoutPaneTab,
@@ -43,10 +44,17 @@ export function SettingsTabNotch({
         <span className={LAYOUT_TAB_SLOT_CLASS}>
           {/* Uncapped, unlike a chat tab: its breadcrumb filters use the header's free room. */}
           <div
-            className={cn(PANE_TAB_CLASS, "max-w-none")}
+            className={cn(PANE_TAB_CLASS, "max-w-none cursor-pointer select-none")}
             data-layout-pane-tab={tabId ?? undefined}
             data-layout-settings-tab=""
             onPointerDown={tabId === null ? undefined : (event) => beginLayoutTabDrag(event, tabId)}
+            onAuxClick={(event) => {
+              if (tabId !== null) closeLayoutTabOnMiddleClick(event, tabId);
+            }}
+            onMouseDown={(event) => {
+              // Keep the browser's middle-click autoscroll from starting.
+              if (event.button === 1) event.preventDefault();
+            }}
             onContextMenu={(event) => {
               if (tabId === null) return;
               event.preventDefault();

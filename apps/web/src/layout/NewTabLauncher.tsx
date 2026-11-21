@@ -62,6 +62,7 @@ import { canCloseLayoutTab, selectLayoutWayBack, type LayoutPageContent } from "
 import { useOpenLayoutPage } from "./pageNavigation";
 import { runInNewLayoutTab, useLayoutStore } from "./layoutStore";
 import {
+  closeLayoutTabOnMiddleClick,
   LAYOUT_TAB_ICON_CLASS,
   LAYOUT_TAB_SLOT_CLASS,
   LayoutPaneTab,
@@ -475,10 +476,17 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
         ))}
         <span className={LAYOUT_TAB_SLOT_CLASS}>
           <div
-            className={PANE_TAB_CLASS}
+            className={cn(PANE_TAB_CLASS, "cursor-pointer select-none")}
             data-layout-launcher-tab=""
             data-layout-pane-tab={tabId ?? undefined}
             onPointerDown={tabId === null ? undefined : (event) => beginLayoutTabDrag(event, tabId)}
+            onAuxClick={(event) => {
+              if (closable && tabId !== null) closeLayoutTabOnMiddleClick(event, tabId);
+            }}
+            onMouseDown={(event) => {
+              // Keep the browser's middle-click autoscroll from starting.
+              if (event.button === 1) event.preventDefault();
+            }}
             onContextMenu={(event) => {
               if (tabId === null) return;
               event.preventDefault();

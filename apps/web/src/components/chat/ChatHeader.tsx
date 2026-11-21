@@ -396,7 +396,7 @@ export const ChatHeader = memo(function ChatHeader({
                       />
                     ) : (
                       <div
-                        className={PANE_TAB_CLASS}
+                        className={cn(PANE_TAB_CLASS, "cursor-pointer select-none")}
                         data-layout-pane-tab={layoutTabId ?? undefined}
                         onAuxClick={handleTabAuxClick}
                         onPointerDown={handleTabPointerDown}
