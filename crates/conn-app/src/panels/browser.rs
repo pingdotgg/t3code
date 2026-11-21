@@ -16,22 +16,22 @@ use conn_theme::Tokens;
 use conn_web::{BrowserView, Rect as WebRect, WebError, WebRuntime, WebRuntimeState};
 #[cfg(feature = "cef")]
 use futures::StreamExt as _;
-use gpui_kit::assets::IconName;
 #[cfg(feature = "cef")]
 use gpui_kit::canvas;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{Icon, h_flex, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window, div, px,
 };
 
 use super::color::to_hsla;
+use super::header::superhero_icon;
 
 const UI_TEXT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
 const TOOLBAR_PAD_Y_PX: f32 = 7.5;
-const TOOLBAR_PAD_START_PX: f32 = 16.0;
+const TOOLBAR_PAD_START_PX: f32 = 8.0;
 const TOOLBAR_PAD_END_PX: f32 = 11.5;
 const TOOLBAR_HEIGHT_PX: f32 = 32.0;
 const TOOLBAR_INNER_PADDING_PX: f32 = 3.0;
@@ -516,11 +516,11 @@ impl BrowserPanel {
             .cursor_pointer()
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(|this, _, _, cx| this.go_back(cx)))
-            .child(
-                Icon::new(IconName::ChevronLeft)
-                    .size(px(NAV_ICON_SIZE_PX))
-                    .text_color(back_color),
-            );
+            .child(superhero_icon(
+                "superhero/chevron-left.svg",
+                NAV_ICON_SIZE_PX,
+                back_color,
+            ));
 
         let forward_btn = div()
             .id("browser-nav-forward")
@@ -532,11 +532,11 @@ impl BrowserPanel {
             .cursor_pointer()
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(|this, _, _, cx| this.go_forward(cx)))
-            .child(
-                Icon::new(IconName::ChevronRight)
-                    .size(px(NAV_ICON_SIZE_PX))
-                    .text_color(forward_color),
-            );
+            .child(superhero_icon(
+                "superhero/chevron-right.svg",
+                NAV_ICON_SIZE_PX,
+                forward_color,
+            ));
 
         let reload_btn = div()
             .id("browser-nav-reload")
@@ -548,11 +548,11 @@ impl BrowserPanel {
             .cursor_pointer()
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(|this, _, _, cx| this.reload(cx)))
-            .child(
-                Icon::new(IconName::RotateCw)
-                    .size(px(NAV_ICON_SIZE_PX))
-                    .text_color(fg),
-            );
+            .child(superhero_icon(
+                "superhero/refresh.svg",
+                NAV_ICON_SIZE_PX,
+                fg,
+            ));
 
         h_flex()
             .flex_shrink_0()
@@ -666,7 +666,7 @@ impl Render for BrowserPanel {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .child(Icon::new(IconName::Globe).size(px(18.0)).text_color(fg)),
+                                .child(superhero_icon("superhero/globe.svg", 18.0, fg)),
                         )
                         .child(
                             div()
@@ -699,7 +699,7 @@ impl Render for BrowserPanel {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .child(Icon::new(IconName::Globe).size(px(18.0)).text_color(fg)),
+                        .child(superhero_icon("superhero/globe.svg", 18.0, fg)),
                 )
                 .child(
                     div()
@@ -731,11 +731,11 @@ impl Render for BrowserPanel {
                             .bg(field_bg)
                             .border_1()
                             .border_color(field_border)
-                            .pl(px(10.0))
+                            .pl(px(8.0))
                             .pr(px(10.0))
                             .gap(px(6.0))
                             .items_center()
-                            .child(Icon::new(IconName::Globe).size(px(14.0)).text_color(muted))
+                            .child(superhero_icon("superhero/globe.svg", 14.0, muted))
                             .child(
                                 div().flex_1().min_w_0().child(
                                     Input::new(&self.url_input)

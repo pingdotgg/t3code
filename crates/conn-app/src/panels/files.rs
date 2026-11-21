@@ -1,5 +1,6 @@
-//! Files right-panel surface: soft search field, lazy directory tree (`projects.listEntries`),
-//! and read-only syntect-highlighted source preview (`projects.readFile`).
+//! Files right-panel surface: Conn soft search field, `ToolbarGroup` actions,
+//! Pierre-themed lazy directory tree (`projects.listEntries`), and syntect-highlighted
+//! read-only source preview (`projects.readFile`) meeting in a clean T-junction.
 
 use std::fmt;
 
@@ -7,26 +8,37 @@ use conn_client::Connection;
 use conn_contract::rpc::projects::{list_entries, read_file};
 use conn_contract::{ProjectEntryKind, ProjectListEntriesInput, ProjectReadFileInput};
 use conn_theme::Tokens;
-use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{Icon, h_flex, v_flex};
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, Context, Entity, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    SharedString, Styled, Subscription, Window, div, px,
+    App, ClipboardItem, Context, Entity, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Render, SharedString, Styled, Subscription, Window, div, px,
 };
 
 use super::color::to_hsla;
+use super::header::superhero_icon;
 use super::highlight::{HighlightSpan, highlight_lines};
 use super::tree::FileTreeState;
 
-const TREE_COLUMN_WIDTH_PX: f32 = 240.0;
+/// Default explorer column width (`FileExplorerPane.tsx`: `defaultWidth = 256`).
+const TREE_COLUMN_WIDTH_PX: f32 = 256.0;
+/// Pierre tree compact row height (`FileBrowserPanel.tsx`: `itemHeight: 28`).
 const TREE_ROW_HEIGHT_PX: f32 = 28.0;
+/// Pierre tree row radius (`pierre-tree-theme.ts`: `border-radius: 5px`).
+const TREE_ROW_RADIUS_PX: f32 = 5.0;
+/// Standard panel UI text size (`text-ui`: 13px / 20px).
 const UI_TEXT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
+/// Breadcrumb font size (`text-sm`: 14px / 20px).
+const BREADCRUMB_TEXT_PX: f32 = 14.0;
+/// Panel toolbar metrics (`index.css`: `--spacing-toolbar: 7.5px`, `--spacing-toolbar-end: 11.5px`).
 const TOOLBAR_PAD_Y_PX: f32 = 7.5;
-const TOOLBAR_PAD_START_PX: f32 = 16.0;
+const TOOLBAR_PAD_START_PX: f32 = 8.0;
 const TOOLBAR_PAD_END_PX: f32 = 11.5;
+const TOOLBAR_HEIGHT_PX: f32 = 32.0;
+const TOOLBAR_INNER_PAD_PX: f32 = 3.0;
+const TOOLBAR_BTN_SIZE_PX: f32 = 24.0;
 
 #[derive(Clone, Debug)]
 enum PreviewState {
@@ -52,6 +64,7 @@ pub(crate) struct FilesPanel {
     tree: FileTreeState,
     tree_error: Option<String>,
     preview: PreviewState,
+    word_wrap: bool,
     search_input: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
     context_generation: u64,
@@ -74,7 +87,7 @@ impl FilesPanel {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
-        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Filter files..."));
+        let search_input = cx.new(|cx| InputState::new(window, cx).placeholder("Search files"));
         let sub = cx.subscribe(&search_input, |this, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 let query = input.read(cx).value().to_string();
@@ -89,6 +102,7 @@ impl FilesPanel {
             tree: FileTreeState::default(),
             tree_error: None,
             preview: PreviewState::Empty,
+            word_wrap: false,
             search_input,
             _subscriptions: vec![sub],
             context_generation: 0,
@@ -128,6 +142,34 @@ impl FilesPanel {
             self.load_directory(String::new(), cx);
         }
         cx.notify();
+    }
+
+    fn refresh_files(&mut self, cx: &mut Context<'_, Self>) {
+        if self.workspace_root.is_none() {
+            return;
+        }
+        let expanded = self.tree.expanded_directories();
+        self.load_directory(String::new(), cx);
+        for dir in expanded {
+            self.load_directory(dir, cx);
+        }
+        if let PreviewState::Loaded { path, .. } = &self.preview {
+            let path = path.clone();
+            self.open_file(path, cx);
+        }
+    }
+
+    fn toggle_expand_all(&mut self, cx: &mut Context<'_, Self>) {
+        if self.tree.all_directories_expanded() {
+            self.tree.collapse_all_directories();
+            cx.notify();
+        } else {
+            let to_load = self.tree.expand_all_directories();
+            for dir in to_load {
+                self.load_directory(dir, cx);
+            }
+            cx.notify();
+        }
     }
 
     fn load_directory(&mut self, directory: String, cx: &mut Context<'_, Self>) {
@@ -229,33 +271,93 @@ impl FilesPanel {
         .detach();
     }
 
-    fn render_toolbar(&self) -> impl IntoElement {
+    fn render_toolbar(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let fg = to_hsla(self.tokens.foreground);
         let field_bg = to_hsla(self.tokens.shell_field);
-        let field_border = to_hsla(self.tokens.shell_divider_header);
+        let control_bg = to_hsla(self.tokens.shell_control);
+        let control_border = to_hsla(self.tokens.shell_divider_header);
+        let hover_bg = to_hsla(self.tokens.shell_highlight);
         let muted = to_hsla(self.tokens.muted_foreground);
 
-        h_flex()
-            .w_full()
-            .pt(px(TOOLBAR_PAD_Y_PX))
-            .pb(px(TOOLBAR_PAD_Y_PX))
+        let all_expanded = self.tree.all_directories_expanded();
+        let has_dirs = self.tree.has_directories();
+        let expand_icon = if all_expanded {
+            "superhero/chevrons-down-up.svg"
+        } else {
+            "superhero/chevrons-up-down.svg"
+        };
+
+        // Explorer toolbar sits directly over the 256px tree column so the soft search field
+        // starts 8px from the panel edge and its search icon aligns at 16px with the tree icons.
+        let mut explorer_actions = h_flex()
+            .flex_shrink_0()
+            .h(px(TOOLBAR_HEIGHT_PX))
+            .px(px(TOOLBAR_INNER_PAD_PX))
+            .gap(px(2.0))
+            .items_center()
+            .rounded(px(9999.0))
+            .bg(control_bg)
+            .border_1()
+            .border_color(control_border)
+            .child(
+                div()
+                    .id("files-refresh-btn")
+                    .size(px(TOOLBAR_BTN_SIZE_PX))
+                    .rounded(px(9999.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.refresh_files(cx)),
+                    )
+                    .child(superhero_icon("superhero/refresh.svg", 14.0, muted)),
+            );
+
+        if has_dirs {
+            explorer_actions = explorer_actions.child(
+                div()
+                    .id("files-toggle-expand-btn")
+                    .size(px(TOOLBAR_BTN_SIZE_PX))
+                    .rounded(px(9999.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| this.toggle_expand_all(cx)),
+                    )
+                    .child(superhero_icon(expand_icon, 14.0, muted)),
+            );
+        }
+
+        let explorer_toolbar = h_flex()
+            .w(px(TREE_COLUMN_WIDTH_PX))
+            .flex_shrink_0()
+            .py(px(TOOLBAR_PAD_Y_PX))
             .pl(px(TOOLBAR_PAD_START_PX))
-            .pr(px(TOOLBAR_PAD_END_PX))
+            .pr(px(TOOLBAR_PAD_START_PX))
             .items_center()
             .gap(px(8.0))
             .child(
-                // Soft search field: h-8, pill radius, --shell-field fill, --shell-divider-header border.
+                // Soft search field (`InputGroup variant="soft"`): h-8, pill radius, --shell-field fill.
                 h_flex()
                     .flex_1()
-                    .h(px(32.0))
+                    .min_w_0()
+                    .h(px(TOOLBAR_HEIGHT_PX))
                     .rounded(px(9999.0))
                     .bg(field_bg)
                     .border_1()
-                    .border_color(field_border)
-                    .pl(px(10.0))
+                    .border_color(control_border)
+                    .pl(px(8.0))
                     .pr(px(10.0))
                     .gap(px(6.0))
                     .items_center()
-                    .child(Icon::new(IconName::Search).size(px(14.0)).text_color(muted))
+                    .child(superhero_icon("superhero/search.svg", 14.0, muted))
                     .child(
                         div().flex_1().min_w_0().child(
                             Input::new(&self.search_input)
@@ -264,13 +366,109 @@ impl FilesPanel {
                         ),
                     ),
             )
+            .child(explorer_actions);
+
+        // Preview subheader: breadcrumb path (`text-sm`) + Copy/Wrap `ToolbarGroup` when a file is open.
+        let active_path = match &self.preview {
+            PreviewState::Loaded { path, .. }
+            | PreviewState::Loading(path)
+            | PreviewState::Error { path, .. } => Some(path.as_str()),
+            PreviewState::Empty => None,
+        };
+        let has_contents = matches!(&self.preview, PreviewState::Loaded { .. });
+        let wrap_icon_color = if self.word_wrap { fg } else { muted };
+
+        let mut preview_toolbar = h_flex()
+            .flex_1()
+            .min_w_0()
+            .py(px(TOOLBAR_PAD_Y_PX))
+            .pl(px(14.0))
+            .pr(px(TOOLBAR_PAD_END_PX))
+            .items_center()
+            .justify_between()
+            .gap(px(8.0));
+
+        if let Some(path) = active_path {
+            preview_toolbar = preview_toolbar.child(render_breadcrumb(path, fg, muted));
+            if has_contents {
+                preview_toolbar = preview_toolbar.child(
+                    h_flex()
+                        .flex_shrink_0()
+                        .h(px(TOOLBAR_HEIGHT_PX))
+                        .px(px(TOOLBAR_INNER_PAD_PX))
+                        .gap(px(2.0))
+                        .items_center()
+                        .rounded(px(9999.0))
+                        .bg(control_bg)
+                        .border_1()
+                        .border_color(control_border)
+                        .child(
+                            // Pressed toggle brightens icon to `fg` with no fill (`nckrtl-shell-design`).
+                            div()
+                                .id("files-preview-wrap-btn")
+                                .size(px(TOOLBAR_BTN_SIZE_PX))
+                                .rounded(px(9999.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(hover_bg))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.word_wrap = !this.word_wrap;
+                                        cx.notify();
+                                    }),
+                                )
+                                .child(superhero_icon(
+                                    "superhero/wrap-lines.svg",
+                                    14.0,
+                                    wrap_icon_color,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .id("files-preview-copy-btn")
+                                .size(px(TOOLBAR_BTN_SIZE_PX))
+                                .rounded(px(9999.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(hover_bg))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        if let PreviewState::Loaded { raw_contents, .. } =
+                                            &this.preview
+                                        {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                raw_contents.clone(),
+                                            ));
+                                        }
+                                    }),
+                                )
+                                .child(superhero_icon("superhero/copy.svg", 14.0, muted)),
+                        ),
+                );
+            }
+        }
+
+        h_flex()
+            .w_full()
+            .items_center()
+            .child(explorer_toolbar)
+            .child(preview_toolbar)
     }
 
     fn render_tree_column(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let muted = to_hsla(self.tokens.muted_foreground);
         let fg = to_hsla(self.tokens.foreground);
-        let highlight = to_hsla(self.tokens.shell_highlight);
-        let hover_bg = to_hsla(self.tokens.foreground.with_alpha(0.04));
+        // Pierre tree theme (`pierre-tree-theme.ts`):
+        // --trees-hover-bg-override: var(--shell-highlight)
+        // --trees-selected-bg-override: color-mix(in srgb, var(--foreground) 11%, transparent)
+        let hover_bg = to_hsla(self.tokens.shell_highlight);
+        let selected_bg = to_hsla(self.tokens.foreground.with_alpha(0.11));
 
         let mut col = v_flex()
             .id("files-tree-scroll")
@@ -278,14 +476,14 @@ impl FilesPanel {
             .h_full()
             .flex_shrink_0()
             .overflow_y_scroll()
-            .py(px(6.0))
+            .py(px(4.0))
             .px(px(6.0));
 
         if self.workspace_root.is_none() {
             return col.child(muted_message("Open a project to browse files.", muted));
         }
         if self.tree.is_root_loading() && !self.tree.has_loaded("") {
-            return col.child(muted_message("Loading files...", muted));
+            return col.child(muted_message("Loading files…", muted));
         }
         if let Some(err) = &self.tree_error {
             return col.child(muted_message(
@@ -308,37 +506,35 @@ impl FilesPanel {
         for row in rows {
             let is_dir = row.kind == ProjectEntryKind::Directory;
             let is_selected = selected == Some(row.path.as_str());
-            let indent_px = 10.0 + (row.depth as f32) * 14.0;
+            // Row margin-x is 2px (6+2 = 8px from panel edge), padding-x is 8px (8+8 = 16px to icon).
+            let indent_px = 8.0 + (row.depth as f32) * 14.0;
             let row_path = row.path.clone();
             let text_color = if row.ignored && !is_selected {
                 muted
-            } else if is_selected {
-                fg
             } else {
-                to_hsla(self.tokens.foreground)
+                fg
             };
-
-            let icon_name = if is_dir {
+            let icon_path = if is_dir {
                 if row.expanded {
-                    IconName::FolderOpen
+                    "superhero/folder-open.svg"
                 } else {
-                    IconName::Folder
+                    "superhero/folder.svg"
                 }
             } else {
-                IconName::File
+                file_icon_path(&row.name)
             };
 
             let item = h_flex()
                 .id(SharedString::from(format!("tree-row-{}", row.path)))
-                .w_full()
+                .mx(px(2.0))
                 .h(px(TREE_ROW_HEIGHT_PX))
                 .pl(px(indent_px))
                 .pr(px(8.0))
                 .gap(px(6.0))
                 .items_center()
-                .rounded(px(6.0))
+                .rounded(px(TREE_ROW_RADIUS_PX))
                 .cursor_pointer()
-                .when(is_selected, |el| el.bg(highlight))
+                .when(is_selected, |el| el.bg(selected_bg))
                 .when(!is_selected, |el| el.hover(move |s| s.bg(hover_bg)))
                 .on_mouse_down(
                     MouseButton::Left,
@@ -356,20 +552,21 @@ impl FilesPanel {
                 )
                 .child(if is_dir {
                     let chevron = if row.expanded {
-                        IconName::ChevronDown
+                        "superhero/chevron-down.svg"
                     } else {
-                        IconName::ChevronRight
+                        "superhero/chevron-right.svg"
                     };
                     div()
                         .w(px(12.0))
                         .flex()
+                        .flex_shrink_0()
                         .items_center()
                         .justify_center()
-                        .child(Icon::new(chevron).size(px(12.0)).text_color(muted))
+                        .child(superhero_icon(chevron, 12.0, muted))
                 } else {
-                    div().w(px(12.0))
+                    div().w(px(12.0)).flex_shrink_0()
                 })
-                .child(Icon::new(icon_name).size(px(15.0)).text_color(muted))
+                .child(superhero_icon(icon_path, 15.0, muted))
                 .child(
                     div()
                         .flex_1()
@@ -388,6 +585,7 @@ impl FilesPanel {
 
     fn render_preview_column(&self, cx: &App) -> impl IntoElement {
         let muted = to_hsla(self.tokens.muted_foreground);
+        let gutter_fg = to_hsla(self.tokens.muted_foreground.with_alpha(0.65));
         let mono_font = mono_font_family(cx);
 
         let container = v_flex()
@@ -405,7 +603,7 @@ impl FilesPanel {
             PreviewState::Loading(path) => container
                 .items_center()
                 .justify_center()
-                .child(muted_message(&format!("Loading {path}..."), muted)),
+                .child(muted_message(&format!("Loading {path}…"), muted)),
             PreviewState::Error { path, message } => container
                 .items_center()
                 .justify_center()
@@ -418,8 +616,8 @@ impl FilesPanel {
                 lines, truncated, ..
             } => {
                 let gutter_digits = lines.len().max(1).to_string().len().max(3);
-                let gutter_width = (gutter_digits as f32) * 8.0 + 16.0;
-                let mut body = container.py(px(8.0)).px(px(12.0));
+                let gutter_width = (gutter_digits as f32) * 8.0 + 18.0;
+                let mut body = container.pt(px(6.0)).pb(px(12.0)).px(px(12.0));
 
                 if *truncated {
                     body = body.child(
@@ -443,7 +641,10 @@ impl FilesPanel {
                         .min_w_0()
                         .font_family(mono_font.clone())
                         .text_size(px(UI_TEXT_PX))
-                        .line_height(px(UI_LINE_HEIGHT_PX));
+                        .line_height(px(UI_LINE_HEIGHT_PX))
+                        .when(!self.word_wrap, |el| {
+                            el.overflow_hidden().whitespace_nowrap()
+                        });
 
                     if spans.is_empty() {
                         code_row = code_row.child(" ");
@@ -470,12 +671,12 @@ impl FilesPanel {
                                 div()
                                     .w(px(gutter_width))
                                     .flex_shrink_0()
-                                    .pr(px(12.0))
+                                    .pr(px(14.0))
                                     .text_right()
                                     .font_family(mono_font.clone())
                                     .text_size(px(UI_TEXT_PX))
                                     .line_height(px(UI_LINE_HEIGHT_PX))
-                                    .text_color(muted)
+                                    .text_color(gutter_fg)
                                     .child(line_no.to_string()),
                             )
                             .child(code_row),
@@ -493,7 +694,7 @@ impl Render for FilesPanel {
 
         v_flex()
             .size_full()
-            .child(self.render_toolbar())
+            .child(self.render_toolbar(cx))
             // One continuous horizontal divider under the toolbar across both columns.
             .child(div().w_full().h(px(1.0)).bg(divider))
             .child(
@@ -506,6 +707,43 @@ impl Render for FilesPanel {
                     .child(div().w(px(1.0)).h_full().bg(divider))
                     .child(self.render_preview_column(cx)),
             )
+    }
+}
+
+fn render_breadcrumb(path: &str, fg: gpui_kit::Hsla, muted: gpui_kit::Hsla) -> impl IntoElement {
+    let (dir, name) = match path.rsplit_once('/') {
+        Some((d, f)) => (Some(d), f),
+        None => (None, path),
+    };
+    let mut row = h_flex()
+        .flex_1()
+        .min_w_0()
+        .items_center()
+        .gap(px(4.0))
+        .text_size(px(BREADCRUMB_TEXT_PX))
+        .line_height(px(UI_LINE_HEIGHT_PX));
+    if let Some(dir) = dir {
+        row = row
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(muted)
+                    .child(dir.to_owned()),
+            )
+            .child(div().flex_shrink_0().text_color(muted).child("/"));
+    }
+    row.child(div().flex_shrink_0().text_color(fg).child(name.to_owned()))
+}
+
+fn file_icon_path(name: &str) -> &'static str {
+    let ext = name.rsplit_once('.').map_or("", |(_, e)| e);
+    match ext {
+        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "c" | "h" | "cpp" | "cc" | "java"
+        | "swift" | "kt" | "rb" | "php" | "sh" | "zsh" | "css" | "scss" | "html" | "sql"
+        | "json" | "toml" | "yaml" | "yml" => "superhero/file-code.svg",
+        "md" | "mdx" | "txt" | "rst" | "adoc" | "log" => "superhero/file-text.svg",
+        _ => "superhero/file.svg",
     }
 }
 

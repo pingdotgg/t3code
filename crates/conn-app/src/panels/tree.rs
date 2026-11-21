@@ -87,6 +87,60 @@ impl FileTreeState {
         }
     }
 
+    /// Returns whether any directory entry is currently known in the tree.
+    #[must_use]
+    pub(crate) fn has_directories(&self) -> bool {
+        self.children
+            .values()
+            .flatten()
+            .any(|e| e.kind == ProjectEntryKind::Directory && !e.ignored.unwrap_or(false))
+    }
+
+    /// Returns `true` when every non-ignored known directory is expanded.
+    #[must_use]
+    pub(crate) fn all_directories_expanded(&self) -> bool {
+        let mut any = false;
+        for entry in self.children.values().flatten() {
+            if entry.kind == ProjectEntryKind::Directory && !entry.ignored.unwrap_or(false) {
+                any = true;
+                if !self.expanded.contains(&entry.path) {
+                    return false;
+                }
+            }
+        }
+        any
+    }
+
+    /// Expands all known non-ignored directories and returns those that still need a lazy load.
+    pub(crate) fn expand_all_directories(&mut self) -> Vec<String> {
+        let dirs: Vec<String> = self
+            .children
+            .values()
+            .flatten()
+            .filter(|e| e.kind == ProjectEntryKind::Directory && !e.ignored.unwrap_or(false))
+            .map(|e| e.path.clone())
+            .collect();
+        let mut to_load = Vec::new();
+        for dir in dirs {
+            self.expanded.insert(dir.clone());
+            if !self.children.contains_key(&dir) && !self.loading.contains(&dir) {
+                to_load.push(dir);
+            }
+        }
+        to_load
+    }
+
+    /// Collapses every expanded directory.
+    pub(crate) fn collapse_all_directories(&mut self) {
+        self.expanded.clear();
+    }
+
+    /// Returns all currently expanded directory paths (useful for refreshing).
+    #[must_use]
+    pub(crate) fn expanded_directories(&self) -> Vec<String> {
+        self.expanded.iter().cloned().collect()
+    }
+
     /// Updates the filter query.
     pub(crate) fn set_query(&mut self, query: String) {
         self.query = query;
@@ -333,5 +387,26 @@ mod tests {
             tree.visible_rows().is_empty(),
             "unmatched query must yield no rows"
         );
+    }
+
+    #[test]
+    fn expand_and_collapse_all_skips_ignored_directories() {
+        let mut tree = FileTreeState::default();
+        let ignored_dir = ProjectEntry {
+            path: "target".to_owned(),
+            kind: ProjectEntryKind::Directory,
+            ignored: Some(true),
+        };
+        tree.set_directory_entries("", vec![dir("src"), ignored_dir, file("Cargo.toml")]);
+
+        assert!(tree.has_directories());
+        assert!(!tree.all_directories_expanded());
+
+        let to_load = tree.expand_all_directories();
+        assert_eq!(to_load, vec!["src"], "ignored dirs are not auto-expanded");
+        assert!(tree.all_directories_expanded());
+
+        tree.collapse_all_directories();
+        assert!(!tree.all_directories_expanded());
     }
 }

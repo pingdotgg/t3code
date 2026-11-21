@@ -1,52 +1,41 @@
-//! Right-panel surfaces for `conn-app`: tab strip, Files explorer + source preview,
-//! Diff viewer, local PTY Terminal, and Browser placeholder.
+//! Right-panel surfaces for `conn-app`: Conn tab header, Files explorer + source preview,
+//! Diff viewer, local PTY Terminal, and Browser surface.
 
 mod browser;
 mod color;
 mod diff;
 mod diff_parser;
 mod files;
+pub(crate) mod header;
 mod highlight;
 mod terminal;
 mod terminal_palette;
 mod tree;
 
 use std::fmt;
+use std::rc::Rc;
 
 use conn_client::Connection;
 use conn_state::RightPanelTab;
 use conn_theme::Tokens;
-use gpui_kit::assets::IconName;
-use gpui_kit::component::{Icon, h_flex, v_flex};
+use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, Entity, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Render, SharedString, Styled, Window, div, px,
+    AnyElement, App, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div, px,
 };
 
 use self::browser::BrowserPanel;
 use self::color::to_hsla;
 use self::diff::DiffPanel;
 use self::files::FilesPanel;
+use self::header::{
+    PanelHeaderCallbacks, PanelHeaderProps, panel_tab_icon_path, render_panel_header,
+    superhero_icon,
+};
 use self::terminal::TerminalPanel;
 
-const HEADER_HEIGHT_PX: f32 = 44.0;
-const TAB_HEIGHT_PX: f32 = 28.0;
-const TAB_FONT_SIZE_PX: f32 = 14.0;
-const TAB_ICON_SIZE_PX: f32 = 16.0;
 const UI_TEXT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
-
-const PRIMARY_TABS: [(RightPanelTab, &str, IconName); 4] = [
-    (RightPanelTab::Files, "Files", IconName::Folder),
-    (RightPanelTab::Diff, "Diff", IconName::FileDiff),
-    (
-        RightPanelTab::Terminal,
-        "Terminal",
-        IconName::SquareTerminal,
-    ),
-    (RightPanelTab::Browser, "Browser", IconName::Globe),
-];
 
 /// Right-panel GPUI entity mounted inside Conn's right-panel card.
 #[expect(
@@ -56,6 +45,10 @@ const PRIMARY_TABS: [(RightPanelTab, &str, IconName); 4] = [
 pub struct RightPanel {
     tokens: Tokens,
     tab: RightPanelTab,
+    open_tabs: Vec<RightPanelTab>,
+    add_menu_open: bool,
+    maximized: bool,
+    bottom_dock_open: bool,
     project_id: Option<String>,
     workspace_root: Option<String>,
     thread_id: Option<String>,
@@ -73,6 +66,7 @@ impl fmt::Debug for RightPanel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RightPanel")
             .field("tab", &self.tab)
+            .field("open_tabs", &self.open_tabs)
             .field("project_id", &self.project_id)
             .field("workspace_root", &self.workspace_root)
             .field("thread_id", &self.thread_id)
@@ -102,6 +96,10 @@ impl RightPanel {
         Self {
             tokens,
             tab: RightPanelTab::Files,
+            open_tabs: vec![RightPanelTab::Files],
+            add_menu_open: false,
+            maximized: false,
+            bottom_dock_open: false,
             project_id: None,
             workspace_root: None,
             thread_id: None,
@@ -198,9 +196,15 @@ impl RightPanel {
         self.browser.update(cx, |b, cx| b.set_visible(show, cx));
     }
 
-    /// Switches the active right-panel tab, lazily spawning the terminal PTY on first visit.
+    /// Switches the active right-panel tab (opening it if not yet in `open_tabs`),
+    /// lazily spawning the terminal PTY on first visit.
     pub fn set_tab(&mut self, tab: RightPanelTab, cx: &mut Context<'_, Self>) {
+        if !self.open_tabs.contains(&tab) {
+            self.open_tabs.push(tab);
+        }
+        self.add_menu_open = false;
         if self.tab == tab {
+            cx.notify();
             return;
         }
         self.tab = tab;
@@ -211,82 +215,109 @@ impl RightPanel {
         cx.notify();
     }
 
+    /// Closes an open tab if more than one tab is open, activating an adjacent tab if needed.
+    pub fn close_tab(&mut self, tab: RightPanelTab, cx: &mut Context<'_, Self>) {
+        if self.open_tabs.len() <= 1 {
+            return;
+        }
+        if let Some(pos) = self.open_tabs.iter().position(|&t| t == tab) {
+            self.open_tabs.remove(pos);
+            if self.tab == tab {
+                let next = self
+                    .open_tabs
+                    .get(pos.saturating_sub(1))
+                    .copied()
+                    .unwrap_or(RightPanelTab::Files);
+                self.tab = next;
+                self.sync_browser_visibility(cx);
+            }
+            cx.notify();
+        }
+    }
+
     /// Returns the currently active right-panel tab.
     #[must_use]
     pub fn tab(&self) -> RightPanelTab {
         self.tab
     }
 
+    /// Returns the list of currently open right-panel tabs.
+    #[must_use]
+    pub fn open_tabs(&self) -> &[RightPanelTab] {
+        &self.open_tabs
+    }
+
     /// Renders the 44px header tab strip (`RightPanelTabs`), suitable for mounting either
     /// inside [`RightPanel::render`] or directly in the shell's glass header row.
     pub fn render_tabs(&self, cx: &mut Context<'_, Self>) -> AnyElement {
-        let fg = to_hsla(self.tokens.foreground);
-        let muted = to_hsla(self.tokens.muted_foreground);
-        let highlight = to_hsla(self.tokens.shell_highlight);
-
-        let mut strip = h_flex()
-            .w_full()
-            .h(px(HEADER_HEIGHT_PX))
-            .pl(px(16.0))
-            .pr(px(12.0))
-            .items_center()
-            .gap(px(4.0));
-
-        for (tab_kind, label, icon) in PRIMARY_TABS {
-            let active = self.tab == tab_kind;
-            let text_color = if active { fg } else { muted };
-            let btn = h_flex()
-                .id(SharedString::from(format!("right-tab-{label}")))
-                .h(px(TAB_HEIGHT_PX))
-                .px(px(8.0))
-                .gap(px(6.0))
-                .items_center()
-                .rounded(px(8.0))
-                .cursor_pointer()
-                .text_size(px(TAB_FONT_SIZE_PX))
-                .text_color(text_color)
-                .when(active, |el| el.bg(highlight))
-                .when(!active, |el| {
-                    el.hover(move |s| s.bg(highlight).text_color(fg))
+        let entity = cx.entity();
+        let callbacks = PanelHeaderCallbacks {
+            on_select_tab: {
+                let entity = entity.clone();
+                Rc::new(move |tab, _, cx| {
+                    entity.update(cx, |this, cx| this.set_tab(tab, cx));
                 })
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| this.set_tab(tab_kind, cx)),
-                )
-                .child(
-                    Icon::new(icon)
-                        .size(px(TAB_ICON_SIZE_PX))
-                        .text_color(text_color),
-                )
-                .child(label);
-            strip = strip.child(btn);
-        }
+            },
+            on_close_tab: Some({
+                let entity = entity.clone();
+                Rc::new(move |tab, _, cx| {
+                    entity.update(cx, |this, cx| this.close_tab(tab, cx));
+                })
+            }),
+            on_toggle_add_menu: {
+                let entity = entity.clone();
+                Rc::new(move |_, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.add_menu_open = !this.add_menu_open;
+                        cx.notify();
+                    });
+                })
+            },
+            on_add_tab: {
+                let entity = entity.clone();
+                Rc::new(move |tab, _, cx| {
+                    entity.update(cx, |this, cx| this.set_tab(tab, cx));
+                })
+            },
+            on_toggle_maximize: {
+                let entity = entity.clone();
+                Rc::new(move |_, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.maximized = !this.maximized;
+                        cx.notify();
+                    });
+                })
+            },
+            on_toggle_dock_bottom: {
+                let entity = entity.clone();
+                Rc::new(move |_, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.bottom_dock_open = !this.bottom_dock_open;
+                        cx.notify();
+                    });
+                })
+            },
+            on_toggle_panel: Rc::new(move |_, cx| {
+                entity.update(cx, |this, cx| {
+                    this.add_menu_open = false;
+                    cx.notify();
+                });
+            }),
+        };
 
-        // Trailing "+" button matching Conn's RightPanelTabs launcher trigger.
-        let next_tab = next_primary_tab(self.tab);
-        strip = strip.child(
-            div()
-                .id("right-tab-add")
-                .size(px(TAB_HEIGHT_PX))
-                .rounded(px(8.0))
-                .flex()
-                .items_center()
-                .justify_center()
-                .cursor_pointer()
-                .text_color(muted)
-                .hover(move |s| s.bg(highlight).text_color(fg))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _, _, cx| this.set_tab(next_tab, cx)),
-                )
-                .child(
-                    Icon::new(IconName::Plus)
-                        .size(px(TAB_ICON_SIZE_PX))
-                        .text_color(muted),
-                ),
-        );
-
-        strip.into_any_element()
+        render_panel_header(
+            PanelHeaderProps {
+                open_tabs: &self.open_tabs,
+                active_tab: self.tab,
+                maximized: self.maximized,
+                bottom_dock_open: self.bottom_dock_open,
+                panel_open: true,
+                add_menu_open: self.add_menu_open,
+                tokens: &self.tokens,
+            },
+            callbacks,
+        )
+        .into_any_element()
     }
 }
 
@@ -305,15 +336,24 @@ impl Render for RightPanel {
             RightPanelTab::Diff => self.diff.clone().into_any_element(),
             RightPanelTab::Terminal => self.terminal.clone().into_any_element(),
             RightPanelTab::Browser => self.browser.clone().into_any_element(),
-            RightPanelTab::Database => {
-                placeholder_surface("Database panel", IconName::Database, &self.tokens, muted)
-            }
-            RightPanelTab::Mcp => {
-                placeholder_surface("MCP panel", IconName::Webhook, &self.tokens, muted)
-            }
-            RightPanelTab::Device => {
-                placeholder_surface("Device panel", IconName::Smartphone, &self.tokens, muted)
-            }
+            RightPanelTab::Database => placeholder_surface(
+                "Database panel",
+                panel_tab_icon_path(RightPanelTab::Database),
+                &self.tokens,
+                muted,
+            ),
+            RightPanelTab::Mcp => placeholder_surface(
+                "MCP panel",
+                panel_tab_icon_path(RightPanelTab::Mcp),
+                &self.tokens,
+                muted,
+            ),
+            RightPanelTab::Device => placeholder_surface(
+                "Device panel",
+                panel_tab_icon_path(RightPanelTab::Device),
+                &self.tokens,
+                muted,
+            ),
         };
 
         if !self.chrome {
@@ -330,18 +370,9 @@ impl Render for RightPanel {
     }
 }
 
-fn next_primary_tab(current: RightPanelTab) -> RightPanelTab {
-    match current {
-        RightPanelTab::Files => RightPanelTab::Diff,
-        RightPanelTab::Diff => RightPanelTab::Terminal,
-        RightPanelTab::Terminal => RightPanelTab::Browser,
-        _ => RightPanelTab::Files,
-    }
-}
-
 fn placeholder_surface(
     title: &str,
-    icon: IconName,
+    icon_path: &'static str,
     tokens: &Tokens,
     muted: gpui_kit::Hsla,
 ) -> AnyElement {
@@ -360,11 +391,7 @@ fn placeholder_surface(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(
-                    Icon::new(icon)
-                        .size(px(18.0))
-                        .text_color(to_hsla(tokens.foreground)),
-                ),
+                .child(superhero_icon(icon_path, 18.0, to_hsla(tokens.foreground))),
         )
         .child(
             div()

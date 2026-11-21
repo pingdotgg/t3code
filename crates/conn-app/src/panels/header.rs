@@ -1,0 +1,421 @@
+//! Right-panel header matching real Conn (`RightPanelTabs.tsx` + `PanelLayoutControls.tsx`):
+//! open-panel tabs, `+` add-panel button with a `dropdown-glass` menu, and far-right
+//! maximize, dock-to-bottom, and close/toggle controls.
+
+use std::rc::Rc;
+
+use conn_state::RightPanelTab;
+use conn_theme::Tokens;
+use gpui_kit::component::h_flex;
+use gpui_kit::prelude::*;
+use gpui_kit::{
+    App, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString, Styled,
+    Svg, Window, WindowControlArea, deferred, div, px, svg,
+};
+
+use super::color::to_hsla;
+
+/// Header height (`--shell-header-height`, 44px).
+pub(crate) const HEADER_HEIGHT_PX: f32 = 44.0;
+/// Left inset on the tab strip (`pl-2`, 8px). Combined with the tab's `pl-2` (8px),
+/// the first tab icon starts at 16px, aligning with panel content below.
+const HEADER_PAD_START_PX: f32 = 8.0;
+/// Right inset for the far-right layout controls (`--workspace-controls-right`, 11px).
+const HEADER_PAD_END_PX: f32 = 11.0;
+/// Open-panel tab height (`h-7`, 28px) and max width (`max-w-40`, 160px).
+const TAB_HEIGHT_PX: f32 = 28.0;
+const TAB_MAX_WIDTH_PX: f32 = 160.0;
+/// Tab pill corner radius (`rounded-lg`, 8px).
+const TAB_RADIUS_PX: f32 = 8.0;
+/// Right-panel control button corner radius (`--control-radius: 6px`).
+pub(crate) const CONTROL_RADIUS_PX: f32 = 6.0;
+/// Add-panel `+` trigger button size (`size="icon-xs"` -> `sm:size-6`, 24px).
+const ADD_BUTTON_SIZE_PX: f32 = 24.0;
+/// Far-right layout toggle button size (`size="sm"` -> `sm:h-7 sm:min-w-7`, 28px).
+const LAYOUT_BUTTON_SIZE_PX: f32 = 28.0;
+/// Tab label font size (`text-sm`, 14px / 20px line height).
+const TAB_FONT_SIZE_PX: f32 = 14.0;
+const TAB_LINE_HEIGHT_PX: f32 = 20.0;
+/// Standard header/tab icon size (`size-4`, 16px).
+const HEADER_ICON_PX: f32 = 16.0;
+/// Dropdown-glass menu dimensions (`menu.tsx`: `rounded-xl`, `p-1`, `sm:min-h-7`, `rounded-lg` rows).
+const MENU_RADIUS_PX: f32 = 12.0;
+const MENU_ROW_RADIUS_PX: f32 = 8.0;
+const MENU_ROW_HEIGHT_PX: f32 = 28.0;
+const MENU_MIN_WIDTH_PX: f32 = 180.0;
+const MENU_SIDE_OFFSET_PX: f32 = 6.0;
+
+/// Surfaces listed in the `+` add-panel menu, with their single-key shortcuts from `RightPanelTabs.tsx`.
+pub(crate) const ADD_PANEL_ITEMS: [(RightPanelTab, &str, &str); 4] = [
+    (RightPanelTab::Files, "Files", "F"),
+    (RightPanelTab::Diff, "Diff", "D"),
+    (RightPanelTab::Terminal, "Terminal", "T"),
+    (RightPanelTab::Browser, "Browser", "B"),
+];
+
+/// Renders a superheroicons 16/solid SVG tinted with `color`.
+#[must_use]
+pub(crate) fn superhero_icon(path: &'static str, size_px: f32, color: Hsla) -> Svg {
+    svg()
+        .path(path)
+        .size(px(size_px))
+        .text_color(color)
+        .flex_none()
+}
+
+/// Human-readable label for a right-panel tab.
+#[must_use]
+pub(crate) fn panel_tab_label(tab: RightPanelTab) -> &'static str {
+    match tab {
+        RightPanelTab::Files => "Files",
+        RightPanelTab::Diff => "Diff",
+        RightPanelTab::Terminal => "Terminal",
+        RightPanelTab::Browser => "Browser",
+        RightPanelTab::Database => "Database",
+        RightPanelTab::Mcp => "MCP",
+        RightPanelTab::Device => "Device",
+    }
+}
+
+/// Superheroicons 16/solid asset path for a right-panel tab.
+#[must_use]
+pub(crate) fn panel_tab_icon_path(tab: RightPanelTab) -> &'static str {
+    match tab {
+        RightPanelTab::Files => "superhero/files.svg",
+        RightPanelTab::Diff => "superhero/file-diff.svg",
+        RightPanelTab::Terminal => "superhero/terminal-window.svg",
+        RightPanelTab::Browser => "superhero/globe.svg",
+        RightPanelTab::Database => "superhero/database.svg",
+        RightPanelTab::Mcp => "superhero/plug.svg",
+        RightPanelTab::Device => "superhero/phone.svg",
+    }
+}
+
+/// State passed to [`render_panel_header`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PanelHeaderProps<'a> {
+    pub(crate) open_tabs: &'a [RightPanelTab],
+    pub(crate) active_tab: RightPanelTab,
+    pub(crate) maximized: bool,
+    pub(crate) bottom_dock_open: bool,
+    pub(crate) panel_open: bool,
+    pub(crate) add_menu_open: bool,
+    pub(crate) tokens: &'a Tokens,
+}
+
+/// Callbacks emitted by [`render_panel_header`].
+#[derive(Clone)]
+pub(crate) struct PanelHeaderCallbacks {
+    pub(crate) on_select_tab: Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>,
+    pub(crate) on_close_tab: Option<Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>>,
+    pub(crate) on_toggle_add_menu: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub(crate) on_add_tab: Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>,
+    pub(crate) on_toggle_maximize: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub(crate) on_toggle_dock_bottom: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub(crate) on_toggle_panel: Rc<dyn Fn(&mut Window, &mut App)>,
+}
+
+/// Renders Conn's 44px right-panel glass header: open tabs, `+` add-panel launcher with
+/// `dropdown-glass` menu, and far-right maximize, dock-to-bottom, and close/toggle buttons.
+pub(crate) fn render_panel_header(
+    props: PanelHeaderProps<'_>,
+    callbacks: PanelHeaderCallbacks,
+) -> impl IntoElement {
+    let fg = to_hsla(props.tokens.foreground);
+    let muted = to_hsla(props.tokens.muted_foreground);
+    let highlight = to_hsla(props.tokens.shell_highlight);
+
+    let mut left_strip = h_flex()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .items_center()
+        .gap(px(4.0));
+
+    let allow_close = callbacks.on_close_tab.is_some() && props.open_tabs.len() > 1;
+    for (idx, &tab) in props.open_tabs.iter().enumerate() {
+        let active = tab == props.active_tab;
+        let text_color = if active { fg } else { muted };
+        let label = panel_tab_label(tab);
+        let icon_path = panel_tab_icon_path(tab);
+        let on_select = callbacks.on_select_tab.clone();
+        let on_close_middle = callbacks.on_close_tab.clone();
+
+        let mut tab_el = h_flex()
+            .id(SharedString::from(format!("right-panel-tab-{idx}-{label}")))
+            .h(px(TAB_HEIGHT_PX))
+            .max_w(px(TAB_MAX_WIDTH_PX))
+            .flex_shrink_0()
+            .px(px(8.0))
+            .gap(px(6.0))
+            .items_center()
+            .rounded(px(TAB_RADIUS_PX))
+            .cursor_pointer()
+            .text_size(px(TAB_FONT_SIZE_PX))
+            .line_height(px(TAB_LINE_HEIGHT_PX))
+            .text_color(text_color)
+            .when(active, |el| el.bg(highlight))
+            .when(!active, |el| {
+                el.hover(move |s| s.bg(highlight).text_color(fg))
+            })
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                on_select(tab, window, cx);
+            })
+            .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
+                if let Some(close) = &on_close_middle {
+                    close(tab, window, cx);
+                }
+            })
+            .child(superhero_icon(icon_path, HEADER_ICON_PX, text_color))
+            .child(div().min_w_0().truncate().child(label));
+
+        if allow_close && let Some(on_close) = callbacks.on_close_tab.clone() {
+            let close_hover = to_hsla(props.tokens.foreground.with_alpha(0.08));
+            tab_el = tab_el.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "right-panel-tab-close-{idx}-{label}"
+                    )))
+                    .size(px(18.0))
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(close_hover))
+                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                        cx.stop_propagation();
+                        on_close(tab, window, cx);
+                    })
+                    .child(superhero_icon("superhero/close.svg", 12.0, muted)),
+            );
+        }
+
+        left_strip = left_strip.child(tab_el);
+    }
+
+    // Trailing `+` trigger and anchored `dropdown-glass` add-panel menu.
+    let on_toggle_add = callbacks.on_toggle_add_menu.clone();
+    let add_icon_color = if props.add_menu_open { fg } else { muted };
+    let mut add_anchor = div().relative().flex_shrink_0().child(
+        div()
+            .id("right-panel-add-btn")
+            .size(px(ADD_BUTTON_SIZE_PX))
+            .rounded(px(CONTROL_RADIUS_PX))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .when(props.add_menu_open, |el| el.bg(highlight))
+            .hover(move |s| s.bg(highlight))
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                on_toggle_add(window, cx);
+            })
+            .child(superhero_icon(
+                "superhero/add.svg",
+                HEADER_ICON_PX,
+                add_icon_color,
+            )),
+    );
+
+    if props.add_menu_open {
+        add_anchor = add_anchor.child(render_add_panel_menu(props.tokens, callbacks.on_add_tab));
+    }
+
+    left_strip = left_strip.child(add_anchor);
+
+    // Far-right layout controls: maximize/restore, dock-to-bottom, close/toggle right panel.
+    let max_icon = if props.maximized {
+        "superhero/minimize.svg"
+    } else {
+        "superhero/maximize.svg"
+    };
+    let on_max = callbacks.on_toggle_maximize;
+    let on_dock = callbacks.on_toggle_dock_bottom;
+    let on_toggle = callbacks.on_toggle_panel;
+
+    let right_controls = h_flex()
+        .flex_shrink_0()
+        .h_full()
+        .items_center()
+        .gap(px(4.0))
+        .child(header_icon_toggle(
+            "right-panel-maximize-btn",
+            max_icon,
+            props.maximized,
+            fg,
+            muted,
+            highlight,
+            on_max,
+        ))
+        .child(header_icon_toggle(
+            "right-panel-dock-bottom-btn",
+            "superhero/panel-bottom.svg",
+            props.bottom_dock_open,
+            fg,
+            muted,
+            highlight,
+            on_dock,
+        ))
+        .child(header_icon_toggle(
+            "right-panel-toggle-btn",
+            "superhero/sidebar-right.svg",
+            props.panel_open,
+            fg,
+            muted,
+            highlight,
+            on_toggle,
+        ));
+
+    h_flex()
+        .w_full()
+        .h(px(HEADER_HEIGHT_PX))
+        .flex_shrink_0()
+        .pl(px(HEADER_PAD_START_PX))
+        .pr(px(HEADER_PAD_END_PX))
+        .items_center()
+        .gap(px(4.0))
+        .window_control_area(WindowControlArea::Drag)
+        .child(left_strip)
+        .child(right_controls)
+}
+
+fn header_icon_toggle(
+    id: &'static str,
+    icon_path: &'static str,
+    pressed: bool,
+    fg: Hsla,
+    muted: Hsla,
+    highlight: Hsla,
+    on_press: Rc<dyn Fn(&mut Window, &mut App)>,
+) -> impl IntoElement {
+    let icon_color = if pressed { fg } else { muted };
+    div()
+        .id(id)
+        .size(px(LAYOUT_BUTTON_SIZE_PX))
+        .rounded(px(CONTROL_RADIUS_PX))
+        .flex()
+        .flex_shrink_0()
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .when(pressed, |el| el.bg(highlight))
+        .hover(move |s| s.bg(highlight))
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            on_press(window, cx);
+        })
+        .child(superhero_icon(icon_path, HEADER_ICON_PX, icon_color))
+}
+
+fn render_add_panel_menu(
+    tokens: &Tokens,
+    on_add_tab: Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>,
+) -> impl IntoElement {
+    let overlay_bg = to_hsla(tokens.shell_overlay);
+    let glass_border = to_hsla(tokens.glass_divider);
+    let highlight = to_hsla(tokens.shell_highlight);
+    let fg = to_hsla(tokens.foreground);
+    let muted = to_hsla(tokens.muted_foreground);
+
+    let mut list = div()
+        .id("right-panel-add-menu")
+        .flex()
+        .flex_col()
+        .min_w(px(MENU_MIN_WIDTH_PX))
+        .p(px(4.0))
+        .rounded(px(MENU_RADIUS_PX))
+        .bg(overlay_bg)
+        .border_1()
+        .border_color(glass_border)
+        .shadow_lg();
+
+    for (tab, label, shortcut) in ADD_PANEL_ITEMS {
+        let on_add = on_add_tab.clone();
+        let icon_path = panel_tab_icon_path(tab);
+        let row = h_flex()
+            .id(SharedString::from(format!("right-panel-add-{label}")))
+            .w_full()
+            .h(px(MENU_ROW_HEIGHT_PX))
+            .px(px(8.0))
+            .gap(px(8.0))
+            .items_center()
+            .rounded(px(MENU_ROW_RADIUS_PX))
+            .cursor_pointer()
+            .text_size(px(TAB_FONT_SIZE_PX))
+            .line_height(px(TAB_LINE_HEIGHT_PX))
+            .text_color(fg)
+            .hover(move |s| s.bg(highlight))
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                cx.stop_propagation();
+                on_add(tab, window, cx);
+            })
+            .child(superhero_icon(icon_path, HEADER_ICON_PX, muted))
+            .child(div().flex_1().min_w_0().truncate().child(label))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(12.0))
+                    .text_color(muted)
+                    .child(shortcut),
+            );
+        list = list.child(row);
+    }
+
+    deferred(
+        div()
+            .absolute()
+            .top(px(ADD_BUTTON_SIZE_PX + MENU_SIDE_OFFSET_PX))
+            .left(px(0.0))
+            .child(list),
+    )
+    .with_priority(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::AssetSource as _;
+
+    #[test]
+    fn add_menu_lists_all_four_primary_surfaces() {
+        let tabs: Vec<RightPanelTab> = ADD_PANEL_ITEMS.iter().map(|(t, _, _)| *t).collect();
+        assert_eq!(
+            tabs,
+            vec![
+                RightPanelTab::Files,
+                RightPanelTab::Diff,
+                RightPanelTab::Terminal,
+                RightPanelTab::Browser,
+            ],
+            "add-panel menu must list Files, Diff, Terminal, Browser"
+        );
+    }
+
+    #[test]
+    fn header_superhero_icons_exist_in_embedded_assets() {
+        let assets = crate::superhero::AppAssets;
+        let paths = [
+            panel_tab_icon_path(RightPanelTab::Files),
+            panel_tab_icon_path(RightPanelTab::Diff),
+            panel_tab_icon_path(RightPanelTab::Terminal),
+            panel_tab_icon_path(RightPanelTab::Browser),
+            panel_tab_icon_path(RightPanelTab::Database),
+            panel_tab_icon_path(RightPanelTab::Mcp),
+            panel_tab_icon_path(RightPanelTab::Device),
+            "superhero/add.svg",
+            "superhero/close.svg",
+            "superhero/maximize.svg",
+            "superhero/minimize.svg",
+            "superhero/panel-bottom.svg",
+            "superhero/sidebar-right.svg",
+        ];
+        for path in paths {
+            let loaded = assets.load(path).expect("asset load should not fail");
+            assert!(
+                loaded.is_some(),
+                "header superheroicon `{path}` must exist in embedded assets"
+            );
+        }
+    }
+}

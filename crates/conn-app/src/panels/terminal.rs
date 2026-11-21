@@ -20,7 +20,7 @@ use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle as AnsiCursorStyle};
 use conn_theme::Tokens;
-use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, BorderStyle, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, DispatchPhase,
@@ -34,6 +34,7 @@ use gpui_kit::{
 use tokio::sync::mpsc;
 
 use super::color::{Rgb8, rgb8_to_hsla, to_hsla};
+use super::header::superhero_icon;
 use super::terminal_palette::{
     KeyInput, TerminalKeyAction, TerminalPalette, dim_rgb8, encode_terminal_key,
 };
@@ -43,6 +44,9 @@ const TERMINAL_PAD_START_PX: f32 = 16.0;
 const TERMINAL_PAD_TOP_PX: f32 = 16.0;
 const TERMINAL_PAD_END_PX: f32 = 12.0;
 const TERMINAL_PAD_BOTTOM_PX: f32 = 12.0;
+const TOOLBAR_HEIGHT_PX: f32 = 32.0;
+const TOOLBAR_INNER_PAD_PX: f32 = 3.0;
+const TOOLBAR_BTN_SIZE_PX: f32 = 24.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct GridSize {
@@ -216,6 +220,25 @@ impl TerminalPanel {
         let cwd = resolve_cwd(self.workspace_root.as_deref());
         self.session = Some(self.start_session(cwd, cx));
         cx.notify();
+    }
+
+    /// Restarts the login shell in the current workspace root.
+    fn restart_session(&mut self, cx: &mut Context<'_, Self>) {
+        let cwd = resolve_cwd(self.workspace_root.as_deref());
+        self.session = Some(self.start_session(cwd, cx));
+        cx.notify();
+    }
+
+    /// Clears the terminal screen and scrollback (equivalent to Ctrl+L / clear).
+    fn clear_terminal(&mut self, cx: &mut Context<'_, Self>) {
+        if let Some(session) = &self.session {
+            let mut term = session.term.lock();
+            term.grid_mut().clear_history();
+            term.scroll_display(Scroll::Bottom);
+            drop(term);
+            self.write_bytes(b"\x0c".to_vec());
+            cx.notify();
+        }
     }
 
     fn start_session(&self, cwd: PathBuf, cx: &mut Context<'_, Self>) -> TerminalSession {
@@ -521,6 +544,9 @@ impl Render for TerminalPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let bg = to_hsla(self.tokens.shell_card);
         let muted = to_hsla(self.tokens.muted_foreground);
+        let control_bg = to_hsla(self.tokens.shell_control);
+        let control_border = to_hsla(self.tokens.shell_divider_header);
+        let hover_bg = to_hsla(self.tokens.shell_highlight);
         let focused = self.focus.is_focused(window);
         let entity = cx.entity();
 
@@ -534,8 +560,61 @@ impl Render for TerminalPanel {
             })
         });
 
+        // Floating top-right ToolbarGroup matching `ThreadTerminalDrawer.tsx` (`absolute right-2 top-2`).
+        let action_group = h_flex()
+            .absolute()
+            .top(px(8.0))
+            .right(px(8.0))
+            .h(px(TOOLBAR_HEIGHT_PX))
+            .px(px(TOOLBAR_INNER_PAD_PX))
+            .gap(px(2.0))
+            .items_center()
+            .rounded(px(9999.0))
+            .bg(control_bg)
+            .border_1()
+            .border_color(control_border)
+            .child(
+                div()
+                    .id("terminal-clear-btn")
+                    .size(px(TOOLBAR_BTN_SIZE_PX))
+                    .rounded(px(9999.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.clear_terminal(cx);
+                        }),
+                    )
+                    .child(superhero_icon("superhero/clean.svg", 14.0, muted)),
+            )
+            .child(
+                div()
+                    .id("terminal-restart-btn")
+                    .size(px(TOOLBAR_BTN_SIZE_PX))
+                    .rounded(px(9999.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.restart_session(cx);
+                        }),
+                    )
+                    .child(superhero_icon("superhero/refresh.svg", 14.0, muted)),
+            );
+
         v_flex()
             .id("terminal-panel")
+            .relative()
             .size_full()
             .bg(bg)
             .track_focus(&self.focus)
@@ -560,6 +639,7 @@ impl Render for TerminalPanel {
                         focused,
                     }),
             )
+            .child(action_group)
             .when_some(status_banner, |el, msg| {
                 el.child(
                     div()
