@@ -692,7 +692,8 @@ export const make = Effect.gen(function* () {
           refs !== null &&
           local !== null &&
           local.refSnapshot === refs &&
-          (local.includesBranchChanges || !wantsBranchChanges(cwd));
+          ((local.includesBranchChanges && local.value.branchChanges !== undefined) ||
+            !wantsBranchChanges(cwd));
         if (!localIsFresh) {
           // Base refs and merge bases can move without changing divergence counts.
           yield* refreshLocalStatusCore(cwd, { refSnapshot: refs });

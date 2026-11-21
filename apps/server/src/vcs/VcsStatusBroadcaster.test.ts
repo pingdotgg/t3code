@@ -1362,6 +1362,22 @@ describe("VcsStatusBroadcaster", () => {
         state.refSnapshot = null;
         yield* TestClock.adjust("30 seconds");
         assert.equal(state.localStatusCalls, localBeforeIdle + 2);
+
+        // Omitted Changes totals (e.g. transient totals failure) retry on the next poll even with unchanged refs.
+        state.refSnapshot = "moved";
+        state.currentLocalStatus = { ...baseLocalStatus };
+        yield* TestClock.adjust("30 seconds");
+        assert.equal(state.localStatusCalls, localBeforeIdle + 3);
+        state.currentLocalStatus = {
+          ...baseLocalStatus,
+          branchChanges: { baseRef: "origin/main", insertions: 5, deletions: 2 },
+        };
+        yield* TestClock.adjust("30 seconds");
+        assert.equal(state.localStatusCalls, localBeforeIdle + 4);
+        assert.deepStrictEqual(
+          (yield* broadcaster.getStatus({ cwd: "/repo" })).branchChanges,
+          state.currentLocalStatus.branchChanges,
+        );
       }).pipe(Effect.provide(layerTestFor(state)));
     },
   );
