@@ -1,10 +1,57 @@
+diff --git a/android/src/main/java/expo/modules/video/VideoModule.kt b/android/src/main/java/expo/modules/video/VideoModule.kt
+index c2711344c58758e0ce5b71572d59c930330f0103..f6deb463d075f8ea199e73071e5f05385c8e9f20 100644
+--- a/android/src/main/java/expo/modules/video/VideoModule.kt
++++ b/android/src/main/java/expo/modules/video/VideoModule.kt
+@@ -31,6 +31,7 @@ import expo.modules.video.utils.runWithPiPMisconfigurationSoftHandling
+ import expo.modules.video.managers.VideoManager
+ import kotlinx.coroutines.async
+ import kotlinx.coroutines.awaitAll
++import kotlinx.coroutines.coroutineScope
+ import kotlinx.coroutines.launch
+ import kotlinx.coroutines.runBlocking
+ import kotlin.time.Duration
+@@ -349,14 +350,12 @@ class VideoModule : Module() {
+       }
+
+       AsyncFunction("generateThumbnailsAsync") Coroutine { ref: VideoPlayer, times: List<Duration>, options: VideoThumbnailOptions? ->
+-        return@Coroutine ref.toMetadataRetriever().safeUse {
+-          val bitmaps = times.map { time ->
+-            appContext.backgroundCoroutineScope.async {
+-              generateThumbnailAtTime(time, options)
+-            }
++        return@Coroutine ref.withMetadataRetriever {
++          coroutineScope {
++            times.map { time ->
++              async { generateThumbnailAtTime(time, options) }
++            }.awaitAll()
+           }
+-
+-          bitmaps.awaitAll()
+         }
+       }
+
 diff --git a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt b/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
-index 7ccce96..b6f30df 100644
+index 7ccce9681477328701755792fdc3bab09b428e30..9ce70ad2e3d20032bac22b10779d1f870bd2f837 100644
 --- a/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
 +++ b/android/src/main/java/expo/modules/video/player/VideoPlayer.kt
-@@ -265,6 +265,10 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+@@ -47,12 +47,14 @@ import expo.modules.video.records.TimeUpdate
+ import expo.modules.video.records.VideoSource
+ import expo.modules.video.records.VideoSize
+ import expo.modules.video.records.VideoTrack
++import expo.modules.video.safeUse
+ import expo.modules.video.utils.MutableWeakReference
+ import expo.modules.video.utils.buildBasicMediaSession
+ import kotlinx.coroutines.DelicateCoroutinesApi
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.GlobalScope
+ import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
+ import java.io.FileInputStream
+ import java.lang.ref.WeakReference
+ import kotlin.time.DurationUnit
+@@ -265,6 +267,10 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
    var keepScreenOnWhilePlaying by VideoPlayerKeepAwake(this, appContext)
- 
+
    private val playerListener = object : Player.Listener {
 +    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
 +      emit("playbackRequestedChange", mapOf("isPlaybackRequested" to playWhenReady))
@@ -13,6 +60,46 @@ index 7ccce96..b6f30df 100644
      override fun onIsPlayingChanged(isPlaying: Boolean) {
        this@VideoPlayer.playing = isPlaying
      }
+@@ -584,24 +590,28 @@ class VideoPlayer(val context: Context, appContext: AppContext, source: VideoSou
+     }
+   }
+
+-  fun toMetadataRetriever(): MediaMetadataRetriever {
++  internal suspend fun <T> withMetadataRetriever(block: suspend MediaMetadataRetriever.() -> T): T {
+     val source = uncommittedSource ?: commitedSource
+     val uri = source?.uri ?: throw IllegalStateException("Video source is not set")
+     val stringUri = uri.toString()
+
+-    val mediaMetadataRetriever = MediaMetadataRetriever()
+-    if (URLUtil.isFileUrl(stringUri)) {
+-      mediaMetadataRetriever.setDataSource(stringUri.replace("file://", ""))
+-    } else if (URLUtil.isContentUrl(stringUri)) {
+-      context.contentResolver.openFileDescriptor(uri, "r")?.use { parcelFileDescriptor ->
+-        FileInputStream(parcelFileDescriptor.fileDescriptor).use { inputStream ->
+-          mediaMetadataRetriever.setDataSource(inputStream.fd)
++    // Opening a remote source can block Expo's module queue while Android reads metadata.
++    return withContext(Dispatchers.IO) {
++      MediaMetadataRetriever().safeUse {
++        if (URLUtil.isFileUrl(stringUri)) {
++          setDataSource(stringUri.replace("file://", ""))
++        } else if (URLUtil.isContentUrl(stringUri)) {
++          context.contentResolver.openFileDescriptor(uri, "r")?.use { parcelFileDescriptor ->
++            FileInputStream(parcelFileDescriptor.fileDescriptor).use { inputStream ->
++              setDataSource(inputStream.fd)
++            }
++          }
++        } else {
++          setDataSource(stringUri, source.headers ?: emptyMap())
+         }
++        block()
+       }
+-    } else {
+-      mediaMetadataRetriever.setDataSource(stringUri, source.headers ?: emptyMap())
+     }
+-    return mediaMetadataRetriever
+   }
+ }
+
 diff --git a/ios/VideoPlayerObserver.swift b/ios/VideoPlayerObserver.swift
 index adf5820..ce69210 100644
 --- a/ios/VideoPlayerObserver.swift
