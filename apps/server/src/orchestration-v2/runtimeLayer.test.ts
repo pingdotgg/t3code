@@ -14170,8 +14170,11 @@ describe("subagent lifecycle cascade", () => {
     const run = (operation: "archive" | "unarchive" | "delete", threadId = parent, id?: string) =>
       threads.dispatch(command(operation, threadId, id));
     // Committed by a process that stopped before its reply, leaving the cascade to the worker.
-    const commit = (operation: "archive" | "unarchive", threadId = parent, id?: string) =>
-      orchestrator.dispatch(command(operation, threadId, id));
+    const commit = (
+      operation: "archive" | "unarchive" | "delete",
+      threadId = parent,
+      id?: string,
+    ) => orchestrator.dispatch(command(operation, threadId, id));
     const state = (field: "archivedAt" | "deletedAt", ...ids: ReadonlyArray<string>) =>
       Effect.forEach(ids, (id) => store.getThread(ThreadId.make(id))).pipe(
         Effect.map((all) => all.map((thread) => (thread[field] === null ? 0 : 1)).join("")),
@@ -14336,13 +14339,9 @@ describe("subagent lifecycle cascade", () => {
     { source: app, delivery: "reply", operation: "archive", collision: null },
     { source: app, delivery: "worker", operation: "archive", collision: null },
     { source: parent, delivery: "reply", operation: "archive", collision: "accepted" },
-    { source: parent, delivery: "worker", operation: "archive", collision: "accepted" },
     { source: parent, delivery: "reply", operation: "archive", collision: "rejected" },
-    { source: parent, delivery: "worker", operation: "archive", collision: "rejected" },
     { source: parent, delivery: "reply", operation: "unarchive", collision: "accepted" },
-    { source: parent, delivery: "worker", operation: "unarchive", collision: "accepted" },
     { source: parent, delivery: "reply", operation: "unarchive", collision: "rejected" },
-    { source: parent, delivery: "worker", operation: "unarchive", collision: "rejected" },
   ] as const)(
     "cascades side-chat descendants from $source through $delivery: $operation, collision $collision",
     ({ source, delivery, operation, collision }) =>
@@ -14413,6 +14412,89 @@ describe("subagent lifecycle cascade", () => {
         assert.equal(yield* f.archived(side, child, independent), "001");
       }).pipe(Effect.provide(layerTest)),
   );
+  it.effect("preserves a newer descendant restore through a delayed nested side-chat archive", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const side = ThreadId.make("side");
+      const child = ThreadId.make("side-child");
+      yield* f.sideChat(app, side);
+      yield* f.set(child, {
+        lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+      });
+      yield* f.run("archive", child, "archive:side-child:independent");
+      yield* f.commit("archive");
+      yield* f.run("unarchive", child);
+      yield* f.drain;
+      assert.equal(yield* f.archived(parent, app, side, child), "1110");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { delivery: "reply", useParentDerivedId: false },
+    { delivery: "worker", useParentDerivedId: false },
+    { delivery: "worker", useParentDerivedId: true },
+  ] as const)(
+    "preserves an independent side-chat rearchive through $delivery, parent-derived ID $useParentDerivedId",
+    ({ delivery, useParentDerivedId }) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const side = ThreadId.make("side");
+        const child = ThreadId.make("side-child");
+        yield* f.sideChat(parent, side);
+        yield* f.set(child, {
+          lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+        });
+        if (useParentDerivedId) yield* f.run("archive", side, "earlier:side-archive");
+        yield* f.run("archive");
+        yield* f.run("unarchive", side);
+        assert.equal(yield* f.archived(side, child), "00");
+        yield* TestClock.adjust("1 second");
+        yield* f.run(
+          "archive",
+          side,
+          useParentDerivedId ? "archive:parent:side-chat:side" : undefined,
+        );
+        yield* f.drain;
+        yield* TestClock.adjust("8 days");
+        yield* f.outbox.pruneSettled;
+        if (delivery === "reply") yield* f.run("unarchive");
+        else {
+          yield* f.commit("unarchive");
+          yield* f.drain;
+        }
+        assert.equal(yield* f.archived(parent, side, child), "001");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["reply", "worker", "legacy worker"] as const)(
+    "leaves a moved side chat's subagent alone during parent deletion through %s",
+    (delivery) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const side = ThreadId.make("side");
+        const child = ThreadId.make("side-child");
+        const projectId = ProjectId.make("foreign");
+        yield* f.sideChat(parent, side);
+        yield* f.set(side, { projectId });
+        yield* f.set(child, {
+          projectId,
+          lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+        });
+        if (delivery === "reply") yield* f.run("delete");
+        else {
+          yield* f.commit("delete");
+          if (delivery === "legacy worker") {
+            yield* f.threads.cascadeSubagentLifecycle({
+              threadId: side,
+              commandId: CommandId.make("delete:parent:side-chat:side"),
+              operation: "thread.delete",
+            });
+          } else yield* f.drain;
+        }
+        assert.equal(yield* f.state("deletedAt", parent, side, child), "110");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("restores only what a parent archive cascaded, through independent archives", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

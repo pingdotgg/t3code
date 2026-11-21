@@ -557,6 +557,7 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly operation: "thread.archive" | "thread.unarchive" | "thread.delete";
+    readonly sideChat?: EffectOutbox.EmbeddedSideChatCascade | undefined;
   }) => Effect.Effect<
     void,
     Orchestrator.OrchestratorV2Error | CommandReceiptStore.CommandReceiptStoreV2Error
@@ -853,46 +854,26 @@ const make = Effect.gen(function* () {
     ensureCommandTranscripts(command).pipe(
       Effect.andThen(assertDispatchTargetEnabled(command)),
       Effect.andThen(orchestrator.dispatch(command)),
-      Effect.tap((result) => cascadeBeforeReply(command, result)),
+      Effect.tap((result) => cascadeBeforeReply(result)),
     );
 
   // Clients read archive snapshots as soon as this returns; the outbox effect only backs it up.
   // A replay or a no-op (an unused-only delete that kept the thread) leaves it to that effect.
   const cascadeBeforeReply = Effect.fn("ThreadManagementService.cascadeBeforeReply")(function* (
-    command: OrchestrationV2ServerCommand,
     result: Orchestrator.OrchestratorV2DispatchResult,
-    sideChatsOnly = false,
   ) {
-    if (
-      (command.type !== "thread.archive" &&
-        command.type !== "thread.unarchive" &&
-        command.type !== "thread.delete") ||
-      result.replayed === true
-    )
-      return;
-    const eventType =
-      command.type === "thread.archive"
-        ? "thread.archived"
-        : command.type === "thread.unarchive"
-          ? "thread.unarchived"
-          : "thread.deleted";
     yield* Effect.forEach(
-      result.storedEvents.filter(
-        ({ event }) =>
-          event.type === eventType && (!sideChatsOnly || event.threadId !== command.threadId),
-      ),
-      ({ event }) =>
+      result.subagentCascades ?? [],
+      ({ commandId, threadId, request }) =>
         cascadeSubagentLifecycle({
-          commandId:
-            event.threadId === command.threadId
-              ? command.commandId
-              : CommandId.make(`${command.commandId}:side-chat:${event.threadId}`),
-          threadId: event.threadId,
-          operation: command.type,
+          commandId,
+          threadId,
+          operation: request.operation,
+          sideChat: request.sideChat,
         }).pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Subagent lifecycle cascade left to the effect worker", {
-              threadId: event.threadId,
+              threadId,
               cause,
             }),
           ),
@@ -1829,12 +1810,48 @@ const make = Effect.gen(function* () {
     if (failures[0] !== undefined) return yield* failures[0];
   });
 
+  // Older embedded deletes have only the enclosing parent's lifecycle receipt.
+  const legacySideChatDeletionParent = Effect.fn(
+    "ThreadManagementService.legacySideChatDeletionParent",
+  )(function* (commandId: CommandId, threadId: ThreadId) {
+    const suffix = `:side-chat:${threadId}`;
+    if (commandId.length <= suffix.length || !commandId.endsWith(suffix)) return;
+    const direct = Option.getOrUndefined(yield* receipts.getByCommandId(commandId));
+    if (
+      direct?.threadId === threadId &&
+      direct.commandType === "thread.delete" &&
+      direct.status === "accepted"
+    )
+      return;
+    const parentCommandId = CommandId.make(commandId.slice(0, -suffix.length));
+    const parent = Option.getOrUndefined(yield* receipts.getByCommandId(parentCommandId));
+    if (
+      parent?.status === "accepted" &&
+      parent.commandType === "thread.delete" &&
+      parent.threadId !== threadId
+    )
+      return parent.threadId;
+  });
+
   const cascadeSubagentLifecycle: ThreadManagementServiceShape["cascadeSubagentLifecycle"] =
     Effect.fn("ThreadManagementService.cascadeSubagentLifecycle")(function* (input) {
-      const receipt = Option.getOrUndefined(yield* receipts.getByCommandId(input.commandId));
-      // Side chats deleted with their parent have no receipt of their own.
+      const { sideChat } = input;
+      if (input.operation === "thread.unarchive" && sideChat && !sideChat.archiveCommandId) return;
+      const parentThreadId =
+        sideChat?.parentThreadId ??
+        (input.operation === "thread.delete"
+          ? yield* legacySideChatDeletionParent(input.commandId, input.threadId)
+          : undefined);
+      const receipt =
+        input.operation === "thread.delete"
+          ? undefined
+          : Option.getOrUndefined(yield* receipts.getByCommandId(input.commandId));
       if (input.operation !== "thread.delete" && receipt?.status !== "accepted") return;
-      const source = input.operation === "thread.delete" ? undefined : receipt;
+      const source = receipt && {
+        threadId: receipt.threadId,
+        cutoff: sideChat?.cutoff ?? receipt.resultSequence,
+        archiveCommandId: sideChat?.archiveCommandId,
+      };
       const visit: (
         thread: {
           readonly id: ThreadId;
@@ -1849,7 +1866,7 @@ const make = Effect.gen(function* () {
         if (path.length > 0 && thread.deletedAt === null) {
           const command = { type: input.operation, commandId, threadId: thread.id };
           const dispatched = yield* orchestrator.dispatch(command).pipe(
-            Effect.tap((result) => cascadeBeforeReply(command, result, true)),
+            Effect.tap((result) => cascadeBeforeReply(result)),
             Effect.provideService(EffectOutbox.SubagentCascade, { source, path }),
             Effect.as(true),
             Effect.catchTags({
@@ -1866,10 +1883,24 @@ const make = Effect.gen(function* () {
             const limit = yield* DispatchModeLimit;
             const current = (yield* orchestrator.getThreadRecords(thread.id, [])).thread;
             if (path.length > 0 && current.projectId !== thread.projectId) return;
+            if (path.length === 0 && parentThreadId !== undefined) {
+              if (
+                current.lineage.sideChat !== true ||
+                current.lineage.parentThreadId !== parentThreadId
+              )
+                return;
+              const { thread: parent } = yield* orchestrator.getThreadRecords(parentThreadId, []);
+              if (
+                current.projectId !== parent.projectId ||
+                (sideChat && current.projectId !== sideChat.projectId)
+              )
+                return;
+            }
             if (limit && exceededDispatchModeLimit(limit, current)) return;
             if (source && current.deletedAt !== null) return;
             const latest = source ? yield* receipts.getLatestLifecycle(thread.id) : null;
-            if (source && CommandReceiptStore.supersedesCascade(latest, source, commandId)) return;
+            if (source && CommandReceiptStore.supersedesCascade(latest, source.cutoff, commandId))
+              return;
             const children = yield* orchestrator.getSubagentChildThreads(thread.id);
             const [, failures] = yield* Effect.partition(children, (child) =>
               Effect.gen(function* () {
@@ -1889,7 +1920,9 @@ const make = Effect.gen(function* () {
           }),
         );
       });
-      const cascade = visit({ id: input.threadId, deletedAt: null }, input.commandId, []);
+      const walk = visit({ id: input.threadId, deletedAt: null }, input.commandId, []);
+      const cascade =
+        parentThreadId === undefined ? walk : threadDispatch.withLock(parentThreadId, walk);
       yield* input.operation === "thread.delete" &&
       (yield* EffectOutbox.SubagentCascade) === undefined
         ? threadDispatch.withDeletionLock(cascade)

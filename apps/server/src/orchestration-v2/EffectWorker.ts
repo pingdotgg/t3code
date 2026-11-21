@@ -687,6 +687,7 @@ export const layerExecutor: Layer.Layer<
                 commandId: effect.commandId,
                 threadId: effect.threadId,
                 operation: effect.request.operation,
+                sideChat: effect.request.sideChat,
               })
               .pipe(
                 Effect.provideService(DispatchModeLimit, effect.request.limit),

@@ -237,12 +237,9 @@ export const cascadeCommandId = Effect.fn("CommandReceiptStore.cascadeCommandId"
 /** A lifecycle choice made after the cascade's source command, other than `ownCommandId`. */
 export const supersedesCascade = (
   latest: CommandReceiptV2 | null,
-  source: CommandReceiptV2,
+  cutoff: number,
   ownCommandId: CommandId,
-) =>
-  latest !== null &&
-  latest.resultSequence > source.resultSequence &&
-  latest.commandId !== ownCommandId;
+) => latest !== null && latest.resultSequence > cutoff && latest.commandId !== ownCommandId;
 
 /** Whether a cascade from an archive of `rootThreadId`, along `path`, archived this thread. */
 export const archivedByCascade = Effect.fn("CommandReceiptStore.archivedByCascade")(function* (
@@ -250,6 +247,7 @@ export const archivedByCascade = Effect.fn("CommandReceiptStore.archivedByCascad
   latest: CommandReceiptV2 | null,
   rootThreadId: ThreadId,
   path: ReadonlyArray<ThreadId>,
+  expectedArchiveCommandId?: CommandId,
 ) {
   if (latest?.commandType !== "thread.archive") return false;
   let rootCommandId: string = latest.commandId;
@@ -259,6 +257,8 @@ export const archivedByCascade = Effect.fn("CommandReceiptStore.archivedByCascad
     if (!rootCommandId.endsWith(segment)) return false;
     rootCommandId = rootCommandId.slice(0, -segment.length);
   }
+  if (expectedArchiveCommandId !== undefined && rootCommandId !== expectedArchiveCommandId)
+    return false;
   const root = Option.getOrNull(yield* receipts.getByCommandId(CommandId.make(rootCommandId)));
   const valid = root?.status === "accepted" && root.threadId === rootThreadId;
   // Derive the IDs again, so a user ID only shaped like a cascade retry is not counted.

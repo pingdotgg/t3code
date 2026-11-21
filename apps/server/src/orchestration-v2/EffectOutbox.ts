@@ -13,6 +13,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   ProviderInteractionMode,
+  ProjectId,
   RunId,
   RuntimeMode,
   RuntimeRequestId,
@@ -33,11 +34,27 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
-import type { CommandReceiptV2 } from "./CommandReceiptStore.ts";
+
+const EmbeddedSideChatCascade = Schema.Struct({
+  parentThreadId: ThreadId,
+  projectId: ProjectId,
+  cutoff: Schema.optional(NonNegativeInt),
+  archiveCommandId: Schema.optional(CommandId),
+});
+export type EmbeddedSideChatCascade = typeof EmbeddedSideChatCascade.Type;
 
 /** Set while a cascade dispatches a descendant's lifecycle command; delete needs no source. */
 export const SubagentCascade = Context.Reference<
-  | { readonly source: CommandReceiptV2 | undefined; readonly path: ReadonlyArray<ThreadId> }
+  | {
+      readonly source:
+        | {
+            readonly threadId: ThreadId;
+            readonly cutoff: number;
+            readonly archiveCommandId?: CommandId | undefined;
+          }
+        | undefined;
+      readonly path: ReadonlyArray<ThreadId>;
+    }
   | undefined
 >("t3/orchestration-v2/SubagentCascade", { defaultValue: () => undefined });
 
@@ -139,6 +156,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("subagent-threads.cascade"),
     operation: Schema.Literals(["thread.archive", "thread.unarchive", "thread.delete"]),
+    sideChat: Schema.optional(EmbeddedSideChatCascade),
     limit: Schema.optional(
       Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
     ),
@@ -216,6 +234,13 @@ export interface PendingOrchestrationEffectV2 {
   readonly request: OrchestrationEffectRequestV2;
   readonly availableAt?: DateTime.Utc;
 }
+
+export type SubagentCascadeEffect = PendingOrchestrationEffectV2 & {
+  readonly request: Extract<
+    OrchestrationEffectRequestV2,
+    { readonly type: "subagent-threads.cascade" }
+  >;
+};
 
 export class EffectOutboxError extends Schema.TaggedError<EffectOutboxError>()(
   "EffectOutboxError",
