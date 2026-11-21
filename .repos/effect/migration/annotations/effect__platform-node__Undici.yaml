@@ -115,3 +115,9 @@
 "@effect/platform-node/Undici#SpecIterableIterator":
   replacement: "undici.SpecIterableIterator"
   note: "Import the upstream type directly; it extends SpecIteratorObject and includes iterator-helper methods in Undici 8."
+"@effect/platform-node/Undici#Dispatcher.HttpMethod":
+  replacement: "undici.Dispatcher.HttpMethod"
+  note: "Import the upstream Dispatcher namespace type. Undici 8 accepts custom method strings as well as the standard methods; do not treat HttpMethod as a closed union for exhaustive matching."
+"@effect/platform-node/Undici#FormData":
+  replacement: "undici.FormData"
+  note: "Import the upstream FormData constructor directly. It remains the multipart form-data implementation; append and set accept values with an optional filename, and get returns a string or File, or null for a missing key."

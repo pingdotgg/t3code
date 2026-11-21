@@ -48,14 +48,14 @@ const SkillFrontmatter = Schema.Struct({
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 const SkillConfigEntry = Schema.Struct({
   path: Schema.String,
-  include_only: Schema.optional(Schema.Array(Schema.String)),
-  exclude: Schema.optional(Schema.Array(Schema.String)),
+  include_only: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  exclude: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
 });
 const decodeSkillsConfig = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
-      inherits: Schema.optional(Schema.Array(SkillConfigEntry)),
-      entries: Schema.optional(Schema.Array(SkillConfigEntry)),
+      inherits: Schema.optional(Schema.NullOr(Schema.Array(SkillConfigEntry))),
+      entries: Schema.optional(Schema.NullOr(Schema.Array(SkillConfigEntry))),
     }),
   ),
 );
@@ -289,10 +289,7 @@ function matchesSkillFilter(entry: string, filter: SkillEntryFilter): boolean {
 
 function narrowSkillFilter(
   parent: SkillEntryFilter,
-  entry: {
-    readonly include_only?: ReadonlyArray<string> | undefined;
-    readonly exclude?: ReadonlyArray<string> | undefined;
-  },
+  entry: typeof SkillConfigEntry.Type,
 ): SkillEntryFilter {
   const includeGroups =
     entry.include_only && entry.include_only.length > 0
@@ -305,16 +302,8 @@ function narrowSkillFilter(
   return { includeGroups, excludePatterns };
 }
 
-function resolveSkillsConfigPath(
-  path: Path.Path,
-  rawPath: string,
-  baseDir: string,
-  userHome: string,
-): string {
-  if (rawPath === "~") return userHome;
-  if (rawPath.startsWith("~/") || rawPath.startsWith("~\\")) {
-    return path.join(userHome, rawPath.slice(2));
-  }
+// agy does not expand ~, so a ~/ path stays relative to the config file.
+function resolveSkillsConfigPath(path: Path.Path, rawPath: string, baseDir: string): string {
   return path.isAbsolute(rawPath) ? path.resolve(rawPath) : path.resolve(baseDir, rawPath);
 }
 
@@ -348,13 +337,45 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
   };
   const skillsByName = new Map<string, ServerProviderSkill>();
 
+  const addSkillFile = Effect.fn("addAntigravitySkillFile")(function* (
+    skillPath: string,
+    scope: string,
+  ) {
+    const fileName = path.basename(skillPath);
+    if (fileName.toLowerCase() !== "skill.md" || !fileName.endsWith(".md")) return;
+    const contents = yield* readSkillFrontmatter(skillPath, budget);
+    if (contents === undefined) return;
+    const skill = parseSkillFrontmatter(contents, fileName);
+    if (!skill || skillsByName.has(skill.name)) return;
+    skillsByName.set(skill.name, {
+      ...skill,
+      path: skillPath,
+      scope,
+      enabled: true,
+    });
+  });
+
   const scanDirectory = Effect.fn("scanAntigravitySkillDirectory")(function* (
     directory: string,
     scope: string,
     scanChildren: boolean,
     filter: SkillEntryFilter = EMPTY_SKILL_FILTER,
+    acceptSkillFile = false,
   ): Effect.fn.Return<void, AntigravitySkillsProbeError, FileSystem.FileSystem> {
     const info = yield* readIfPresent(fileSystem.stat(directory), directory);
+    if (info?.type === "File" && acceptSkillFile) {
+      if (budget.remainingEntries === 0) {
+        return yield* new AntigravitySkillsProbeError({
+          reason: "scan-budget-exhausted",
+          path: directory,
+        });
+      }
+      budget.remainingEntries -= 1;
+      if (matchesSkillFilter(path.basename(path.dirname(directory)), filter)) {
+        yield* addSkillFile(directory, scope);
+      }
+      return;
+    }
     if (info?.type !== "Directory") return;
     const entries = yield* readIfPresent(fileSystem.readDirectory(directory), directory);
     if (entries === undefined) return;
@@ -369,18 +390,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     const sortedEntries = entries.toSorted();
     const skillFileName = sortedEntries.find((entry) => entry.toLowerCase() === "skill.md");
     if (skillFileName !== undefined) {
-      if (!skillFileName.endsWith(".md")) return;
-      const skillPath = path.join(directory, skillFileName);
-      const contents = yield* readSkillFrontmatter(skillPath, budget);
-      if (contents === undefined) return;
-      const skill = parseSkillFrontmatter(contents, skillFileName);
-      if (!skill || skillsByName.has(skill.name)) return;
-      skillsByName.set(skill.name, {
-        ...skill,
-        path: skillPath,
-        scope,
-        enabled: true,
-      });
+      yield* addSkillFile(path.join(directory, skillFileName), scope);
       return;
     }
     if (scanChildren) {
@@ -431,7 +441,7 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     const nextVisited = new Set(visitedConfigs);
     nextVisited.add(resolvedConfigPath);
     for (const inherited of parsed.value.inherits ?? []) {
-      const inheritedPath = resolveSkillsConfigPath(path, inherited.path, baseDir, input.userHome);
+      const inheritedPath = resolveSkillsConfigPath(path, inherited.path, baseDir);
       yield* scanSkillsConfig(
         inheritedPath,
         path.dirname(inheritedPath),
@@ -442,8 +452,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       );
     }
     for (const entry of parsed.value.entries ?? []) {
-      const entryDirectory = resolveSkillsConfigPath(path, entry.path, baseDir, input.userHome);
-      yield* scanDirectory(entryDirectory, scope, true, narrowSkillFilter(filter, entry));
+      const entryDirectory = resolveSkillsConfigPath(path, entry.path, baseDir);
+      yield* scanDirectory(entryDirectory, scope, true, narrowSkillFilter(filter, entry), true);
     }
   });
 

@@ -252,6 +252,30 @@ it("steers a Grok follow-up into its running turn without restarting it", () => 
   assert.isTrue(grok.turns.supportsActiveSteering);
 });
 
+// regression: #32606 a slash command steered into a running turn replaced the task
+it.each([
+  ["/compact", { type: "queue_after_active" }],
+  ["/context", { type: "queue_after_active" }],
+  [" /context all\n", { type: "queue_after_active" }],
+  ["/plugin:review-pr 12", { type: "queue_after_active" }],
+  ["/home/me/x.ts fails", { type: "steer_active", targetRunId: activeRunId }],
+  ["/ context", { type: "steer_active", targetRunId: activeRunId }],
+  ["$skill /context", { type: "steer_active", targetRunId: activeRunId }],
+] as const)("steers %j only when it is not a slash command", (text, expected) => {
+  const projection = dispatchProjection(baseCapabilities);
+  for (const deliveryIntent of ["auto", "steer"] as const) {
+    assert.deepEqual(
+      CommandPolicy.resolveMessageDispatch(projection, {
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent,
+        text,
+        attachments: [],
+      }),
+      expected,
+    );
+  }
+});
+
 it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {
   const projection = dispatchProjection(baseCapabilities);
   const maintenance = {

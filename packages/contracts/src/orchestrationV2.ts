@@ -81,6 +81,7 @@ import {
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
+import { PROJECT_TRACKED_FOLDERS_MAX } from "./project.ts";
 import {
   TurnTokenUsage,
   ToolActivitySurface,
@@ -548,6 +549,15 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  /** Repositories a completed rewind left as they were: none had a snapshot to go back to. */
+  rollbackUnrestored: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        requestId: CommandId,
+        repositories: Schema.Array(TrimmedNonEmptyString),
+      }),
+    ),
+  ),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
@@ -758,12 +768,27 @@ export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
     baseRef: TrimmedNonEmptyString,
     branch: Schema.optional(TrimmedNonEmptyString),
     startFromOrigin: Schema.optional(Schema.Boolean),
+    repositories: Schema.optional(
+      Schema.Array(Schema.Struct({ path: TrimmedNonEmptyString }))
+        .check(Schema.isMaxLength(PROJECT_TRACKED_FOLDERS_MAX))
+        .annotate({
+          description: "Tracked Git folders to give a worktree. Default: all, or none above 8.",
+        }),
+    ),
   }),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+
+/** What a run returned as data: a value the server accepted against the run's `outputSchema`. */
+export const OrchestrationV2RunOutput = Schema.Struct({
+  value: Schema.Json,
+  // A string, not a DateTime: the run's JSON form only converts its own top-level dates.
+  submittedAt: IsoDateTime,
+});
+export type OrchestrationV2RunOutput = typeof OrchestrationV2RunOutput.Type;
 
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
@@ -802,8 +827,21 @@ export const OrchestrationV2Run = Schema.Struct({
   workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
+  /** The JSON Schema of the result this run was asked to return as data. */
+  outputSchema: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
+  /**
+   * Its own field, written by its own event: lifecycle writers hold a copy of the run from when
+   * the turn started, and their updates must not put an unanswered run back.
+   */
+  output: Schema.optional(OrchestrationV2RunOutput),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
+
+export const OrchestrationV2RunOutputSubmitted = Schema.Struct({
+  runId: RunId,
+  output: OrchestrationV2RunOutput,
+});
+export type OrchestrationV2RunOutputSubmitted = typeof OrchestrationV2RunOutputSubmitted.Type;
 
 export function orchestrationV2RunWorkStartedAt(
   run: Pick<OrchestrationV2Run, "workStartedAt" | "startedAt" | "requestedAt">,
@@ -1023,6 +1061,14 @@ export const OrchestrationV2CheckpointScope = Schema.Struct({
   ordinalWithinParent: NonNegativeInt,
   advancesAppRunCount: Schema.Boolean,
   cwd: TrimmedNonEmptyString,
+  /** Repository scopes: the folder's display name. */
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  /**
+   * Set on a repository scope: one tracked Git folder the thread reaches, a child of the root
+   * scope, holding the tracked path (it stays the same when `cwd` moves). Such a scope uses kind
+   * `manual`, because clients already released reject a kind they do not know.
+   */
+  repositoryPath: Schema.optionalKey(TrimmedNonEmptyString),
   createdAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2CheckpointScope = typeof OrchestrationV2CheckpointScope.Type;
@@ -1435,7 +1481,7 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
-  /** A scheduled delivery that named no model; it runs on the thread's selection at start. */
+  /** A message that named no model; it runs on the thread's selection at start. */
   followsThreadSelection: Schema.optional(Schema.Literal(true)),
   senderThreadId: Schema.optional(ThreadId),
   linkedSender: Schema.optional(OrchestrationV2LinkedSender),
@@ -1552,6 +1598,36 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
 
+/**
+ * The checkpoint a file rewind to run `targetOrdinal` restores a tracked repository to, given that
+ * repository scope's checkpoints. Its records are sparse: the first snapshot at or after the
+ * target is the target's own, or the baseline taken before the first later run that changed the
+ * repository. Null when no later run changed it, or when that state was never snapshotted.
+ */
+export function repositoryRewindCheckpoint<
+  Checkpoint extends Pick<OrchestrationV2Checkpoint, "ordinalWithinScope" | "runId" | "status">,
+>(checkpoints: ReadonlyArray<Checkpoint>, targetOrdinal: number): Checkpoint | null {
+  let first: Checkpoint | undefined;
+  for (const checkpoint of checkpoints) {
+    if (checkpoint.status !== "ready" || checkpoint.ordinalWithinScope < targetOrdinal) continue;
+    if (first === undefined || checkpoint.ordinalWithinScope < first.ordinalWithinScope)
+      first = checkpoint;
+  }
+  if (first === undefined) return null;
+  // A later run's own checkpoint holds that run's changes, not the state before them.
+  if (first.ordinalWithinScope !== targetOrdinal && first.runId !== null) return null;
+  // A run whose snapshot failed in between may have changed the repository unrecorded.
+  const end = first.ordinalWithinScope;
+  const unrecorded = checkpoints.some(
+    (checkpoint) =>
+      checkpoint.runId !== null &&
+      (checkpoint.status === "error" || checkpoint.status === "missing") &&
+      checkpoint.ordinalWithinScope > targetOrdinal &&
+      checkpoint.ordinalWithinScope < end,
+  );
+  return unrecorded ? null : first;
+}
+
 export const OrchestrationV2CheckpointRollbackRequest = Schema.Struct({
   scopeId: CheckpointScopeId,
   checkpointId: CheckpointId,
@@ -1637,6 +1713,9 @@ export type OrchestrationV2UserMessageInputIntent =
 
 /** Notices without a level predate it and are warnings. */
 const OrchestrationV2SystemNoticeLevel = Schema.Literals(["info", "warning", "error"]);
+
+/** A notice about an MCP server that a sign-in from the thread would fix. */
+const OrchestrationV2McpSignIn = Schema.Struct({ server: Schema.String });
 
 /** A same-harness model or effort change that took effect with this message. */
 export const OrchestrationV2ModelSwitch = Schema.Struct({
@@ -1897,6 +1976,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("system_notice"),
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
+    mcpSignIn: Schema.optional(OrchestrationV2McpSignIn),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2093,6 +2173,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run.background-work-cancelled"),
     payload: OrchestrationV2RunBackgroundWorkCancelled,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.output-submitted"),
+    payload: OrchestrationV2RunOutputSubmitted,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -2781,6 +2866,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     type: Schema.Literal("system_notice"),
     message: Schema.String,
     level: Schema.optional(OrchestrationV2SystemNoticeLevel),
+    mcpSignIn: Schema.optional(OrchestrationV2McpSignIn),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3043,6 +3129,11 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.output-submitted"),
+    payload: OrchestrationV2RunOutputSubmitted,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("run-attempt.created"),
     payload: OrchestrationV2RunAttemptJson,
   }),
@@ -3185,6 +3276,7 @@ export const OrchestrationV2Command = Schema.Union([
         titleSeed: Schema.optional(TrimmedNonEmptyString),
         scheduledTaskId: Schema.optional(ScheduledTaskId),
         senderThreadId: Schema.optional(ThreadId),
+        outputSchema: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
         workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
       }),
     ),
@@ -3440,6 +3532,8 @@ export const OrchestrationV2Command = Schema.Union([
     idleCompaction: Schema.optional(OrchestrationV2IdleCompaction),
     /** Start a new provider session without the thread's earlier context. Never steers. */
     freshContext: Schema.optional(Schema.Boolean),
+    /** Asks the run for a result as data matching this JSON Schema. Never steers. */
+    outputSchema: Schema.optional(Schema.Record(Schema.String, Schema.Json)),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,
@@ -3664,6 +3758,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  // The server issues this after checking the value against the run's declared schema.
+  Schema.Struct({
+    type: Schema.Literal("run.output.submit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    value: Schema.Json,
+  }),
   // Guest share commands the server issues after checking T3 Connect and the guest token.
   Schema.Struct({
     type: Schema.Literal("thread.guest-share.open"),

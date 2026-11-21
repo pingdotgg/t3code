@@ -2,7 +2,7 @@ import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSk
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
-import { fileBasename } from "@t3tools/shared/path";
+import { fileDisplayName } from "@t3tools/shared/path";
 import {
   CircleDashedIcon,
   ImageIcon,
@@ -89,7 +89,7 @@ export function CollapsedComposerPromptPreview(props: {
             key={key}
             kind="mention"
             icon={<PierreEntryIcon pathValue={segment.path} kind="file" theme={props.theme} />}
-            label={fileBasename(segment.path)}
+            label={fileDisplayName(segment.path)}
           />
         );
       case "context-reference": {
