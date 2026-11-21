@@ -30,6 +30,7 @@ import { msg, T, useGT, useMessages } from "gt-react";
 
 import { m } from "~/i18n/messages";
 
+import { useDeadlinePassed } from "~/hooks/useDeadline";
 import { useNowMinute } from "~/hooks/useNowMinute";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
@@ -466,11 +467,14 @@ function GuestThread({
 }
 
 function ExpiryLabel({ expiresAt }: { readonly expiresAt: string }) {
+  const parsedExpiresAt = Date.parse(expiresAt);
+  const expiresAtMs = Number.isFinite(parsedExpiresAt) ? parsedExpiresAt : null;
+  const expired = useDeadlinePassed(expiresAtMs);
   const nowMinute = useNowMinute();
   const m = useMessages();
   return (
     <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-      {formatGuestExpiry(expiresAt, Date.parse(`${nowMinute}Z`), m)}
+      {expired ? m(msg("Expired")) : formatGuestExpiry(expiresAt, Date.parse(`${nowMinute}Z`), m)}
     </span>
   );
 }
