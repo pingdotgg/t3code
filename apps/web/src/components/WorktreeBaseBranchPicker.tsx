@@ -89,7 +89,7 @@ export function WorktreeBaseBranchPicker({
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     if (next && !open && cwd !== null) {
-      void refreshLocalStatusForPicker({ environmentId, input: { cwd, localOnly: true } });
+      void refreshLocalStatusForPicker({ environmentId, input: { cwd } });
     }
     if (!next) setQuery("");
   };

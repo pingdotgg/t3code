@@ -13,17 +13,15 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react-native";
-import { RegistryContext } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
-  runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { m } from "../../i18n/messages";
-import { useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { sanitizeNewRefName } from "@t3tools/shared/git";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -38,6 +36,7 @@ import { cn } from "../../lib/cn";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
+import { useRefreshBranchesOnFocus } from "./use-refresh-branches-on-focus";
 import { useSearchToolbarInset } from "../../components/ui/useBarInset";
 import type { AppBarSearch } from "../../components/ui/AppBar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
@@ -468,19 +467,7 @@ export function BranchPickerScreen(props: {
   const m = useMessages();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const registry = useContext(RegistryContext);
-  const environmentId = props.project?.environmentId;
-  const cwd = props.project?.workspaceRoot;
-  const refreshPickerStatus = useCallback(() => {
-    if (!environmentId || !cwd) return;
-    void runAtomCommand(
-      registry,
-      vcsEnvironment.refreshLocalStatusForPicker,
-      { environmentId, input: { cwd, localOnly: true } },
-      { reportFailure: false },
-    );
-  }, [cwd, environmentId, registry]);
-  useFocusEffect(refreshPickerStatus);
+  useRefreshBranchesOnFocus(props.project?.environmentId, props.project?.workspaceRoot);
   const search: AppBarSearch = {
     value: props.query,
     onChangeText: props.onQueryChange,
