@@ -292,7 +292,8 @@ export const sleep = Effect.fn("workflow.sleep")(function* (
       yield* run.store.runStatus(run.runId, "waiting", `sleep ${name}`);
     }),
   });
-  yield* DurableClock.sleep({ name: `sleep/${name}`, duration });
+  // Effect keeps a short sleep in memory, where a restart would start it over.
+  yield* DurableClock.sleep({ name: `sleep/${name}`, duration, inMemoryThreshold: Duration.zero });
   yield* Activity.make({
     name: `sleep/${name}/close`,
     execute: Effect.andThen(
