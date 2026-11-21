@@ -10,6 +10,7 @@ import { definition } from "../shared/definition.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import * as AzureDevOpsIssueTracker from "./AzureDevOpsIssueTracker.ts";
+import * as AzureDevOpsMediaFetch from "./azureDevOpsMediaFetch.ts";
 import * as AzureDevOpsPullRequestProvider from "./AzureDevOpsPullRequestProvider.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
@@ -20,6 +21,7 @@ const makeInstance = Effect.all({
   discovery: Effect.succeed(AzureDevOpsSourceControlProvider.discovery),
   pullRequests: AzureDevOpsPullRequestProvider.make,
   issues: AzureDevOpsIssueTracker.make,
+  fetchMedia: AzureDevOpsMediaFetch.make,
 });
 
 export const driver = defineSourceControlDriver({
