@@ -28,7 +28,8 @@ prunes older history on the next refresh, and raising it again does not bring pr
 While `settings.json` cannot be read, nothing is pruned.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
-databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
+databases, including T3-managed profiles. A subagent recorded only in a transcript, with no
+conversation database of its own, is missing from the Antigravity totals. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
 
 Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
