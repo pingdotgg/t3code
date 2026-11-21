@@ -141,6 +141,20 @@ pub(crate) fn set_interaction_mode(
     }))
 }
 
+/// `thread.runtime-mode.set`: switch the thread's runtime permission mode
+/// (`"approval-required"`, `"auto-accept-edits"`, `"auto"`, `"full-access"`).
+pub(crate) fn set_runtime_mode(
+    thread_id: &str,
+    runtime_mode: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.runtime-mode.set",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "runtimeMode": runtime_mode,
+    }))
+}
+
 /// `thread.settle` / `thread.unsettle`: move a thread into or out of the Settled shelf.
 pub(crate) fn settle_thread(
     thread_id: &str,
@@ -227,6 +241,14 @@ mod tests {
         assert!(
             set_interaction_mode("t1", "default").is_ok(),
             "thread.interaction-mode.set (default) decodes"
+        );
+        assert!(
+            set_runtime_mode("t1", "full-access").is_ok(),
+            "thread.runtime-mode.set (full-access) decodes"
+        );
+        assert!(
+            set_runtime_mode("t1", "approval-required").is_ok(),
+            "thread.runtime-mode.set (approval-required) decodes"
         );
         assert!(settle_thread("t1", true).is_ok(), "thread.settle decodes");
         assert!(

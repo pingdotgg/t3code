@@ -88,6 +88,8 @@ pub(crate) enum ComposerEvent {
         instance_id: String,
         model: String,
     },
+    RuntimeModeSelected(String),
+    InteractionModeSelected(String),
     SlashCommand(String),
 }
 
@@ -96,6 +98,11 @@ pub(crate) struct Composer {
     tokens: Tokens,
     connection: Option<Connection>,
     workspace_root: Option<String>,
+    thread_branch: Option<String>,
+    worktree_active: bool,
+    runtime_mode: String,
+    interaction_mode: String,
+    runtime_menu_open: bool,
     working: bool,
     textarea: Entity<TextareaState>,
     model_search_input: Entity<InputState>,
@@ -195,6 +202,11 @@ impl Composer {
             tokens,
             connection,
             workspace_root: None,
+            thread_branch: None,
+            worktree_active: false,
+            runtime_mode: "full-access".to_owned(),
+            interaction_mode: "default".to_owned(),
+            runtime_menu_open: false,
             working: false,
             textarea,
             model_search_input,
@@ -251,6 +263,30 @@ impl Composer {
         }
         self.workspace_root = root;
         self.file_mentions.clear();
+        cx.notify();
+    }
+
+    /// Updates the branch, worktree flag, runtime mode, and interaction mode displayed in the
+    /// bottom `BranchToolbar` context strip.
+    pub(crate) fn set_thread_context(
+        &mut self,
+        branch: Option<String>,
+        worktree_active: bool,
+        runtime_mode: String,
+        interaction_mode: String,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.thread_branch == branch
+            && self.worktree_active == worktree_active
+            && self.runtime_mode == runtime_mode
+            && self.interaction_mode == interaction_mode
+        {
+            return;
+        }
+        self.thread_branch = branch;
+        self.worktree_active = worktree_active;
+        self.runtime_mode = runtime_mode;
+        self.interaction_mode = interaction_mode;
         cx.notify();
     }
 
@@ -351,6 +387,10 @@ impl Composer {
         let mut changed = false;
         if self.model_picker_open {
             self.model_picker_open = false;
+            changed = true;
+        }
+        if self.runtime_menu_open {
+            self.runtime_menu_open = false;
             changed = true;
         }
         if self.active_trigger.take().is_some() {
@@ -716,6 +756,207 @@ impl Composer {
         }
         (self.selected_model.clone(), self.selected_driver.as_deref())
     }
+
+    /// Renders Conn's `BranchToolbar` / `ComposerSurface.ContextStrip` under the composer card:
+    /// worktree/local indicator + branch name on the left; Plan mode toggle + runtime permission
+    /// selector on the right.
+    fn render_context_strip(&self, tokens: &Tokens, cx: &mut Context<'_, Self>) -> AnyElement {
+        let fg = hsla(tokens.foreground);
+        let muted = hsla(tokens.muted_foreground);
+        let hover_bg = hsla(tokens.shell_highlight);
+        let plan_active = self.interaction_mode == "plan";
+
+        let mut left = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.0))
+            .min_w_0()
+            .flex_1();
+
+        let env_icon = if self.worktree_active {
+            "superhero/folder-git.svg"
+        } else {
+            "superhero/folder.svg"
+        };
+        let env_label = if self.worktree_active {
+            "Worktree"
+        } else {
+            "Local"
+        };
+        left = left.child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .flex_shrink_0()
+                .child(icons::icon(env_icon, 12.0, muted))
+                .child(env_label),
+        );
+
+        if let Some(branch) = self.thread_branch.as_deref().filter(|b| !b.is_empty()) {
+            left = left.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .min_w_0()
+                    .child(icons::icon("superhero/branch.svg", 12.0, muted))
+                    .child(div().min_w_0().truncate().child(branch.to_owned())),
+            );
+        }
+
+        let plan_btn = div()
+            .id("composer-plan-mode-toggle")
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.0))
+            .h(px(22.0))
+            .px(px(6.0))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .text_color(if plan_active { fg } else { muted })
+            .when(plan_active, |el| el.bg(hover_bg))
+            .hover(move |s| s.bg(hover_bg).text_color(fg))
+            .on_click(cx.listener(|composer, _, _, cx| {
+                let next = if composer.interaction_mode == "plan" {
+                    "default"
+                } else {
+                    "plan"
+                };
+                composer.interaction_mode = next.to_owned();
+                cx.emit(ComposerEvent::InteractionModeSelected(next.to_owned()));
+                cx.notify();
+            }))
+            .conn_tooltip("Toggle Plan mode", tokens)
+            .child(icons::icon(
+                "superhero/checklist.svg",
+                12.0,
+                if plan_active { fg } else { muted },
+            ))
+            .child("Plan");
+
+        let mut runtime_slot = div().relative().child(
+            div()
+                .id("composer-runtime-mode-trigger")
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .h(px(22.0))
+                .px(px(6.0))
+                .rounded(px(6.0))
+                .cursor_pointer()
+                .text_color(if self.runtime_menu_open { fg } else { muted })
+                .when(self.runtime_menu_open, |el| el.bg(hover_bg))
+                .hover(move |s| s.bg(hover_bg).text_color(fg))
+                .on_click(cx.listener(|composer, _, _, cx| {
+                    composer.runtime_menu_open = !composer.runtime_menu_open;
+                    if composer.runtime_menu_open {
+                        composer.model_picker_open = false;
+                    }
+                    cx.notify();
+                }))
+                .conn_tooltip("Runtime permissions", tokens)
+                .child(icons::icon("superhero/shield.svg", 12.0, muted))
+                .child(runtime_mode_label(&self.runtime_mode))
+                .child(icons::icon("superhero/chevron-down.svg", 11.0, muted)),
+        );
+
+        if self.runtime_menu_open {
+            let pop_fg = hsla(tokens.popover_foreground);
+            let mut menu = div()
+                .id("composer-runtime-mode-menu")
+                .absolute()
+                .bottom_full()
+                .right_0()
+                .mb(px(4.0))
+                .w(px(176.0))
+                .rounded(px(8.0))
+                .bg(hsla(tokens.popover))
+                .border_1()
+                .border_color(hsla(tokens.shell_inner_border))
+                .shadow_md()
+                .p(px(4.0))
+                .flex()
+                .flex_col()
+                .gap(px(2.0));
+            for &(mode, label) in RUNTIME_MODES {
+                let active = self.runtime_mode == mode;
+                menu = menu.child(
+                    div()
+                        .id(SharedString::from(format!("composer-rm-{mode}")))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0))
+                        .h(px(26.0))
+                        .px(px(8.0))
+                        .rounded(px(5.0))
+                        .cursor_pointer()
+                        .text_size(px(12.0))
+                        .line_height(px(16.0))
+                        .text_color(if active { pop_fg } else { muted })
+                        .hover(move |s| s.bg(hover_bg).text_color(pop_fg))
+                        .on_click(cx.listener(move |composer, _, _, cx| {
+                            composer.runtime_menu_open = false;
+                            if composer.runtime_mode != mode {
+                                composer.runtime_mode = mode.to_owned();
+                                cx.emit(ComposerEvent::RuntimeModeSelected(mode.to_owned()));
+                            }
+                            cx.notify();
+                        }))
+                        .child(div().flex_1().child(label))
+                        .when(active, |el| {
+                            el.child(icons::icon("superhero/check.svg", 12.0, pop_fg))
+                        }),
+                );
+            }
+            runtime_slot = runtime_slot.child(deferred(menu).with_priority(3));
+        }
+
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(8.0))
+            .w_full()
+            .pt(px(6.0))
+            .px(px(6.0))
+            .text_size(px(12.0))
+            .line_height(px(16.0))
+            .text_color(muted)
+            .child(left)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .flex_shrink_0()
+                    .child(plan_btn)
+                    .child(runtime_slot),
+            )
+            .into_any_element()
+    }
+}
+
+const RUNTIME_MODES: &[(&str, &str)] = &[
+    ("full-access", "Full access"),
+    ("auto", "Auto"),
+    ("auto-accept-edits", "Accept edits"),
+    ("approval-required", "Supervised"),
+];
+
+fn runtime_mode_label(mode: &str) -> &'static str {
+    RUNTIME_MODES
+        .iter()
+        .find(|&&(id, _)| id == mode)
+        .map_or("Full access", |&(_, label)| label)
 }
 
 impl Render for Composer {
@@ -933,7 +1174,10 @@ impl Render for Composer {
             .relative()
             .w_full()
             .capture_action(cx.listener(|composer, _: &Escape, _window, cx| {
-                if composer.model_picker_open || composer.active_trigger.is_some() {
+                if composer.model_picker_open
+                    || composer.runtime_menu_open
+                    || composer.active_trigger.is_some()
+                {
                     composer.close_overlays(cx);
                     cx.stop_propagation();
                 }
@@ -959,7 +1203,8 @@ impl Render for Composer {
                     cx.stop_propagation();
                 }
             }))
-            .child(card);
+            .child(card)
+            .child(self.render_context_strip(&tokens, cx));
 
         if let Some(trigger) = self.active_trigger.clone() {
             let menu = render_command_menu(

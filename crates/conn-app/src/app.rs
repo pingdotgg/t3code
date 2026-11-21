@@ -149,6 +149,12 @@ impl ConnApp {
                 crate::chat::ChatEvent::OpenFile(path) => {
                     app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
                 }
+                crate::chat::ChatEvent::RuntimeModeSelected(mode) => {
+                    app.set_runtime_mode(mode, cx);
+                }
+                crate::chat::ChatEvent::InteractionModeSelected(mode) => {
+                    app.set_interaction_mode(mode, cx);
+                }
                 crate::chat::ChatEvent::SlashCommand(command) => {
                     app.handle_slash_command(command, cx);
                 }
@@ -454,9 +460,20 @@ impl ConnApp {
             panel.set_context(project_id, panel_root, thread_id, cx);
             panel.set_surface(&surface, cx);
         });
+        let branch = shell_thread.and_then(|t| t.branch.clone());
+        let worktree_active = shell_thread.is_some_and(|t| t.worktree_path.is_some());
+        let runtime_mode = shell_thread
+            .map(|t| conn_contract::to_json(&t.runtime_mode))
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "full-access".to_owned());
+        let interaction_mode = shell_thread
+            .map(|t| conn_contract::to_json(&t.interaction_mode))
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "default".to_owned());
         self.chat.update(cx, |chat, cx| {
             chat.set_workspace_root(root, cx);
             chat.set_thread(thread, title, cx);
+            chat.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
             if let Some(model) = model {
                 chat.set_model_label(model, cx);
             }
@@ -1348,32 +1365,63 @@ impl ConnApp {
         self.set_tokens(tokens, cx);
         true
     }
+    /// Switches the selected thread's runtime permission mode (`thread.runtime-mode.set`).
+    fn set_runtime_mode(&mut self, mode: &str, cx: &mut Context<'_, Self>) {
+        if self.draft_project.is_some() {
+            self.draft_runtime_mode = Some(mode.to_owned());
+            return;
+        }
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let Ok(cmd) = crate::commands::set_runtime_mode(&thread_id, mode) else {
+            return;
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(cmd).await {
+                eprintln!("runtime mode: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
+    }
+
+    /// Switches the selected thread's interaction mode (`thread.interaction-mode.set`).
+    fn set_interaction_mode(&mut self, mode: &str, cx: &mut Context<'_, Self>) {
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let Ok(cmd) = crate::commands::set_interaction_mode(&thread_id, mode) else {
+            return;
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(cmd).await {
+                eprintln!("interaction mode: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
+    }
+
     /// Executes a built-in `/` slash command selected in the composer menu.
     fn handle_slash_command(&mut self, command: &str, cx: &mut Context<'_, Self>) {
         match command {
             "plan" => {
-                let (Some(connection), Some(thread_id)) = (
-                    self.connection.clone(),
-                    self.layout.selected_thread_id.clone(),
-                ) else {
+                let Some(thread_id) = self.layout.selected_thread_id.as_deref() else {
                     return;
                 };
                 let next_mode = self
                     .shell
-                    .thread(&thread_id)
+                    .thread(thread_id)
                     .map(|t| conn_contract::to_json(&t.interaction_mode))
                     .and_then(|v| v.as_str().map(str::to_owned))
                     .map(|current| if current == "plan" { "default" } else { "plan" })
                     .unwrap_or("plan");
-                let Ok(cmd) = crate::commands::set_interaction_mode(&thread_id, next_mode) else {
-                    return;
-                };
-                cx.spawn(async move |_, _| {
-                    if let Err(e) = connection.dispatch_command(cmd).await {
-                        eprintln!("slash /plan: dispatchCommand failed: {e}");
-                    }
-                })
-                .detach();
+                self.set_interaction_mode(next_mode, cx);
             }
             "settle" => {
                 self.toggle_selected_thread_settled(cx);

@@ -66,6 +66,10 @@ pub(crate) enum ChatEvent {
     OpenDiff,
     /// Open a workspace-relative file in the right panel's File preview tab.
     OpenFile(String),
+    /// Switch the thread's runtime permission mode (`thread.runtime-mode.set`).
+    RuntimeModeSelected(String),
+    /// Switch the thread's interaction mode (`thread.interaction-mode.set`).
+    InteractionModeSelected(String),
     /// A built-in `/` slash command selected from the composer command menu.
     SlashCommand(String),
 }
@@ -133,6 +137,12 @@ impl ChatView {
                         instance_id: instance_id.clone(),
                         model: model.clone(),
                     });
+                }
+                ComposerEvent::RuntimeModeSelected(mode) => {
+                    cx.emit(ChatEvent::RuntimeModeSelected(mode.clone()));
+                }
+                ComposerEvent::InteractionModeSelected(mode) => {
+                    cx.emit(ChatEvent::InteractionModeSelected(mode.clone()));
                 }
                 ComposerEvent::SlashCommand(command) => {
                     cx.emit(ChatEvent::SlashCommand(command.clone()));
@@ -257,6 +267,20 @@ impl ChatView {
             .update(cx, |c, cx| c.set_model_label(label.clone(), cx));
         self.model_label = label;
         cx.notify();
+    }
+
+    /// Updates the composer's bottom `BranchToolbar` context strip.
+    pub(crate) fn set_thread_context(
+        &mut self,
+        branch: Option<String>,
+        worktree_active: bool,
+        runtime_mode: String,
+        interaction_mode: String,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer.update(cx, |c, cx| {
+            c.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
+        });
     }
 
     pub(super) fn mark_code_copied(&mut self, key: String, cx: &mut Context<'_, Self>) {
