@@ -25,6 +25,7 @@ import {
   inferProjectTitleFromPath,
   isExplicitRelativeProjectPath,
   isUnsupportedWindowsProjectPath,
+  isWindowsPlatform,
   resolveProjectPathForDispatch,
 } from "../state/projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
@@ -218,6 +219,10 @@ export function buildAddProjectRemoteSourceReadiness(
     }
     return READY;
   };
+}
+
+export function getAddProjectPathExample(platform: string): string {
+  return isWindowsPlatform(platform) ? "C:\\Projects\\my-app" : "~/projects/my-app";
 }
 
 export function getAddProjectInitialQuery(baseDirectory: string | null | undefined): string {
