@@ -325,6 +325,50 @@ describe("promptStashStore", () => {
     }
   });
 
+  it("keeps images pending in an open tab until the other tab finishes saving them", async () => {
+    const storage = createMemoryStorage();
+    const readerWindow = new EventTarget();
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("window", readerWindow);
+    vi.resetModules();
+    try {
+      const { usePromptStashStore: reader } = await import("./promptStashStore");
+      vi.stubGlobal("window", new EventTarget());
+      vi.resetModules();
+      const { usePromptStashStore: writer } = await import("./promptStashStore");
+      const entry = makeEntry({ id: "encoding-in-other-tab" });
+      writer.getState().stashEntry({ ...entry, pendingImageCount: 1 });
+      notifyStorage(readerWindow, storage);
+
+      expect(reader.getState().entries).toEqual([{ ...entry, pendingImageCount: 1 }]);
+
+      vi.stubGlobal("window", new EventTarget());
+      vi.resetModules();
+      const { usePromptStashStore: reloaded } = await import("./promptStashStore");
+      expect(reloaded.getState().entries[0]).toMatchObject({
+        pendingImageCount: 0,
+        unreadableImageNames: ["image 1 (not saved before reload)"],
+      });
+      reloaded.getState().stashEntry(makeEntry({ id: "unrelated" }));
+      notifyStorage(readerWindow, storage);
+      expect(reader.getState().entries[1]).toEqual({ ...entry, pendingImageCount: 1 });
+
+      const { attachments } = makeEntry({ id: entry.id, attachmentChars: 12 });
+      const images = { attachments, droppedImageNames: [], unreadableImageNames: [] };
+      expect(writer.getState().finalizeEntryImages(entry.id, images)).toEqual({
+        attached: true,
+        durable: true,
+      });
+      notifyStorage(readerWindow, storage);
+      const finalizedEntry = { ...entry, ...images, pendingImageCount: 0 };
+      expect(reader.getState().entries[1]).toEqual(finalizedEntry);
+      expect(reader.getState().takeEntry(entry.id).entry).toEqual(finalizedEntry);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
   it.each([PROMPT_STASH_STORAGE_KEY, null])(
     "empties the stash when another tab removes its storage (event key %s)",
     async (key) => {

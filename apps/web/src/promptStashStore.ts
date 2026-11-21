@@ -85,6 +85,8 @@ function resolveBaseStorage(): { storage: StateStorage; durable: boolean } {
 const { storage: baseStashStorage, durable: storageIsDurable } = resolveBaseStorage();
 
 const unpersistedFinalizedEntryIds = new Set<string>();
+const recoveredEntryIds = new Set<string>();
+let memoryEntries: ReadonlyArray<PromptStashEntry> = [];
 
 // Clear the composer only after a durable write; debounce cannot confirm durability.
 function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
@@ -121,34 +123,43 @@ function readStoredEntries(): ReadonlyArray<PromptStashEntry> | null {
   }
 }
 
-function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
-  return readStoredEntries()?.map(clearOrphanedPendingImages) ?? null;
+function recoverEntry(entry: PromptStashEntry): PromptStashEntry {
+  return recoveredEntryIds.has(entry.id) ? clearOrphanedPendingImages(entry) : entry;
+}
+
+function hydrateEntries() {
+  const entries = readStoredEntries() ?? [];
+  recoveredEntryIds.clear();
+  for (const entry of entries) {
+    if (entry.pendingImageCount) recoveredEntryIds.add(entry.id);
+  }
+  publishEntries(entries);
+}
+
+function publishEntries(entries: ReadonlyArray<PromptStashEntry>) {
+  // Recovery is local to the loading tab because another tab may still be encoding.
+  memoryEntries = entries;
+  usePromptStashStore.setState({
+    entries: recoveredEntryIds.size === 0 ? entries : entries.map(recoverEntry),
+  });
 }
 
 /**
  * Reconciles the local queue with storage before writes and after changes in other tabs.
- * Local encoding and failed finalize writes retain ownership while the stored entry exists.
+ * Failed finalize writes retain their local images while the stored entry exists.
  */
-function latestEntries(memory: ReadonlyArray<PromptStashEntry>): ReadonlyArray<PromptStashEntry> {
+function latestEntries(): ReadonlyArray<PromptStashEntry> {
   const stored = readStoredEntries();
-  if (!stored) return memory;
+  if (!stored) return memoryEntries;
+  if (unpersistedFinalizedEntryIds.size === 0) return stored;
   const storedIds = new Set(stored.map((entry) => entry.id));
   for (const id of unpersistedFinalizedEntryIds) {
     if (!storedIds.has(id)) unpersistedFinalizedEntryIds.delete(id);
   }
-  const memoryById = new Map(memory.map((entry) => [entry.id, entry]));
-  return stored.map((entry) => {
-    const local = memoryById.get(entry.id);
-    if (
-      local &&
-      (local.pendingImageCount ||
-        entry.pendingImageCount ||
-        unpersistedFinalizedEntryIds.has(entry.id))
-    ) {
-      return local;
-    }
-    return clearOrphanedPendingImages(entry);
-  });
+  const memoryById = new Map(memoryEntries.map((entry) => [entry.id, entry]));
+  return stored.map((entry) =>
+    unpersistedFinalizedEntryIds.has(entry.id) ? (memoryById.get(entry.id) ?? entry) : entry,
+  );
 }
 
 interface PromptStashStoreState {
@@ -173,31 +184,31 @@ interface PromptStashStoreState {
   ) => { attached: boolean; durable: boolean };
 }
 
-export const usePromptStashStore = create<PromptStashStoreState>()((set, get) => ({
+export const usePromptStashStore = create<PromptStashStoreState>()(() => ({
   entries: [],
   stashEntry: (entry) => {
-    const nextEntries = [entry, ...latestEntries(get().entries)];
+    const nextEntries = [entry, ...latestEntries()];
     const evicted = nextEntries.length > MAX_STASH_ENTRIES ? (nextEntries.pop() ?? null) : null;
     const { written, durable } = persistEntries(nextEntries);
     // Failed writes must not duplicate the intact composer; eviction also commits only on success.
     if (!written) {
       return { evicted: null, written: false, durable: false };
     }
-    set(() => ({ entries: nextEntries }));
-    return { evicted, written: true, durable };
+    publishEntries(nextEntries);
+    return { evicted: evicted && recoverEntry(evicted), written: true, durable };
   },
   takeEntry: (entryId) => {
-    const entries = latestEntries(get().entries);
+    const entries = latestEntries();
     const entry = entries.find((candidate) => candidate.id === entryId) ?? null;
     if (!entry) return { entry: null, durable: true };
     const nextEntries = entries.filter((candidate) => candidate.id !== entryId);
     const { durable } = persistEntries(nextEntries);
     unpersistedFinalizedEntryIds.delete(entryId);
-    set(() => ({ entries: nextEntries }));
-    return { entry, durable };
+    publishEntries(nextEntries);
+    return { entry: recoverEntry(entry), durable };
   },
   finalizeEntryImages: (entryId, images) => {
-    const entries = latestEntries(get().entries);
+    const entries = latestEntries();
     const index = entries.findIndex((candidate) => candidate.id === entryId);
     const existing = index === -1 ? undefined : entries[index];
     if (!existing) return { attached: false, durable: true };
@@ -211,7 +222,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
     };
     const { written, durable } = persistEntries(nextEntries);
     if (!written) unpersistedFinalizedEntryIds.add(entryId);
-    set(() => ({ entries: nextEntries }));
+    publishEntries(nextEntries);
     return { attached: true, durable };
   },
 }));
@@ -220,10 +231,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
   try {
     baseStashStorage.removeItem(LEGACY_PROMPT_STASH_STORAGE_KEY);
   } catch {}
-  const persisted = readPersistedEntries();
-  if (persisted) {
-    usePromptStashStore.setState({ entries: persisted });
-  }
+  hydrateEntries();
 }
 
 if (storageIsDurable && typeof window !== "undefined") {
@@ -232,13 +240,12 @@ if (storageIsDurable && typeof window !== "undefined") {
     if (event.key !== PROMPT_STASH_STORAGE_KEY && event.key !== null) return;
 
     // A queued event can describe an older write than the value now in storage.
-    const { entries } = usePromptStashStore.getState();
-    const latest = latestEntries(entries);
-    if (latest !== entries) usePromptStashStore.setState({ entries: latest });
+    const latest = latestEntries();
+    if (latest !== memoryEntries) publishEntries(latest);
   });
 }
 
 export function writePromptStashStorageForTest(raw: string): void {
   baseStashStorage.setItem(PROMPT_STASH_STORAGE_KEY, raw);
-  usePromptStashStore.setState({ entries: readPersistedEntries() ?? [] });
+  hydrateEntries();
 }
