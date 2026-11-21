@@ -8784,6 +8784,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       expected:
         "Claude stopped: the prompt exceeds the model's context window. Run /compact or start a new thread.",
     },
+    {
+      name: "a flagged result whose terminal reason is not a failure",
+      isError: true,
+      result: "API Error: 400 Request rejected by a safeguard.",
+      terminalReason: "completed" as const,
+      expected: "API Error: 400 Request rejected by a safeguard.",
+    },
     ...[
       {
         name: "a model version error rewritten by a custom endpoint",

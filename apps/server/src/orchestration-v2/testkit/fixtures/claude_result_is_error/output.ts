@@ -11,7 +11,6 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-const AUTH_ERROR_TEXT = "Failed to authenticate. API Error: 401 Invalid authentication credentials";
 const AUTH_FAILURE_TEXT =
   "Claude could not authenticate. For subscription login, run `claude auth login` on this environment's machine, then start a new thread. For API-key authentication, check this instance's configured credentials.";
 
@@ -55,7 +54,8 @@ export function assertClaudeResultIsErrorOutput(
   const run1AssistantTexts = projection.turnItems.flatMap((item) =>
     item.runId === failedRun?.id && item.type === "assistant_message" ? [item.text] : [],
   );
-  assert.deepEqual(run1AssistantTexts, [AUTH_ERROR_TEXT]);
+  // The turn's error item carries the API error; the CLI's synthetic repeat is not a reply.
+  assert.deepEqual(run1AssistantTexts, []);
 
   const recoveredRun = projection.runs.find((run) => run.ordinal === 2);
   assert.isDefined(recoveredRun);
