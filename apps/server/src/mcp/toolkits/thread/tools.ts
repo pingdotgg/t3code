@@ -244,7 +244,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
 const SubmitOutputTool = Tool.make("t3_submit_output", {
   ...commandTool,
   description:
-    "Return this turn's result as data, when the message asked for one. `runId`: the run id the message gave. `json`: JSON text matching the schema it gave. A rejection says what did not fit; fix it and call again.",
+    "Return the result the message asked for, with the `runId` it gave. `json`: JSON text matching its schema. A rejection says what to fix; retry.",
   // Stored on the run, which every client of the thread holds.
   parameters: Schema.Struct({
     runId: Schema.optional(RunId),
