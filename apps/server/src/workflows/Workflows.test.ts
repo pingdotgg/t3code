@@ -1703,10 +1703,26 @@ it.effect(
 
 it.effect("an issue opened after the workflow loaded starts one run, which can comment on it", () =>
   Effect.gen(function* () {
-    const { boot, forge } = yield* harness();
+    const starts: Array<string> = [];
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.map(WorkflowStore.make, (real) =>
+        WorkflowStore.WorkflowStore.of({
+          ...real,
+          runStarted: (run) =>
+            Effect.andThen(
+              Effect.sync(() => starts.push(run.idempotencyKey)),
+              real.runStarted(run),
+            ),
+        }),
+      ),
+    );
+    const { boot, forge } = yield* harness(store);
     const triaged = (workflows: Workflows.Workflows["Service"]) =>
       Effect.map(workflows.list(), (runs) => runs.filter((run) => run.workflow === "triage"));
     forge.open.push(issueAt("1", "1969-12-31T23:00:00.000Z"));
+    // Before the mark too, written the way some hosts write a time.
+    forge.open.push(issueAt("3", "1970-01-01T00:30:00+01:00"));
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -1724,6 +1740,11 @@ it.effect("an issue opened after the workflow loaded starts one run, which can c
         const done = yield* workflows.waitFor(run!.runId, status("completed"));
         assert.equal(done.result, "#2");
         assert.deepStrictEqual(forge.comments, ["2: Looking at Issue 2."]);
+        // A later look still lists it, and leaves the run it has alone.
+        const before = starts.length;
+        yield* TestClock.adjust("2 minutes");
+        yield* workflows.sweep;
+        assert.deepStrictEqual(starts.slice(before), []);
         assert.deepStrictEqual(forge.asked.at(-1), {
           project: PROJECT,
           state: "all",

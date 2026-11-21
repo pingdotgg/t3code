@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as TestClock from "effect/testing/TestClock";
 
 import Migration0100 from "../persistence/Migrations/106_Workflows.ts";
@@ -62,6 +63,17 @@ it.effect("a run still waits while one of the things it started side by side is 
         idempotencyKey: "k",
         input: {},
       });
+      // Started again under its key: nothing changed, so nobody is told.
+      const told = yield* PubSub.subscribe(store.changes);
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: "duo",
+        version: 1,
+        engineTag: "duo@1",
+        idempotencyKey: "k",
+        input: {},
+      });
+      assert.equal(yield* PubSub.remaining(told), 0);
       const now = Effect.map(store.run("r1"), (run) => [run?.status, run?.detail]);
       yield* store.stepStarted("r1", "left", "agent");
       yield* store.stepStarted("r1", "right", "agent");
