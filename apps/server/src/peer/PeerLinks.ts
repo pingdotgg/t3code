@@ -82,7 +82,7 @@ export interface ResolvedPeerLink {
 }
 
 export const LINKED_ENVIRONMENTS_OFF =
-  "Linked environments is off on this machine. Turn it on in Settings → Labs. On a headless server, run `t3 pair` here and open its pairing URL in a browser to reach Settings. Both linked machines need it on.";
+  'Linked environments is off on this machine. Turn it on in Settings → Labs, or without a browser set `"linkedEnvironmentsEnabled": true` in `settings.json` under the T3 home\'s userdata directory (`~/.t3/userdata` by default). Both linked machines need it on.';
 
 /**
  * Links from this environment to others. Linking signs this environment in to
