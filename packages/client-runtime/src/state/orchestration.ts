@@ -71,7 +71,6 @@ interface CachedThreadLinkMetadata {
   readonly expiresAt: number;
   readonly shellGeneration: number;
   readonly removedAtSeq: number;
-  readonly observedSeq: number;
 }
 
 interface InFlightThreadLinkMetadata {
@@ -206,7 +205,6 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     RpcSession.RpcSession,
     Map<ThreadId, InFlightThreadLinkMetadata>
   >();
-  let nextObservationSeq = 0;
   const readShellVersion = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
     if (shellState === undefined) return { generation: 0, removedAt: undefined };
     const { generation, removedAt } = registry.get(shellState(environmentId));
@@ -285,8 +283,6 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       entries = new Map();
       threadLinkMetadataCache.set(session, entries);
     }
-    const existing = entries.get(threadId);
-    if (existing !== undefined && existing.observedSeq > cached.observedSeq) return;
     entries.delete(threadId);
     entries.set(threadId, cached);
     while (entries.size > THREAD_LINK_METADATA_CACHE_LIMIT) {
@@ -305,9 +301,25 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       if (first === undefined) return;
       const { session, supervisor, registry } = first.request;
       const environmentId = supervisor.target.environmentId;
+      const initialShell = readShellVersion(registry, environmentId);
+      const batchGeneration = initialShell.generation;
+      const supersededExit = () =>
+        Exit.fail(
+          new EnvironmentRpcUnavailableError({
+            environmentId,
+            ...translatableMessage(msg("The environment has no session.")),
+          }),
+        );
       const flightsById = new Map<ThreadId, Array<InFlightThreadLinkMetadata>>();
       for (const entry of entries) {
         for (const flight of entry.request.flights) {
+          if (
+            flight.shellGeneration !== batchGeneration ||
+            flight.removedAtSeq !== (initialShell.removedAt?.get(flight.threadId) ?? -1)
+          ) {
+            settleFlight(session, flight, supersededExit());
+            continue;
+          }
           let list = flightsById.get(flight.threadId);
           if (list === undefined) {
             list = [];
@@ -317,7 +329,6 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         }
       }
       const uniqueIds = [...flightsById.keys()];
-      const batchGeneration = readShellVersion(registry, environmentId).generation;
       let nextOffset = 0;
 
       const settleIds = (
@@ -351,24 +362,31 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
           const before = readShellVersion(registry, environmentId);
           // Stop before dispatching another chunk once a shell snapshot supersedes this batch.
           if (before.generation !== batchGeneration) {
-            failRemaining(
-              Exit.fail(
-                new EnvironmentRpcUnavailableError({
-                  environmentId,
-                  ...translatableMessage(msg("The environment has no session.")),
-                }),
-              ),
-            );
+            failRemaining(supersededExit());
             return;
           }
-          const chunk = uniqueIds.slice(offset, offset + THREAD_LINK_METADATA_CHUNK_SIZE);
-          const observedSeq = ++nextObservationSeq;
+          const rawChunk = uniqueIds.slice(offset, offset + THREAD_LINK_METADATA_CHUNK_SIZE);
+          const chunk: Array<ThreadId> = [];
+          for (const threadId of rawChunk) {
+            if (
+              (before.removedAt?.get(threadId) ?? -1) !==
+              (initialShell.removedAt?.get(threadId) ?? -1)
+            ) {
+              settleIds([threadId], supersededExit);
+              continue;
+            }
+            chunk.push(threadId);
+          }
+          if (chunk.length === 0) {
+            nextOffset = offset + rawChunk.length;
+            continue;
+          }
           const chunkExit = yield* Effect.exit(
             fetchThreadLinkMetadataChunk(supervisor, session, chunk),
           );
           if (Exit.isFailure(chunkExit)) {
             settleIds(chunk, () => Exit.failCause(chunkExit.cause));
-            nextOffset = offset + chunk.length;
+            nextOffset = offset + rawChunk.length;
             continue;
           }
           const now = yield* Clock.currentTimeMillis;
@@ -383,12 +401,11 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
                 expiresAt: now + THREAD_LINK_METADATA_STALE_TIME_MS,
                 shellGeneration: before.generation,
                 removedAtSeq,
-                observedSeq,
               });
             }
           }
           settleIds(chunk, (threadId) => Exit.succeed(chunkExit.value.get(threadId) ?? null));
-          nextOffset = offset + chunk.length;
+          nextOffset = offset + rawChunk.length;
         }
       }).pipe(
         Effect.onExit((exit) =>
@@ -517,9 +534,14 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         const metadata = metadataMapToRecord(resolved);
         if (failedThreadIds.length === 0) return metadata;
         yield* assertSessionActive(supervisor, session);
+        const latestShell = readShellVersion(registry, environmentId);
         if (
           succeededCount === 0 ||
-          readShellVersion(registry, environmentId).generation !== generation
+          latestShell.generation !== generation ||
+          failedThreadIds.some(
+            (threadId) =>
+              (latestShell.removedAt?.get(threadId) ?? -1) !== (removedAt?.get(threadId) ?? -1),
+          )
         ) {
           return yield* Effect.failCause(firstFailureCause!);
         }

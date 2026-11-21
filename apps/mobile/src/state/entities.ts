@@ -155,13 +155,13 @@ function isIndexedLink(
 }
 
 const CONFIRMED_THREAD_TITLES_LIMIT = 2048;
-// Carries confirmed local titles across streaming key transitions while metadata loads.
+// Carries confirmed local titles (or null for a confirmed miss) across keys while metadata loads.
 const confirmedThreadTitlesByRegistry = new WeakMap<
   AtomRegistry.AtomRegistry,
-  Map<string, string>
+  Map<string, string | null>
 >();
 
-function confirmedTitlesFor(registry: AtomRegistry.AtomRegistry): Map<string, string> {
+function confirmedTitlesFor(registry: AtomRegistry.AtomRegistry): Map<string, string | null> {
   let titles = confirmedThreadTitlesByRegistry.get(registry);
   if (titles === undefined) {
     titles = new Map();
@@ -170,7 +170,16 @@ function confirmedTitlesFor(registry: AtomRegistry.AtomRegistry): Map<string, st
   return titles;
 }
 
-function rememberConfirmedTitle(titles: Map<string, string>, refKey: string, title: string) {
+// Non-reactive registry handle for read-only callers without direct registry access.
+const confirmedThreadTitlesAtom = Atom.make((get) => confirmedTitlesFor(get.registry)).pipe(
+  Atom.withLabel("mobile-confirmed-thread-titles"),
+);
+
+function rememberConfirmedTitle(
+  titles: Map<string, string | null>,
+  refKey: string,
+  title: string | null,
+) {
   titles.delete(refKey);
   titles.set(refKey, title);
   while (titles.size > CONFIRMED_THREAD_TITLES_LIMIT) {
@@ -234,6 +243,7 @@ function readBatchedThreadLinkMetadata(
 
 function resolveThreadLinkFromTitles(
   titles: ReadonlyMap<string, ThreadLinkTitle>,
+  confirmedTitles: ReadonlyMap<string, string | null>,
   link: ThreadLink,
   messageEnvironmentId: EnvironmentId,
   readThreadRefs: () => ReadonlyArray<ScopedThreadRef>,
@@ -241,7 +251,10 @@ function resolveThreadLinkFromTitles(
   return resolveThreadLinkWith(
     link,
     messageEnvironmentId,
-    (candidate) => typeof titles.get(threadKey(candidate)) === "string",
+    (candidate) => {
+      const key = threadKey(candidate);
+      return confirmedTitles.get(key) !== null && typeof titles.get(key) === "string";
+    },
     readThreadRefs,
   );
 }
@@ -271,7 +284,7 @@ const threadLinkTitlesAtom = Atom.family((key: string) => {
         continue;
       }
       if (outcome.kind === "miss") {
-        confirmedTitles.delete(refKey);
+        rememberConfirmedTitle(confirmedTitles, refKey, null);
         continue;
       }
       if (outcome.kind === "failed") {
@@ -325,6 +338,7 @@ const threadChipIconsAtom = Atom.family((key: string) => {
   return Atom.make((get) => {
     const previous = Option.getOrUndefined(get.self<ReadonlyMap<string, string>>());
     const titles = get(titlesAtom);
+    const confirmedTitles = confirmedTitlesFor(get.registry);
     const { shells, metadataByEnv } = readBatchedThreadLinkMetadata(get, candidateRefs);
     const icons = new Map<string, string>();
     const iconCache = new Map<string, string | null>();
@@ -377,7 +391,7 @@ const threadChipIconsAtom = Atom.family((key: string) => {
 
     for (const { target, link } of targets) {
       const ref = link
-        ? (resolveThreadLinkFromTitles(titles, link, target.environmentId, () => {
+        ? (resolveThreadLinkFromTitles(titles, confirmedTitles, link, target.environmentId, () => {
             cachedThreadRefs ??= get(environmentThreadShells.threadRefsAtom);
             return cachedThreadRefs;
           }) ?? scopeThreadRef(target.environmentId, target.threadId))
@@ -519,8 +533,12 @@ export function useMessageThreadLinks(
     refKeySet,
     resolve: (link, read) =>
       isIndexedLink(refKeySet, link, environmentId)
-        ? resolveThreadLinkFromTitles(titles, link, environmentId, () =>
-            read(environmentThreadShells.threadRefsAtom),
+        ? resolveThreadLinkFromTitles(
+            titles,
+            read(confirmedThreadTitlesAtom),
+            link,
+            environmentId,
+            () => read(environmentThreadShells.threadRefsAtom),
           )
         : resolveThreadLink(read, link, environmentId),
     titleFor: (ref) => {
@@ -556,8 +574,13 @@ export function resolveThreadLinkTarget(
     isIndexedLink(messageIndex.refKeySet, link, messageEnvironmentId)
   ) {
     const titles = read(threadLinkTitlesAtom(messageIndex.refKeysKey));
-    const ref = resolveThreadLinkFromTitles(titles, link, messageEnvironmentId, () =>
-      read(environmentThreadShells.threadRefsAtom),
+    const confirmedTitles = read(confirmedThreadTitlesAtom);
+    const ref = resolveThreadLinkFromTitles(
+      titles,
+      confirmedTitles,
+      link,
+      messageEnvironmentId,
+      () => read(environmentThreadShells.threadRefsAtom),
     );
     if (ref === null) return null;
     const cachedTitle = titles.get(threadKey(ref));

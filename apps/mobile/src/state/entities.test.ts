@@ -494,6 +494,7 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
       // archived chips must not flicker, and confirmed-deleted links must stay plain text.
       setShell(localEnv, olderId, null);
       const pendingAfterArchive = useMessageThreadLinks(markdown, localEnv);
+      const overlapPendingBeforeMiss = useMessageThreadLinks(overlapMarkdown, localEnv);
       expect(pendingAfterArchive.markdown).toBe(
         `[Local Renamed](t3-thread://v1/${olderId}) [Archived One](t3-thread://v2/${localEnv}/${archId}) del`,
       );
@@ -502,6 +503,18 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
         resolveThreadLink(registry.get.bind(registry), v1Link, localEnv, pendingAfterArchive),
       ).toEqual({ environmentId: localEnv, threadId: olderId });
       expect(pendingAfterArchive.resolve(v1Link, registry.get.bind(registry))).toEqual({
+        environmentId: localEnv,
+        threadId: olderId,
+      });
+      expect(
+        resolveThreadLinkTarget(
+          registry.get.bind(registry),
+          v1Link,
+          localEnv,
+          overlapPendingBeforeMiss,
+        ),
+      ).toEqual({ ref: { environmentId: localEnv, threadId: olderId }, title: "Local Renamed" });
+      expect(overlapPendingBeforeMiss.resolve(v1Link, registry.get.bind(registry))).toEqual({
         environmentId: localEnv,
         threadId: olderId,
       });
@@ -534,9 +547,8 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
         title: "Remote Streamed",
       });
 
-      // A settled miss clears shared confirmation for olderId. Re-evaluating an overlapping key
-      // whose own metadata lookup is still pending keeps displaying its previous title locally
-      // without restoring confirmation for a fresh key.
+      // A settled miss records a confirmed miss for olderId. An overlapping pending key keeps
+      // displaying its previous title locally, while tapping either key resolves the remote match.
       const priorSuccess = AsyncResult.success({
         [archId]: { title: "Archived One", projectId: projectLocal },
       });
@@ -546,6 +558,21 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
           sourceRefKeys: pendingAfterArchive.refKeys,
         }).get(`t3-thread://v2/${localEnv}/${archId}`),
       ).toBe("https://favicon.test/local-repo");
+      expect(
+        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, pendingAfterArchive),
+      ).toEqual({ ref: { environmentId: remoteEnv, threadId: olderId }, title: "Remote Same ID" });
+      expect(
+        resolveThreadLinkTarget(
+          registry.get.bind(registry),
+          v1Link,
+          localEnv,
+          overlapPendingBeforeMiss,
+        ),
+      ).toEqual({ ref: { environmentId: remoteEnv, threadId: olderId }, title: "Remote Same ID" });
+      expect(overlapPendingBeforeMiss.resolve(v1Link, registry.get.bind(registry))).toEqual({
+        environmentId: remoteEnv,
+        threadId: olderId,
+      });
 
       // Re-evaluate overlapMarkdown (its [olderId] query is still Initial) by renaming overlapShellId.
       setShell(localEnv, overlapShellId, {
@@ -553,9 +580,17 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
         projectId: projectLocal,
         updatedAt: 2,
       });
-      expect(useMessageThreadLinks(overlapMarkdown, localEnv).markdown).toBe(
+      const overlapAfterMiss = useMessageThreadLinks(overlapMarkdown, localEnv);
+      expect(overlapAfterMiss.markdown).toBe(
         `[Local Renamed](t3-thread://v1/${olderId}) [Overlap Renamed](t3-thread://v2/${localEnv}/${overlapShellId})`,
       );
+      expect(
+        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, overlapAfterMiss),
+      ).toEqual({ ref: { environmentId: remoteEnv, threadId: olderId }, title: "Remote Same ID" });
+      expect(overlapAfterMiss.resolve(v1Link, registry.get.bind(registry))).toEqual({
+        environmentId: remoteEnv,
+        threadId: olderId,
+      });
       const freshAfterMiss = useMessageThreadLinks(
         `[v1](t3-thread://v1/${olderId}) [c](t3-thread://v2/${localEnv}/fresh-c)`,
         localEnv,

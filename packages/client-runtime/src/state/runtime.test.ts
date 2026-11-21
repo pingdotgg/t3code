@@ -2012,64 +2012,121 @@ describe("environment query lifecycle", () => {
           [tFail]: { title: "Recovered Fail", projectId: null },
         });
 
-        // Case D: if a shell snapshot arrives during the batch delay, an older batch and a newer
-        // batch both observe the new generation; observedSeq keeps the older response from
-        // overwriting the newer cache entry while still caching other IDs from the older batch.
+        // Case D: flights superseded by a shell snapshot or thread removal during the batch delay
+        // are rejected before dispatch, while current-generation flights in the same batch still run.
+        const orderRegistry = AtomRegistry.make();
+        yield* Effect.addFinalizer(() => Effect.sync(() => orderRegistry.dispose()));
+        // Warm orderRegistry's AtomRuntime layer (0 RPCs) so subsequent mounts enter execute synchronously.
+        const warmOrderAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [] },
+        });
+        const releaseWarm = orderRegistry.mount(warmOrderAtom);
+        expect(yield* readEnvironmentQuery(orderRegistry, warmOrderAtom)).toEqual({});
+        releaseWarm();
+
         const tOrder = ThreadId.make("order-10");
         const tOrderOther = ThreadId.make("order-other-11");
+        const tOrderFresh = ThreadId.make("order-fresh-12");
+        const tOrderRemoved = ThreadId.make("order-removed-13");
+        const tOrderKept = ThreadId.make("order-kept-14");
+        const tOrderAfterStale = ThreadId.make("order-after-stale-15");
         const olderAtom = orchestration.threadLinkMetadata({
           environmentId: QUERY_ENVIRONMENT.environmentId,
           input: { threadIds: [tOrder, tOrderOther] },
         });
         const newerAtom = orchestration.threadLinkMetadata({
           environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: [tOrder] },
+          input: { threadIds: [tOrder, tOrderFresh] },
         });
-        const orderGuardChecked = yield* Deferred.make<void>();
-        let watchOrderGuard = false;
-        const releaseOlder = registry.mount(olderAtom);
+        const callsBeforeOrder = calls.length;
+        const releaseOlder = orderRegistry.mount(olderAtom);
         releaseOlder();
-        // Bump generation 2 -> 3 before batch 1's yieldNow delay runs: batch 1 observes gen 3
-        // while inFlight still holds gen 2, so newerAtom creates a gen-3 flight for tOrder.
-        registry.set(shellState, {
-          removedAt: new Map(),
-          get generation() {
-            if (watchOrderGuard) Deferred.doneUnsafe(orderGuardChecked, Exit.void);
-            return 3;
-          },
-        });
-        const olderReq = yield* Queue.take(requests);
-        const releaseNewer = registry.mount(newerAtom);
+        // Bump generation 1 -> 3 during the yieldNow delay and mount newerAtom in the same batch:
+        // gen-1 flights are rejected without dispatching, and only [tOrder, tOrderFresh] is sent.
+        orderRegistry.set(shellState, { removedAt: new Map(), generation: 3 });
+        const releaseNewer = orderRegistry.mount(newerAtom);
         yield* Effect.addFinalizer(() => Effect.sync(releaseNewer));
         const newerReq = yield* Queue.take(requests);
+        expect(calls).toHaveLength(callsBeforeOrder + 1);
+        expect(calls[callsBeforeOrder]).toEqual([tOrder, tOrderFresh]);
         yield* Deferred.succeed(newerReq, {
           [tOrder]: { title: "Newer Title", projectId: null },
+          [tOrderFresh]: { title: "Fresh Title", projectId: null },
         });
-        expect(yield* readEnvironmentQuery(registry, newerAtom)).toEqual({
+        expect(yield* readEnvironmentQuery(orderRegistry, newerAtom)).toEqual({
           [tOrder]: { title: "Newer Title", projectId: null },
+          [tOrderFresh]: { title: "Fresh Title", projectId: null },
         });
-        watchOrderGuard = true;
-        yield* Deferred.succeed(olderReq, {
-          [tOrder]: { title: "Older Title", projectId: null },
-          [tOrderOther]: { title: "Other Valid", projectId: null },
-        });
-        yield* Deferred.await(orderGuardChecked);
-        yield* Effect.yieldNow;
-        watchOrderGuard = false;
-        const callsAfterOrderRace = calls.length;
-        const verifyOrderCache = orchestration.threadLinkMetadata({
+
+        // A removal arriving during the batch delay rejects only the superseded removedAtSeq flight
+        // while dispatching unaffected flights in the same batch.
+        const staleRemovedAtom = orchestration.threadLinkMetadata({
           environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: { threadIds: [tOrder, tOrderOther, tOrder] },
+          input: { threadIds: [tOrderRemoved, tOrderKept] },
         });
-        expect(registry.get(verifyOrderCache)).toMatchObject({
-          _tag: "Success",
-          waiting: false,
-          value: {
-            [tOrder]: { title: "Newer Title", projectId: null },
-            [tOrderOther]: { title: "Other Valid", projectId: null },
+        const callsBeforeRemovedDelay = calls.length;
+        const releaseStaleRemoved = orderRegistry.mount(staleRemovedAtom);
+        releaseStaleRemoved();
+        orderRegistry.set(shellState, { removedAt: new Map([[tOrderRemoved, 10]]), generation: 3 });
+        const keptReq = yield* Queue.take(requests);
+        expect(calls).toHaveLength(callsBeforeRemovedDelay + 1);
+        expect(calls[callsBeforeRemovedDelay]).toEqual([tOrderKept]);
+        yield* Deferred.succeed(keptReq, {
+          [tOrderKept]: { title: "Kept Title", projectId: null },
+        });
+        const freshRemovedAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tOrderRemoved] },
+        });
+        const releaseFreshRemoved = orderRegistry.mount(freshRemovedAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseFreshRemoved));
+        const removedDelayReq = yield* Queue.take(requests);
+        expect(calls[callsBeforeRemovedDelay + 1]).toEqual([tOrderRemoved]);
+        yield* Deferred.succeed(removedDelayReq, {
+          [tOrderRemoved]: { title: "Removed Fresh", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(orderRegistry, freshRemovedAtom)).toEqual({
+          [tOrderRemoved]: { title: "Removed Fresh", projectId: null },
+        });
+
+        // A batch containing only superseded-generation flights dispatches zero RPCs and clears
+        // its in-flight entries so a later lookup fetches normally.
+        releaseNewer();
+        releaseFreshRemoved();
+        const staleOnlyAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tOrderOther] },
+        });
+        const staleBatchChecked = yield* Deferred.make<void>();
+        const callsBeforeStaleOnly = calls.length;
+        const releaseStaleOnly = orderRegistry.mount(staleOnlyAtom);
+        releaseStaleOnly();
+        orderRegistry.set(shellState, {
+          removedAt: new Map(),
+          get generation() {
+            Deferred.doneUnsafe(staleBatchChecked, Exit.void);
+            return 4;
           },
         });
-        expect(calls).toHaveLength(callsAfterOrderRace);
+        yield* Deferred.await(staleBatchChecked);
+        const afterStaleAtom = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [tOrderAfterStale, tOrderOther] },
+        });
+        const releaseAfterStale = orderRegistry.mount(afterStaleAtom);
+        yield* Effect.addFinalizer(() => Effect.sync(releaseAfterStale));
+        const afterStaleReq = yield* Queue.take(requests);
+        expect(calls).toHaveLength(callsBeforeStaleOnly + 1);
+        expect(calls[callsBeforeStaleOnly]).toEqual([tOrderAfterStale, tOrderOther]);
+        yield* Deferred.succeed(afterStaleReq, {
+          [tOrderAfterStale]: { title: "After Stale", projectId: null },
+          [tOrderOther]: { title: "Gen 4 Other", projectId: null },
+        });
+        expect(yield* readEnvironmentQuery(orderRegistry, afterStaleAtom)).toEqual({
+          [tOrderAfterStale]: { title: "After Stale", projectId: null },
+          [tOrderOther]: { title: "Gen 4 Other", projectId: null },
+        });
       }),
   );
 
@@ -2219,6 +2276,7 @@ describe("environment query lifecycle", () => {
         const iso499 = ThreadId.make("iso-499");
         const iso500 = ThreadId.make("iso-500");
         const iso501 = ThreadId.make("iso-501");
+        const iso502 = ThreadId.make("iso-502");
         const callerA = orchestration.threadLinkMetadata({
           environmentId: QUERY_ENVIRONMENT.environmentId,
           input: { threadIds: callerAIds },
@@ -2231,10 +2289,15 @@ describe("environment query lifecycle", () => {
           environmentId: QUERY_ENVIRONMENT.environmentId,
           input: { threadIds: [iso501] },
         });
+        const callerD = orchestration.threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [iso502] },
+        });
         const callsBeforeIso = dispatchedChunks.length;
         const releaseA = registry.mount(callerA);
         const releaseB = registry.mount(callerB);
         const releaseC = registry.mount(callerC);
+        const releaseD = registry.mount(callerD);
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             releaseA();
@@ -2246,6 +2309,9 @@ describe("environment query lifecycle", () => {
         expect(dispatchedChunks).toHaveLength(callsBeforeIso + 1);
         expect(dispatchedChunks[callsBeforeIso]).toHaveLength(500);
         expect(dispatchedChunks[callsBeforeIso]?.at(-1)).toBe(iso499);
+        // Remove iso502 while chunk 1 is held: chunk 2 skips the superseded flight instead of sending it.
+        releaseD();
+        registry.set(shellState, { removedAt: new Map([[iso502, 1]]), generation: 2 });
         yield* Deferred.succeed(isoChunk1, {
           "iso-0": { title: "Chunk 1 OK", projectId: null },
           [iso499]: { title: "Spanning OK", projectId: null },
