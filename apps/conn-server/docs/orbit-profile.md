@@ -714,7 +714,9 @@ Every stage is built and proven in isolation first:
 | 3. The Mac with the desktop app | (b) for the desktop: previews and the agent browser, devices, PR panels, provider sign-in. A native spawn path (no `ELECTRON_RUN_AS_NODE`, `--bootstrap-fd 3`). A replacement for fds 4 to 7 (updates, telemetry, the in-app browser), or an explicit drop. Signed binaries. | As stage 2, from a copy of the Mac's T3 home | The binary in the isolated desktop copy's bundle. The desktop updates the server by updating itself. The SDK host could run on Electron's own Node (`ELECTRON_RUN_AS_NODE`) instead of a 152 MB single executable [estimate]. | The isolated desktop copy, with its own data folder and home; Conn's desktop keeps its T3 server | Nick uses the isolated desktop for one project | Use the normal Conn app |
 | 4. The T3 server leaves Conn | Stages 1 to 3 have run for an agreed time. The loose fork's merge gate (section 10) works. | None new | Conn's desktop and mobile take the client copy's changes | Only now does `nckrtl/conn` change | A Conn release with the Conn Server | The previous Conn release, which still bundles the T3 server |
 
-**The converter.** None exists [code: a search for `statev2` in `R/crates` finds nothing].
+**The converter.** Built for threads and projects (2026-11-21): `conn-engine/src/t3_import.rs`,
+run by `serve` at the first start in a T3 state folder (`docs/status.md`, "T3 state import").
+Scheduled tasks, peer links and sessions are not converted.
 
 - T3 keeps `userdata/statev2.sqlite`: events, about 20 projection tables, auth, scheduled
   tasks, peer links, PR review data [code, `M/apps/server/src/persistence/Migrations`].

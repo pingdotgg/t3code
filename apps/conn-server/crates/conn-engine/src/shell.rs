@@ -316,7 +316,12 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         "deletedAt": field("deletedAt"),
     });
     // As T3's shell: present only when the thread has them.
-    for key in ["linkedPullRequest", "branchPullRequest", "issues"] {
+    for key in [
+        "linkedPullRequest",
+        "branchPullRequest",
+        "issues",
+        "historyOrigin",
+    ] {
         if let (Some(value), Some(map)) = (thread.get(key), row.as_object_mut()) {
             map.insert(key.into(), value.clone());
         }

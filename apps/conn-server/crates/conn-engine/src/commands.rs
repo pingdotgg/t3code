@@ -463,7 +463,7 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         release_held(tx, &c.thread_id)?;
     }
     let queued = matches!(delivery, Delivery::Queue { .. });
-    let ordinal = tx.count(&c.thread_id, "runs")? + 1;
+    let ordinal = tx.next_run_ordinal(&c.thread_id)?;
     let run_id = format!("run:{}:{ordinal}", c.thread_id);
     let root = format!("node:{run_id}:root");
     let model = normalize_model_selection(

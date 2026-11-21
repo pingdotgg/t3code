@@ -78,7 +78,8 @@ pub(crate) async fn subscribe_shell(
     let (first, mut cursor) = inner
         .db(move |store| -> Result<(Vec<Value>, u64), String> {
             let high = store.high_water();
-            let resumed = match after.filter(|after| *after <= high) {
+            let imported = store.imported_through();
+            let resumed = match after.filter(|after| can_replay(*after, high, imported)) {
                 Some(after) => store.shell_changes_since(after)?,
                 None => None,
             };
@@ -144,6 +145,14 @@ pub(crate) async fn subscribe_shell(
     Ok(rx)
 }
 
+/// Whether a thread or shell stream can resume from `after` by replaying. A cursor above the
+/// high water is from another database. A cursor at or below the T3 import boundary
+/// (`imported`, 0 when never imported) may be the T3 server's: the rows it imported have no
+/// events here, so only a snapshot is complete.
+pub(crate) fn can_replay(after: u64, high: u64, imported: u64) -> bool {
+    after <= high && (imported == 0 || after > imported)
+}
+
 pub(crate) async fn subscribe_thread(
     inner: Arc<Inner>,
     input: Value,
@@ -164,7 +173,8 @@ pub(crate) async fn subscribe_thread(
             if !store.thread_exists(&id)? {
                 return Ok(None);
             }
-            if let Some(after) = after.filter(|after| *after <= high) {
+            let imported = store.imported_through();
+            if let Some(after) = after.filter(|after| can_replay(*after, high, imported)) {
                 let events = store.thread_events_after(&id, after, MAX_REPLAY_EVENTS + 1)?;
                 if events.len() <= MAX_REPLAY_EVENTS {
                     let items = events.into_iter().map(event_item).collect();

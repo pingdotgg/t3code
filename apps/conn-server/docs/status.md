@@ -21,6 +21,70 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## T3 state import (2026-11-21)
+
+A Conn Server that starts in a T3 server's state folder has the same threads (Nick,
+2026-11-21: "we need to have the same threads"). Before, it started empty there.
+
+- **What runs.** `serve`, before it listens, calls `conn_engine::import_t3_state`
+  (`conn-engine/src/t3_import.rs`) when the folder holds `statev2.sqlite` and no
+  `engine.sqlite`. It attaches T3's file read-only (`mode=ro`; `immutable=1` when a cleanly
+  stopped T3 left no `-wal` and none can be made), copies in one transaction the projects
+  (`projection_projects`, as T3's `OrchestrationProjectShell` plus `deletedAt`), the threads
+  (archived and deleted ones too) and every projection row (runs, attempts, nodes, subagents,
+  provider sessions per `provider_session_bindings`, provider threads and turns, runtime
+  requests, messages, plans, turn items, checkpoint scopes, checkpoints, context handoffs and
+  transfers, MCP app model context) with its id and its JSON body, unchanged. `first_seq`
+  follows the order T3's `ProjectionStore` reads each collection in; turn items and runs keep
+  their ordinals; final message texts go into search. A provider thread without a thread of
+  its own goes to its owner node's thread, as T3 reads it. The engine then computes each shell
+  row. The store is built as `engine.sqlite.t3-import` and renamed into place only when
+  complete. A table or project column an older T3 lacks reads as empty or as its default.
+- **Boundary.** `meta.imported_through` is above the imported rows and above the last sequence
+  T3 gave out (`orchestration_v2_projection_metadata`, the event counter). New sequences start
+  above it. A client cursor at or below it may be T3's, and the imported rows have no events
+  here, so the thread and shell streams answer it with a snapshot (`streams::can_replay`; the
+  shell's pruned mark is set to it too). A new run takes the ordinal after the
+  thread's highest, not its run count + 1: T3 leaves gaps when it moves a queued run forward
+  (6 threads on mini).
+- **Why this way.** Reading T3's tables in place would put a second schema under every engine
+  read and write. The engine already stores T3's encoded `OrchestrationV2*` bodies, so a
+  one-time copy keeps its code as it is. T3's file is never written: the T3 server can take
+  over again (rollback) with every thread it had; threads made on the Conn Server do not go
+  back. An existing `engine.sqlite` is never touched; a partial import is removed and redone.
+- **Not carried over:** T3's event log (compacted; clients read projections), sessions and
+  pairings (devices pair again), command receipts, scheduled tasks (`scheduled_tasks`, 8 on
+  mini) and peer links (`peer_environment_links`, 6 on mini). Session import
+  (`agentSessions.*`) stays unserved; it is a different thing.
+- **Proof on a copy of mini's T3 home** (12.3 GB `statev2.sqlite` taken with sqlite `.backup`;
+  `~/.t3` untouched): `crates/conn-server/tools/t3-import-diff.mjs` starts the T3 server and the
+  Conn Server on APFS clones of the copy and compares what a client reads. Import: 6 projects,
+  1,531 threads, 18,960 runs, 230,292 nodes, 68,170 messages, 318,032 turn items, 19,788
+  checkpoints, 3,654 context transfers, 761 session bindings; 183 s to 259 s on mini, once.
+  The boundary became 1,862,638, T3's last sequence.
+  - Byte for byte, every T3 row against the engine row: none missing; every row identical
+    except rows of threads that each server's restart recovery changed (runs live at the copy).
+  - Shell: 5 projects and 1,529 threads on both. Every thread's projection, through T3's wire
+    projection and the contract decode: no difference outside the known list below. Settings
+    (decoded) and the 88 keybindings: equal. The environment id: equal.
+  - Continued: in a one-thread copy, the Conn Server imported the thread (a Haiku thread from
+    2026-11-13, 10 messages), served its old messages, and ran two new Claude Haiku turns in
+    it (runs 6 and 7) on the same provider thread and Claude session; asked how many
+    subagents "we agreed on earlier", it answered "Four." from the old conversation.
+- **Known, not from the import** (each holds for every thread this server serves, and the
+  import keeps the rows it is computed from): T3 also lists a context transfer on its source
+  thread, this engine on its target only (2,806 such listings on mini); the shell row has
+  `tags: []`, `latestRunStopRequested: false`, `latestRunBackgroundWake: false` and `null` for
+  absent fields where T3 omits or reads them; it shows no waiting link card; its
+  `latestUserAuthoredMessageAt` reads only the newest user message; a run fork's shell counts
+  only its own items; projects have no `repositoryIdentity`; serde_json re-reads floats without
+  `float_roundtrip` (last digit of `opens.score`) and keeps object keys sorted (the order of a
+  dynamic tool's wire summary). The HTTP thread route serves outputs that T3's wire projection
+  omits; the check applies T3's own projection to both sides.
+- **First start takes minutes** on a large T3 home (mini: 3 to 5 minutes and as much free
+  disk as `statev2.sqlite`). An interrupted import starts over at the next start and loses
+  nothing.
+
 ## Merge-back (2026-11-21)
 
 `thread.merge_back` is served, so `t3_thread_transfer` `merge_back` and the client's "Merge

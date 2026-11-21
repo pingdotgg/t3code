@@ -253,6 +253,8 @@ fn keyed_rows(
 pub(crate) struct Store {
     conn: Connection,
     next_seq: u64,
+    /// See [`Store::imported_through`].
+    imported_through: u64,
     /// Every transaction's `now` (`EngineConfig::clock`).
     clock: std::sync::Arc<dyn crate::clock::Clock>,
     /// A title generator is configured, so commands may ask for titles.
@@ -297,13 +299,22 @@ impl Store {
             .query_row(
                 "SELECT MAX(COALESCE((SELECT MAX(seq) FROM events), 0),
                             COALESCE((SELECT MAX(seq) FROM shell_changes), 0),
-                            COALESCE((SELECT MAX(sequence) FROM receipts), 0))",
+                            COALESCE((SELECT MAX(sequence) FROM receipts), 0),
+                            COALESCE((SELECT value FROM meta WHERE key = 'imported_through'), 0))",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        let imported_through: i64 = conn
+            .query_row(
+                "SELECT COALESCE((SELECT value FROM meta WHERE key = 'imported_through'), 0)",
                 [],
                 |row| row.get(0),
             )
             .map_err(err)?;
         Ok(Self {
             conn,
+            imported_through: imported_through.max(0) as u64,
             next_seq: high as u64 + 1,
             clock: std::sync::Arc::new(crate::clock::SystemClock),
             generates_titles: false,
@@ -335,6 +346,12 @@ impl Store {
     /// The sequence of the last committed change.
     pub(crate) fn high_water(&self) -> u64 {
         self.next_seq - 1
+    }
+
+    /// The T3 import boundary (`t3_import.rs`), 0 when this store was never imported. A cursor
+    /// at or below it may come from the T3 server, whose rows have no events here.
+    pub(crate) fn imported_through(&self) -> u64 {
+        self.imported_through
     }
 
     pub(crate) fn tx(&mut self) -> StoreResult<Tx<'_>> {
@@ -879,6 +896,24 @@ impl Store {
         Ok(rows)
     }
 
+    /// One text column per row.
+    pub(crate) fn query_rows_text(&self, sql: &str) -> StoreResult<Vec<String>> {
+        let mut stmt = self.conn.prepare(sql).map_err(err)?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(err)?;
+        Ok(rows)
+    }
+
+    /// Moves the write-ahead log into the file and empties it.
+    pub(crate) fn checkpoint(&self) -> StoreResult<()> {
+        self.conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .map_err(err)
+    }
+
     /// A text column and a JSON column per row.
     pub(crate) fn query_rows(
         &self,
@@ -1219,6 +1254,29 @@ impl Tx<'_> {
             }
         }
         Ok(seq)
+    }
+
+    /// The ordinal of a thread's next run: one above its highest. A thread imported from T3
+    /// can have gaps (T3 moves a queued run past newer ones when it starts it), so the count
+    /// of runs would give an ordinal already taken.
+    pub(crate) fn next_run_ordinal(&self, thread_id: &str) -> StoreResult<u64> {
+        self.tx
+            .query_row(
+                "SELECT COALESCE(MAX(ordinal), 0) FROM entities WHERE thread_id = ?1 AND kind = 'runs'",
+                [thread_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|max| max.max(0) as u64 + 1)
+            .map_err(err)
+    }
+
+    /// Marks a thread's shell row for the commit to recompute, at a new sequence.
+    pub(crate) fn touch(&mut self, thread_id: &str) {
+        let seq = self.alloc();
+        match self.touched.iter_mut().find(|(id, _)| id == thread_id) {
+            Some(entry) => entry.1 = seq,
+            None => self.touched.push((thread_id.to_owned(), seq)),
+        }
     }
 
     /// Takes the next turn item position for an item whose text is held and not stored yet

@@ -220,6 +220,14 @@ pub async fn serve_with_instances(
         devices: OnceLock::new(),
     });
 
+    // A state folder the T3 server used: its threads and projects, once (`t3_import.rs`).
+    let import_dir = state_dir.clone();
+    match tokio::task::spawn_blocking(move || conn_engine::import_t3_state(&import_dir)).await {
+        Ok(Ok(Some(report))) => eprintln!("conn-server: {}", report.summary()),
+        Ok(Ok(None)) => {}
+        Ok(Err(error)) => or_exit(Err(error), "cannot import the T3 server's state"),
+        Err(error) => or_exit(Err(error), "cannot import the T3 server's state"),
+    }
     let mut config = EngineConfig::new(state_dir.join("engine.sqlite"));
     config.projects = projects;
     config.provider_set = Some(providers.clone());

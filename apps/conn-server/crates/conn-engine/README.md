@@ -100,6 +100,11 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   path (a `full_thread_summary` handoff when the fork cannot be native, or after a failed
   native fork) is not built: such a message is refused, and a failed native fork fails the
   turn.
+- **T3 state import** (`src/t3_import.rs`). `import_t3_state` builds `engine.sqlite` once
+  from a T3 server's `statev2.sqlite` in the same folder: projects, threads and every
+  projection row with its id and body, read-only from T3's file, renamed into place when
+  complete. The server calls it before it opens the engine (`docs/status.md`, "T3 state
+  import"). Tests: `t3_import::tests`.
 
 - **Buffered delivery** (`src/streaming.rs`, T3's `assistantStreaming.ts` and
   `RunExecutionService`). A running `assistant_message` node is never stored. A streaming

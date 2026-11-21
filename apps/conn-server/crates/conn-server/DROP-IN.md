@@ -210,7 +210,7 @@ either server, never both at once.
 | `keybindings.json`, `keybindings-migrations`                                                                                                                       | Rules, seeded with defaults                                                                                 | **Reads and writes both** (same format and backfill)                                                                                                                                    |
 | `server-owner.sqlite`                                                                                                                                              | Ownership lock                                                                                              | **Takes the same lock**                                                                                                                                                                 |
 | `server-runtime.json`                                                                                                                                              | Running server's origin                                                                                     | **Writes the same format**; T3's `t3 pair`/`project` CLI finds a running Conn Server                                                                                                    |
-| `statev2.sqlite` (+ `-wal`/`-shm`), `state.sqlite`                                                                                                                 | Threads, projects, auth sessions and pairing links (`auth_sessions`, `auth_pairing_links`), everything else | **Ignored.** Threads need the migration below; T3 sessions are not carried over, so every device pairs again and Orbit issues new Gateway and Swamp sessions                            |
+| `statev2.sqlite` (+ `-wal`/`-shm`), `state.sqlite`                                                                                                                 | Threads, projects, auth sessions and pairing links (`auth_sessions`, `auth_pairing_links`), everything else | **Read once, never written.** At the first start (no `engine.sqlite` yet) its projects and threads become `engine.sqlite` (`conn-engine/src/t3_import.rs`, below); T3 sessions are not carried over, so every device pairs again and Orbit issues new Gateway and Swamp sessions |
 | `secrets/` (`server-signing-key.bin`, …)                                                                                                                           | Secret store, signing keys                                                                                  | Ignored                                                                                                                                                                                 |
 | `model-manifest.json` | The model catalog fetched from T3 Code's GitHub (`ModelManifest.ts`), `{"fetchedAtMs","manifest"}` | **Writes it the same way**: when (start, then at most hourly, 5 minutes after a failed try, only with `enableProviderUpdateChecks`), what (a manifest that decodes and is not older than the bundled or cached one) and the bytes (`model-manifest-diff.mjs`). Reads no model from it. Test seam: `CONN_MODEL_MANIFEST_URL` (`off` never fetches; an `http(s)` URL fetches from there); every check sets `off` |
 | `attachments/`, `logs/`, `anonymous-id`, `themes/`, `browser-artifacts/`, `annotations/`, `speech/`, `providers/`, `usage-model-rates.json` | Feature data and caches                                                                                     | Ignored (other tracks may take attachments and logs)                                                                                                                                    |
@@ -220,16 +220,14 @@ either server, never both at once.
 Switching back to the T3 server: settings, keybindings and the environment id carry over;
 threads and pairings made on the Conn Server do not.
 
-**Thread-history migration (design only).** A one-shot `conn-server migrate-t3` with both
-servers stopped: open `statev2.sqlite` read-only, read the projection rows (projects, threads,
-turns, messages, turn items, runs) rather than replaying T3's event log, and append one
-`thread.imported`-style event per thread into `engine.sqlite` carrying the projection as the
-client contract encodes it, so the Conn Server's own projections rebuild from its own log.
-Keep T3 ids, so clients' cached links survive. Skip live state: running turns become stopped,
-provider sessions are not resumed (the provider resumes by its own session id on the next
-turn). Checkpoint refs live in git and need nothing. Record the source commit and row counts
-in a marker table so the import never runs twice, and prove it with a recording of a migrated
-home in the real client.
+**Thread-history import (built, 2026-11-21).** `serve` imports it itself, before it listens,
+when the state folder holds `statev2.sqlite` and no `engine.sqlite`: T3's file is attached
+read-only, every projection row is copied with its id and its JSON body in one transaction,
+the shell rows are computed, and the new store is renamed into place when it is complete. T3's
+file is not changed, so the T3 server can take over again with every thread it had. Live state
+is not resumed by the import: the engine's restart recovery ends runs that were live, as after
+any restart, and the provider resumes by its own session id on the next turn. Proof and limits:
+`docs/status.md`, "T3 state import".
 
 ## 6. Making the Conn Server the default
 

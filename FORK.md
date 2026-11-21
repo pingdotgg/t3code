@@ -104,8 +104,10 @@ from this tree.
   - Resource telemetry: `subscribeResourceTelemetry`, the resource and process history and
     its retry (the Settings › Diagnostics CPU and memory panel). Orbit tracks resources.
   - The Usage page: `server.getUsageSummary` and `server.refreshUsageRates`.
-  - Session import: `agentSessions.scan` and `agentSessions.import`. No threads are
-    imported, including old T3 server threads when a container switches servers.
+  - Session import: `agentSessions.scan` and `agentSessions.import` (provider transcripts
+    turned into threads). This is not the T3 state import: a Conn Server that starts in a
+    T3 server's state folder carries that server's threads over once
+    (`apps/conn-server/docs/status.md`, "T3 state import").
   - Clone from the client: `projectClone.*`. The `/mcp` clone tool stays.
   - The test-login group of the browser's key menu: `credentials.listForSite` and
     `credentials.fillForSite`. Vault logins in that menu stay; the desktop fills them itself.
