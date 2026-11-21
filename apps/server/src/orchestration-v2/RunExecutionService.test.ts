@@ -3638,12 +3638,20 @@ it.effect.each([
   { ended: false, rootLive: true, settledStatus: "completed" as const },
   // Moving child C to another run keeps nested subagent G owned by this run for lost-work cleanup.
   { ended: true, rootLive: true, handedOffWithNested: true },
+  // Losing the runtime while both C and nested G are open isolates G from C's batch while keeping C's own child work.
+  { ended: true, rootLive: true, nestedOpen: true },
   // A legacy subagent claimed by a newer run under the same ID is not failed by the older run's cascade.
   { ended: false, rootLive: true, claimedByOtherRun: true },
   // Even if only the shared node has been claimed by a newer run, the older run skips the subagent.
   { ended: false, rootLive: true, nodeClaimedByOtherRun: true },
-  // If the shared node is claimed between reload and conditional write, expectedNode rejects the write.
+  // If the shared node is claimed between reload and conditional write, expectedNodes rejects the write.
   { ended: false, rootLive: true, nodeClaimedBeforeWrite: true },
+  // If only the shared subagent turn item is claimed before write, expectedTurnItems rejects and retry skips the subagent.
+  { ended: false, rootLive: true, itemClaimedBeforeWrite: true },
+  // If the node completes before write while the subagent stays running, cleanup reloads and settles without rewriting the node.
+  { ended: true, rootLive: true, nodeCompletedBeforeWrite: true },
+  // If a child command item completes before write, expectedTurnItems rejects the stale write and retry preserves the completed item.
+  { ended: true, rootLive: true, childItemCompletedBeforeWrite: true },
 ] as const)(
   "ends a subagent that outlived its root when the provider stream fails (%o)",
   ({
@@ -3653,9 +3661,13 @@ it.effect.each([
     rootLive,
     settledStatus,
     handedOffWithNested,
+    nestedOpen,
     claimedByOtherRun,
     nodeClaimedByOtherRun,
     nodeClaimedBeforeWrite,
+    itemClaimedBeforeWrite,
+    nodeCompletedBeforeWrite,
+    childItemCompletedBeforeWrite,
   }) =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex");
@@ -3664,7 +3676,16 @@ it.effect.each([
       const grandchildItemId = TurnItemId.make(
         "turn-item:stream-error-outlived-subagent:grandchild",
       );
-      const { finalEvents } = yield* captureRootRunTermination({
+      const childWorkNodeId = NodeId.make("node:stream-error-outlived-subagent:child-work");
+      let writeAttempts = 0;
+      const batchWriteIds: Array<{
+        readonly subagentId: NodeId;
+        readonly nodeIds: ReadonlyArray<NodeId>;
+        readonly turnItemIds: ReadonlyArray<TurnItemId>;
+        readonly expectedNodeIds: ReadonlyArray<NodeId>;
+        readonly expectedTurnItemIds: ReadonlyArray<TurnItemId>;
+      }> = [];
+      const { ids, stored, finalEvents } = yield* captureRootRunTermination({
         key: "stream-error-outlived-subagent",
         shouldFinalizeRun: () => Effect.succeed(true),
         events: (ids) => {
@@ -3689,7 +3710,10 @@ it.effect.each([
           if (
             claimedByOtherRun === true ||
             nodeClaimedByOtherRun === true ||
-            nodeClaimedBeforeWrite === true
+            nodeClaimedBeforeWrite === true ||
+            itemClaimedBeforeWrite === true ||
+            nodeCompletedBeforeWrite === true ||
+            childItemCompletedBeforeWrite === true
           ) {
             events.push({
               type: "node.updated",
@@ -3697,13 +3721,50 @@ it.effect.each([
               node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
             });
           }
-          if (handedOffWithNested === true) {
+          if (childItemCompletedBeforeWrite === true) {
+            events.push({
+              type: "turn_item.updated",
+              driver,
+              turnItem: makeLinkedChildTurnItemFixture({
+                ids,
+                driver,
+                type: "command_execution",
+              }),
+            });
+          }
+          if (handedOffWithNested === true || nestedOpen === true) {
             events.push(
               {
                 type: "node.updated",
                 driver,
                 node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
               },
+              ...(nestedOpen === true
+                ? ([
+                    {
+                      type: "node.updated",
+                      driver,
+                      node: {
+                        ...makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+                        id: childWorkNodeId,
+                        threadId: ids.childThreadId,
+                        runId: null,
+                        kind: "root_turn",
+                        parentNodeId: baseSubagent.id,
+                        rootNodeId: childWorkNodeId,
+                      },
+                    },
+                    {
+                      type: "turn_item.updated",
+                      driver,
+                      turnItem: makeLinkedChildTurnItemFixture({
+                        ids,
+                        driver,
+                        type: "command_execution",
+                      }),
+                    },
+                  ] as const)
+                : []),
               {
                 type: "subagent.updated",
                 driver,
@@ -3741,11 +3802,15 @@ it.effect.each([
                   childThreadId: grandchildThreadId,
                 },
               },
-              {
-                type: "subagent.updated",
-                driver,
-                subagent: { ...baseSubagent, runId: RunId.make("run:other-owner") },
-              },
+              ...(handedOffWithNested === true
+                ? ([
+                    {
+                      type: "subagent.updated",
+                      driver,
+                      subagent: { ...baseSubagent, runId: RunId.make("run:other-owner") },
+                    },
+                  ] as const)
+                : []),
             );
           }
           if (rootLive !== true) {
@@ -3766,13 +3831,61 @@ it.effect.each([
             ),
           );
         },
-        ...(nodeClaimedBeforeWrite === true
+        ...(nodeClaimedBeforeWrite === true ||
+        itemClaimedBeforeWrite === true ||
+        nodeCompletedBeforeWrite === true ||
+        childItemCompletedBeforeWrite === true ||
+        nestedOpen === true
           ? {
               beforeSubagentWrite: (payload, stored) =>
                 Effect.sync(() => {
-                  const node = stored.nodes.get(payload.expected.id);
-                  if (node !== undefined) {
-                    stored.nodes.set(node.id, { ...node, runId: RunId.make("run:other-owner") });
+                  writeAttempts++;
+                  batchWriteIds.push({
+                    subagentId: payload.expected.id,
+                    nodeIds: payload.events.flatMap((event) =>
+                      event.type === "node.updated" ? [event.payload.id] : [],
+                    ),
+                    turnItemIds: payload.events.flatMap((event) =>
+                      event.type === "turn-item.updated" ? [event.payload.id] : [],
+                    ),
+                    expectedNodeIds: (payload.expectedNodes ?? []).map((node) => node.id),
+                    expectedTurnItemIds: (payload.expectedTurnItems ?? []).map((item) => item.id),
+                  });
+                  if (writeAttempts > 1) return;
+                  if (nodeClaimedBeforeWrite === true) {
+                    const node = stored.nodes.get(payload.expected.id);
+                    if (node !== undefined) {
+                      stored.nodes.set(node.id, { ...node, runId: RunId.make("run:other-owner") });
+                    }
+                  }
+                  if (itemClaimedBeforeWrite === true) {
+                    const subagentItem = [...stored.turnItems.values()].find(
+                      (item) => item.type === "subagent" && item.subagentId === payload.expected.id,
+                    );
+                    if (subagentItem !== undefined) {
+                      stored.turnItems.set(subagentItem.id, {
+                        ...subagentItem,
+                        runId: RunId.make("run:other-owner"),
+                      });
+                    }
+                  }
+                  if (nodeCompletedBeforeWrite === true) {
+                    const node = stored.nodes.get(payload.expected.id);
+                    if (node !== undefined) {
+                      stored.nodes.set(node.id, { ...node, status: "completed" });
+                    }
+                  }
+                  if (childItemCompletedBeforeWrite === true) {
+                    const childItem = [...stored.turnItems.values()].find(
+                      (item) => item.type === "command_execution",
+                    );
+                    if (childItem !== undefined) {
+                      stored.turnItems.set(childItem.id, {
+                        ...childItem,
+                        status: "completed",
+                        title: "Completed output",
+                      });
+                    }
                   }
                 }),
             }
@@ -3808,6 +3921,11 @@ it.effect.each([
             }
           : {}),
       });
+      const detailedIds =
+        handedOffWithNested === true ||
+        nestedOpen === true ||
+        nodeCompletedBeforeWrite === true ||
+        childItemCompletedBeforeWrite === true;
       const expected =
         handedOffWithNested === true
           ? [
@@ -3816,34 +3934,65 @@ it.effect.each([
               `node.updated:failed:${grandchildId}`,
               `turn-item.updated:failed:${grandchildItemId}`,
             ]
-          : rootLive === true
-            ? ["run.updated:failed"]
-            : ended
-              ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
-              : ["run.updated:waiting"];
+          : nestedOpen === true
+            ? [
+                "run.updated:failed",
+                `subagent.updated:failed:${ids.subagentNodeId}`,
+                `node.updated:failed:${ids.subagentNodeId}`,
+                `turn-item.updated:failed:${ids.itemId}`,
+                `node.updated:failed:${childWorkNodeId}`,
+                `turn-item.updated:failed:${ids.childItemId}`,
+                `subagent.updated:failed:${grandchildId}`,
+                `node.updated:failed:${grandchildId}`,
+                `turn-item.updated:failed:${grandchildItemId}`,
+              ]
+            : nodeCompletedBeforeWrite === true
+              ? [
+                  "run.updated:failed",
+                  `subagent.updated:failed:${ids.subagentNodeId}`,
+                  `turn-item.updated:failed:${ids.itemId}`,
+                ]
+              : childItemCompletedBeforeWrite === true
+                ? [
+                    "run.updated:failed",
+                    `subagent.updated:failed:${ids.subagentNodeId}`,
+                    `node.updated:failed:${ids.subagentNodeId}`,
+                    `turn-item.updated:failed:${ids.itemId}`,
+                  ]
+                : rootLive === true
+                  ? ["run.updated:failed"]
+                  : ended
+                    ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
+                    : ["run.updated:waiting"];
       assert.deepEqual(
         finalEvents.flatMap((event) => {
           if (event.type === "run.updated") return [`${event.type}:${event.payload.status}`];
           if (event.type === "subagent.updated") {
             return [
-              handedOffWithNested === true
+              detailedIds
                 ? `${event.type}:${event.payload.status}:${event.payload.id}`
                 : `${event.type}:${event.payload.status}`,
             ];
           }
           if (
-            (handedOffWithNested === true ||
+            (detailedIds ||
               claimedByOtherRun === true ||
               nodeClaimedByOtherRun === true ||
-              nodeClaimedBeforeWrite === true) &&
+              nodeClaimedBeforeWrite === true ||
+              itemClaimedBeforeWrite === true) &&
             event.type === "node.updated" &&
-            event.payload.kind === "subagent"
+            event.payload.id !== ids.rootNodeId
           ) {
             return [`${event.type}:${event.payload.status}:${event.payload.id}`];
           }
-          if (event.type === "turn-item.updated" && event.payload.type === "subagent") {
+          if (
+            event.type === "turn-item.updated" &&
+            (event.payload.type === "subagent" ||
+              ((nestedOpen === true || childItemCompletedBeforeWrite === true) &&
+                event.payload.type === "command_execution"))
+          ) {
             return [
-              handedOffWithNested === true
+              detailedIds
                 ? `${event.type}:${event.payload.status}:${event.payload.id}`
                 : `${event.type}:${event.payload.status}`,
             ];
@@ -3852,6 +4001,49 @@ it.effect.each([
         }),
         expected,
       );
+      if (nestedOpen === true) {
+        assert.deepEqual(batchWriteIds, [
+          {
+            subagentId: ids.subagentNodeId,
+            nodeIds: [ids.subagentNodeId, childWorkNodeId],
+            turnItemIds: [ids.itemId, ids.childItemId],
+            expectedNodeIds: [ids.subagentNodeId, childWorkNodeId],
+            expectedTurnItemIds: [ids.itemId, ids.childItemId],
+          },
+          {
+            subagentId: grandchildId,
+            nodeIds: [grandchildId],
+            turnItemIds: [grandchildItemId],
+            expectedNodeIds: [grandchildId],
+            expectedTurnItemIds: [grandchildItemId],
+          },
+        ]);
+      }
+      if (nodeClaimedBeforeWrite === true || itemClaimedBeforeWrite === true) {
+        assert.equal(writeAttempts, 1);
+        assert.equal(stored.subagents.get(ids.subagentNodeId)?.status, "running");
+        assert.equal(stored.nodes.get(ids.subagentNodeId)?.status, "running");
+        assert.equal(stored.turnItems.get(ids.itemId)?.status, "running");
+        if (itemClaimedBeforeWrite === true) {
+          assert.equal(stored.turnItems.get(ids.itemId)?.runId, RunId.make("run:other-owner"));
+        }
+      }
+      if (nodeCompletedBeforeWrite === true) {
+        assert.equal(writeAttempts, 2);
+        assert.deepEqual(batchWriteIds[1]?.nodeIds, []);
+        assert.deepEqual(batchWriteIds[1]?.expectedNodeIds, [ids.subagentNodeId]);
+        assert.equal(stored.nodes.get(ids.subagentNodeId)?.status, "completed");
+        assert.equal(stored.subagents.get(ids.subagentNodeId)?.status, "failed");
+        assert.equal(stored.turnItems.get(ids.itemId)?.status, "failed");
+      }
+      if (childItemCompletedBeforeWrite === true) {
+        assert.equal(writeAttempts, 2);
+        assert.deepEqual(batchWriteIds[0]?.expectedTurnItemIds, [ids.itemId, ids.childItemId]);
+        assert.deepEqual(batchWriteIds[1]?.turnItemIds, [ids.itemId]);
+        assert.equal(stored.turnItems.get(ids.childItemId)?.status, "completed");
+        assert.equal(stored.turnItems.get(ids.childItemId)?.title, "Completed output");
+        assert.equal(stored.subagents.get(ids.subagentNodeId)?.status, "failed");
+      }
     }),
 );
 
@@ -4416,7 +4608,7 @@ function captureRootRunTermination(input: {
                 yield* captureFinalEvents(payload.events);
                 return { committed: true, storedEvents: [] };
               }),
-            // Committed only against the row that was read, as the real conditional writes are.
+            // Committed only against the rows that were read, as the real conditional writes are.
             writeIfSubagentUnchanged: (payload) =>
               Effect.gen(function* () {
                 if (input.beforeSubagentWrite !== undefined) {
@@ -4424,8 +4616,12 @@ function captureRootRunTermination(input: {
                 }
                 if (
                   stored.subagents.get(payload.expected.id) !== payload.expected ||
-                  (payload.expectedNode !== undefined &&
-                    stored.nodes.get(payload.expectedNode.id) !== payload.expectedNode)
+                  (payload.expectedNodes ?? []).some(
+                    (expectedNode) => stored.nodes.get(expectedNode.id) !== expectedNode,
+                  ) ||
+                  (payload.expectedTurnItems ?? []).some(
+                    (expectedItem) => stored.turnItems.get(expectedItem.id) !== expectedItem,
+                  )
                 ) {
                   return { committed: false, storedEvents: [] };
                 }
@@ -4444,11 +4640,18 @@ function captureRootRunTermination(input: {
                 return { committed: true, storedEvents: [] };
               }),
             writeIfTurnItemUnchanged: (payload) =>
-              stored.turnItems.get(payload.expected.id) === payload.expected
-                ? captureFinalEvents(payload.events).pipe(
-                    Effect.as({ committed: true, storedEvents: [] }),
-                  )
-                : Effect.succeed({ committed: false, storedEvents: [] }),
+              Effect.gen(function* () {
+                if (stored.turnItems.get(payload.expected.id) !== payload.expected) {
+                  return { committed: false, storedEvents: [] };
+                }
+                for (const event of payload.events) {
+                  if (event.type === "turn-item.updated") {
+                    stored.turnItems.set(event.payload.id, event.payload);
+                  }
+                }
+                yield* captureFinalEvents(payload.events);
+                return { committed: true, storedEvents: [] };
+              }),
           }),
           IdAllocator.layer,
           ThreadCommandExecutor.layer,
@@ -4588,6 +4791,8 @@ function captureRootRunTermination(input: {
     }).pipe(Effect.provide(layerTest));
 
     return {
+      ids,
+      stored,
       previewActivityEnded,
       written: yield* Ref.get(writtenItems),
       finalEvents: yield* Ref.get(finalEvents),

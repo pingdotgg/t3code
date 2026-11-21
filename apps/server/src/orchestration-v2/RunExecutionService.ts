@@ -1357,8 +1357,12 @@ export const layer: Layer.Layer<
           const open = yield* Ref.get(openRunOwnedSubagents);
           const subagents = new Map<NodeId, OrchestrationV2Subagent>();
           const nodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
+          // Owned node per tracked subagent, even if settled, so a concurrent claim still conflicts.
+          const guardedSubagentNodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
           const turnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
-          if (input.loadUnsettledWork === undefined) return { subagents, nodes, turnItems };
+          if (input.loadUnsettledWork === undefined) {
+            return { subagents, nodes, guardedSubagentNodes, turnItems };
+          }
           const trackedSubagentItemIds = new Set<TurnItemId>(
             [...open.turnItems.values()].map((item) => item.id),
           );
@@ -1369,28 +1373,29 @@ export const layer: Layer.Layer<
                 .filter((record) => record.threadId === threadId)
                 .map((record) => record.id),
             );
-            const foreignOwnedNodeIds = new Set<NodeId>();
+            const foreignOwnedSubagentIds = new Set<NodeId>();
             for (const node of stored.nodes) {
               if (!isOwnedByRun(node, input.run)) {
-                foreignOwnedNodeIds.add(node.id);
+                foreignOwnedSubagentIds.add(node.id);
                 continue;
+              }
+              if (open.subagents.has(node.id)) {
+                guardedSubagentNodes.set(node.id, node);
               }
               if (open.nodes.has(node.id) && isOpenExecutionNodeStatus(node.status)) {
                 nodes.set(node.id, node);
               }
             }
-            for (const subagent of stored.subagents) {
-              if (
-                open.subagents.has(subagent.id) &&
-                !foreignOwnedNodeIds.has(subagent.id) &&
-                isOwnedByRun(subagent, input.run) &&
-                !isSettledSubagentStatus(subagent.status)
-              ) {
-                subagents.set(subagent.id, subagent);
-              }
-            }
             for (const item of stored.turnItems) {
               if (isSettledTurnItemStatus(item.status)) continue;
+              if (
+                trackedSubagentItemIds.has(item.id) &&
+                item.type === "subagent" &&
+                !isOwnedByRun(item, input.run)
+              ) {
+                foreignOwnedSubagentIds.add(item.subagentId);
+                continue;
+              }
               const trackedRootToolCall =
                 openRootToolCalls.has(item.id) &&
                 item.threadId === input.run.threadId &&
@@ -1407,8 +1412,18 @@ export const layer: Layer.Layer<
                 turnItems.set(item.id, item);
               }
             }
+            for (const subagent of stored.subagents) {
+              if (
+                open.subagents.has(subagent.id) &&
+                !foreignOwnedSubagentIds.has(subagent.id) &&
+                isOwnedByRun(subagent, input.run) &&
+                !isSettledSubagentStatus(subagent.status)
+              ) {
+                subagents.set(subagent.id, subagent);
+              }
+            }
           }
-          return { subagents, nodes, turnItems };
+          return { subagents, nodes, guardedSubagentNodes, turnItems };
         });
         const loadLostRootToolCalls = loadTrackedWork([input.run.threadId]).pipe(
           Effect.map(({ turnItems }) =>
@@ -1416,7 +1431,7 @@ export const layer: Layer.Layer<
           ),
         );
         // Subagents and tool calls that outlived the root run die with the provider runtime. Stop
-        // can settle them meanwhile, so each write holds only while its stored row is unchanged.
+        // can settle them meanwhile, so each write holds only while its stored rows are unchanged.
         const endLostWorkOnce = Effect.fn("RunExecutionService.endLostWork")(function* (
           completedAt: DateTime.Utc,
           options: { readonly includeToolCalls: boolean },
@@ -1430,66 +1445,116 @@ export const layer: Layer.Layer<
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
             return;
           }
-          const stored = yield* loadTrackedWork([
+          const trackedThreadIds = [
             input.run.threadId,
             ...[
               ...open.subagents.values(),
               ...open.nodes.values(),
               ...open.childTurnItems.values(),
             ].map((record) => record.threadId),
-          ]);
-          for (const subagent of stored.subagents.values()) {
-            const subagentItemId = open.turnItems.get(subagent.id)?.id;
-            const subagentItem =
-              subagentItemId === undefined ? undefined : stored.turnItems.get(subagentItemId);
-            const events = yield* cascadeTerminalizeRunOwnedSubagents({
-              run: input.run,
-              open: {
-                subagents: new Map([[subagent.id, subagent]]),
-                turnItems: new Map(
-                  subagentItem?.type === "subagent" ? [[subagent.id, subagentItem]] : [],
+          ];
+          const maxConflictPasses = 4;
+          let conflictedSubagents = 0;
+          let conflictedToolCalls = 0;
+          for (let pass = 0; pass < maxConflictPasses; pass++) {
+            const stored = yield* loadTrackedWork(trackedThreadIds);
+            conflictedSubagents = 0;
+            conflictedToolCalls = 0;
+            for (const subagent of stored.subagents.values()) {
+              const subagentItemId = open.turnItems.get(subagent.id)?.id;
+              const rawSubagentItem =
+                subagentItemId === undefined ? undefined : stored.turnItems.get(subagentItemId);
+              const subagentItem =
+                rawSubagentItem?.type === "subagent" ? rawSubagentItem : undefined;
+              const batchChildTurnItems = new Map(
+                [...stored.turnItems].filter(
+                  ([id, item]) =>
+                    open.childTurnItems.has(id) &&
+                    id !== subagentItem?.id &&
+                    (item.threadId === subagent.childThreadId ||
+                      (item.type === "subagent" && item.subagentId === subagent.id)) &&
+                    !(
+                      item.type === "subagent" &&
+                      item.subagentId !== subagent.id &&
+                      open.subagents.has(item.subagentId)
+                    ),
                 ),
-                childTurnItems: new Map(
-                  [...stored.turnItems].filter(
-                    ([id, item]) =>
-                      open.childTurnItems.has(id) &&
-                      (item.threadId === subagent.childThreadId ||
-                        (item.type === "subagent" && item.subagentId === subagent.id)),
+              );
+              const batchNodes = new Map(
+                [...stored.nodes].filter(
+                  ([id, node]) =>
+                    id === subagent.id ||
+                    (subagent.childThreadId !== null &&
+                      node.threadId === subagent.childThreadId &&
+                      !open.subagents.has(id)),
+                ),
+              );
+              const events = yield* cascadeTerminalizeRunOwnedSubagents({
+                run: input.run,
+                open: {
+                  subagents: new Map([[subagent.id, subagent]]),
+                  turnItems: new Map(
+                    subagentItem === undefined ? [] : [[subagent.id, subagentItem]],
                   ),
-                ),
-                nodes: new Map(
-                  [...stored.nodes].filter(
-                    ([id, node]) => id === subagent.id || node.threadId === subagent.childThreadId,
+                  childTurnItems: batchChildTurnItems,
+                  nodes: batchNodes,
+                  linkedChildThreadIds: new Set(
+                    subagent.childThreadId === null ? [] : [subagent.childThreadId],
                   ),
-                ),
-                linkedChildThreadIds: new Set(
-                  subagent.childThreadId === null ? [] : [subagent.childThreadId],
-                ),
-              },
-              status: "failed",
-              completedAt,
-              allocateEventId,
-            });
-            const expectedNode = stored.nodes.get(subagent.id);
-            yield* eventSink.writeIfSubagentUnchanged({
-              expected: subagent,
-              ...(expectedNode === undefined ? {} : { expectedNode }),
-              events,
+                },
+                status: "failed",
+                completedAt,
+                allocateEventId,
+              });
+              const guardedNode = stored.guardedSubagentNodes.get(subagent.id);
+              const expectedNodes =
+                guardedNode !== undefined && !batchNodes.has(guardedNode.id)
+                  ? [...batchNodes.values(), guardedNode]
+                  : [...batchNodes.values()];
+              const expectedTurnItems = [
+                ...(subagentItem === undefined ? [] : [subagentItem]),
+                ...batchChildTurnItems.values(),
+              ];
+              const result = yield* eventSink.writeIfSubagentUnchanged({
+                expected: subagent,
+                expectedNodes,
+                expectedTurnItems,
+                events,
+              });
+              if (!result.committed) {
+                conflictedSubagents++;
+              }
+            }
+            if (options.includeToolCalls) {
+              for (const toolCall of stored.turnItems.values()) {
+                if (!openRootToolCalls.has(toolCall.id)) continue;
+                const result = yield* eventSink.writeIfTurnItemUnchanged({
+                  expected: toolCall,
+                  events: yield* interruptLostToolCalls({
+                    run: input.run,
+                    toolCalls: [toolCall],
+                    completedAt,
+                    allocateEventId,
+                  }),
+                });
+                if (!result.committed) {
+                  conflictedToolCalls++;
+                }
+              }
+            }
+            if (conflictedSubagents === 0 && conflictedToolCalls === 0) {
+              break;
+            }
+          }
+          if (conflictedSubagents > 0 || conflictedToolCalls > 0) {
+            yield* Effect.logWarning("orchestration V2 lost-work cleanup conflict", {
+              runId: input.run.id,
+              attemptId: input.attempt.id,
+              conflictedSubagents,
+              conflictedToolCalls,
             });
           }
           if (options.includeToolCalls) {
-            for (const toolCall of stored.turnItems.values()) {
-              if (!openRootToolCalls.has(toolCall.id)) continue;
-              yield* eventSink.writeIfTurnItemUnchanged({
-                expected: toolCall,
-                events: yield* interruptLostToolCalls({
-                  run: input.run,
-                  toolCalls: [toolCall],
-                  completedAt,
-                  allocateEventId,
-                }),
-              });
-            }
             openRootToolCalls.clear();
           }
           yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());

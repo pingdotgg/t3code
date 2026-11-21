@@ -8,9 +8,11 @@ import {
   ProviderInstanceId,
   RunId,
   ThreadId,
+  TurnItemId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2Subagent,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -112,16 +114,18 @@ it.effect("rejects a planned fork whose source was deleted before it committed",
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("rejects writeIfSubagentUnchanged when expectedNode changed to another run", () =>
+it.effect("guards writeIfSubagentUnchanged against concurrent node and turn-item updates", () =>
   Effect.gen(function* () {
     const sink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const now = yield* DateTime.now;
     const threadId = ThreadId.make("subagent-node-guard");
+    const childThreadId = ThreadId.make("subagent-node-guard:child");
     const run1Id = RunId.make("run:1");
     const run2Id = RunId.make("run:2");
     const rootNodeId = NodeId.make("node:root");
     const subagentId = NodeId.make("node:subagent");
+    const childTurnItemId = TurnItemId.make("turn-item:child-command");
     const providerInstanceId = ProviderInstanceId.make("opencode");
     const driver = ProviderDriverKind.make("opencode");
     const thread: OrchestrationV2AppThread = {
@@ -149,6 +153,16 @@ it.effect("rejects writeIfSubagentUnchanged when expectedNode changed to another
       snoozedAt: null,
       lastVisitedAt: null,
     };
+    const childThread: OrchestrationV2AppThread = {
+      ...thread,
+      id: childThreadId,
+      title: "Child",
+      lineage: {
+        rootThreadId: threadId,
+        parentThreadId: threadId,
+        relationshipToParent: "subagent",
+      },
+    };
     const subagent: OrchestrationV2Subagent = {
       id: subagentId,
       threadId,
@@ -159,7 +173,7 @@ it.effect("rejects writeIfSubagentUnchanged when expectedNode changed to another
       driver,
       providerInstanceId,
       providerThreadId: null,
-      childThreadId: null,
+      childThreadId,
       nativeTaskRef: null,
       prompt: "work",
       title: "Worker",
@@ -187,6 +201,24 @@ it.effect("rejects writeIfSubagentUnchanged when expectedNode changed to another
       startedAt: now,
       completedAt: null,
     };
+    const childTurnItem: OrchestrationV2TurnItem = {
+      id: childTurnItemId,
+      threadId: childThreadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running",
+      title: "Running command",
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "command_execution",
+      input: "echo ok",
+    };
     yield* sink.write({
       events: [
         {
@@ -195,6 +227,13 @@ it.effect("rejects writeIfSubagentUnchanged when expectedNode changed to another
           threadId,
           occurredAt: now,
           payload: thread,
+        },
+        {
+          id: EventId.make("subagent-guard:child-thread"),
+          type: "thread.created",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: childThread,
         },
         {
           id: EventId.make("subagent-guard:subagent"),
@@ -217,6 +256,15 @@ it.effect("rejects writeIfSubagentUnchanged when expectedNode changed to another
           occurredAt: now,
           payload: node,
         },
+        {
+          id: EventId.make("subagent-guard:child-item"),
+          type: "turn-item.updated",
+          threadId: childThreadId,
+          runId: run1Id,
+          providerInstanceId,
+          occurredAt: now,
+          payload: childTurnItem,
+        },
       ],
     });
     const claimedNode: OrchestrationV2ExecutionNode = { ...node, runId: run2Id };
@@ -234,9 +282,10 @@ it.effect("rejects writeIfSubagentUnchanged when expectedNode changed to another
         },
       ],
     });
-    const result = yield* sink.writeIfSubagentUnchanged({
+    const nodeRejected = yield* sink.writeIfSubagentUnchanged({
       expected: subagent,
-      expectedNode: node,
+      expectedNodes: [node],
+      expectedTurnItems: [childTurnItem],
       events: [
         {
           id: EventId.make("subagent-guard:fail-subagent"),
@@ -261,15 +310,69 @@ it.effect("rejects writeIfSubagentUnchanged when expectedNode changed to another
         },
       ],
     });
-    assert.isFalse(result.committed);
+    assert.isFalse(nodeRejected.committed);
     const projection = yield* projections.getThreadProjection(threadId);
     assert.equal(projection.subagents[0]?.status, "running");
     assert.equal(projection.nodes[0]?.runId, run2Id);
     assert.equal(projection.nodes[0]?.status, "running");
 
+    // A concurrent child turn-item completion also rejects the batch in the same transaction.
+    const completedChildItem: OrchestrationV2TurnItem = {
+      ...childTurnItem,
+      status: "completed",
+      title: "Finished command",
+      completedAt: now,
+      updatedAt: now,
+    };
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("subagent-guard:complete-child-item"),
+          type: "turn-item.updated",
+          threadId: childThreadId,
+          runId: run1Id,
+          providerInstanceId,
+          occurredAt: now,
+          payload: completedChildItem,
+        },
+      ],
+    });
+    const itemRejected = yield* sink.writeIfSubagentUnchanged({
+      expected: subagent,
+      expectedNodes: [claimedNode],
+      expectedTurnItems: [childTurnItem],
+      events: [
+        {
+          id: EventId.make("subagent-guard:fail-subagent-stale-item"),
+          type: "subagent.updated",
+          threadId,
+          runId: run1Id,
+          nodeId: subagentId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: { ...subagent, status: "failed", completedAt: now, updatedAt: now },
+        },
+        {
+          id: EventId.make("subagent-guard:fail-child-item-stale"),
+          type: "turn-item.updated",
+          threadId: childThreadId,
+          runId: run1Id,
+          providerInstanceId,
+          occurredAt: now,
+          payload: { ...childTurnItem, status: "failed", completedAt: now, updatedAt: now },
+        },
+      ],
+    });
+    assert.isFalse(itemRejected.committed);
+    const childBeforeAccept = yield* projections.getThreadProjection(childThreadId);
+    assert.equal(childBeforeAccept.turnItems[0]?.status, "completed");
+    assert.equal(childBeforeAccept.turnItems[0]?.title, "Finished command");
+
     const accepted = yield* sink.writeIfSubagentUnchanged({
       expected: subagent,
-      expectedNode: claimedNode,
+      expectedNodes: [claimedNode],
+      expectedTurnItems: [completedChildItem],
       events: [
         {
           id: EventId.make("subagent-guard:fail-subagent-accepted"),
@@ -289,5 +392,8 @@ it.effect("rejects writeIfSubagentUnchanged when expectedNode changed to another
     assert.equal(afterAccept.subagents[0]?.status, "failed");
     assert.equal(afterAccept.nodes[0]?.runId, run2Id);
     assert.equal(afterAccept.nodes[0]?.status, "running");
+    const childAfterAccept = yield* projections.getThreadProjection(childThreadId);
+    assert.equal(childAfterAccept.turnItems[0]?.status, "completed");
+    assert.equal(childAfterAccept.turnItems[0]?.title, "Finished command");
   }).pipe(Effect.provide(layer)),
 );

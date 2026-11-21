@@ -194,10 +194,11 @@ export interface EventSinkV2Shape {
     },
     EventSinkV2Error
   >;
-  /** Commits only if the stored subagent (and optional node) still equal expected. */
+  /** Commits only if the stored subagent (and optional nodes and turn items) still equal expected. */
   readonly writeIfSubagentUnchanged: (input: {
     readonly expected: OrchestrationV2Subagent;
-    readonly expectedNode?: OrchestrationV2ExecutionNode;
+    readonly expectedNodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
+    readonly expectedTurnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<
     {
@@ -788,8 +789,7 @@ const layerBase: Layer.Layer<
           expectedJson,
         },
       ];
-      if (input.expectedNode !== undefined) {
-        const expectedNode = input.expectedNode;
+      for (const expectedNode of input.expectedNodes ?? []) {
         checks.push({
           read: sql<{ readonly payload_json: string }>`
             SELECT payload_json
@@ -798,6 +798,17 @@ const layerBase: Layer.Layer<
             LIMIT 1
           `,
           expectedJson: yield* ProjectionStore.encodeNodePayload(expectedNode),
+        });
+      }
+      for (const expectedTurnItem of input.expectedTurnItems ?? []) {
+        checks.push({
+          read: sql<{ readonly payload_json: string }>`
+            SELECT payload_json
+            FROM orchestration_v2_projection_turn_items
+            WHERE turn_item_id = ${expectedTurnItem.id}
+            LIMIT 1
+          `,
+          expectedJson: yield* ProjectionStore.encodeTurnItemPayload(expectedTurnItem),
         });
       }
       return yield* writeIfStoredPayloadsMatch(checks, input.events);
