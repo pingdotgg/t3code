@@ -22,9 +22,9 @@ export function createSwipeableScrollGate(onChange: (active: boolean) => void) {
 
   const scheduleSettle = () => {
     clearSettle();
+    // Unlock only; a paused drag that resumes must still re-gate.
     settleTimer = setTimeout(() => {
       settleTimer = null;
-      dragging = false;
       setActive(false);
     }, SCROLL_GATE_SETTLE_MS);
   };

@@ -72,6 +72,11 @@ describe("createSwipeableScrollGate", () => {
 
       vi.advanceTimersByTime(1);
       expect(active).toBe(false);
+
+      gate.onScroll(60);
+      expect(active).toBe(true);
+      gate.onScroll(100);
+      expect(active).toBe(true);
     } finally {
       vi.useRealTimers();
     }
