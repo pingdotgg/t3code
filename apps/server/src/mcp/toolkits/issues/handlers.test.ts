@@ -158,6 +158,7 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
     issueLayer ??
       Layer.mock(IssueService.IssueService)({
         detail: () => Effect.succeed(detail),
+        linkMetadata: () => Effect.succeed(detail),
         projectScope: (projectId) =>
           Effect.succeed({
             projectId,
