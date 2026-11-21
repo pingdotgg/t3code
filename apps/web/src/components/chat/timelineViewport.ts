@@ -7,7 +7,6 @@ import {
   TYPE_TO_FOCUS_EDITABLE_SELECTOR,
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./composerFocusRedirect";
-import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import { createUpwardScrollDetector, isTimelineScrollTarget } from "./timelineScrollTarget";
 
 /**
@@ -144,13 +143,7 @@ export function attachTimelineViewport(
         height: scrollNode.scrollHeight,
         programmatic: programmaticHolds > 0,
       }) &&
-      frameHasInput() &&
-      // LegendList updates its scroll state on the next animation frame.
-      resolveTimelineIsAtEnd({
-        contentLength: scrollNode.scrollHeight,
-        scroll: scrollNode.scrollTop,
-        scrollLength: scrollNode.clientHeight,
-      }) === false
+      frameHasInput()
     ) {
       emit({ source: "scroll" });
     }

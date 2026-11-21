@@ -272,8 +272,7 @@ import {
 } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
-import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
-import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
+import { ThreadHtmlRender } from "./HtmlRenderWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -2002,6 +2001,7 @@ function renderFeedEntry(
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleUserMessage: (rowId: string, anchorKey: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
+    readonly onHtmlRenderInteraction: (rowId: string) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
@@ -2126,6 +2126,7 @@ function renderFeedEntry(
         render={entry.render}
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
+        onInteraction={() => props.onHtmlRenderInteraction(entry.id)}
       />
     );
   }
@@ -4073,14 +4074,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     });
   };
 
-  const preserveDisclosurePosition = (anchorKey: string | null) => {
+  const anchorRow = (anchorKey: string) => {
     const list = listRef.current;
     const working = props.activeWorkStartedAt !== null || props.runlessWorkActive === true;
     // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
-    if (anchorKey !== null && list && !(working && list.getState().isFollowingEnd)) {
+    if (list && !(working && list.getState().isFollowingEnd)) {
       list.cancelScroll();
       list.anchorVisibleContent({ key: anchorKey });
     }
+  };
+
+  const preserveDisclosurePosition = (anchorKey: string | null) => {
+    const list = listRef.current;
+    if (anchorKey !== null) anchorRow(anchorKey);
     if (list && anchorKey && !reduceMotion) {
       const state = list.getState();
       const anchorIndex = state.indexByKey(anchorKey);
@@ -4208,7 +4214,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         : resolveThreadFeedFixedItemSize("run-fold");
     }
     if (entry.type === "html-render") {
-      return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
+      // The WebView fits its live document, including disclosures and client font wrapping.
+      return undefined;
     }
     if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
       return undefined;
@@ -4320,6 +4327,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkRow,
             onToggleUserMessage,
             onToggleTurnFold,
+            // A disclosure inside the WebView may resize its row after the touch.
+            onHtmlRenderInteraction: anchorRow,
             onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
