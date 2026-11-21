@@ -1,15 +1,21 @@
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
-import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import {
+  animateSidebarLayoutChanges,
+  resolveSidebarFolderDot,
+  resolveThreadLastVisitedAt,
+} from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -38,10 +44,12 @@ export function sidebarFolderRowId(projectKey: string) {
  * count and chevron, with the count and a status dot only while it is closed, so a
  * closed folder still says when a hidden thread needs you.
  */
-export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHeader(props: {
+export const SidebarProjectFolder = memo(function SidebarProjectFolder(props: {
   group: SidebarProjectSnapshot;
   collapsed: boolean;
   hiddenThreads: readonly EnvironmentThreadShell[];
+  sortableDisabled: boolean;
+  children: ReactNode;
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
   onContextMenu: (
@@ -54,6 +62,11 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const m = useMessages();
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: rowId,
+    disabled: props.sortableDisabled,
+    animateLayoutChanges: animateSidebarLayoutChanges,
+  });
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const dot = collapsed
     ? resolveSidebarFolderDot(
@@ -68,15 +81,13 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         })),
       )
     : null;
-  return (
-    <li
-      data-testid="sidebar-project-folder"
-      className="group/project-folder relative mt-2 list-none first:mt-0"
-    >
+  const header = (
+    <li data-testid="sidebar-project-folder" className="group/project-folder relative list-none">
       <button
         type="button"
         data-sidebar-row={rowId}
         aria-expanded={!collapsed}
+        {...listeners}
         onClick={() => props.onToggle(group)}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -86,7 +97,10 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
             contextMenuSourceOf(event),
           );
         }}
-        className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className={cn(
+          "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          isDragging && "bg-sidebar-row-active",
+        )}
       >
         <ProjectFavicon project={group} className="size-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">
@@ -133,6 +147,22 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
           </TooltipPopup>
         </Tooltip>
       </span>
+    </li>
+  );
+  return (
+    <li
+      ref={setNodeRef}
+      data-sidebar-folder-group={rowId}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        "relative mt-2 list-none first:mt-0",
+        isDragging && "z-20 rounded-(--control-radius) bg-sidebar shadow-lg",
+      )}
+    >
+      <ul role="presentation" className="flex flex-col gap-px">
+        {header}
+        {props.children}
+      </ul>
     </li>
   );
 });

@@ -3,9 +3,17 @@ import { userEvent } from "vite-plus/test/browser";
 import { fakeTimers, render } from "../../test/render";
 import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
 
-function mountList(container: HTMLElement, names: readonly string[]) {
+function mountList(container: HTMLElement, names: readonly string[], insideFolder = false) {
   const list = document.createElement("ul");
   list.style.cssText = "position: relative; margin: 0; padding: 0; width: 200px; list-style: none";
+  const rowList = insideFolder ? document.createElement("ul") : list;
+  if (insideFolder) {
+    const folder = document.createElement("li");
+    folder.dataset.sidebarFolderGroup = "";
+    folder.style.position = "relative";
+    folder.append(rowList);
+    list.append(folder);
+  }
   const pressed: string[] = [];
   const rows = new Map<string, HTMLLIElement>();
   const add = (name: string) => {
@@ -15,7 +23,7 @@ function mountList(container: HTMLElement, names: readonly string[]) {
     button.textContent = name;
     button.addEventListener("click", () => pressed.push(name));
     row.append(button);
-    list.append(row);
+    rowList.append(row);
     rows.set(name, row);
   };
   for (const name of names) add(name);
@@ -41,20 +49,23 @@ function duringPress(act: () => void) {
 }
 
 describe("sidebar shift guard", () => {
-  it("drops a press on a row that slid up on its own, then accepts it after the delay", async () => {
-    await using screen = await render(null);
-    using list = mountList(screen.container, ["A", "B", "C"]);
-    using _clock = fakeTimers();
+  it.each([false, true])(
+    "drops a press on a row that slid up on its own (inside folder: %s)",
+    async (insideFolder) => {
+      await using screen = await render(null);
+      using list = mountList(screen.container, ["A", "B", "C"], insideFolder);
+      using _clock = fakeTimers();
 
-    list.remove("A");
-    list.guard.update();
-    await userEvent.click(list.button("B"));
-    expect(list.pressed).toEqual([]);
+      list.remove("A");
+      list.guard.update();
+      await userEvent.click(list.button("B"));
+      expect(list.pressed).toEqual([]);
 
-    vi.advanceTimersByTime(500);
-    await userEvent.click(list.button("B"));
-    expect(list.pressed).toEqual(["B"]);
-  });
+      vi.advanceTimersByTime(500);
+      await userEvent.click(list.button("B"));
+      expect(list.pressed).toEqual(["B"]);
+    },
+  );
 
   it("keeps rows that did not move, or barely moved, clickable", async () => {
     await using screen = await render(null);

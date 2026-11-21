@@ -393,32 +393,23 @@ export function reorderProjects(
     return state;
   }
 
-  const originalTargetIndex = currentProjectOrder.findIndex((id) => targetSet.has(id));
-  if (originalTargetIndex < 0) {
+  const sourceIndex = currentProjectOrder.findIndex((id) => draggedSet.has(id));
+  const targetIndex = currentProjectOrder.findIndex((id) => targetSet.has(id));
+  if (sourceIndex < 0 || targetIndex < 0) {
     return state;
   }
 
-  const projectOrder = [...currentProjectOrder];
-
-  const removed: string[] = [];
-  let draggedBeforeTarget = 0;
-  for (let i = projectOrder.length - 1; i >= 0; i--) {
-    if (draggedSet.has(projectOrder[i]!)) {
-      removed.unshift(projectOrder.splice(i, 1)[0]!);
-      if (i < originalTargetIndex) {
-        draggedBeforeTarget++;
-      }
-    }
-  }
-  if (removed.length === 0) {
-    return state;
-  }
-
-  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
-  projectOrder.splice(insertIndex, 0, ...removed);
+  const dragged = currentProjectOrder.filter((id) => draggedSet.has(id));
+  const projectOrder = currentProjectOrder.filter((id) => !draggedSet.has(id));
+  const insertIndex =
+    sourceIndex < targetIndex
+      ? projectOrder.findLastIndex((id) => targetSet.has(id)) + 1
+      : projectOrder.findIndex((id) => targetSet.has(id));
+  projectOrder.splice(insertIndex, 0, ...dragged);
+  const loaded = new Set(currentProjectOrder);
   return {
     ...state,
-    projectOrder,
+    projectOrder: [...projectOrder, ...state.projectOrder.filter((id) => !loaded.has(id))],
   };
 }
 

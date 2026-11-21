@@ -85,12 +85,26 @@ describe("uiStateStore pure functions", () => {
     const keyALocal = "env-local:proj-a";
     const keyARemote = "env-remote:proj-a";
     const keyB = "env-local:proj-b";
-    const keyC = "env-local:proj-c";
-    const currentOrder = [keyALocal, keyARemote, keyB, keyC];
+    const keyCLocal = "env-local:proj-c";
+    const keyCRemote = "env-remote:proj-c";
+    const disconnected = "env-disconnected:proj-d";
+    const currentOrder = [keyALocal, keyARemote, keyB, keyCLocal, keyCRemote];
 
-    const next = reorderProjects(makeUiState(), currentOrder, [keyALocal, keyARemote], [keyC]);
+    const next = reorderProjects(
+      makeUiState({ projectOrder: [disconnected] }),
+      currentOrder,
+      [keyALocal, keyARemote],
+      [keyCLocal, keyCRemote],
+    );
 
-    expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
+    expect(next.projectOrder).toEqual([
+      keyB,
+      keyCLocal,
+      keyCRemote,
+      keyALocal,
+      keyARemote,
+      disconnected,
+    ]);
   });
 });
 
