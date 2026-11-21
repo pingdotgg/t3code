@@ -60,7 +60,7 @@ const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PER
 // Matches a model that takes no images, not one refused image (size, format). Wording differs by
 // endpoint; a rejection this misses is retried on every call.
 const IMAGE_INPUT_UNSUPPORTED =
-  /image inputs? (?:is|are) not supported|(?:does not|doesn't) support image(?:s| inputs?)\b/i;
+  /image inputs? (?:is|are) not supported|(?:does not|doesn't) support image(?:s| inputs?)(?=\s*(?:[.,;:!)"']|$))/i;
 
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
