@@ -3990,6 +3990,43 @@ describe("storage cleanup reports and local file policies", () => {
         }),
       ),
   );
+  it.live("keeps external rotated logs when a scanned directory is replaced by a symlink", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        yield* fs.makeDirectory(config.logsDir, { recursive: true });
+        const nested = `${yield* fs.realPath(config.logsDir)}/nested`;
+        const outside = yield* fs.makeTempDirectoryScoped();
+        const expired = `${outside}/server.log.1`;
+        yield* fs.makeDirectory(nested);
+        yield* fs.writeFileString(expired, "external log");
+        yield* fs.utimes(expired, 1, 1);
+
+        const { service, enableFiles, disable } = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: (directory, options) =>
+              Effect.gen(function* () {
+                if (directory === nested) {
+                  yield* fs.rename(nested, `${nested}-original`);
+                  yield* fs.symlink(outside, nested);
+                }
+                return yield* fs.readDirectory(directory, options);
+              }),
+          }),
+        );
+        disable();
+        enableFiles();
+        const report = yield* service.runNow;
+        expect(yield* fs.exists(expired)).toBe(true);
+        expect(report.entries.find((entry) => entry.kind === "logs")).toMatchObject({
+          outcome: "kept",
+          reason: "No expired files",
+        });
+      }),
+    ),
+  );
   it.live("reports git failures without aborting the remaining categories", () =>
     runCleanupTest(
       Effect.gen(function* () {
