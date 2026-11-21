@@ -435,6 +435,40 @@ const diffRefused = new GitHubRequestPolicy.GitHubApiResponseError({
   status: 406,
 });
 
+const summaryNode = (number: number) => ({
+  number,
+  title: `Pull request ${number}`,
+  url: `https://github.com/acme/web/pull/${number}`,
+  author: {
+    __typename: "User",
+    login: "octocat",
+    name: "Octo Cat",
+    avatarUrl: "https://avatars.githubusercontent.com/u/1",
+  },
+  baseRefName: "main",
+  headRefName: `feat/${number}`,
+  state: "OPEN",
+  isDraft: false,
+  mergeable: "MERGEABLE",
+  reviewDecision: null,
+  latestReviews: {
+    nodes: [
+      {
+        state: "APPROVED",
+        isMinimized: false,
+        author: { __typename: "User", login: "reviewer" },
+      },
+    ],
+  },
+  additions: 12,
+  deletions: 3,
+  changedFiles: 2,
+  updatedAt: "2026-08-24T12:34:56.000Z",
+  mergedAt: null,
+  closedAt: null,
+  commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+});
+
 function callAt(index: number): ApiCall {
   const call = mockedExecute.mock.calls[index];
   assert.isDefined(call);
@@ -1205,46 +1239,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("reads linked pull requests on one host together, filed back by position", () =>
     Effect.gen(function* () {
-      const node = (number: number) => ({
-        number,
-        title: `Pull request ${number}`,
-        url: `https://github.com/acme/web/pull/${number}`,
-        author: {
-          __typename: "User",
-          login: "octocat",
-          name: "Octo Cat",
-          avatarUrl: "https://avatars.githubusercontent.com/u/1",
-        },
-        baseRefName: "main",
-        headRefName: `feat/${number}`,
-        state: "OPEN",
-        isDraft: false,
-        mergeable: "MERGEABLE",
-        reviewDecision: null,
-        latestReviews: {
-          nodes: [
-            {
-              state: "APPROVED",
-              isMinimized: false,
-              author: { __typename: "User", login: "reviewer" },
-            },
-          ],
-        },
-        additions: 12,
-        deletions: 3,
-        changedFiles: 2,
-        updatedAt: "2026-08-24T12:34:56.000Z",
-        mergedAt: null,
-        closedAt: null,
-        commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
-      });
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
             encodeJson({
               data: {
-                _0_repository: { pullRequest: node(7) },
-                _1_repository: { pullRequest: node(8) },
+                _0_repository: { pullRequest: summaryNode(7) },
+                _1_repository: { pullRequest: summaryNode(8) },
               },
             }),
           ),
@@ -1300,6 +1301,49 @@ layer("GitHubPullRequestApi.layer", (it) => {
         _0_stacks: true,
         _1_number: 8,
       });
+    }),
+  );
+
+  it.effect("splits summary reads into requests GitHub answers within its time limit", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: Object.fromEntries(
+                Object.entries(call.kind === "graphql" ? (call.variables ?? {}) : {})
+                  .filter(([name]) => name.endsWith("_number"))
+                  .map(([name, number]) => [
+                    name.replace(/number$/, "repository"),
+                    { pullRequest: summaryNode(Number(number)) },
+                  ]),
+              ),
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const numbers = Array.from({ length: 25 }, (_, index) => index + 1);
+
+      const reads = yield* Effect.forEach(
+        numbers,
+        (number) =>
+          cli.getPullRequestSummary({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "github.com",
+            number,
+          }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const summaries = yield* Fiber.join(reads);
+
+      expect(summaries.map((summary) => summary?.number)).toEqual(numbers);
+      const aliasCounts = mockedExecute.mock.calls.map(
+        (_, index) => Object.keys(varsAt(index)).filter((name) => name.endsWith("_number")).length,
+      );
+      expect(Math.max(...aliasCounts)).toBeLessThanOrEqual(10);
     }),
   );
 

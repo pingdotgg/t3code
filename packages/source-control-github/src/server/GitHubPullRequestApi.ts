@@ -474,6 +474,8 @@ export interface GitHubPullRequestStat {
 
 /** Four parallel batches of 25 took ~2.1s; one batch of 100 took ~5.2s. */
 const STAT_ALIASES_PER_REQUEST = 25;
+// GitHub fails a GraphQL request it cannot finish in 10 s; one batch of 25 summaries took up to ~8 s.
+const SUMMARY_ALIASES_PER_REQUEST = 10;
 // Cache checks stagger reads across scheduler ticks; allow time to batch.
 const SUMMARY_BATCH_WINDOW = "10 millis";
 
@@ -1866,7 +1868,7 @@ export const make = Effect.gen(function* () {
     batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(
     RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
-    RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
+    RequestResolver.batchN(SUMMARY_ALIASES_PER_REQUEST),
   );
   const getPullRequestSummary: GitHubPullRequestApi["Service"]["getPullRequestSummary"] = Effect.fn(
     "GitHubPullRequestApi.getPullRequestSummary",
