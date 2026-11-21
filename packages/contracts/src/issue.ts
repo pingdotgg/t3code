@@ -572,12 +572,27 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
 
-/** Which standalone tracker scope a project's issues come from, beside its git host's own. */
+export const MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES = 250;
+
+/**
+ * Which standalone tracker scopes a project's issues come from, beside its git host's own.
+ * `scope` is where agents file new issues; `additionalScopes` are listed and written too.
+ */
 export const IssueTrackerProjectBinding = Schema.Struct({
   tracker: IssueTrackerKind,
   scope: TrimmedNonEmptyString,
+  additionalScopes: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString).check(
+      Schema.isMaxLength(MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES),
+    ),
+  ),
 });
 export type IssueTrackerProjectBinding = typeof IssueTrackerProjectBinding.Type;
+
+export const issueTrackerBindingScopes = (binding: IssueTrackerProjectBinding) => [
+  binding.scope,
+  ...(binding.additionalScopes ?? []),
+];
 
 /** One container the connected account can read, offered when a project is bound. */
 export const IssueTrackerScope = Schema.Struct({
@@ -606,7 +621,7 @@ export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
 
 export const IssueTrackerConnectionList = Schema.Struct({
   trackers: Schema.Array(IssueTrackerConnection),
-  /** Which standalone tracker scope each bound project reads; a project absent here reads none. */
+  /** Which standalone tracker scopes each bound project reads; a project absent here reads none. */
   bindings: Schema.Record(ProjectId, IssueTrackerProjectBinding),
 });
 export type IssueTrackerConnectionList = typeof IssueTrackerConnectionList.Type;
