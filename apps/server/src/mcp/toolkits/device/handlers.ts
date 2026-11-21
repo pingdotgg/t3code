@@ -290,7 +290,11 @@ const handlers = {
           : agentDeviceTargetArgs({ ...device, id: agent.agentDeviceId })),
         ...agent.args,
       ];
-      const launcher = yield* devices.agentLauncher({ ...opened, targetArgs });
+      const launcher = yield* devices.agentLauncher({
+        ...opened,
+        targetArgs,
+        openedIn: agent.installDirectory,
+      });
       if (Option.isNone(launcher)) {
         return yield* new DeviceToolUnavailableError({
           reason:

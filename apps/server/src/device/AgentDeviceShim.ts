@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 
 const SHIM_DIR = "device/bin";
 const TARGETS_DIR = "device/targets";
+const CLAIM_DIRECTORY_FILE = "claim-directory";
 const STALE_RUNTIME =
   "This agent-device command is out of date because T3 Code moved or updated its runtime. Call device_open again for a fresh one.";
 
@@ -157,14 +158,50 @@ const VALUE_FLAGS: ReadonlyArray<string> = [
   "--wait",
 ];
 
+/**
+ * agent-device 0.21.36's commands that take or check a session's claim on its device. It records the
+ * directory `open` ran in as the claim's workspace and refuses the rest from outside that repository,
+ * so a bound launcher runs these in one directory and resolves their paths against the caller's.
+ */
+const CLAIM_COMMANDS: ReadonlyArray<string> = [
+  "open",
+  "install",
+  "reinstall",
+  "uninstall",
+  "install-from-source",
+  "push",
+  "prepare",
+  "boot",
+  "shutdown",
+];
+
+/** The flags those commands accept whose value is a path. */
+const CLAIM_PATH_FLAGS: ReadonlyArray<string> = [
+  "--config",
+  "--ios-simulator-device-set",
+  "--ios-xctest-derived-data-path",
+  "--ios-xctest-env-dir",
+  "--ios-xctestrun-file",
+  "--launch-console",
+  "--remote-config",
+  "--save-script",
+  "--state-dir",
+];
+
 // Help gets no bound flags (agent-device reads --config even for help); only args before `--` are flags.
 // agent-device 0.21.31 refuses some bound flags per command; connect/disconnect/auth/daemon would
 // replace T3's connection; device status reads this machine's claims. It reports a sandboxed shell and a
 // dropped tunnel alike, so check first, at --daemon-base-url if given, as agent-device prefers it.
-const launcherSource = (node: string, entryPath: string, boundArgs: ReadonlyArray<string>) =>
+const launcherSource = (
+  node: string,
+  entryPath: string,
+  boundArgs: ReadonlyArray<string>,
+  claim: { readonly directory: string } | { readonly targetsDir: string },
+) =>
   `import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
+import { isAbsolute, join, resolve } from "node:path";
 const entry = ${JSON.stringify(entryPath)};
 const bound = ${JSON.stringify(boundArgs)};
 const refused = new Map([["cdp", ["--platform", "--udid", "--config", "--session"]], ["connection", ["--platform", "--udid"]]]);
@@ -220,11 +257,37 @@ if (local) {
     process.exit(1);
   }
 }
+// The shared launcher uses the directory of the session's bound launcher, so both hold one claim.
+const targets = ${JSON.stringify("targetsDir" in claim ? claim.targetsDir : null)};
+const session = targets ? valueOf("--session") ?? "" : "";
+const recorded = () => { try { return readFileSync(join(targets, session, ${JSON.stringify(CLAIM_DIRECTORY_FILE)}), "utf8"); } catch { return null; } };
+const claimDirectory = targets ? (/^[\\w-][\\w.-]*$/.test(session) ? recorded() : null) : ${JSON.stringify("directory" in claim ? claim.directory : null)};
+const cwd = !informational && claimDirectory && ${JSON.stringify(CLAIM_COMMANDS)}.includes(name) && existsSync(claimDirectory) ? claimDirectory : undefined;
+if (cwd) {
+  const pathFlags = new Set(${JSON.stringify(CLAIM_PATH_FLAGS)});
+  const url = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+  const absolute = value => !value || isAbsolute(value) || value.startsWith("~") || url.test(value) ? value : resolve(value);
+  const operands = [];
+  for (let index = 0; index < command.length; index++) {
+    const arg = command[index];
+    if (arg === "--") { for (let rest = index + 1; rest < command.length; rest++) operands.push(rest); break; }
+    if (!arg.startsWith("-")) { operands.push(index); continue; }
+    const equals = arg.indexOf("=");
+    const flag = equals < 0 ? arg : arg.slice(0, equals);
+    if (equals >= 0) { if (pathFlags.has(flag)) command[index] = flag + "=" + absolute(arg.slice(equals + 1)); }
+    else if (valued.has(flag)) { if (++index < command.length && pathFlags.has(flag)) command[index] = absolute(command[index]); }
+    // agent-device reads the word after --save-script as its path only when it looks like one.
+    else if (flag === "--save-script" && /[\\/]/.test(command[index + 1] ?? "")) { index++; command[index] = absolute(command[index]); }
+  }
+  const file = name === "push" || name === "reinstall" ? operands[2] : name === "install" && operands.length > 1 ? operands.at(-1) : undefined;
+  // A push payload is a file or inline JSON.
+  if (file !== undefined && (name !== "push" || existsSync(resolve(command[file])))) command[file] = absolute(command[file]);
+}
 const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
 delete env.AGENT_DEVICE_DAEMON_BASE_URL;
 delete env.AGENT_DEVICE_DAEMON_AUTH_TOKEN;
 delete env.AGENT_DEVICE_CONFIG;
-const child = spawn(${JSON.stringify(node)}, [entry, ...command], { stdio: "inherit", env });
+const child = spawn(${JSON.stringify(node)}, [entry, ...command], { stdio: "inherit", env, ...(cwd ? { cwd } : {}) });
 child.on("error", error => { console.error(error.message); process.exitCode = 1; });
 child.on("exit", code => { process.exitCode = code ?? 1; });
 `;
@@ -234,6 +297,7 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   readonly dir: string;
   readonly entryPath: string;
   readonly boundArgs: ReadonlyArray<string>;
+  readonly claim: { readonly directory: string } | { readonly targetsDir: string };
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -241,7 +305,12 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   const node = yield* resolveNodeExecutable("Device automation");
   yield* fs.makeDirectory(input.dir, { recursive: true });
   const launcherPath = path.join(input.dir, "agent-device-launcher.mjs");
-  yield* fs.writeFileString(launcherPath, launcherSource(node, input.entryPath, input.boundArgs));
+  yield* fs.writeFileString(
+    launcherPath,
+    launcherSource(node, input.entryPath, input.boundArgs, input.claim),
+  );
+  if ("directory" in input.claim)
+    yield* fs.writeFileString(path.join(input.dir, CLAIM_DIRECTORY_FILE), input.claim.directory);
   if (platform === "win32") {
     const script = `@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nif not exist "${node}" (echo ${STALE_RUNTIME} 1>&2 & exit /b 1)\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"${node}" "${launcherPath}" %*\r\n`;
     const scriptPath = path.join(input.dir, "agent-device.cmd");
@@ -262,7 +331,12 @@ export const ensureAgentDeviceShim = Effect.fn("AgentDeviceShim.ensure")(functio
 }) {
   const path = yield* Path.Path;
   const shimDir = path.join(input.stateDir, SHIM_DIR);
-  yield* writeLauncher({ dir: shimDir, entryPath: input.entryPath, boundArgs: [] });
+  yield* writeLauncher({
+    dir: shimDir,
+    entryPath: input.entryPath,
+    boundArgs: [],
+    claim: { targetsDir: path.join(input.stateDir, TARGETS_DIR) },
+  });
   return shimDir;
 });
 
@@ -275,12 +349,16 @@ export const bindAgentDeviceLauncher = Effect.fn("AgentDeviceShim.bind")(functio
   readonly stateDir: string;
   readonly session: string;
   readonly targetArgs: ReadonlyArray<string>;
+  /** Where the host already opened the session; without it the launcher's own directory. */
+  readonly openedIn?: string | undefined;
 }) {
   const path = yield* Path.Path;
+  const dir = path.join(input.stateDir, TARGETS_DIR, input.session);
   return yield* writeLauncher({
-    dir: path.join(input.stateDir, TARGETS_DIR, input.session),
+    dir,
     entryPath: input.entryPath,
     boundArgs: input.targetArgs,
+    claim: { directory: input.openedIn ?? dir },
   });
 });
 
