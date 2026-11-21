@@ -13,22 +13,26 @@ export type SetupLine =
 
 const TAIL_LINES = 3;
 
-/** What an agent card shows of its worktree setup. A finished setup, and a thread that has none, show nothing. */
+/**
+ * What an agent card shows of its worktree setup. T3 reports a failed setup script as a failed
+ * stage while the phase is still running or done, so a failed stage shows in every phase. A
+ * setup that finished clean, and a thread that has none, show nothing.
+ */
 export function setupLine(snapshot: WorktreeSetupSnapshot | null | undefined): SetupLine | null {
   if (snapshot == null) return null;
-  if (snapshot.phase === "running") {
-    const stage = snapshot.stages.find((entry) => entry.status === "running");
-    if (stage === undefined) return null;
-    const percent = stage.percent === null ? "" : ` ${stage.percent}%`;
-    return { kind: "running", text: `${worktreeSetupStageLabel(stage.id)}${percent}` };
+  const failed = snapshot.stages.find((entry) => entry.status === "failed");
+  if (snapshot.phase === "failed" || failed !== undefined) {
+    return {
+      kind: "failed",
+      text: failed === undefined ? "Setup failed" : `${worktreeSetupStageLabel(failed.id)} failed`,
+      error: snapshot.error ?? failed?.detail ?? null,
+      tail: failed?.tail.slice(-TAIL_LINES) ?? [],
+      terminalId: snapshot.setupScript?.terminalId ?? null,
+    };
   }
-  if (snapshot.phase !== "failed") return null;
-  const stage = snapshot.stages.find((entry) => entry.status === "failed");
-  return {
-    kind: "failed",
-    text: stage === undefined ? "Setup failed" : `${worktreeSetupStageLabel(stage.id)} failed`,
-    error: snapshot.error,
-    tail: stage?.tail.slice(-TAIL_LINES) ?? [],
-    terminalId: snapshot.setupScript?.terminalId ?? null,
-  };
+  if (snapshot.phase !== "running") return null;
+  const stage = snapshot.stages.find((entry) => entry.status === "running");
+  if (stage === undefined) return null;
+  const percent = stage.percent === null ? "" : ` ${stage.percent}%`;
+  return { kind: "running", text: `${worktreeSetupStageLabel(stage.id)}${percent}` };
 }

@@ -11,6 +11,11 @@ import { connectionAtomRuntime } from "../connection/runtime";
 
 const terminalEnvironment = createTerminalEnvironmentAtoms(connectionAtomRuntime);
 
+const ESCAPE_SEQUENCES = new RegExp(
+  String.raw`\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001b]*(?:\u0007|\u001b\\)|[()][0-2AB])|\r`,
+  "g",
+);
+
 /** A worktree setup script's terminal, read only, as T3 holds it. */
 export function SetupTerminal({
   environmentId,
@@ -48,7 +53,9 @@ export function SetupTerminal({
           data-testid="setup-terminal"
           className="min-h-24 overflow-auto font-mono text-[11px] leading-5 whitespace-pre-wrap text-fg"
         >
-          {buffer === null ? "Connecting to the terminal" : terminalOutputText(buffer.output)}
+          {buffer === null
+            ? "Connecting to the terminal"
+            : terminalOutputText(buffer.output).replace(ESCAPE_SEQUENCES, "")}
         </pre>
         {buffer?.error != null && <p className="text-[11px] text-red-300">{buffer.error}</p>}
         <button

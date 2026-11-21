@@ -5,7 +5,11 @@ import { describe, expect, it } from "vite-plus/test";
 import { setupLine } from "./worktreeSetup";
 
 const snapshot = Schema.decodeUnknownSync(WorktreeSetupSnapshot);
-const stage = (id: string, status: string, extra: Record<string, unknown> = {}) => ({
+const stage = (
+  id: string,
+  status: string,
+  extra: { percent?: number; detail?: string; tail?: string[] } = {},
+) => ({
   id,
   status,
   startedAt: null,
@@ -40,25 +44,39 @@ describe("setupLine", () => {
   });
 
   it("shows the failed stage, T3's error, the last three lines, and the terminal", () => {
-    const line = setupLine(
-      snapshot({
-        ...base,
-        phase: "failed",
-        error: "Setup script exited with 1.",
-        setupScript: { name: "setup", command: "sh x.sh", terminalId: "term-9" },
-        stages: [
-          stage("checkout", "done"),
-          stage("setup-script", "failed", { tail: ["one", "two", "three", "four"] }),
-        ],
-      }),
-    );
-    expect(line).toEqual({
+    const failedScript = stage("setup-script", "failed", {
+      detail: "exited with 1",
+      tail: ["one", "two", "three", "four"],
+    });
+    const setupScript = { name: "Setup", command: "sh x.sh", terminalId: "setup-setup" };
+    const expected = {
       kind: "failed",
       text: "Run setup script failed",
-      error: "Setup script exited with 1.",
+      error: "exited with 1",
       tail: ["two", "three", "four"],
-      terminalId: "term-9",
-    });
+      terminalId: "setup-setup",
+    };
+    expect(
+      setupLine(
+        snapshot({
+          ...base,
+          phase: "done",
+          setupScript,
+          stages: [stage("checkout", "done"), failedScript, stage("agent", "done")],
+        }),
+      ),
+    ).toEqual(expected);
+    expect(
+      setupLine(
+        snapshot({
+          ...base,
+          phase: "failed",
+          error: "Setup script exited with 1.",
+          setupScript,
+          stages: [stage("checkout", "done"), failedScript],
+        }),
+      ),
+    ).toEqual({ ...expected, error: "Setup script exited with 1." });
   });
 
   it("shows nothing once setup is done", () => {
