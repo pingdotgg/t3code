@@ -721,8 +721,10 @@ const make = Effect.gen(function* () {
       const { supported } = yield* listProjects({ host: link.host, authority });
       const onHost = supported.filter((project) => project.tracker === tracker);
       const onAuthority = onHost.filter((project) => project.host === authority);
-      // An explicit port names its own server; only a port-less link may borrow another binding's.
-      const onTracker = onAuthority.length > 0 || parsedUrl.port !== "" ? onAuthority : onHost;
+      // Only a host with its own `changeRequestHost` keeps ports, so only its ported links are exact.
+      const portIsExact =
+        parsedUrl.port !== "" && gitHost?.definition.changeRequestHost !== undefined;
+      const onTracker = onAuthority.length > 0 || portIsExact ? onAuthority : onHost;
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
       const scope = link.scope.toLowerCase();
