@@ -1029,59 +1029,64 @@ function TaskForm({
           />
         </SettingsSection>
 
-        <SettingsSection
-          title={gt("Destination")}
-          footer={
-            draft.threadMode === "new_thread"
-              ? gt("Each run starts a new thread.")
-              : draft.threadMode === "continue"
-                ? draft.threadId === null
-                  ? gt(
-                      "Runs continue one conversation. The first run starts the thread. Deleting it also deletes this task.",
-                    )
-                  : gt("Runs continue one conversation. Deleting it also deletes this task.")
-                : draft.threadId === null
-                  ? gt(
-                      "Runs share one thread, each in a fresh session without earlier runs' context. The first run starts the thread. Deleting it also deletes this task.",
-                    )
-                  : gt(
-                      "Runs share one thread, each in a fresh session without earlier runs' context. Deleting it also deletes this task.",
-                    )
-          }
-        >
-          {offersThreadModes ? (
-            <SelectRow
-              label={gt("Runs go to")}
-              value={m(THREAD_MODE_LABELS[draft.threadMode])}
-              actions={(Object.keys(THREAD_MODE_LABELS) as ScheduledTaskThreadMode[]).map(
-                (mode) => ({
-                  id: mode,
-                  title: m(THREAD_MODE_LABELS[mode]),
-                  state: draft.threadMode === mode ? "on" : undefined,
-                }),
-              )}
-              onSelect={(id) => {
-                if (id === "new_thread")
-                  setDraft((current) => ({ ...unbindDraftFromThread(current), threadMode: id }));
-                else if (id === "continue" || id === "fresh_session")
-                  setDraft((current) => ({ ...current, threadMode: id }));
-              }}
-            />
-          ) : null}
-          {!offersThreadModes || draft.threadMode !== "new_thread" ? (
-            <PickerRow
-              label={gt("Thread")}
-              borderTop={offersThreadModes}
-              value={
-                draft.threadId === null && draft.threadMode !== "new_thread"
-                  ? gt("Started by the first run")
-                  : destinationLabel
-              }
-              onPress={() => navigation.navigate("SettingsScheduledTaskThread")}
-              disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
-            />
-          ) : null}
-        </SettingsSection>
+        {offersThreadModes || draft.threadMode !== "new_thread" ? (
+          <SettingsSection
+            title={gt("Destination")}
+            footer={
+              draft.threadMode === "new_thread"
+                ? gt("Each run starts a new thread.")
+                : draft.threadMode === "continue"
+                  ? draft.threadId === null
+                    ? gt(
+                        "Runs continue one conversation. The first run starts the thread. Deleting it also deletes this task.",
+                      )
+                    : gt("Runs continue one conversation. Deleting it also deletes this task.")
+                  : draft.threadId === null
+                    ? gt(
+                        "Runs share one thread, each in a fresh session without earlier runs' context. The first run starts the thread. Deleting it also deletes this task.",
+                      )
+                    : gt(
+                        "Runs share one thread, each in a fresh session without earlier runs' context. Deleting it also deletes this task.",
+                      )
+            }
+          >
+            {offersThreadModes ? (
+              <SelectRow
+                label={gt("Runs go to")}
+                value={m(THREAD_MODE_LABELS[draft.threadMode])}
+                actions={(Object.keys(THREAD_MODE_LABELS) as ScheduledTaskThreadMode[]).map(
+                  (mode) => ({
+                    id: mode,
+                    title: m(THREAD_MODE_LABELS[mode]),
+                    state: draft.threadMode === mode ? "on" : undefined,
+                  }),
+                )}
+                onSelect={(id) => {
+                  if (id === "new_thread")
+                    setDraft((current) => ({ ...unbindDraftFromThread(current), threadMode: id }));
+                  else if (id === "continue" || id === "fresh_session")
+                    setDraft((current) => ({ ...current, threadMode: id }));
+                }}
+              />
+            ) : null}
+            {draft.threadMode !== "new_thread" ? (
+              <PickerRow
+                label={gt("Thread")}
+                borderTop={offersThreadModes}
+                value={destinationLabel}
+                onPress={() => navigation.navigate("SettingsScheduledTaskThread")}
+                // Without thread modes there is no way back to a new thread each run, so stay read-only.
+                disabled={
+                  !offersThreadModes ||
+                  !draft.projectId ||
+                  saving ||
+                  dictationPending ||
+                  environmentUnavailable
+                }
+              />
+            ) : null}
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection title={gt("Workspace")}>
           <SelectRow

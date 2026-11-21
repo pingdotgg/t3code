@@ -111,6 +111,10 @@
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"
     },
+    "./scheduled-task-destination": {
+      "types": "./src/scheduledTaskDestination.ts",
+      "default": "./src/scheduledTaskDestination.ts"
+    },
     "./linked-thread": {
       "types": "./src/linkedThread.ts",
       "default": "./src/linkedThread.ts"

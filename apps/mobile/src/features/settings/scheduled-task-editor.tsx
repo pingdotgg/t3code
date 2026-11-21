@@ -21,8 +21,6 @@ import {
   type ScheduledTaskEditor,
 } from "./scheduled-task-editor-state";
 
-export const NEW_THREAD_DESTINATION_LABEL = msg("New thread each run");
-
 export function useScheduledTaskThread(
   environmentId: EnvironmentId | null,
   threadId: ThreadId | null,
@@ -45,7 +43,7 @@ export function useScheduledTaskDestinationLabel(
 ): string {
   const m = useMessages();
   const thread = useScheduledTaskThread(environmentId, threadId);
-  if (environmentId === null || threadId === null) return m(NEW_THREAD_DESTINATION_LABEL);
+  if (environmentId === null || threadId === null) return m(msg("Started by the first run"));
   return thread?.title.trim() || m(msg("Thread {id}", { id: threadId }));
 }
 
