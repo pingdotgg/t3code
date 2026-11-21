@@ -53,6 +53,11 @@ const PackageManifest = Schema.Struct({
   target: Schema.String,
   entrypoint: Schema.String,
 });
+const LocalProbe = Schema.fromJsonString(
+  Schema.Struct({ executablePath: Schema.String, fingerprint: Schema.String, version: Version }),
+);
+const decodeLocalProbe = Schema.decodeEffect(LocalProbe);
+const encodeLocalProbe = Schema.encodeEffect(LocalProbe);
 const decodeVersion = Schema.decodeUnknownEffect(Version);
 const decodeNpmLatest = Schema.decodeUnknownEffect(Schema.Struct({ version: Version }));
 const encodeRecord = Schema.encodeEffect(Schema.fromJsonString(InstalledRelease));
@@ -197,6 +202,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       : options.releaseAsset;
   const managedDirectory = path.join(options.baseDir, "tools", "codex");
   const activePath = path.join(managedDirectory, "active.json");
+  const localProbePath = path.join(options.baseDir, "caches", "codex-local-probe.json");
   const executableName = platform === "win32" ? "codex.exe" : "codex";
   const gate = yield* Semaphore.make(1);
   const updateCheckGate = yield* Semaphore.make(1);
@@ -489,24 +495,42 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       const info = yield* fs.stat(executablePath);
       const fingerprint = `${realExecutablePath}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}:${Option.getOrUndefined(info.ino)}`;
       const cached = localCache.get(executablePath);
+      const local = (version: string) =>
+        ({
+          executablePath,
+          source: "local",
+          version,
+          managedVersionDirectory: null,
+        }) satisfies CodexExecutable;
+      // Only successful probes persist, so a slow or failed one is retried on the next start.
+      const persisted = fs.readFileString(localProbePath).pipe(
+        Effect.flatMap(decodeLocalProbe),
+        Effect.map((record) =>
+          record.executablePath === executablePath && record.fingerprint === fingerprint
+            ? local(record.version)
+            : null,
+        ),
+        Effect.orElseSucceed(() => null),
+      );
+      const probe = Effect.gen(function* () {
+        const output = yield* runCommand(executablePath, ["--version"]);
+        const version = /^codex-cli (\d+\.\d+\.\d+)$/u.exec(output.trim())?.[1];
+        if (!version) return null;
+        yield* runCommand(executablePath, ["app-server", "--help"]);
+        yield* fs.makeDirectory(path.dirname(localProbePath), { recursive: true }).pipe(
+          Effect.andThen(encodeLocalProbe({ executablePath, fingerprint, version })),
+          Effect.flatMap((record) => fs.writeFileString(localProbePath, record)),
+          Effect.ignore,
+        );
+        return local(version);
+      }).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.orElseSucceed(() => null),
+      );
       const executable =
         cached?.fingerprint === fingerprint
           ? cached.executable
-          : yield* Effect.gen(function* () {
-              const output = yield* runCommand(executablePath, ["--version"]);
-              const version = /^codex-cli (\d+\.\d+\.\d+)$/u.exec(output.trim())?.[1];
-              if (!version) return null;
-              yield* runCommand(executablePath, ["app-server", "--help"]);
-              return {
-                executablePath,
-                source: "local",
-                version,
-                managedVersionDirectory: null,
-              } satisfies CodexExecutable;
-            }).pipe(
-              Effect.timeout("5 seconds"),
-              Effect.orElseSucceed(() => null),
-            );
+          : ((yield* persisted) ?? (yield* probe));
       localCache.set(executablePath, { fingerprint, executable });
       if (!executable) return null;
       const advisory = yield* compatibility(executable.version);
