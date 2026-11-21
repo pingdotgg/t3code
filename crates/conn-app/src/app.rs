@@ -90,6 +90,14 @@ pub(crate) struct ConnApp {
     connection_gen: u64,
     /// Orbit Gateway Nodes/Instances, profile, workspace, theme, and desktop settings sync state.
     orbit: crate::orbit_sync::OrbitSyncState,
+    /// Project id currently subscribed to `annotations.subscribe` on `self.connection`.
+    subscribed_annotation_project: Option<String>,
+    /// Live annotations queue for `subscribed_annotation_project`.
+    annotations: Vec<conn_state::AnnotationRecord>,
+    /// Threads with automatic annotation Watch enabled.
+    annotation_watching_threads: HashSet<String>,
+    /// Waiting annotation ids already sent to each thread (prevents Watch re-send loops).
+    annotation_last_sent: HashMap<String, Vec<String>>,
 }
 
 impl std::fmt::Debug for ConnApp {
@@ -121,8 +129,8 @@ impl ConnApp {
             Some(config) => {
                 let (connection, events) = Connection::start(config, crate::live::RT.handle());
                 connection.subscribe_shell();
+                connection.subscribe_panel_requests(Some(default_device_name()));
                 Self::pump_events(1, None, events, cx);
-                Self::start_agent_panel_requests(1, connection.clone(), cx);
                 (ShellState::default(), Some(connection))
             }
             None => {
@@ -193,6 +201,9 @@ impl ConnApp {
                 crate::panels::RightPanelEvent::SendPrompt(prompt) => {
                     app.send_prompt(prompt.clone(), cx);
                 }
+                crate::panels::RightPanelEvent::Annotation(action) => {
+                    app.handle_annotation_action(action.clone(), cx);
+                }
             },
         )
         .detach();
@@ -262,6 +273,10 @@ impl ConnApp {
             server_label: None,
             connection_gen: 1,
             orbit,
+            subscribed_annotation_project: None,
+            annotations: Vec::new(),
+            annotation_watching_threads: HashSet::new(),
+            annotation_last_sent: HashMap::new(),
         };
         if crate::orbit_sync::orbit_sync_enabled_by_env() {
             app.sync_orbit_profile(crate::orbit_sync::allow_startup_theme_adopt(), cx);
@@ -520,7 +535,7 @@ impl ConnApp {
     }
 
     /// Pushes the selected thread's timeline (and title/model) into the chat view.
-    fn sync_chat(&self, cx: &mut Context<'_, Self>) {
+    fn sync_chat(&mut self, cx: &mut Context<'_, Self>) {
         let selected = self.layout.selected_thread_id.as_deref();
         let shell_thread = selected.and_then(|id| self.shell.thread(id));
         let title = if self.draft_project.is_some() {
@@ -539,12 +554,14 @@ impl ConnApp {
         let timeline = selected.and_then(|id| self.threads.get(id));
         let fallback = selected.map(conn_state::ThreadState::new);
         let thread = timeline.or(fallback.as_ref());
-        let project_id = shell_thread.map(|t| t.project_id.clone());
+        let project_id = shell_thread
+            .map(|t| t.project_id.clone())
+            .or_else(|| self.draft_project.clone());
         let thread_id = selected.map(str::to_owned);
         let surface = self.right_panel_surface();
         let panel_root = root.clone();
         self.right_panel.update(cx, |panel, cx| {
-            panel.set_context(project_id, panel_root, thread_id, cx);
+            panel.set_context(project_id.clone(), panel_root, thread_id, cx);
             panel.set_surface(&surface, cx);
         });
         let model_instance = shell_thread.map(|t| t.provider_instance_id.clone());
@@ -573,6 +590,7 @@ impl ConnApp {
                 chat.set_model_selection(model_instance, model, model_options, cx);
             }
         });
+        self.sync_annotations_state(project_id.as_deref(), cx);
     }
 
     /// Moves connection events onto the GPUI thread, one batch per wake.
@@ -601,7 +619,7 @@ impl ConnApp {
                             ) {
                                 status_changed = true;
                             }
-                            app.apply_event(event, orbit_server_id.as_deref());
+                            app.apply_event(event, orbit_server_id.as_deref(), cx);
                         }
                         if status_changed {
                             app.refresh_settings_orbit_info(cx);
@@ -619,7 +637,12 @@ impl ConnApp {
         .detach();
     }
 
-    fn apply_event(&mut self, event: ClientEvent, orbit_server_id: Option<&str>) {
+    fn apply_event(
+        &mut self,
+        event: ClientEvent,
+        orbit_server_id: Option<&str>,
+        cx: &mut Context<'_, Self>,
+    ) {
         match event {
             ClientEvent::Status(status) => {
                 if let ConnectionStatus::Failed(ref msg) = status
@@ -667,6 +690,17 @@ impl ConnApp {
                     .entry(thread_id.clone())
                     .or_insert_with(|| ThreadState::new(thread_id))
                     .apply(item);
+            }
+            ClientEvent::PanelRequest(request) => {
+                self.dispatch_agent_panel_request(request, cx);
+            }
+            ClientEvent::Annotations {
+                project_id,
+                annotations,
+            } => {
+                if self.subscribed_annotation_project.as_deref() == Some(project_id.as_str()) {
+                    self.annotations = annotations;
+                }
             }
             ClientEvent::StreamEnded { tag, key, error } => {
                 if tag == "orchestration.subscribeThread" && self.threads.contains_key(&key) {
@@ -1550,106 +1584,195 @@ impl ConnApp {
         true
     }
 
-    /// Subscribes to `conn-server`'s `panels.requests` reverse-RPC stream so agents (via
-    /// `panel_open`, `database_query`, `mcp_connect`, `mcp_call`) can drive this desktop app's
-    /// live panels over the existing `/ws` connection.
-    fn start_agent_panel_requests(
-        generation: u64,
-        connection: Connection,
+    /// Display name advertised to `conn-server` on the `panels.requests` stream.
+    fn device_name(&self) -> String {
+        self.orbit
+            .node
+            .as_ref()
+            .map(|n| n.name.clone())
+            .unwrap_or_else(default_device_name)
+    }
+
+    /// Synchronizes `annotations.subscribe` for the active project, pushes the queue into the
+    /// Browser and Device panels, and runs Watch auto-dispatch when the active thread is idle.
+    fn sync_annotations_state(&mut self, project_id: Option<&str>, cx: &mut Context<'_, Self>) {
+        if self.subscribed_annotation_project.as_deref() != project_id {
+            if let Some(old) = self.subscribed_annotation_project.take()
+                && let Some(conn) = &self.connection
+            {
+                conn.unsubscribe_annotations(&old);
+            }
+            self.annotations.clear();
+            if let Some(next) = project_id {
+                self.subscribed_annotation_project = Some(next.to_owned());
+                if let Some(conn) = &self.connection {
+                    conn.subscribe_annotations(next);
+                }
+            }
+        }
+
+        let thread_id = self.layout.selected_thread_id.clone();
+        let watching = thread_id
+            .as_deref()
+            .is_some_and(|id| self.annotation_watching_threads.contains(id));
+        let project_ready = project_id.is_some() && self.connection.is_some();
+
+        self.right_panel.update(cx, |panel, cx| {
+            panel.set_annotations(self.annotations.clone(), watching, project_ready, cx);
+        });
+
+        self.maybe_auto_send_annotations(cx);
+    }
+
+    fn maybe_auto_send_annotations(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(thread_id) = self.layout.selected_thread_id.clone() else {
+            return;
+        };
+        let watching = self.annotation_watching_threads.contains(&thread_id);
+        let thread_idle = !self
+            .threads
+            .get(&thread_id)
+            .is_some_and(|timeline| timeline.working);
+        let last_sent = self
+            .annotation_last_sent
+            .get(&thread_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let to_send =
+            conn_state::waiting_ids_to_send(watching, thread_idle, &self.annotations, last_sent);
+        if to_send.is_empty() {
+            return;
+        }
+        self.annotation_last_sent.insert(thread_id, to_send);
+        let prompt = conn_state::build_annotation_prompt(&self.annotations);
+        self.send_prompt(prompt, cx);
+    }
+
+    fn handle_annotation_action(
+        &mut self,
+        action: crate::panels::annotations::AnnotationAction,
         cx: &mut Context<'_, Self>,
     ) {
-        const RESUBSCRIBE_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
-        const NOT_ON_THREAD: &str = "The user is looking at another thread, so Conn did not run this. Ask them to open your thread, then try again.";
+        use crate::panels::annotations::AnnotationAction;
 
-        cx.spawn(async move |this, cx| {
-            loop {
-                let device_name = this
-                    .read_with(cx, |app, _| {
-                        if app.connection_gen != generation {
-                            return None;
-                        }
-                        Some(
-                            app.orbit
-                                .node
-                                .as_ref()
-                                .map(|n| n.name.clone())
-                                .or_else(|| std::env::var("USER").ok())
-                                .unwrap_or_else(|| "Mac".to_owned()),
-                        )
-                    })
-                    .ok()
-                    .flatten();
-                let Some(device_name) = device_name else {
-                    break;
+        match action {
+            AnnotationAction::Create(annotation) => {
+                let (Some(conn), Some(project_id)) = (
+                    self.connection.clone(),
+                    self.subscribed_annotation_project.clone(),
+                ) else {
+                    return;
                 };
-
-                let payload = serde_json::to_value(conn_contract::AgentPanelSubscribeInput {
-                    device_name: Some(device_name.clone()),
-                })
-                .unwrap_or_else(|_| serde_json::json!({}));
-                let (stream_id, mut rx) = connection.stream_json("panels.requests", payload);
-
-                loop {
-                    let next = crate::live::RT
+                let input = conn_contract::AnnotationCreateInput {
+                    project_id,
+                    annotation,
+                };
+                cx.spawn(async move |_, _| {
+                    let _ = crate::live::RT
                         .spawn(async move {
-                            let item = rx.recv().await;
-                            (item, rx)
+                            let res = conn
+                                .call::<conn_contract::AnnotationCreateInput, conn_contract::AnnotationCreateResult>(
+                                    "annotations.create",
+                                    &input,
+                                )
+                                .await;
+                            if let Err(err) = res {
+                                eprintln!("annotations.create failed: {err}");
+                            }
                         })
                         .await;
-                    let Ok((Some(raw), next_rx)) = next else {
-                        break;
-                    };
-                    rx = next_rx;
-
-                    let still_active = this
-                        .read_with(cx, |app, _| app.connection_gen == generation)
-                        .unwrap_or(false);
-                    if !still_active {
-                        connection.cancel_stream(stream_id);
-                        return;
-                    }
-
-                    let Ok(request) =
-                        serde_json::from_value::<conn_contract::AgentPanelRequest>(raw)
-                    else {
-                        continue;
-                    };
-
-                    let conn_reply = connection.clone();
-                    let dev_reply = device_name.clone();
-                    let this_req = this.clone();
-                    cx.spawn(async move |cx| {
-                        let response = Self::handle_agent_panel_request(
-                            this_req,
-                            request,
-                            dev_reply,
-                            NOT_ON_THREAD,
-                            cx,
-                        )
-                        .await;
-                        let _ = crate::live::RT
-                            .spawn(async move {
-                                let _ = conn_reply
-                                    .call::<conn_contract::AgentPanelResponse, ()>(
-                                        "panels.respond",
-                                        &response,
-                                    )
-                                    .await;
-                            })
-                            .await;
-                    })
-                    .detach();
-                }
-
-                connection.cancel_stream(stream_id);
-                let still_active = this
-                    .read_with(cx, |app, _| app.connection_gen == generation)
-                    .unwrap_or(false);
-                if !still_active {
-                    break;
-                }
-                cx.background_executor().timer(RESUBSCRIBE_DELAY).await;
+                })
+                .detach();
             }
+            AnnotationAction::Remove { ids } => {
+                if ids.is_empty() {
+                    return;
+                }
+                let (Some(conn), Some(project_id)) = (
+                    self.connection.clone(),
+                    self.subscribed_annotation_project.clone(),
+                ) else {
+                    return;
+                };
+                let input = conn_contract::AnnotationRemoveInput {
+                    project_id,
+                    ids: Some(ids),
+                    scope: None,
+                };
+                cx.spawn(async move |_, _| {
+                    let _ = crate::live::RT
+                        .spawn(async move {
+                            let res = conn
+                                .call::<conn_contract::AnnotationRemoveInput, conn_contract::AnnotationRemoveResult>(
+                                    "annotations.remove",
+                                    &input,
+                                )
+                                .await;
+                            if let Err(err) = res {
+                                eprintln!("annotations.remove failed: {err}");
+                            }
+                        })
+                        .await;
+                })
+                .detach();
+            }
+            AnnotationAction::SendWaiting => {
+                let waiting_ids: Vec<String> = self
+                    .annotations
+                    .iter()
+                    .filter(|r| {
+                        conn_state::annotation_state(r) == conn_state::AnnotationQueueState::Waiting
+                    })
+                    .map(|r| r.id.clone())
+                    .collect();
+                if waiting_ids.is_empty() {
+                    return;
+                }
+                if let Some(thread_id) = self.layout.selected_thread_id.clone() {
+                    self.annotation_last_sent.insert(thread_id, waiting_ids);
+                }
+                let prompt = conn_state::build_annotation_prompt(&self.annotations);
+                self.send_prompt(prompt, cx);
+            }
+            AnnotationAction::ToggleWatch => {
+                let Some(thread_id) = self.layout.selected_thread_id.clone() else {
+                    return;
+                };
+                if !self.annotation_watching_threads.remove(&thread_id) {
+                    self.annotation_watching_threads.insert(thread_id);
+                }
+                let project_id = self.subscribed_annotation_project.clone();
+                self.sync_annotations_state(project_id.as_deref(), cx);
+                cx.notify();
+            }
+        }
+    }
+
+    /// Dispatches one agent panel request received on `conn-client`'s auto-resubscribed
+    /// `panels.requests` stream (`panel_open`, `database_query`, `mcp_connect`, `mcp_call`) and
+    /// replies via `panels.respond`.
+    fn dispatch_agent_panel_request(
+        &self,
+        request: conn_contract::AgentPanelRequest,
+        cx: &mut Context<'_, Self>,
+    ) {
+        const NOT_ON_THREAD: &str = "The user is looking at another thread, so Conn did not run this. Ask them to open your thread, then try again.";
+
+        let Some(conn_reply) = self.connection.clone() else {
+            return;
+        };
+        let device_name = self.device_name();
+        cx.spawn(async move |this, cx| {
+            let response =
+                Self::handle_agent_panel_request(this, request, device_name, NOT_ON_THREAD, cx)
+                    .await;
+            let _ = crate::live::RT
+                .spawn(async move {
+                    let _ = conn_reply
+                        .call::<conn_contract::AgentPanelResponse, ()>("panels.respond", &response)
+                        .await;
+                })
+                .await;
         })
         .detach();
     }
@@ -2047,6 +2170,9 @@ impl ConnApp {
         self.shell = ShellState::default();
         self.threads.clear();
         self.ended_threads.clear();
+        self.subscribed_annotation_project = None;
+        self.annotations.clear();
+        self.annotation_last_sent.clear();
         self.layout.selected_thread_id = None;
         self.layout.selected_project_id = None;
         self.draft_project = None;
@@ -2054,8 +2180,8 @@ impl ConnApp {
 
         let (connection, events) = Connection::start(config, crate::live::RT.handle());
         connection.subscribe_shell();
+        connection.subscribe_panel_requests(Some(self.device_name()));
         Self::pump_events(generation, orbit_server_id, events, cx);
-        Self::start_agent_panel_requests(generation, connection.clone(), cx);
 
         self.connection = Some(connection.clone());
         self.chat.update(cx, |chat, cx| {
@@ -2622,4 +2748,8 @@ impl Render for ConnApp {
 
         root
     }
+}
+
+fn default_device_name() -> String {
+    std::env::var("USER").unwrap_or_else(|_| "Mac".to_owned())
 }

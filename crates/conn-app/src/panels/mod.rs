@@ -1,6 +1,7 @@
 //! Right-panel surfaces for `conn-app`: Conn tab header, Files explorer + source preview,
 //! Diff viewer, local PTY Terminal, and Browser surface.
 
+pub(crate) mod annotations;
 mod api;
 mod browser;
 pub(crate) mod chrome;
@@ -56,6 +57,8 @@ pub(crate) enum RightPanelEvent {
     OpenTab(RightPanelTab),
     /// A surface asked to send an agent prompt to the active thread (e.g. PR agent actions).
     SendPrompt(String),
+    /// Browser or Device panel emitted a project annotation queue action.
+    Annotation(annotations::AnnotationAction),
 }
 
 impl gpui_kit::EventEmitter<RightPanelEvent> for RightPanel {}
@@ -128,6 +131,13 @@ impl RightPanel {
         let diff = cx.new(|_| DiffPanel::new(tokens.clone(), connection.clone()));
         let terminal = cx.new(|cx| TerminalPanel::new(tokens.clone(), cx));
         let browser = cx.new(|cx| BrowserPanel::new(tokens.clone(), window, cx));
+        cx.subscribe(
+            &browser,
+            |_, _, action: &annotations::AnnotationAction, cx| {
+                cx.emit(RightPanelEvent::Annotation(action.clone()));
+            },
+        )
+        .detach();
         let api = cx.new(|cx| ApiPanel::new(tokens.clone(), window, cx));
         let database = cx.new(|cx| DatabasePanel::new(tokens.clone(), window, cx));
         let mcp = cx.new(|cx| McpPanel::new(tokens.clone(), window, cx));
@@ -146,6 +156,13 @@ impl RightPanel {
         let linked_items =
             cx.new(|cx| LinkedItemsPanel::new(tokens.clone(), connection.clone(), window, cx));
         let device = cx.new(|cx| DevicePanel::new(tokens.clone(), connection.clone(), window, cx));
+        cx.subscribe(
+            &device,
+            |_, _, action: &annotations::AnnotationAction, cx| {
+                cx.emit(RightPanelEvent::Annotation(action.clone()));
+            },
+        )
+        .detach();
         cx.subscribe(&linked_items, Self::on_linked_items_event)
             .detach();
 
@@ -251,6 +268,22 @@ impl RightPanel {
         cx: &App,
     ) -> Option<tokio::sync::broadcast::Receiver<conn_desktop::orbit::OrbitRealtimeEvent>> {
         self.tasks.read(cx).subscribe_orbit_events()
+    }
+
+    /// Syncs the active project's live annotations queue and Watch state into Browser and Device.
+    pub fn set_annotations(
+        &mut self,
+        annotations: Vec<conn_state::AnnotationRecord>,
+        watching: bool,
+        project_ready: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.browser.update(cx, |p, cx| {
+            p.sync_annotations(annotations.clone(), watching, project_ready, cx);
+        });
+        self.device.update(cx, |p, cx| {
+            p.sync_annotations(annotations, watching, project_ready, cx);
+        });
     }
 
     /// Updates the live `conn-server` connection across every server-backed right-panel surface.

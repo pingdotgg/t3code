@@ -115,6 +115,15 @@ pub enum ClientEvent {
         thread_id: String,
         item: conn_contract::OrchestrationV2ThreadStreamItem,
     },
+    /// Server→desktop agent panel request (`panels.requests`: `panel_open`, `database_query`,
+    /// `mcp_connect`, `mcp_call`). Auto-resubscribed on WebSocket reconnect.
+    PanelRequest(conn_contract::AgentPanelRequest),
+    /// Live project annotation queue snapshot (`annotations.subscribe`). Auto-resubscribed on
+    /// WebSocket reconnect.
+    Annotations {
+        project_id: String,
+        annotations: Vec<conn_contract::AnnotationRecord>,
+    },
     /// A stream ended or failed; the UI may resubscribe.
     StreamEnded {
         tag: String,
@@ -330,6 +339,34 @@ impl Connection {
         let _ = self
             .cmd_tx
             .send(Command::UnsubscribeThread(thread_id.to_owned()));
+    }
+
+    /// Subscribes to `panels.requests` as a first-class auto-resubscribed stream so agent panel
+    /// calls (`panel_open`, `database_query`, `mcp_connect`, `mcp_call`) resume immediately on
+    /// WebSocket reconnect with zero retry gap.
+    pub fn subscribe_panel_requests(&self, device_name: Option<String>) {
+        let _ = self
+            .cmd_tx
+            .send(Command::SubscribePanelRequests(device_name));
+    }
+
+    /// Stops listening to `panels.requests`.
+    pub fn unsubscribe_panel_requests(&self) {
+        let _ = self.cmd_tx.send(Command::UnsubscribePanelRequests);
+    }
+
+    /// Subscribes to `annotations.subscribe` for `project_id`, auto-resubscribing on reconnect.
+    pub fn subscribe_annotations(&self, project_id: &str) {
+        let _ = self
+            .cmd_tx
+            .send(Command::SubscribeAnnotations(project_id.to_owned()));
+    }
+
+    /// Stops listening to `annotations.subscribe` for `project_id`.
+    pub fn unsubscribe_annotations(&self, project_id: &str) {
+        let _ = self
+            .cmd_tx
+            .send(Command::UnsubscribeAnnotations(project_id.to_owned()));
     }
 
     /// Calls a unary RPC method with raw JSON payload and response.

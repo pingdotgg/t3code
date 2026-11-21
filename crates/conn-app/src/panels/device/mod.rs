@@ -33,14 +33,17 @@ use conn_contract::{
     DeviceServiceState, DeviceShutdownInput, DeviceSimlockIdentityInput, DeviceSummary,
     ServerProbePayload, ServerUpdateSettingsPayload,
 };
+use conn_state::{AnnotationPinPoint, AnnotationRecord, build_device_annotation_capture};
 use conn_theme::Tokens;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Bounds, Context, FocusHandle, FontWeight, IntoElement, KeyDownEvent, KeyUpEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render,
-    RenderImage, SharedString, Styled, Window, div, px,
+    AnyElement, Bounds, Context, EventEmitter, FocusHandle, FontWeight, IntoElement, KeyDownEvent,
+    KeyUpEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    Render, RenderImage, SharedString, Styled, Window, div, px,
 };
+
+use super::annotations::{AnnotationAction, AnnotationSubject, AnnotationUiState, PendingPinDraft};
 
 use self::hosts::{
     EasAccountCheckState, HostConfigScreen, SavedHostConfigs, SimlockIdentityCheckState,
@@ -153,7 +156,12 @@ pub(crate) struct DevicePanel {
     screenshot_pending: bool,
     screenshot_error: Option<String>,
     screenshot_notice: Option<String>,
+
+    // Shared project annotations queue & click-to-annotate state.
+    pub(super) annotations: AnnotationUiState,
 }
+
+impl EventEmitter<AnnotationAction> for DevicePanel {}
 
 impl std::fmt::Debug for DevicePanel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -192,6 +200,10 @@ impl DevicePanel {
     ) -> Self {
         let tools_inputs = ToolsInputs::new(window, cx);
         let focus_handle = cx.focus_handle();
+        let annotations =
+            AnnotationUiState::new(AnnotationSubject::Device, window, cx, |this, window, cx| {
+                this.submit_pending_annotation(window, cx);
+            });
         let mut panel = Self {
             tokens,
             connection,
@@ -252,9 +264,62 @@ impl DevicePanel {
             screenshot_pending: false,
             screenshot_error: None,
             screenshot_notice: None,
+            annotations,
         };
         panel.start_state_subscription(cx);
         panel
+    }
+
+    pub(crate) fn sync_annotations(
+        &mut self,
+        annotations: Vec<AnnotationRecord>,
+        watching: bool,
+        project_ready: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.annotations.sync(annotations, watching, project_ready);
+        cx.notify();
+    }
+
+    pub(super) fn submit_pending_annotation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(draft) = self.annotations.pending_pin else {
+            return;
+        };
+        let comment = self
+            .annotations
+            .comment_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_owned();
+        if comment.is_empty() {
+            return;
+        }
+        let device_label = self
+            .active_device()
+            .map_or_else(|| "Device screen".to_owned(), |d| d.name.clone());
+        let device_pathname = self
+            .effective_foreground_app_id()
+            .map(str::to_owned)
+            .unwrap_or_else(|| device_label.clone());
+        let id = self.annotations.next_annotation_id();
+        let capture = build_device_annotation_capture(
+            id,
+            comment,
+            device_label,
+            device_pathname,
+            draft.point,
+        );
+        self.annotations.cancel_pin();
+        self.annotations.comment_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+        cx.emit(AnnotationAction::Create(capture));
+        cx.notify();
     }
 
     /// Shows or hides the device panel. When hidden, the live stream tears down immediately so
@@ -525,6 +590,41 @@ impl DevicePanel {
         if self.workspace_menu.take().is_some() {
             cx.notify();
         }
+        if self.annotations.queue_open {
+            self.annotations.queue_open = false;
+            self.annotations.confirming_remove = false;
+            cx.notify();
+        }
+        if self.annotations.annotating && event.button == MouseButton::Left {
+            if let Some(viewport) = self.screen_viewport_bounds.get() {
+                let vw = f32::from(viewport.size.width);
+                let vh = f32::from(viewport.size.height);
+                if vw > 1.0 && vh > 1.0 {
+                    let local_x =
+                        (f32::from(event.position.x) - f32::from(viewport.origin.x)).clamp(0.0, vw);
+                    let local_y =
+                        (f32::from(event.position.y) - f32::from(viewport.origin.y)).clamp(0.0, vh);
+                    let x_pct = (f64::from(local_x) / f64::from(vw) * 100.0).clamp(0.0, 100.0);
+                    let y_pct = (f64::from(local_y) / f64::from(vh) * 100.0).clamp(0.0, 100.0);
+                    self.annotations.begin_pin(
+                        PendingPinDraft {
+                            point: AnnotationPinPoint {
+                                x_pct,
+                                y_pct,
+                                viewport_w: f64::from(vw),
+                                viewport_h: f64::from(vh),
+                            },
+                            local_x,
+                            local_y,
+                        },
+                        window,
+                        cx,
+                    );
+                    cx.notify();
+                }
+            }
+            return;
+        }
         if event.button != MouseButton::Left || !self.input_connected || self.active_touch.is_some()
         {
             return;
@@ -621,6 +721,20 @@ impl DevicePanel {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if event.keystroke.key == "escape" {
+            if self.annotations.pending_pin.is_some() {
+                self.annotations.cancel_pin();
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+            if self.annotations.annotating {
+                self.annotations.toggle_annotating();
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+        }
         if !self.focus_handle.is_focused(window) || !self.input_connected {
             return;
         }
@@ -2176,6 +2290,11 @@ impl Render for DevicePanel {
                         changed = true;
                     }
                     if p.open_warning_details.take().is_some() {
+                        changed = true;
+                    }
+                    if p.annotations.queue_open {
+                        p.annotations.queue_open = false;
+                        p.annotations.confirming_remove = false;
                         changed = true;
                     }
                     if changed {

@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use conn_contract::{
+    AgentPanelRequest, AgentPanelSubscribeInput, AnnotationList, AnnotationProjectInput,
     OrchestrationV2ShellStreamItem, OrchestrationV2SubscribeShellInput,
     OrchestrationV2SubscribeThreadInput, OrchestrationV2ThreadStreamItem,
 };
@@ -25,6 +26,8 @@ use crate::{ClientError, ClientEvent, ConnectionStatus, Credential, ServerConfig
 
 const TAG_SUBSCRIBE_SHELL: &str = "orchestration.subscribeShell";
 const TAG_SUBSCRIBE_THREAD: &str = "orchestration.subscribeThread";
+const TAG_PANELS_REQUESTS: &str = "panels.requests";
+const TAG_ANNOTATIONS_SUBSCRIBE: &str = "annotations.subscribe";
 const PING_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_MISSED_PONGS: u8 = 2;
 
@@ -32,6 +35,10 @@ pub(crate) enum Command {
     SubscribeShell,
     SubscribeThread(String),
     UnsubscribeThread(String),
+    SubscribePanelRequests(Option<String>),
+    UnsubscribePanelRequests,
+    SubscribeAnnotations(String),
+    UnsubscribeAnnotations(String),
     Call {
         tag: String,
         payload: Value,
@@ -55,6 +62,8 @@ struct ThreadSubState {
 enum ActiveStream {
     Shell,
     Thread(String),
+    PanelRequests,
+    Annotations(String),
     Generic {
         stream_id: StreamId,
         tx: mpsc::Sender<Value>,
@@ -84,6 +93,9 @@ struct DriverState {
     shell_after_sequence: Option<i64>,
     shell_request_id: Option<RequestId>,
     thread_subs: HashMap<String, ThreadSubState>,
+    panel_requests_device: Option<Option<String>>,
+    panel_request_id: Option<RequestId>,
+    annotation_subs: HashMap<String, Option<RequestId>>,
     pending_calls: Vec<PendingCall>,
     pending_streams: Vec<PendingStream>,
     in_flight_unary: HashMap<RequestId, oneshot::Sender<Result<Value, ClientError>>>,
@@ -108,6 +120,9 @@ impl DriverState {
             shell_after_sequence: None,
             shell_request_id: None,
             thread_subs: HashMap::new(),
+            panel_requests_device: None,
+            panel_request_id: None,
+            annotation_subs: HashMap::new(),
             pending_calls: Vec::new(),
             pending_streams: Vec::new(),
             in_flight_unary: HashMap::new(),
@@ -142,8 +157,12 @@ impl DriverState {
         self.in_flight_streams.clear();
         self.generic_stream_ids.clear();
         self.shell_request_id = None;
+        self.panel_request_id = None;
         for sub in self.thread_subs.values_mut() {
             sub.request_id = None;
+        }
+        for req_id in self.annotation_subs.values_mut() {
+            *req_id = None;
         }
     }
 
@@ -160,6 +179,18 @@ impl DriverState {
             }
             Command::UnsubscribeThread(thread_id) => {
                 self.thread_subs.remove(&thread_id);
+            }
+            Command::SubscribePanelRequests(device_name) => {
+                self.panel_requests_device = Some(device_name);
+            }
+            Command::UnsubscribePanelRequests => {
+                self.panel_requests_device = None;
+            }
+            Command::SubscribeAnnotations(project_id) => {
+                self.annotation_subs.entry(project_id).or_insert(None);
+            }
+            Command::UnsubscribeAnnotations(project_id) => {
+                self.annotation_subs.remove(&project_id);
             }
             Command::Call {
                 tag,
@@ -499,6 +530,15 @@ where
         send_thread_subscribe(state, &thread_id, ws_write).await?;
     }
 
+    if state.panel_requests_device.is_some() && state.panel_request_id.is_none() {
+        send_panel_requests_subscribe(state, ws_write).await?;
+    }
+
+    let project_ids: Vec<String> = state.annotation_subs.keys().cloned().collect();
+    for project_id in project_ids {
+        send_annotations_subscribe(state, &project_id, ws_write).await?;
+    }
+
     let pending_calls = std::mem::take(&mut state.pending_calls);
     for call in pending_calls {
         send_unary_call(state, call.tag, call.payload, call.reply, ws_write).await?;
@@ -557,6 +597,37 @@ where
             if let Some(sub) = state.thread_subs.remove(&thread_id)
                 && let Some(request_id) = sub.request_id
             {
+                state.in_flight_streams.remove(&request_id);
+                send_client_frame(ws_write, &FromClient::Interrupt { request_id }).await?;
+            }
+        }
+        Command::SubscribePanelRequests(device_name) => {
+            state.panel_requests_device = Some(device_name);
+            if state.panel_request_id.is_none() {
+                send_panel_requests_subscribe(state, ws_write).await?;
+            }
+        }
+        Command::UnsubscribePanelRequests => {
+            state.panel_requests_device = None;
+            if let Some(request_id) = state.panel_request_id.take() {
+                state.in_flight_streams.remove(&request_id);
+                send_client_frame(ws_write, &FromClient::Interrupt { request_id }).await?;
+            }
+        }
+        Command::SubscribeAnnotations(project_id) => {
+            let needs_send = match state.annotation_subs.get(&project_id) {
+                Some(existing) => existing.is_none(),
+                None => {
+                    state.annotation_subs.insert(project_id.clone(), None);
+                    true
+                }
+            };
+            if needs_send {
+                send_annotations_subscribe(state, &project_id, ws_write).await?;
+            }
+        }
+        Command::UnsubscribeAnnotations(project_id) => {
+            if let Some(Some(request_id)) = state.annotation_subs.remove(&project_id) {
                 state.in_flight_streams.remove(&request_id);
                 send_client_frame(ws_write, &FromClient::Interrupt { request_id }).await?;
             }
@@ -644,6 +715,49 @@ where
         ActiveStream::Thread(thread_id.to_owned()),
     );
     send_request(ws_write, request_id, TAG_SUBSCRIBE_THREAD, payload).await
+}
+
+async fn send_panel_requests_subscribe<S>(
+    state: &mut DriverState,
+    ws_write: &mut S,
+) -> Result<(), String>
+where
+    S: futures::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
+    let device_name = state.panel_requests_device.clone().flatten();
+    let input = AgentPanelSubscribeInput { device_name };
+    let payload = serde_json::to_value(&input)
+        .map_err(|err| format!("failed to encode panels.requests payload: {err}"))?;
+    let request_id = state.alloc_request_id();
+    state.panel_request_id = Some(request_id.clone());
+    state
+        .in_flight_streams
+        .insert(request_id.clone(), ActiveStream::PanelRequests);
+    send_request(ws_write, request_id, TAG_PANELS_REQUESTS, payload).await
+}
+
+async fn send_annotations_subscribe<S>(
+    state: &mut DriverState,
+    project_id: &str,
+    ws_write: &mut S,
+) -> Result<(), String>
+where
+    S: futures::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
+    let input = AnnotationProjectInput {
+        project_id: project_id.to_owned(),
+    };
+    let payload = serde_json::to_value(&input)
+        .map_err(|err| format!("failed to encode annotations.subscribe payload: {err}"))?;
+    let request_id = state.alloc_request_id();
+    if let Some(slot) = state.annotation_subs.get_mut(project_id) {
+        *slot = Some(request_id.clone());
+    }
+    state.in_flight_streams.insert(
+        request_id.clone(),
+        ActiveStream::Annotations(project_id.to_owned()),
+    );
+    send_request(ws_write, request_id, TAG_ANNOTATIONS_SUBSCRIBE, payload).await
 }
 
 async fn send_unary_call<S>(
@@ -830,6 +944,46 @@ where
                 }
             }
         }
+        Some(ActiveStream::PanelRequests) => {
+            for value in values {
+                match serde_json::from_value::<AgentPanelRequest>(value) {
+                    Ok(request) => {
+                        if events_tx
+                            .send(ClientEvent::PanelRequest(request))
+                            .await
+                            .is_err()
+                        {
+                            return Err(SessionOutcome::Closed);
+                        }
+                    }
+                    Err(err) => {
+                        warn!("conn-client failed to decode panels.requests item: {err}");
+                    }
+                }
+            }
+        }
+        Some(ActiveStream::Annotations(project_id)) => {
+            let project_id = project_id.clone();
+            for value in values {
+                match serde_json::from_value::<AnnotationList>(value) {
+                    Ok(list) => {
+                        if events_tx
+                            .send(ClientEvent::Annotations {
+                                project_id: project_id.clone(),
+                                annotations: list.annotations,
+                            })
+                            .await
+                            .is_err()
+                        {
+                            return Err(SessionOutcome::Closed);
+                        }
+                    }
+                    Err(err) => {
+                        warn!("conn-client failed to decode annotations.subscribe item: {err}");
+                    }
+                }
+            }
+        }
         Some(ActiveStream::Generic { stream_id, tx }) => {
             let stream_id = *stream_id;
             let tx = tx.clone();
@@ -905,6 +1059,40 @@ async fn handle_exit(
                     .send(ClientEvent::StreamEnded {
                         tag: TAG_SUBSCRIBE_THREAD.to_owned(),
                         key: thread_id,
+                        error,
+                    })
+                    .await
+                    .is_err()
+                {
+                    return Err(SessionOutcome::Closed);
+                }
+            }
+            ActiveStream::PanelRequests => {
+                if state.panel_request_id.as_ref() == Some(&request_id) {
+                    state.panel_request_id = None;
+                }
+                if events_tx
+                    .send(ClientEvent::StreamEnded {
+                        tag: TAG_PANELS_REQUESTS.to_owned(),
+                        key: String::new(),
+                        error,
+                    })
+                    .await
+                    .is_err()
+                {
+                    return Err(SessionOutcome::Closed);
+                }
+            }
+            ActiveStream::Annotations(project_id) => {
+                if let Some(slot) = state.annotation_subs.get_mut(&project_id)
+                    && slot.as_ref() == Some(&request_id)
+                {
+                    *slot = None;
+                }
+                if events_tx
+                    .send(ClientEvent::StreamEnded {
+                        tag: TAG_ANNOTATIONS_SUBSCRIBE.to_owned(),
+                        key: project_id,
                         error,
                     })
                     .await

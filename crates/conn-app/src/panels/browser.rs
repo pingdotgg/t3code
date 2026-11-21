@@ -4,7 +4,6 @@
 #[cfg(feature = "cef")]
 use std::cell::{Cell, RefCell};
 use std::fmt;
-#[cfg(feature = "cef")]
 use std::rc::Rc;
 #[cfg(feature = "cef")]
 use std::sync::Arc;
@@ -12,6 +11,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::a11y::ConnA11yExt as _;
+#[cfg(feature = "cef")]
+use conn_state::AnnotationPinPoint;
+use conn_state::{AnnotationRecord, build_browser_annotation_capture};
 use conn_theme::Tokens;
 #[cfg(feature = "cef")]
 use conn_web::{
@@ -25,7 +27,8 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    Context, Entity, IntoElement, ParentElement, Render, Styled, Subscription, Window, div, px,
+    Context, Entity, EventEmitter, FontWeight, IntoElement, ParentElement, Render, Styled,
+    Subscription, Window, div, px,
 };
 #[cfg(feature = "cef")]
 use gpui_kit::{
@@ -34,6 +37,16 @@ use gpui_kit::{
     ScrollDelta, ScrollEvent, Task, canvas,
 };
 
+use super::annotations::{
+    AnnotationAction, AnnotationSubject, AnnotationUiState, QueuePopoverAnchor,
+    QueuePopoverCallbacks, render_queue_popover,
+};
+#[cfg(feature = "cef")]
+use super::annotations::{
+    PendingPinDraft, PinComposerCallbacks, render_pin_composer, render_pins_overlay,
+    toggle_annotation_dictation,
+};
+use super::chrome::{self, ConnTooltipExt as _};
 use super::color::to_hsla;
 use super::header::superhero_icon;
 
@@ -102,7 +115,11 @@ pub(crate) struct BrowserPanel {
     /// Hidden state last sent to CEF.
     #[cfg(feature = "cef")]
     applied_hidden: Rc<Cell<Option<bool>>>,
+    /// Shared project annotations queue & click-to-annotate state.
+    annotations: AnnotationUiState,
 }
+
+impl EventEmitter<AnnotationAction> for BrowserPanel {}
 
 impl fmt::Debug for BrowserPanel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -154,6 +171,11 @@ impl BrowserPanel {
             }));
         }
 
+        let annotations =
+            AnnotationUiState::new(AnnotationSubject::Page, window, cx, |this, window, cx| {
+                this.submit_pending_annotation(window, cx);
+            });
+
         Self {
             tokens,
             url_input,
@@ -182,7 +204,60 @@ impl BrowserPanel {
             applied_size: Rc::new(Cell::new(None)),
             #[cfg(feature = "cef")]
             applied_hidden: Rc::new(Cell::new(None)),
+            annotations,
         }
+    }
+
+    pub(crate) fn sync_annotations(
+        &mut self,
+        annotations: Vec<AnnotationRecord>,
+        watching: bool,
+        project_ready: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.annotations.sync(annotations, watching, project_ready);
+        cx.notify();
+    }
+
+    fn current_url(&self) -> String {
+        #[cfg(feature = "cef")]
+        {
+            self.view
+                .borrow()
+                .as_ref()
+                .map(BrowserView::url)
+                .filter(|u| !u.is_empty())
+                .unwrap_or_else(|| self.url.clone())
+        }
+        #[cfg(not(feature = "cef"))]
+        {
+            self.url.clone()
+        }
+    }
+
+    fn submit_pending_annotation(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(draft) = self.annotations.pending_pin else {
+            return;
+        };
+        let comment = self
+            .annotations
+            .comment_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_owned();
+        if comment.is_empty() {
+            return;
+        }
+        let id = self.annotations.next_annotation_id();
+        let url = self.current_url();
+        let capture = build_browser_annotation_capture(id, comment, url, draft.point);
+        self.annotations.cancel_pin();
+        self.annotations.comment_input.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+        cx.emit(AnnotationAction::Create(capture));
+        cx.notify();
     }
 
     /// Shows or hides the browser panel. When hidden, CEF stops painting; when
@@ -587,6 +662,40 @@ impl BrowserPanel {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.annotations.queue_open {
+            self.annotations.queue_open = false;
+            self.annotations.confirming_remove = false;
+            cx.notify();
+        }
+        if self.annotations.annotating && event.button == MouseButton::Left {
+            if let Some(bounds) = self.last_bounds.get()
+                && bounds.width > 1.0
+                && bounds.height > 1.0
+            {
+                let local_x = (f32::from(event.position.x) - bounds.x).clamp(0.0, bounds.width);
+                let local_y = (f32::from(event.position.y) - bounds.y).clamp(0.0, bounds.height);
+                let x_pct =
+                    (f64::from(local_x) / f64::from(bounds.width) * 100.0).clamp(0.0, 100.0);
+                let y_pct =
+                    (f64::from(local_y) / f64::from(bounds.height) * 100.0).clamp(0.0, 100.0);
+                self.annotations.begin_pin(
+                    PendingPinDraft {
+                        point: AnnotationPinPoint {
+                            x_pct,
+                            y_pct,
+                            viewport_w: f64::from(bounds.width),
+                            viewport_h: f64::from(bounds.height),
+                        },
+                        local_x,
+                        local_y,
+                    },
+                    window,
+                    cx,
+                );
+                cx.notify();
+            }
+            return;
+        }
         window.focus(&self.focus_handle, cx);
         let Some((x, y)) = self.local_coords(event.position) else {
             return;
@@ -671,6 +780,20 @@ impl BrowserPanel {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if event.keystroke.key == "escape" {
+            if self.annotations.pending_pin.is_some() {
+                self.annotations.cancel_pin();
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+            if self.annotations.annotating {
+                self.annotations.toggle_annotating();
+                cx.notify();
+                cx.stop_propagation();
+                return;
+            }
+        }
         if !self.focus_handle.is_focused(window) {
             return;
         }
@@ -862,6 +985,199 @@ impl BrowserPanel {
             .child(forward_btn)
             .child(reload_btn)
     }
+
+    fn render_annotations_toolbar_group(&self, cx: &mut Context<'_, Self>) -> gpui_kit::Div {
+        let fg = to_hsla(self.tokens.foreground);
+        let muted = to_hsla(self.tokens.muted_foreground);
+        let hover_bg = to_hsla(self.tokens.shell_highlight);
+        let control_bg = to_hsla(self.tokens.shell_control);
+        let border = to_hsla(self.tokens.shell_divider_header);
+        let primary = to_hsla(self.tokens.primary);
+        let primary_fg = to_hsla(self.tokens.primary_foreground);
+
+        let counts = self.annotations.counts();
+        let annotating = self.annotations.annotating;
+        let project_ready = self.annotations.project_ready;
+        let entity = cx.entity();
+
+        let annotate_btn = div()
+            .id("browser-annotate-toggle")
+            .a11y_button(
+                "browser.annotations.toggle",
+                if annotating {
+                    "Stop annotating page"
+                } else {
+                    "Annotate page"
+                },
+            )
+            .size(px(TOOLBAR_BUTTON_SIZE_PX))
+            .rounded(px(9999.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(annotating, |el| {
+                el.bg(chrome::alpha(self.tokens.primary, 0.22))
+            })
+            .when(project_ready, |el| {
+                el.cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.annotations.toggle_annotating();
+                        cx.notify();
+                    }))
+            })
+            .when(!project_ready, |el| el.opacity(0.45))
+            .conn_tooltip(
+                if annotating {
+                    "Stop annotating page"
+                } else {
+                    "Annotate page"
+                },
+                &self.tokens,
+            )
+            .child(superhero_icon(
+                "superhero/comment-text.svg",
+                NAV_ICON_SIZE_PX,
+                if annotating { primary } else { fg },
+            ));
+
+        let queue_btn = div()
+            .id("browser-annotations-queue")
+            .a11y_button(
+                "browser.annotations.queue",
+                format!("Annotations queue ({} waiting)", counts.waiting),
+            )
+            .h(px(TOOLBAR_BUTTON_SIZE_PX))
+            .px(px(6.0))
+            .rounded(px(9999.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.0))
+            .cursor_pointer()
+            .when(self.annotations.queue_open, |el| el.bg(hover_bg))
+            .hover(move |s| s.bg(hover_bg))
+            .conn_tooltip(
+                if counts.waiting > 0 {
+                    format!("Annotations queue ({} waiting)", counts.waiting)
+                } else {
+                    "Annotations queue".to_owned()
+                },
+                &self.tokens,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.annotations.toggle_queue();
+                cx.notify();
+            }))
+            .child(superhero_icon(
+                "superhero/checklist.svg",
+                13.0,
+                if self.annotations.watching {
+                    to_hsla(self.tokens.success_foreground)
+                } else if counts.waiting > 0 {
+                    fg
+                } else {
+                    muted
+                },
+            ))
+            .when(counts.waiting > 0, |el| {
+                el.child(
+                    div()
+                        .min_w(px(16.0))
+                        .h(px(16.0))
+                        .px(px(4.0))
+                        .rounded(px(9999.0))
+                        .bg(primary)
+                        .text_color(primary_fg)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(10.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(counts.waiting.to_string()),
+                )
+            });
+
+        let mut anchor = div().relative().flex_shrink_0().child(
+            h_flex()
+                .h(px(TOOLBAR_HEIGHT_PX))
+                .px(px(TOOLBAR_INNER_PADDING_PX))
+                .gap(px(2.0))
+                .items_center()
+                .rounded(px(9999.0))
+                .bg(control_bg)
+                .border_1()
+                .border_color(if annotating { primary } else { border })
+                .child(annotate_btn)
+                .child(queue_btn),
+        );
+
+        if self.annotations.queue_open {
+            let callbacks = QueuePopoverCallbacks {
+                on_toggle_annotating: {
+                    let entity = entity.clone();
+                    Rc::new(move |_, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.annotations.toggle_annotating();
+                            cx.notify();
+                        });
+                    })
+                },
+                on_send_waiting: {
+                    let entity = entity.clone();
+                    Rc::new(move |_, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.annotations.queue_open = false;
+                            cx.emit(AnnotationAction::SendWaiting);
+                            cx.notify();
+                        });
+                    })
+                },
+                on_toggle_watch: {
+                    let entity = entity.clone();
+                    Rc::new(move |_, cx| {
+                        entity.update(cx, |_, cx| {
+                            cx.emit(AnnotationAction::ToggleWatch);
+                        });
+                    })
+                },
+                on_remove_ids: {
+                    let entity = entity.clone();
+                    Rc::new(move |ids, _, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.annotations.confirming_remove = false;
+                            cx.emit(AnnotationAction::Remove { ids });
+                            cx.notify();
+                        });
+                    })
+                },
+                on_set_confirming_remove: {
+                    let entity = entity.clone();
+                    Rc::new(move |confirming, _, cx| {
+                        entity.update(cx, |this, cx| {
+                            this.annotations.confirming_remove = confirming;
+                            cx.notify();
+                        });
+                    })
+                },
+                on_close: Rc::new(move |_, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.annotations.queue_open = false;
+                        this.annotations.confirming_remove = false;
+                        cx.notify();
+                    });
+                }),
+            };
+            anchor = anchor.child(render_queue_popover(
+                &self.annotations,
+                &self.tokens,
+                QueuePopoverAnchor::BelowRight,
+                callbacks,
+            ));
+        }
+
+        anchor
+    }
 }
 
 impl Render for BrowserPanel {
@@ -899,11 +1215,14 @@ impl Render for BrowserPanel {
             }
 
             let has_view = self.view.borrow().is_some();
-            let cursor_style = self
-                .view
-                .borrow()
-                .as_ref()
-                .map_or(CursorStyle::Arrow, |v| map_cursor_style(v.cursor()));
+            let cursor_style = if self.annotations.annotating {
+                CursorStyle::Crosshair
+            } else {
+                self.view
+                    .borrow()
+                    .as_ref()
+                    .map_or(CursorStyle::Arrow, |v| map_cursor_style(v.cursor()))
+            };
             let current_image = self.rendered_frame.as_ref().map(|(_, img)| img.clone());
 
             let status_message = match &self.phase {
@@ -1070,6 +1389,48 @@ impl Render for BrowserPanel {
                         ),
                 );
             }
+            let viewport_size = self.last_bounds.get().map(|b| (b.width, b.height));
+            if let Some(overlay) =
+                render_pins_overlay(&self.annotations, &self.tokens, viewport_size)
+            {
+                container = container.child(overlay);
+            }
+            if let Some(composer) = {
+                let entity = cx.entity();
+                render_pin_composer(
+                    &self.annotations,
+                    &self.tokens,
+                    viewport_size,
+                    PinComposerCallbacks {
+                        on_submit: {
+                            let entity = entity.clone();
+                            Rc::new(move |window, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.submit_pending_annotation(window, cx);
+                                });
+                            })
+                        },
+                        on_cancel: {
+                            let entity = entity.clone();
+                            Rc::new(move |_, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.annotations.cancel_pin();
+                                    cx.notify();
+                                });
+                            })
+                        },
+                        on_toggle_dictation: Rc::new(move |window, cx| {
+                            entity.update(cx, |_, cx| {
+                                toggle_annotation_dictation(window, cx, |this: &mut Self| {
+                                    &mut this.annotations
+                                });
+                            });
+                        }),
+                    },
+                )
+            } {
+                container = container.child(composer);
+            }
             container
         };
 
@@ -1148,7 +1509,8 @@ impl Render for BrowserPanel {
                                         .text_size(px(UI_TEXT_PX)),
                                 ),
                             ),
-                    ),
+                    )
+                    .child(self.render_annotations_toolbar_group(cx)),
             )
             .child(div().w_full().h(px(1.0)).bg(divider))
             .child(body)

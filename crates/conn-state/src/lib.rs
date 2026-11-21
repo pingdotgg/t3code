@@ -11,13 +11,21 @@
 //!   into [`TimelineEntry`] view models so views never touch raw contract events.
 //! - [`LayoutState`]: sidebar, right panel, and tab layout.
 
+mod annotations;
 mod layout;
 mod shell;
 mod thread;
 
 pub use conn_contract::{
+    AnnotationCapture, AnnotationRecord, AnnotationRecordSource, AnnotationStatus,
     OrchestrationProjectShell as ProjectShell, OrchestrationV2ShellStreamItem as ShellStreamItem,
     OrchestrationV2ThreadShell as ThreadShell, OrchestrationV2ThreadStreamItem as ThreadStreamItem,
+};
+
+pub use crate::annotations::{
+    AnnotationPinPoint, AnnotationQueueCounts, AnnotationQueueState, annotation_state,
+    build_annotation_prompt, build_browser_annotation_capture, build_device_annotation_capture,
+    count_annotations, waiting_ids_to_send,
 };
 
 pub use crate::layout::{

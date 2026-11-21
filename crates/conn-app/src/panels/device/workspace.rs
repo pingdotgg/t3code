@@ -1,6 +1,8 @@
 //! Active Device workspace: screen area (`DeviceStreamView`), right floating controls rail
 //! (`DeviceControlsRail`), and collapsible `DeviceToolsPanel` drawer.
 
+use std::rc::Rc;
+
 use conn_client::device_hub::HardwareButton;
 use conn_contract::support::JsNumber;
 use conn_contract::{
@@ -24,6 +26,10 @@ use gpui_kit::{
     ParentElement, SharedString, Styled, Subscription, Window, canvas, div, img, px,
 };
 
+use super::super::annotations::{
+    AnnotationAction, PinComposerCallbacks, QueuePopoverAnchor, QueuePopoverCallbacks,
+    render_pin_composer, render_pins_overlay, render_queue_popover, toggle_annotation_dictation,
+};
 use super::super::chrome::{
     self, ConnTooltipExt as _, MenuEntry, MenuRow, XS_LINE_HEIGHT_PX, XS_TEXT_PX,
 };
@@ -291,6 +297,48 @@ fn render_device_stream(
                 .size_full()
                 .object_fit(ObjectFit::Contain),
         );
+    }
+
+    let viewport_size = panel
+        .screen_viewport_bounds
+        .get()
+        .map(|b| (f32::from(b.size.width), f32::from(b.size.height)));
+    if let Some(overlay) = render_pins_overlay(&panel.annotations, tokens, viewport_size) {
+        media_host = media_host.child(overlay);
+    }
+    if let Some(composer) = render_pin_composer(
+        &panel.annotations,
+        tokens,
+        viewport_size,
+        PinComposerCallbacks {
+            on_submit: {
+                let entity = entity.clone();
+                Rc::new(move |window, cx| {
+                    entity.update(cx, |p, cx| p.submit_pending_annotation(window, cx));
+                })
+            },
+            on_cancel: {
+                let entity = entity.clone();
+                Rc::new(move |_, cx| {
+                    entity.update(cx, |p, cx| {
+                        p.annotations.cancel_pin();
+                        cx.notify();
+                    });
+                })
+            },
+            on_toggle_dictation: {
+                let entity = entity.clone();
+                Rc::new(move |window, cx| {
+                    entity.update(cx, |_, cx| {
+                        toggle_annotation_dictation(window, cx, |p: &mut DevicePanel| {
+                            &mut p.annotations
+                        });
+                    });
+                })
+            },
+        },
+    ) {
+        media_host = media_host.child(composer);
     }
 
     viewport = viewport.child(media_host);
@@ -792,8 +840,11 @@ fn render_controls_rail(
                 icon: Some("superhero/power.svg"),
                 checked: false,
                 destructive: true,
-                on_select: Box::new(move |_, cx| {
-                    entity.update(cx, |p, cx| p.close_active_device(true, cx));
+                on_select: Box::new({
+                    let entity = entity.clone();
+                    move |_, cx| {
+                        entity.update(cx, |p, cx| p.close_active_device(true, cx));
+                    }
                 }),
             }),
         ];
@@ -805,6 +856,152 @@ fn render_controls_rail(
         ));
     }
     pill = pill.child(more_anchor);
+
+    // Annotations controls (`Annotate screen` + `Annotation queue` popover).
+    let ann_counts = panel.annotations.counts();
+    let ann_annotating = panel.annotations.annotating;
+    let ann_ready = panel.annotations.project_ready;
+    let mut queue_anchor = div().relative().child(
+        rail_icon_button(
+            "device-rail-annotations-queue",
+            "superhero/checklist.svg",
+            tokens,
+            panel.annotations.queue_open,
+            false,
+            {
+                let entity = entity.clone();
+                move |_, _, cx| {
+                    entity.update(cx, |p, cx| {
+                        p.workspace_menu = None;
+                        p.annotations.toggle_queue();
+                        cx.notify();
+                    });
+                }
+            },
+        )
+        .conn_tooltip(
+            if ann_counts.waiting > 0 {
+                format!("Annotations queue ({} waiting)", ann_counts.waiting)
+            } else {
+                "Annotations queue".to_owned()
+            },
+            tokens,
+        ),
+    );
+    if ann_counts.waiting > 0 {
+        queue_anchor = queue_anchor.child(
+            div()
+                .absolute()
+                .top(px(-3.0))
+                .right(px(-3.0))
+                .min_w(px(15.0))
+                .h(px(15.0))
+                .px(px(3.0))
+                .rounded(px(9999.0))
+                .bg(to_hsla(tokens.primary))
+                .text_color(to_hsla(tokens.primary_foreground))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(9.0))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(ann_counts.waiting.to_string()),
+        );
+    }
+    if panel.annotations.queue_open {
+        let callbacks = QueuePopoverCallbacks {
+            on_toggle_annotating: {
+                let entity = entity.clone();
+                Rc::new(move |_, cx| {
+                    entity.update(cx, |p, cx| {
+                        p.annotations.toggle_annotating();
+                        cx.notify();
+                    });
+                })
+            },
+            on_send_waiting: {
+                let entity = entity.clone();
+                Rc::new(move |_, cx| {
+                    entity.update(cx, |p, cx| {
+                        p.annotations.queue_open = false;
+                        cx.emit(AnnotationAction::SendWaiting);
+                        cx.notify();
+                    });
+                })
+            },
+            on_toggle_watch: {
+                let entity = entity.clone();
+                Rc::new(move |_, cx| {
+                    entity.update(cx, |_, cx| {
+                        cx.emit(AnnotationAction::ToggleWatch);
+                    });
+                })
+            },
+            on_remove_ids: {
+                let entity = entity.clone();
+                Rc::new(move |ids, _, cx| {
+                    entity.update(cx, |p, cx| {
+                        p.annotations.confirming_remove = false;
+                        cx.emit(AnnotationAction::Remove { ids });
+                        cx.notify();
+                    });
+                })
+            },
+            on_set_confirming_remove: {
+                let entity = entity.clone();
+                Rc::new(move |confirming, _, cx| {
+                    entity.update(cx, |p, cx| {
+                        p.annotations.confirming_remove = confirming;
+                        cx.notify();
+                    });
+                })
+            },
+            on_close: {
+                let entity = entity.clone();
+                Rc::new(move |_, cx| {
+                    entity.update(cx, |p, cx| {
+                        p.annotations.queue_open = false;
+                        p.annotations.confirming_remove = false;
+                        cx.notify();
+                    });
+                })
+            },
+        };
+        queue_anchor = queue_anchor.child(render_queue_popover(
+            &panel.annotations,
+            tokens,
+            QueuePopoverAnchor::LeftOfRail,
+            callbacks,
+        ));
+    }
+
+    pill = pill
+        .child(rail_divider())
+        .child(
+            rail_icon_button(
+                "device-rail-annotate",
+                "superhero/comment-text.svg",
+                tokens,
+                ann_annotating,
+                !ann_ready,
+                move |_, _, cx| {
+                    entity.update(cx, |p, cx| {
+                        p.workspace_menu = None;
+                        p.annotations.toggle_annotating();
+                        cx.notify();
+                    });
+                },
+            )
+            .conn_tooltip(
+                if ann_annotating {
+                    "Stop annotating screen"
+                } else {
+                    "Annotate screen"
+                },
+                tokens,
+            ),
+        )
+        .child(queue_anchor);
 
     // 3D view / Flat view divider + toggles (3D disabled in GPUI because Three.js WebGL is browser-only).
     pill = pill
