@@ -69,6 +69,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             listRef={ctx.listRef}
           >
             <ChatMarkdown
+              className="chat-message-markdown"
               text={messageText}
               renderInsights
               cwd={ctx.markdownCwd}

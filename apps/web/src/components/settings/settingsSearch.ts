@@ -408,6 +408,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("typography family size system sans")],
   },
   {
+    id: "chat-font-size",
+    title: "Chat font size",
+    to: "/settings/appearance",
+    searchTerms: ["typography messages user assistant agent output reply response text size large"],
+  },
+  {
     id: "prompt-font",
     title: msg("Prompt font"),
     to: "/settings/appearance",

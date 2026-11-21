@@ -21,6 +21,13 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## Chat text size
+
+On web and desktop, use **Settings → Appearance → Typography → Chat font size** to set user
+messages and agent replies from 12 to 32 px without enlarging the sidebar or composer. Code
+blocks keep their own font size. **Default** or resetting the setting restores chat text that
+follows the interface font size.
+
 ## Composer context
 
 Git-backed projects show branch and worktree controls below the composer while you create a thread.
