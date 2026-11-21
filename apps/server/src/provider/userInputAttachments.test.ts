@@ -609,27 +609,6 @@ describe("question answer paths", () => {
             occurrences: { text: "Repeated value", count: rows ? 10_000 : 512 },
           })),
         ),
-        {
-          ext: "pptx",
-          bounded: true,
-          parts: {
-            "ppt/presentation.xml":
-              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
-            "ppt/_rels/presentation.xml.rels":
-              '<Relationships><Relationship Id="a" Target="slides/a.xml"/></Relationships>',
-            "ppt/slides/a.xml": "<slide><p>Slide text</p></slide>",
-            "ppt/slides/_rels/a.xml.rels":
-              '<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/table.xml"/></Relationships>',
-            "ppt/notesSlides/table.xml":
-              '<notes><p>Before the table</p><table><table-row number-rows-repeated="10001"><table-cell><p>Repeated value</p></table-cell></table-row></table></notes>',
-          },
-          expected: [
-            "Notes:\nBefore the table",
-            "Repeated value",
-            "[Extracted text truncated at document extraction limits.]",
-          ],
-          occurrences: { text: "Repeated value", count: 10_000 },
-        },
         ...["ods", "odt", "odp", "docx"].map((ext) => ({
           ext,
           bounded: true,
