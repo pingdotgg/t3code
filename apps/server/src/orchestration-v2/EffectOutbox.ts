@@ -482,7 +482,12 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 ${nowIso},
                 ${nowIso}
               )
-              ON CONFLICT(effect_id) DO NOTHING
+              ${
+                effect.request.type === "subagent-threads.cascade" &&
+                effect.request.sideChat !== undefined
+                  ? sql``
+                  : sql`ON CONFLICT(effect_id) DO NOTHING`
+              }
             `,
             { concurrency: 1, discard: true },
           );

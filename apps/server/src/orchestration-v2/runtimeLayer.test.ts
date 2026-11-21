@@ -14495,6 +14495,35 @@ describe("subagent lifecycle cascade", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("rolls back a nested side-chat deletion with an occupied recovery effect ID", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const side = ThreadId.make("side");
+      const child = ThreadId.make("side-child");
+      yield* f.sideChat(app, side);
+      yield* f.set(child, {
+        lineage: { rootThreadId: parent, parentThreadId: side, relationshipToParent: "subagent" },
+      });
+      const nestedId = "delete:parent:subagent:app";
+      const effectId = `effect:${nestedId}:side-chat:${side}:subagent-threads.cascade`;
+      yield* f.outbox.enqueue([
+        {
+          id: effectId,
+          commandId: CommandId.make("earlier"),
+          threadId: ThreadId.make("fork"),
+          request: { type: "terminal.cleanup" },
+          availableAt: DateTime.add(f.now, { days: 1 }),
+        },
+      ]);
+      const occupied = yield* f.outbox.get(effectId);
+      yield* f.commit("delete");
+      yield* f.drain;
+      assert.equal(yield* f.state("deletedAt", parent, app, side, child), "1000");
+      assert.isTrue(Option.isNone(yield* receipt(nestedId)));
+      assert.deepEqual(yield* f.outbox.get(effectId), occupied);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("restores only what a parent archive cascaded, through independent archives", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
