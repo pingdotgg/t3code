@@ -77,6 +77,8 @@ export interface ProviderChangeRequestWatchFingerprint {
   readonly remarks: string;
   /** True when `status` changes with every check and mergeability change, so pending work needs no detail read. */
   readonly coversDetail?: boolean;
+  /** False when the host returned partial remark state; callers must read activity instead. */
+  readonly includesRemarkState?: boolean;
 }
 
 export interface PullRequestProviderFailure {
