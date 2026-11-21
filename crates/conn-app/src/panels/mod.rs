@@ -53,6 +53,8 @@ pub(crate) enum RightPanelEvent {
     OpenFile(String),
     /// A surface asked to show another surface (e.g. Linked items opening a pull request).
     OpenTab(RightPanelTab),
+    /// A surface asked to send an agent prompt to the active thread (e.g. PR agent actions).
+    SendPrompt(String),
 }
 
 impl gpui_kit::EventEmitter<RightPanelEvent> for RightPanel {}
@@ -131,6 +133,15 @@ impl RightPanel {
         let tasks = cx.new(|cx| TasksPanel::new(tokens.clone(), window, cx));
         let pull_request =
             cx.new(|cx| PullRequestPanel::new(tokens.clone(), connection.clone(), window, cx));
+        cx.subscribe(
+            &pull_request,
+            |_, _, event: &pull_request::PullRequestEvent, cx| match event {
+                pull_request::PullRequestEvent::SendPrompt(prompt) => {
+                    cx.emit(RightPanelEvent::SendPrompt(prompt.clone()));
+                }
+            },
+        )
+        .detach();
         let linked_items =
             cx.new(|cx| LinkedItemsPanel::new(tokens.clone(), connection.clone(), window, cx));
         let device = cx.new(|cx| DevicePanel::new(tokens.clone(), connection.clone(), window, cx));

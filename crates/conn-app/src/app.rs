@@ -72,6 +72,11 @@ pub(crate) struct ConnApp {
     overlay_subscriptions: Vec<gpui_kit::Subscription>,
     /// What had the keyboard before the palette or Settings opened; it gets it back on close.
     focus_before_overlay: Option<FocusHandle>,
+    /// Live search box at the top of the thread sidebar.
+    sidebar_search_input: Entity<gpui_kit::component::input::InputState>,
+    _sidebar_search_sub: gpui_kit::Subscription,
+    /// When true, replaces translucent shell fills with opaque `sidebar`/`shell_card`.
+    reduce_transparency: bool,
     server_url: Option<String>,
 }
 
@@ -130,6 +135,12 @@ impl ConnApp {
                 crate::chat::ChatEvent::ModelSelected { instance_id, model } => {
                     app.select_model(instance_id, model, cx);
                 }
+                crate::chat::ChatEvent::OpenDiff => {
+                    app.select_right_panel_tab(RightPanelTab::Diff, cx);
+                }
+                crate::chat::ChatEvent::SlashCommand(command) => {
+                    app.handle_slash_command(command, cx);
+                }
             },
         )
         .detach();
@@ -151,9 +162,24 @@ impl ConnApp {
                 crate::panels::RightPanelEvent::OpenTab(tab) => {
                     app.select_right_panel_tab(*tab, cx);
                 }
+                crate::panels::RightPanelEvent::SendPrompt(prompt) => {
+                    app.send_prompt(prompt.clone(), cx);
+                }
             },
         )
         .detach();
+
+        let sidebar_search_input = cx.new(|cx| {
+            gpui_kit::component::input::InputState::new(window, cx).placeholder("Search")
+        });
+        let sidebar_search_sub = cx.subscribe(
+            &sidebar_search_input,
+            |_app, _, event: &gpui_kit::component::input::InputEvent, cx| {
+                if matches!(event, gpui_kit::component::input::InputEvent::Change) {
+                    cx.notify();
+                }
+            },
+        );
 
         Self {
             tokens,
@@ -181,6 +207,9 @@ impl ConnApp {
             settings_modal: None,
             overlay_subscriptions: Vec::new(),
             focus_before_overlay: None,
+            sidebar_search_input,
+            _sidebar_search_sub: sidebar_search_sub,
+            reduce_transparency: false,
             server_url,
         }
     }
@@ -269,7 +298,17 @@ impl ConnApp {
         };
         let theme_id = self.theme_id.clone();
         let tokens = self.tokens.clone();
-        let modal = cx.new(|cx| SettingsModal::new(theme_id, tokens, connection, window, cx));
+        let reduce_transparency = self.reduce_transparency;
+        let modal = cx.new(|cx| {
+            SettingsModal::new(
+                theme_id,
+                tokens,
+                reduce_transparency,
+                connection,
+                window,
+                cx,
+            )
+        });
         let sub = cx.subscribe_in(
             &modal,
             window,
@@ -277,6 +316,9 @@ impl ConnApp {
                 SettingsEvent::ApplyTheme(id) => {
                     // set_theme pushes the new tokens into the open modal too.
                     app.set_theme(id, cx);
+                }
+                SettingsEvent::ReduceTransparency(enabled) => {
+                    app.set_reduce_transparency(*enabled, cx);
                 }
                 SettingsEvent::Close => {
                     app.settings_modal = None;
@@ -930,15 +972,15 @@ impl ConnApp {
             .child(chat_card)
     }
 
-    /// Surfaces the add menu enables, by Conn's rules (`SURFACE_DISABLED_REASONS`): project
-    /// surfaces need a thread in a project; pull request and linked items need a pull request.
+    /// Surfaces the add menu enables, by Conn's rules (`SURFACE_DISABLED_REASONS`): Browser and
+    /// Tasks are always available; project/thread surfaces (including Pull request and Linked
+    /// items, which render Conn's link/empty states when no PR is attached yet) need a thread.
     fn available_right_panel_tabs(&self) -> Vec<RightPanelTab> {
         let thread = self.layout.selected_thread_id.is_some();
         RightPanelTab::MENU_ORDER
             .into_iter()
             .filter(|tab| match tab {
                 RightPanelTab::Browser | RightPanelTab::Tasks => true,
-                RightPanelTab::PullRequest | RightPanelTab::LinkedItems => false,
                 _ => thread,
             })
             .collect()
@@ -1130,9 +1172,95 @@ impl ConnApp {
         self.set_tokens(tokens, cx);
         true
     }
+    /// Executes a built-in `/` slash command selected in the composer menu.
+    fn handle_slash_command(&mut self, command: &str, cx: &mut Context<'_, Self>) {
+        match command {
+            "plan" => {
+                let (Some(connection), Some(thread_id)) = (
+                    self.connection.clone(),
+                    self.layout.selected_thread_id.clone(),
+                ) else {
+                    return;
+                };
+                let next_mode = self
+                    .shell
+                    .thread(&thread_id)
+                    .map(|t| conn_contract::to_json(&t.interaction_mode))
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .map(|current| if current == "plan" { "default" } else { "plan" })
+                    .unwrap_or("plan");
+                let Ok(cmd) = crate::commands::set_interaction_mode(&thread_id, next_mode) else {
+                    return;
+                };
+                cx.spawn(async move |_, _| {
+                    if let Err(e) = connection.dispatch_command(cmd).await {
+                        eprintln!("slash /plan: dispatchCommand failed: {e}");
+                    }
+                })
+                .detach();
+            }
+            "settle" => {
+                self.toggle_selected_thread_settled(cx);
+            }
+            _ => {
+                // Other slash commands (`/clear`, `/compact`, `/review`, `/status`, `/usage`)
+                // remain in the composer draft so the user can add arguments and press Enter.
+            }
+        }
+    }
+
+    /// Toggles the selected thread's settled state (`thread.settle` / `thread.unsettle`).
+    fn toggle_selected_thread_settled(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let is_settled = self
+            .shell
+            .archived_threads
+            .iter()
+            .any(|t| t.id == thread_id)
+            || self
+                .shell
+                .thread(&thread_id)
+                .is_some_and(|t| t.settled_at.is_some());
+        let Ok(cmd) = crate::commands::settle_thread(&thread_id, !is_settled) else {
+            return;
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(cmd).await {
+                eprintln!("settle: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
+    }
+
+    /// Toggles Reduce Transparency across the shell, matching Conn's
+    /// `@media (prefers-reduced-transparency: reduce)` (`--shell-fill: var(--sidebar);
+    /// --shell-inner-fill: var(--shell-card);`).
+    fn set_reduce_transparency(&mut self, enabled: bool, cx: &mut Context<'_, Self>) {
+        if self.reduce_transparency == enabled {
+            return;
+        }
+        self.reduce_transparency = enabled;
+        let theme_id = self.theme_id.clone();
+        if let Some((_, tokens)) = crate::live::tokens_for(&theme_id) {
+            self.set_tokens(tokens, cx);
+        } else {
+            cx.notify();
+        }
+    }
+
     /// Replaces the active theme tokens and updates `gpui-kit`'s global theme.
-    pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
+    pub(crate) fn set_tokens(&mut self, mut tokens: Tokens, cx: &mut Context<'_, Self>) {
+        if self.reduce_transparency {
+            tokens.shell_fill = tokens.sidebar;
+            tokens.shell_inner_fill = tokens.shell_card;
+        }
         apply_kit_theme(&tokens, cx);
+        crate::vibrancy::sync_appearance(tokens.appearance);
         self.chat
             .update(cx, |chat, cx| chat.set_tokens(tokens.clone(), cx));
         self.right_panel
@@ -1256,6 +1384,7 @@ impl Render for ConnApp {
                     &self.layout,
                     self.active_workspace.as_deref(),
                     &self.collapsed_projects,
+                    &self.sidebar_search_input,
                     &self.tokens,
                     &self.geometry,
                     cx,

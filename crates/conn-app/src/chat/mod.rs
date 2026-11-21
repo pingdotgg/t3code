@@ -8,11 +8,13 @@ mod icons;
 pub(crate) mod markdown;
 mod spinner;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
-use conn_state::{ItemStatus, ThreadState, TimelineEntry};
+use conn_state::{
+    EntryTiming, ItemStatus, RunTiming, ThreadState, TimelineEntry, TurnCheckpointSummary,
+};
 use conn_theme::Tokens;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight, InteractiveElement,
@@ -57,6 +59,10 @@ pub(crate) enum ChatEvent {
         instance_id: String,
         model: String,
     },
+    /// Open the right panel's Diff tab (e.g. clicking a turn's changed-files summary card).
+    OpenDiff,
+    /// A built-in `/` slash command selected from the composer command menu.
+    SlashCommand(String),
 }
 
 /// GPUI entity rendering the Conn chat card (timeline + composer).
@@ -67,6 +73,9 @@ pub(crate) struct ChatView {
     thread_title: Option<String>,
     working: bool,
     cache: RowCache,
+    entry_timings: HashMap<String, EntryTiming>,
+    run_timings: HashMap<String, RunTiming>,
+    turn_checkpoints: HashMap<String, TurnCheckpointSummary>,
     expanded_ids: HashSet<String>,
     copied_code_key: Option<String>,
     model_label: String,
@@ -117,7 +126,7 @@ impl ChatView {
                     });
                 }
                 ComposerEvent::SlashCommand(command) => {
-                    eprintln!("composer: slash command {command} is not implemented yet");
+                    cx.emit(ChatEvent::SlashCommand(command.clone()));
                 }
             },
         );
@@ -129,6 +138,9 @@ impl ChatView {
             thread_title: None,
             working: false,
             cache: RowCache::default(),
+            entry_timings: HashMap::new(),
+            run_timings: HashMap::new(),
+            turn_checkpoints: HashMap::new(),
             expanded_ids: HashSet::new(),
             copied_code_key: None,
             model_label: "Default model".to_owned(),
@@ -169,6 +181,9 @@ impl ChatView {
             self.thread_id = None;
             self.working = false;
             self.cache.clear();
+            self.entry_timings.clear();
+            self.run_timings.clear();
+            self.turn_checkpoints.clear();
             self.expanded_ids.clear();
             self.copied_code_key = None;
             self.stick_to_bottom = true;
@@ -186,6 +201,9 @@ impl ChatView {
 
         self.has_thread = true;
         self.working = thread.working;
+        self.entry_timings = thread.entry_timings.clone();
+        self.run_timings = thread.run_timings.clone();
+        self.turn_checkpoints = thread.turn_checkpoints.clone();
         let _stats = self.cache.sync(&thread.entries);
 
         if self.stick_to_bottom {
@@ -239,6 +257,155 @@ impl ChatView {
             self.expanded_ids.insert(id.to_owned());
         }
         cx.notify();
+    }
+
+    fn work_group_duration_ms(&self, rows: &[CachedRow]) -> Option<u64> {
+        let mut min_start: Option<i64> = None;
+        let mut max_end: Option<i64> = None;
+        let mut single_run: Option<&str> = None;
+        let mut multiple_runs = false;
+        for row in rows {
+            if let Some(timing) = self.entry_timings.get(row.entry.id()) {
+                if let Some(start) = timing.started_at_ms {
+                    min_start = Some(min_start.map_or(start, |cur| cur.min(start)));
+                }
+                if let Some(end) = timing.completed_at_ms {
+                    max_end = Some(max_end.map_or(end, |cur| cur.max(end)));
+                }
+                if let Some(run_id) = timing.run_id.as_deref() {
+                    match single_run {
+                        None => single_run = Some(run_id),
+                        Some(existing) if existing != run_id => multiple_runs = true,
+                        Some(_) => {}
+                    }
+                }
+            }
+        }
+        if let (Some(start), Some(end)) = (min_start, max_end)
+            && end > start
+        {
+            return u64::try_from(end - start).ok();
+        }
+        if !multiple_runs
+            && let Some(run_id) = single_run
+            && let Some(run) = self.run_timings.get(run_id)
+            && let (Some(start), Some(end)) = (run.started_at_ms, run.completed_at_ms)
+            && end > start
+        {
+            return u64::try_from(end - start).ok();
+        }
+        None
+    }
+
+    fn item_run_id(&self, item: &TimelineItem<'_>) -> Option<&str> {
+        let id = match item {
+            TimelineItem::User { row, .. }
+            | TimelineItem::Assistant { row, .. }
+            | TimelineItem::Approval(row)
+            | TimelineItem::Notice(row) => row.entry.id(),
+            TimelineItem::WorkGroup { rows, .. } => rows.last()?.entry.id(),
+        };
+        self.entry_timings.get(id).and_then(|t| t.run_id.as_deref())
+    }
+
+    fn checkpoint_after_item(
+        &self,
+        items: &[TimelineItem<'_>],
+        idx: usize,
+    ) -> Option<&TurnCheckpointSummary> {
+        let item = items.get(idx)?;
+        if matches!(item, TimelineItem::User { .. }) {
+            return None;
+        }
+        let run_id = self.item_run_id(item)?;
+        // Only emit after the final non-user item belonging to this run.
+        let next_same_run = items
+            .get(idx + 1)
+            .and_then(|next| self.item_run_id(next))
+            .is_some_and(|next_id| next_id == run_id);
+        if next_same_run {
+            return None;
+        }
+        self.turn_checkpoints
+            .get(run_id)
+            .filter(|cp| cp.file_count > 0)
+    }
+
+    fn render_changed_files_card(
+        &self,
+        idx: usize,
+        cp: &TurnCheckpointSummary,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let label = if cp.file_count == 1 {
+            "1 changed file".to_owned()
+        } else {
+            format!("{} changed files", cp.file_count)
+        };
+        let border = hsla(self.tokens.shell_divider);
+        let hover_bg = hsla(self.tokens.shell_highlight);
+        let fg = hsla(self.tokens.foreground);
+        let muted = hsla(self.tokens.muted_foreground);
+        let added = hsla(self.tokens.diff_added);
+        let removed = hsla(self.tokens.diff_removed);
+
+        div()
+            .pt(px(6.0))
+            .pb(px(4.0))
+            .child(
+                div()
+                    .id(SharedString::from(format!("turn-changed-files-{idx}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(8.0))
+                    .w_full()
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .rounded(px(10.0))
+                    .bg(hsla(self.tokens.shell_field))
+                    .border_1()
+                    .border_color(border)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.emit(ChatEvent::OpenDiff);
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(icons::icon("superhero/file-diff.svg", 14.0, muted))
+                            .child(
+                                div()
+                                    .text_size(px(UI_FONT_PX))
+                                    .line_height(px(UI_LINE_HEIGHT_PX))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(fg)
+                                    .child(label),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.0))
+                            .text_size(px(UI_FONT_PX))
+                            .line_height(px(UI_LINE_HEIGHT_PX))
+                            .child(div().text_color(added).child(format!("+{}", cp.additions)))
+                            .child(
+                                div()
+                                    .text_color(removed)
+                                    .child(format!("-{}", cp.deletions)),
+                            )
+                            .child(icons::icon(icons::CARET_RIGHT, 12.0, muted)),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn refresh_stick_to_bottom(&mut self) {
@@ -435,7 +602,8 @@ impl ChatView {
             // Conn `TurnFoldTimelineRow`: `border-b border-(--shell-divider)! pb-2 pt-1`,
             // button `flex items-center gap-1 rounded-md px-1 text-sm leading-relaxed
             // text-muted-foreground hover:text-foreground`, `size-3.5` (14px) chevron.
-            // `TimelineEntry` carries no timestamps yet, so we show Conn's durationless `"Worked"` label.
+            let duration_ms = self.work_group_duration_ms(rows);
+            let worked_label = format_worked_label(duration_ms);
             let fold_btn = div()
                 .id(SharedString::from(format!("fold-{group_id}")))
                 .flex()
@@ -452,7 +620,7 @@ impl ChatView {
                 .on_click(cx.listener(move |view, _, _, cx| {
                     view.toggle_expanded(&toggle_id, cx);
                 }))
-                .child("Worked")
+                .child(worked_label)
                 .child(icons::icon(
                     if expanded {
                         icons::CARET_DOWN
@@ -1054,6 +1222,9 @@ impl Render for ChatView {
                     lane = lane.child(self.render_working_row());
                 }
                 lane = lane.child(self.render_timeline_item(item, cx));
+                if let Some(cp) = self.checkpoint_after_item(&items, idx) {
+                    lane = lane.child(self.render_changed_files_card(idx, cp, cx));
+                }
             }
             if self.working && working_before_idx.is_none() {
                 lane = lane.child(self.render_working_row());
@@ -1092,5 +1263,53 @@ impl Render for ChatView {
             .min_w_0()
             .child(timeline)
             .child(composer_lane)
+    }
+}
+
+/// Formats Conn's settled work-group label (`Worked` / `Worked for 7.5s` / `Worked for 2m 14s`).
+#[must_use]
+fn format_worked_label(duration_ms: Option<u64>) -> String {
+    let Some(ms) = duration_ms.filter(|&d| d >= 100) else {
+        return "Worked".to_owned();
+    };
+    if ms < 10_000 {
+        format!("Worked for {:.1}s", (ms as f64) / 1000.0)
+    } else if ms < 60_000 {
+        format!("Worked for {}s", (ms + 500) / 1000)
+    } else {
+        let total_secs = (ms + 500) / 1000;
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        if secs == 0 {
+            format!("Worked for {mins}m")
+        } else {
+            format!("Worked for {mins}m {secs}s")
+        }
+    }
+}
+
+#[cfg(test)]
+mod worked_label_tests {
+    use super::format_worked_label;
+
+    #[test]
+    fn formats_worked_duration_labels() {
+        assert_eq!(format_worked_label(None), "Worked", "missing duration");
+        assert_eq!(format_worked_label(Some(50)), "Worked", "sub-100ms");
+        assert_eq!(
+            format_worked_label(Some(7_500)),
+            "Worked for 7.5s",
+            "sub-10s shows one decimal"
+        );
+        assert_eq!(
+            format_worked_label(Some(42_400)),
+            "Worked for 42s",
+            "10..60s rounds to whole seconds"
+        );
+        assert_eq!(
+            format_worked_label(Some(134_000)),
+            "Worked for 2m 14s",
+            "minutes and seconds"
+        );
     }
 }

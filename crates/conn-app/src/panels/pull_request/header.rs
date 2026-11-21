@@ -6,7 +6,8 @@ use std::rc::Rc;
 
 use conn_contract::{
     PullRequestAction, PullRequestActionInputUpdateMethod, PullRequestActor, PullRequestComment,
-    PullRequestCommit, PullRequestDetail, PullRequestDetailAutoMergeMethod, PullRequestState,
+    PullRequestCommit, PullRequestDetail, PullRequestDetailAutoMergeMethod,
+    PullRequestLabelCandidate, PullRequestReviewerCandidate, PullRequestState,
 };
 use conn_theme::{Appearance, Tokens, color_mix_srgb};
 use gpui_kit::component::input::{Input, InputState};
@@ -26,12 +27,14 @@ use super::super::color::to_hsla;
 use super::super::header::superhero_icon;
 use super::logic::{
     ChecksState, DetailTab, PrimaryControl, ReviewOutcome, allowed_merge_methods, auto_merge_label,
-    build_reviewer_entries, can_delete_branch, can_edit_change_request, can_perform_action,
-    checkout_command, format_grouped_count, format_relative_time, label_chip_colors,
-    merge_method_label, open_on_host_label, parse_pull_request_url, resolve_base_freshness,
-    resolve_merge_method, resolve_primary_control, resolve_state_presentation,
-    review_outcome_color, review_outcome_label, state_tone_color,
+    build_explain_pr_prompt, build_resolve_conflicts_prompt, build_reviewer_entries,
+    can_delete_branch, can_edit_change_request, can_perform_action, checkout_command,
+    format_grouped_count, format_relative_time, label_chip_colors, merge_method_label,
+    open_on_host_label, parse_pull_request_url, resolve_base_freshness, resolve_merge_method,
+    resolve_primary_control, resolve_state_presentation, review_outcome_color,
+    review_outcome_label, state_tone_color,
 };
+use super::pickers::{render_base_branch_freshness, render_label_picker, render_reviewer_picker};
 use crate::theme::MONO_FONT;
 
 const HEADER_INSET_X_PX: f32 = 18.0; // `px-4.5`
@@ -71,6 +74,36 @@ pub(super) struct HeaderCallbacks {
         Rc<dyn Fn(PullRequestDetailAutoMergeMethod, &mut Window, &mut App)>,
     pub(super) on_copy_branch: Rc<dyn Fn(String, &mut Window, &mut App)>,
     pub(super) on_open_url: Rc<dyn Fn(String, &mut Window, &mut App)>,
+    pub(super) on_toggle_reviewer_picker: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub(super) on_select_reviewer_candidate:
+        Rc<dyn Fn(PullRequestReviewerCandidate, &mut Window, &mut App)>,
+    pub(super) on_toggle_label_picker: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub(super) on_select_label_candidate:
+        Rc<dyn Fn(PullRequestLabelCandidate, &mut Window, &mut App)>,
+    pub(super) on_toggle_base_freshness_popover: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub(super) on_toggle_header_condensed: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub(super) on_send_prompt: Rc<dyn Fn(String, &mut Window, &mut App)>,
+}
+
+/// Picker & popover state passed into [`render_header_body`].
+pub(super) struct HeaderPickerState<'a> {
+    pub(super) reviewer_open: bool,
+    pub(super) reviewer_search_input: &'a Entity<InputState>,
+    pub(super) reviewer_query: &'a str,
+    pub(super) reviewer_loading: bool,
+    pub(super) reviewer_error: Option<&'a str>,
+    pub(super) reviewer_candidates: &'a [PullRequestReviewerCandidate],
+    pub(super) reviewer_truncated: bool,
+    pub(super) reviewer_pending_id: Option<&'a str>,
+    pub(super) label_open: bool,
+    pub(super) label_search_input: &'a Entity<InputState>,
+    pub(super) label_query: &'a str,
+    pub(super) label_loading: bool,
+    pub(super) label_error: Option<&'a str>,
+    pub(super) label_candidates: &'a [PullRequestLabelCandidate],
+    pub(super) label_truncated: bool,
+    pub(super) label_pending_name: Option<&'a str>,
+    pub(super) base_freshness_open: bool,
 }
 
 /// Renders the fixed PR title bar (`PULL_REQUEST_DETAIL_HEADER_CLASS`).
@@ -90,6 +123,9 @@ pub(super) fn render_title_header(
     armed_confirm: Option<ConfirmableAction>,
     actions_menu_open: bool,
     refreshing: bool,
+    can_fix_findings: bool,
+    fix_findings_prompt: String,
+    condensed: bool,
     cb: &HeaderCallbacks,
 ) -> AnyElement {
     let fg = to_hsla(tokens.foreground);
@@ -253,9 +289,41 @@ pub(super) fn render_title_header(
             pending_action,
             armed_confirm,
             refreshing,
+            can_fix_findings,
+            fix_findings_prompt,
             cb,
         ));
     }
+
+    let on_toggle_condensed = cb.on_toggle_header_condensed.clone();
+    let collapse_btn = div()
+        .id("pr-header-collapse-btn")
+        .flex()
+        .flex_shrink_0()
+        .size(px(24.0))
+        .items_center()
+        .justify_center()
+        .rounded(px(PILL_RADIUS_PX))
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .on_click(move |_, window, cx| on_toggle_condensed(window, cx))
+        .conn_fast_tooltip(
+            if condensed {
+                "Show details"
+            } else {
+                "Hide details"
+            },
+            tokens,
+        )
+        .child(superhero_icon(
+            if condensed {
+                "superhero/chevron-down.svg"
+            } else {
+                "superhero/chevron-up.svg"
+            },
+            14.0,
+            muted,
+        ));
 
     h_flex()
         .w_full()
@@ -275,6 +343,7 @@ pub(super) fn render_title_header(
                 .items_center()
                 .gap(px(4.0))
                 .when_some(primary_el, |el, ctrl| el.child(ctrl))
+                .child(collapse_btn)
                 .child(overflow_anchor),
         )
         .into_any_element()
@@ -326,6 +395,9 @@ fn render_primary_control(
             let fg = to_hsla(tokens.destructive_foreground);
             let border = to_hsla(tokens.destructive.with_alpha(0.35));
             let bg = to_hsla(tokens.destructive.with_alpha(0.10));
+            let hover_bg = to_hsla(tokens.destructive.with_alpha(0.18));
+            let prompt = build_resolve_conflicts_prompt(detail);
+            let on_send = cb.on_send_prompt.clone();
             Some(
                 h_flex()
                     .id("pr-primary-conflicts")
@@ -337,13 +409,16 @@ fn render_primary_control(
                     .bg(bg)
                     .border_1()
                     .border_color(border)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(move |_, window, cx| on_send(prompt.clone(), window, cx))
                     .text_size(px(XS_TEXT_PX))
                     .line_height(px(XS_LINE_HEIGHT_PX))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(fg)
-                    .conn_fast_tooltip("Resolve conflicts", tokens)
+                    .conn_fast_tooltip("Resolve conflicts in this thread", tokens)
                     .child(superhero_icon("superhero/warning.svg", 14.0, fg))
-                    .child("Conflicts")
+                    .child("Resolve conflicts")
                     .into_any_element(),
             )
         }
@@ -485,6 +560,8 @@ fn render_actions_menu(
     pending_action: Option<PullRequestAction>,
     armed_confirm: Option<ConfirmableAction>,
     refreshing: bool,
+    can_fix_findings: bool,
+    fix_findings_prompt: String,
     cb: &HeaderCallbacks,
 ) -> AnyElement {
     let busy = pending_action.is_some();
@@ -573,6 +650,35 @@ fn render_actions_menu(
             false,
             refreshing,
             Box::new(move |window, cx| on_refresh(window, cx)),
+        ));
+    }
+
+    // Agent prompt actions (Explain this PR / Fix findings in this thread)
+    {
+        let explain_prompt = build_explain_pr_prompt(detail);
+        let on_send = cb.on_send_prompt.clone();
+        list = list.child(item(
+            "pr-menu-explain-pr",
+            "superhero/book.svg",
+            "Explain this pull request".to_owned(),
+            fg,
+            muted,
+            false,
+            false,
+            Box::new(move |window, cx| on_send(explain_prompt.clone(), window, cx)),
+        ));
+    }
+    {
+        let on_send = cb.on_send_prompt.clone();
+        list = list.child(item(
+            "pr-menu-fix-findings",
+            "superhero/tool.svg",
+            "Fix findings in this thread".to_owned(),
+            fg,
+            muted,
+            false,
+            !can_fix_findings,
+            Box::new(move |window, cx| on_send(fix_findings_prompt.clone(), window, cx)),
         ));
     }
 
@@ -926,6 +1032,75 @@ fn render_actions_menu(
         .into_any_element()
 }
 
+/// Renders the compact single-line summary bar shown when the metadata header is condensed
+/// (`PullRequestDetailPanel.tsx` condensed row).
+pub(super) fn render_condensed_header_row(
+    tokens: &Tokens,
+    detail: &PullRequestDetail,
+    now_ms: i64,
+    cb: &HeaderCallbacks,
+) -> AnyElement {
+    let muted = to_hsla(tokens.muted_foreground);
+    let divider = to_hsla(tokens.shell_divider);
+    let updated = format_relative_time(&detail.updated_at, now_ms);
+    let on_expand = cb.on_toggle_header_condensed.clone();
+
+    h_flex()
+        .id("pr-condensed-header-row")
+        .w_full()
+        .flex_shrink_0()
+        .px(px(HEADER_INSET_X_PX))
+        .py(px(6.0))
+        .gap(px(8.0))
+        .items_center()
+        .border_b_1()
+        .border_color(divider)
+        .text_size(px(XS_TEXT_PX))
+        .line_height(px(XS_LINE_HEIGHT_PX))
+        .text_color(muted)
+        .cursor_pointer()
+        .on_click(move |_, window, cx| on_expand(window, cx))
+        .child(render_actor_avatar(tokens, detail.author.as_ref(), 16.0))
+        .child(div().flex_shrink_0().child(if updated.is_empty() {
+            detail.updated_at.clone()
+        } else {
+            updated
+        }))
+        .child(div().h(px(12.0)).w(px(1.0)).flex_shrink_0().bg(divider))
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .items_center()
+                .gap(px(4.0))
+                .font_family(SharedString::from(MONO_FONT))
+                .text_size(px(11.0))
+                .child(div().min_w_0().truncate().child(detail.head_branch.clone()))
+                .child(div().flex_shrink_0().child("→"))
+                .child(div().min_w_0().truncate().child(detail.base_branch.clone())),
+        )
+        .child(
+            h_flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap(px(6.0))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap(px(3.0))
+                        .child(superhero_icon("superhero/file-diff.svg", 12.0, muted))
+                        .child(format_grouped_count(detail.changed_files)),
+                )
+                .child(render_diff_stat(
+                    tokens,
+                    detail.additions,
+                    detail.deletions,
+                    11.0,
+                )),
+        )
+        .into_any_element()
+}
+
 /// Renders the key-value metadata section (`PullRequestDetailHeaderBody` + `PullRequestPeopleRows`).
 #[expect(
     clippy::too_many_arguments,
@@ -939,6 +1114,7 @@ pub(super) fn render_header_body(
     now_ms: i64,
     copied_branch: bool,
     pending_action: Option<PullRequestAction>,
+    pickers: &HeaderPickerState<'_>,
     cb: &HeaderCallbacks,
 ) -> AnyElement {
     let fg = to_hsla(tokens.foreground);
@@ -1045,7 +1221,7 @@ pub(super) fn render_header_body(
         },
         detail.head_branch
     );
-    let mut branch_row = h_flex()
+    let branch_row = h_flex()
         .ml(px(-4.0))
         .min_w_0()
         .flex_wrap()
@@ -1077,47 +1253,16 @@ pub(super) fn render_header_body(
                 .text_color(chrome::alpha(tokens.muted_foreground, 0.7))
                 .child("into"),
         )
-        .child(
-            div()
-                .id("pr-base-branch")
-                .max_w(px(160.0))
-                .truncate()
-                .text_color(muted)
-                .conn_code_tooltip(detail.base_branch.clone(), tokens)
-                .child(detail.base_branch.clone()),
-        );
-    if let Some(freshness) = freshness {
-        let warn = to_hsla(tokens.warning);
-        let behind_label = match freshness.behind_by {
-            Some(n) => format!("{n} behind"),
-            None => "Out of date".to_owned(),
-        };
-        branch_row = branch_row.child(
-            h_flex()
-                .flex_shrink_0()
-                .items_center()
-                .gap(px(4.0))
-                .text_size(px(XS_TEXT_PX))
-                .text_color(warn)
-                .child(superhero_icon("superhero/warning.svg", 13.0, warn))
-                .child(behind_label),
-        );
-        if let Some(method) = freshness.methods.first().copied() {
-            let on_perform = cb.on_perform_action.clone();
-            let busy = pending_action.is_some();
-            branch_row = branch_row.child(small_outline_button(
-                "pr-update-branch-btn",
-                Some("superhero/merge.svg"),
-                if pending_action == Some(PullRequestAction::UpdateBranch) {
-                    "Updating..."
-                } else if method == PullRequestActionInputUpdateMethod::Rebase {
-                    "Update with rebase"
-                } else {
-                    "Update branch"
-                },
-                tokens,
-                busy,
-                move |window, cx| {
+        .child(render_base_branch_freshness(
+            tokens,
+            &detail.base_branch,
+            freshness.as_ref(),
+            pickers.base_freshness_open,
+            pending_action,
+            cb.on_toggle_base_freshness_popover.clone(),
+            {
+                let on_perform = cb.on_perform_action.clone();
+                Rc::new(move |method, window, cx| {
                     on_perform(
                         PullRequestAction::UpdateBranch,
                         None,
@@ -1125,10 +1270,9 @@ pub(super) fn render_header_body(
                         window,
                         cx,
                     );
-                },
-            ));
-        }
-    }
+                })
+            },
+        ));
 
     // Changes value (`N files` + `+add -del`)
     let files_label = if detail.changed_files == 1 {
@@ -1151,10 +1295,12 @@ pub(super) fn render_header_body(
 
     // Reviewers row
     let reviewer_entries = build_reviewer_entries(&detail.reviewers, comments, commits);
-    let reviewers_el: AnyElement = if reviewer_entries.is_empty() {
-        div().text_color(muted).child("None").into_any_element()
+    let can_show_reviewer_picker =
+        detail.capabilities.reviewers.request && detail.capabilities.reviewers.list_candidates;
+    let mut reviewers_row = h_flex().min_w_0().flex_wrap().items_center().gap(px(6.0));
+    if reviewer_entries.is_empty() {
+        reviewers_row = reviewers_row.child(div().text_color(muted).child("None"));
     } else {
-        let mut row = h_flex().min_w_0().flex_wrap().items_center().gap(px(6.0));
         for (idx, entry) in reviewer_entries.iter().enumerate() {
             let login = entry
                 .actor
@@ -1225,17 +1371,34 @@ pub(super) fn render_header_body(
                         .child(review_outcome_label(outcome)),
                 );
             }
-            row = row.child(chip);
+            reviewers_row = reviewers_row.child(chip);
         }
-        row.into_any_element()
-    };
+    }
+    if can_show_reviewer_picker {
+        reviewers_row = reviewers_row.child(render_reviewer_picker(
+            tokens,
+            detail.viewer_permissions.request_reviewers,
+            pickers.reviewer_open,
+            pickers.reviewer_search_input,
+            pickers.reviewer_query,
+            pickers.reviewer_loading,
+            pickers.reviewer_error,
+            pickers.reviewer_candidates,
+            pickers.reviewer_truncated,
+            pickers.reviewer_pending_id,
+            cb.on_toggle_reviewer_picker.clone(),
+            cb.on_select_reviewer_candidate.clone(),
+        ));
+    }
+    let reviewers_el = reviewers_row.into_any_element();
 
     // Labels row
-    let show_labels_row = !detail.labels.is_empty() || detail.capabilities.labels == Some(true);
-    let labels_el: AnyElement = if detail.labels.is_empty() {
-        div().text_color(muted).child("None").into_any_element()
+    let can_show_label_picker = detail.capabilities.labels == Some(true);
+    let show_labels_row = !detail.labels.is_empty() || can_show_label_picker;
+    let mut labels_row = h_flex().min_w_0().flex_wrap().items_center().gap(px(4.0));
+    if detail.labels.is_empty() {
+        labels_row = labels_row.child(div().text_color(muted).child("None"));
     } else {
-        let mut row = h_flex().min_w_0().flex_wrap().items_center().gap(px(4.0));
         for (idx, label) in detail.labels.iter().enumerate() {
             let (bg, label_fg) = label_chip_colors(tokens, label.color.as_deref());
             let chip = div()
@@ -1261,10 +1424,26 @@ pub(super) fn render_header_body(
                     |el, desc| el.conn_fast_tooltip(desc.to_owned(), tokens),
                 )
                 .child(div().min_w_0().truncate().child(label.name.clone()));
-            row = row.child(chip);
+            labels_row = labels_row.child(chip);
         }
-        row.into_any_element()
-    };
+    }
+    if can_show_label_picker {
+        labels_row = labels_row.child(render_label_picker(
+            tokens,
+            detail.viewer_permissions.labels != Some(false),
+            pickers.label_open,
+            pickers.label_search_input,
+            pickers.label_query,
+            pickers.label_loading,
+            pickers.label_error,
+            pickers.label_candidates,
+            pickers.label_truncated,
+            pickers.label_pending_name,
+            cb.on_toggle_label_picker.clone(),
+            cb.on_select_label_candidate.clone(),
+        ));
+    }
+    let labels_el = labels_row.into_any_element();
 
     let mut body = v_flex()
         .w_full()
@@ -1606,7 +1785,6 @@ pub(super) fn render_detail_ghost(tokens: &Tokens, number: Option<i64>) -> AnyEl
 
     v_flex()
         .size_full()
-        .bg(to_hsla(tokens.shell_card))
         .child(header)
         .child(
             v_flex()
@@ -1678,7 +1856,6 @@ pub(super) fn render_unavailable_state(
         .justify_center()
         .p(px(24.0))
         .gap(px(16.0))
-        .bg(to_hsla(tokens.shell_card))
         .child(media)
         .child(
             v_flex()

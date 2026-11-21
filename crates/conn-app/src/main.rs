@@ -196,6 +196,7 @@ fn main() {
         let theme = live::initial_theme();
         let tokens = Tokens::derive(&theme);
         theme::apply_kit_theme(&tokens, cx);
+        vibrancy::sync_appearance(tokens.appearance);
         let server = live::server_config_from_env();
         app::register_keybindings(cx);
         app::start_frame_log(cx);

@@ -88,6 +88,7 @@ pub(crate) struct SettingsConnectionInfo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsEvent {
     ApplyTheme(String),
+    ReduceTransparency(bool),
     Close,
 }
 
@@ -139,6 +140,7 @@ impl SettingsModal {
     pub(crate) fn new(
         active_theme_id: impl Into<String>,
         tokens: Tokens,
+        reduce_transparency: bool,
         connection: SettingsConnectionInfo,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -167,7 +169,7 @@ impl SettingsModal {
             geometry: ShellGeometry::default(),
             active_page: SettingsPage::Appearance,
             active_theme_id: active_theme_id.into(),
-            reduce_transparency: false,
+            reduce_transparency,
             connection,
             themes,
             focus_handle,
@@ -206,6 +208,7 @@ impl SettingsModal {
 
     fn toggle_reduce_transparency(&mut self, cx: &mut Context<'_, Self>) {
         self.reduce_transparency = !self.reduce_transparency;
+        cx.emit(SettingsEvent::ReduceTransparency(self.reduce_transparency));
         cx.notify();
     }
 

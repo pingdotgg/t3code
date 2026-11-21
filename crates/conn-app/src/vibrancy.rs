@@ -7,17 +7,81 @@
 //! opened `Transparent`, and this inserts a full `NSVisualEffectView` with its material intact
 //! below GPUI's content.
 
-use gpui_kit::{App, Window};
+use conn_theme::Appearance;
+use gpui_kit::{App, Styled as _, Window};
 
-/// Adds the vibrancy view behind every new root window.
+/// Adds the vibrancy view behind every new root window and clears `gpui-component`'s opaque root
+/// background so Conn's translucent shell fills composite over macOS vibrancy.
 pub(crate) fn install(cx: &mut App) {
-    cx.observe_new::<gpui_kit::base::Root>(|_, window, _| {
+    cx.observe_new::<gpui_kit::base::Root>(|root, window, _| {
+        // `gpui-component`'s `WindowState` RootPlugin refines `Root` with an opaque
+        // `.bg(theme.tokens.background)` on every render. `Root::render` applies `root.style()`
+        // after plugin styles, so setting transparent black here clears that opaque fill and lets
+        // Conn's `shell_fill` (60%) and `shell_inner_fill` (76%) composite over the
+        // `NSVisualEffectView` behind GPUI's transparent `CAMetalLayer` (matching Conn's
+        // `html.electron-macos, html.electron-macos body { background: transparent !important; }`).
+        root.style().background = Some(gpui_kit::transparent_black().into());
         if let Some(window) = window {
             add_vibrancy(window);
         }
     })
     .detach();
 }
+
+/// Syncs the macOS application appearance (`NSAppearanceNameAqua` / `NSAppearanceNameDarkAqua`)
+/// with the active Conn theme, matching Conn's `ElectronTheme.ts` (`nativeTheme.themeSource`).
+///
+/// Without this, `NSVisualEffectView`'s `UnderWindowBackground` material follows the OS system
+/// appearance instead of the selected Conn theme (e.g. light vibrancy under a dark theme or dark
+/// vibrancy under a light theme).
+#[cfg(target_os = "macos")]
+pub(crate) fn sync_appearance(appearance: Appearance) {
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject};
+
+    let name = match appearance {
+        Appearance::Light => c"NSAppearanceNameAqua",
+        Appearance::Dark => c"NSAppearanceNameDarkAqua",
+    };
+
+    let (Some(ns_string_cls), Some(ns_appearance_cls), Some(ns_app_cls)) = (
+        AnyClass::get(c"NSString"),
+        AnyClass::get(c"NSAppearance"),
+        AnyClass::get(c"NSApplication"),
+    ) else {
+        return;
+    };
+
+    // SAFETY: Standard AppKit/Foundation calls on the main thread:
+    // - `[[NSString alloc] initWithUTF8String:]` takes a NUL-terminated static C string and
+    //   returns a +1 owned `NSString` wrapped in `Retained`.
+    // - `+[NSAppearance appearanceNamed:]` returns an `NSAppearance` or `nil`.
+    // - `+[NSApplication sharedApplication]` returns the singleton `NSApplication` instance.
+    // - `-[NSApplication setAppearance:]` accepts a nullable `NSAppearance *`.
+    unsafe {
+        let allocated: *mut AnyObject = objc2::msg_send![ns_string_cls, alloc];
+        let ns_name: Option<Retained<AnyObject>> = Retained::from_raw(objc2::msg_send![
+            allocated,
+            initWithUTF8String: name.as_ptr()
+        ]);
+        let Some(ns_name) = ns_name else {
+            return;
+        };
+        let ns_appearance: Option<Retained<AnyObject>> =
+            objc2::msg_send![ns_appearance_cls, appearanceNamed: &*ns_name];
+        let Some(ns_appearance) = ns_appearance else {
+            return;
+        };
+        let ns_app: Option<Retained<AnyObject>> = objc2::msg_send![ns_app_cls, sharedApplication];
+        let Some(ns_app) = ns_app else {
+            return;
+        };
+        let _: () = objc2::msg_send![&*ns_app, setAppearance: &*ns_appearance];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn sync_appearance(_appearance: Appearance) {}
 
 #[cfg(target_os = "macos")]
 fn add_vibrancy(window: &Window) {
@@ -125,3 +189,42 @@ fn add_vibrancy(window: &Window) {
 
 #[cfg(not(target_os = "macos"))]
 fn add_vibrancy(_window: &Window) {}
+
+#[cfg(all(test, feature = "automation"))]
+mod tests {
+    use gpui_kit::{
+        AppContext as _, Context, IntoElement, Render, Styled as _, TestAppContext, Window, div,
+    };
+
+    struct EmptyView;
+
+    impl Render for EmptyView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn vibrancy_install_clears_root_opaque_background(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            super::install(cx);
+        });
+        let (root, _) = cx.add_window_view(|window, cx| {
+            let content = cx.new(|_| EmptyView);
+            gpui_kit::base::Root::new(content, window, cx)
+        });
+        root.update(cx, |root, _| {
+            let bg = root.style().background.as_ref();
+            assert!(
+                bg.is_some(),
+                "vibrancy::install must set an explicit background override on Root"
+            );
+            assert_eq!(
+                bg.and_then(|fill| fill.color()),
+                Some(gpui_kit::Background::from(gpui_kit::transparent_black())),
+                "Root background override must be transparent so NSVisualEffectView shows through"
+            );
+        });
+    }
+}

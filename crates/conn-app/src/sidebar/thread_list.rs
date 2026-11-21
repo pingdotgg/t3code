@@ -23,8 +23,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use conn_state::{LayoutState, ProjectShell, ShellState, ThreadActivity, ThreadShell};
 use conn_theme::{Appearance, ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::{
-    Context, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
+    Context, Entity, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
     Styled as _, WindowControlArea, div, px,
 };
 
@@ -89,12 +90,17 @@ impl StatusDotState {
 }
 
 /// Renders the thread sidebar column (`layout.sidebar_width` wide).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "renders the sidebar from borrowed shell, layout, search, and theme state"
+)]
 #[must_use]
 pub(crate) fn render_thread_sidebar(
     shell: &ShellState,
     layout: &LayoutState,
     active_workspace: Option<&str>,
     collapsed_projects: &HashSet<String>,
+    search_input: &Entity<InputState>,
     tokens: &Tokens,
     geometry: &ShellGeometry,
     cx: &mut Context<'_, ConnApp>,
@@ -104,6 +110,8 @@ pub(crate) fn render_thread_sidebar(
     let search_icon_color = hsla_alpha(tokens.sidebar_muted_foreground, 0.85);
     let hover_bg = hsla(tokens.sidebar_row_hover);
     let has_projects = !shell.projects.is_empty();
+    let search_query = search_input.read(cx).value().to_string();
+    let has_query = !search_query.trim().is_empty();
 
     // 44px transparent header above the inset thread card.
     // Places the sidebar toggle directly right of the macOS traffic lights
@@ -158,6 +166,53 @@ pub(crate) fn render_thread_sidebar(
         cx.listener(|app, _event, _window, cx| app.start_new_thread(None, cx)),
     ));
 
+    let mut search_box = div()
+        .id("sidebar-search")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .flex_1()
+        .min_w_0()
+        .h(px(geometry.toolbar_height_px))
+        .px(px(8.0))
+        .rounded(px(SEARCH_RADIUS_PX))
+        .cursor_text()
+        .text_size(px(TITLE_FONT_SIZE_PX))
+        .line_height(px(TITLE_LINE_HEIGHT_PX))
+        .font_weight(gpui_kit::FontWeight::MEDIUM)
+        .text_color(fg)
+        .hover(move |s| s.bg(hover_bg))
+        .child(icons::chrome(IconName::Search, search_icon_color))
+        .child(
+            div().flex_1().min_w_0().child(
+                Input::new(search_input)
+                    .appearance(false)
+                    .text_size(px(TITLE_FONT_SIZE_PX)),
+            ),
+        );
+    if has_query {
+        let search_to_clear = search_input.clone();
+        search_box = search_box.child(
+            div()
+                .id("sidebar-search-clear")
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(18.0))
+                .flex_shrink_0()
+                .rounded(px(4.0))
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
+                .on_click(move |_, window, cx| {
+                    search_to_clear.update(cx, |state, cx| {
+                        state.set_value(String::new(), window, cx);
+                    });
+                })
+                .child(icons::concept("superhero/close.svg", 12.0, muted)),
+        );
+    }
+
     let top_row = div()
         .flex()
         .flex_row()
@@ -166,35 +221,18 @@ pub(crate) fn render_thread_sidebar(
         .w_full()
         .flex_shrink_0()
         .p(px(SIDEBAR_CONTENT_INSET_PX))
-        .child(
-            div()
-                .id("sidebar-search")
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .flex_1()
-                .min_w_0()
-                .h(px(geometry.toolbar_height_px))
-                .px(px(8.0))
-                .rounded(px(SEARCH_RADIUS_PX))
-                .cursor_text()
-                .text_size(px(TITLE_FONT_SIZE_PX))
-                .line_height(px(TITLE_LINE_HEIGHT_PX))
-                .font_weight(gpui_kit::FontWeight::MEDIUM)
-                .text_color(muted)
-                .hover(move |s| s.bg(hover_bg).text_color(fg))
-                .child(icons::chrome(IconName::Search, search_icon_color))
-                .child(div().flex_1().min_w_0().truncate().child("Search")),
-        )
+        .child(search_box)
         .child(header_actions);
 
-    // Flat list of threads, scoped to `active_workspace` when selected.
+    // Flat list of threads, scoped to `active_workspace` and live sidebar search when set.
     let now_secs = current_unix_secs();
     let visible_threads: Vec<&ThreadShell> = shell
         .threads
         .iter()
         .filter(|thread| active_workspace.is_none_or(|ws| ws == thread.project_id))
+        .filter(|thread| {
+            thread_matches_search(thread, shell.project(&thread.project_id), &search_query)
+        })
         .collect();
 
     let mut thread_rows = Vec::with_capacity(visible_threads.len());
@@ -213,9 +251,14 @@ pub(crate) fn render_thread_sidebar(
         .archived_threads
         .iter()
         .filter(|thread| active_workspace.is_none_or(|ws| ws == thread.project_id))
+        .filter(|thread| {
+            thread_matches_search(thread, shell.project(&thread.project_id), &search_query)
+        })
         .collect();
     let settled_count = settled_threads.len();
     let settled_expanded = collapsed_projects.contains(SETTLED_SHELF_TOGGLE_KEY);
+
+    let no_matches = has_query && thread_rows.is_empty() && settled_count == 0;
 
     let mut list_scroll = div()
         .id("sidebar-thread-scroll")
@@ -228,6 +271,18 @@ pub(crate) fn render_thread_sidebar(
         .pb(px(SIDEBAR_CONTENT_INSET_PX))
         .gap(px(1.0))
         .children(thread_rows);
+
+    if no_matches {
+        list_scroll = list_scroll.child(
+            div()
+                .px(px(ROW_HORIZONTAL_INSET_PX))
+                .py(px(12.0))
+                .text_size(px(geometry.ui_font_size_px))
+                .line_height(px(geometry.ui_line_height_px))
+                .text_color(muted)
+                .child("No matching threads"),
+        );
+    }
 
     {
         let settled_header = div()
@@ -630,9 +685,75 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
+/// Matches a thread against the sidebar search query: every whitespace-separated term must appear
+/// case-insensitively in the thread title, project title, or branch name.
+#[must_use]
+fn thread_matches_search(
+    thread: &ThreadShell,
+    project: Option<&ProjectShell>,
+    query: &str,
+) -> bool {
+    thread_fields_match_search(
+        &thread.title,
+        project.map(|p| p.title.as_str()),
+        thread.branch.as_deref(),
+        query,
+    )
+}
+
+#[must_use]
+fn thread_fields_match_search(
+    title: &str,
+    project_title: Option<&str>,
+    branch: Option<&str>,
+    query: &str,
+) -> bool {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let title = title.to_ascii_lowercase();
+    let project_title = project_title
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let branch = branch.map(str::to_ascii_lowercase).unwrap_or_default();
+    trimmed.split_whitespace().all(|term| {
+        let needle = term.to_ascii_lowercase();
+        title.contains(&needle) || project_title.contains(&needle) || branch.contains(&needle)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thread_search_matches_title_project_and_branch() {
+        let title = "Fix macOS vibrancy shell color";
+        let project = Some("conn-gpui");
+        let branch = Some("feat/vibrancy-fix");
+
+        assert!(
+            thread_fields_match_search(title, project, branch, ""),
+            "empty query matches all threads"
+        );
+        assert!(
+            thread_fields_match_search(title, project, branch, "vibrancy"),
+            "matches thread title case-insensitively"
+        );
+        assert!(
+            thread_fields_match_search(title, project, branch, "gpui VIBRANCY"),
+            "multi-term query matches across project title and thread title"
+        );
+        assert!(
+            thread_fields_match_search(title, project, branch, "feat/vibrancy"),
+            "matches branch name"
+        );
+        assert!(
+            !thread_fields_match_search(title, project, branch, "vibrancy missing"),
+            "rejects when any term does not match"
+        );
+    }
 
     #[test]
     fn relative_age_formats_seconds_minutes_hours_days() {

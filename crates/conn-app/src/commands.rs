@@ -122,6 +122,40 @@ pub(crate) fn stop_thread(thread_id: &str) -> Result<OrchestrationV2Command, ser
     }))
 }
 
+/// `thread.interaction-mode.set`: switch the thread between `"default"` and `"plan"`.
+pub(crate) fn set_interaction_mode(
+    thread_id: &str,
+    interaction_mode: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.interaction-mode.set",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "interactionMode": interaction_mode,
+    }))
+}
+
+/// `thread.settle` / `thread.unsettle`: move a thread into or out of the Settled shelf.
+pub(crate) fn settle_thread(
+    thread_id: &str,
+    settled: bool,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    if settled {
+        conn_contract::from_json(json!({
+            "type": "thread.settle",
+            "commandId": new_id("cmd"),
+            "threadId": thread_id,
+        }))
+    } else {
+        conn_contract::from_json(json!({
+            "type": "thread.unsettle",
+            "commandId": new_id("cmd"),
+            "threadId": thread_id,
+            "reason": "user",
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +178,19 @@ mod tests {
         assert!(
             respond_approval("t1", "r1", "accept").is_ok(),
             "runtime-request.respond decodes"
+        );
+        assert!(
+            set_interaction_mode("t1", "plan").is_ok(),
+            "thread.interaction-mode.set (plan) decodes"
+        );
+        assert!(
+            set_interaction_mode("t1", "default").is_ok(),
+            "thread.interaction-mode.set (default) decodes"
+        );
+        assert!(settle_thread("t1", true).is_ok(), "thread.settle decodes");
+        assert!(
+            settle_thread("t1", false).is_ok(),
+            "thread.unsettle decodes"
         );
     }
 

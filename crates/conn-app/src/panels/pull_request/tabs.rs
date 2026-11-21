@@ -5,8 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use conn_contract::{
-    PullRequestAction, PullRequestComment, PullRequestCommit, PullRequestDetail,
-    PullRequestFileViewedState, PullRequestReviewThread, PullRequestState,
+    PullRequestAction, PullRequestCheckStatus, PullRequestComment, PullRequestCommit,
+    PullRequestDetail, PullRequestFileViewedState, PullRequestReaction, PullRequestReactionContent,
+    PullRequestReviewThread, PullRequestReviewVerdict, PullRequestState,
 };
 use conn_theme::{Appearance, Tokens, color_mix_srgb};
 use gpui_kit::component::input::{Textarea, TextareaState};
@@ -24,18 +25,23 @@ use super::super::chrome::{
 use super::super::color::to_hsla;
 use super::super::diff_parser::{DiffFile, DiffLineKind};
 use super::super::header::superhero_icon;
+use super::super::highlight::highlight_lines;
 use super::header::{
     ConfirmableAction, render_actor_avatar, render_diff_stat, small_ghost_button,
     small_outline_button,
 };
 use super::logic::{
-    ChecksState, CommentFilter, DetailTab, ReviewOutcome, TimelineEvent, TimelineEventKind,
-    TimelineOrder, TimelineRow, TimelineThread, build_timeline, can_edit_change_request,
-    can_perform_action, check_status_color, check_status_icon, check_status_label,
-    filter_timeline_events, format_grouped_count, format_relative_time, group_timeline_rows,
+    ChecksState, CommentFilter, ComposerMode, DetailTab, ReviewOutcome, TimelineEvent,
+    TimelineEventKind, TimelineOrder, TimelineRow, TimelineThread, available_review_verdicts,
+    build_fix_check_prompt, build_fix_findings_prompt, build_fix_thread_prompt, build_timeline,
+    can_edit_change_request, can_perform_action, can_submit_review, check_status_color,
+    check_status_icon, check_status_label, filter_timeline_events, format_grouped_count,
+    format_relative_time, group_timeline_rows, is_request_changes_summary_required,
     is_verdict_stale, newest_commit_at, resolve_state_presentation, review_outcome,
-    review_outcome_color, review_outcome_label, state_tone_color, summarize_checks,
+    review_outcome_color, review_outcome_label, review_placeholder, review_verdict_icon,
+    review_verdict_label, state_tone_color, summarize_checks,
 };
+use super::pickers::render_reaction_bar;
 use crate::chat::markdown::{MarkdownOptions, render_markdown};
 use crate::theme::MONO_FONT;
 
@@ -85,7 +91,31 @@ pub(super) struct TabCallbacks {
     pub(super) on_reload_code: Rc<dyn Fn(&mut Window, &mut App)>,
     pub(super) on_toggle_composer: Rc<dyn Fn(&mut Window, &mut App)>,
     pub(super) on_submit_comment: Rc<dyn Fn(Option<PullRequestAction>, &mut Window, &mut App)>,
+    pub(super) on_set_composer_mode: Rc<dyn Fn(ComposerMode, &mut Window, &mut App)>,
+    pub(super) on_select_review_verdict:
+        Rc<dyn Fn(PullRequestReviewVerdict, &mut Window, &mut App)>,
+    pub(super) on_submit_review: Rc<dyn Fn(&mut Window, &mut App)>,
+    pub(super) on_toggle_reaction_picker: Rc<dyn Fn(String, &mut Window, &mut App)>,
+    pub(super) on_toggle_reaction: Rc<
+        dyn Fn(
+            String,
+            Option<String>,
+            PullRequestReactionContent,
+            bool,
+            String,
+            &mut Window,
+            &mut App,
+        ),
+    >,
+    pub(super) on_send_prompt: Rc<dyn Fn(String, &mut Window, &mut App)>,
     pub(super) on_arm_confirm: Rc<dyn Fn(Option<ConfirmableAction>, &mut Window, &mut App)>,
+}
+
+/// Shared reaction overlay & picker state passed into description and timeline tabs.
+pub(super) struct ReactionState<'a> {
+    pub(super) can_react: bool,
+    pub(super) open_picker: Option<&'a str>,
+    pub(super) pending: &'a HashMap<String, (String, HashMap<PullRequestReactionContent, bool>)>,
 }
 
 /// Renders Conn's `PullRequestDetailTabBar` (`h-12.25 border-y px-4.5 gap-5`) with the active
@@ -234,16 +264,30 @@ pub(super) fn render_checks_tab_trailing(
         Some(ChecksState::Pending) => ("superhero/circle-dot.svg", to_hsla(tokens.warning)),
         None => ("superhero/circle-dot.svg", to_hsla(tokens.muted_foreground)),
     };
-    h_flex()
-        .min_w_0()
-        .items_center()
-        .gap(px(6.0))
-        .text_size(px(UI_TEXT_PX))
-        .line_height(px(UI_LINE_HEIGHT_PX))
-        .text_color(chrome::alpha(tokens.foreground, 0.85))
-        .child(superhero_icon(icon, 14.0, color))
-        .child(div().min_w_0().truncate().child(summary))
-        .into_any_element()
+    let mut row = h_flex().min_w_0().items_center().gap(px(8.0)).child(
+        h_flex()
+            .min_w_0()
+            .items_center()
+            .gap(px(6.0))
+            .text_size(px(UI_TEXT_PX))
+            .line_height(px(UI_LINE_HEIGHT_PX))
+            .text_color(chrome::alpha(tokens.foreground, 0.85))
+            .child(superhero_icon(icon, 14.0, color))
+            .child(div().min_w_0().truncate().child(summary)),
+    );
+    if checks_state == Some(ChecksState::Failing) {
+        let prompt = build_fix_findings_prompt(detail, &[], &[], &detail.checks, false);
+        let on_send = cb.on_send_prompt.clone();
+        row = row.child(small_outline_button(
+            "pr-fix-failing-checks-btn",
+            Some("superhero/tool.svg"),
+            "Fix failing checks",
+            tokens,
+            false,
+            move |window, cx| on_send(prompt.clone(), window, cx),
+        ));
+    }
+    row.into_any_element()
 }
 
 /// Trailing controls for the Timeline tab bar (`commentCount · commits · approvals`, filter menu,
@@ -551,9 +595,15 @@ pub(super) fn render_code_tab_trailing(
 }
 
 /// Renders the Description (`summary`) tab (`PullRequestDescriptionTab`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "view props passed explicitly from PullRequestPanel::render"
+)]
 pub(super) fn render_description_tab(
     tokens: &Tokens,
     detail: &PullRequestDetail,
+    pr_reactions: &[PullRequestReaction],
+    reaction_state: &ReactionState<'_>,
     editing_body: bool,
     body_input: &Entity<TextareaState>,
     body_saving: bool,
@@ -655,7 +705,25 @@ pub(super) fn render_description_tab(
             ),
         );
     }
-    row.into_any_element()
+    let reaction_bar = render_reaction_bar(
+        tokens,
+        "__pr__",
+        None,
+        pr_reactions,
+        reaction_state.pending.get("__pr__"),
+        reaction_state.can_react,
+        reaction_state.open_picker == Some("__pr__"),
+        cb.on_toggle_reaction_picker.clone(),
+        cb.on_toggle_reaction.clone(),
+    );
+    v_flex()
+        .w_full()
+        .min_w_0()
+        .child(row)
+        .when_some(reaction_bar, |el, bar| {
+            el.child(div().px(px(INSET_X_PX)).pb(px(16.0)).child(bar))
+        })
+        .into_any_element()
 }
 
 /// Renders the Checks tab (`PullRequestChecksTab`: `p-1.75`, `px-2.75 py-2`, `text-xs leading-5`).
@@ -687,6 +755,10 @@ pub(super) fn render_checks_tab(
         let status_color = to_hsla(check_status_color(tokens, check.status));
         let icon = check_status_icon(check.status);
         let status_label = check_status_label(check);
+        let is_failing = matches!(
+            check.status,
+            PullRequestCheckStatus::Failure | PullRequestCheckStatus::Cancelled
+        );
         let mut row = h_flex()
             .id(SharedString::from(format!("pr-check-row-{idx}")))
             .w_full()
@@ -708,6 +780,30 @@ pub(super) fn render_checks_tab(
                     .child(check.name.clone()),
             )
             .child(div().flex_shrink_0().text_color(muted).child(status_label));
+        if is_failing {
+            let prompt = build_fix_check_prompt(detail, check);
+            let on_send = cb.on_send_prompt.clone();
+            let hover = to_hsla(tokens.shell_highlight);
+            row = row.child(
+                h_flex()
+                    .id(SharedString::from(format!("pr-check-fix-{idx}")))
+                    .flex_shrink_0()
+                    .h(px(22.0))
+                    .px(px(7.0))
+                    .gap(px(4.0))
+                    .items_center()
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .text_size(px(XS_TEXT_PX))
+                    .text_color(fg)
+                    .hover(move |s| s.bg(hover))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(move |_, window, cx| on_send(prompt.clone(), window, cx))
+                    .conn_fast_tooltip("Fix failing check in this thread", tokens)
+                    .child(superhero_icon("superhero/tool.svg", 12.0, muted))
+                    .child("Fix"),
+            );
+        }
         if let Some(url) = check.url.clone() {
             let on_open = cb.on_open_url.clone();
             row = row
@@ -740,6 +836,7 @@ pub(super) fn render_timeline_tab(
     replying_thread: Option<&str>,
     reply_input: &Entity<TextareaState>,
     reply_submitting: bool,
+    reaction_state: &ReactionState<'_>,
     now_ms: i64,
     cb: &TabCallbacks,
 ) -> AnyElement {
@@ -815,6 +912,9 @@ pub(super) fn render_timeline_tab(
             .bg(divider),
     );
 
+    let raw_threads_by_id: HashMap<&str, &PullRequestReviewThread> =
+        review_threads.iter().map(|t| (t.id.as_str(), t)).collect();
+
     for (idx, row) in rows.into_iter().enumerate() {
         let el = match row {
             TimelineRow::Comments(group_events) => {
@@ -823,7 +923,15 @@ pub(super) fn render_timeline_tab(
                     group_events.first().map_or("empty", |e| e.id.as_str())
                 );
                 let is_open = expanded_groups.contains(&group_key);
-                render_conversation_group(tokens, &group_key, &group_events, is_open, now_ms, cb)
+                render_conversation_group(
+                    tokens,
+                    &group_key,
+                    &group_events,
+                    is_open,
+                    reaction_state,
+                    now_ms,
+                    cb,
+                )
             }
             TimelineRow::Event(event) => {
                 if let Some(thread) = &event.thread {
@@ -834,15 +942,18 @@ pub(super) fn render_timeline_tab(
                         .get(&thread.id)
                         .copied()
                         .unwrap_or(default_expanded);
+                    let raw_thread = raw_threads_by_id.get(thread.id.as_str()).copied();
                     render_review_thread_event(
                         tokens,
                         detail,
                         &event,
                         thread,
+                        raw_thread,
                         is_expanded,
                         replying_thread == Some(thread.id.as_str()),
                         reply_input,
                         reply_submitting,
+                        reaction_state,
                         now_ms,
                         cb,
                     )
@@ -850,7 +961,16 @@ pub(super) fn render_timeline_tab(
                     render_commit_event(tokens, &event, now_ms, cb)
                 } else if let Some(outcome) = review_outcome(event.review_state.as_deref()) {
                     let stale = is_verdict_stale(&event.at, newest_commit);
-                    render_review_verdict_event(tokens, idx, &event, outcome, stale, now_ms, cb)
+                    render_review_verdict_event(
+                        tokens,
+                        idx,
+                        &event,
+                        outcome,
+                        stale,
+                        reaction_state,
+                        now_ms,
+                        cb,
+                    )
                 } else {
                     render_lifecycle_event(tokens, &event, now_ms)
                 }
@@ -1050,12 +1170,17 @@ fn render_commit_event(
         .into_any_element()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "view props passed explicitly from render_timeline_tab"
+)]
 fn render_review_verdict_event(
     tokens: &Tokens,
     idx: usize,
     event: &TimelineEvent,
     outcome: ReviewOutcome,
     stale: bool,
+    reaction_state: &ReactionState<'_>,
     now_ms: i64,
     cb: &TabCallbacks,
 ) -> AnyElement {
@@ -1141,6 +1266,19 @@ fn render_review_verdict_event(
             &MarkdownOptions::default(),
         )));
     }
+    if let Some(bar) = render_reaction_bar(
+        tokens,
+        &event.id,
+        Some(event.id.clone()),
+        &event.reactions,
+        reaction_state.pending.get(&event.id),
+        reaction_state.can_react,
+        reaction_state.open_picker == Some(event.id.as_str()),
+        cb.on_toggle_reaction_picker.clone(),
+        cb.on_toggle_reaction.clone(),
+    ) {
+        content = content.child(div().mt(px(8.0)).child(bar));
+    }
 
     div()
         .relative()
@@ -1157,6 +1295,7 @@ fn render_conversation_group(
     group_key: &str,
     events: &[TimelineEvent],
     is_open: bool,
+    reaction_state: &ReactionState<'_>,
     now_ms: i64,
     cb: &TabCallbacks,
 ) -> AnyElement {
@@ -1246,6 +1385,7 @@ fn render_conversation_group(
                 ev,
                 true,
                 None,
+                reaction_state,
                 now_ms,
                 cb,
             ));
@@ -1272,10 +1412,12 @@ fn render_review_thread_event(
     detail: &PullRequestDetail,
     event: &TimelineEvent,
     thread: &TimelineThread,
+    raw_thread: Option<&PullRequestReviewThread>,
     is_expanded: bool,
     is_replying: bool,
     reply_input: &Entity<TextareaState>,
     reply_submitting: bool,
+    reaction_state: &ReactionState<'_>,
     now_ms: i64,
     cb: &TabCallbacks,
 ) -> AnyElement {
@@ -1392,6 +1534,36 @@ fn render_review_thread_event(
         let can_resolve = detail.capabilities.review.resolve
             && detail.viewer_permissions.resolve
             && thread.can_resolve;
+        let fix_btn = if !thread.is_resolved
+            && let Some(raw) = raw_thread
+        {
+            let prompt = build_fix_thread_prompt(detail, raw);
+            let on_send = cb.on_send_prompt.clone();
+            let hover = to_hsla(tokens.shell_highlight);
+            Some(
+                h_flex()
+                    .id(SharedString::from(format!("pr-thread-fix-{}", thread.id)))
+                    .flex_shrink_0()
+                    .h(px(24.0))
+                    .px(px(7.0))
+                    .gap(px(4.0))
+                    .items_center()
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .text_size(px(XS_TEXT_PX))
+                    .line_height(px(XS_LINE_HEIGHT_PX))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(fg)
+                    .hover(move |s| s.bg(hover))
+                    .on_click(move |_, window, cx| on_send(prompt.clone(), window, cx))
+                    .conn_fast_tooltip("Fix findings in this thread", tokens)
+                    .child(superhero_icon("superhero/tool.svg", 12.0, muted))
+                    .child("Fix")
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
         let resolve_btn = if can_resolve {
             let tid = thread.id.clone();
             let next_resolved = !thread.is_resolved;
@@ -1410,6 +1582,19 @@ fn render_review_thread_event(
         } else {
             None
         };
+        let extra_actions: Option<AnyElement> = match (fix_btn, resolve_btn) {
+            (Some(a), Some(b)) => Some(
+                h_flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(a)
+                    .child(b)
+                    .into_any_element(),
+            ),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
 
         let mut expanded_box = v_flex()
             .mt(px(12.0))
@@ -1419,7 +1604,8 @@ fn render_review_thread_event(
                 &format!("th-root-{}", thread.id),
                 event,
                 false,
-                resolve_btn,
+                extra_actions,
+                reaction_state,
                 now_ms,
                 cb,
             ));
@@ -1437,6 +1623,7 @@ fn render_review_thread_event(
                     reply,
                     false,
                     None,
+                    reaction_state,
                     now_ms,
                     cb,
                 ));
@@ -1515,12 +1702,17 @@ fn render_review_thread_event(
         .into_any_element()
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "view props passed explicitly from timeline renderers"
+)]
 fn render_conversation_card(
     tokens: &Tokens,
     card_id: &str,
     event: &TimelineEvent,
     show_path: bool,
     extra_action: Option<AnyElement>,
+    reaction_state: &ReactionState<'_>,
     now_ms: i64,
     cb: &TabCallbacks,
 ) -> AnyElement {
@@ -1625,6 +1817,20 @@ fn render_conversation_card(
                 .into_any_element()
         };
         card = card.child(div().w_full().p(px(12.0)).child(body_el));
+    }
+
+    if let Some(bar) = render_reaction_bar(
+        tokens,
+        &event.id,
+        Some(event.id.clone()),
+        &event.reactions,
+        reaction_state.pending.get(&event.id),
+        reaction_state.can_react,
+        reaction_state.open_picker == Some(event.id.as_str()),
+        cb.on_toggle_reaction_picker.clone(),
+        cb.on_toggle_reaction.clone(),
+    ) {
+        card = card.child(div().w_full().px(px(12.0)).pb(px(10.0)).child(bar));
     }
 
     card.into_any_element()
@@ -2044,6 +2250,14 @@ fn render_file_diff_pane(
 
             let mut lines_col = v_flex().w_full().pb(px(24.0));
             for (hunk_idx, hunk) in diff.hunks.iter().enumerate() {
+                let hunk_source: String = hunk
+                    .lines
+                    .iter()
+                    .map(|l| l.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let highlighted = highlight_lines(&entry.path, &hunk_source, tokens);
+
                 lines_col = lines_col.child(
                     div()
                         .w_full()
@@ -2059,7 +2273,7 @@ fn render_file_diff_pane(
                         .text_color(muted)
                         .child(hunk.header.clone()),
                 );
-                for line in &hunk.lines {
+                for (line_idx, line) in hunk.lines.iter().enumerate() {
                     let (row_bg, gutter_bg, sign, sign_color) = match line.kind {
                         DiffLineKind::Added => (Some(added_bg), Some(added_gutter_bg), "+", added),
                         DiffLineKind::Removed => {
@@ -2094,6 +2308,35 @@ fn render_file_diff_pane(
                                 .child(new_no),
                         );
 
+                    let mut code_cell = if word_wrap {
+                        h_flex().flex_1().min_w_0().flex_wrap().pr(px(12.0))
+                    } else {
+                        h_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .pr(px(12.0))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                    };
+                    if let Some(spans) = highlighted.get(line_idx)
+                        && !spans.is_empty()
+                    {
+                        for span in spans {
+                            let mut el = div()
+                                .text_color(to_hsla(span.color))
+                                .child(span.text.clone());
+                            if span.bold {
+                                el = el.font_weight(FontWeight::BOLD);
+                            }
+                            if span.italic {
+                                el = el.italic();
+                            }
+                            code_cell = code_cell.child(el);
+                        }
+                    } else {
+                        code_cell = code_cell.text_color(code_fg).child(line.text.clone());
+                    }
+
                     lines_col = lines_col.child(
                         h_flex()
                             .w_full()
@@ -2110,15 +2353,7 @@ fn render_file_diff_pane(
                                     .text_color(sign_color)
                                     .child(sign),
                             )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .pr(px(12.0))
-                                    .when(!word_wrap, |el| el.overflow_hidden().whitespace_nowrap())
-                                    .text_color(code_fg)
-                                    .child(line.text.clone()),
-                            ),
+                            .child(code_cell),
                     );
                 }
             }
@@ -2134,7 +2369,8 @@ fn render_file_diff_pane(
         .into_any_element()
 }
 
-/// Floating bottom-right comment composer (`PullRequestComposer` + `PullRequestCommentForm`).
+/// Floating bottom-right composer (`PullRequestComposer` + `PullRequestCommentForm` +
+/// `PullRequestReviewForm`).
 #[expect(
     clippy::too_many_arguments,
     reason = "view props passed explicitly from PullRequestPanel::render"
@@ -2143,16 +2379,32 @@ pub(super) fn render_floating_composer(
     tokens: &Tokens,
     detail: &PullRequestDetail,
     open: bool,
+    requested_mode: ComposerMode,
     comment_input: &Entity<TextareaState>,
     comment_empty: bool,
-    submitting: bool,
+    comment_submitting: bool,
+    review_input: &Entity<TextareaState>,
+    review_text: &str,
+    review_verdict: PullRequestReviewVerdict,
+    review_submitting: bool,
     armed_confirm: Option<ConfirmableAction>,
     cb: &TabCallbacks,
 ) -> Option<AnyElement> {
     let can_comment = detail.capabilities.comment && detail.viewer_permissions.comment;
-    if !can_comment {
+    let verdicts = available_review_verdicts(detail);
+    if !can_comment && verdicts.is_empty() {
         return None;
     }
+
+    let mode = if can_comment {
+        if verdicts.is_empty() {
+            ComposerMode::Comment
+        } else {
+            requested_mode
+        }
+    } else {
+        ComposerMode::Review
+    };
 
     let fg = to_hsla(tokens.foreground);
     let muted = to_hsla(tokens.muted_foreground);
@@ -2183,6 +2435,11 @@ pub(super) fn render_floating_composer(
     };
 
     let on_toggle = cb.on_toggle_composer.clone();
+    let trigger_tip = if !can_comment {
+        "Review pull request"
+    } else {
+        "Comment or review"
+    };
     let trigger = div()
         .id("pr-composer-trigger")
         .flex()
@@ -2197,7 +2454,7 @@ pub(super) fn render_floating_composer(
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .on_click(move |_, window, cx| on_toggle(window, cx))
-        .conn_fast_tooltip("Leave a comment", tokens)
+        .conn_fast_tooltip(trigger_tip, tokens)
         .child(superhero_icon("superhero/thread.svg", 16.0, fg));
 
     let mut wrapper = v_flex()
@@ -2208,63 +2465,70 @@ pub(super) fn render_floating_composer(
         .gap(px(8.0));
 
     if open {
-        let disabled = comment_empty || submitting;
         let on_close = cb.on_toggle_composer.clone();
-        let on_submit = cb.on_submit_comment.clone();
-        let on_arm = cb.on_arm_confirm.clone();
-
-        let mut footer = h_flex().w_full().items_center().justify_end().gap(px(8.0));
-        if let Some(action) = follow_up {
-            let is_close = action == PullRequestAction::Close;
-            let armed = armed_confirm == Some(ConfirmableAction::CloseWithComment);
-            let label = if submitting {
-                if is_close {
-                    "Closing..."
+        let header_left: AnyElement = if can_comment && !verdicts.is_empty() {
+            let on_mode = cb.on_set_composer_mode.clone();
+            let seg_btn =
+                |id: &'static str,
+                 label: &'static str,
+                 target: ComposerMode,
+                 active: bool,
+                 on_set: Rc<dyn Fn(ComposerMode, &mut Window, &mut App)>| {
+                    div()
+                        .id(id)
+                        .h(px(24.0))
+                        .px(px(10.0))
+                        .flex()
+                        .items_center()
+                        .rounded(px(6.0))
+                        .cursor_pointer()
+                        .text_size(px(XS_TEXT_PX))
+                        .line_height(px(XS_LINE_HEIGHT_PX))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(if active { fg } else { muted })
+                        .when(active, |el| el.bg(hover))
+                        .when(!active, |el| el.hover(move |s| s.text_color(fg)))
+                        .on_click(move |_, window, cx| on_set(target, window, cx))
+                        .child(label)
+                };
+            h_flex()
+                .p(px(2.0))
+                .gap(px(2.0))
+                .rounded(px(8.0))
+                .bg(to_hsla(tokens.shell_control))
+                .border_1()
+                .border_color(to_hsla(tokens.shell_divider_header))
+                .child(seg_btn(
+                    "pr-composer-mode-comment",
+                    "Comment",
+                    ComposerMode::Comment,
+                    mode == ComposerMode::Comment,
+                    on_mode.clone(),
+                ))
+                .child(seg_btn(
+                    "pr-composer-mode-review",
+                    "Review",
+                    ComposerMode::Review,
+                    mode == ComposerMode::Review,
+                    on_mode,
+                ))
+                .into_any_element()
+        } else {
+            div()
+                .text_size(px(14.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(fg)
+                .child(if mode == ComposerMode::Review {
+                    "Review pull request"
                 } else {
-                    "Reopening..."
-                }
-            } else if is_close && armed {
-                "Confirm close?"
-            } else if is_close {
-                "Close with comment"
-            } else {
-                "Reopen with comment"
-            };
-            let on_submit_action = on_submit.clone();
-            let on_arm_action = on_arm.clone();
-            footer = footer.child(small_outline_button(
-                "pr-comment-follow-up",
-                Some(if is_close {
-                    "superhero/pull-request-closed.svg"
-                } else {
-                    "superhero/pull-request.svg"
-                }),
-                label,
-                tokens,
-                disabled,
-                move |window, cx| {
-                    if is_close && !armed {
-                        on_arm_action(Some(ConfirmableAction::CloseWithComment), window, cx);
-                    } else {
-                        on_arm_action(None, window, cx);
-                        on_submit_action(Some(action), window, cx);
-                    }
-                },
-            ));
-        }
+                    "Comment on pull request"
+                })
+                .into_any_element()
+        };
 
-        footer = footer.child(small_outline_button(
-            "pr-comment-submit",
-            Some("superhero/send.svg"),
-            if submitting { "Posting..." } else { "Comment" },
-            tokens,
-            disabled,
-            move |window, cx| on_submit(None, window, cx),
-        ));
-
-        let popover = v_flex()
+        let mut popover = v_flex()
             .id("pr-composer-popover")
-            .w(px(360.0))
+            .w(px(380.0))
             .p(px(12.0))
             .gap(px(10.0))
             .rounded(px(12.0))
@@ -2278,13 +2542,7 @@ pub(super) fn render_floating_composer(
                     .w_full()
                     .items_center()
                     .justify_between()
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(fg)
-                            .child("Comment on pull request"),
-                    )
+                    .child(header_left)
                     .child(
                         div()
                             .id("pr-composer-close")
@@ -2299,23 +2557,189 @@ pub(super) fn render_floating_composer(
                             .conn_fast_tooltip("Close", tokens)
                             .child(superhero_icon("superhero/close.svg", 14.0, muted)),
                     ),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .min_h(px(80.0))
-                    .p(px(8.0))
-                    .rounded(px(8.0))
-                    .bg(to_hsla(tokens.shell_field))
-                    .border_1()
-                    .border_color(to_hsla(tokens.shell_divider_header))
-                    .child(
-                        Textarea::new(comment_input)
-                            .appearance(false)
-                            .text_size(px(UI_TEXT_PX)),
+            );
+
+        if mode == ComposerMode::Review {
+            let effective_verdict = if verdicts.contains(&review_verdict) {
+                review_verdict
+            } else {
+                verdicts
+                    .first()
+                    .copied()
+                    .unwrap_or(PullRequestReviewVerdict::Comment)
+            };
+            let req_summary = is_request_changes_summary_required(&detail.provider);
+            let can_send = !review_submitting
+                && can_submit_review(effective_verdict, review_text, req_summary);
+            let hint = review_placeholder(effective_verdict, req_summary);
+
+            let mut verdict_row = h_flex().flex_wrap().items_center().gap(px(4.0));
+            for verdict in &verdicts {
+                let verdict = *verdict;
+                let selected = verdict == effective_verdict;
+                let on_pick = cb.on_select_review_verdict.clone();
+                let (sel_bg, sel_border, sel_fg) = match verdict {
+                    PullRequestReviewVerdict::Approve => (
+                        to_hsla(tokens.success.with_alpha(0.14)),
+                        to_hsla(tokens.success.with_alpha(0.40)),
+                        to_hsla(tokens.success),
                     ),
-            )
-            .child(footer);
+                    PullRequestReviewVerdict::RequestChanges => (
+                        to_hsla(tokens.destructive.with_alpha(0.14)),
+                        to_hsla(tokens.destructive.with_alpha(0.40)),
+                        to_hsla(tokens.destructive),
+                    ),
+                    PullRequestReviewVerdict::Comment => (
+                        to_hsla(tokens.shell_highlight),
+                        to_hsla(tokens.shell_divider_header),
+                        fg,
+                    ),
+                };
+                verdict_row = verdict_row.child(
+                    h_flex()
+                        .id(SharedString::from(format!("pr-verdict-opt-{verdict:?}")))
+                        .h(px(24.0))
+                        .px(px(8.0))
+                        .gap(px(4.0))
+                        .items_center()
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(if selected {
+                            sel_border
+                        } else {
+                            to_hsla(tokens.shell_divider_header)
+                        })
+                        .when(selected, |el| el.bg(sel_bg))
+                        .cursor_pointer()
+                        .text_size(px(XS_TEXT_PX))
+                        .line_height(px(XS_LINE_HEIGHT_PX))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(if selected { sel_fg } else { muted })
+                        .hover(move |s| s.bg(hover))
+                        .on_click(move |_, window, cx| on_pick(verdict, window, cx))
+                        .child(superhero_icon(
+                            review_verdict_icon(verdict),
+                            12.0,
+                            if selected { sel_fg } else { muted },
+                        ))
+                        .child(review_verdict_label(verdict)),
+                );
+            }
+
+            let on_submit_review = cb.on_submit_review.clone();
+            popover = popover
+                .child(
+                    div()
+                        .w_full()
+                        .min_h(px(80.0))
+                        .p(px(8.0))
+                        .rounded(px(8.0))
+                        .bg(to_hsla(tokens.shell_field))
+                        .border_1()
+                        .border_color(to_hsla(tokens.shell_divider_header))
+                        .child(
+                            Textarea::new(review_input)
+                                .appearance(false)
+                                .text_size(px(UI_TEXT_PX)),
+                        ),
+                )
+                .child(div().text_size(px(11.0)).text_color(muted).child(hint))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(8.0))
+                        .child(verdict_row)
+                        .child(small_outline_button(
+                            "pr-review-submit",
+                            Some("superhero/send.svg"),
+                            if review_submitting {
+                                "Submitting..."
+                            } else {
+                                "Submit review"
+                            },
+                            tokens,
+                            !can_send,
+                            move |window, cx| on_submit_review(window, cx),
+                        )),
+                );
+        } else {
+            let disabled = comment_empty || comment_submitting;
+            let on_submit = cb.on_submit_comment.clone();
+            let on_arm = cb.on_arm_confirm.clone();
+
+            let mut footer = h_flex().w_full().items_center().justify_end().gap(px(8.0));
+            if let Some(action) = follow_up {
+                let is_close = action == PullRequestAction::Close;
+                let armed = armed_confirm == Some(ConfirmableAction::CloseWithComment);
+                let label = if comment_submitting {
+                    if is_close {
+                        "Closing..."
+                    } else {
+                        "Reopening..."
+                    }
+                } else if is_close && armed {
+                    "Confirm close?"
+                } else if is_close {
+                    "Close with comment"
+                } else {
+                    "Reopen with comment"
+                };
+                let on_submit_action = on_submit.clone();
+                let on_arm_action = on_arm.clone();
+                footer = footer.child(small_outline_button(
+                    "pr-comment-follow-up",
+                    Some(if is_close {
+                        "superhero/pull-request-closed.svg"
+                    } else {
+                        "superhero/pull-request.svg"
+                    }),
+                    label,
+                    tokens,
+                    disabled,
+                    move |window, cx| {
+                        if is_close && !armed {
+                            on_arm_action(Some(ConfirmableAction::CloseWithComment), window, cx);
+                        } else {
+                            on_arm_action(None, window, cx);
+                            on_submit_action(Some(action), window, cx);
+                        }
+                    },
+                ));
+            }
+
+            footer = footer.child(small_outline_button(
+                "pr-comment-submit",
+                Some("superhero/send.svg"),
+                if comment_submitting {
+                    "Posting..."
+                } else {
+                    "Comment"
+                },
+                tokens,
+                disabled,
+                move |window, cx| on_submit(None, window, cx),
+            ));
+
+            popover = popover
+                .child(
+                    div()
+                        .w_full()
+                        .min_h(px(80.0))
+                        .p(px(8.0))
+                        .rounded(px(8.0))
+                        .bg(to_hsla(tokens.shell_field))
+                        .border_1()
+                        .border_color(to_hsla(tokens.shell_divider_header))
+                        .child(
+                            Textarea::new(comment_input)
+                                .appearance(false)
+                                .text_size(px(UI_TEXT_PX)),
+                        ),
+                )
+                .child(footer);
+        }
 
         wrapper = wrapper.child(popover);
     }

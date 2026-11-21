@@ -4,6 +4,7 @@
 
 mod header;
 mod logic;
+mod pickers;
 mod tabs;
 
 use std::collections::{HashMap, HashSet};
@@ -14,8 +15,9 @@ use conn_client::{Connection, StreamId};
 use conn_contract::rpc::git::resolve_pull_request;
 use conn_contract::rpc::orchestration::get_thread_projection;
 use conn_contract::rpc::pull_requests::{
-    activity, comment, detail, diff_file_contents, files_viewed, invalidate, list, reply_to_thread,
-    run_action, set_files_viewed, set_thread_resolution, update,
+    activity, comment, detail, diff_file_contents, files_viewed, invalidate, label_candidates,
+    list, reply_to_thread, request_reviewers, reviewer_candidates, run_action, set_files_viewed,
+    set_labels, set_reaction, set_thread_resolution, submit_review, update,
 };
 use conn_contract::rpc::review::get_diff_preview;
 use conn_contract::{
@@ -23,40 +25,54 @@ use conn_contract::{
     PullRequestActionInput, PullRequestActionInputUpdateMethod, PullRequestActivity,
     PullRequestCommentInput, PullRequestDetail, PullRequestDetailAutoMergeMethod,
     PullRequestDiffFileContentsInput, PullRequestFileViewedState, PullRequestInvalidateInput,
-    PullRequestListInput, PullRequestListState, PullRequestRef, PullRequestSetFilesViewedInput,
-    PullRequestSetFilesViewedInputFilesItem, PullRequestThreadReplyInput,
-    PullRequestThreadResolutionInput, PullRequestUpdateInput,
-    ReviewDiffFileContentsInputChangeType, ReviewDiffPreviewInput,
+    PullRequestLabelCandidate, PullRequestLabelChangeInput, PullRequestListInput,
+    PullRequestListState, PullRequestReactionContent, PullRequestReactionInput, PullRequestRef,
+    PullRequestReviewVerdict, PullRequestReviewerCandidate, PullRequestReviewerCandidatesInput,
+    PullRequestReviewerRequestInput, PullRequestReviewerRequestInputReviewersItem,
+    PullRequestSetFilesViewedInput, PullRequestSetFilesViewedInputFilesItem,
+    PullRequestSubmitReviewInput, PullRequestThreadReplyInput, PullRequestThreadResolutionInput,
+    PullRequestUpdateInput, ReviewDiffFileContentsInputChangeType, ReviewDiffPreviewInput,
 };
 use conn_theme::Tokens;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, ClipboardItem, Context, Entity, IntoElement, KeyDownEvent, MouseButton,
-    ParentElement, Render, ScrollHandle, Styled, Subscription, Window, div,
+    AnyElement, ClipboardItem, Context, Entity, EventEmitter, IntoElement, KeyDownEvent,
+    MouseButton, ParentElement, Render, ScrollHandle, Styled, Subscription, Window, div,
 };
 use serde_json::json;
 
 use self::header::{
-    ConfirmableAction, HeaderCallbacks, render_detail_ghost, render_header_body,
-    render_title_header, render_unavailable_state,
+    ConfirmableAction, HeaderCallbacks, HeaderPickerState, render_condensed_header_row,
+    render_detail_ghost, render_header_body, render_title_header, render_unavailable_state,
 };
 use self::logic::{
-    CommentFilter, DetailTab, ResolvedPullRequestTarget, ReviewOutcome, TimelineOrder,
-    build_unified_diff_from_contents, classify_checks, describe_rpc_error, latest_review_outcomes,
-    now_epoch_ms, open_on_host_label, parse_pull_request_url, resolve_thread_pr_target,
+    CommentFilter, ComposerMode, DetailTab, ResolvedPullRequestTarget, ReviewOutcome,
+    TimelineOrder, available_review_verdicts, build_fix_findings_prompt,
+    build_unified_diff_from_contents, can_submit_review, classify_checks, describe_rpc_error,
+    has_actionable_findings, is_request_changes_summary_required, latest_review_outcomes,
+    next_header_condensed, now_epoch_ms, open_on_host_label, parse_pull_request_url,
+    resolve_thread_pr_target,
 };
 use self::tabs::{
-    CodeFileEntry, FileDiffState, TabCallbacks, render_checks_tab, render_checks_tab_trailing,
-    render_code_tab, render_code_tab_trailing, render_description_tab, render_floating_composer,
-    render_tab_bar, render_timeline_tab, render_timeline_tab_trailing,
+    CodeFileEntry, FileDiffState, ReactionState, TabCallbacks, render_checks_tab,
+    render_checks_tab_trailing, render_code_tab, render_code_tab_trailing, render_description_tab,
+    render_floating_composer, render_tab_bar, render_timeline_tab, render_timeline_tab_trailing,
 };
 use super::chrome;
-use super::color::to_hsla;
 use super::diff_parser::parse_unified_diff;
 
 const CLOCK_TICK_INTERVAL: Duration = Duration::from_secs(60);
+const METADATA_FOLD_HEIGHT_PX: f32 = 220.0;
+
+/// Events emitted by [`PullRequestPanel`] to the right-panel orchestrator.
+#[derive(Clone, Debug)]
+pub(crate) enum PullRequestEvent {
+    SendPrompt(String),
+}
+
+impl EventEmitter<PullRequestEvent> for PullRequestPanel {}
 
 #[derive(Clone, Debug)]
 enum PanelState {
@@ -111,6 +127,29 @@ pub(crate) struct PullRequestPanel {
     pending_action: Option<PullRequestAction>,
     armed_confirm: Option<ConfirmableAction>,
 
+    // Reviewer & label pickers + base-branch freshness popover
+    reviewer_picker_open: bool,
+    reviewer_search_input: Entity<InputState>,
+    reviewer_query: String,
+    reviewer_loading: bool,
+    reviewer_error: Option<String>,
+    reviewer_candidates: Vec<PullRequestReviewerCandidate>,
+    reviewer_truncated: bool,
+    reviewer_pending_id: Option<String>,
+    label_picker_open: bool,
+    label_search_input: Entity<InputState>,
+    label_query: String,
+    label_loading: bool,
+    label_error: Option<String>,
+    label_candidates: Vec<PullRequestLabelCandidate>,
+    label_truncated: bool,
+    label_pending_name: Option<String>,
+    base_freshness_open: bool,
+
+    // Collapsible header on scroll
+    header_condensed_by_tab: HashMap<DetailTab, bool>,
+    header_manual_override: Option<bool>,
+
     // Tabs & Timeline state
     active_tab: DetailTab,
     timeline_order: TimelineOrder,
@@ -122,11 +161,20 @@ pub(crate) struct PullRequestPanel {
     reply_input: Entity<TextareaState>,
     reply_submitting: bool,
 
-    // Floating comment composer
+    // Emoji reactions
+    open_reaction_picker: Option<String>,
+    pending_reactions: HashMap<String, (String, HashMap<PullRequestReactionContent, bool>)>,
+
+    // Floating comment & review composer
     composer_open: bool,
+    composer_mode: ComposerMode,
     comment_input: Entity<TextareaState>,
     comment_text: String,
     comment_submitting: bool,
+    review_input: Entity<TextareaState>,
+    review_text: String,
+    review_verdict: PullRequestReviewVerdict,
+    review_submitting: bool,
 
     // Code tab state
     code_files: Vec<CodeFileEntry>,
@@ -184,6 +232,15 @@ impl PullRequestPanel {
                 .placeholder("Write a reply")
                 .auto_grow(2, 8)
         });
+        let review_input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder("Summarize your review")
+                .auto_grow(3, 12)
+        });
+        let reviewer_search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search people with access"));
+        let label_search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search labels"));
 
         let comment_sub = cx.subscribe(&comment_input, |this, input, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
@@ -191,6 +248,30 @@ impl PullRequestPanel {
                 cx.notify();
             }
         });
+        let review_sub = cx.subscribe(&review_input, |this, input, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.review_text = input.read(cx).value().to_string();
+                cx.notify();
+            }
+        });
+        let reviewer_search_sub = cx.subscribe(
+            &reviewer_search_input,
+            |this, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.reviewer_query = input.read(cx).value().to_string();
+                    cx.notify();
+                }
+            },
+        );
+        let label_search_sub = cx.subscribe(
+            &label_search_input,
+            |this, input, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.label_query = input.read(cx).value().to_string();
+                    cx.notify();
+                }
+            },
+        );
         let title_sub = cx.subscribe_in(
             &title_input,
             window,
@@ -232,6 +313,25 @@ impl PullRequestPanel {
             selected_merge_method: None,
             pending_action: None,
             armed_confirm: None,
+            reviewer_picker_open: false,
+            reviewer_search_input,
+            reviewer_query: String::new(),
+            reviewer_loading: false,
+            reviewer_error: None,
+            reviewer_candidates: Vec::new(),
+            reviewer_truncated: false,
+            reviewer_pending_id: None,
+            label_picker_open: false,
+            label_search_input,
+            label_query: String::new(),
+            label_loading: false,
+            label_error: None,
+            label_candidates: Vec::new(),
+            label_truncated: false,
+            label_pending_name: None,
+            base_freshness_open: false,
+            header_condensed_by_tab: HashMap::new(),
+            header_manual_override: None,
             active_tab: DetailTab::Summary,
             timeline_order: TimelineOrder::Newest,
             comment_filter: CommentFilter::default(),
@@ -241,10 +341,17 @@ impl PullRequestPanel {
             replying_thread: None,
             reply_input,
             reply_submitting: false,
+            open_reaction_picker: None,
+            pending_reactions: HashMap::new(),
             composer_open: false,
+            composer_mode: ComposerMode::Comment,
             comment_input,
             comment_text: String::new(),
             comment_submitting: false,
+            review_input,
+            review_text: String::new(),
+            review_verdict: PullRequestReviewVerdict::Comment,
+            review_submitting: false,
             code_files: Vec::new(),
             code_files_loading: false,
             code_files_error: None,
@@ -254,7 +361,13 @@ impl PullRequestPanel {
             code_tree_open: true,
             code_word_wrap: false,
             scroll_handle: ScrollHandle::new(),
-            _subscriptions: vec![comment_sub, title_sub],
+            _subscriptions: vec![
+                comment_sub,
+                review_sub,
+                reviewer_search_sub,
+                label_search_sub,
+                title_sub,
+            ],
         };
 
         panel.start_background_loops(cx);
@@ -313,6 +426,25 @@ impl PullRequestPanel {
         self.editing_body = false;
         self.actions_menu_open = false;
         self.filter_menu_open = false;
+        self.reviewer_picker_open = false;
+        self.reviewer_query.clear();
+        self.reviewer_loading = false;
+        self.reviewer_error = None;
+        self.reviewer_candidates.clear();
+        self.reviewer_truncated = false;
+        self.reviewer_pending_id = None;
+        self.label_picker_open = false;
+        self.label_query.clear();
+        self.label_loading = false;
+        self.label_error = None;
+        self.label_candidates.clear();
+        self.label_truncated = false;
+        self.label_pending_name = None;
+        self.base_freshness_open = false;
+        self.header_condensed_by_tab.clear();
+        self.header_manual_override = None;
+        self.open_reaction_picker = None;
+        self.pending_reactions.clear();
         self.armed_confirm = None;
         self.pending_action = None;
         self.copied_branch = false;
@@ -324,12 +456,26 @@ impl PullRequestPanel {
         self.expanded_threads.clear();
         self.replying_thread = None;
         self.composer_open = false;
+        self.composer_mode = ComposerMode::Comment;
+        self.review_text.clear();
+        self.review_verdict = PullRequestReviewVerdict::Comment;
+        self.review_submitting = false;
         self.code_files.clear();
         self.code_files_loading = false;
         self.code_files_error = None;
         self.code_selected_path = None;
         self.code_diffs.clear();
         self.files_viewed.clear();
+    }
+
+    fn close_popovers(&mut self) {
+        self.actions_menu_open = false;
+        self.filter_menu_open = false;
+        self.reviewer_picker_open = false;
+        self.label_picker_open = false;
+        self.base_freshness_open = false;
+        self.open_reaction_picker = None;
+        self.armed_confirm = None;
     }
 
     fn start_background_loops(&mut self, cx: &mut Context<'_, Self>) {
@@ -1205,6 +1351,376 @@ impl PullRequestPanel {
             cx.notify();
         }
     }
+
+    fn emit_prompt(&mut self, prompt: String, cx: &mut Context<'_, Self>) {
+        self.close_popovers();
+        cx.emit(PullRequestEvent::SendPrompt(prompt));
+        cx.notify();
+    }
+
+    fn load_reviewer_candidates(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(conn), Some(target)) = (self.connection.clone(), self.active_target()) else {
+            return;
+        };
+        let generation = self.generation;
+        self.reviewer_loading = true;
+        self.reviewer_error = None;
+        cx.notify();
+
+        let payload = PullRequestReviewerCandidatesInput {
+            project_id: target.reference.project_id.clone(),
+            host: target.reference.host.clone(),
+            expected_account_id: target.reference.expected_account_id.clone(),
+            allow_stale: None,
+            repository: target.reference.repository.clone(),
+            number: target.reference.number,
+            query: None,
+        };
+
+        cx.spawn(async move |this, cx| {
+            let res = conn
+                .call::<reviewer_candidates::Payload, reviewer_candidates::Success>(
+                    "pullRequests.reviewerCandidates",
+                    &payload,
+                )
+                .await;
+            let _ = this.update(cx, |panel, cx| {
+                if panel.generation != generation {
+                    return;
+                }
+                panel.reviewer_loading = false;
+                match res {
+                    Ok(list) => {
+                        panel.reviewer_candidates = list.candidates;
+                        panel.reviewer_truncated = list.truncated;
+                        panel.reviewer_error = None;
+                    }
+                    Err(err) => {
+                        panel.reviewer_error = Some(describe_rpc_error(&err).1);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn toggle_reviewer_candidate(
+        &mut self,
+        candidate: PullRequestReviewerCandidate,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.reviewer_pending_id.is_some() {
+            return;
+        }
+        let (Some(conn), Some(target)) = (self.connection.clone(), self.active_target()) else {
+            return;
+        };
+        let next_requested = !candidate.is_requested;
+        let cand_id = candidate.id.clone();
+        let cand_login = candidate.login.clone();
+        self.reviewer_pending_id = Some(cand_id.clone());
+        self.notice = None;
+        if let Some(entry) = self
+            .reviewer_candidates
+            .iter_mut()
+            .find(|c| c.id == cand_id && c.kind == candidate.kind)
+        {
+            entry.is_requested = next_requested;
+        }
+        cx.notify();
+
+        let payload = PullRequestReviewerRequestInput {
+            project_id: target.reference.project_id.clone(),
+            host: target.reference.host.clone(),
+            expected_account_id: target.reference.expected_account_id.clone(),
+            allow_stale: None,
+            repository: target.reference.repository.clone(),
+            number: target.reference.number,
+            reviewers: vec![PullRequestReviewerRequestInputReviewersItem {
+                id: candidate.id.clone(),
+                kind: candidate.kind,
+            }],
+            requested: next_requested,
+        };
+
+        cx.spawn(async move |this, cx| {
+            let res = conn
+                .call::<request_reviewers::Payload, request_reviewers::Success>(
+                    "pullRequests.requestReviewers",
+                    &payload,
+                )
+                .await;
+            let _ = this.update(cx, |panel, cx| {
+                panel.reviewer_pending_id = None;
+                match res {
+                    Ok(()) => {
+                        panel.refresh_quietly(cx);
+                    }
+                    Err(err) => {
+                        if let Some(entry) = panel
+                            .reviewer_candidates
+                            .iter_mut()
+                            .find(|c| c.id == cand_id && c.kind == candidate.kind)
+                        {
+                            entry.is_requested = !next_requested;
+                        }
+                        let verb = if next_requested {
+                            format!("Could not ask {cand_login} for a review")
+                        } else {
+                            format!("Could not take back the review request to {cand_login}")
+                        };
+                        panel.notice = Some(format!("{verb}: {}", describe_rpc_error(&err).1));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn load_label_candidates(&mut self, cx: &mut Context<'_, Self>) {
+        let (Some(conn), Some(target)) = (self.connection.clone(), self.active_target()) else {
+            return;
+        };
+        let generation = self.generation;
+        self.label_loading = true;
+        self.label_error = None;
+        cx.notify();
+
+        let payload = target.reference;
+        cx.spawn(async move |this, cx| {
+            let res = conn
+                .call::<label_candidates::Payload, label_candidates::Success>(
+                    "pullRequests.labelCandidates",
+                    &payload,
+                )
+                .await;
+            let _ = this.update(cx, |panel, cx| {
+                if panel.generation != generation {
+                    return;
+                }
+                panel.label_loading = false;
+                match res {
+                    Ok(list) => {
+                        panel.label_candidates = list.candidates;
+                        panel.label_truncated = list.truncated;
+                        panel.label_error = None;
+                    }
+                    Err(err) => {
+                        panel.label_error = Some(describe_rpc_error(&err).1);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn toggle_label_candidate(
+        &mut self,
+        candidate: PullRequestLabelCandidate,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.label_pending_name.is_some() {
+            return;
+        }
+        let (Some(conn), Some(target)) = (self.connection.clone(), self.active_target()) else {
+            return;
+        };
+        let next_applied = !candidate.is_applied;
+        let label_name = candidate.name;
+        self.label_pending_name = Some(label_name.clone());
+        self.notice = None;
+        if let Some(entry) = self
+            .label_candidates
+            .iter_mut()
+            .find(|c| c.name == label_name)
+        {
+            entry.is_applied = next_applied;
+        }
+        cx.notify();
+
+        let payload = PullRequestLabelChangeInput {
+            project_id: target.reference.project_id.clone(),
+            host: target.reference.host.clone(),
+            expected_account_id: target.reference.expected_account_id.clone(),
+            allow_stale: None,
+            repository: target.reference.repository.clone(),
+            number: target.reference.number,
+            labels: vec![label_name.clone()],
+            applied: next_applied,
+        };
+
+        cx.spawn(async move |this, cx| {
+            let res = conn
+                .call::<set_labels::Payload, set_labels::Success>(
+                    "pullRequests.setLabels",
+                    &payload,
+                )
+                .await;
+            let _ = this.update(cx, |panel, cx| {
+                panel.label_pending_name = None;
+                match res {
+                    Ok(()) => {
+                        panel.refresh_quietly(cx);
+                    }
+                    Err(err) => {
+                        if let Some(entry) = panel
+                            .label_candidates
+                            .iter_mut()
+                            .find(|c| c.name == label_name)
+                        {
+                            entry.is_applied = !next_applied;
+                        }
+                        let verb = if next_applied {
+                            format!("Could not put {label_name} on")
+                        } else {
+                            format!("Could not take {label_name} off")
+                        };
+                        panel.notice = Some(format!("{verb}: {}", describe_rpc_error(&err).1));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn submit_review(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.review_submitting {
+            return;
+        }
+        let (Some(conn), PanelState::Ready { target, detail }) =
+            (self.connection.clone(), &self.state)
+        else {
+            return;
+        };
+        let verdicts = available_review_verdicts(detail);
+        let verdict = if verdicts.contains(&self.review_verdict) {
+            self.review_verdict
+        } else if let Some(first) = verdicts.first().copied() {
+            first
+        } else {
+            return;
+        };
+        let body = self.review_input.read(cx).value().to_string();
+        let req_summary = is_request_changes_summary_required(&detail.provider);
+        if !can_submit_review(verdict, &body, req_summary) {
+            return;
+        }
+
+        self.review_submitting = true;
+        self.notice = None;
+        let payload = PullRequestSubmitReviewInput {
+            project_id: target.reference.project_id.clone(),
+            host: target.reference.host.clone(),
+            expected_account_id: target.reference.expected_account_id.clone(),
+            allow_stale: None,
+            repository: target.reference.repository.clone(),
+            number: target.reference.number,
+            verdict,
+            body,
+            comments: Vec::new(),
+        };
+        let review_input = self.review_input.clone();
+        let window_handle = window.window_handle();
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let res = conn
+                .call::<submit_review::Payload, submit_review::Success>(
+                    "pullRequests.submitReview",
+                    &payload,
+                )
+                .await;
+            let _ = cx.update_window(window_handle, |_, window, cx| {
+                let _ = this.update(cx, |panel, cx| {
+                    panel.review_submitting = false;
+                    match res {
+                        Ok(()) => {
+                            panel.review_text.clear();
+                            review_input.update(cx, |s, cx| s.set_value(String::new(), window, cx));
+                            panel.composer_open = false;
+                            panel.refresh_quietly(cx);
+                        }
+                        Err(err) => {
+                            panel.notice = Some(format!(
+                                "The review could not be submitted: {}",
+                                describe_rpc_error(&err).1
+                            ));
+                        }
+                    }
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+    }
+
+    fn toggle_reaction(
+        &mut self,
+        subject_key: String,
+        subject_id: Option<String>,
+        content: PullRequestReactionContent,
+        reacted: bool,
+        signature: String,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.open_reaction_picker = None;
+        let (Some(conn), Some(target)) = (self.connection.clone(), self.active_target()) else {
+            return;
+        };
+        let entry = self
+            .pending_reactions
+            .entry(subject_key.clone())
+            .or_insert_with(|| (signature.clone(), HashMap::new()));
+        if entry.0 != signature {
+            entry.0 = signature.clone();
+            entry.1.clear();
+        }
+        entry.1.insert(content, reacted);
+        cx.notify();
+
+        let payload = PullRequestReactionInput {
+            project_id: target.reference.project_id.clone(),
+            host: target.reference.host.clone(),
+            expected_account_id: target.reference.expected_account_id.clone(),
+            allow_stale: None,
+            repository: target.reference.repository.clone(),
+            number: target.reference.number,
+            subject_id,
+            content,
+            reacted,
+        };
+
+        cx.spawn(async move |this, cx| {
+            let res = conn
+                .call::<set_reaction::Payload, set_reaction::Success>(
+                    "pullRequests.setReaction",
+                    &payload,
+                )
+                .await;
+            let _ = this.update(cx, |panel, cx| {
+                match res {
+                    Ok(()) => {
+                        panel.refresh_quietly(cx);
+                    }
+                    Err(err) => {
+                        if let Some((_, map)) = panel.pending_reactions.get_mut(&subject_key) {
+                            map.remove(&content);
+                        }
+                        panel.notice = Some(format!(
+                            "The reaction could not be saved: {}",
+                            describe_rpc_error(&err).1
+                        ));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
 }
 
 /// Resolves the PR reference for a thread using:
@@ -1301,7 +1817,21 @@ async fn resolve_pr_for_thread(
 impl Render for PullRequestPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let entity = cx.entity();
-        let bg = to_hsla(self.tokens.shell_card);
+
+        // Update scroll-driven condensed state for the active tab (unless manually overridden).
+        let scroll_top_px = (-f32::from(self.scroll_handle.offset().y)).max(0.0);
+        let prev_condensed = self
+            .header_condensed_by_tab
+            .get(&self.active_tab)
+            .copied()
+            .unwrap_or(false);
+        let auto_condensed =
+            next_header_condensed(prev_condensed, scroll_top_px, METADATA_FOLD_HEIGHT_PX);
+        if auto_condensed != prev_condensed {
+            self.header_condensed_by_tab
+                .insert(self.active_tab, auto_condensed);
+        }
+        let condensed = self.header_manual_override.unwrap_or(auto_condensed);
 
         let content: AnyElement = match &self.state {
             PanelState::NoConnection => render_unavailable_state(
@@ -1395,12 +1925,27 @@ impl Render for PullRequestPanel {
                     .activity
                     .as_ref()
                     .map_or(&[][..], |a| a.commits.as_slice());
+                let pr_reactions = self
+                    .activity
+                    .as_ref()
+                    .and_then(|a| a.reactions.as_deref())
+                    .unwrap_or(&[]);
+                let comments_truncated =
+                    self.activity.as_ref().is_some_and(|a| a.comments_truncated);
                 let comment_count = self.activity.as_ref().map_or(0, |a| a.comment_count);
                 let approval_count = latest_review_outcomes(comments, commits)
                     .iter()
                     .filter(|e| e.outcome == ReviewOutcome::Approved && !e.stale)
                     .count();
                 let checks_state = classify_checks(&detail.checks);
+                let can_fix_findings = has_actionable_findings(review_threads, &detail.checks);
+                let fix_findings_prompt = build_fix_findings_prompt(
+                    detail,
+                    review_threads,
+                    comments,
+                    &detail.checks,
+                    comments_truncated,
+                );
 
                 let header_cb = HeaderCallbacks {
                     on_start_edit_title: Rc::new({
@@ -1433,11 +1978,9 @@ impl Render for PullRequestPanel {
                         let entity = entity.clone();
                         move |_, cx| {
                             entity.update(cx, |p, cx| {
-                                p.actions_menu_open = !p.actions_menu_open;
-                                p.filter_menu_open = false;
-                                if !p.actions_menu_open {
-                                    p.armed_confirm = None;
-                                }
+                                let next = !p.actions_menu_open;
+                                p.close_popovers();
+                                p.actions_menu_open = next;
                                 cx.notify();
                             });
                         }
@@ -1450,6 +1993,7 @@ impl Render for PullRequestPanel {
                         let entity = entity.clone();
                         move |action, merge_method, update_method, _, cx| {
                             entity.update(cx, |p, cx| {
+                                p.base_freshness_open = false;
                                 p.perform_action(action, merge_method, update_method, cx);
                             });
                         }
@@ -1497,6 +2041,78 @@ impl Render for PullRequestPanel {
                         let entity = entity.clone();
                         move |url, _, cx| entity.update(cx, |p, cx| p.open_external_url(url, cx))
                     }),
+                    on_toggle_reviewer_picker: Rc::new({
+                        let entity = entity.clone();
+                        move |window, cx| {
+                            entity.update(cx, |p, cx| {
+                                let next = !p.reviewer_picker_open;
+                                p.close_popovers();
+                                p.reviewer_picker_open = next;
+                                if next {
+                                    p.reviewer_query.clear();
+                                    p.reviewer_search_input
+                                        .update(cx, |s, cx| s.set_value(String::new(), window, cx));
+                                    p.load_reviewer_candidates(cx);
+                                } else {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    }),
+                    on_select_reviewer_candidate: Rc::new({
+                        let entity = entity.clone();
+                        move |candidate, _, cx| {
+                            entity.update(cx, |p, cx| p.toggle_reviewer_candidate(candidate, cx));
+                        }
+                    }),
+                    on_toggle_label_picker: Rc::new({
+                        let entity = entity.clone();
+                        move |window, cx| {
+                            entity.update(cx, |p, cx| {
+                                let next = !p.label_picker_open;
+                                p.close_popovers();
+                                p.label_picker_open = next;
+                                if next {
+                                    p.label_query.clear();
+                                    p.label_search_input
+                                        .update(cx, |s, cx| s.set_value(String::new(), window, cx));
+                                    p.load_label_candidates(cx);
+                                } else {
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    }),
+                    on_select_label_candidate: Rc::new({
+                        let entity = entity.clone();
+                        move |candidate, _, cx| {
+                            entity.update(cx, |p, cx| p.toggle_label_candidate(candidate, cx));
+                        }
+                    }),
+                    on_toggle_base_freshness_popover: Rc::new({
+                        let entity = entity.clone();
+                        move |_, cx| {
+                            entity.update(cx, |p, cx| {
+                                let next = !p.base_freshness_open;
+                                p.close_popovers();
+                                p.base_freshness_open = next;
+                                cx.notify();
+                            });
+                        }
+                    }),
+                    on_toggle_header_condensed: Rc::new({
+                        let entity = entity.clone();
+                        move |_, cx| {
+                            entity.update(cx, |p, cx| {
+                                p.header_manual_override = Some(!condensed);
+                                cx.notify();
+                            });
+                        }
+                    }),
+                    on_send_prompt: Rc::new({
+                        let entity = entity.clone();
+                        move |prompt, _, cx| entity.update(cx, |p, cx| p.emit_prompt(prompt, cx))
+                    }),
                 };
 
                 let tab_cb = TabCallbacks {
@@ -1505,7 +2121,7 @@ impl Render for PullRequestPanel {
                         move |tab, _, cx| {
                             entity.update(cx, |p, cx| {
                                 p.active_tab = tab;
-                                p.filter_menu_open = false;
+                                p.close_popovers();
                                 if tab == DetailTab::Code
                                     && p.code_files.is_empty()
                                     && !p.code_files_loading
@@ -1572,8 +2188,9 @@ impl Render for PullRequestPanel {
                         let entity = entity.clone();
                         move |_, cx| {
                             entity.update(cx, |p, cx| {
-                                p.filter_menu_open = !p.filter_menu_open;
-                                p.actions_menu_open = false;
+                                let next = !p.filter_menu_open;
+                                p.close_popovers();
+                                p.filter_menu_open = next;
                                 cx.notify();
                             });
                         }
@@ -1684,8 +2301,7 @@ impl Render for PullRequestPanel {
                         move |_, cx| {
                             entity.update(cx, |p, cx| {
                                 p.composer_open = !p.composer_open;
-                                p.actions_menu_open = false;
-                                p.filter_menu_open = false;
+                                p.close_popovers();
                                 cx.notify();
                             });
                         }
@@ -1695,6 +2311,56 @@ impl Render for PullRequestPanel {
                         move |follow_up, window, cx| {
                             entity.update(cx, |p, cx| p.submit_comment(follow_up, window, cx));
                         }
+                    }),
+                    on_set_composer_mode: Rc::new({
+                        let entity = entity.clone();
+                        move |mode, _, cx| {
+                            entity.update(cx, |p, cx| {
+                                p.composer_mode = mode;
+                                cx.notify();
+                            });
+                        }
+                    }),
+                    on_select_review_verdict: Rc::new({
+                        let entity = entity.clone();
+                        move |verdict, _, cx| {
+                            entity.update(cx, |p, cx| {
+                                p.review_verdict = verdict;
+                                cx.notify();
+                            });
+                        }
+                    }),
+                    on_submit_review: Rc::new({
+                        let entity = entity.clone();
+                        move |window, cx| entity.update(cx, |p, cx| p.submit_review(window, cx))
+                    }),
+                    on_toggle_reaction_picker: Rc::new({
+                        let entity = entity.clone();
+                        move |key, _, cx| {
+                            entity.update(cx, |p, cx| {
+                                let next =
+                                    if p.open_reaction_picker.as_deref() == Some(key.as_str()) {
+                                        None
+                                    } else {
+                                        Some(key)
+                                    };
+                                p.close_popovers();
+                                p.open_reaction_picker = next;
+                                cx.notify();
+                            });
+                        }
+                    }),
+                    on_toggle_reaction: Rc::new({
+                        let entity = entity.clone();
+                        move |key, subject_id, content, reacted, sig, _, cx| {
+                            entity.update(cx, |p, cx| {
+                                p.toggle_reaction(key, subject_id, content, reacted, sig, cx);
+                            });
+                        }
+                    }),
+                    on_send_prompt: Rc::new({
+                        let entity = entity.clone();
+                        move |prompt, _, cx| entity.update(cx, |p, cx| p.emit_prompt(prompt, cx))
                     }),
                     on_arm_confirm: Rc::new(move |armed, _, cx| {
                         entity.update(cx, |p, cx| {
@@ -1716,8 +2382,31 @@ impl Render for PullRequestPanel {
                     self.armed_confirm,
                     self.actions_menu_open,
                     self.refreshing,
+                    can_fix_findings,
+                    fix_findings_prompt,
+                    condensed,
                     &header_cb,
                 );
+
+                let picker_state = HeaderPickerState {
+                    reviewer_open: self.reviewer_picker_open,
+                    reviewer_search_input: &self.reviewer_search_input,
+                    reviewer_query: &self.reviewer_query,
+                    reviewer_loading: self.reviewer_loading,
+                    reviewer_error: self.reviewer_error.as_deref(),
+                    reviewer_candidates: &self.reviewer_candidates,
+                    reviewer_truncated: self.reviewer_truncated,
+                    reviewer_pending_id: self.reviewer_pending_id.as_deref(),
+                    label_open: self.label_picker_open,
+                    label_search_input: &self.label_search_input,
+                    label_query: &self.label_query,
+                    label_loading: self.label_loading,
+                    label_error: self.label_error.as_deref(),
+                    label_candidates: &self.label_candidates,
+                    label_truncated: self.label_truncated,
+                    label_pending_name: self.label_pending_name.as_deref(),
+                    base_freshness_open: self.base_freshness_open,
+                };
 
                 let header_body = render_header_body(
                     &self.tokens,
@@ -1727,8 +2416,15 @@ impl Render for PullRequestPanel {
                     self.now_ms,
                     self.copied_branch,
                     self.pending_action,
+                    &picker_state,
                     &header_cb,
                 );
+
+                let reaction_state = ReactionState {
+                    can_react: detail.capabilities.reactions == Some(true),
+                    open_picker: self.open_reaction_picker.as_deref(),
+                    pending: &self.pending_reactions,
+                };
 
                 let viewed_count = self
                     .files_viewed
@@ -1778,6 +2474,8 @@ impl Render for PullRequestPanel {
                     DetailTab::Summary => render_description_tab(
                         &self.tokens,
                         detail,
+                        pr_reactions,
+                        &reaction_state,
                         self.editing_body,
                         &self.body_input,
                         self.body_saving,
@@ -1799,6 +2497,7 @@ impl Render for PullRequestPanel {
                         self.replying_thread.as_deref(),
                         &self.reply_input,
                         self.reply_submitting,
+                        &reaction_state,
                         self.now_ms,
                         &tab_cb,
                     ),
@@ -1822,9 +2521,14 @@ impl Render for PullRequestPanel {
                     &self.tokens,
                     detail,
                     self.composer_open,
+                    self.composer_mode,
                     &self.comment_input,
                     self.comment_text.trim().is_empty(),
                     self.comment_submitting,
+                    &self.review_input,
+                    &self.review_text,
+                    self.review_verdict,
+                    self.review_submitting,
                     self.armed_confirm,
                     &tab_cb,
                 );
@@ -1832,8 +2536,15 @@ impl Render for PullRequestPanel {
                 let mut root = v_flex()
                     .relative()
                     .size_full()
-                    .bg(bg)
                     .child(title_header)
+                    .when(condensed, |el| {
+                        el.child(render_condensed_header_row(
+                            &self.tokens,
+                            detail,
+                            self.now_ms,
+                            &header_cb,
+                        ))
+                    })
                     .when_some(self.notice.as_ref(), |el, notice| {
                         el.child(chrome::warning_notice(&self.tokens, notice.clone()))
                     })
@@ -1849,7 +2560,7 @@ impl Render for PullRequestPanel {
                                 v_flex()
                                     .w_full()
                                     .min_w_0()
-                                    .child(header_body)
+                                    .when(!condensed, |el| el.child(header_body))
                                     .child(tab_bar)
                                     .child(tab_body),
                             ),
@@ -1864,17 +2575,18 @@ impl Render for PullRequestPanel {
         v_flex()
             .id("pull-request-panel")
             .size_full()
-            .bg(bg)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|panel, _, _, cx| {
                     if panel.actions_menu_open
                         || panel.filter_menu_open
+                        || panel.reviewer_picker_open
+                        || panel.label_picker_open
+                        || panel.base_freshness_open
+                        || panel.open_reaction_picker.is_some()
                         || panel.armed_confirm.is_some()
                     {
-                        panel.actions_menu_open = false;
-                        panel.filter_menu_open = false;
-                        panel.armed_confirm = None;
+                        panel.close_popovers();
                         cx.notify();
                     }
                 }),
@@ -1882,11 +2594,16 @@ impl Render for PullRequestPanel {
             .on_key_down(cx.listener(|panel, event: &KeyDownEvent, window, cx| {
                 let key = event.keystroke.key.as_str();
                 if key == "escape" {
-                    if panel.actions_menu_open || panel.filter_menu_open || panel.composer_open {
-                        panel.actions_menu_open = false;
-                        panel.filter_menu_open = false;
+                    if panel.actions_menu_open
+                        || panel.filter_menu_open
+                        || panel.reviewer_picker_open
+                        || panel.label_picker_open
+                        || panel.base_freshness_open
+                        || panel.open_reaction_picker.is_some()
+                        || panel.composer_open
+                    {
+                        panel.close_popovers();
                         panel.composer_open = false;
-                        panel.armed_confirm = None;
                         cx.notify();
                     } else if panel.editing_title {
                         panel.editing_title = false;
@@ -1899,7 +2616,11 @@ impl Render for PullRequestPanel {
                     && (event.keystroke.modifiers.platform || event.keystroke.modifiers.control)
                     && panel.composer_open
                 {
-                    panel.submit_comment(None, window, cx);
+                    if panel.composer_mode == ComposerMode::Review {
+                        panel.submit_review(window, cx);
+                    } else {
+                        panel.submit_comment(None, window, cx);
+                    }
                 }
             }))
             .child(content)
