@@ -19,6 +19,7 @@ import {
   getThemeModes,
   removeCustomThemes,
   serializeThemeFile,
+  themeFileName,
   type ThemeAppearance,
   type ThemeDefinition,
   type ThemeHalves,
@@ -862,7 +863,7 @@ export function ThemeLibrary({
             activeModesFor={pickedModesFor}
             key={collectionId}
             onDownload={(customTheme) =>
-              downloadThemeFile(`${customTheme.id}.json`, serializeThemeFile(customTheme))
+              downloadThemeFile(themeFileName(customTheme), serializeThemeFile(customTheme))
             }
             onDuplicate={(customTheme) =>
               openThemeEditor({
