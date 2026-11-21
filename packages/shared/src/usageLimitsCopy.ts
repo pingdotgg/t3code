@@ -15,6 +15,7 @@ import {
   providersWithLimits,
   type ResetCreditChoice,
   resetCountdown,
+  unshownFailedHubAccounts,
 } from "./usageLimits.ts";
 
 const MINUTE = 60_000;
@@ -86,6 +87,8 @@ export function collectLimitNotices(
   const label = (environmentLabel: string, subject: string) =>
     presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
   const notices = new Set<string>();
+  // A failed hub read needs no notice when another report already shows the account's row.
+  const failedAccounts = unshownFailedHubAccounts(presentations);
   for (const presentation of presentations.values()) {
     const environmentLabel = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
@@ -105,6 +108,12 @@ export function collectLimitNotices(
             }),
           ),
         );
+      }
+      for (const account of source.accounts) {
+        const name = failedAccounts.get(account);
+        if (name === undefined) continue;
+        const notice = limitsNotice(account.usageLimits, resolve);
+        notices.add(`${label(environmentLabel, source.label)} · ${name}: ${notice}`);
       }
     }
   }

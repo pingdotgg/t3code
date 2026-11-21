@@ -271,6 +271,7 @@ export async function createComposerFileAttachment(input: {
 export async function pickComposerFiles(input: {
   readonly existingCount: number;
   readonly maxBytes?: number;
+  readonly acceptSelection?: () => boolean;
 }): Promise<{
   readonly files: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
@@ -301,7 +302,7 @@ export async function pickComposerFiles(input: {
   } finally {
     endHandoff();
   }
-  if (result.canceled) {
+  if (result.canceled || input.acceptSelection?.() === false) {
     return { files: [], error: null };
   }
 
@@ -401,6 +402,7 @@ export async function pickComposerMedia(input: {
   readonly maxVideoBytes?: number;
   /** Receives placeholders over the picker's local copies before processing; each keeps its attachment's id. */
   readonly onPicked?: (placeholders: ReadonlyArray<DraftComposerAttachment>) => void;
+  readonly acceptSelection?: () => boolean;
 }): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
@@ -449,7 +451,7 @@ export async function pickComposerMedia(input: {
     endHandoff();
   }
 
-  if (result.canceled) {
+  if (result.canceled || input.acceptSelection?.() === false) {
     return {
       attachments: [],
       error: null,

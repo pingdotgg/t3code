@@ -185,7 +185,7 @@ const propertyKey = (emitter: Emitter, key: PropertyKey, reference: string): str
   typeof key === "string" ? JSON.stringify(key) : constant(emitter, key, reference)
 
 const propertyPresence = (input: string, key: string, name: PropertyKey): string =>
-  name === "__proto__" ? `Object.hasOwn(${input},${key})` : `${key} in ${input}`
+  SchemaAST.requiresOwnProperty(name) ? `Object.hasOwn(${input},${key})` : `${key} in ${input}`
 
 const assignProperty = (output: string, key: string, value: string, name: PropertyKey): string =>
   name === "__proto__"
@@ -216,7 +216,7 @@ const needsPresenceCheck = (ast: SchemaAST.AST): boolean => {
 }
 
 const propertyNeedsPresenceCheck = (name: PropertyKey, ast: SchemaAST.AST): boolean =>
-  name === "__proto__" || needsPresenceCheck(ast)
+  SchemaAST.requiresOwnProperty(name) || needsPresenceCheck(ast)
 
 /** @internal */
 export const shouldCompileParser = (ast: SchemaAST.AST, local = false): boolean => {
@@ -747,9 +747,9 @@ const emitArray = (): string =>
     const parser=getElement();let r,t,value;
     for(;index<end;index++){
       const item=input[index];r=parser(item,s.options);
-      if(r===R.sameExit&&item!==R.missing){s.output[index]=item;continue}
+      if(R.isSameExit(r)&&item!==R.missing){s.output[index]=item;continue}
       if(!R.effectIsExit(r))return resume(s,item,index,r,end);
-      if(r._tag==="Success"&&(value=r===R.sameExit?item:r[R.args])!==R.missing){s.output[index]=value}
+      if(r._tag==="Success"&&(value=R.isSameExit(r)?item:r[R.args])!==R.missing){s.output[index]=value}
       else{t=step(s,item,r,index);if(t)return t}
     }
   }}`
@@ -836,7 +836,7 @@ const canInlineEncoding = (ast: SchemaAST.AST): ast is SchemaAST.AST & { readonl
   )
 
 const inlinePropertyHandler =
-  `const handle=(state,index,property,present,input,result)=>{let value;if(result===R.sameExit){if(!present)return;value=input}else{if(!R.effectIsExit(result))return resume(state,index,result);if(result._tag!=="Success"||(value=result[R.args])===R.missing)return step(state,property,result)}const name=property.name;if(name==="__proto__")Object.defineProperty(state.out,name,{value,writable:true,enumerable:true,configurable:true});else state.out[name]=value}`
+  `const handle=(state,index,property,present,input,result)=>{let value;if(R.isSameExit(result)){if(!present)return;value=input}else{if(!R.effectIsExit(result))return resume(state,index,result);if(result._tag!=="Success"||(value=result[R.args])===R.missing)return step(state,property,result)}const name=property.name;if(name==="__proto__")Object.defineProperty(state.out,name,{value,writable:true,enumerable:true,configurable:true});else state.out[name]=value}`
 
 const emitObject = (ast: SchemaAST.Objects): string => {
   const initializers: Array<string> = []
@@ -867,8 +867,9 @@ const emitObject = (ast: SchemaAST.Objects): string => {
   ]
   ast.propertySignatures.forEach((property, index) => {
     const key = typeof property.name === "symbol" ? `properties[${index}].name` : JSON.stringify(String(property.name))
-    const present = property.name === "__proto__" ? `Object.hasOwn(i,${key})` : `${key} in i`
-    const handle = `if(r===R.sameExit){if(h${index}){${assignProperty("out", key, `v${index}`, property.name)}}}else{` +
+    const present = propertyPresence("i", key, property.name)
+    const handle =
+      `if(R.isSameExit(r)){if(h${index}){${assignProperty("out", key, `v${index}`, property.name)}}}else{` +
       `if(!R.effectIsExit(r))return resume(state,${index},r);` +
       `if(r._tag==="Success"&&(value=r[R.args])!==R.missing){${assignProperty("out", key, "value", property.name)}}` +
       `else{t=step(state,p${index},r);if(t)return t}}`
