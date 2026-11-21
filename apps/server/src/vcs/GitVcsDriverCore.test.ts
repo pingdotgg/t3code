@@ -6374,6 +6374,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("returns the new name when Git renames the branch but cannot update its config", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, ".git/config.lock", "");
+
+        const renamed = yield* driver.renameBranch({
+          cwd,
+          oldBranch: initialBranch,
+          newBranch: "topic",
+        });
+
+        assert.equal(renamed.branch, "topic");
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "topic");
+      }),
+    );
+
     it.effect.each(["t3", "T3"])("flattens a generated name when parent %s blocks it", (parent) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

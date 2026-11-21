@@ -6653,17 +6653,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? input.newBranch
           : yield* resolveAvailableBranchName(input.cwd, input.newBranch);
 
-        yield* executeGit(
+        const args = ["branch", "-m", "--", input.oldBranch, targetBranch];
+        const result = yield* executeGitWithStableDiagnostics(
           "GitVcsDriver.renameBranch",
           input.cwd,
-          ["branch", "-m", "--", input.oldBranch, targetBranch],
-          {
-            timeoutMs: 10_000,
-            fallbackErrorDetail: "git branch rename failed",
-          },
+          args,
+          { timeoutMs: 10_000, allowNonZeroExit: true },
         );
-
-        return { branch: targetBranch };
+        if (result.exitCode === 0) return { branch: targetBranch };
+        // Git rewrites .git/config only after it has moved the ref and every worktree HEAD,
+        // so this failure leaves a finished rename behind.
+        if (/^fatal: branch is renamed, but update of config-file failed/im.test(result.stderr)) {
+          yield* Effect.logWarning("renamed the branch but kept its config under the old name");
+          return { branch: targetBranch };
+        }
+        const reason = classifyGitFailure(result.stderr);
+        return yield* new GitCommandError({
+          ...gitCommandContext({ operation: "GitVcsDriver.renameBranch", cwd: input.cwd, args }),
+          ...(reason === null ? {} : { reason }),
+          detail: "git branch rename failed",
+          ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+          stdoutLength: result.stdout.length,
+          stderrLength: result.stderr.length,
+        });
       }),
     );
   });
