@@ -8694,7 +8694,7 @@
   "58e0e226493150e7": "Impossible de charger les gestionnaires de tickets",
   "77cfcbde543df32d": "Afficher ou masquer les détails de {tracker}",
   "0083f65885c60156": "Déconnecter {tracker}",
-  "295392927d5c8a84": "Choisissez un ou plusieurs {scope}s {tracker} pour chaque projet. Leurs tickets s'affichent à côté de ceux du dépôt, et les agents créent les nouveaux tickets dans le premier.",
+  "ed83b25c71c98a20": "Choisissez un ou plusieurs {scope}s {tracker} pour chaque projet. Leurs tickets s'affichent à côté de ceux du dépôt, et les agents créent les nouveaux tickets dans le premier, sauf si vous leur indiquez une autre destination.",
   "19c2d5e81ff8f89a": "{scope} {tracker} pour {project}",
   "68e061510b765772": "Non lié",
   "a2d95d39d3398bda": "Identifiant refusé",

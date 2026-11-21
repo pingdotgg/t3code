@@ -699,7 +699,12 @@ describe("IssueService with a standalone tracker", () => {
         writable: false,
       });
       expect((yield* bound.projectScope("web" as ProjectId)).scope).toBe("ENG");
-      expect((yield* bound.projectScope("web" as ProjectId, "ops-12")).scope).toBe("OPS");
+      expect((yield* bound.projectScope("web" as ProjectId, { key: "ops-12" })).scope).toBe("OPS");
+      expect(yield* bound.projectScope("web" as ProjectId, { scope: "ACME/Web" })).toMatchObject({
+        tracker: GITHUB,
+        host: "github.com",
+        scope: "acme/web",
+      });
       expect(
         yield* bound.detail({
           projectId: "web" as ProjectId,
