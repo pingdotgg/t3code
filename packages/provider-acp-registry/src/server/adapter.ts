@@ -48,6 +48,12 @@ import {
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  ANTIGRAVITY_SWARM_CAPABILITIES_META,
+  makeAntigravitySwarmTracker,
+  registerAntigravitySwarmExtension,
+} from "@t3tools/provider-acp/server/antigravitySwarm";
+import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -257,6 +263,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ? yield* makeKimiPromptOutcomeWatch(options.environment.KIMI_CODE_HOME)
     : undefined;
   const copilotRouting = isCopilot ? makeCopilotSubagentRouting() : undefined;
+  const antigravitySwarm = isAntigravityCli ? makeAntigravitySwarmTracker() : undefined;
   // Copilot CLI 1.0.105 rejects stdio MCP servers from the client, and Command Code cannot
   // start the stdio bridge on Windows (it spawns MCP commands through cmd.exe, which splits
   // the unquoted "T3 Code (Beta).exe" path). Both take T3's MCP endpoint over ACP HTTP.
@@ -273,7 +280,23 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     compactViaAdvertisedCommand: true,
-    ...(isAntigravityCli ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
+    ...(antigravitySwarm === undefined
+      ? {}
+      : {
+          wakeOnDetachedRequest: true,
+          replyEndsWithUsageUpdate: true,
+          subagentsIdleOnTurnCompletion: true,
+          clientCapabilitiesMeta: ANTIGRAVITY_SWARM_CAPABILITIES_META,
+          permissionDisposition: (
+            policy: Parameters<typeof acpPermissionDisposition>[0],
+            request: Parameters<typeof acpPermissionDisposition>[1],
+          ) =>
+            acpPermissionDisposition(policy, request, {
+              extraWritableRoots: antigravitySwarm.childPermissionWorkspaces(request),
+            }),
+          registerExtensions: (context: Parameters<typeof registerAntigravitySwarmExtension>[1]) =>
+            registerAntigravitySwarmExtension(antigravitySwarm, context),
+        }),
     promptFailure: (cause) =>
       acpRegistryPromptFailure(isVibe ? "mistral-vibe" : registryAgentId, cause),
     ...(isDroid
@@ -343,7 +366,45 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           alwaysSetModel: true,
         }),
     mcpOverHttp: useHttpMcpServers,
-    makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
+    makeRuntime:
+      options.makeRuntime ??
+      (antigravitySwarm === undefined
+        ? makeAcpRegistryRuntime(runtimeOptions, catalog)
+        : (runtimeInput) =>
+            Effect.gen(function* () {
+              const rt = yield* makeAcpRegistryRuntime(runtimeOptions, catalog)(runtimeInput);
+              let activeRuntimeSessionId: string | undefined;
+              const rememberSession = (started: AcpSessionRuntime.AcpSessionRuntimeStartResult) =>
+                Effect.sync(() => {
+                  if (
+                    activeRuntimeSessionId !== undefined &&
+                    activeRuntimeSessionId !== started.sessionId
+                  ) {
+                    antigravitySwarm.clearSession(activeRuntimeSessionId);
+                  }
+                  activeRuntimeSessionId = started.sessionId;
+                });
+              yield* Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  if (activeRuntimeSessionId !== undefined) {
+                    antigravitySwarm.clearSession(activeRuntimeSessionId);
+                  }
+                }),
+              );
+              return {
+                ...rt,
+                start: () => rt.start().pipe(Effect.tap(rememberSession)),
+                loadSession: (...args: Parameters<typeof rt.loadSession>) =>
+                  rt.loadSession(...args).pipe(Effect.tap(rememberSession)),
+                resumeSession: (...args: Parameters<typeof rt.resumeSession>) =>
+                  rt.resumeSession(...args).pipe(Effect.tap(rememberSession)),
+                closeSession: (sessionId?: string) =>
+                  Effect.sync(() => {
+                    const target = sessionId ?? activeRuntimeSessionId;
+                    if (target !== undefined) antigravitySwarm.clearSession(target);
+                  }).pipe(Effect.andThen(rt.closeSession(sessionId))),
+              };
+            })),
     ...(runtimeCoordinator === undefined
       ? {}
       : {

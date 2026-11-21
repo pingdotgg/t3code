@@ -184,8 +184,9 @@ export function antigravitySessionMode(
 export function antigravityPermissionDisposition(
   policy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
+  options?: { readonly extraWritableRoots?: ReadonlyArray<string> | undefined },
 ) {
-  const disposition = acpPermissionDisposition(policy, request);
+  const disposition = acpPermissionDisposition(policy, request, options);
   // agy's Auto has already reviewed what it sends; the user decides unless the sandbox forbids it.
   return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
 }

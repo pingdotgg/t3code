@@ -72,6 +72,7 @@ function acpCanonicalPathForContainment(path: string): string | undefined {
 interface AcpPolicyOperation {
   readonly kind: string | null | undefined;
   readonly locations: ReadonlyArray<{ readonly path: string }> | null | undefined;
+  readonly extraWritableRoots?: ReadonlyArray<string> | undefined;
 }
 
 function acpPolicyRequiresApproval(runtimePolicy: AcpRuntimePolicy): boolean {
@@ -102,6 +103,7 @@ function acpWorkspaceWriteAllowsMutation(
   runtimePolicy: AcpRuntimePolicy,
   sandboxPolicy: Record<string, unknown>,
   locations: AcpPolicyOperation["locations"],
+  extraWritableRoots?: ReadonlyArray<string>,
 ): boolean {
   const cwd =
     typeof runtimePolicy.cwd === "string" && runtimePolicy.cwd.trim().length > 0
@@ -115,6 +117,7 @@ function acpWorkspaceWriteAllowsMutation(
   const writableRoots = [
     ...(Array.isArray(sandboxPolicy.writableRoots) ? sandboxPolicy.writableRoots : []),
     ...(runtimePolicy.workspace?.extraRoots ?? []),
+    ...(extraWritableRoots ?? []),
   ];
   for (const writableRoot of writableRoots) {
     if (typeof writableRoot !== "string") continue;
@@ -164,6 +167,7 @@ function acpOperationDisposition(
           runtimePolicy,
           sandboxPolicy ?? {},
           operation.locations,
+          operation.extraWritableRoots,
         )
           ? "allow"
           : "deny";
@@ -194,10 +198,15 @@ function isAcpMutationKind(toolKind: string): boolean {
 export function acpPermissionDisposition(
   runtimePolicy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
+  options?: { readonly extraWritableRoots?: ReadonlyArray<string> | undefined },
 ): AcpPermissionDisposition {
+  const extraWritableRoots = options?.extraWritableRoots;
   return acpOperationDisposition(runtimePolicy, {
     kind: request.toolCall.kind,
     locations: request.toolCall.locations,
+    ...(extraWritableRoots === undefined || extraWritableRoots.length === 0
+      ? {}
+      : { extraWritableRoots }),
   });
 }
 

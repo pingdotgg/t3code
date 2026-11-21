@@ -53,10 +53,9 @@ import {
 } from "../../provider/acp/AntigravityProtocol.ts";
 import {
   ANTIGRAVITY_SWARM_CAPABILITIES_META,
-  ANTIGRAVITY_SWARM_NOTIFICATION_METHOD,
-  AntigravitySwarmNotification,
   agentAdvertisesAntigravitySwarm,
   makeAntigravitySwarmTracker,
+  registerAntigravitySwarmExtension,
 } from "../../provider/acp/AntigravitySwarm.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
@@ -165,7 +164,6 @@ export function makeAntigravityAcpAdapterFlavor(
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
   const swarmTracker = makeAntigravitySwarmTracker();
-  let nativeSwarmProtocol = false;
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
@@ -186,6 +184,28 @@ export function makeAntigravityAcpAdapterFlavor(
       // Served reads are reported from the read handler, so they take turns with agent updates.
       const updates = yield* Semaphore.make(1);
       let projectUpdate: Parameters<typeof runtime.handleSessionUpdate>[0] | undefined;
+      let activeRuntimeSessionId: string | undefined;
+      const rememberStartedSession = (started: AcpSessionRuntime.AcpSessionRuntimeStartResult) =>
+        Effect.sync(() => {
+          if (
+            activeRuntimeSessionId !== undefined &&
+            activeRuntimeSessionId !== started.sessionId
+          ) {
+            swarmTracker.clearSession(activeRuntimeSessionId);
+          }
+          activeRuntimeSessionId = started.sessionId;
+          swarmTracker.setSessionProtocol(
+            started.sessionId,
+            agentAdvertisesAntigravitySwarm(started.initializeResult.agentCapabilities),
+          );
+        });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (activeRuntimeSessionId !== undefined) {
+            swarmTracker.clearSession(activeRuntimeSessionId);
+          }
+        }),
+      );
       return {
         ...runtime,
         handleReadTextFile: (handler) =>
@@ -218,17 +238,24 @@ export function makeAntigravityAcpAdapterFlavor(
           );
         },
         start: () =>
-          runtime.start().pipe(
-            Effect.tap((started) =>
-              Effect.sync(() => {
-                nativeSwarmProtocol = agentAdvertisesAntigravitySwarm(
-                  started.initializeResult.agentCapabilities,
-                );
-              }).pipe(
-                Effect.andThen(options.onSessionStarted?.(started, input.cwd) ?? Effect.void),
+          runtime
+            .start()
+            .pipe(
+              Effect.tap((started) =>
+                rememberStartedSession(started).pipe(
+                  Effect.andThen(options.onSessionStarted?.(started, input.cwd) ?? Effect.void),
+                ),
               ),
             ),
-          ),
+        loadSession: (...args) =>
+          runtime.loadSession(...args).pipe(Effect.tap(rememberStartedSession)),
+        resumeSession: (...args) =>
+          runtime.resumeSession(...args).pipe(Effect.tap(rememberStartedSession)),
+        closeSession: (sessionId) =>
+          Effect.sync(() => {
+            const target = sessionId ?? activeRuntimeSessionId;
+            if (target !== undefined) swarmTracker.clearSession(target);
+          }).pipe(Effect.andThen(runtime.closeSession(sessionId))),
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
@@ -298,7 +325,10 @@ export function makeAntigravityAcpAdapterFlavor(
           request,
         }),
     },
-    permissionDisposition: antigravityPermissionDisposition,
+    permissionDisposition: (policy, request) =>
+      antigravityPermissionDisposition(policy, request, {
+        extraWritableRoots: swarmTracker.childPermissionWorkspaces(request),
+      }),
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
@@ -310,37 +340,11 @@ export function makeAntigravityAcpAdapterFlavor(
     },
     normalizeToolCall: normalizeAntigravityToolCall,
     clientCapabilitiesMeta: ANTIGRAVITY_SWARM_CAPABILITIES_META,
-    registerExtensions: (context) =>
-      context.runtime.handleExtNotification(
-        ANTIGRAVITY_SWARM_NOTIFICATION_METHOD,
-        AntigravitySwarmNotification,
-        (notification) =>
-          Effect.gen(function* () {
-            nativeSwarmProtocol = true;
-            const mutation = swarmTracker.applyNotification(notification);
-            if (mutation.activeBackgroundWork) {
-              yield* context.setExternalBackgroundWork({
-                sessionId: mutation.sessionId,
-                active: true,
-              });
-            }
-            for (const subagent of mutation.subagents) {
-              yield* context.upsertSubagent({
-                sessionId: mutation.sessionId,
-                subagent,
-                allowReopenFromIdle: true,
-              });
-            }
-            if (!mutation.activeBackgroundWork) {
-              yield* context.setExternalBackgroundWork({
-                sessionId: mutation.sessionId,
-                active: false,
-              });
-            }
-          }),
-      ),
-    extractSubagentUpdate: (toolCall) =>
-      extractAntigravitySubagentUpdate(toolCall, { nativeSwarmProtocol }),
+    registerExtensions: (context) => registerAntigravitySwarmExtension(swarmTracker, context),
+    extractSubagentUpdate: (toolCall, sessionId) =>
+      extractAntigravitySubagentUpdate(toolCall, {
+        nativeSwarmProtocol: sessionId !== undefined && swarmTracker.usesNativeProtocol(sessionId),
+      }),
     supportsImagePrompts: true,
     compactViaAdvertisedCommand: true,
     requiresSignIn: isAntigravitySignInRequiredError,
