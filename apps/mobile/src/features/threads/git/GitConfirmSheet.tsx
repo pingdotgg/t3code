@@ -3,7 +3,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useGT, useMessages } from "gt-react-native";
 import { useCallback, useMemo } from "react";
 import { View } from "react-native";
@@ -20,6 +20,7 @@ import {
   type GitRepositoryRouteParams,
 } from "../../../state/thread-git-target";
 import { vcsEnvironment } from "../../../state/vcs";
+import { useReturnToThread } from "../thread-inspector-navigation";
 import { SheetActionButton } from "./gitSheetComponents";
 
 type GitConfirmSheetProps = StaticScreenProps<
@@ -38,6 +39,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const gt = useGT();
   const messages = useMessages();
   const navigation = useNavigation();
+  const returnToThread = useReturnToThread();
   const repository = gitRepositoryTargetFromRoute(props.route.params);
   const gitState = useSelectedThreadGitState(repository);
   const gitActions = useSelectedThreadGitActions(repository);
@@ -89,7 +91,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
 
   const continuePendingAction = async () => {
     if (!canWriteSourceControl || !confirmAction) return;
-    navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
+    returnToThread({ environmentId, threadId });
     await gitActions.onRunSelectedThreadGitAction({
       action: confirmAction,
       ...(params.commitMessage ? { commitMessage: params.commitMessage } : {}),
@@ -99,7 +101,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
 
   const movePendingActionToFeatureBranch = useCallback(async () => {
     if (!canCreateFeatureBranch || !confirmAction) return;
-    navigation.dispatch(StackActions.replace("Thread", { environmentId, threadId }));
+    returnToThread({ environmentId, threadId });
 
     if (includesCommit) {
       await gitActions.onRunSelectedThreadGitAction({
@@ -131,7 +133,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
     gitState.selectedThreadBranches,
     includesCommit,
     params,
-    navigation,
+    returnToThread,
     environmentId,
     threadId,
   ]);

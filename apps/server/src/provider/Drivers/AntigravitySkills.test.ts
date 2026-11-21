@@ -435,8 +435,16 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         yield* fileSystem.writeFileString(
           path.join(input.cwd, ".agents", "skills.json"),
           JSON.stringify({
+            entries: null,
+            inherits: [{ path: "workspace-skills.json", include_only: null }],
+          }),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(input.cwd, "workspace-skills.json"),
+          JSON.stringify({
+            inherits: null,
             entries: [
-              { path: "tools/skills/deploy/SKILL.md" },
+              { path: "tools/skills/deploy/SKILL.md", exclude: null },
               { path: "tools/skills/internal/SKILL.md", exclude: ["internal"] },
             ],
           }),

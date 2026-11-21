@@ -48,14 +48,14 @@ const SkillFrontmatter = Schema.Struct({
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 const SkillConfigEntry = Schema.Struct({
   path: Schema.String,
-  include_only: Schema.optional(Schema.Array(Schema.String)),
-  exclude: Schema.optional(Schema.Array(Schema.String)),
+  include_only: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  exclude: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
 });
 const decodeSkillsConfig = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
-      inherits: Schema.optional(Schema.Array(SkillConfigEntry)),
-      entries: Schema.optional(Schema.Array(SkillConfigEntry)),
+      inherits: Schema.optional(Schema.NullOr(Schema.Array(SkillConfigEntry))),
+      entries: Schema.optional(Schema.NullOr(Schema.Array(SkillConfigEntry))),
     }),
   ),
 );
@@ -289,10 +289,7 @@ function matchesSkillFilter(entry: string, filter: SkillEntryFilter): boolean {
 
 function narrowSkillFilter(
   parent: SkillEntryFilter,
-  entry: {
-    readonly include_only?: ReadonlyArray<string> | undefined;
-    readonly exclude?: ReadonlyArray<string> | undefined;
-  },
+  entry: typeof SkillConfigEntry.Type,
 ): SkillEntryFilter {
   const includeGroups =
     entry.include_only && entry.include_only.length > 0

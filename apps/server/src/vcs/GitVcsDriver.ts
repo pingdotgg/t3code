@@ -337,6 +337,8 @@ export interface GitSetBranchUpstreamInput {
 
 export interface GitRemoteStatusOptions {
   readonly refreshUpstream?: boolean;
+  /** False skips the base-branch lookup and reports `aheadOfDefaultCount` as 0. */
+  readonly includeAheadOfDefault?: boolean;
 }
 
 /**

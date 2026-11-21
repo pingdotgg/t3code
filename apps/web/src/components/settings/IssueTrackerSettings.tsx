@@ -297,7 +297,7 @@ function ProjectBindings({
       <SettingsRow
         title={gt("Projects")}
         description={gt(
-          "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one.",
+          "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one unless asked for another.",
           { tracker: tracker.displayName, scope: tracker.scopeNoun },
         )}
       />

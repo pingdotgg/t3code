@@ -41,19 +41,39 @@ export function useOpenThreadInspector() {
     if (presentation === "full-screen") return false;
     if (openInInspector) openInInspector(target);
     else {
-      const parent = navigation.getState()?.routes.findLast((route) => route.name === "Thread");
-      if (
-        !parent?.params ||
-        !("environmentId" in parent.params) ||
-        parent.params.environmentId !== source.environmentId ||
-        !("threadId" in parent.params) ||
-        parent.params.threadId !== source.threadId
-      )
-        return false;
+      if (!isNearestThreadRoute(navigation.getState(), source)) return false;
       navigation.dispatch(
         StackActions.popTo("Thread", { ...source, inspector: target }, { merge: true }),
       );
     }
     return true;
   };
+}
+
+/** Closes the screens above `thread`, or opens it when the nearest thread route is another one. */
+export function useReturnToThread() {
+  const navigation = useNavigation();
+  return (thread: { readonly environmentId: string; readonly threadId: string }) =>
+    navigation.dispatch(
+      isNearestThreadRoute(navigation.getState(), thread)
+        ? StackActions.popTo("Thread", thread, { merge: true })
+        : StackActions.replace("Thread", thread),
+    );
+}
+
+// `Thread` has no `getId`, so `popTo("Thread")` lands on the nearest one whatever thread it shows.
+function isNearestThreadRoute(
+  state:
+    | { readonly routes: ReadonlyArray<{ readonly name: string; readonly params?: object }> }
+    | undefined,
+  thread: { readonly environmentId: string; readonly threadId: string },
+) {
+  const params = state?.routes.findLast((route) => route.name === "Thread")?.params;
+  return (
+    params !== undefined &&
+    "environmentId" in params &&
+    params.environmentId === thread.environmentId &&
+    "threadId" in params &&
+    params.threadId === thread.threadId
+  );
 }
