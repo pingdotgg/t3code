@@ -5291,6 +5291,8 @@ interface ActiveClaudeSubagent {
   resultItemOrdinal: number | null;
   lastAssistantText: string | null;
   lastAssistantMessageId: string | null;
+  // A SubagentHandback call carries the report; the Agent result then only points at it.
+  handbackText: string | null;
 }
 
 interface ClaudeLiveQueryContext {
@@ -7551,6 +7553,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resultItemOrdinal: null,
             lastAssistantText: null,
             lastAssistantMessageId: null,
+            handbackText: null,
           };
           yield* Ref.update(sessionSubagentsByTaskId, (current) =>
             new Map(current).set(resume.taskId, subagent),
@@ -8195,6 +8198,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     )
                   : undefined));
           const model = input.model ?? priorTask?.model ?? null;
+          const handbackText = isReopen ? null : (existingSubagent?.handbackText ?? null);
+          const result =
+            input.status === "completed" && handbackText !== null ? handbackText : input.result;
           const task = {
             ...(priorTask ?? {
               id: nodeId,
@@ -8239,7 +8245,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : {}),
             ...(input.progress === undefined ? {} : { progress: input.progress }),
             ...(workflowWithThreads === undefined ? {} : { workflow: workflowWithThreads }),
-            ...(input.result === undefined ? {} : { result: input.result }),
+            ...(result === undefined ? {} : { result }),
             ...(isReopen ? { startedAt: now } : {}),
             completedAt: input.status === "running" ? null : (priorTask?.completedAt ?? now),
             updatedAt: now,
@@ -8276,6 +8282,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               input.reopen === true ? null : (existingSubagent?.lastAssistantText ?? null),
             lastAssistantMessageId:
               input.reopen === true ? null : (existingSubagent?.lastAssistantMessageId ?? null),
+            handbackText,
           } satisfies ActiveClaudeSubagent;
           // Ingestion can terminalize after lookup; reopen only that generation to preserve newer results.
           const accepted = yield* Ref.modify(sessionSubagentsByTaskId, (current) => {
@@ -8473,12 +8480,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           const resultAlreadyShown =
             input.status === "completed" &&
-            input.result !== undefined &&
+            result !== undefined &&
             normalizeClaudeResultText(subagent.lastAssistantText ?? "") ===
-              normalizeClaudeResultText(input.result);
+              normalizeClaudeResultText(result);
           if (
-            input.result !== undefined &&
-            input.result.trim().length > 0 &&
+            result !== undefined &&
+            result.trim().length > 0 &&
             input.status !== "running" &&
             !resultAlreadyShown
           ) {
@@ -8489,7 +8496,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               threadId: childThreadId,
               rootNodeId: childRootNodeId,
               role: "assistant",
-              text: input.result,
+              text: result,
               ordinal: resultItemOrdinal,
               now,
             });
@@ -10187,6 +10194,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   new Map(current).set(message.task_id, {
                     ...registered,
                     confirmedOutcome: undefined,
+                    handbackText: null,
                     ...(message.run_id === undefined
                       ? {}
                       : { resultNativeItemId: `task:${message.task_id}:result:${message.run_id}` }),
@@ -10247,10 +10255,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             return;
           }
-          const notificationSummary =
-            isNotification && typeof message.summary === "string" && message.summary.length > 0
-              ? message.summary
+          const handbackText =
+            isNotification && message.status === "completed"
+              ? ((yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)?.handbackText ??
+                null)
               : null;
+          const notificationSummary =
+            handbackText ??
+            (isNotification && typeof message.summary === "string" && message.summary.length > 0
+              ? message.summary
+              : null);
           if (isPendingTaskNotification) {
             yield* recordWakeReport(
               wakeInput.nativeThreadId,
@@ -11858,6 +11872,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const toolPresentations = claudeToolPresentationsFromAssistantMessage(message);
+          const messageParentToolUseId = parentToolUseIdFromSdkMessage(message);
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
             const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
             if (toolUse.name === "Agent") {
@@ -11867,11 +11882,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 pendingSubagentLaunchesByToolUseId,
                 toolUse.id,
                 nativeToolInput,
-                parentToolUseIdFromSdkMessage(message),
+                messageParentToolUseId,
               );
               continue;
             }
-            if (toolUse.name === "TodoWrite" && parentToolUseIdFromSdkMessage(message) === null) {
+            if (toolUse.name === "SubagentHandback" && messageParentToolUseId !== null) {
+              const report =
+                nativeToolInput.type === "record" ? nativeToolInput.value.message : undefined;
+              const subagent = yield* resolveSubagentByToolUseId(context, messageParentToolUseId);
+              if (subagent !== undefined && typeof report === "string") {
+                subagent.handbackText = report;
+              }
+            }
+            if (toolUse.name === "TodoWrite" && messageParentToolUseId === null) {
               yield* emitClaudePlanProjection({
                 context,
                 nativeItemId: toolUse.id,
@@ -11884,7 +11907,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeItemId: toolUse.id,
               toolName: toolUse.name,
               toolInput: nativeToolInput,
-              parentToolUseId: parentToolUseIdFromSdkMessage(message),
+              parentToolUseId: messageParentToolUseId,
               presentation:
                 toolPresentations.get(toolUse.id) ??
                 mcpToolPresentation({
@@ -11944,6 +11967,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolInput: EMPTY_CLAUDE_NATIVE_TOOL_INPUT,
                 parentToolUseId,
               }));
+            // A refused or unexecuted handback delivered nothing; the subagent's later result stands.
+            if (
+              toolCall.toolName === "SubagentHandback" &&
+              parentToolUseId !== null &&
+              (isClaudeToolResultError(toolResult) ||
+                claudeToolNonExecutionKind(message, toolResult.tool_use_id) !== undefined)
+            ) {
+              const subagent = yield* resolveSubagentByToolUseId(context, parentToolUseId);
+              if (subagent !== undefined) subagent.handbackText = null;
+            }
             const appOutput =
               parentToolUseId === null &&
               toolCall.runId !== null &&
