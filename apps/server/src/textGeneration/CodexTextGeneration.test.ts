@@ -146,6 +146,9 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "      if (named.includes(name)) servers.set(name, false);",
         "      else servers.delete(name);",
         "    }",
+        '    for (const [, name, body] of value.matchAll(/"([^"]+)"=\\{([^}]*)\\}/g)) {',
+        "      if (/\\b(command|url)\\b/.test(body)) servers.set(name, true);",
+        "    }",
         '  } else if (value.startsWith("mcp_servers.")) {',
         '    const [name, key] = value.slice("mcp_servers.".length).split(/[.=]/);',
         "    if (value === `mcp_servers.${name}.enabled=false`) offServers.add(name);",
@@ -440,7 +443,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("keeps MCP servers off when launch args set their own mcp_servers table", () =>
+  it.effect("still runs when launch args set their own mcp_servers table", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Remove default shapes" }),
@@ -450,7 +453,27 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           { name: "my server", enabled: true },
         ],
         requireArg:
-          '--config features.apps=false --config mcp_servers={"my.server"={enabled=false},"my server"={enabled=false}} --config mcp_servers.my server.enabled=false --ephemeral',
+          "--config features.apps=false --config mcp_servers.my server.enabled=false --ephemeral",
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Remove default shapes from characters",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Remove default shapes");
+        }),
+    ),
+  );
+
+  it.effect("keeps the transport of a server a launch-arg mcp_servers table defines", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Remove default shapes" }),
+        launchArgs: `-c 'mcp_servers={"demo"={"command"="echo","args"=["hi"]}}'`,
+        mcpServers: [{ name: "demo", enabled: true }],
+        requireMcpServersOff: ["demo"],
       },
       (textGeneration) =>
         Effect.gen(function* () {
