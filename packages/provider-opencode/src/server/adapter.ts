@@ -407,9 +407,14 @@ interface OpenCodeSubagentContext {
   launch: ToolPart | null;
 }
 
+interface ReceivedOpenCodeEvent {
+  readonly event: OpenCodeEvent;
+  readonly quotaRetry: boolean;
+}
+
 /** Root work OpenCode began with no T3 turn, such as a background task's result; held until a run admits it. */
 interface OpenCodeWake {
-  readonly events: Array<OpenCodeEvent>;
+  readonly events: Array<ReceivedOpenCodeEvent>;
   // A user message alone can be a late update; only a busy root is work worth a run.
   offered: boolean;
   cancelling: boolean;
@@ -921,6 +926,46 @@ function providerRef(nativeId: string, strength: "strong" | "weak" = "strong") {
   } satisfies OrchestrationV2ProviderRef;
 }
 
+const OPENCODE_INTERACTIVE_RETRY_CEILING_MS = 5 * 60 * 1_000;
+
+function isOpenCodeQuotaRetry(
+  status: {
+    readonly message: string;
+    readonly next: number;
+    readonly action?: { readonly reason: string; readonly message: string };
+  },
+  now: number,
+): boolean {
+  const identifiers = new Set([
+    "account_rate_limit",
+    "free_tier_limit",
+    "GoUsageLimitError",
+    "FreeUsageLimitError",
+  ]);
+  const structuredQuota = (value: unknown): boolean => {
+    if (typeof value !== "object" || value === null) return false;
+    return ["reason", "code", "type"].some((key) =>
+      identifiers.has(String(Reflect.get(value, key))),
+    );
+  };
+  if (structuredQuota(status) || structuredQuota(status.action)) return true;
+  // Text is evidence only of an explicit quota identifier/window, never a
+  // structured reason embedded in diagnostics (e.g. account_rate_limit=false).
+  return [status.message, status.action?.message ?? ""].some((message) => {
+    // Negative diagnostic fields do not become quota evidence merely because
+    // their identifier contains "rate_limit" or "tier_limit".
+    const diagnosticText = message.replace(
+      /["']?\b(?:account_rate_limit|free_tier_limit)\b["']?\s*[:=]\s*(?:false|null|0)\b/gi,
+      "",
+    );
+    return (
+      /\b(?:GoUsageLimitError|FreeUsageLimitError)\b|OpenCode Go usage limit reached|weekly.*resets in|5[ -]hour.*limit/i.test(message) ||
+      (status.next - now >= OPENCODE_INTERACTIVE_RETRY_CEILING_MS &&
+        /(?:rate|usage|quota)[ _-]?limit|quota.{0,20}(?:exhausted|exceeded)/i.test(diagnosticText))
+    );
+  });
+}
+
 function openCodeErrorMessage(event: Extract<OpenCodeEvent, { type: "session.error" }>): string {
   const error = event.properties.error;
   if (error === undefined) return "OpenCode session failed without an error payload.";
@@ -1136,6 +1181,9 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const relatedSessionOwners = new Map<string, OpenCodeThreadState>();
         // Busy children outlive parent settlement; keep their server open.
         const busySessionIds = new Set<string>();
+        // v1 status/error events have no turn identity. Retire quota-stopped sessions so
+        // late abort events (or an abort that outlives its timeout) cannot hit a new turn.
+        const quotaStoppedSessionIds = new Set<string>();
         // A background task returns before its new child session reports busy.
         const unstartedSessionIds = new Set<string>();
         // A child can error before any turn of it is projected; its next idle settles the launch.
@@ -2901,13 +2949,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
 
         // Callers hold eventPermit. A root user message with no T3 turn starts a wake; its work stays
         // held, with that of children no turn has claimed yet, until startTurn takes it.
-        const acceptEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
+        const acceptEvent = Effect.fnUntraced(function* (received: ReceivedOpenCodeEvent) {
+          const { event } = received;
           const sessionId = sessionWorkEventSessionId(event);
+          if (sessionId !== undefined && quotaStoppedSessionIds.has(sessionId)) return;
           const owner =
             sessionId === undefined
               ? undefined
               : (threads.get(sessionId) ?? relatedSessionOwners.get(sessionId));
-          if (owner === undefined || sessionId === undefined) return yield* routeEvent(event);
+          if (owner === undefined || sessionId === undefined) return yield* routeEvent(received);
           const wake = owner.wake;
           const isRoot = sessionId === owner.nativeSessionId;
           const rootStatus =
@@ -2920,7 +2970,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             event.type === "message.updated" &&
             event.properties.info.role === "user" &&
             !wake.events.some(
-              (held) =>
+              ({ event: held }) =>
                 held.type === "message.updated" &&
                 held.properties.info.id === event.properties.info.id,
             );
@@ -2932,8 +2982,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             wake.settled = Deferred.makeUnsafe<void>();
           }
           if (wake?.cancelling) {
-            if (!isRoot) return yield* routeEvent(event);
-            wake.events.push(event);
+            if (!isRoot) return yield* routeEvent(received);
+            wake.events.push(received);
             if (isRoot && (rootStatus === "busy" || rootStatus === "retry")) {
               wake.offered = true;
               yield* Deferred.succeed(wake.admission, true);
@@ -2965,7 +3015,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             yield* Deferred.succeed(wake.admission, false);
             owner.wake = null;
           } else if (wake !== null && (wake.offered || isRoot)) {
-            wake.events.push(event);
+            wake.events.push(received);
             if (!wake.offered && (rootStatus === "busy" || rootStatus === "retry")) {
               wake.offered = true;
               yield* Deferred.succeed(wake.admission, true);
@@ -2987,7 +3037,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           ) {
             owner.userMessageIds.push(event.properties.info.id);
             owner.wake = {
-              events: [event],
+              events: [received],
               offered: false,
               cancelling: false,
               admission: Deferred.makeUnsafe<boolean>(),
@@ -2995,10 +3045,18 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             };
             return;
           }
-          yield* routeEvent(event);
+          yield* routeEvent(received);
         });
 
         const handleEvent = Effect.fnUntraced(function* (event: OpenCodeEvent) {
+          // A retry deadline is relative to receipt, even when routing or wake takeover waits.
+          const quotaRetry =
+            event.type === "session.status" &&
+            event.properties.status.type === "retry" &&
+            isOpenCodeQuotaRetry(
+              event.properties.status,
+              DateTime.toEpochMillis(yield* DateTime.now),
+            );
           yield* logProtocolEvent({
             direction: "incoming",
             messageKind: "notification",
@@ -3006,11 +3064,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             payload: event,
           });
           // A slow native call only delays events, as on main; Stop goes through lifecyclePermit.
-          yield* eventPermit.withPermit(acceptEvent(event));
+          yield* eventPermit.withPermit(acceptEvent({ event, quotaRetry }));
         });
 
         const routeEvent = Effect.fnUntraced(function* (
-          event: OpenCodeEvent,
+          { event, quotaRetry }: ReceivedOpenCodeEvent,
           historicalRootSessionId?: string,
         ) {
           const historicalRoot =
@@ -3019,11 +3077,14 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           // A foreground prompt inherits held output, but has not submitted its own native work yet.
           if (
             historicalRoot &&
+            !quotaRetry &&
             (event.type === "session.status" ||
               event.type === "session.idle" ||
               event.type === "session.error")
           )
             return;
+          const eventSessionId = sessionWorkEventSessionId(event);
+          if (eventSessionId !== undefined && quotaStoppedSessionIds.has(eventSessionId)) return;
           switch (event.type) {
             case "server.connected":
               if (hasConnected) {
@@ -3117,6 +3178,60 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               if (state === undefined) return;
               if (state.activeTurn?.admissionPending) {
                 state.activeTurn.admissionStatusSequence++;
+              }
+              const retry = event.properties.status;
+              const turn = state.activeTurn;
+              if (retry.type === "retry" && turn !== null && !turn.finalized) {
+                if (quotaRetry) {
+                  quotaStoppedSessionIds.add(sessionId);
+                  busySessionIds.delete(sessionId);
+                  const failure = makeProviderFailure({
+                    message: `OpenCode quota limit: ${retry.message} (retry at ${DateTime.formatIso(DateTime.makeUnsafe(retry.next))}). Start a new provider thread after quota resets or select another provider.`,
+                    code: "usage_limit",
+                    class: "usage_limit",
+                  });
+                  // Claim terminal ownership before abort can reject a pending prompt.
+                  // Historical wake transfer also settles priorWakeSettled here; the
+                  // foreground must recover on a fresh session, never wait for quota reset.
+                  yield* finalizeTurn(state, turn, turn.interrupted ? "interrupted" : "failed", {
+                    failure,
+                    threadDisposition: "broken",
+                  });
+                  // Startup must succeed so orchestration keeps ingesting the queued terminal.
+                  yield* Deferred.succeed(turn.admissionSettled, undefined);
+                  yield* updateProviderSession("error", failure.message);
+                  yield* abortRootSession(state).pipe(Effect.timeout("5 seconds"), Effect.ignore);
+                  return;
+                }
+                const now = yield* DateTime.now;
+                const nativeItemId = `${turn.providerTurnId}:retry:${retry.attempt}`;
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver: OPENCODE_PROVIDER,
+                  turnItem: {
+                    id: idAllocator.derive.turnItemFromProviderItem({
+                      driver: OPENCODE_PROVIDER,
+                      nativeItemId,
+                    }),
+                    threadId: turn.threadId,
+                    runId: turn.runId,
+                    nodeId: turn.rootNodeId,
+                    providerThreadId: state.providerThread.id,
+                    providerTurnId: turn.providerTurnId,
+                    nativeItemRef: providerRef(nativeItemId, "weak"),
+                    parentItemId: null,
+                    ordinal: itemOrdinal(turn, nativeItemId),
+                    type: "system_notice",
+                    title: "OpenCode retry",
+                    level: "warning",
+                    status: "completed",
+                    message: `OpenCode retry ${retry.attempt}: ${retry.message} (retry at ${DateTime.formatIso(DateTime.makeUnsafe(retry.next))}).`,
+                    startedAt: now,
+                    completedAt: now,
+                    updatedAt: now,
+                  },
+                });
+                return;
               }
               if (event.properties.status.type === "busy") {
                 yield* updateProviderThread(state, { status: "active" });
@@ -3844,6 +3959,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                           "OpenCode event stream has ended; reconnect the provider session before starting another turn.",
                         );
                       }
+                      if (quotaStoppedSessionIds.has(sessionId)) {
+                        return yield* protocolError(
+                          "OpenCode session stopped at a quota limit; start a new provider thread.",
+                        );
+                      }
                       if (state.activeTurn !== null) {
                         return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                           driver: OPENCODE_PROVIDER,
@@ -3866,7 +3986,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                       });
                       yield* updateProviderSession("running", null);
                       if (!continuation) {
-                        for (const event of wake?.events ?? []) {
+                        for (const { event } of wake?.events ?? []) {
                           if (
                             event.type === "message.updated" &&
                             event.properties.sessionID === sessionId &&
@@ -3964,15 +4084,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 turnInput.message.text,
               ).pipe(
                 Effect.tapError((cause) =>
-                  admissionAbortController!.signal.aborted
+                  quotaStoppedSessionIds.has(sessionId) || admissionAbortController!.signal.aborted
                     ? Effect.void
                     : finalizeTurn(state, turn, "failed", {
                         failure: makeProviderFailure({ cause, class: "provider_error" }),
                       }),
                 ),
-                Effect.catch((cause) =>
-                  admissionAbortController!.signal.aborted ? Effect.void : Effect.fail(cause),
-                ),
+                Effect.catch((cause) => {
+                  if (quotaStoppedSessionIds.has(sessionId))
+                    return Deferred.await(admissionSettled);
+                  return admissionAbortController!.signal.aborted
+                    ? Effect.void
+                    : Effect.fail(cause);
+                }),
+                Effect.raceFirst(Deferred.await(admissionSettled)),
                 Effect.ensuring(
                   Effect.all([
                     Deferred.succeed(admissionSettled, undefined).pipe(Effect.ignore),

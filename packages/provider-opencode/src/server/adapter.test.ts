@@ -635,6 +635,324 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  for (const message of [
+    "GoUsageLimitError: weekly usage limit reached",
+    "FreeUsageLimitError",
+    "account_rate_limit",
+    "free_tier_limit",
+    "Rate limit exceeded",
+    "structured quota",
+  ]) {
+    it.effect(`stops quota retry: ${message}; ignores late events and isolates replacement`, () =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const aborts: string[] = [];
+        let creates = 0;
+        let promptId = "";
+        const harness = yield* makeOpenCodeRuntimeHarness("quota-retry", "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({
+              data: {
+                id: ++creates === 1 ? "root" : "replacement",
+                time: { created: 1, updated: 1 },
+              },
+            }),
+            promptAsync: async (input: { messageID: string }) => {
+              promptId = input.messageID;
+              return { data: true };
+            },
+            abort: async (input: { sessionID: string }) => {
+              aborts.push(input.sessionID);
+              return { data: true };
+            },
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.startTurn();
+        const firstTerminal = yield* Deferred.make<void>();
+        let terminalCount = 0;
+        const received = yield* harness.runtime.events.pipe(
+          Stream.filter((e) => e.type === "turn.terminal"),
+          Stream.tap(() =>
+            Effect.sync(() => {
+              terminalCount++;
+            }).pipe(Effect.andThen(Deferred.succeed(firstTerminal, undefined))),
+          ),
+          Stream.take(2),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const now = yield* DateTime.now;
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.status",
+            properties: {
+              sessionID: "root",
+              status: {
+                type: "retry",
+                message,
+                ...(["structured quota", "account_rate_limit", "free_tier_limit"].includes(message)
+                  ? {
+                      action: {
+                        reason:
+                          message === "free_tier_limit" ? "free_tier_limit" : "account_rate_limit",
+                        message: "wait",
+                        provider: "go",
+                        title: "Limit",
+                        label: "Upgrade",
+                      },
+                    }
+                  : {}),
+                attempt: 1,
+                next: DateTime.toEpochMillis(now) + 7 * 86_400_000,
+              },
+            },
+          }),
+        );
+        yield* Deferred.await(firstTerminal);
+        assert.deepEqual(aborts, ["root"]);
+        assert.equal((yield* Effect.exit(harness.startTurn()))._tag, "Failure");
+        const replacement = yield* harness.runtime.ensureThread({
+          threadId: ThreadId.make("thread-opencode-replacement"),
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("opencode-quota-retry"),
+            model: "anthropic/claude-sonnet",
+            options: [],
+          },
+          runtimePolicy: harness.policy,
+        });
+        yield* harness.startTurn("replacement", replacement, harness.policy, false, "replacement");
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: "replacement",
+              info: { id: promptId, role: "user", time: { created: 1 } },
+            },
+          }),
+        );
+        for (const event of [
+          { type: "session.idle", properties: { sessionID: "root" } },
+          { type: "session.status", properties: { sessionID: "root", status: { type: "idle" } } },
+          {
+            type: "session.error",
+            properties: {
+              sessionID: "root",
+              error: { name: "MessageAbortedError", data: { message: "aborted" } },
+            },
+          },
+          {
+            type: "session.error",
+            properties: {
+              sessionID: "root",
+              error: {
+                name: "APIError",
+                data: { message: "quota", statusCode: 429, isRetryable: true },
+              },
+            },
+          },
+        ])
+          yield* Effect.promise(() => nativeEvents.push(event));
+        assert.equal(terminalCount, 1);
+        yield* Effect.promise(() =>
+          nativeEvents.push({ type: "session.idle", properties: { sessionID: "replacement" } }),
+        );
+        nativeEvents.close();
+        const events = yield* Fiber.join(received);
+        const terminals = events.filter((e) => e.type === "turn.terminal");
+        assert.equal(terminals.length, 2);
+        assert.equal(terminals[0]?.status, "failed");
+        assert.equal(terminals[0]?.failure?.class, "usage_limit");
+        assert.include(terminals[0]?.failure?.message ?? "", message);
+        assert.equal(terminals[0]?.threadDisposition, "broken");
+        assert.equal(terminals[1]?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+    );
+  }
+
+  for (const message of [
+    "429: Rate limit exceeded",
+    "503: service unavailable",
+    "429: per-minute token usage limit exceeded; retry in 1 second",
+    "503: upstream overload; account_rate_limit=false",
+    '503: upstream overload; "free_tier_limit":false',
+  ]) {
+    it.effect(`surfaces a short retry and completes normally: ${message}`, () =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        let aborts = 0;
+        let promptId = "";
+        const harness = yield* makeOpenCodeRuntimeHarness("transient-retry", "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: { messageID: string }) => {
+              promptId = input.messageID;
+              return { data: true };
+            },
+            abort: async () => {
+              aborts++;
+              return { data: true };
+            },
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.startTurn();
+        const received = yield* harness.runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const now = yield* DateTime.now;
+        const next = DateTime.toEpochMillis(now) + (message.includes("false") ? 300_000 : 1_000);
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: "root",
+              info: { id: promptId, role: "user", time: { created: 1 } },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.status",
+            properties: { sessionID: "root", status: { type: "retry", message, attempt: 1, next } },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({ type: "session.idle", properties: { sessionID: "root" } }),
+        );
+        const events = yield* Fiber.join(received);
+        assert.equal(aborts, 0);
+        const notice = events.find(
+          (e) => e.type === "turn_item.updated" && e.turnItem.type === "system_notice",
+        );
+        assert.isDefined(notice);
+        if (notice?.type === "turn_item.updated" && notice.turnItem.type === "system_notice") {
+          assert.include(notice.turnItem.message, message);
+          assert.include(notice.turnItem.message, DateTime.formatIso(DateTime.makeUnsafe(next)));
+        }
+        assert.equal(events.find((e) => e.type === "turn.terminal")?.status, "completed");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+    );
+  }
+
+  it.effect("quota owns terminal when abort rejects a pending prompt submission", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const submitted = promiseGate<void>();
+      let rejectPrompt!: (reason: Error) => void;
+      const prompt = new Promise<{ data: boolean }>((_resolve, reject) => {
+        rejectPrompt = reject;
+      });
+      const harness = yield* makeOpenCodeRuntimeHarness("quota-prompt-race", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => {
+            submitted.resolve();
+            return prompt;
+          },
+          abort: async () => {
+            rejectPrompt(new Error("submission aborted"));
+            await Promise.resolve();
+            return { data: true };
+          },
+          children: async () => ({ data: [] }),
+        },
+      });
+      const starting = yield* harness.startTurn().pipe(Effect.exit, Effect.forkScoped);
+      yield* Effect.promise(() => submitted.promise);
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: {
+            sessionID: "root",
+            status: {
+              type: "retry",
+              message: "GoUsageLimitError",
+              attempt: 1,
+              next: 2_000_000_000_000,
+            },
+          },
+        }),
+      );
+      // The orchestration caller cancels ingestion on a failed start. Keep the
+      // terminal queued until startup returns, so consumption cannot hide the race.
+      assert.equal((yield* Fiber.join(starting))._tag, "Success");
+      const terminal = yield* harness.runtime.events.pipe(
+        Stream.filter((e) => e.type === "turn.terminal"),
+        Stream.runHead,
+      );
+      assert(Option.isSome(terminal));
+      assert.equal(terminal.value.status, "failed");
+      assert.equal(terminal.value.failure?.class, "usage_limit");
+      assert.equal(terminal.value.failure?.code, "usage_limit");
+      assert.equal(terminal.value.threadDisposition, "broken");
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect("finalizes quota failure even when native abort never answers", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const submitted = promiseGate<void>();
+      const abortCalled = promiseGate<void>();
+      let aborts = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness("quota-abort-timeout", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => {
+            submitted.resolve();
+            return new Promise(() => {});
+          },
+          abort: async () => {
+            if (++aborts > 1) return { data: true };
+            abortCalled.resolve();
+            return new Promise(() => {});
+          },
+          children: async () => ({ data: [] }),
+        },
+      });
+      const starting = yield* harness
+        .startTurn()
+        .pipe(Effect.timeout("1 second"), Effect.forkScoped);
+      yield* Effect.promise(() => submitted.promise);
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((e) => e.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const pushed = yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "session.status",
+          properties: {
+            sessionID: "root",
+            status: {
+              type: "retry",
+              message: "GoUsageLimitError",
+              attempt: 1,
+              next: 2_000_000_000_000,
+            },
+          },
+        }),
+      ).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => abortCalled.promise);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(starting);
+      yield* TestClock.adjust("4 seconds");
+      yield* Fiber.join(pushed);
+      const events = yield* Fiber.join(received);
+      assert.equal(events.filter((e) => e.type === "turn.terminal").length, 1);
+      const terminal = events.find((e) => e.type === "turn.terminal");
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.class, "usage_limit");
+      assert.equal(terminal?.threadDisposition, "broken");
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
   it.effect("classifies APIError 429 as a usage limit", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
@@ -1570,6 +1888,7 @@ describe("OpenCodeAdapterV2", () => {
     { state: "settled", end: "foreground" },
     { state: "settled", end: "foreground-buffered" },
     { state: "settled", end: "foreground-buffered-error" },
+    { state: "settled", end: "foreground-buffered-quota" },
     { state: "settled", end: "foreground-stop" },
     { state: "settled", end: "foreground-eof" },
     { state: "settled", end: "invalid-continuation" },
@@ -1595,6 +1914,7 @@ describe("OpenCodeAdapterV2", () => {
         const push = (event: unknown) => Effect.promise(() => nativeEvents.push(event));
         const root = "ses_root";
         const promptIds: Array<string> = [];
+        let creates = 0;
         const aborted: Array<string> = [];
         const nativeExit = yield* Deferred.make<number>();
         const routeStarted = promiseGate<void>();
@@ -1633,7 +1953,12 @@ describe("OpenCodeAdapterV2", () => {
               },
             },
             session: {
-              create: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+              create: async () => ({
+                data: {
+                  id: ++creates > 1 && end === "foreground-buffered-quota" ? "fresh" : root,
+                  time: { created: 1, updated: 1 },
+                },
+              }),
               get: async (input: { sessionID: string }) => {
                 if (input.sessionID === "ses_unrelated" || input.sessionID === "ses_replay_child") {
                   routeStarted.resolve();
@@ -2455,6 +2780,52 @@ describe("OpenCodeAdapterV2", () => {
             providerThread: resumed,
           });
           assert.equal(replacementSnapshot.providerTurns.at(-1)?.status, "running");
+          return;
+        }
+        if (end === "foreground-buffered-quota") {
+          const receivedAt = DateTime.toEpochMillis(yield* DateTime.now);
+          yield* push({
+            type: "session.status",
+            properties: {
+              sessionID: root,
+              status: {
+                type: "retry",
+                message: "429: rate limit exceeded",
+                attempt: 1,
+                next: receivedAt + 5 * 60_000,
+              },
+            },
+          });
+          yield* TestClock.adjust("2 seconds");
+          // No more native events: replay alone must settle admission and retire root.
+          const foreground = yield* harness
+            .startTurn("follow up", undefined, undefined, false, "next")
+            .pipe(Effect.timeout("1 second"), Effect.forkScoped);
+          yield* TestClock.adjust("1 second");
+          yield* Fiber.join(foreground);
+          const events = yield* harness.runtime.events.pipe(
+            Stream.takeUntil((e) => e.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          const terminal = events.find((e) => e.type === "turn.terminal");
+          assert.equal(terminal?.status, "failed");
+          assert.equal(terminal?.failure?.class, "usage_limit");
+          assert.equal(terminal?.failure?.code, "usage_limit");
+          assert.equal(terminal?.threadDisposition, "broken");
+          assert.equal(promptIds.length, 1, "foreground never submits on retired native root");
+          assert.equal((yield* Effect.exit(harness.startTurn()))._tag, "Failure");
+          assert.include(aborted, root);
+          const fresh = yield* harness.runtime.ensureThread({
+            threadId: ThreadId.make("thread-quota-fresh"),
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("opencode-root-background-wake"),
+              model: "anthropic/claude-sonnet",
+              options: [],
+            },
+            runtimePolicy: harness.policy,
+          });
+          yield* harness.startTurn("retry", fresh, harness.policy, false, "fresh");
+          assert.equal(promptIds.length, 2, "foreground recovery submits on fresh native session");
           return;
         }
         const foreground =
