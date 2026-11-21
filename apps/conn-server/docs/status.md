@@ -1085,6 +1085,11 @@ builder with a test that fails without the fix.
 - **Release `conn-server-v0.3.0`**: provider install through Orbit's AI router (#181),
   Antigravity over ACP (#183) and the ACP MCP bridge memory fix (#184); the version bump is
   its own PR.
+- **Release `conn-server-v0.4.0`**: desktop tab relay (#191), `pull_request_create` (#192),
+  remote delegation and the Orbit Gateway link (#190), Orbit-managed provider CLIs (#194),
+  fork merge-back with context handoff (#195), T3 state import at first start (#196, #198,
+  #200), unserved method triage (#197), thread shell `subagentCount` with v4 upgrade backfill
+  and compact `orbitTask` receipts (#201, #205); the version bump is its own PR.
 
 ## Partly followed to Conn `444f032be7` (the 2026-11-18 sync)
 
