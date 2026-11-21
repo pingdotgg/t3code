@@ -16,6 +16,7 @@ import {
   filterAvailableSettingsSearchItems,
   getThreadAutoSettlementSearchAvailability,
 } from "./settingsSearch";
+import { readAvailableSpellcheckLanguages } from "./SpellcheckLanguagesPicker";
 
 export function useAvailableSettingsSearchItems() {
   const { environments } = useEnvironments();
@@ -72,6 +73,7 @@ export function useAvailableSettingsSearchItems() {
     hasThreadAutoSettlement,
     managedTunnelActive,
     hasPeerLinkHost,
+    hasSpellcheckLanguages: readAvailableSpellcheckLanguages().length > 0,
     hasFastWorktreeCheckoutEnvironment,
     hasTextGeneratorsEnvironment,
     hasPrimaryEnvironment: primaryEnvironmentId !== null,

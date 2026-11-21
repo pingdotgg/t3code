@@ -46,6 +46,7 @@ import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
+import * as DesktopSpellcheck from "../settings/DesktopSpellcheck.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
@@ -163,6 +164,9 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         Effect.provideService(DesktopLegacyLocalStorage.DesktopLegacyLocalStorage, {
           load: () => Effect.void,
         } as unknown as DesktopLegacyLocalStorage.DesktopLegacyLocalStorage["Service"]),
+        Effect.provideService(DesktopSpellcheck.DesktopSpellcheck, {
+          initialize: Effect.void,
+        } as DesktopSpellcheck.DesktopSpellcheck["Service"]),
         Effect.provideService(DesktopSnapShot.DesktopSnapShot, {
           initialize: Effect.void,
         } as DesktopSnapShot.DesktopSnapShot["Service"]),
