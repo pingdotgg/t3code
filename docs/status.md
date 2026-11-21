@@ -33,6 +33,7 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 - **Device screen streaming (2026-11-21):** Authenticated device hub ticket minting (`device_hub` in `conn-client`), MJPEG + AVCC/SEMU H.264 demuxing, macOS VideoToolbox BGRA hardware decode (tested end-to-end with a real H.264 IDR frame), iOS/Android touch + keyboard + hardware buttons, screenshot save to `~/Downloads`, foreground app & event log SSE, and visibility-gated stream lifecycle (`RightPanel::sync_surface_visibility` -> `DevicePanel::set_visible`).
 - **Pull Request & Linked Items surfaces (2026-11-21):** Reviewer/label pickers, base-branch freshness/update popover, submit review (`Comment`/`Approve`/`RequestChanges`), emoji reactions, PR Code tab diff syntax highlighting, agent prompt actions (`SendPrompt`), collapsible header on scroll, and gradient hover fade in Linked Items.
 - **Rust hot-patching spike (2026-11-21 — proven live in `nick-vm`):** `gpui-pre = 0.3.11` ships built-in Subsecond `0.7.10` hot-reload (`gpui-pre/src/hot_reload.rs` + automatic `subsecond::HotFn::current(...)` dispatch on every `Render` / `RenderOnce` view). Wired an optional `hot-reload` feature in `crates/conn-app/Cargo.toml` (debug-only inside `gpui-pre/build.rs`), enabled `gpui::hot_reload` info logging in `stderr_log.rs`, installed Dioxus CLI `0.7.10` at `~/.cargo/bin/dx`, and added `scripts/dev-hot.sh`. Verified live in `nick-vm`: editing two `conn-app` views (`sidebar/thread_list.rs` + `chat/composer.rs`) hot-patched the running macOS Metal window in **2.78s compile / 3.22s end-to-end** while preserving the same PID, WebSocket connection, active thread, and open `Files` panel.
+- **Locked Conn + Orbit scope & Upstream Radar (2026-11-21):** Locked [`docs/scope.md`](./scope.md) around the 3+1 architecture (**Orbit** control plane, trimmed **`conn-server`** with Expo mobile guardrail, **`conn-gpui`** on macOS, future **pure SwiftUI iOS** over GPUI-free `conn-client`/`conn-state`/`conn-theme` via UniFFI). Added [`scripts/radar.sh`](../scripts/radar.sh), [`docs/radar.md`](./radar.md), and `t3code` pin in `references.pin` to track upstream T3 Code, Threadbear, and Rune against the cutlist.
 - **Diagnostics:** GPUI warnings/errors go to stderr; `CONN_GPUI_FRAME_LOG=1` also logs keys, the palette action and renders per second.
 
 ## How to run (reproduction)
@@ -75,11 +76,13 @@ CEF lint check: `CARGO_TARGET_DIR=target-cef cargo clippy -p conn-web -p conn-ap
 - Inline code uses the body font; GPUI `HighlightStyle` cannot switch font family inside a run.
 - The thread diff for the seeded "Add greet function" thread includes `target/` files: its checkpoint predates the demo `.gitignore`.
 
-## Next
+## Next (aligned with locked `docs/scope.md`)
 
-- **Composer:** clipboard image paste.
-- **Diff & Terminal:** working-tree/branch diff scopes; terminal tabs/splits.
-- **Settings:** additional server-backed Conn settings pages and multi-workspace saved presets.
+- **Orbit sync (`#1`, `#2`, `#8`, `#13`):** workspaces, themes/appearance, and flat Orbit-backed settings (`PATCH /profiles/{id}/settings`).
+- **Composer (`#6`, `#10`):** Operator dictation button (`/dictate/start|stop|wait|cancel`) and clipboard image paste.
+- **Browser & Device Annotations (`#18`):** annotation overlay, queue panel, and Operator dictation wired to `annotations_*`.
+- **Diff (`#15`):** working-tree / branch diff scopes.
+- **Upstream Radar (`docs/radar.md`):** run `scripts/radar.sh` to triage new commits from `t3code`, `threadbear`, and `rune` against `docs/scope.md`.
 
 ## Phase 2 drift (fixed)
 

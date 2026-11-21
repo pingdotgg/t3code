@@ -1,10 +1,10 @@
 # conn-gpui
 
-Read `docs/status.md` first. It says what is proven, what is in progress, and what is next. Update it with every landed milestone.
+Read `docs/status.md` and `docs/scope.md` first. `docs/status.md` says what is proven, what is in progress, and what is next; `docs/scope.md` is the locked feature cutlist defining what belongs in **Orbit**, **`conn-server`**, **`conn-gpui`**, and future **SwiftUI iOS** (and what upstream T3 Code features are intentionally dropped). Update `docs/status.md` with every landed milestone.
 
-**conn-gpui** is a native Rust + GPUI desktop client for Conn: a pixel-for-pixel port of the Conn desktop shell (`../conn`, Nick's fork of T3 Code) that talks directly to `conn-server` (`../conn-server`) using its typed Rust contract crates (`conn-wire` and `conn-contract`), adopting proven GPUI patterns from Threadbear (`.refs/threadbear`).
+**conn-gpui** is a native Rust + GPUI macOS desktop client for Conn + Orbit: it matches the Conn desktop shell's look and feel (`../conn`) for everything in `docs/scope.md`, talks directly to `conn-server` (`../conn-server`) using its typed Rust contract crates (`conn-wire` and `conn-contract`), integrates tightly with Orbit (nodes, workspaces, profiles, themes, tasks, schedules, `ai-router`), and adopts proven GPUI patterns from Threadbear (`.refs/threadbear`).
 
-Read `README.md`, `docs/architecture.md`, and `docs/design-spec.md` before changing code. If you are running a long autonomous session, read `GOAL.md` for the phased milestone plan and sub-agent split.
+Read `README.md`, `docs/scope.md`, `docs/architecture.md`, and `docs/design-spec.md` before changing code. Do **not** port features marked `Drop` or `Orbit` in `docs/scope.md` into `conn-gpui`. For tracking upstream changes from T3 Code, Threadbear, and Rune, see `docs/radar.md`. If you are running a long autonomous session, read `GOAL.md` for the phased milestone plan and sub-agent split.
 
 ## Inputs and references (read-only)
 
@@ -42,7 +42,7 @@ Keep crate boundaries strict so parallel sub-agents do not collide:
 
 - `conn-client`, `conn-state`, and `conn-theme` stay `#![forbid(unsafe_code)]`.
 - `unsafe` is permitted only in `conn-app` (macOS AppKit/Metal window shims) and `conn-web` (CEF FFI), and every `unsafe` block must carry a `// SAFETY:` comment (`undocumented_unsafe_blocks = "deny"`).
-- Keep `conn-client` and `conn-state` 100% GPUI-free so `cargo test -p conn-client -p conn-state` runs in seconds with no window server.
+- Keep `conn-client`, `conn-state`, and `conn-theme` 100% GPUI-free so `cargo test -p conn-client -p conn-state -p conn-theme` runs in seconds with no window server and so the same Rust core can be exposed to a future pure SwiftUI iOS client via UniFFI.
 
 ## Visual parity rules (pixel-for-pixel Conn)
 

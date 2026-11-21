@@ -1,7 +1,6 @@
-# Parity with real Conn
+# Parity with real Conn (within `docs/scope.md`)
 
-conn-gpui is done only when it matches the real Conn app in look and behavior. This file lists
-every known gap. Update it as gaps close; never mark a surface done without a side-by-side.
+conn-gpui matches the real Conn shell in look and behavior **for the locked feature set in [`docs/scope.md`](./scope.md)** — do not chase upstream T3 Code features marked `Drop` or moved to `Orbit`. This file lists every known gap inside that scope. Update it as gaps close; never mark a surface done without a side-by-side.
 
 ## Reference: real Conn side by side in nick-vm
 
@@ -31,13 +30,16 @@ Nick's Mac and never by asking Nick to test. Take `/tmp/vm-gui.lock` around GUI 
 - Fixed: native view shown a frame before its panel repainted (flash on tab switch); URL field stuck on `about:blank`; native view hidden when right panel closes or GPUI overlays (palette, Settings) open.
 
 ### Buttons that exist but do nothing yet
-- Right panel: dock to bottom.
-- Composer: microphone has no dictation; `/` commands execute `/model`, `/plan`, `/settle` (other provider slash commands stay in the draft for Enter).
+- Right panel: dock to bottom *(deferred per `docs/scope.md` #16 — hide or wire later)*.
+- Composer: microphone needs **Operator** dictation (`/dictate/start|stop|wait|cancel`, per `docs/scope.md` #6); `/` commands execute `/model`, `/plan`, `/settle` (other provider slash commands stay in the draft for Enter).
 
-### Features missing
-- Multi-workspace saved presets; dedicated rail Usage / global Pull Requests pages (rail buttons currently open Tasks & Linked Items).
-- Working-tree / branch diff scopes (`All changes` and per-turn `Turn N` scopes via `getTurnDiff` are wired); terminal tabs/splits.
-- Device WebRTC transport (MJPEG + VideoToolbox H.264 implemented).
+### Features missing (within locked `docs/scope.md`)
+- **Orbit profile & workspace sync (`#1`, `#2`, `#8`, `#13`):** multi-workspace sync, theme/appearance sync, and flat Orbit-backed settings (`PATCH /profiles/{id}/settings`) replacing legacy T3 multi-scope settings.
+- **Composer (`#10`):** clipboard image paste; Operator dictation button.
+- **Browser & Device Annotations (`#18`):** annotation overlay, queue panel, and Operator dictation wired to `annotations_*`.
+- **Diff (`#15`):** working-tree / branch diff scopes (`All changes` and per-turn `Turn N` scopes via `getTurnDiff` are wired).
+- **Device (`#24`):** optional WebRTC transport (MJPEG + VideoToolbox H.264 implemented).
+- **Intentionally omitted (see `docs/scope.md`):** Usage limits/accounts (`#3`), Scheduled Tasks (`#7`, Orbit), Snooze/Archive/Working shelves (`#9`), Labs/Theme Editor/Keybindings editor (`#13`, `#30`), GitLab & AI PR Review Guides (`#23`), EAS/Simlock hosts (`#24`), SnapShot/Guest Share/Telemetry/Side Chats (`#26`–`#29`).
 
 ### Done so far (verified in `nick-vm` side-by-side captures)
 - Core shell: sidebar width (288px column), thread order (latest user message), Claude and OpenAI marks, SF Mono for code and inline code, Settled footer, app activation (bundled `.app`), native macOS menu bar (`Conn`, `File`, `Edit`, `View`, `Window`) + main-window close/quit, header and breadcrumb positions, header Linked items toggle & tooltips, header title truncation, workspace rail wired buttons & tooltips, macOS vibrancy `Root` fix + `NSAppearance` sync (exact RGB match to `Conn.app`), Reduce Transparency toggle.
