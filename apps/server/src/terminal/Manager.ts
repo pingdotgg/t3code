@@ -1274,6 +1274,19 @@ function shouldStripOscSequence(content: string): boolean {
   return /^(10|11|12);(?:\?|rgb:)/.test(content);
 }
 
+// An OSC 4 whose every colour is "?" reports palette entries and sets none. Ghostty skips C0
+// controls inside an OSC, runs one that CAN or SUB ends, and reads the pairs past empty fields.
+function isOscPaletteQuery(content: string): boolean {
+  if (!/^[\0-\x1f]*4/.test(content) || !content.includes("?")) return false;
+  const [code, ...pairs] = content
+    .replace(/[\0-\x1f]+/g, "")
+    .split(";")
+    .filter((field) => field !== "");
+  return (
+    code === "4" && pairs.length > 1 && pairs.every((field, at) => at % 2 === 0 || field === "?")
+  );
+}
+
 function stripStringTerminator(value: string): string {
   if (value.endsWith("\u001b\\")) {
     return value.slice(0, -2);
@@ -1488,6 +1501,18 @@ function sanitizeTerminalHistoryChunk(
         const content = stripStringTerminator(
           prefix.slice(2) + input.slice(contentStart, c1?.index ?? end),
         );
+        // ST ends what the query's ESC cut short and leaves ground state, as the query does when it
+        // has its own terminator. Without one, the query ends at the next ESC, which history may
+        // strip, so ST would not replay the same and the query stays.
+        if (
+          nextCodePoint === 0x5d &&
+          isOscPaletteQuery(content) &&
+          /[\x07\x18\x1a]$|\x1b\\$/.test(input.slice(index, end))
+        ) {
+          append("\u001b\\");
+          index = end;
+          continue;
+        }
         const strip =
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
