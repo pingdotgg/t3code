@@ -384,6 +384,17 @@ const READ_OUTAGE_MS = 60_000;
 /** A clone's create runs for minutes; a pairing follows #9's `pair` deadline. */
 const CREATE_TIMEOUT_MS = 30 * 60_000;
 const PAIRING_TIMEOUT_MS = OPERATION_TIMEOUT_MS;
+/**
+ * The user waits on the create and the pairing, which end in seconds: Orbit's 2 s hint would see
+ * each end up to 2 s late. Conn reads them this often for their first minute, then by the hint.
+ */
+const WAITED_POLL_MS = 500;
+const WAITED_POLL_WINDOW_MS = 60_000;
+/**
+ * A create seen running this recently ended moments ago, so its clone is awake. After a longer
+ * gap (a sleeping laptop) the clone may sleep too: Conn lists it and wakes it.
+ */
+const CREATED_SERVER_FRESH_MS = 60_000;
 /** How long a pairing admission may keep losing its answer; each try may take up to 60 s. */
 const PAIRING_ADMISSION_MS = 5 * 60_000;
 
@@ -675,7 +686,9 @@ export async function runOrbitThreadStart(
     beforeRead?: () => Promise<void>,
   ): Promise<OrbitGatewayOperation> => {
     const deadline = ports.now() + timeoutMs;
+    const fastUntil = ports.now() + WAITED_POLL_WINDOW_MS;
     let outageSince: number | null = null;
+    let lastHint: number | null = null;
     for (;;) {
       checkStopped();
       await beforeRead?.();
@@ -699,7 +712,11 @@ export async function runOrbitThreadStart(
         );
       }
       if (ports.now() >= deadline) throw failed("operation.timeout", null, null);
-      const wait = operationPollDelayMs(operation?.pollAfterSeconds ?? null);
+      if (operation !== null) lastHint = operation.pollAfterSeconds ?? lastHint;
+      // A failed read keeps the last hint, so a failing Gateway is not read faster.
+      const hinted = operationPollDelayMs(lastHint);
+      const wait =
+        operation !== null && ports.now() < fastUntil ? Math.min(hinted, WAITED_POLL_MS) : hinted;
       await ports.sleep(Math.max(Math.min(wait, deadline - ports.now()), 0));
     }
   };
@@ -821,6 +838,7 @@ export async function runOrbitThreadStart(
       }
       // A failed clone resumes when the same name is created again, so a retry admits it anew
       // under a new key. A create still running past the deadline keeps its Operation.
+      let runningSeenAt: number | null = null;
       const created = await follow(
         current.createOperationId!,
         createDeadline - ports.now(),
@@ -836,25 +854,40 @@ export async function runOrbitThreadStart(
             detail,
           ),
         (operation) => {
+          if (!OPERATION_TERMINAL_STATUSES.has(operation.status)) runningSeenAt = ports.now();
           const rows = observeOrbitCreateRows(current.createRows ?? null, operation, ports.now());
           if (!sameOrbitCreateRows(rows, current.createRows)) update({ createRows: rows });
           ports.onCreateOperation?.(operation);
         },
         () => cancelIfRequested(current.createOperationId!),
       );
-      const server = (await ports.client.environments()).find(
-        (environment) => environment.instanceId === current.instanceId,
-      );
-      if (!server) {
-        throw stepFailed("Orbit created the clone but lists no T3 server for it.", {});
-      }
-      if (server.status !== "registered") {
-        throw stepFailed("The clone's T3 server registration expired.", {});
-      }
-      if (server.powerState === "stopped") await wakeClone(ports, current.instanceId!);
       const result = created.result ?? null;
+      const t3 = result?.t3;
+      const createdServer =
+        typeof t3 === "object" && t3 !== null && "environment_id" in t3 ? t3.environment_id : null;
+      let environmentId: string;
+      if (
+        runningSeenAt !== null &&
+        ports.now() - runningSeenAt < CREATED_SERVER_FRESH_MS &&
+        typeof createdServer === "string"
+      ) {
+        // The create ended moments ago: its server was registered and started just now.
+        environmentId = createdServer;
+      } else {
+        const server = (await ports.client.environments()).find(
+          (environment) => environment.instanceId === current.instanceId,
+        );
+        if (!server) {
+          throw stepFailed("Orbit created the clone but lists no T3 server for it.", {});
+        }
+        if (server.status !== "registered") {
+          throw stepFailed("The clone's T3 server registration expired.", {});
+        }
+        if (server.powerState === "stopped") await wakeClone(ports, current.instanceId!);
+        environmentId = server.environmentId;
+      }
       update({
-        environmentId: server.environmentId,
+        environmentId,
         resultBranch: typeof result?.branch === "string" ? result.branch : null,
         resultBaseBranch: typeof result?.base_branch === "string" ? result.base_branch : null,
         // The completion runs on; the thread opens without waiting for it.

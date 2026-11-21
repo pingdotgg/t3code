@@ -76,6 +76,16 @@ describe("orbitCreateRowOf", () => {
     ["clone-route-csr-0", "address"],
     ["clone-route-csr-0-1", "address"],
     ["clone-route", "address"],
+    // The Gateway engine's create.
+    ["clone", "container"],
+    ["fetch", "container"],
+    ["copy_volume", "container"],
+    ["prepare", "container"],
+    ["start", "container"],
+    ["club_key", "container"],
+    ["spare", "container"],
+    ["checkout", "t3"],
+    ["t3", "t3"],
     // Older Gateways.
     ["clone-agent", "t3"],
     ["csr", "address"],
@@ -160,6 +170,25 @@ describe("observeOrbitCreateRows while the create runs", () => {
       1,
     );
     expect(rows.t3?.status).toBe("running");
+  });
+
+  it("the engine's create ends the copy when its checkout and T3 run (instance 3910)", () => {
+    const rows = observeOrbitCreateRows(
+      null,
+      op("running", [
+        step("clone", "succeeded"),
+        step("fetch", "succeeded"),
+        step("copy_volume", "succeeded"),
+        step("prepare", "succeeded"),
+        step("start", "succeeded"),
+        step("club_key", "succeeded"),
+        step("spare", "succeeded"),
+        step("checkout", "succeeded"),
+        step("t3", "running"),
+      ]),
+      1,
+    );
+    expect(statuses(rows)).toEqual(["container:done", "address:running", "t3:running"]);
   });
 
   it("keeps the address running when 5063's address steps end before the create does", () => {
