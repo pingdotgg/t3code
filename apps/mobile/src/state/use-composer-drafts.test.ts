@@ -274,7 +274,7 @@ it.each(["picker open", "reading image"] as const)(
     });
     const picking = pickQuestionAttachments({
       key: questionKey,
-      kind: "media",
+      kind: "library",
       isActive: () => true,
       append: (attachments) => appendComposerDraftAttachments(questionKey, attachments),
     });

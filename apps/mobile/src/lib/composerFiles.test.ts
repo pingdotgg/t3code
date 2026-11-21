@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   documentUri: "file:///documents",
   pickFile: vi.fn(),
   pickMedia: vi.fn(),
+  takePhoto: vi.fn(),
+  requestCameraPermission: vi.fn(),
   copy: vi.fn(),
   delete: vi.fn(),
   open: vi.fn(),
@@ -80,7 +82,11 @@ vi.mock("expo-file-system", () => {
   };
 });
 
-vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: mocks.pickMedia }));
+vi.mock("expo-image-picker", () => ({
+  launchImageLibraryAsync: mocks.pickMedia,
+  launchCameraAsync: mocks.takePhoto,
+  requestCameraPermissionsAsync: mocks.requestCameraPermission,
+}));
 vi.mock("expo-document-picker", () => ({ getDocumentAsync: mocks.pickFile }));
 vi.mock("expo-image-manipulator", () => ({
   SaveFormat: { JPEG: "jpeg", PNG: "png", WEBP: "webp" },
@@ -104,6 +110,9 @@ describe("composer file attachments", () => {
     mocks.documentUri = "file:///documents";
     mocks.pickFile.mockReset();
     mocks.pickMedia.mockReset();
+    mocks.takePhoto.mockReset();
+    mocks.requestCameraPermission.mockReset();
+    mocks.requestCameraPermission.mockResolvedValue({ granted: true });
     mocks.copy.mockReset();
     mocks.delete.mockReset();
     mocks.open.mockReset();
@@ -328,6 +337,48 @@ describe("composer file attachments", () => {
         images: [],
         error: "Failed to read 'photo.HEIC'.",
       });
+    });
+  });
+
+  describe("camera capture", () => {
+    const shot: ImagePickerAsset = {
+      uri: "file:///picker/shot.jpg",
+      type: "image",
+      fileName: "shot.jpg",
+      mimeType: "image/jpeg",
+      fileSize: 4,
+      width: 4032,
+      height: 3024,
+    };
+
+    beforeEach(() => {
+      mocks.readBase64.mockResolvedValue("YWJj");
+    });
+
+    it("attaches a camera photo without opening the photo library", async () => {
+      mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [shot] });
+
+      await expect(pickComposerMedia({ existingCount: 0, source: "camera" })).resolves.toEqual({
+        attachments: [expect.objectContaining({ type: "image", name: "shot.jpg" })],
+        error: null,
+      });
+      expect(mocks.pickMedia).not.toHaveBeenCalled();
+    });
+
+    it("holds the foreground handoff through a denied camera prompt", async () => {
+      let promptedDuringHandoff = false;
+      mocks.requestCameraPermission.mockImplementation(async () => {
+        promptedDuringHandoff = isForegroundHandoffActive();
+        return { granted: false };
+      });
+
+      await expect(pickComposerMedia({ existingCount: 0, source: "camera" })).resolves.toEqual({
+        attachments: [],
+        error: "Camera access was denied for this app. Open Settings to enable it.",
+      });
+      expect(promptedDuringHandoff).toBe(true);
+      expect(mocks.takePhoto).not.toHaveBeenCalled();
+      expect(isForegroundHandoffActive()).toBe(false);
     });
   });
 

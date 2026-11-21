@@ -67,7 +67,7 @@ export function useComposerAttachmentActions(props: {
     ];
     if (problems.length) Dialog.alert(title, problems.join("\n\n"));
   };
-  const onPickDraftMedia = async () => {
+  const onPickDraftMedia = async (source: "library" | "camera") => {
     const key = props.draftKey;
     if (!key || props.locked) return;
     const insertion = captureComposerDraftInsertion(key);
@@ -75,6 +75,7 @@ export function useComposerAttachmentActions(props: {
       const result = await pickComposerMedia({
         existingCount: countComposerDraftAttachmentsAfterSelection(key, insertion),
         maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
+        source,
       });
       report(
         m(msg("Could not attach photo or video")),

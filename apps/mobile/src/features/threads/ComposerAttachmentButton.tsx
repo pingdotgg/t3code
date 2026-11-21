@@ -7,6 +7,7 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { Menu } from "../../components/ui/Menu";
 
 const ATTACHMENT_MENU_ACTIONS: MenuAction[] = [
+  { id: "camera", title: msg("Take Photo"), image: "camera" },
   { id: "photos", title: msg("Photo Library"), image: "photo" },
   { id: "files", title: msg("Choose Files"), image: "folder" },
 ];
@@ -15,7 +16,7 @@ export function ComposerAttachmentButton(props: {
   readonly disabled?: boolean;
   readonly size?: "regular" | "large";
   readonly supportsFiles: boolean;
-  readonly onPickMedia: () => Promise<void>;
+  readonly onPickMedia: (source: "library" | "camera") => Promise<void>;
   readonly onPickFiles: () => Promise<void>;
 }) {
   const gt = useGT();
@@ -28,7 +29,7 @@ export function ComposerAttachmentButton(props: {
       accessibilityState={{ disabled: props.disabled }}
       className="size-[44px] shrink-0 items-center justify-center rounded-full active:opacity-70 disabled:opacity-50"
       disabled={props.disabled}
-      onPress={props.supportsFiles ? undefined : () => void props.onPickMedia()}
+      onPress={props.supportsFiles ? undefined : () => void props.onPickMedia("library")}
     >
       <SymbolView
         name="plus"
@@ -51,8 +52,10 @@ export function ComposerAttachmentButton(props: {
       accessibilityRole="button"
       actions={ATTACHMENT_MENU_ACTIONS.map((action) => ({ ...action, title: m(action.title) }))}
       onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === "photos") {
-          void props.onPickMedia();
+        if (nativeEvent.event === "camera") {
+          void props.onPickMedia("camera");
+        } else if (nativeEvent.event === "photos") {
+          void props.onPickMedia("library");
         } else if (nativeEvent.event === "files") {
           void props.onPickFiles();
         }
