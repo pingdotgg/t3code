@@ -16,6 +16,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
+import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -33,6 +34,7 @@ import {
   resolveProjectFileBackedSetting,
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveRuntimeMode } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -181,8 +183,8 @@ const access = Effect.gen(function* () {
   return yield* Project.ProjectService;
 });
 
-/** Settings, not the project record, hold the project default model that new threads use. */
-const withSavedDefaultModel = Effect.gen(function* () {
+/** Settings, not the project record, hold the default model and actions that new threads use. */
+const withSavedProjectSettings = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService.pipe(
     Effect.flatMap((service) => service.getSettings),
     Effect.mapError(unavailable),
@@ -195,9 +197,15 @@ const withSavedDefaultModel = Effect.gen(function* () {
         resolved.sources.defaultModelSelection === "project"
           ? resolved.settings.defaultModelSelection
           : null,
+      scripts: resolveProjectScripts(settings, project),
     };
   };
 });
+
+// The project is already committed, so a failed Settings read must not report the create as failed.
+const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
+  Effect.orElseSucceed(() => (project: ProjectRecord) => project),
+);
 
 export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_thread_launch: McpToolAccess.startsThreads(
@@ -217,6 +225,23 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
         const attachments = input.attachments ?? [];
+        if (input.generateTitle === true && !input.message?.trim() && attachments.length === 0)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "Title generation requires a message or attachments. No thread was created.",
+          });
+        const schemaProblem =
+          input.outputSchema === undefined
+            ? null
+            : outputRequestProblem(input.outputSchema, {
+                text: input.message ?? "",
+                attachments: input.attachments,
+              });
+        if (schemaProblem !== null || (input.outputSchema !== undefined && !input.message))
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: schemaProblem ?? "outputSchema needs a message that asks for the result.",
+          });
         if (attachments.some((attachment) => !Claims.attachmentIsPendingUpload(attachment)))
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
@@ -408,6 +433,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           threadId,
           projectId,
           title: input.title,
+          ...(input.generateTitle === undefined ? {} : { generateTitle: input.generateTitle }),
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
@@ -420,6 +446,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   ...(caller === undefined ? {} : { senderThreadId: caller.id }),
                   text: input.message ?? "",
                   attachments,
+                  ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
                 },
               }),
           createdBy: "agent",
@@ -472,7 +499,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       const page = yield* projects
         .listPage({ cursor: input.cursor ?? 0, limit: input.limit ?? 20 })
         .pipe(Effect.mapError(unavailable));
-      return { ...page, projects: page.projects.map(yield* withSavedDefaultModel) };
+      return { ...page, projects: page.projects.map(yield* withSavedProjectSettings) };
     }),
   ),
   t3_project_read: McpToolAccess.reads((input) =>
@@ -484,7 +511,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "invalid_request",
           message: "The project was not found.",
         });
-      return (yield* withSavedDefaultModel)(result.value);
+      return (yield* withSavedProjectSettings)(result.value);
     }),
   ),
   t3_project_create: McpToolAccess.writesEnvironment(
@@ -522,7 +549,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               ),
             );
           return {
-            ...project,
+            ...(yield* withSavedProjectSettingsAfterCreate)(project),
             ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
           };
         }
@@ -533,9 +560,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               "Creating a project does not set its default model; set defaultModelSelection afterwards with t3_project_update.",
           });
         const commandId = yield* newCommandId();
-        return yield* projects
+        const created = yield* projects
           .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
           .pipe(Effect.mapError(projectFailure));
+        return (yield* withSavedProjectSettingsAfterCreate)(created);
       }),
     // Linked work may bring the repository it works in; an existing
     // registered workspace is still refused.
@@ -547,7 +575,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       const updated = yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
-      return (yield* withSavedDefaultModel)(updated);
+      return (yield* withSavedProjectSettings)(updated);
     }),
   ),
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>

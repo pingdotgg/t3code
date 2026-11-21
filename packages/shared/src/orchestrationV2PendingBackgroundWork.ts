@@ -87,6 +87,18 @@ export function deriveBlockedOnThreadWait(input: {
   return hasWait;
 }
 
+/** A provider instance's background subagent outlives its run and still calls tools. */
+export function hasPendingBackgroundSubagent(
+  tasks: ReadonlyArray<PendingBackgroundWorkTask> | undefined,
+  providerInstanceId: OrchestrationV2ProviderThread["providerInstanceId"] | undefined,
+): boolean {
+  return (
+    tasks?.some(
+      (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
+    ) ?? false
+  );
+}
+
 export function backgroundWorkHoldsCompletion(
   tasks: ReadonlyArray<Pick<PendingBackgroundWorkTask, "kind" | "awaited">>,
 ): boolean {
@@ -307,7 +319,14 @@ export function derivePendingBackgroundWork(input: {
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
 
-  return Array.from(byTaskId.values());
+  // Follow-up tasks can share a child thread; the pending list counts agents, not messages.
+  const childThreadIds = new Set<ThreadId>();
+  return Array.from(byTaskId.values()).filter((task) => {
+    if (task.kind !== "subagent" || task.childThreadId == null) return true;
+    if (childThreadIds.has(task.childThreadId)) return false;
+    childThreadIds.add(task.childThreadId);
+    return true;
+  });
 }
 
 function pullRequestWatchTasks(

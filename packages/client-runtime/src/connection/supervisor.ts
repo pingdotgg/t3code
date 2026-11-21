@@ -1332,40 +1332,66 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // Registered before the fibers below so closing the scope interrupts them first.
   // A loop still running when the queue shuts down would report that as a failure.
   yield* Effect.addFinalizer(() => Queue.shutdown(signals).pipe(Effect.andThen(clearLease)));
-  yield* connectivity.changes.pipe(
-    Stream.runForEach((network) =>
-      Ref.modify(intent, (current) => {
-        const next = targetNetwork(network);
-        return current.network === next
-          ? [false, current]
-          : ([true, { ...current, network: next }] as const);
-      }).pipe(
-        Effect.flatMap((changed) =>
-          changed
-            ? (network === "offline" ? Effect.void : forgetSilentRoutes).pipe(
-                Effect.andThen(signal({ _tag: "NetworkChanged", network })),
-              )
-            : Effect.void,
-        ),
+  // A defect in a background listener would otherwise end it for good, silently.
+  // Untraced: a span here would stay open for the supervisor's whole lifetime.
+  const keepRunning = Effect.fnUntraced(
+    function* (task: string, effect: Effect.Effect<void>, onRestart?: Effect.Effect<void>) {
+      let current = effect;
+      while (true) {
+        const exit = yield* Effect.exit(current);
+        if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return yield* exit;
+        yield* Effect.logError("Connection supervisor task failed; restarting it.").pipe(
+          Effect.annotateLogs({
+            "environment.id": target.environmentId,
+            "environment.label": target.label,
+            task,
+            ...safeErrorLogAttributes(exit.cause.reasons.find(Cause.isDieReason)?.defect),
+          }),
+        );
+        yield* Effect.sleep(RETRY_BASE_DELAY_MS);
+        current = onRestart ? onRestart.pipe(Effect.andThen(effect)) : effect;
+      }
+    },
+    (self) => Effect.forkScoped(self),
+  );
+
+  const applyNetwork = (network: NetworkStatus) =>
+    Ref.modify(intent, (current) => {
+      const next = targetNetwork(network);
+      return current.network === next
+        ? [false, current]
+        : ([true, { ...current, network: next }] as const);
+    }).pipe(
+      Effect.flatMap((changed) =>
+        changed
+          ? (network === "offline" ? Effect.void : forgetSilentRoutes).pipe(
+              Effect.andThen(signal({ _tag: "NetworkChanged", network })),
+            )
+          : Effect.void,
+      ),
+    );
+  // A restarted listener may have missed changes while it was down.
+  yield* keepRunning(
+    "network-listener",
+    connectivity.changes.pipe(Stream.runForEach(applyNetwork)),
+    connectivity.status.pipe(Effect.flatMap(applyNetwork)),
+  );
+  yield* keepRunning(
+    "wakeup-listener",
+    wakeups.changes.pipe(
+      Stream.filter(ConnectionWakeups.reachesConnectionSupervisor),
+      Stream.runForEach((reason) =>
+        // A long suspension can hide a network change the platform never reported.
+        (reason === "network-changed" || reason === "application-active-long"
+          ? forgetSilentRoutes
+          : Effect.void
+        ).pipe(Effect.andThen(signal({ _tag: "Wakeup", reason }))),
       ),
     ),
-    Effect.forkScoped,
   );
-  yield* wakeups.changes.pipe(
-    Stream.filter(ConnectionWakeups.reachesConnectionSupervisor),
-    Stream.runForEach((reason) =>
-      // A long suspension can hide a network change the platform never reported.
-      (reason === "network-changed" || reason === "application-active-long"
-        ? forgetSilentRoutes
-        : Effect.void
-      ).pipe(Effect.andThen(signal({ _tag: "Wakeup", reason }))),
-    ),
-    Effect.forkScoped,
-  );
-  yield* Queue.take(betterRouteChecks).pipe(
-    Effect.flatMap(checkBetterRoutes),
-    Effect.forever,
-    Effect.forkScoped,
+  yield* keepRunning(
+    "better-route-checker",
+    Queue.take(betterRouteChecks).pipe(Effect.flatMap(checkBetterRoutes), Effect.forever),
   );
   // A restarted loop has forgotten its retry ladder, so it waits out the
   // ladder's ceiling unless a signal cuts the wait short.

@@ -18,7 +18,6 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
-const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -30,6 +29,8 @@ const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
   .map((name) => name.trim())
   .filter((name) => name.length > 0);
 const loadedCommandNames = process.env.T3_ACP_LOADED_COMMANDS?.split(",").filter(Boolean);
+// omp advertises a loaded session's commands only after it answers session/load.
+const loadedCommandsDelayMs = Number(process.env.T3_ACP_LOADED_COMMANDS_DELAY_MS ?? "");
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -522,16 +523,6 @@ const program = Effect.gen(function* () {
       },
     });
 
-  const writeHarnessFailure = Effect.promise(
-    () =>
-      new Promise<void>((resolve) => {
-        process.stderr.write(
-          "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2\n",
-          () => resolve(),
-        );
-      }),
-  );
-
   const finishPrompt = (
     targetSessionId: string,
     stopReason: AcpSchema.StopReason,
@@ -710,13 +701,21 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       sessionsLoading.add(requestedSessionId);
       if (loadedCommandNames !== undefined) {
-        yield* agent.client.sessionUpdate({
+        const publishLoadedCommands = agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "available_commands_update",
             availableCommands: loadedCommandNames.map((name) => ({ name, description: name })),
           },
         });
+        if (Number.isFinite(loadedCommandsDelayMs)) {
+          yield* Effect.sleep(`${loadedCommandsDelayMs} millis`).pipe(
+            Effect.andThen(publishLoadedCommands),
+            Effect.forkDetach,
+          );
+        } else {
+          yield* publishLoadedCommands;
+        }
       }
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
@@ -1055,19 +1054,6 @@ const program = Effect.gen(function* () {
         );
         return {};
       }
-      if (
-        harnessFailure === "1" ||
-        harnessFailure === "pending" ||
-        harnessFailure === "after-end-turn"
-      ) {
-        if (harnessFailure === "after-end-turn") {
-          return yield* finishPrompt(requestedSessionId, "end_turn");
-        }
-        yield* writeHarnessFailure;
-        if (harnessFailure === "pending") return yield* Effect.never;
-        return yield* finishPrompt(requestedSessionId, "end_turn");
-      }
-
       if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {
         const probes = [
           [
@@ -2210,9 +2196,7 @@ const program = Effect.gen(function* () {
             typeof params === "object" && params !== null ? Reflect.get(params, "code") : undefined;
           process.exit(typeof code === "number" ? code : 19);
         })
-      : method === "_test/harness-failure"
-        ? writeHarnessFailure
-        : Effect.void,
+      : Effect.void,
   );
 
   return yield* Effect.never;

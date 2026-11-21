@@ -89,10 +89,12 @@ import { modelSwitchSince } from "./modelSwitch.ts";
 import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
+import { outputRequestProblem } from "./runOutput.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  hasPendingBackgroundSubagent,
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
@@ -198,6 +200,7 @@ import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
   makeSubagentChildThread,
+  SUBAGENT_RESULT_TURN_ITEM_TYPES,
   subagentResultForRun,
   delegatedTaskProgress,
   delegatedTaskReportRuns,
@@ -674,6 +677,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "prepared-run.retry":
     case "subagent.stop":
     case "run.interrupt":
+    case "run.output.submit":
     case "queued-message.promote-to-steer":
     case "queued-run.start":
     case "queue.resume":
@@ -856,6 +860,7 @@ function mayStartSubagentFollowup(
 ): boolean {
   if (command.scheduledTaskId !== undefined || command.restartContinuationOfRunId !== undefined)
     return false;
+  if (isCompactionCommandMessage({ role: "user", ...command })) return false;
   if (command.notification !== undefined)
     return (
       command.notification.source.kind !== "monitor" || command.notification.outcome !== "updated"
@@ -7470,8 +7475,31 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode = { type: "start_immediately" };
     }
     const freshContext = command.freshContext === true;
+    // A result is asked of one whole turn, so a send that declares one never joins a running turn.
+    // A run that continues one cut short still owes that run's result.
+    const continuedRunId =
+      command.restartContinuationOfRunId ??
+      command.usageLimitContinuationOfRunId ??
+      command.manualContinuationOfRunId;
+    const outputSchema =
+      command.outputSchema ??
+      (continuedRunId === undefined
+        ? undefined
+        : projection.runs.find((run) => run.id === continuedRunId)?.outputSchema);
+    const schemaProblem =
+      command.outputSchema === undefined
+        ? null
+        : outputRequestProblem(command.outputSchema, command);
+    if (schemaProblem !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: schemaProblem,
+      });
+    }
+    const output = outputSchema === undefined ? {} : { outputSchema };
     if (
-      freshContext &&
+      (freshContext || command.outputSchema !== undefined) &&
       (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active")
     ) {
       dispatchMode = { type: "queue_after_active" };
@@ -8055,6 +8083,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...(freshContext ? { freshContext: true } : {}),
+        ...output,
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -8479,6 +8508,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...wakeWorkStartedAt(projection, command),
         ...(freshContext ? { freshContext: true } : {}),
+        ...output,
       };
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
@@ -9292,6 +9322,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       ...wakeWorkStartedAt(projection, command),
+      ...output,
     };
     const attempt: OrchestrationV2RunAttempt = {
       id: attemptId,
@@ -9767,6 +9798,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     yield* Ref.update(effects, (existing) => [...existing, pendingEffect]);
   });
 
+  // A native background subagent keeps working, and delegating, after the latest run settles.
+  const backgroundSubagentOutlivesRun = (run: OrchestrationV2Run) =>
+    projectionStore.getThreadShell(run.threadId).pipe(
+      Effect.map(
+        (shell) =>
+          shell !== null &&
+          shell.archivedAt === null &&
+          shell.activeRunId === null &&
+          shell.latestRunId === run.id &&
+          hasPendingBackgroundSubagent(shell.pendingBackgroundTasks, run.providerInstanceId),
+      ),
+      Effect.mapError(
+        (cause) => new OrchestratorProjectionError({ threadId: run.threadId, cause }),
+      ),
+    );
+
   const dispatchDelegatedTaskRequest = Effect.fn("orchestrationV2.dispatch.delegatedTaskRequest")(
     function* (
       command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
@@ -9783,7 +9830,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
-      if (parentRun === undefined || !isActiveRun(parentRun)) {
+      if (
+        parentRun === undefined ||
+        !(isActiveRun(parentRun) || (yield* backgroundSubagentOutlivesRun(parentRun)))
+      ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -10921,6 +10971,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...(command.url === undefined ? {} : { url: command.url }),
             ...(command.placeholder === undefined ? {} : { placeholder: command.placeholder }),
             ...(command.delivery === undefined ? {} : { delivery: command.delivery }),
+            ...(command.fields === undefined ? {} : { fields: command.fields }),
             secretStatus: command.secretStatus,
           };
       if (
@@ -11786,6 +11837,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: "A message that starts a fresh session can't steer the current turn.",
       });
     }
+    // Steering joins a turn that was not asked for this message's result, so it would be lost.
+    if (queuedRun.outputSchema !== undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "A message that asks for a result can't steer the current turn.",
+      });
+    }
     if (goalCommand !== null) {
       yield* ensureGoalCommandSupported(command, queuedMessage, modelSelection.instanceId);
       const goal = projection.providerThreads.find(
@@ -12066,6 +12125,57 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
   });
 
+  const dispatchRunOutputSubmit = Effect.fn("Orchestrator.dispatchRunOutputSubmit")(function* (
+    command: Extract<OrchestrationV2InternalCommand, { readonly type: "run.output.submit" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const projection = yield* projectionStore
+      .getThreadRecords(command.threadId, ["runs"])
+      .pipe(mapDispatchError(command));
+    const run = projection.runs.find((candidate) => candidate.id === command.runId);
+    if (run?.outputSchema === undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} was not asked for a result.`,
+      });
+    }
+    // The service picks the active run, but the run can end before this command is its turn. A
+    // turn that completed without its result still owes it, and a later turn may give it.
+    const owes = run.status === "completed" && run.output === undefined;
+    if (!isActiveRun(run) && !owes) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} is ${run.status} and takes no result.`,
+      });
+    }
+    // A stopped run stays active until its provider settles; what it submits then is not kept.
+    if (yield* stopReachedRun(command, command.threadId, run.id)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} was stopped and takes no result.`,
+      });
+    }
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "run.output-submitted",
+      threadId: command.threadId,
+      runId: run.id,
+      ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+      payload: {
+        runId: run.id,
+        output: { value: command.value, submittedAt: DateTime.formatIso(now) },
+      },
+    });
+  });
+
   const dispatchQueuedRunEdit = Effect.fn("Orchestrator.dispatchQueuedRunEdit")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "queued-run.edit" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -12123,6 +12233,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       { text: command.text, attachments: command.attachments ?? queuedMessage.attachments },
       queuedRunModelSelection(projection, queuedRun).instanceId,
     );
+    const editProblem =
+      queuedRun.outputSchema === undefined
+        ? null
+        : outputRequestProblem(queuedRun.outputSchema, {
+            text: command.text,
+            attachments: command.attachments ?? queuedMessage.attachments,
+          });
+    if (editProblem !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: editProblem,
+      });
+    }
     const queuedTurnItem = projection.turnItems.find(
       (candidate) => candidate.type === "user_message" && candidate.messageId === queuedMessage.id,
     );
@@ -14875,7 +14999,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageRoles: ["assistant"],
           messageRunIds: resultRunIds,
           turnItemRunIds: resultRunIds,
-          turnItemTypes: ["assistant_message", "error", "system_notice"],
+          turnItemTypes: SUBAGENT_RESULT_TURN_ITEM_TYPES,
           providerTurnAttemptIds: [childRun, ...reportRuns].flatMap(
             (run) => run.activeAttemptId ?? [],
           ),
@@ -15776,6 +15900,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "queued-run.edit":
         yield* dispatchQueuedRunEdit(command, events, effects);
+        break;
+      case "run.output.submit":
+        yield* dispatchRunOutputSubmit(command, events);
         break;
       case "checkpoint.rollback":
         yield* dispatchCheckpointRollback(command, events, effects);

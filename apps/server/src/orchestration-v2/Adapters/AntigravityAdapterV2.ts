@@ -21,6 +21,7 @@ import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityAppendsSystemPrompt,
+  antigravityPermissionDisposition,
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
   antigravitySteersWithPrompt,
@@ -33,13 +34,14 @@ import {
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
   readAntigravityChildrenAtWork,
+  readAntigravityPendingReply,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { hasLiveAntigravityScheduleTimer } from "../../provider/acp/AntigravityScheduleWait.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
-  antigravityCommandOutlivesPrompt,
+  antigravityToolOutlivesPrompt,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
@@ -223,21 +225,12 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    buildAttachmentPrompt: ({
-      text,
-      attachments,
-      resolveAttachmentPath,
-      promptCapabilities,
-      agentVersion,
-      currentModel,
-    }) =>
+    buildAttachmentPrompt: ({ text, attachments, resolveAttachmentPath, promptCapabilities }) =>
       buildAntigravityPrompt({
         input: text,
         attachments,
         resolveAttachmentPath,
         promptCapabilities,
-        agentVersion,
-        currentModel,
       }).pipe(
         Effect.map((blocks) => (text.trim() ? blocks.slice(1) : blocks)),
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
@@ -251,7 +244,7 @@ export function makeAntigravityAcpAdapterFlavor(
     deferFinalizeForBackgroundWork: true,
     wakeOnDetachedRequest: true,
     replyEndsWithUsageUpdate: true,
-    toolOutlivesPrompt: antigravityCommandOutlivesPrompt,
+    toolOutlivesPrompt: antigravityToolOutlivesPrompt,
     // session/cancel ends the agent's running commands, so only Stop sends it once the prompt
     // has ended. A message sent while a command runs leaves the command alone.
     preserveRuntimeOnSettledInterrupt: true,
@@ -282,6 +275,7 @@ export function makeAntigravityAcpAdapterFlavor(
           request,
         }),
     },
+    permissionDisposition: antigravityPermissionDisposition,
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
       const question = extractAntigravityUserInputQuestion(request);
@@ -296,9 +290,9 @@ export function makeAntigravityAcpAdapterFlavor(
     supportsImagePrompts: true,
     compactViaAdvertisedCommand: true,
     requiresSignIn: isAntigravitySignInRequiredError,
+    checksVersionAtHandshake: true,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",
-    // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
     ...(profileDirectory === undefined
@@ -314,6 +308,11 @@ export function makeAntigravityAcpAdapterFlavor(
             }),
           promptInactivityPaused: ({ sessionId }) =>
             hasLiveAntigravityScheduleTimer({
+              profileDirectory,
+              sessionId,
+            }),
+          hasPendingReply: (sessionId: string) =>
+            readAntigravityPendingReply({
               profileDirectory,
               sessionId,
             }),
