@@ -6661,6 +6661,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             timeoutMs: 10_000,
             fallbackErrorDetail: "git branch rename failed",
           },
+        ).pipe(
+          // Git moves the ref before it rewrites .git/config, so a locked config fails a rename
+          // that already happened.
+          Effect.catch((error) =>
+            Effect.gen(function* () {
+              const [oldExists, targetExists] = yield* Effect.all([
+                branchExists(input.cwd, input.oldBranch),
+                branchExists(input.cwd, targetBranch),
+              ]);
+              if (oldExists || !targetExists) return yield* error;
+              yield* Effect.logWarning(
+                "renamed the branch but kept its config under the old name",
+                {
+                  cause: error,
+                },
+              );
+            }),
+          ),
         );
 
         return { branch: targetBranch };
