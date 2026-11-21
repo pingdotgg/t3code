@@ -110,6 +110,7 @@ abstract class Node<K, V> {
   abstract readonly _tag: "EmptyNode" | "LeafNode" | "IndexedNode" | "CollisionNode" | "ArrayNode"
   abstract readonly edit: number
   abstract get size(): number
+  // `hash` must be a 32-bit integer: callers coerce with `| 0` before entering the trie.
   abstract get(shift: number, hash: number, key: K): Option.Option<V>
   abstract has(shift: number, hash: number, key: K): boolean
   abstract set(
@@ -924,7 +925,7 @@ export const fromIterable = <K, V>(entries: Iterable<readonly [K, V]>): HashMap<
   const added = { value: false }
 
   for (const [key, value] of entries) {
-    const hash = Hash.hash(key)
+    const hash = Hash.hash(key) | 0
     added.value = false
     root = root.set(NaN, 0, hash, key, value, added)
     if (added.value) {
@@ -944,7 +945,7 @@ export const get = dual<
   <K1 extends K, K, V>(self: HashMap<K, V>, key: K1) => Option.Option<V>
 >(2, <K, V>(self: HashMap<K, V>, key: K): Option.Option<V> => {
   const impl = self as HashMapImpl<K, V>
-  return impl._root.get(0, Hash.hash(key), key)
+  return impl._root.get(0, Hash.hash(key) | 0, key)
 })
 
 /** @internal */
@@ -953,7 +954,7 @@ export const getHash = dual<
   <K1 extends K, K, V>(self: HashMap<K, V>, key: K1, hash: number) => Option.Option<V>
 >(3, <K, V>(self: HashMap<K, V>, key: K, hash: number): Option.Option<V> => {
   const impl = self as HashMapImpl<K, V>
-  return impl._root.get(0, hash, key)
+  return impl._root.get(0, hash | 0, key)
 })
 
 /** @internal */
@@ -974,7 +975,7 @@ export const has = dual<
   <K1 extends K, K, V>(self: HashMap<K, V>, key: K1) => boolean
 >(2, <K, V>(self: HashMap<K, V>, key: K): boolean => {
   const impl = self as HashMapImpl<K, V>
-  return impl._root.has(0, Hash.hash(key), key)
+  return impl._root.has(0, Hash.hash(key) | 0, key)
 })
 
 /** @internal */
@@ -983,7 +984,7 @@ export const hasHash = dual<
   <K1 extends K, K, V>(self: HashMap<K, V>, key: K1, hash: number) => boolean
 >(3, <K, V>(self: HashMap<K, V>, key: K, hash: number): boolean => {
   const impl = self as HashMapImpl<K, V>
-  return impl._root.has(0, hash, key)
+  return impl._root.has(0, hash | 0, key)
 })
 
 /** @internal */
@@ -1005,7 +1006,7 @@ const setHash = <K, V>(self: HashMap<K, V>, key: K, hash: number, value: V): Has
 
   // Pass edit context: use current edit if editable, otherwise NaN (never matches any edit)
   const edit = impl._editable ? impl._edit : NaN
-  const newRoot = impl._root.set(edit, 0, hash, key, value, added)
+  const newRoot = impl._root.set(edit, 0, hash | 0, key, value, added)
 
   if (impl._editable) {
     // In-place mutation
@@ -1125,7 +1126,7 @@ const removeHash = <K, V>(self: HashMap<K, V>, key: K, hash: number): HashMap<K,
   const removed = { value: false }
 
   const edit = impl._editable ? impl._edit : NaN
-  const newRoot = impl._root.remove(edit, 0, hash, key, removed)
+  const newRoot = impl._root.remove(edit, 0, hash | 0, key, removed)
 
   if (!removed.value) {
     return self

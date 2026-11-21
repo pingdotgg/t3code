@@ -33,7 +33,9 @@ import * as Tracer from "effect/Tracer";
 import { ChildProcess, ChildProcessSpawner, CommandLine } from "effect/process";
 
 import {
+  DEFAULT_SERVER_SETTINGS,
   GitCommandError,
+  ProjectId,
   ReviewDiffPreviewInput,
   VcsRef,
   VcsListRefsResult,
@@ -50,6 +52,7 @@ import {
   splitNullSeparatedGitStdoutPaths,
   windowsLongPathConfigEnv,
 } from "./GitVcsDriverCore.ts";
+import { autoPullProjects } from "../serverRuntimeStartup.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import { gitConfigEnv } from "./VcsProcess.ts";
@@ -1231,6 +1234,46 @@ describe("pullCurrentBranch", () => {
           assert.equal(refreshed.behindCount, 0);
           assert.equal(targetFetches, 0);
         }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
+      }),
+    ).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("the startup pull waits for a status fetch that runs past five seconds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { cwd, remoteHead } = yield* cloneBehindRemote;
+        const targetPath = NodeFS.realpathSync.native(cwd);
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fetchHeld = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let held = false;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              !held &&
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("fetch") &&
+              String(command.options.cwd) === targetPath
+            ) {
+              held = true;
+              yield* Deferred.succeed(fetchHeld, undefined);
+              yield* Deferred.await(release);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const startup = yield* autoPullProjects(
+          [{ id: ProjectId.make("behind"), workspaceRoot: cwd, autoPull: true }],
+          { ...DEFAULT_SERVER_SETTINGS, defaultAutoPull: true },
+        ).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver), Effect.forkChild);
+        yield* Deferred.await(fetchHeld);
+        yield* TestClock.adjust("6 seconds");
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(startup);
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
       }),
     ).pipe(Effect.provide(layerTest)),
   );
@@ -3298,6 +3341,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               assert.include(patch.diff, `b/${file.path}`);
             }
           }
+        }
+      }),
+    );
+
+    it.effect("rejects a file selector for a different source than the request", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "README.md", "dirty\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const file = { path: "README.md", previousPath: null };
+
+        for (const [sourceKind, fileKind] of [
+          ["working-tree", "branch-range"],
+          ["branch-range", "working-tree"],
+        ] as const) {
+          const conflict = yield* driver
+            .getReviewDiffPreview({ cwd, sourceKind, file: { ...file, sourceKind: fileKind } })
+            .pipe(Effect.flip);
+          assert.equal(conflict.operation, "GitVcsDriver.getReviewDiffPreview");
+          assert.equal(conflict.detail, "Review source selectors must agree.");
         }
       }),
     );
@@ -6266,6 +6330,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* fileSystem.readFileString(path.join(cwd, "obsolete-branch")),
           "uncommitted work\n",
         );
+        assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
+      }),
+    );
+
+    it.effect("explains how to proceed when local changes block a branch switch", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "example.txt", "main\n");
+        yield* git(cwd, ["add", "example.txt"]);
+        yield* git(cwd, ["commit", "-m", "main example"]);
+        yield* git(cwd, ["checkout", "-q", "-b", "feature"]);
+        yield* writeTextFile(cwd, "example.txt", "feature\n");
+        yield* git(cwd, ["commit", "-am", "feature example"]);
+        yield* git(cwd, ["checkout", "-q", initialBranch]);
+        yield* writeTextFile(cwd, "example.txt", "uncommitted work\n");
+
+        const error = yield* driver.switchRef({ cwd, refName: "feature" }).pipe(Effect.flip);
+
+        assert.match(error.detail, /local changes/i);
+        assert.match(error.detail, /commit|stash|discard/i);
         assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
       }),
     );

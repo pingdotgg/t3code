@@ -35,6 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
@@ -645,6 +646,13 @@ export interface AcpAdapterV2Flavor {
    * open. A turn that ends on the deferred finalize waits for it instead of the short debounce.
    */
   readonly replyEndsWithUsageUpdate?: boolean;
+  /**
+   * True when the agent has a queued wake or in-flight reply that has not streamed yet (for
+   * example, a second background task finished while the first wake's reply was running).
+   * Checked before finalizing a settled prompt or its deferred debounce, so the turn waits
+   * through `ACP_OPEN_REPLY_QUIET_LIMIT` instead of closing early.
+   */
+  readonly hasPendingReply?: (sessionId: string) => Effect.Effect<boolean>;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
   readonly interruptPromptOnCancel?: boolean;
@@ -998,11 +1006,45 @@ interface AcpMcpContext {
   readonly authorization?: string;
 }
 
+// A GUI-subsystem executable (packaged Windows desktop) does not hold the console, so PowerShell
+// neither waits for it nor captures its output or exit code; cmd.exe running a batch file does.
+// cmd.exe decodes batch files with the console code page, so paths come from the (UTF-16) environment.
+const ACP_MCP_CALL_LAUNCHER = [
+  "@echo off",
+  "setlocal EnableExtensions DisableDelayedExpansion",
+  'set "ELECTRON_RUN_AS_NODE=1"',
+  "if not defined T3_ACP_MCP_ENTRYPOINT goto packaged",
+  '"%T3_ACP_MCP_NODE%" "%T3_ACP_MCP_ENTRYPOINT%" acp-mcp-call %*',
+  "exit /b %errorlevel%",
+  ":packaged",
+  '"%T3_ACP_MCP_NODE%" acp-mcp-call %*',
+  "",
+].join("\r\n");
+
+const writeAcpMcpCallLauncher = Effect.fn("AcpAdapterV2.writeAcpMcpCallLauncher")(function* (
+  stateDir: string,
+) {
+  if (!(yield* HostProcess.isWindows)) return undefined;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const dir = `${stateDir}\\acp`;
+  const launcherPath = `${dir}\\acp-mcp-call.cmd`;
+  return yield* fileSystem.makeDirectory(dir, { recursive: true }).pipe(
+    Effect.andThen(fileSystem.writeFileString(launcherPath, ACP_MCP_CALL_LAUNCHER)),
+    Effect.as(launcherPath),
+    Effect.catch((error) =>
+      Effect.logWarning("Could not write the ACP terminal tool launcher.", error).pipe(
+        Effect.as(undefined),
+      ),
+    ),
+  );
+});
+
 function acpMcpContext(
   session: McpProviderSession.McpProviderSessionConfig | undefined,
   self: SelfInvocation,
   mcpOverHttp: boolean | undefined,
   deferMcpTools: boolean | undefined,
+  callLauncher: string | undefined,
 ): AcpMcpContext {
   if (session === undefined) {
     return { servers: [], acpServers: [], httpServers: [] };
@@ -1050,6 +1092,7 @@ function acpMcpContext(
       T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
       T3_ACP_MCP_NODE: self.command,
       ...(self.entrypoint === undefined ? {} : { T3_ACP_MCP_ENTRYPOINT: self.entrypoint }),
+      ...(callLauncher === undefined ? {} : { T3_ACP_MCP_CALL: callLauncher }),
     },
   };
 }
@@ -1984,14 +2027,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const { flavor, selfInvocation: self } = options;
+  const callLauncher = yield* writeAcpMcpCallLauncher(host.paths.stateDir);
   const readMcpContext = (threadId: ThreadId | null) =>
     threadId === null
-      ? Effect.succeed(acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools))
+      ? Effect.succeed(
+          acpMcpContext(undefined, self, flavor.mcpOverHttp, flavor.deferMcpTools, callLauncher),
+        )
       : mcpSessions
           .read(threadId)
           .pipe(
             Effect.map((session) =>
-              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.deferMcpTools),
+              acpMcpContext(session, self, flavor.mcpOverHttp, flavor.deferMcpTools, callLauncher),
             ),
           );
   const driver = flavor.driver;
@@ -8685,9 +8731,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (hasDeferredBackgroundWork(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
-          const debounce = context.replyOpen
-            ? ACP_OPEN_REPLY_QUIET_LIMIT
-            : ACP_DEFERRED_FINALIZE_DEBOUNCE;
+          const replyOpen = context.replyOpen;
+          const debounce = replyOpen ? ACP_OPEN_REPLY_QUIET_LIMIT : ACP_DEFERRED_FINALIZE_DEBOUNCE;
           const canFinalize = () =>
             context.promptSettled &&
             !context.finalized &&
@@ -8710,6 +8755,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const wasPending = context.detachedWorkPending;
               if (!(yield* readDetachedWork())) return;
               if (!context.detachedWorkPending && !wasPending) break;
+            }
+            const pendingReply =
+              !replyOpen && flavor.hasPendingReply !== undefined
+                ? yield* flavor.hasPendingReply(context.nativeThreadId)
+                : false;
+            if (!canFinalize()) return;
+            if (pendingReply) {
+              context.replyOpen = true;
+              yield* scheduleDeferredFinalize(context);
+              return;
             }
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
@@ -9143,12 +9198,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     context.detachedWorkPending = detachedWorkSeen;
                     if (detachedWorkSeen) yield* scheduleDeferredFinalize(context);
                   }
-                  if (
+                  const deferredBackgroundWork =
                     defersFinalizeForBackgroundWork &&
                     !context.interrupted &&
-                    (detachedWorkSeen || hasDeferredBackgroundWork(context))
-                  ) {
+                    (detachedWorkSeen || hasDeferredBackgroundWork(context));
+                  const pendingReply =
+                    !deferredBackgroundWork &&
+                    defersFinalizeForBackgroundWork &&
+                    status === "completed" &&
+                    !context.interrupted &&
+                    flavor.hasPendingReply !== undefined
+                      ? yield* flavor.hasPendingReply(context.nativeThreadId)
+                      : false;
+                  if (context.finalized) return;
+                  if (deferredBackgroundWork || pendingReply) {
                     yield* closeTextStreams(context);
+                    if (pendingReply) {
+                      context.replyOpen = true;
+                      yield* scheduleDeferredFinalize(context);
+                    }
                     yield* (
                       options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
                     );
