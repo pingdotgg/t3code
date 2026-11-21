@@ -21,8 +21,7 @@ const TABS = [
 
 /**
  * The panel's tabs as Orca's right sidebar draws them: icons only, 36px apart, with a short
- * underline under the active one. The top bar's toggle closes the panel, as Orca's does. The
- * Checks icon carries the CI status dot.
+ * underline under the active one. The top bar's toggle closes the panel, as Orca's does.
  */
 export function PanelTabs() {
   const registry = useContext(RegistryContext);

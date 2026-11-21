@@ -9,9 +9,7 @@ export function PrChecks({ view }: { view: TicketView }) {
   if (live === null) return null;
   return (
     <div className="border-b border-line px-3 py-2 text-[12px]">
-      <p className="text-[10px] text-faint uppercase">
-        Checks · <span data-testid="pr-checks-rollup">{summarizeChecks(live.checks)}</span>
-      </p>
+      <p className="text-[10px] text-faint uppercase">Checks · {summarizeChecks(live.checks)}</p>
       {live.checks.length === 0 ? (
         <p data-testid="pr-no-checks" className="text-muted">
           No checks reported

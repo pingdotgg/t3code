@@ -21,20 +21,35 @@ export const panelAtom = Atom.make<PanelState>({
   width: PANEL_DEFAULT_WIDTH,
 }).pipe(Atom.keepAlive, Atom.withLabel("side-panel"));
 
-const change = (registry: AtomRegistry.AtomRegistry, next: (state: PanelState) => PanelState) =>
-  registry.set(panelAtom, next(registry.get(panelAtom)));
+const checksShown = (state: PanelState) => state.open && state.tab === "checks";
 
-const markOpen = (tab: PanelTab) => {
-  if (tab === "checks") performance.mark("board:checks-open");
+let awaitingChecksPaint = false;
+
+/** Marks the Checks tab coming into view, which pairs with the one paint that follows it. */
+const change = (registry: AtomRegistry.AtomRegistry, next: (state: PanelState) => PanelState) => {
+  const before = registry.get(panelAtom);
+  const after = next(before);
+  if (checksShown(after) && !checksShown(before)) {
+    performance.mark("board:checks-open");
+    awaitingChecksPaint = true;
+  } else if (!checksShown(after)) {
+    awaitingChecksPaint = false;
+  }
+  registry.set(panelAtom, after);
 };
 
+/** Marks the frame that drew the Checks tab's rows, once for each time the tab came into view. */
+export function markChecksPainted(): void {
+  if (!awaitingChecksPaint) return;
+  awaitingChecksPaint = false;
+  performance.mark("board:checks-painted");
+}
+
 export function setPanelTab(registry: AtomRegistry.AtomRegistry, tab: PanelTab): void {
-  markOpen(tab);
   change(registry, (state) => ({ ...state, tab }));
 }
 
 export function showPanelTab(registry: AtomRegistry.AtomRegistry, tab: PanelTab): void {
-  markOpen(tab);
   change(registry, (state) => ({ ...state, open: true, tab }));
 }
 

@@ -56,6 +56,7 @@ export function CommentEntry({
       )}
     </>
   );
+  const reactions = comment.reactions ?? [];
   return (
     <div
       data-testid="pr-comment"
@@ -94,12 +95,12 @@ export function CommentEntry({
       </div>
       {comment.body.trim() !== "" && (
         <div className="px-4 py-2.5 text-[13px] leading-relaxed break-words text-fg">
-          <ChatMarkdown text={comment.body} />
+          <ChatMarkdown text={comment.body} untrusted />
         </div>
       )}
-      {(comment.reactions?.length ?? 0) > 0 && (
+      {reactions.length > 0 && (
         <div className="flex flex-wrap gap-1 px-4 pb-2.5">
-          {comment.reactions?.map((reaction) => (
+          {reactions.map((reaction) => (
             <span
               key={reaction.content}
               data-testid="pr-reaction"

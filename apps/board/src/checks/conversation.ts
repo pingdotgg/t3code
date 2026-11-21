@@ -20,10 +20,9 @@ export type Audience = "all" | "humans" | "bots";
 const time = (comment: PullRequestComment) => Date.parse(comment.createdAt);
 
 /** An item counts as a bot's when its first comment is, so a human's reply to a bot's finding stays under Bots. */
-export const rootOf = (item: ConversationItem) =>
-  item.kind === "comment" ? item.comment : item.root;
+const rootOf = (item: ConversationItem) => (item.kind === "comment" ? item.comment : item.root);
 
-export const isBotItem = (item: ConversationItem) => rootOf(item).author?.isBot === true;
+const isBotItem = (item: ConversationItem) => rootOf(item).author?.isBot === true;
 
 /**
  * The conversation oldest first: each review thread as one item, placed at its first comment's

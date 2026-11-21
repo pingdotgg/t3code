@@ -7,15 +7,12 @@ import { useContext, useState } from "react";
 import { failureText } from "../settings/failureText";
 import { pullRequestEnvironment } from "../state/prStatus";
 import { PopMenu } from "../ui/PopMenu";
-import { type PrAction as Action, prActions } from "./prActions";
+import { type PrActionItem, prActions } from "./prActions";
 
 const BUTTON =
   "flex h-7 items-center justify-center gap-2 bg-message px-3 text-[11px] text-fg enabled:hover:bg-hover disabled:text-faint";
 
-/**
- * The pull request's primary action as Orca's split button, with the other actions in its menu. A
- * merge is not here, because it goes through the For-you approval.
- */
+/** The pull request's primary action as Orca's split button, with the other actions in its menu. */
 export function PrAction({
   environmentId,
   reference,
@@ -31,7 +28,7 @@ export function PrAction({
   const actions = prActions(detail);
   if (actions === null) return null;
 
-  const run = async (action: Action) => {
+  const run = async (action: PrActionItem) => {
     if (working !== null) return;
     setFailure(null);
     setWorking(action.kind);
@@ -82,6 +79,11 @@ export function PrAction({
           }))}
         />
       </div>
+      {primary.unavailable !== null && working === null && (
+        <p data-testid="pr-action-reason" className="text-[11px] text-muted">
+          {primary.unavailable}
+        </p>
+      )}
       {failure !== null && (
         <p
           role="alert"

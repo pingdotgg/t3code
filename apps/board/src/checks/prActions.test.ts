@@ -41,19 +41,20 @@ describe("a pull request's actions", () => {
     expect(actions?.menu.map((action) => action.kind)).toEqual(["ready", "draft"]);
   });
 
-  it("Given an up-to-date ready pull request, when its actions are read, then converting to draft is the button", () => {
+  it("Given an up-to-date ready pull request, when its actions are read, then the button is the update, off, and converting to draft is in the menu", () => {
     expect(summary(detail())).toEqual([
-      ["draft", null],
-      ["ready", "Already ready"],
       ["update-branch", "Up to date"],
+      ["ready", "Already ready"],
+      ["draft", null],
     ]);
   });
 
   it("Given a behind pull request with conflicts, when its actions are read, then the update says to resolve them first", () => {
     const actions = prActions(detail({ baseComparison: "behind", mergeability: "conflicting" }));
-    expect(actions?.menu.find((action) => action.kind === "update-branch")?.unavailable).toBe(
-      "Resolve conflicts first",
-    );
+    expect(actions?.primary).toMatchObject({
+      kind: "update-branch",
+      unavailable: "Resolve conflicts first",
+    });
   });
 
   it("Given a viewer who may not change a draft, when its actions are read, then the button is the ready action, off, with the reason", () => {

@@ -1,5 +1,7 @@
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
+import { checksPickAtom } from "./checksView";
+
 /** What a diff tab compares: the working tree against HEAD, the branch against its base, or one commit. */
 export type DiffSource =
   | { readonly kind: "working-tree" }
@@ -50,8 +52,11 @@ const change = (
   next: (state: FilesViewState) => FilesViewState,
 ) => registry.set(filesViewAtom, next(registry.get(filesViewAtom)));
 
-export const chooseRoot = (registry: AtomRegistry.AtomRegistry, root: string) =>
+/** Browses another root. The Checks tab follows the root, so a ticket picked there no longer applies. */
+export function chooseRoot(registry: AtomRegistry.AtomRegistry, root: string) {
+  registry.set(checksPickAtom, null);
   change(registry, (state) => ({ ...state, root }));
+}
 
 /** Opens a file or a diff as a tab, or shows the tab it already has, at the line it names. */
 export function openFile(registry: AtomRegistry.AtomRegistry, file: FileRef) {

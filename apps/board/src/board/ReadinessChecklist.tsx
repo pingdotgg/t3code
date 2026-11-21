@@ -56,7 +56,7 @@ export function ReadinessChecklist({
               )}
               {claim !== undefined && <ClaimEvidence condition={claim} />}
               {condition.key === "ci_green" && checks !== undefined && checks.runs.length > 0 && (
-                <div data-testid="readiness-checks" className="-mx-1 mt-1">
+                <div className="-mx-1 mt-1">
                   <CheckRows checks={checks.runs} now={checks.now} />
                 </div>
               )}

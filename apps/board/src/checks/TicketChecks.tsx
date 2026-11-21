@@ -14,7 +14,7 @@ export function TicketChecks({ view, active }: { view: TicketView; active: boole
   const { project } = usePrContext();
   const { ref, key, live, now } = useTicketPr(view);
   const reading = live === null ? "none" : checksReading(live, now);
-  // The icon in the panel's tab strip lives outside the board, so a ref callback hands it the reading and takes it back when the ticket changes or the board closes.
+  // The repo bans useEffect, so a ref callback on a hidden node hands the tab icon the reading and takes it back when the ticket changes or the board closes.
   const publish = useCallback(
     (node: HTMLElement | null) => registry.set(checksDotAtom, node === null ? "none" : reading),
     [registry, reading],
@@ -29,7 +29,6 @@ export function TicketChecks({ view, active }: { view: TicketView; active: boole
           key={key}
           environmentId={project.environmentId}
           reference={ref}
-          pollKey={key}
           live={live}
           now={now}
           active={active}

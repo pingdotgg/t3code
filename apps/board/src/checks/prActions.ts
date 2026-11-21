@@ -6,9 +6,9 @@ import type {
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
 
-export type PrActionKind = "ready" | "draft" | "update-branch";
+type PrActionKind = "ready" | "draft" | "update-branch";
 
-export interface PrAction {
+export interface PrActionItem {
   readonly kind: PrActionKind;
   readonly label: string;
   /** Null when the action is available, otherwise why it is not. */
@@ -39,18 +39,22 @@ const allowed = (detail: PrActionDetail, kind: PrActionKind) =>
 const reasonOff = (detail: PrActionDetail, kind: PrActionKind, state: string | null) =>
   state ?? (allowed(detail, kind) ? null : "Not allowed");
 
-function updateBranch(detail: PrActionDetail): PrAction {
+function updateBranch(detail: PrActionDetail): PrActionItem {
   const offered = detail.capabilities.updateMethods ?? [];
   const permitted = detail.viewerPermissions.updateMethods ?? [];
   const updateMethod = offered.find((method) => permitted.includes(method));
   const unavailable =
-    detail.baseComparison !== "behind"
+    detail.baseComparison === "up-to-date"
       ? "Up to date"
-      : detail.mergeability !== "mergeable"
-        ? "Resolve conflicts first"
-        : updateMethod === undefined
-          ? "Not allowed"
-          : reasonOff(detail, "update-branch", null);
+      : detail.baseComparison !== "behind"
+        ? "Base comparison unknown"
+        : detail.mergeability === "conflicting"
+          ? "Resolve conflicts first"
+          : detail.mergeability === "unknown"
+            ? "Checking mergeability"
+            : updateMethod === undefined
+              ? "Not allowed"
+              : reasonOff(detail, "update-branch", null);
   return {
     kind: "update-branch",
     label: "Update branch",
@@ -60,26 +64,28 @@ function updateBranch(detail: PrActionDetail): PrAction {
 }
 
 /**
- * What the PR header's button and its menu offer, as T3 gates them. The first available action is
- * the button and the other two sit in the menu, each with the reason it is off. A merge is not here,
- * because it goes through the For-you approval. Null when the pull request is not open.
+ * What the PR header's button and its menu offer, as T3 gates them. The button is marking ready or
+ * updating the branch, whichever is available first, and converting to draft only ever sits in the
+ * menu. Every action in the menu carries the reason it is off. A merge is not here, because it goes
+ * through the For-you approval. Null when the pull request is not open.
  */
 export function prActions(
   detail: PrActionDetail,
-): { readonly primary: PrAction; readonly menu: ReadonlyArray<PrAction> } | null {
+): { readonly primary: PrActionItem; readonly menu: ReadonlyArray<PrActionItem> } | null {
   if (detail.state !== "open") return null;
-  const ready: PrAction = {
+  const ready: PrActionItem = {
     kind: "ready",
     label: "Mark ready for review",
     unavailable: reasonOff(detail, "ready", detail.isDraft ? null : "Already ready"),
   };
-  const draft: PrAction = {
+  const draft: PrActionItem = {
     kind: "draft",
     label: "Convert to draft",
     unavailable: reasonOff(detail, "draft", detail.isDraft ? "Already a draft" : null),
   };
-  const all = [ready, updateBranch(detail), draft];
+  const update = updateBranch(detail);
   const primary =
-    all.find((action) => action.unavailable === null) ?? (detail.isDraft ? ready : draft);
-  return { primary, menu: all.filter((action) => action !== primary) };
+    [ready, update].find((action) => action.unavailable === null) ??
+    (detail.isDraft ? ready : update);
+  return { primary, menu: [ready, update, draft].filter((action) => action !== primary) };
 }

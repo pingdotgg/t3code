@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import { CommentCard } from "./CommentCard";
 import { type Audience, audienceCounts, conversationItems, filterByAudience } from "./conversation";
 
-const PAGE = 30;
 const AUDIENCES = [
   ["all", "All"],
   ["humans", "Humans"],
@@ -14,14 +13,12 @@ const AUDIENCES = [
 
 const EMPTY = { all: "No comments yet.", humans: "No human comments.", bots: "No bot comments." };
 
-/** The pull request's comments and review threads, oldest first and the latest page shown, with Orca's All, Humans, and Bots filter. */
+/** The pull request's comments and review threads, oldest first, with Orca's All, Humans, and Bots filter. */
 export function PrComments({ activity }: { activity: PullRequestActivity | null }) {
   const [audience, setAudience] = useState<Audience>("all");
-  const [shown, setShown] = useState(PAGE);
   const items = useMemo(() => (activity === null ? [] : conversationItems(activity)), [activity]);
   const counts = audienceCounts(items);
   const filtered = filterByAudience(items, audience);
-  const page = filtered.slice(Math.max(0, filtered.length - shown));
   return (
     <section
       aria-label="Comments"
@@ -51,10 +48,7 @@ export function PrComments({ activity }: { activity: PullRequestActivity | null 
               role="tab"
               aria-selected={audience === id}
               data-testid={`pr-comments-${id}`}
-              onClick={() => {
-                setAudience(id);
-                setShown(PAGE);
-              }}
+              onClick={() => setAudience(id)}
               className={`flex h-7 items-center justify-center gap-1 rounded-md px-1.5 text-[11px] font-medium transition-colors ${audience === id ? "bg-message text-fg shadow-xs" : "text-muted hover:text-fg"}`}
             >
               <span>{label}</span>
@@ -69,27 +63,10 @@ export function PrComments({ activity }: { activity: PullRequestActivity | null 
         <p className="py-5 text-center text-[11px] text-muted">{EMPTY[audience]}</p>
       ) : (
         <ul className="flex flex-col gap-2 px-3 py-2">
-          {filtered.length > page.length && (
-            <li>
-              <button
-                type="button"
-                onClick={() => setShown(shown + PAGE)}
-                className="w-full rounded-md py-1 text-[12px] text-muted hover:bg-hover hover:text-fg"
-              >
-                Show {Math.min(PAGE, filtered.length - page.length)} earlier of{" "}
-                {filtered.length - page.length}
-              </button>
-            </li>
-          )}
-          {page.map((item) => (
+          {filtered.map((item) => (
             <CommentCard key={item.id} item={item} />
           ))}
         </ul>
-      )}
-      {activity?.commentsTruncated === true && (
-        <p className="pb-2 text-center text-[10px] text-muted">
-          GitHub returned only the first {activity.comments.length} comments.
-        </p>
       )}
     </section>
   );

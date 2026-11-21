@@ -5,7 +5,8 @@ import { AsyncResult } from "effect/reactivity";
 import { useCallback, useContext, useState } from "react";
 
 import type { PrLive } from "../domain/readiness";
-import { detailPollAtom, NO_POLL, pullRequestEnvironment } from "../state/prStatus";
+import { markChecksPainted } from "../browser/panel";
+import { NO_ACTIVITY, NO_DETAIL, pullRequestEnvironment } from "../state/prStatus";
 import { CheckGroup } from "./CheckGroup";
 import { PrAction } from "./PrAction";
 import { PrComments } from "./PrComments";
@@ -15,14 +16,12 @@ import { PrHeader } from "./PrHeader";
 export function PrView({
   environmentId,
   reference,
-  pollKey,
   live,
   now,
   active,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  pollKey: string;
   live: PrLive | null;
   now: number;
   active: boolean;
@@ -31,22 +30,28 @@ export function PrView({
   const detailAtom = pullRequestEnvironment.detail({ environmentId, input: reference });
   const activityAtom = pullRequestEnvironment.activity({ environmentId, input: reference });
   const checksAtom = pullRequestEnvironment.checks({ environmentId, input: reference });
-  const detailResult = useAtomValue(detailAtom);
-  const detail = AsyncResult.getOrElse(detailResult, () => null);
-  const activity = AsyncResult.getOrElse(useAtomValue(activityAtom), () => null);
-  useAtomValue(active ? detailPollAtom(pollKey) : NO_POLL);
-  const [refreshing, setRefreshing] = useState(false);
-  // The rows and comments draw on the tab's first showing, so a board whose tab stays closed never pays for them.
+  // The header, rows and comments are read and drawn from the tab's first showing, so a board whose tab stays closed never pays for them.
   const [opened, setOpened] = useState(active);
   if (active && !opened) setOpened(true);
+  const detailResult = useAtomValue(opened ? detailAtom : NO_DETAIL);
+  const detail = AsyncResult.getOrElse(detailResult, () => null);
+  const activity = AsyncResult.getOrElse(
+    useAtomValue(opened ? activityAtom : NO_ACTIVITY),
+    () => null,
+  );
+  const answered = AsyncResult.getOrElse(useAtomValue(checksAtom), () => null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // A ref callback runs after the commit that shows the rows, which is what the user waits on.
-  const painted = active && opened && live !== null && detail !== null && activity !== null;
+  // The rows are what the user waits on, so the paint waits for the checks read and for the list built from it, and not for the header or the comments.
+  const painted =
+    active &&
+    answered !== null &&
+    live !== null &&
+    (answered.checks.length === 0 || live.checks.length > 0);
   const mark = useCallback(
     (element: HTMLElement | null) => {
-      if (element !== null && painted) {
-        requestAnimationFrame(() => performance.mark("board:checks-painted"));
-      }
+      if (element === null || !painted) return;
+      requestAnimationFrame(() => markChecksPainted());
     },
     [painted],
   );
@@ -65,11 +70,7 @@ export function PrView({
     setRefreshing(false);
   };
   return (
-    <div
-      ref={mark}
-      data-testid="checks-panel"
-      className="flex min-h-0 flex-1 flex-col overflow-y-auto"
-    >
+    <div data-testid="checks-panel" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <PrHeader
         reference={reference}
         detail={detail}
@@ -89,7 +90,9 @@ export function PrView({
         (live === null ? (
           <p className="border-y border-line px-3 py-2 text-[12px] text-faint">Loading checks</p>
         ) : (
-          <CheckGroup live={live} now={now} />
+          <div ref={mark}>
+            <CheckGroup live={live} now={now} />
+          </div>
         ))}
       {opened && <PrComments activity={activity} />}
     </div>

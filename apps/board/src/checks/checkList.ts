@@ -1,6 +1,5 @@
 import type { CheckRun, CheckStatus } from "../domain/readiness";
 
-/** Failing and awaiting-action checks first, then running, then the rest. */
 const TIER = {
   failure: 0,
   cancelled: 0,
@@ -18,7 +17,7 @@ export function sortChecks(checks: ReadonlyArray<CheckRun>): ReadonlyArray<Check
   return checks.toSorted((left, right) => rank(left) - rank(right));
 }
 
-export type RollupKind = "failing" | "needs action" | "running" | "passing" | "skipped" | "neutral";
+type RollupKind = "failing" | "needs action" | "running" | "passing" | "skipped" | "neutral";
 
 const PARTS: ReadonlyArray<readonly [label: RollupKind, statuses: ReadonlyArray<CheckStatus>]> = [
   ["failing", ["failure", "cancelled"]],
@@ -62,5 +61,5 @@ const DURATION = new RegExp(
 /** How long a check took, when the host's description says so, such as "Build passed in 5m 52s". */
 export function durationOf(description: string | null): string | null {
   const found = description === null ? null : DURATION.exec(description);
-  return found?.[1]?.trim() ?? null;
+  return found?.[1] ?? null;
 }

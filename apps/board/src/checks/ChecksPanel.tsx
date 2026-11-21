@@ -5,7 +5,7 @@ import { useContext } from "react";
 import { panelAtom } from "../browser/panel";
 import { EmptyFiles } from "../files/EmptyFiles";
 import { trimSlashes } from "../files/target";
-import { checksTicketAtom } from "../state/checksView";
+import { checksPickAtom, pickedTicket } from "../state/checksView";
 import { filesViewAtom } from "../state/filesView";
 import { usePrContext } from "../state/prStatus";
 import { TicketChecks } from "./TicketChecks";
@@ -16,9 +16,9 @@ import { TicketChecks } from "./TicketChecks";
  */
 export function ChecksPanel() {
   const registry = useContext(RegistryContext);
-  const { tickets } = usePrContext();
+  const { tickets, orchestratorThreadId } = usePrContext();
   const root = useAtomValue(filesViewAtom).root;
-  const chosen = useAtomValue(checksTicketAtom);
+  const chosen = pickedTicket(useAtomValue(checksPickAtom), orchestratorThreadId);
   const { open, tab } = useAtomValue(panelAtom);
   const view =
     tickets.find((entry) => entry.ticket.key === chosen) ??
@@ -40,7 +40,12 @@ export function ChecksPanel() {
         <select
           aria-label="Ticket"
           value={view.ticket.key}
-          onChange={(event) => registry.set(checksTicketAtom, event.target.value)}
+          onChange={(event) =>
+            registry.set(checksPickAtom, {
+              board: orchestratorThreadId,
+              ticket: event.target.value,
+            })
+          }
           className="absolute inset-0 cursor-pointer opacity-0"
         >
           {tickets.map((entry) => (

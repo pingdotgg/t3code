@@ -48,7 +48,7 @@ export function CheckRow({ check, now }: { check: CheckRun; now: number }) {
   }
   const stuck = isStuck(check, now);
   const { label, tone, Icon } = stuck
-    ? { label: "Stuck", tone: "text-rose-500", Icon: STATUS.pending.Icon }
+    ? { label: "Stuck", tone: "text-rose-500", Icon: LoaderCircle }
     : STATUS[check.status];
   const duration = durationOf(check.description);
   const running =
@@ -97,7 +97,6 @@ export function CheckRow({ check, now }: { check: CheckRun; now: number }) {
             {check.description !== null && check.description !== "" && (
               <span className="block truncate text-[11px] text-muted">{check.description}</span>
             )}
-            {/* In a narrow container, such as a card, the time drops under the name instead of squeezing it. */}
             {time !== null && (
               <span className={`block text-[11px] tabular-nums @[19rem]:hidden ${timeTone}`}>
                 {time}
