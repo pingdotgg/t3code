@@ -1031,10 +1031,13 @@ export function createEnvironmentRpcQueryAtomFamily<
     readonly staleTimeMs?: number;
     readonly idleTtlMs?: number;
     readonly refreshIntervalMs?: number;
-    readonly refreshTrigger?: (target: {
-      readonly environmentId: EnvironmentIdType;
-      readonly input: EnvironmentRpcInput<TTag>;
-    }) => Atom.Atom<unknown> | undefined;
+    readonly refreshTrigger?: (
+      target: {
+        readonly environmentId: EnvironmentIdType;
+        readonly input: EnvironmentRpcInput<TTag>;
+      },
+      query: Atom.Atom<AsyncResult.AsyncResult<EnvironmentRpcSuccess<TTag>, unknown>>,
+    ) => Atom.Atom<unknown> | undefined;
     readonly isFinal?: (value: EnvironmentRpcSuccess<TTag>) => boolean;
     readonly onAnswer?: QueryAnswerHandler<EnvironmentRpcInput<TTag>, EnvironmentRpcSuccess<TTag>>;
   },

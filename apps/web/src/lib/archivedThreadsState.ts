@@ -35,18 +35,6 @@ export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<Environ
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
   readonly error: string | null;
   readonly isLoading: boolean;
-  readonly refresh: () => void;
 } {
-  const environmentKey = makeArchivedThreadsEnvironmentKey(environmentIds);
-  const result = useAtomValue(archivedSnapshotsAtom(environmentKey));
-  const refresh = () => {
-    for (const environmentId of environmentIds) {
-      appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
-    }
-  };
-
-  return {
-    ...result,
-    refresh,
-  };
+  return useAtomValue(archivedSnapshotsAtom(makeArchivedThreadsEnvironmentKey(environmentIds)));
 }
