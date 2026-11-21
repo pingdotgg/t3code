@@ -16,6 +16,7 @@ vi.mock("expo-constants", () => ({
     },
   },
 }));
+vi.mock("expo-secure-store", () => ({ getItem: () => null }));
 
 it.effect("does not let OTLP serialization failures alter application effects", () => {
   const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));

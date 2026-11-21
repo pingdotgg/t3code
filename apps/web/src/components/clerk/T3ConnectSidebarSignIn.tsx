@@ -1,26 +1,56 @@
 import { UserButton, useAuth } from "@clerk/react";
-import { T, useMessages } from "gt-react";
-import { LogInIcon, RotateCwIcon } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
+import { LogInIcon, LogOutIcon, RotateCwIcon } from "lucide-react";
 
-import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { useCloudAuth } from "../../cloud/cloudAuth";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
-import { retryClerkLoad, useClerkLoadFailed } from "./clerkLoadFailure";
+import { retryClerkLoad } from "./clerkLoadFailure";
 import { T3_CONNECT_ACCOUNT_PAGES } from "./T3ConnectAccountPages";
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
 
 export function T3ConnectSidebarSignIn() {
-  if (!hasCloudPublicConfig()) return null;
+  const { provider, isLoaded, isSignedIn, loadFailed } = useCloudAuth();
+  const { openAuthPrompt } = useT3ConnectAuthPrompt();
 
-  return <ConfiguredT3ConnectSidebarSignIn />;
+  if (loadFailed) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton onClick={retryClerkLoad}>
+            <RotateCwIcon />
+            <span>
+              <T>Retry T3 Connect</T>
+            </span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
+  }
+  if (provider === null || !isLoaded || isSignedIn) return null;
+
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton onClick={openAuthPrompt}>
+          <LogInIcon />
+          <span>
+            <T>Sign in to T3 Connect</T>
+          </span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
 }
 
 export function T3ConnectSidebarAvatar() {
-  if (!hasCloudPublicConfig()) return null;
+  const { provider } = useCloudAuth();
 
-  return <ConfiguredT3ConnectSidebarAvatar />;
+  if (provider === "clerk") return <ClerkSidebarAvatar />;
+  if (provider === "oidc") return <OidcSidebarAccount />;
+  return null;
 }
 
-function ConfiguredT3ConnectSidebarAvatar() {
+function ClerkSidebarAvatar() {
   const { isLoaded, isSignedIn } = useAuth();
   const m = useMessages();
 
@@ -50,34 +80,20 @@ function ConfiguredT3ConnectSidebarAvatar() {
   );
 }
 
-function ConfiguredT3ConnectSidebarSignIn() {
-  const { isLoaded, isSignedIn } = useAuth();
-  const loadFailed = useClerkLoadFailed();
-  const { openAuthPrompt } = useT3ConnectAuthPrompt();
+/** An OpenID Connect provider hosts no account pages, so the account is just a way to sign out. */
+function OidcSidebarAccount() {
+  const { isSignedIn, accountLabel, signOut } = useCloudAuth();
+  const gt = useGT();
 
-  if (loadFailed) {
-    return (
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton onClick={retryClerkLoad}>
-            <RotateCwIcon />
-            <span>
-              <T>Retry T3 Connect</T>
-            </span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    );
-  }
-  if (!isLoaded || isSignedIn) return null;
+  if (!isSignedIn) return null;
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton onClick={openAuthPrompt}>
-          <LogInIcon />
-          <span>
-            <T>Sign in to T3 Connect</T>
+        <SidebarMenuButton onClick={() => void signOut()} title={gt("Sign out of T3 Connect")}>
+          <LogOutIcon />
+          <span className="truncate">
+            {accountLabel ? gt("Sign out ({account})", { account: accountLabel }) : gt("Sign out")}
           </span>
         </SidebarMenuButton>
       </SidebarMenuItem>

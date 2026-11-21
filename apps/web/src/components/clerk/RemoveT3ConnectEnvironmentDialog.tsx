@@ -1,9 +1,13 @@
-import { Discovery } from "@t3tools/client-runtime/relay";
+import { useAtomValue } from "@effect/atom-react";
+import { Discovery, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
+import { deregisterManagedRelayEnvironmentCommand } from "../../cloud/managedRelayState";
 import { useRelayEnvironmentDiscovery } from "../../state/environments";
+import { relayEnvironmentDiscovery } from "../../state/relay";
+import { useAtomCommand } from "../../state/use-atom-command";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -14,7 +18,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button, InlineButton } from "../ui/button";
-import { useT3ConnectAccountPage } from "./T3ConnectAccountPages";
+import { useCloudAuth, useT3ConnectAccountPage } from "../../cloud/cloudAuth";
 
 export function RemoveT3ConnectEnvironmentDialog({
   environmentLabel,
@@ -28,7 +32,16 @@ export function RemoveT3ConnectEnvironmentDialog({
   readonly onConfirm: () => void;
 }) {
   const accountPage = useT3ConnectAccountPage();
+  const { provider } = useCloudAuth();
   const gt = useGT();
+  const session = useAtomValue(managedRelaySessionAtom);
+  const deregister = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
+    label: "deregister environment",
+  });
+  const refreshDiscovery = useAtomCommand(relayEnvironmentDiscovery.refreshAfterMutation, {
+    reportFailure: false,
+  });
+  const [isDeregistering, setIsDeregistering] = useState(false);
   const discovery = useRelayEnvironmentDiscovery();
   const registration = environmentId
     ? Discovery.relayEnvironmentRegistration(discovery, environmentId)
@@ -40,6 +53,18 @@ export function RemoveT3ConnectEnvironmentDialog({
   ) {
     setShown({ label: environmentLabel, registration });
   }
+  // A self-hosted relay frees no host space, so leaving it there only makes it come back.
+  const removesEverywhere =
+    provider === "oidc" && shown.registration === "registered" && session !== null;
+  const removeEverywhere = async () => {
+    if (session === null || environmentId === null) return;
+    setIsDeregistering(true);
+    const result = await deregister({ accountId: session.accountId, environmentId });
+    setIsDeregistering(false);
+    if (result._tag === "Failure") return;
+    void refreshDiscovery();
+    onConfirm();
+  };
   const openAccountPage = accountPage.open;
   const accountPageLink = openAccountPage ? (
     <InlineButton
@@ -65,15 +90,25 @@ export function RemoveT3ConnectEnvironmentDialog({
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              <T>
-                Remove <Var>{shown.label}</Var> from this device?
-              </T>
+              {removesEverywhere ? (
+                <T>
+                  Remove <Var>{shown.label}</Var>?
+                </T>
+              ) : (
+                <T>
+                  Remove <Var>{shown.label}</Var> from this device?
+                </T>
+              )}
             </AlertDialogTitle>
             <AlertDialogDescription>
               <T>This forgets its pairing, credentials, and cached threads here.</T>
             </AlertDialogDescription>
             <AlertDialogDescription>
-              {shown.registration === "registered" ? (
+              {removesEverywhere ? (
+                gt(
+                  "It's also removed from your relay account, so it doesn't come back on your devices.",
+                )
+              ) : shown.registration === "registered" ? (
                 <T>
                   It stays on your T3 Connect account and keeps its host space. Deregister it in{" "}
                   <Var>{accountPageLink}</Var> to free it.
@@ -92,9 +127,19 @@ export function RemoveT3ConnectEnvironmentDialog({
             <AlertDialogClose render={<Button variant="outline" />}>
               <T>Cancel</T>
             </AlertDialogClose>
-            <Button variant="destructive" onClick={onConfirm}>
-              <T>Remove from this device</T>
-            </Button>
+            {removesEverywhere ? (
+              <Button
+                variant="destructive"
+                disabled={isDeregistering}
+                onClick={() => void removeEverywhere()}
+              >
+                {isDeregistering ? gt("Removing…") : gt("Remove")}
+              </Button>
+            ) : (
+              <Button variant="destructive" onClick={onConfirm}>
+                <T>Remove from this device</T>
+              </Button>
+            )}
           </AlertDialogFooter>
         </AlertDialogPopup>
       </AlertDialog>

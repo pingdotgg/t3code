@@ -19,7 +19,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 
 import {
   isExpiredAgentActivityState,
@@ -477,6 +476,12 @@ function makeLiveActivityDeliveryRequest(
   }
 }
 
+export interface ApnsDeliveryQueueMessage {
+  readonly body: unknown;
+  readonly ack: Effect.Effect<void>;
+  readonly retry: (error: ApnsDeliveryError) => Effect.Effect<void>;
+}
+
 export class ApnsDeliveries extends Context.Service<
   ApnsDeliveries,
   {
@@ -494,8 +499,8 @@ export class ApnsDeliveries extends Context.Service<
       body: unknown,
     ) => Effect.Effect<RelayDeliveryResult, ApnsDeliveryError>;
     readonly processBatch: (
-      stream: Stream.Stream<{ readonly body: unknown }>,
-    ) => Effect.Effect<void, Arr.NonEmptyArray<ApnsDeliveryError>>;
+      messages: ReadonlyArray<ApnsDeliveryQueueMessage>,
+    ) => Effect.Effect<void>;
     readonly sendPushNotification: (input: {
       readonly target: LiveActivityDeliveryTarget;
       readonly token: string;
@@ -1013,26 +1018,32 @@ const make = Effect.gen(function* () {
 
   const processBatch: ApnsDeliveries["Service"]["processBatch"] = Effect.fn(
     "relay.apn_delivery_queue.process_batch",
-  )(function* (stream) {
-    const messages = yield* Stream.runCollect(stream);
+  )(function* (messages) {
     const groups = Arr.groupBy(messages, (message) => {
       const job = decodeSignedApnsDeliveryJobOption(message.body);
       return Option.isSome(job)
         ? JSON.stringify([job.value.payload.target.userId, job.value.payload.target.deviceId])
         : "";
     });
-    // Finish other devices before surfacing failures so their in-flight sends aren't cancelled.
-    yield* Effect.validate(
+    // Devices run in parallel; within one, a failure redelivers the rest unsent to keep their order.
+    yield* Effect.forEach(
       Object.values(groups),
-      (group) =>
-        Effect.forEach(
-          group,
-          (message) =>
-            processSignedJob(message.body).pipe(
-              Effect.withSpan("relay.apn_delivery_queue.process_message"),
-            ),
-          { discard: true },
-        ),
+      Effect.fnUntraced(function* (group) {
+        for (const [index, message] of group.entries()) {
+          const failure = yield* processSignedJob(message.body).pipe(
+            Effect.withSpan("relay.apn_delivery_queue.process_message"),
+            Effect.matchEffect({
+              onSuccess: () => Effect.as(message.ack, undefined),
+              onFailure: Effect.succeed,
+            }),
+          );
+          if (failure !== undefined) {
+            return yield* Effect.forEach(group.slice(index), (pending) => pending.retry(failure), {
+              discard: true,
+            });
+          }
+        }
+      }),
       { concurrency: 10, discard: true },
     );
   });

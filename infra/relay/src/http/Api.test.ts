@@ -50,10 +50,10 @@ import {
   relayDpopFailureReason,
   traceRelayHttpRequestWith,
   unlinkEnvironmentRecord,
-  verifyRelayClientBearerToken,
   verifyEnvironmentTunnelRecoveryProof,
   withoutCapturedParentSpan,
 } from "./Api.ts";
+import { verifySubjectToken } from "../auth/SubjectTokens.ts";
 import * as RelayHttpApi from "./Api.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
@@ -393,7 +393,9 @@ describe("relay client authentication", () => {
         aud: relaySettings.clerkJwtAudience,
       } as never);
 
-      expect(yield* verifyRelayClientBearerToken(relaySettings, "session-token")).toEqual({
+      expect(
+        yield* verifySubjectToken(relaySettings, "session-token", { acceptClerkOAuth: true }),
+      ).toEqual({
         sub: "user_session",
         mode: "clerk_session_bearer",
       });
@@ -422,7 +424,9 @@ describe("relay client authentication", () => {
         }),
       } as never);
 
-      expect(yield* verifyRelayClientBearerToken(relaySettings, "oauth-token")).toEqual({
+      expect(
+        yield* verifySubjectToken(relaySettings, "oauth-token", { acceptClerkOAuth: true }),
+      ).toEqual({
         sub: "user_oauth",
         mode: "clerk_oauth_bearer",
       });

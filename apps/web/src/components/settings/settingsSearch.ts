@@ -1441,6 +1441,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("add pair backend host code ssh config agent tunnel saved t3 connect")],
   },
   {
+    id: "t3-connect-service",
+    title: msg("T3 Connect service"),
+    to: "/settings/connections",
+    searchTerms: [msg("self-hosted relay own server oidc openid sso sign-in provider")],
+  },
+  {
     id: "load-balancing",
     title: msg("Load balancing"),
     to: "/settings/connections",

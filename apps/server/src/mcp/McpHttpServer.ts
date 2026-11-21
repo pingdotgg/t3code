@@ -97,11 +97,11 @@ import { MessageToolkit } from "./toolkits/message/tools.ts";
 import * as MessageHandlers from "./toolkits/message/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { MCP_HTTP_PATH } from "../httpCors.ts";
-import { requestUrl } from "../requestUrl.ts";
+import { publicBaseUrl, requestUrl } from "../requestUrl.ts";
 
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
-  requestUrl(request).pipe(
-    Option.map((url) => `${url.origin}/.well-known/oauth-protected-resource/mcp`),
+  publicBaseUrl(request).pipe(
+    Option.map((base) => `${base}/.well-known/oauth-protected-resource/mcp`),
   );
 
 /** Launched agents cannot open OAuth browsers; OAuth would mint credentials outliving their session. */

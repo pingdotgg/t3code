@@ -1,5 +1,4 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   managedCapabilityDenial,
@@ -26,6 +25,7 @@ import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 
 import { checkReachability, readLinkState } from "~/cloud/linkEnvironmentAtoms";
 import { isManagedTunnelActive } from "~/cloud/t3ConnectState";
+import { useCloudAuth } from "~/cloud/cloudAuth";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { readCachedCloudLinkState } from "~/cloud/cloudLinkState";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
@@ -260,7 +260,7 @@ function useGrantableLevels(environment: EnvironmentPresentation) {
 
 function useGate(environment: EnvironmentPresentation) {
   const environmentId = environment.environmentId;
-  const { isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const { isLoaded, hasSession } = useCloudAuth();
   const controller = useCloudLinkController(environmentId);
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
   const thisMachine =
@@ -288,7 +288,7 @@ function useGate(environment: EnvironmentPresentation) {
   const relayEntry = discovery.environments.get(environmentId);
   const gate = resolveMcpGate(
     {
-      signedIn: isSignedIn,
+      signedIn: isLoaded ? hasSession : undefined,
       connected,
       approvalCodes:
         serverConfig === null
@@ -355,8 +355,8 @@ function useGate(environment: EnvironmentPresentation) {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks T3 Connect for its machine list once the wizard opens signed in
   useEffect(() => {
-    if (isSignedIn) discoverIfUnasked();
-  }, [isSignedIn]);
+    if (hasSession) discoverIfUnasked();
+  }, [hasSession]);
   const waiting = gate.kind === "offline" || (connecting && gate.kind === "turn-on");
   const refreshLinkState = useEffectEvent(() => controller.linkState.refresh());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the server's link state while the tunnel starts; the server has no push for it

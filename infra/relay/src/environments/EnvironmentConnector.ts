@@ -27,6 +27,7 @@ import {
   RELAY_MINT_RESPONSE_TYP,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
+import { isInternalOnlyHost, isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -45,6 +46,7 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import { diagnoseEndpointFailure } from "./endpointFailure.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
+import { channelEndpoint, channelKey } from "./RelayChannelEndpoint.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import { isManagedEndpointHostname } from "../deploymentConfig.ts";
@@ -69,6 +71,8 @@ function environmentConnectNotAuthorizedReasonMessage(
       return "the managed endpoint hostname is invalid";
     case "managed_endpoint_mismatch":
       return "the linked endpoint does not match its managed allocation";
+    case "manual_endpoint_not_allowed":
+      return "the linked endpoint is not an address this relay may contact";
   }
 }
 
@@ -368,6 +372,72 @@ export function validateManagedEndpoint(input: {
   return Result.succeed(endpoint);
 }
 
+const parseEndpointUrl = (value: string): URL | null => {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * An environment that declares its own address has no allocation to check it against, and the
+ * relay will send requests to it. Require a secure address that is not an internal one, so a
+ * linked environment cannot point the relay at its own network.
+ * DNS names that resolve to private addresses are not detected here.
+ */
+export function validateManualEndpoint(input: {
+  readonly endpoint: RelayManagedEndpoint;
+  readonly manualEndpoints: RelayConfiguration.ManualEndpointsMode;
+}): Result.Result<RelayManagedEndpoint, ManagedEndpointValidationFailure> {
+  const { endpoint } = input;
+  const http = parseEndpointUrl(endpoint.httpBaseUrl);
+  const ws = parseEndpointUrl(endpoint.wsBaseUrl);
+  const rejection =
+    http === null || ws === null || http.protocol !== "https:" || ws.protocol !== "wss:"
+      ? "scheme"
+      : http.username !== "" || http.password !== "" || ws.username !== "" || ws.password !== ""
+        ? "credentials"
+        : http.host !== ws.host
+          ? "authority_mismatch"
+          : isInternalOnlyHost(http.hostname)
+            ? "internal_address"
+            : input.manualEndpoints !== "private" && isPrivateNetworkHost(http.hostname)
+              ? "private_network"
+              : null;
+  return rejection === null
+    ? Result.succeed(endpoint)
+    : Result.fail({
+        reason: "manual_endpoint_not_allowed",
+        attributes: { "relay.authorization.manual_endpoint_rejection": rejection },
+      });
+}
+
+/** Managed links resolve through their allocation; self-declared links only when the relay allows them. */
+export function validateConnectEndpoint(input: {
+  readonly link: EnvironmentLinks.RelayLinkedEnvironmentRecord;
+  readonly allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
+  readonly baseDomain: string | undefined;
+  readonly manualEndpoints: RelayConfiguration.ManualEndpointsMode;
+  /** Where this relay carries this environment, or null when the relay carries no channels. */
+  readonly channelEndpoint?: RelayManagedEndpoint | null;
+}): Result.Result<RelayManagedEndpoint, ManagedEndpointValidationFailure> {
+  if (input.link.endpoint.providerKind === "t3_relay") {
+    const expected = input.channelEndpoint ?? null;
+    return expected !== null &&
+      input.link.endpoint.httpBaseUrl === expected.httpBaseUrl &&
+      input.link.endpoint.wsBaseUrl === expected.wsBaseUrl
+      ? Result.succeed(expected)
+      : Result.fail({ reason: "endpoint_provider_not_managed" });
+  }
+  return input.link.endpoint.providerKind === "manual" && input.manualEndpoints !== "off"
+    ? validateManualEndpoint({
+        endpoint: input.link.endpoint,
+        manualEndpoints: input.manualEndpoints,
+      })
+    : validateManagedEndpoint(input);
+}
+
 const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
   const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
@@ -387,10 +457,18 @@ const make = Effect.gen(function* () {
       readonly link: EnvironmentLinks.RelayLinkedEnvironmentRecord;
       readonly allocation: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
     }) {
-      const result = validateManagedEndpoint({
+      const result = validateConnectEndpoint({
         link: input.link,
         allocation: input.allocation,
         baseDomain: settings.managedEndpointBaseDomain,
+        manualEndpoints: settings.manualEndpoints ?? "off",
+        channelEndpoint:
+          settings.channels === true
+            ? channelEndpoint(
+                settings.relayIssuer,
+                yield* channelKey(input.link.environmentId, input.link.environmentPublicKey),
+              )
+            : null,
       });
       if (Result.isSuccess(result)) {
         return result.success;

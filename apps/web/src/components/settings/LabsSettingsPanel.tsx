@@ -1,8 +1,8 @@
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
-import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { T, useGT, useMessages } from "gt-react";
 
+import { useCloudAuth } from "~/cloud/cloudAuth";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
@@ -89,10 +89,10 @@ function BoringSidebarMultilineRow() {
 function GuestLinksRowWithSignIn() {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
-  const { isSignedIn } = useAuth();
+  const { isLoaded, isSignedIn } = useCloudAuth();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
-  // `isSignedIn` is undefined until Clerk loads.
-  if (isSignedIn !== false) return <GuestLinksRow />;
+  // Until the provider loads, the row keeps its switch rather than flashing a sign-in prompt.
+  if (!isLoaded || isSignedIn) return <GuestLinksRow />;
   return (
     <SettingsRow
       {...searchableSetting("guest-links")}

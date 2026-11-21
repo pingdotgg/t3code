@@ -19,7 +19,7 @@ describe("loadRepoEnv", () => {
     const repoRoot = makeTemporaryDirectory();
     NodeFS.writeFileSync(
       NodePath.join(repoRoot, ".env"),
-      "T3CODE_CLERK_PUBLISHABLE_KEY=pk_root\nT3CODE_CLERK_JWT_TEMPLATE=template_root\nT3CODE_CLERK_CLI_OAUTH_CLIENT_ID=oauth_root\nT3CODE_RELAY_URL=https://root.example.test\n",
+      "T3CODE_CLERK_PUBLISHABLE_KEY=pk_root\nT3CODE_CLERK_JWT_TEMPLATE=template_root\nT3CODE_CLERK_CLI_OAUTH_CLIENT_ID=oauth_root\nT3CODE_OIDC_ISSUER=https://sso.root.example.test\nT3CODE_RELAY_URL=https://root.example.test\n",
     );
     NodeFS.writeFileSync(
       NodePath.join(repoRoot, ".env.local"),
@@ -35,6 +35,8 @@ describe("loadRepoEnv", () => {
           T3CODE_CLERK_PUBLISHABLE_KEY: "pk_ci",
           T3CODE_CLERK_JWT_TEMPLATE: "template_ci",
           T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_ci",
+          T3CODE_OIDC_ISSUER: "https://sso.ci.example.test",
+          T3CODE_OIDC_CLIENT_ID: "oidc_ci",
           T3CODE_RELAY_URL: "https://ci.example.test",
         },
         repoRoot,
@@ -49,6 +51,8 @@ describe("loadRepoEnv", () => {
       EXPO_PUBLIC_CLERK_JWT_TEMPLATE: "template_ci",
       T3CODE_RELAY_URL: "https://ci.example.test",
       VITE_T3CODE_RELAY_URL: "https://ci.example.test",
+      VITE_OIDC_ISSUER: "https://sso.ci.example.test",
+      EXPO_PUBLIC_OIDC_CLIENT_ID: "oidc_ci",
     });
   });
 });
