@@ -127,7 +127,7 @@ it.effect("adds, renames, and removes projects through the V2 project CLI domain
     yield* runCli(["project", "add", workspaceRoot, "--title", "Alpha", "--base-dir", baseDir]);
     const added = (yield* readProjects(baseDir)).projects[0];
     assert.equal(added?.title, "Alpha");
-    assert.equal(added?.workspaceRoot, workspaceRoot);
+    assert.equal(added?.workspaceRoot, NodeFS.realpathSync(workspaceRoot));
 
     yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
     assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
@@ -230,7 +230,8 @@ it.effect("does not send a token to whatever took over a dead server's port", ()
 
 const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixture")(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-lookup-" });
+  const temporaryRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-lookup-" });
+  const root = yield* fs.realPath(temporaryRoot);
   const baseDir = NodePath.join(root, "state");
   const workspaceRoot = NodePath.join(root, "workspace");
   yield* fs.makeDirectory(workspaceRoot);
@@ -500,7 +501,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       }),
     );
 
-    it.effect("normalizes existing paths without conflating separately registered symlinks", () =>
+    it.effect("normalizes existing paths and resolves symlink aliases to the same project", () =>
       Effect.gen(function* () {
         const { baseDir, workspaceRoot, project } = yield* makeProjectLookupFixture();
         yield* runCli([
@@ -514,25 +515,55 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Normalized");
         const aliasPath = `${workspaceRoot}-alias`;
         NodeFS.symlinkSync(workspaceRoot, aliasPath, "junction");
-        const unknownAlias = yield* runCli([
-          "project",
-          "remove",
-          aliasPath,
-          "--base-dir",
-          baseDir,
-        ]).pipe(Effect.flip);
-        assert.include(unknownAlias.message, "No active project found");
-        yield* runCli(["project", "add", aliasPath, "--base-dir", baseDir]);
-        const added = (yield* readProjects(baseDir)).projects;
-        assert.equal(added.length, 2);
-        const aliasProject = added.find((entry) => entry.workspaceRoot === aliasPath);
-        assert.isDefined(aliasProject);
-        assert.notEqual(aliasProject?.id, project.id);
-        yield* runCli(["project", "remove", `${aliasPath}${NodePath.sep}.`, "--base-dir", baseDir]);
+        const duplicate = yield* runCli(["project", "add", aliasPath, "--base-dir", baseDir]).pipe(
+          Effect.flip,
+        );
+        assert.include(duplicate.message, "already exists");
         assert.deepEqual(
           (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
           [project.id],
         );
+        const physicalRoot = `${workspaceRoot}-physical`;
+        NodeFS.mkdirSync(physicalRoot);
+        yield* runCli(["project", "add", physicalRoot, "--base-dir", baseDir]);
+        const physicalProject = (yield* readProjects(baseDir)).projects.find(
+          (entry) => entry.workspaceRoot === physicalRoot,
+        );
+        assert.isDefined(physicalProject);
+        NodeFS.rmdirSync(physicalRoot);
+        NodeFS.renameSync(workspaceRoot, physicalRoot);
+        NodeFS.symlinkSync(`${workspaceRoot}-physical`, workspaceRoot, "junction");
+        yield* runCli([
+          "project",
+          "rename",
+          `${workspaceRoot}${NodePath.sep}.`,
+          "Saved alias",
+          "--base-dir",
+          baseDir,
+        ]);
+        const renamed = (yield* readProjects(baseDir)).projects;
+        assert.equal(renamed.find((entry) => entry.id === project.id)?.title, "Saved alias");
+        assert.equal(
+          renamed.find((entry) => entry.id === physicalProject.id)?.title,
+          physicalProject.title,
+        );
+        yield* runCli(["project", "remove", physicalProject.id, "--base-dir", baseDir]);
+        yield* withProjectService(baseDir, (projects) =>
+          projects.update({
+            commandId: CommandId.make("project-cli-archive-legacy-alias"),
+            projectId: project.id,
+            archived: true,
+          }),
+        );
+        yield* runCli(["project", "add", ` ${aliasPath} `, "--base-dir", baseDir]);
+        const restored = (yield* readProjects(baseDir)).projects;
+        assert.lengthOf(restored, 1);
+        assert.equal(restored[0]?.id, project.id);
+        assert.isNull(restored[0]?.archivedAt);
+        yield* runCli(["project", "rename", aliasPath, "Legacy", "--base-dir", baseDir]);
+        assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Legacy");
+        yield* runCli(["project", "remove", `${aliasPath}${NodePath.sep}.`, "--base-dir", baseDir]);
+        assert.lengthOf((yield* readProjects(baseDir)).projects, 0);
         assert.isTrue(NodeFS.existsSync(workspaceRoot));
       }),
     );

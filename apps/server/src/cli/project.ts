@@ -6,6 +6,8 @@ import {
   type ProjectSnapshot,
   ProjectId,
 } from "@t3tools/contracts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -258,11 +260,24 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
       ? normalizedWorkspaceRootResult.success
       : normalizedWorkspaceRootResult.failure.normalizedWorkspaceRoot;
 
-  const exactWorkspaceMatch = activeProjects.find(
-    (project) => project.workspaceRoot === normalizedWorkspaceRoot,
+  const path = yield* Path.Path;
+  const savedWorkspaceRoot = path.resolve(
+    expandHomePath(trimmedIdentifier, yield* HostProcess.HomeDirectory),
   );
+  const exactWorkspaceMatch =
+    activeProjects.find((project) => project.workspaceRoot === savedWorkspaceRoot) ??
+    activeProjects.find((project) => project.workspaceRoot === normalizedWorkspaceRoot);
 
-  const resolved = exactWorkspaceMatch;
+  const resolved =
+    exactWorkspaceMatch ??
+    Option.getOrUndefined(
+      yield* Effect.findFirst(activeProjects, (project) =>
+        normalizeWorkspaceRootForProjectCommand(project.workspaceRoot).pipe(
+          Effect.map((root) => root === normalizedWorkspaceRoot),
+          Effect.orElseSucceed(() => false),
+        ),
+      ),
+    );
   if (!resolved) {
     return yield* new ProjectNotFoundError({
       operation: "resolveProjectTarget",
@@ -369,9 +384,14 @@ const projectAddCommand = Command.make("add", {
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
       }) {
         const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
-        const existingProject = snapshot.projects.find(
-          (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
-        );
+        const path = yield* Path.Path;
+        const target = yield* findActiveProjectTarget({
+          snapshot,
+          identifier: path.resolve(
+            expandHomePath(flags.workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
+          ),
+        }).pipe(Effect.catchTags({ ProjectNotFoundError: () => Effect.undefined }));
+        const existingProject = snapshot.projects.find((project) => project.id === target?.id);
         // Re-adding an archived project's folder restores it, matching the clients.
         if (existingProject?.archivedAt != null) {
           const title = Option.isSome(flags.title)
