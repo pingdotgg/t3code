@@ -36,7 +36,11 @@ import { cn } from "../../lib/cn";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
-import { useSearchToolbarInset } from "../../components/ui/useBarInset";
+import {
+  useContentBottomInset,
+  useContentTopInset,
+  useSearchToolbarInset,
+} from "../../components/ui/useBarInset";
 import type { AppBarSearch } from "../../components/ui/AppBar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
@@ -475,6 +479,8 @@ export function BranchPickerScreen(props: {
     compactToolbar: true,
   };
   const searchToolbarInset = useSearchToolbarInset(search);
+  const contentTopInset = useContentTopInset();
+  const contentBottomInset = useContentBottomInset();
   const selectedBranchName =
     props.selectedBranchName ??
     props.branches.find((branch) => branch.current)?.name ??
@@ -558,7 +564,8 @@ export function BranchPickerScreen(props: {
         automaticallyAdjustsScrollIndicatorInsets
         automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
         className="flex-1 bg-sheet android:bg-sheet-solid"
-        contentInsetAdjustmentBehavior="automatic"
+        contentInsetAdjustmentBehavior="never"
+        contentInset={{ top: contentTopInset, bottom: contentBottomInset }}
         contentContainerStyle={branchListContentStyle}
         data={props.branches}
         keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
