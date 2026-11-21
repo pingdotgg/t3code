@@ -463,6 +463,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "worktree-release": {
+      const count = countEntities(entityIds("worktreePath"));
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Released {count} worktree} other {Released {count} worktrees}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to release {count} worktree} other {Tried to release {count} worktrees}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "project-read": {
       const count = countEntities(projectIds);
       label = done

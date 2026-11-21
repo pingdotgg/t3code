@@ -204,6 +204,8 @@
   "bd4141e4464734ae": "{count, plural, one {Tried to ask for {count} secret} other {Tried to ask for {count} secrets}}",
   "3685ecb8634fe00c": "{count, plural, one {Handed off to {count} worktree} other {Handed off to {count} worktrees}}",
   "186bc3ed600d2102": "{count, plural, one {Tried to hand off to {count} worktree} other {Tried to hand off to {count} worktrees}}",
+  "0166c0dc3f34c937": "{count, plural, one {Released {count} worktree} other {Released {count} worktrees}}",
+  "8131c8e477f5e30b": "{count, plural, one {Tried to release {count} worktree} other {Tried to release {count} worktrees}}",
   "ea38f91437c9fd84": "{count, plural, one {Read {count} project} other {Read {count} projects}}",
   "962b5c9a64a23fda": "{count, plural, one {Tried to read {count} project} other {Tried to read {count} projects}}",
   "5f6309ffbb9206e5": "{count, plural, one {Registered {count} project} other {Registered {count} projects}}",
