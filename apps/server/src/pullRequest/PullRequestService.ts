@@ -767,6 +767,12 @@ function httpRemoteHost(remoteUrl: string): string | null {
   }
 }
 
+/** Whether `expected` names `head`: the full SHA, or a hex prefix of at least 7 characters. */
+export const isHeadSha = (head: string, expected: string) => {
+  const wanted = expected.toLowerCase();
+  return /^[0-9a-f]{7,}$/.test(wanted) ? head.toLowerCase().startsWith(wanted) : head === expected;
+};
+
 // Capture before the provider read so a slow response keeps its original freshness through caches.
 const observeRead = Effect.fnUntraced(function* <A, E, R>(read: Effect.Effect<A, E, R>) {
   const observedAt = yield* Clock.currentTimeMillis;
@@ -2302,9 +2308,10 @@ export const make = Effect.gen(function* () {
                   )
                 : Effect.succeed(false);
             // Hosts that cannot pin a merge to a commit still refuse a head that already moved.
-            const headPinned =
-              input.expectedHeadSha === undefined
-                ? Effect.void
+            const expected = input.expectedHeadSha;
+            const headPinned: Effect.Effect<string | undefined, PullRequestError> =
+              expected === undefined
+                ? Effect.undefined
                 : project.api
                     .getChangeRequest({
                       cwd: project.project.workspaceRoot,
@@ -2315,19 +2322,24 @@ export const make = Effect.gen(function* () {
                     .pipe(
                       Effect.mapError(toPullRequestError("runAction")),
                       Effect.flatMap((current) =>
-                        current.headSha === input.expectedHeadSha
-                          ? Effect.void
+                        typeof current.headSha === "string" && isHeadSha(current.headSha, expected)
+                          ? Effect.succeed(current.headSha)
                           : Effect.fail(
                               new PullRequestOperationError({
                                 operation: "runAction",
-                                detail: `The head is now ${current.headSha ?? "unknown"}, not ${input.expectedHeadSha}. Review the new commits first.`,
+                                detail: `The head is now ${current.headSha ?? "unknown"}, not ${expected}. Review the new commits first.`,
                               }),
                             ),
                       ),
                     );
             return headPinned.pipe(
-              Effect.andThen(mergeSettings),
-              Effect.flatMap((removeAgentCreditsOnMerge) =>
+              Effect.flatMap((expectedHeadSha) =>
+                Effect.map(mergeSettings, (removeAgentCreditsOnMerge) => ({
+                  expectedHeadSha,
+                  removeAgentCreditsOnMerge,
+                })),
+              ),
+              Effect.flatMap(({ expectedHeadSha, removeAgentCreditsOnMerge }) =>
                 project.api
                   .runAction({
                     cwd: project.project.workspaceRoot,
@@ -2340,9 +2352,7 @@ export const make = Effect.gen(function* () {
                     ...(input.expectedStackHeads === undefined
                       ? {}
                       : { expectedStackHeads: input.expectedStackHeads }),
-                    ...(input.expectedHeadSha === undefined
-                      ? {}
-                      : { expectedHeadSha: input.expectedHeadSha }),
+                    ...(expectedHeadSha === undefined ? {} : { expectedHeadSha }),
                     ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
                     ...(input.updateMethod === undefined
                       ? {}

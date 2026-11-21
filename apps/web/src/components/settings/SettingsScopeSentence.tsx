@@ -1,5 +1,5 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import { fileBasename } from "@t3tools/shared/path";
+import { fileDisplayName } from "@t3tools/shared/path";
 import { CheckIcon, ChevronDownIcon, FolderIcon, LayersIcon, RotateCcwIcon } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
@@ -335,7 +335,7 @@ function CheckoutScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) 
       allOption={{ value: ALL_CHECKOUTS_VALUE, label: gt("All checkouts") }}
       options={checkouts.map((member) => ({
         value: member.physicalProjectKey,
-        label: fileBasename(member.workspaceRoot),
+        label: fileDisplayName(member.workspaceRoot),
         secondary: member.workspaceRoot,
       }))}
     />

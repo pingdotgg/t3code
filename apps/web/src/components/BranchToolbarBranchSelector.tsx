@@ -1,4 +1,3 @@
-import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
@@ -19,7 +18,7 @@ import {
 } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { ChevronDownIcon, ExternalLinkIcon, GitBranchIcon } from "lucide-react";
-import { m, type MessageResolver } from "../i18n/messages";
+import type { MessageResolver } from "../i18n/messages";
 import {
   useEffect,
   useEffectEvent,
@@ -72,6 +71,7 @@ import {
   resolveEffectiveEnvMode,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
+  toBranchActionErrorMessage,
 } from "./BranchToolbar.logic";
 import { resolveDisplayedThreadPr } from "./ThreadStatusIndicators";
 
@@ -121,10 +121,6 @@ function portalTo(container: HTMLElement | undefined, node: ReactElement) {
 }
 
 const WORKTREE_CHANGE_BLOCKED_MESSAGE = msg("Stop the current turn to switch worktrees.");
-
-function toBranchActionErrorMessage(error: unknown): string {
-  return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
-}
 
 // The picker's list keys on these arrays, so they stay cached across the
 // queries and transitions the selector calls after computing them.

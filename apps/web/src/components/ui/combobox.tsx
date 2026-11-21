@@ -120,7 +120,7 @@ function ComboboxSearchInput({
 }) {
   if (variant === "inset") {
     return (
-      <div className="min-w-0 shrink-0 px-2 pt-1.5">
+      <label className="block min-w-0 shrink-0 cursor-text px-2 pt-1.5">
         <div className="relative isolate flex h-7 items-center gap-2 rounded-control px-2.5 before:pointer-events-none before:absolute before:inset-0 before:-z-10 before:rounded-[inherit] before:surface-well">
           <SearchIcon aria-hidden="true" className="size-[13px] shrink-0 text-dim-foreground" />
           <ComboboxInput
@@ -131,11 +131,11 @@ function ComboboxSearchInput({
             unstyled
           />
         </div>
-      </div>
+      </label>
     );
   }
   return (
-    <div className="min-w-0 shrink-0 px-3 pt-2.5">
+    <label className="block min-w-0 shrink-0 cursor-text px-3 pt-2.5">
       <div
         className={cn(
           "relative -translate-y-px border-b pb-1.5 transition-colors",
@@ -154,7 +154,7 @@ function ComboboxSearchInput({
           unstyled
         />
       </div>
-    </div>
+    </label>
   );
 }
 

@@ -36,6 +36,36 @@ describe("resolveNewTaskWorkspaceSelection", () => {
     },
   );
 
+  it("keeps a worktree of tracked repositories for a non-git project folder", () => {
+    expect(
+      resolveNewTaskWorkspaceSelection({
+        selection: {
+          mode: "worktree",
+          branch: "main",
+          worktreePath: null,
+          startFromOrigin: true,
+          repositories: ["/workspace/api"],
+        },
+        fallback,
+        isGitRepo: false,
+        tracksGitRepositories: true,
+      }),
+    ).toEqual({
+      mode: "worktree",
+      branch: null,
+      worktreePath: null,
+      repositories: ["/workspace/api"],
+    });
+    expect(
+      resolveNewTaskWorkspaceSelection({
+        selection: undefined,
+        fallback,
+        isGitRepo: false,
+        tracksGitRepositories: true,
+      }),
+    ).toEqual(fallback);
+  });
+
   // regression: #21404 use current checkout for non-git projects
   it("preserves the selection and defaults for git projects", () => {
     const selection = { mode: "local", branch: "feature", worktreePath: "/worktree" } as const;

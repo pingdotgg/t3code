@@ -1722,6 +1722,12 @@ describe("deriveMessagesTimelineRows", () => {
           message("third-steer", 25, "user", "steer"),
           edit("edit-after-steers", 28, 30),
           message("final", 30, "assistant"),
+          {
+            kind: "event",
+            id: "late-subagent",
+            createdAt: time(50),
+            projectedItem: { item: { type: "subagent", status: "completed", runId } } as never,
+          },
         ],
         latestRun: { runId, status, startedAt: time(0), completedAt: time(30) },
         isWorking: false,
@@ -1749,6 +1755,7 @@ describe("deriveMessagesTimelineRows", () => {
       "third-steer",
       `turn-fold:${runId}`,
       "final",
+      "late-subagent",
     ]);
     expect(collapsed[5]).toMatchObject({
       createdAt: time(0),
@@ -1769,6 +1776,7 @@ describe("deriveMessagesTimelineRows", () => {
       `turn-fold:${runId}`,
       "work-toggle:edit-before-steers",
       "final",
+      "late-subagent",
     ]);
     expect(expanded[6]).toMatchObject({ hiddenCount: 3 });
   });

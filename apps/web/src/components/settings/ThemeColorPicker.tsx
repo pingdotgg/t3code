@@ -64,6 +64,10 @@ function themeRgbToHex(value: string): string | null {
   return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
 }
 
+function isShortHexColor(value: string): boolean {
+  return /^#[0-9a-f]{3,4}$/i.test(value.trim());
+}
+
 function themeRgbValue(hex: string) {
   return themeHexToRgb(hex).join(", ");
 }
@@ -317,15 +321,31 @@ export function ThemeColorHexInput({
   const editorValue = value.trim().toLowerCase().startsWith("oklch(")
     ? (themeColorToHex(value) ?? value)
     : value;
+  // While focused the input shows the typed text, not the committed value: a guided palette
+  // rewrites the committed color, and echoing that mid-edit would replace the user's keystrokes.
+  const [hexDraft, setHexDraft] = useState<string | null>(null);
+  const hexText = hexDraft ?? editorValue;
   return (
     <input
-      aria-invalid={!isThemeColor(value)}
+      aria-invalid={!isThemeColor(hexText)}
       aria-label={gt("{label} hex value", { label })}
       className="w-[8.5ch] min-w-0 shrink-0 rounded-sm bg-transparent font-mono text-caption text-dim-foreground uppercase tabular-nums outline-none placeholder:normal-case hover:text-muted-foreground focus-visible:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring aria-invalid:text-destructive"
-      onChange={(event) => onChange(event.currentTarget.value)}
-      onFocus={onFocus}
+      onBlur={() => {
+        if (hexDraft !== null && isShortHexColor(hexDraft)) onChange(hexDraft);
+        setHexDraft(null);
+      }}
+      onChange={(event) => {
+        const nextValue = event.currentTarget.value;
+        setHexDraft(nextValue);
+        // Shorthand is usually a longer hex mid-deletion, so commit it on blur instead.
+        if (!isShortHexColor(nextValue)) onChange(nextValue);
+      }}
+      onFocus={() => {
+        setHexDraft(editorValue);
+        onFocus?.();
+      }}
       spellCheck={false}
-      value={editorValue}
+      value={hexText}
     />
   );
 }

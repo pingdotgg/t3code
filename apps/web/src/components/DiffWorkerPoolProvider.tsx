@@ -104,7 +104,24 @@ function acquireDiffWorkerPool(poolSize: number) {
 
 // Plain-text views do not queue a highlight task that could retry a blank first render.
 function DiffWorkerReady({ failed, children }: { failed: boolean; children?: ReactNode }) {
-  const workerPool = useWorkerPool();
+  const ready = useDiffWorkerPoolReady(useWorkerPool(), failed);
+  return ready ? (
+    children
+  ) : (
+    <div
+      role="status"
+      className="flex min-h-0 flex-1 items-center justify-center p-4 text-meta text-muted-foreground"
+    >
+      <T>Loading code...</T>
+    </div>
+  );
+}
+
+/** A null pool is one whose worker died: its views render plain text instead of waiting. */
+export function useDiffWorkerPoolReady(
+  workerPool: WorkerPoolManager | null | undefined,
+  failed = workerPool === null,
+) {
   const [readyPool, setReadyPool] = useState<WorkerPoolManager>();
   const ready = workerPool
     ? readyPool === workerPool || workerPool.isInitialized() || !workerPool.isWorkingPool()
@@ -124,16 +141,7 @@ function DiffWorkerReady({ failed, children }: { failed: boolean; children?: Rea
     };
   }, [ready, workerPool]);
 
-  return ready ? (
-    children
-  ) : (
-    <div
-      role="status"
-      className="flex min-h-0 flex-1 items-center justify-center p-4 text-meta text-muted-foreground"
-    >
-      <T>Loading code...</T>
-    </div>
-  );
+  return ready;
 }
 
 // Module-level so the subscribe identity is stable: a new one would release and reacquire
