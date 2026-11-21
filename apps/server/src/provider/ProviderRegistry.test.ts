@@ -4545,6 +4545,52 @@ it.layer(
       ),
     );
 
+    it.effect("starts the capabilities probe without waiting for `claude --version` (#40141)", () =>
+      Effect.gen(function* () {
+        const probeStarted = yield* Deferred.make<void>();
+        // `--version` exits only once the capabilities probe has started.
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const joined = (command as unknown as { args: ReadonlyArray<string> }).args.join(" ");
+            if (joined !== "--version") return Effect.die(`Unexpected args: ${joined}`);
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1),
+                exitCode: Deferred.await(probeStarted).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(0)),
+                ),
+                isRunning: Effect.succeed(true),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.fromEffect(
+                  Deferred.await(probeStarted).pipe(Effect.as(encoder.encode("2.1.0\n"))),
+                ),
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              }),
+            );
+          }),
+        );
+        const check = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          () =>
+            Deferred.succeed(probeStarted, undefined).pipe(
+              Effect.andThen(claudeCapabilities({ subscriptionType: "max" })()),
+            ),
+          { ANTHROPIC_BASE_URL: "" },
+        ).pipe(Effect.provide(spawner), Effect.forkChild);
+        yield* TestClock.adjust("1 minute");
+        const status = yield* Fiber.join(check);
+
+        assert.strictEqual(status.version, "2.1.0");
+        assert.strictEqual(status.status, "ready");
+      }),
+    );
+
     it.effect.each([
       {
         name: "its own home path",

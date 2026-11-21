@@ -300,7 +300,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.map(stampIdentity),
         ),
       ),
-      // Disabled, failed version checks and interruption never reach the probe.
+      // Disabled checks never reach the probe; failed version checks and interruption stop it early.
       Effect.ensuring(modelRoutes.settle),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
