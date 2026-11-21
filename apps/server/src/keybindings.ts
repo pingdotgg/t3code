@@ -174,6 +174,7 @@ const decodeKeybindingRuleExit = Schema.decodeUnknownExit(KeybindingRule);
 const decodeResolvedKeybindingFromConfigExit = Schema.decodeExit(ResolvedKeybindingFromConfig);
 const decodeRawKeybindingsEntriesExit = Schema.decodeUnknownExit(RawKeybindingsEntries);
 const encodeRawKeybindingsEntriesPrettyJson = Schema.encodeEffect(RawKeybindingsEntriesPrettyJson);
+const isSameResolvedKeybindingRule = Schema.toEquivalence(ResolvedKeybindingRule);
 
 export interface KeybindingsConfigState {
   readonly keybindings: ResolvedKeybindingsConfig;
@@ -670,18 +671,35 @@ const make = Effect.gen(function* () {
           const rule = keybindingRuleFromInput(input);
           const replaceTarget = replaceTargetFromUpsertInput(input);
           // A saved rule overrides every inherited default for its command.
-          const siblingDefaults =
-            replaceTarget?.command === rule.command &&
+          let siblingDefaults: ReadonlyArray<KeybindingRule> = [];
+          if (
+            (!replaceTarget || replaceTarget.command === rule.command) &&
             !customConfig.some(({ rule: entry }) => entry?.command === rule.command) &&
-            DEFAULT_KEYBINDINGS.some((entry) => isSameKeybindingRule(entry, replaceTarget)) &&
             decodeResolvedKeybindingFromConfigExit(rule)._tag === "Success"
-              ? DEFAULT_KEYBINDINGS.filter(
-                  (entry) =>
-                    entry.command === rule.command &&
-                    !isSameKeybindingRule(entry, replaceTarget) &&
-                    !isSameKeybindingRule(entry, rule),
-                ).map((entry) => ({ value: entry, rule: entry }))
-              : [];
+          ) {
+            const customRules = customConfig.flatMap(({ rule: entry }) => (entry ? [entry] : []));
+            const visibleBindings = mergeWithDefaultKeybindings(
+              compileResolvedKeybindingsConfig(customRules),
+            ).filter((entry) => entry.command === rule.command);
+            const visibleDefaults = DEFAULT_KEYBINDINGS.filter((entry) => {
+              if (entry.command !== rule.command) return false;
+              const resolved = compileResolvedKeybindingRule(entry);
+              return (
+                resolved &&
+                visibleBindings.some((binding) => isSameResolvedKeybindingRule(binding, resolved))
+              );
+            });
+            if (
+              !replaceTarget ||
+              visibleDefaults.some((entry) => isSameKeybindingRule(entry, replaceTarget))
+            ) {
+              siblingDefaults = visibleDefaults.filter(
+                (entry) =>
+                  (!replaceTarget || !isSameKeybindingRule(entry, replaceTarget)) &&
+                  !isSameKeybindingRule(entry, rule),
+              );
+            }
+          }
           const retainedConfig = customConfig.filter(({ rule: entry }) => {
             if (!entry) return true;
             return (
@@ -692,8 +710,8 @@ const make = Effect.gen(function* () {
           const availableSlots = MAX_KEYBINDINGS_COUNT - siblingDefaults.length - 1;
           const nextConfig = [
             ...siblingDefaults,
-            ...retainedConfig.slice(-availableSlots),
-            { value: rule, rule },
+            ...retainedConfig.slice(-availableSlots).map(({ value }) => value),
+            rule,
           ];
           if (retainedConfig.length > availableSlots) {
             yield* Effect.logWarning("truncating keybindings config to max entries", {
@@ -701,7 +719,7 @@ const make = Effect.gen(function* () {
               maxEntries: MAX_KEYBINDINGS_COUNT,
             });
           }
-          yield* writeConfigAtomically(nextConfig.map(({ value }) => value));
+          yield* writeConfigAtomically(nextConfig);
           return yield* reloadAndEmit;
         }),
       ),

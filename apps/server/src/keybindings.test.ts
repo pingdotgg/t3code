@@ -480,16 +480,60 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       }).pipe(Effect.provide(layerKeybindings())),
   );
 
-  it.effect("unassigns a shortcut without restoring it on startup and can reassign it", () =>
+  it.effect("preserves sibling shortcuts when adding to an inherited command", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, []);
+
+      const added = { key: "f9", command: "chat.new" } as const;
+      const saved = yield* keybindings.upsertKeybindingRule(added);
+      assert.deepEqual(
+        saved.keybindings.filter((rule) => rule.command === added.command),
+        SharedKeybindings.compileResolvedKeybindingsConfig([
+          { key: "mod+n", command: added.command, when: "!terminalFocus" },
+          { key: "mod+shift+o", command: added.command, when: "!terminalFocus" },
+          added,
+        ]),
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("preserves sibling shortcuts only if visible within the binding limit", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
       yield* writeKeybindingsConfig(
         keybindingsConfigPath,
-        Array.from({ length: MAX_KEYBINDINGS_COUNT }, (_, index) => ({
+        Array.from({ length: 210 }, (_, index) => ({
           key: "mod+alt+f1",
           command: `script.filler-${index}.run` as const,
         })),
       );
+
+      const target = { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" } as const;
+      const local = { ...target, key: "mod+shift+n", command: "chat.newLocal" } as const;
+      const relevant = (rule: { readonly command: KeybindingCommand }) =>
+        rule.command === target.command || rule.command === local.command;
+      const before = yield* keybindings.getSnapshot;
+      assert.deepEqual(
+        before.keybindings.filter(relevant),
+        SharedKeybindings.compileResolvedKeybindingsConfig([target, local]),
+      );
+
+      const replacement = { ...target, key: "f8" };
+      const saved = yield* keybindings.upsertKeybindingRule({ ...replacement, replace: target });
+      assert.deepEqual(
+        saved.keybindings.filter(relevant),
+        SharedKeybindings.compileResolvedKeybindingsConfig([local, replacement]),
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("unassigns a shortcut without restoring it on startup and can reassign it", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, []);
       const keybindings = yield* Keybindings.Keybindings;
       const target = SharedKeybindings.DEFAULT_KEYBINDINGS.find(
         (rule) => rule.command === "composer.sendBackground",
