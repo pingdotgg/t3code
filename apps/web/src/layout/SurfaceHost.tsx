@@ -183,6 +183,7 @@ function UnseenPeekDot({ side, tabId }: { side: "left" | "right"; tabId: string 
 
 /** Pen R49C1s: neighboring panes share an 8px gutter, independent of the window inset. */
 const HALF_PANE_GAP = "4px";
+const HALF_PANE_GAP_PX = 4;
 
 const FULL_RECT = { left: 0, top: 0, width: 1, height: 1 };
 const FULL_SLOT: LayoutPaneSlot = {
@@ -301,6 +302,17 @@ function slotStyle(slot: LayoutPaneSlot, stripPx?: number): React.CSSProperties 
     width: `calc(${right} - ${left})`,
     height: `calc(${bottom} - ${top})`,
   };
+}
+
+/**
+ * `slotStyle` while a resize drag grows the stage each frame: across in whole
+ * pixels of the strip, so only the panes that resize or move get new styles.
+ */
+function dragSlotStyle(slot: LayoutPaneSlot, stripPx: number): React.CSSProperties {
+  const edge = (has: boolean) => (has ? HALF_PANE_GAP_PX : 0);
+  const left = Math.round(slot.rect.left * stripPx + edge(slot.hasLeft));
+  const right = Math.round((slot.rect.left + slot.rect.width) * stripPx - edge(slot.hasRight));
+  return { ...slotStyle(slot), left: `${left}px`, width: `${right - left}px` };
 }
 
 /** One workspace in the stack a switch moves (see motion/workspaceSwitch.ts). */
@@ -548,6 +560,7 @@ function useSurfacePlacement(
   narrow: boolean,
   maximizedTabId: string | null,
   windowWidth: number,
+  dragging: boolean,
 ) {
   const overviewPhase = useOverviewPhase();
   const workspaceStack = useWorkspaceStack();
@@ -639,7 +652,9 @@ function useSurfacePlacement(
       return byId;
     }
     for (const slot of slots) {
-      if (slot.activeTabId !== null) byId.set(slot.activeTabId, { slot, style: slotStyle(slot) });
+      if (slot.activeTabId === null) continue;
+      const style = dragging ? dragSlotStyle(slot, stripWidth * viewportWidth) : slotStyle(slot);
+      byId.set(slot.activeTabId, { slot, style });
     }
     return byId;
   })();
@@ -729,6 +744,7 @@ export function LayoutSurfaceHost({
     narrow,
     maximizedTabId,
     window.innerWidth,
+    preview !== null,
   );
   // One pane is focused. A focused surface tab's chat is only related: it
   // answers its thread's pane toggles (cmd+J, alt+cmd+B) and holds the
