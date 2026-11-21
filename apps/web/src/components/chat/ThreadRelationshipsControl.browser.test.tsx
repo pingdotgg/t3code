@@ -230,6 +230,7 @@ it("opens an idle child beside the thread, and in its place with the modifier", 
   });
   expect(screen.router?.state.location.pathname).toBe("/");
   // Idle children can be omitted from the shell; the route loads the child's own detail.
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
   await child.click({ modifiers: [isMacPlatform(navigator.platform) ? "Meta" : "Control"] });
   await vi.waitFor(() =>
     expect(screen.router?.state.location.pathname).toBe("/local/omitted-child"),
