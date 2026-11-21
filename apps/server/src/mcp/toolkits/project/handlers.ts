@@ -45,6 +45,7 @@ import {
 } from "../../delegatedTaskModes.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { watchIfLaunchedByHome } from "../../homeAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
@@ -317,6 +318,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   }),
                 ),
               );
+        if (
+          project !== undefined &&
+          project.workspaceRoot === (yield* ManagedProjectFolders.ManagedProjectFolders).homeRoot
+        )
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "Home's folder takes no other threads. Pass a `projectId` (see `t3_project_list`) or `scratch: true`.",
+          });
         const workspaceStrategy =
           project !== undefined && input.workspaceStrategy?.type === "existing_worktree"
             ? {
@@ -525,6 +535,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           }),
         );
         const thread = result.projection.thread;
+        yield* watchIfLaunchedByHome(thread.id);
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
           threadId: thread.id,

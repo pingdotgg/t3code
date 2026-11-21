@@ -97,6 +97,21 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("lets readers see Home's notes and watches but only operators turn it on, reset or steer it", () => {
+    for (const method of [WS_METHODS.homeNotesRead, WS_METHODS.homeWatchesList]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+    for (const method of [
+      WS_METHODS.homeEnable,
+      WS_METHODS.homeDisable,
+      WS_METHODS.homeReset,
+      WS_METHODS.homeSetModel,
+      WS_METHODS.homeNotesWrite,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationOperateScope);
+    }
+  });
+
   it("still lets readers load settings the way installed Swift clients ask", () => {
     expect(requiredScopeForRpcMethod("server.getSettings")).toBe(AuthOrchestrationReadScope);
   });

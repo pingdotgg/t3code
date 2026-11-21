@@ -105,6 +105,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
   // Send stores and sends a report from a thread's turn: the bar of running that thread.
   [WS_METHODS.agentFeedbackAnswerRequest]: AuthOrchestrationOperateScope,
+  // Home is a full-access agent that acts across projects; turning it on or steering it is operating.
+  [WS_METHODS.homeEnable]: AuthOrchestrationOperateScope,
+  [WS_METHODS.homeDisable]: AuthOrchestrationOperateScope,
+  [WS_METHODS.homeReset]: AuthOrchestrationOperateScope,
+  [WS_METHODS.homeSetModel]: AuthOrchestrationOperateScope,
+  [WS_METHODS.homeNotesWrite]: AuthOrchestrationOperateScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

@@ -3,6 +3,7 @@ import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  isHomeThreadId,
   CommandId,
   type ChatAttachment,
   type MessageId,
@@ -1465,6 +1466,16 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
+      // Home's folder holds its instructions; any other thread there would act as Home.
+      if (
+        project.workspaceRoot === managedFolders.homeRoot &&
+        !isHomeThreadId(input.threadId ?? "")
+      ) {
+        return yield* mapError(
+          input,
+          "resolve-project",
+        )("Home's folder takes no other threads. Name a project or start a scratch thread.");
+      }
       if (input.reuseExistingThread === true && input.threadId === undefined) {
         return yield* mapError(
           input,

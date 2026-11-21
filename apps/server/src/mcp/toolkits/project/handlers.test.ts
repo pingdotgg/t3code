@@ -187,6 +187,7 @@ const clientLaunchHarness = (input: {
     Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/projects",
+      homeRoot: "/unused-home",
       isScratchProject: () => Effect.succeed(false),
     }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
@@ -1345,6 +1346,7 @@ it.effect("an agent cannot delete the built-in scratch project, even with force"
       Layer.mergeAll(
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: "/projects",
+          homeRoot: "/unused-home",
           isScratchProject: (projectId) => Effect.succeed(projectId === harness.projectId),
         }),
         Layer.mock(Project.ProjectService)({

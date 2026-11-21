@@ -110,6 +110,8 @@ import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { MessageToolkit } from "./toolkits/message/tools.ts";
 import * as MessageHandlers from "./toolkits/message/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import * as HomeHandlers from "./toolkits/home/handlers.ts";
+import { HomeToolkit } from "./toolkits/home/tools.ts";
 import { MCP_HTTP_PATH } from "../httpCors.ts";
 import { requestUrl } from "../requestUrl.ts";
 import { routineSpan } from "@t3tools/shared/observability";
@@ -1605,6 +1607,9 @@ const layerDeferredListing = McpServer.visibility(
   { global: true },
 );
 
+/** Outside layerTools: only the active Home thread lists these, so ordinary threads pay nothing. */
+const layerHomeToolkit = toolkitRegistration(HomeToolkit, HomeHandlers.layer);
+
 /** Outside layerTools: the clients its budget measures never list `tool_search`. */
 export const layerToolSearch = Layer.mergeAll(
   toolkitRegistration(ToolSearchToolkit, ToolSearchHandlers.layer),
@@ -1673,5 +1678,5 @@ export const layerMilestoneEvents = Layer.effectDiscard(
 );
 
 export const layer = layerMcpTransport(
-  Layer.mergeAll(layerTools, layerToolSearch, layerMilestoneEvents),
+  Layer.mergeAll(layerTools, layerHomeToolkit, layerToolSearch, layerMilestoneEvents),
 );

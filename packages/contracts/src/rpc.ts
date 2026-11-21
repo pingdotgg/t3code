@@ -415,6 +415,14 @@ import {
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
 import {
+  HomeEnableInput,
+  HomeError,
+  HomeNotes,
+  HomeSetModelInput,
+  HomeThreadResult,
+  HomeWatchesResult,
+} from "./home.ts";
+import {
   StorageCleanupReport,
   DatabaseReclaimError,
   DatabaseStorageStatus,
@@ -668,6 +676,14 @@ export const WS_METHODS = {
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
+
+  homeEnable: "home.enable",
+  homeDisable: "home.disable",
+  homeReset: "home.reset",
+  homeSetModel: "home.setModel",
+  homeNotesRead: "home.notes.read",
+  homeNotesWrite: "home.notes.write",
+  homeWatchesList: "home.watches.list",
 
   pullRequestsList: "pullRequests.list",
   pullRequestsListStats: "pullRequests.listStats",
@@ -2358,6 +2374,47 @@ const WsWorkflowsCountsRpc = Rpc.make(WS_METHODS.workflowsCounts, {
   stream: true,
 });
 
+const HomeRpcError = Schema.Union([HomeError, EnvironmentAuthorizationError]);
+
+const WsHomeEnableRpc = Rpc.make(WS_METHODS.homeEnable, {
+  payload: HomeEnableInput,
+  success: HomeThreadResult,
+  error: HomeRpcError,
+});
+
+const WsHomeDisableRpc = Rpc.make(WS_METHODS.homeDisable, {
+  payload: Schema.Struct({}),
+  error: HomeRpcError,
+});
+
+const WsHomeResetRpc = Rpc.make(WS_METHODS.homeReset, {
+  payload: Schema.Struct({}),
+  success: HomeThreadResult,
+  error: HomeRpcError,
+});
+
+const WsHomeSetModelRpc = Rpc.make(WS_METHODS.homeSetModel, {
+  payload: HomeSetModelInput,
+  error: HomeRpcError,
+});
+
+const WsHomeNotesReadRpc = Rpc.make(WS_METHODS.homeNotesRead, {
+  payload: Schema.Struct({}),
+  success: HomeNotes,
+  error: HomeRpcError,
+});
+
+const WsHomeNotesWriteRpc = Rpc.make(WS_METHODS.homeNotesWrite, {
+  payload: HomeNotes,
+  error: HomeRpcError,
+});
+
+const WsHomeWatchesListRpc = Rpc.make(WS_METHODS.homeWatchesList, {
+  payload: Schema.Struct({}),
+  success: HomeWatchesResult,
+  error: HomeRpcError,
+});
+
 const WsWorkflowsGetRpc = Rpc.make(WS_METHODS.workflowsGet, {
   payload: WorkflowRunGetInput,
   success: WorkflowRunDetail,
@@ -2579,6 +2636,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
+  WsHomeEnableRpc,
+  WsHomeDisableRpc,
+  WsHomeResetRpc,
+  WsHomeSetModelRpc,
+  WsHomeNotesReadRpc,
+  WsHomeNotesWriteRpc,
+  WsHomeWatchesListRpc,
   WsWorkflowsSubscribeRpc,
   WsWorkflowsCountsRpc,
   WsWorkflowsGetRpc,

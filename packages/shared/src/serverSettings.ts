@@ -600,6 +600,8 @@ export function applyServerSettingsPatch(
           ),
         }
       : {}),
+    // Replaced whole: deepMerge would keep a previous model's options.
+    ...(patch.home !== undefined ? { home: patch.home } : {}),
     ...(patch.defaultModelSelection !== undefined
       ? { defaultModelSelection: patch.defaultModelSelection }
       : {}),

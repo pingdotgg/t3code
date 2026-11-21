@@ -10,6 +10,7 @@ import type {
   ShellSnapshotOptions,
 } from "./ProjectionStore.ts";
 import {
+  isHomeThreadId,
   type ChatAttachment,
   CommandId,
   isDelegatedAppThread,
@@ -847,10 +848,19 @@ const make = Effect.gen(function* () {
   };
 
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    ensureCommandTranscripts(command).pipe(
-      Effect.andThen(assertDispatchTargetEnabled(command)),
-      Effect.andThen(orchestrator.dispatch(command)),
-    );
+    // A fork of Home would land in Home's folder and act as Home there.
+    command.type === "thread.fork" && isHomeThreadId(command.sourceThreadId)
+      ? Effect.fail(
+          new Orchestrator.OrchestratorCommandRejectedError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Home cannot be forked.",
+          }),
+        )
+      : ensureCommandTranscripts(command).pipe(
+          Effect.andThen(assertDispatchTargetEnabled(command)),
+          Effect.andThen(orchestrator.dispatch(command)),
+        );
 
   const getProjectThreadRecords: ThreadManagementServiceShape["getProjectThreadRecords"] = (
     input,

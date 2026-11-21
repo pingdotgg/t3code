@@ -266,6 +266,7 @@ function makeHarness(options: HarnessOptions = {}) {
     options.managedFolders ??
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
+        homeRoot: "/unused-home",
         isScratchProject: () => Effect.succeed(false),
         folderForThread: () => Effect.succeedNone,
       }),
@@ -1151,6 +1152,7 @@ function scratchHarness({ scratch = true }: { readonly scratch?: boolean } = {})
   const harness = makeHarness({
     managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
       namedProjectsRoot: "/projects",
+      homeRoot: "/unused-home",
       isScratchProject: (id) => Effect.succeed(scratch && id === projectId),
       folderForThread: (input) =>
         Effect.sync(() => {
@@ -1355,6 +1357,28 @@ it.effect("records the checkout's branch on a root launch that names none", () =
     const threads = yield* ThreadManagement.ThreadManagementService;
     const { thread } = yield* threads.getThreadProjection(launched.threadId);
     assert.equal(thread.branch, "fix/checkout-total");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("starts only Home's own thread in Home's folder", () => {
+  const harness = makeHarness({
+    managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/projects",
+      homeRoot: project.workspaceRoot,
+      isScratchProject: () => Effect.succeed(false),
+      folderForThread: () => Effect.succeedNone,
+    }),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const refused = yield* launches
+      .launch(launchInput({ command: "command:launch:in-home", thread: "thread:launch:in-home" }))
+      .pipe(Effect.flip);
+    assert.equal(refused._tag, "ThreadLaunchError");
+    const home = yield* launches.launch(
+      launchInput({ command: "command:launch:home", thread: "home:launch" }),
+    );
+    assert.equal(home.threadId, "home:launch");
   }).pipe(Effect.provide(harness.layer));
 });
 
@@ -2525,6 +2549,7 @@ it.effect("reports one concurrent same-command launch as new and the rest as res
     const harness = makeHarness({
       managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
+        homeRoot: "/unused-home",
         isScratchProject: () => Effect.succeed(false),
         folderForThread: () =>
           Ref.updateAndGet(arrived, (count) => count + 1).pipe(

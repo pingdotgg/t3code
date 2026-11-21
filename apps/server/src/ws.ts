@@ -136,6 +136,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as Workflows from "./workflows/Workflows.ts";
+import * as HomeService from "./home/HomeService.ts";
 import * as WorkflowRuntime from "./workflows/WorkflowRuntime.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as FeedbackStore from "./feedback/FeedbackStore.ts";
@@ -1511,6 +1512,7 @@ export const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const workflows = yield* Workflows.Workflows;
+      const home = yield* HomeService.HomeService;
       const workflowDefinitions = yield* WorkflowRuntime.WorkflowDefinitions;
       // The service's messages are built from its own attributes, so they are safe to send.
       const toWorkflowRequestError = (error: Workflows.WorkflowError) =>
@@ -2406,6 +2408,15 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
+        [WS_METHODS.homeEnable]: (input) => home.enable(input),
+        [WS_METHODS.homeDisable]: (_input) => home.disable,
+        [WS_METHODS.homeReset]: (_input) => home.reset,
+        [WS_METHODS.homeSetModel]: (input) => home.setModel(input.modelSelection),
+        [WS_METHODS.homeNotesRead]: (_input) =>
+          home.readNotes.pipe(Effect.map((text) => ({ text }))),
+        [WS_METHODS.homeNotesWrite]: (input) => home.writeNotes(input.text),
+        [WS_METHODS.homeWatchesList]: (_input) =>
+          home.read.pipe(Effect.map(({ watches }) => ({ watches }))),
         [WS_METHODS.workflowsSubscribe]: (input) =>
           input.changes === true ? workflows.watch : Workflows.wholeLists(workflows.watch),
         [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
