@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
@@ -81,10 +83,12 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         ];
 
         expect(yield* mergeClaudeProcessEnvironment({ homePath }, undefined, host)).toEqual({
+          CLAUDE_CODE_ARTIFACT: "0",
           CLAUDE_CODE_ENTRYPOINT: "t3-code",
           KEEP: "1",
         });
         expect(yield* mergeClaudeProcessEnvironment({ homePath }, instance, host)).toEqual({
+          CLAUDE_CODE_ARTIFACT: "0",
           CLAUDE_CODE_ENTRYPOINT: "instance",
           CLAUDE_EFFORT: "low",
           KEEP: "1",
@@ -99,5 +103,30 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
             .CLAUDE_CODE_ENTRYPOINT,
         ).toBe("custom");
       }),
+  );
+
+  it.effect("turns Claude artifacts off unless the host or instance environment sets them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const homePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
+      const instance = [{ name: "CLAUDE_CODE_ARTIFACT", value: "1", sensitive: false }];
+
+      expect(
+        (yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {})).CLAUDE_CODE_ARTIFACT,
+      ).toBe("0");
+      expect(
+        (yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {
+          CLAUDE_CODE_ARTIFACT: "1",
+        })).CLAUDE_CODE_ARTIFACT,
+      ).toBe("1");
+      expect(
+        (yield* mergeClaudeProcessEnvironment({ homePath }, instance, {})).CLAUDE_CODE_ARTIFACT,
+      ).toBe("1");
+      const windows = yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {
+        claude_code_artifact: "1",
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      expect(windows.claude_code_artifact).toBe("1");
+      expect(windows).not.toHaveProperty("CLAUDE_CODE_ARTIFACT");
+    }),
   );
 });
