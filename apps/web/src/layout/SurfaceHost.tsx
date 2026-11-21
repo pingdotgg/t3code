@@ -212,6 +212,7 @@ type ClosingTab = { placed: { slot: LayoutPaneSlot; style: React.CSSProperties }
   | { kind: "bare" }
 );
 const NO_GHOSTS: ReadonlyMap<string, ClosingTab> = new Map();
+const DRAG_SLOTS: ReadonlyMap<string, { slot: LayoutPaneSlot }> = new Map();
 
 /** A shown surface tab, by the pane and thread it shows in. */
 interface SurfaceMountRequest {
@@ -1615,7 +1616,9 @@ export function LayoutSurfaceHost({
                 : { width: `max(${stripSize.share * 100}%, ${stripSize.minPx}px)` }
           }
         >
-          <PaneMotionSnapshot stageRef={stageRef} slots={slotByTabId} />
+          {/* Pane motion is off for a drag and cannot animate its release, so the drag's frames
+              take no snapshot for it. */}
+          <PaneMotionSnapshot stageRef={stageRef} slots={dragging ? DRAG_SLOTS : slotByTabId} />
           {renderedTabIds.map((tabId) => {
             const entry = chatTabsById.get(tabId);
             const ghost = entry ? null : ghosts.get(tabId);
