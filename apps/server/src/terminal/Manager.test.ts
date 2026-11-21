@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   DEFAULT_TERMINAL_ID,
   ProjectId,
   ThreadId,
@@ -486,6 +487,153 @@ it("restores bounded history across append compaction, clears and split Unicode"
   history.append("z".repeat(maxBytes * 3));
   flush();
   expect(persisted).toBe("z".repeat(maxBytes));
+});
+
+it("stops holding a control sequence that outgrows its limit", () => {
+  const stringLimit = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
+  const csiLimit = 4_096;
+  // No final byte for a CSI and no terminator for a string.
+  const digits = "0123456789 123\r\n".repeat(64);
+  // History gets one ST where a sequence is dropped.
+  const st = "\u001b\\";
+  // The next ESC cuts this title short, so it goes to history with no terminator.
+  const leftOpen = "\u001b]0;one";
+  // The terminal runs the carriage returns and line feeds inside a CSI while it waits for the
+  // final byte.
+  const lineBreaks = (fed: string) => fed.replaceAll(/[^\r\n]/g, "");
+  // The last UTF-8 byte of U+20805 is 0x85, NEL, which ends a CSI or a string other than OSC.
+  // History replays it as ESC E.
+  const splitCodePoint = ["\ud842", "\udc05"];
+  for (const { name, open, limit, filler = digits, end, history } of [
+    {
+      name: "DCS, split code point",
+      open: `${leftOpen}\u001bPstuck`,
+      limit: stringLimit,
+      end: splitCodePoint,
+      history: () => `${leftOpen}${st}\u001bE`,
+    },
+    // Each piece's U+0090 ends the sequence before it and opens a DCS that the piece drops.
+    {
+      name: "DCS opened by U+0090",
+      open: "\u001b[",
+      limit: stringLimit,
+      filler: `\u0090${"y".repeat(stringLimit)}`,
+      end: ["\u001b", "\\"],
+      history: () => st.repeat(3),
+    },
+    { name: "OSC, BEL", open: "\u001b]0;", limit: stringLimit, end: ["\u0007"], history: () => st },
+    {
+      name: "OSC, ESC",
+      open: "\u001b]0;",
+      limit: stringLimit,
+      end: ["\u001b[31m"],
+      history: () => `${st}\u001b[31m`,
+    },
+    {
+      name: "CSI, final byte",
+      open: `${leftOpen}\u001b[`,
+      limit: csiLimit,
+      end: ["\nm"],
+      history: (fed: string) => `${leftOpen}${st}${lineBreaks(fed)}\n`,
+    },
+    {
+      name: "CSI, CAN",
+      open: "\u001b[",
+      limit: csiLimit,
+      end: ["\u0018"],
+      history: (fed: string) => `${st}${lineBreaks(fed)}`,
+    },
+    {
+      name: "CSI, U+0090",
+      open: "\u001b[",
+      limit: csiLimit,
+      end: ["\n\u0090kept\u001b\\"],
+      history: (fed: string) => `${st}${lineBreaks(fed)}\n\u001bPkept\u001b\\`,
+    },
+    // An ESC abandons the CSI and starts a sequence that is kept.
+    {
+      name: "CSI, ESC",
+      open: "\u001b[",
+      limit: csiLimit,
+      end: ["\n\u001b[31m"],
+      history: (fed: string) => `${st}${lineBreaks(fed)}\n\u001b[31m`,
+    },
+    {
+      name: "CSI, split code point",
+      open: "\u001b[",
+      limit: csiLimit,
+      end: ["\n", ...splitCodePoint],
+      history: (fed: string) => `${st}${lineBreaks(fed)}\n\u001bE`,
+    },
+  ]) {
+    let held = "";
+    let visible = "";
+    const feed = (data: string) => {
+      const sanitized = TerminalManager.sanitizeTerminalHistoryChunk(held, data);
+      held = sanitized.pendingControlSequence;
+      visible += sanitized.visibleText;
+    };
+    const fed = filler.repeat(Math.ceil(limit / filler.length) + 2);
+
+    feed("before\n");
+    feed(open);
+    for (let offset = 0; offset < fed.length; offset += filler.length) {
+      feed(fed.slice(offset, offset + filler.length));
+    }
+    expect(held.length, name).toBeLessThanOrEqual(4);
+
+    for (const data of end) feed(data);
+    feed("after\n");
+    expect(held, name).toBe("");
+    expect(visible, name).toBe(`before\n${history(fed)}after\n`);
+  }
+
+  // Held text of exactly the limit stays held, and one more code unit passes the limit. Output
+  // before it in the same chunk is kept, and so is a last code unit that may begin the end. A C1
+  // introducer counts as its ESC form.
+  const afterOutput = (data: string) =>
+    TerminalManager.sanitizeTerminalHistoryChunk("", `before\n${data}`);
+  const string = "\u001b]".padEnd(stringLimit, "0");
+  const csi = "\u001b[".padEnd(csiLimit, "0");
+  for (const atLimit of [string, csi]) {
+    expect(afterOutput(atLimit), atLimit.slice(0, 2)).toEqual({
+      visibleText: "before\n",
+      pendingControlSequence: atLimit,
+    });
+  }
+  // A sequence that ends in the chunk where it passes the limit is kept whole.
+  for (const ended of [`${string}0\u0007`, `${csi}0m`]) {
+    expect(afterOutput(ended), `${ended.slice(0, 2)} ends`).toEqual({
+      visibleText: `before\n${ended}`,
+      pendingControlSequence: "",
+    });
+  }
+  expect(afterOutput(`${string}\u001b`), "string past the limit").toEqual({
+    visibleText: `before\n${st}`,
+    pendingControlSequence: "\u0018\u001b]\u001b",
+  });
+  expect(afterOutput(`\u001b[\u009b${csi.slice(2)}\ud842`), "CSI past the limit").toEqual({
+    visibleText: `before\n${st}`,
+    pendingControlSequence: "\u0018\u001b[\ud842",
+  });
+  expect(afterOutput(`${string}\ud842`), "string past the limit, high surrogate").toEqual({
+    visibleText: `before\n${st}`,
+    pendingControlSequence: "\u0018\u001b]\ud842",
+  });
+  // libghostty ignores intermediates past the fourth, so an escape sequence keeps the first four.
+  const escape = '\u001b!"#$';
+  expect(afterOutput(`${escape}%`), "escape sequence past the limit").toEqual({
+    visibleText: "before\n",
+    pendingControlSequence: escape,
+  });
+  expect(TerminalManager.sanitizeTerminalHistoryChunk(escape, "&'"), "escape stays cut").toEqual({
+    visibleText: "",
+    pendingControlSequence: escape,
+  });
+  expect(TerminalManager.sanitizeTerminalHistoryChunk(escape, "&'B"), "escape ends").toEqual({
+    visibleText: `${escape}&'B`,
+    pendingControlSequence: "",
+  });
 });
 
 it.layer(
