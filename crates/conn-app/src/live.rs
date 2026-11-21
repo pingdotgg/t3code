@@ -85,3 +85,21 @@ pub(crate) fn window_from_env() -> Option<[f32; 4]> {
         _ => None,
     }
 }
+
+/// `CONN_GPUI_THEME_FILE`: a Conn theme JSON file to use and to watch for edits (dev loop).
+pub(crate) fn theme_file_from_env() -> Option<std::path::PathBuf> {
+    std::env::var_os("CONN_GPUI_THEME_FILE").map(std::path::PathBuf::from)
+}
+
+/// Reads and parses a Conn theme JSON file into its definition and tokens.
+pub(crate) fn load_theme_file(path: &std::path::Path) -> Result<(ThemeDefinition, Tokens), String> {
+    let json = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let id = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("theme-file")
+        .to_owned();
+    let theme = conn_theme::parse_theme_json(&id, &json).map_err(|e| e.to_string())?;
+    let tokens = Tokens::derive(&theme);
+    Ok((theme, tokens))
+}

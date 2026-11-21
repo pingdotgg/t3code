@@ -129,6 +129,9 @@ impl ConnApp {
             },
         )
         .detach();
+        if let Some(path) = crate::live::theme_file_from_env() {
+            Self::watch_theme_file(path, cx);
+        }
         let right_panel = cx.new(|cx| {
             let mut panel =
                 crate::panels::RightPanel::new(tokens.clone(), connection.clone(), window, cx);
@@ -966,6 +969,36 @@ impl ConnApp {
 
     pub(crate) fn connection_status(&self) -> Option<&ConnectionStatus> {
         self.status.as_ref()
+    }
+
+    /// Dev loop: applies `CONN_GPUI_THEME_FILE` now and again whenever the file changes, so
+    /// theme colors and the shell tokens derived from them can be tuned live, no rebuild.
+    fn watch_theme_file(path: std::path::PathBuf, cx: &mut Context<'_, Self>) {
+        cx.spawn(async move |this, cx| {
+            let mut seen: Option<std::time::SystemTime> = None;
+            loop {
+                let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+                if modified.is_some() && modified != seen {
+                    seen = modified;
+                    let loaded = crate::live::load_theme_file(&path);
+                    let alive = this.update(cx, |app, cx| match loaded {
+                        Ok((theme, tokens)) => {
+                            eprintln!("theme file: applied {}", path.display());
+                            app.theme_id = theme.id;
+                            app.set_tokens(tokens, cx);
+                        }
+                        Err(error) => eprintln!("theme file: {error}"),
+                    });
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(300))
+                    .await;
+            }
+        })
+        .detach();
     }
 
     /// Switches to a built-in theme by id. Returns false for an unknown id.
