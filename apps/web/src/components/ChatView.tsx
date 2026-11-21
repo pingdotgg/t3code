@@ -1737,7 +1737,7 @@ export default function ChatView(props: ChatViewProps) {
       gitStatusAtom
         ? chatGitStatusAtom(
             workspaceRevision.pending
-              ? revisionedQuery(gitStatusAtom, undefined, gitStatusRevision)
+              ? revisionedQuery(gitStatusAtom, undefined, { startedUnder: gitStatusRevision })
               : revisionedQuery(
                   gitStatusAtom,
                   workspaceMutationId === null ? undefined : gitStatusRevision,

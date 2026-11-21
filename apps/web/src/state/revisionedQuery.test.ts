@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -22,8 +23,11 @@ function setup(readQuery: (cache: Atom.Atom<number>) => Atom.Atom<number> = (cac
       return fetches;
     }).pipe(Atom.keepAlive),
   );
-  const mount = async (revision: string | null | undefined, startedUnder?: string) => {
-    const release = registry.mount(revisionedQuery(query, revision, startedUnder));
+  const mount = async (
+    revision: string | null | undefined,
+    options?: Parameters<typeof revisionedQuery>[2],
+  ) => {
+    const release = registry.mount(revisionedQuery(query, revision, options));
     // A stale read refetches in a microtask, after the render that read it.
     await Promise.resolve();
     return () => {
@@ -132,49 +136,81 @@ describe("revisionedQuery", () => {
 
   it("records a fetch started without a revision under the one it names", async () => {
     const fresh = setup();
-    (await fresh.mount(undefined, "visit-b"))();
+    (await fresh.mount(undefined, { startedUnder: "visit-b" }))();
     (await fresh.mount("visit-b"))();
     expect(fresh.fetches()).toBe(1);
 
     // Cached before that read: the revision still refetches it.
     const cached = setup();
     (await cached.mount("thread-a-1"))();
-    (await cached.mount(undefined, "visit-b"))();
+    (await cached.mount(undefined, { startedUnder: "visit-b" }))();
     expect(cached.fetches()).toBe(1);
     (await cached.mount("visit-b"))();
     expect(cached.fetches()).toBe(2);
   });
 
-  it("does not refetch for either of two readers when a thread's history loads", async () => {
+  it("refetches once for two readers of one query, and not when a thread's history loads", async () => {
     const { mount, fetches } = setup();
+    (await mount("thread-a-1", { detail: "status" }))();
+    (await mount("thread-a-1"))();
+    expect(fetches()).toBe(1);
+
     let visit = advanceWorkspaceVisit(
       null,
       { threadKey: "thread-b", unloaded: true, mutationId: null },
       "view",
     );
-    // The Changes totals and the Diff panel read one query, each under its own format, and
-    // stay mounted through the load as a rendered component does.
-    let release = () => {};
+    // The Changes totals, which add status totals of their own, then the Diff panel.
     const render = async (unloaded: boolean, mutationId: string | null) => {
       visit = advanceWorkspaceVisit(visit, { threadKey: "thread-b", unloaded, mutationId }, "view");
       const { revision } = workspaceRevisionOf(visit, mutationId);
-      const releaseTotals = await mount(JSON.stringify([revision, "status"]));
-      const releaseDiff = await mount(revision);
-      release();
-      release = () => {
-        releaseTotals();
-        releaseDiff();
-      };
+      (await mount(revision, { detail: "status" }))();
+      (await mount(revision))();
     };
 
     await render(true, null);
-    const opened = fetches();
+    expect(fetches()).toBe(2);
     await render(false, "thread-b-1");
-    expect(fetches()).toBe(opened);
-
+    expect(fetches()).toBe(2);
     await render(false, "thread-b-2");
-    expect(fetches()).toBeGreaterThan(opened);
-    release();
+    expect(fetches()).toBe(3);
+  });
+
+  it("refetches when a reader's own detail changes, whatever the other readers read", async () => {
+    const { mount, fetches } = setup();
+
+    (await mount("mutation-1", { detail: "status-1" }))();
+    (await mount("mutation-1"))();
+    (await mount("mutation-1", { detail: "status-1" }))();
+    expect(fetches()).toBe(1);
+
+    (await mount("mutation-1", { detail: "status-2" }))();
+    expect(fetches()).toBe(2);
+    (await mount("mutation-1"))();
+    expect(fetches()).toBe(2);
+  });
+
+  it("leaves a fetch that began after the revision changed to finish", async () => {
+    let fetches = 0;
+    const registry = AtomRegistry.make();
+    const query = Atom.make(
+      Effect.suspend(() => ((fetches += 1) === 1 ? Effect.succeed(fetches) : Effect.never)),
+    ).pipe(Atom.keepAlive);
+
+    registry.mount(revisionedQuery(query, "mutation-1"));
+    await Promise.resolve();
+    expect(fetches).toBe(1);
+
+    // Another reader's own refresh lands between the read and its deferred refetch.
+    registry.mount(revisionedQuery(query, "mutation-2"));
+    registry.refresh(query);
+    await Promise.resolve();
+    expect(fetches).toBe(2);
+
+    // A fetch already in flight when the revision changes started before the change.
+    registry.mount(revisionedQuery(query, "mutation-3"));
+    await Promise.resolve();
+    expect(fetches).toBe(3);
   });
 
   it("does not restart the fetch of a query whose cache is gone", async () => {
