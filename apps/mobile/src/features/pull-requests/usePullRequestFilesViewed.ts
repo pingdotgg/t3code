@@ -1,7 +1,9 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestDetail } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
 import { use, useState } from "react";
 import {
   composerPullRequests,
@@ -13,6 +15,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { viewedOverlay, type ViewedState } from "./pullRequestFilesViewed";
+import { m } from "../../i18n/messages";
 
 export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullRequestDetail | null) {
   const registry = use(RegistryContext);
@@ -71,7 +74,10 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
       return {
         ...current,
         presses: rest,
-        error: cause instanceof Error ? cause.message : "Could not update viewed files.",
+        error:
+          cause instanceof Error
+            ? (errorDisplayMessage(cause, m) ?? cause.message)
+            : m(msg("Could not update viewed files.")),
       };
     });
     refresh();

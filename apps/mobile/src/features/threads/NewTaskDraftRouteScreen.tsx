@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   CommonActions,
   useRoute,
@@ -6,6 +7,7 @@ import {
   usePreventRemoveContext,
   type StaticScreenProps,
 } from "@react-navigation/native";
+import { msg, T, useGT } from "gt-react-native";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { useAtomValue } from "@effect/atom-react";
@@ -16,6 +18,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { AppText as Text } from "../../components/ui/AppText";
+import { m } from "../../i18n/messages";
 import { useProjects } from "../../state/entities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { rootNavigationRef } from "../../lib/rootNavigation";
@@ -67,8 +70,8 @@ const branchCheckouts = makeNewTaskBranchCheckouts({
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not switch branch",
-        error instanceof Error ? error.message : "The branch could not be checked out.",
+        m(msg("Could not switch branch")),
+        errorDisplayMessage(error, m) ?? m(msg("The branch could not be checked out.")),
       );
     }
     rootNavigationRef.dispatch({
@@ -89,6 +92,7 @@ const idleBranchCheckoutAtom = Atom.make(AsyncResult.initial<BranchCheckoutResul
 );
 
 export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraftRouteParams>) {
+  const gt = useGT();
   const currentRoute = useRoute();
   const goBack = useWorkspaceBackNavigation();
   const params = route.params ?? {};
@@ -199,9 +203,11 @@ export function NewTaskDraftRouteScreen({ route }: StaticScreenProps<NewTaskDraf
   return (
     <>
       {preparingBranch ? (
-        <ThreadScreenFallback header={<AppBar title="New thread" onBack={goBack} />}>
+        <ThreadScreenFallback header={<AppBar title={gt("New thread")} onBack={goBack} />}>
           <View className="flex-1 items-center justify-center bg-screen">
-            <Text className="text-foreground">Switching branch...</Text>
+            <Text className="text-foreground">
+              <T>Switching branch...</T>
+            </Text>
           </View>
         </ThreadScreenFallback>
       ) : (

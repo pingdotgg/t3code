@@ -9,6 +9,8 @@ import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/sh
 
 import type { EnvironmentThreadShell } from "./state/models.ts";
 import { threadSearchSubject, type ThreadSearchShell } from "./state/threadSearch.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 const COMPOSER_THREAD_RESULT_LIMIT = 5;
 
@@ -25,29 +27,38 @@ export interface ComposerThreadItem {
 
 /**
  * Threads to reference from the composer, matched and ranked like the command
- * palette, without subagent or side chat threads. The agent reads threads on its own server
- * and on the machines it links to, so candidates stay within those, and a linked
- * machine's threads say which machine they are on.
+ * palette, without subagent threads or other threads' side chats. The agent reads threads
+ * on its own server and on the machines it links to, so candidates stay within those, and a
+ * linked machine's threads say which machine they are on.
  */
-export function matchComposerThreadItems(input: {
-  shells: ReadonlyArray<ComposerThreadCandidate>;
-  environmentId: EnvironmentId;
-  /** The machines the composer's environment links to, by name. */
-  linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
-  excludeThreadId: ThreadId | null;
-  query: string;
-  /** Recency is measured against this time. */
-  now: number;
-}): ComposerThreadItem[] {
+export function matchComposerThreadItems(
+  input: {
+    shells: ReadonlyArray<ComposerThreadCandidate>;
+    environmentId: EnvironmentId;
+    /** The machines the composer's environment links to, by name. */
+    linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
+    excludeThreadId: ThreadId | null;
+    query: string;
+    /** Recency is measured against this time. */
+    now: number;
+  },
+  resolve: MFunctionType = mFallback,
+): ComposerThreadItem[] {
   const query = foldSearchQuery(input.query);
   if (query.length === 0) return [];
+  // Closing an unused side chat deletes it, so only one with a message is offered.
+  const isOwnSideChat = (shell: ComposerThreadCandidate) =>
+    shell.lineage.sideChat === true &&
+    shell.environmentId === input.environmentId &&
+    shell.lineage.parentThreadId === input.excludeThreadId &&
+    shell.latestUserMessageAt !== null;
   const candidates = input.shells.filter(
     (shell) =>
       (shell.environmentId === input.environmentId ||
         input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
-      isListedThreadLineage(shell.lineage),
+      (isListedThreadLineage(shell.lineage) || isOwnSideChat(shell)),
   );
   return rankSearchItems(candidates, (shell, options) =>
     scoreThreadSearch(query, threadSearchSubject(shell, null), input.now, {
@@ -66,7 +77,11 @@ export function matchComposerThreadItems(input: {
         type: "thread",
         thread: { environmentId: shell.environmentId, threadId: shell.id },
         label: shell.title,
-        description: machine === undefined ? "Thread" : `Thread on ${machine}`,
+        description: isOwnSideChat(shell)
+          ? resolve(msg("Side chat"))
+          : machine === undefined
+            ? resolve(msg("Thread", { $context: "noun, search result type" }))
+            : resolve(msg("Thread on {machine}", { machine })),
       };
     });
 }
@@ -87,18 +102,29 @@ export interface ComposerEnvironmentItem {
 }
 
 /**
- * The user's machines the `@` picker offers, so the agent can link or work there. The
- * composer's own environment is left out. Like threads, they need a query: bare `@` stays a
- * file picker.
+ * The machines the `@` picker offers, so the agent can link or work there: the client's paired
+ * machines and those the composer's environment links to. The composer's own environment is
+ * left out. Like threads, they need a query: bare `@` stays a file picker.
  */
-export function matchComposerEnvironmentItems(input: {
-  environments: ReadonlyArray<ComposerEnvironmentCandidate>;
-  environmentId: EnvironmentId;
-  query: string;
-}): ComposerEnvironmentItem[] {
+export function matchComposerEnvironmentItems(
+  input: {
+    environments: ReadonlyArray<ComposerEnvironmentCandidate>;
+    /** The machines the composer's environment links to, by name. */
+    linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
+    environmentId: EnvironmentId;
+    query: string;
+  },
+  resolve: MFunctionType = mFallback,
+): ComposerEnvironmentItem[] {
   const query = input.query.trim().toLowerCase();
   if (query.length === 0) return [];
-  return input.environments
+  const paired = new Set(input.environments.map((environment) => environment.environmentId));
+  const linkedOnly = Array.from(input.linkedEnvironments, ([environmentId, label]) => ({
+    environmentId,
+    label,
+    machine: "server" as const,
+  })).filter((environment) => !paired.has(environment.environmentId));
+  return [...input.environments, ...linkedOnly]
     .filter(
       (environment) =>
         environment.environmentId !== input.environmentId &&
@@ -110,6 +136,6 @@ export function matchComposerEnvironmentItems(input: {
       environmentId: environment.environmentId,
       machine: environment.machine,
       label: environment.label,
-      description: "Machine",
+      description: resolve(msg("Machine", { $context: "noun, search result type" })),
     }));
 }

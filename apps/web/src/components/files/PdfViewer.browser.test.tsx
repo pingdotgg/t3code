@@ -142,6 +142,39 @@ it("fits the width, then finds split and rotated text and jumps to its page", as
   }
 });
 
+it("keeps the painted page while its width changes, then repaints it without a blank frame", async () => {
+  const url = URL.createObjectURL(testPdf());
+  try {
+    const container = document.createElement("div");
+    container.style.cssText = "display:flex;width:500px;height:600px";
+    await using screen = await render(<PdfViewer src={url} title="Resized PDF" />, { container });
+    await expect.element(screen.getByText("1 / 2 pages"), { timeout: 10_000 }).toBeVisible();
+    const region = screen.container.querySelector<HTMLElement>('[role="region"]')!;
+    const canvas = region.querySelector<HTMLCanvasElement>('canvas[aria-label="Page 1"]')!;
+    const bitmapWidth = () =>
+      Math.ceil((region.clientWidth - 32) * Math.min(2, window.devicePixelRatio));
+    await vi.waitFor(() => expect(canvas.width).toBe(bitmapWidth()));
+    const painted = canvas.width;
+
+    // A canvas loses its pixels when its bitmap is resized, so read them as soon as that happens.
+    const repainted = new Promise<number[]>((resolve) =>
+      new MutationObserver(() =>
+        resolve(Array.from(canvas.getContext("2d")!.getImageData(0, 0, 1, 1).data)),
+      ).observe(canvas, { attributeFilter: ["width"] }),
+    );
+    const resized = new Promise((resolve) => new ResizeObserver(resolve).observe(container));
+    container.style.width = "400px";
+    await resized;
+    expect(canvas.getBoundingClientRect().width).toBe(region.clientWidth - 32);
+    expect(canvas.width).toBe(painted);
+
+    expect(await repainted).toEqual([255, 255, 255, 255]);
+    expect(canvas.width).toBe(bitmapWidth());
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
 it("jumps to the first hit while still counting and keeps later manual navigation", async () => {
   setup(4);
   const page = (text: string) => ({

@@ -72,7 +72,8 @@ vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
+  // Doubles as the add-project folder scan, which finds nothing to track.
+  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: { folders: [] } }),
 }));
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),

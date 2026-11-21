@@ -1,5 +1,7 @@
 import * as JsonSchemaGenerator from "@effect/openapi-generator/JsonSchemaGenerator"
-import { describe, expect, it } from "@effect/vitest"
+import { assert, describe, expect, it } from "@effect/vitest"
+import * as Schema from "effect/Schema"
+import { withGeneratedModule } from "../../../effect/test/utils/generatedModule.ts"
 
 describe("JsonSchemaGenerator", () => {
   it("schema & no definitions", () => {
@@ -7,8 +9,7 @@ describe("JsonSchemaGenerator", () => {
     generator.addSchema("A", { type: "string" })
     const definitions = {}
     const result = generator.generate("openapi-3.1", definitions, false)
-    expect(result).toBe(`// schemas
-export type A = string
+    expect(result).toBe(`export type A = string
 export const A = Schema.String
 `)
   })
@@ -20,10 +21,8 @@ export const A = Schema.String
       B: { type: "string" }
     }
     const result = generator.generate("openapi-3.1", definitions, false)
-    expect(result).toBe(`// non-recursive definitions
-export type B = string
+    expect(result).toBe(`export type B = string
 export const B = Schema.String.annotate({ "identifier": "B" })
-// schemas
 export type A = B
 export const A = B
 `)
@@ -40,8 +39,7 @@ export const A = B
         return out
       }
     })
-    expect(result).toBe(`// schemas
-export type A = string
+    expect(result).toBe(`export type A = string
 export const A = Schema.String.annotate({ "description": "desc" })
 `)
   })
@@ -51,10 +49,26 @@ export const A = Schema.String.annotate({ "description": "desc" })
     generator.addSchema("A", { type: "string", description: "desc", examples: ["ex"] })
     const definitions = {}
     const result = generator.generate("openapi-3.1", definitions, false)
-    expect(result).toBe(`// schemas
-export type A = string
+    expect(result).toBe(`export type A = string
 export const A = Schema.String.annotate({ "description": "desc", "examples": ["ex"] })
 `)
+  })
+
+  it("omits examples with excess properties on closed objects while retaining valid examples", () => {
+    const generator = JsonSchemaGenerator.make()
+    generator.addSchema("A", {
+      type: "object",
+      properties: { value: { type: "string" } },
+      additionalProperties: false,
+      examples: [{ value: "valid" }, { value: "invalid", extra: true }]
+    })
+
+    assert.strictEqual(
+      generator.generate("openapi-3.1", {}, false),
+      `export type A = { readonly "value"?: string }
+export const A = Schema.Struct({ "value": Schema.optionalKey(Schema.String) }).annotate({ "examples": [{ "value": "valid" }] })
+`
+    )
   })
 
   const definitions = {
@@ -167,16 +181,14 @@ export const B = Schema.Struct({ "id": Schema.String })`)
       }
     }
     const result = generator.generate("openapi-3.1", definitions, false)
-    expect(result).toBe(`// recursive definitions
-export type B = { readonly "name": string, readonly "children": ReadonlyArray<B> }
+    expect(result).toBe(`export type B = { readonly "name": string, readonly "children": globalThis.ReadonlyArray<B> }
 export const B = Schema.Struct({ "name": Schema.String, "children": Schema.Array(Schema.suspend((): Schema.Codec<B> => B)) }).annotate({ "identifier": "B" })
-// schemas
 export type A = B
 export const A = B
 `)
   })
 
-  it("hoists recursive definitions referenced by earlier recursive definitions", () => {
+  it("initializes mutually recursive definitions", async () => {
     const generator = JsonSchemaGenerator.make()
     generator.addSchema("A", { $ref: "#/components/schemas/ResourcesNetworkCard" })
     const definitions = {
@@ -204,20 +216,17 @@ export const A = B
     }
 
     const result = generator.generate("openapi-3.1", definitions, false)
-    const recursiveDeclaration =
-      "export const ResourcesNetworkCard = Schema.suspend((): Schema.Codec<ResourcesNetworkCard> => __recursive_ResourcesNetworkCard)"
-
-    expect(result).toContain(recursiveDeclaration)
-    expect(result).toContain("const __recursive_ResourcesNetworkCard =")
-    expect(result.indexOf(recursiveDeclaration)).toBeLessThan(
-      result.indexOf("export const ResourcesNetworkCardSRIOV =")
-    )
-    expect(result.indexOf("export const ResourcesNetworkCardSRIOV =")).toBeLessThan(
-      result.indexOf("const __recursive_ResourcesNetworkCard =")
+    await withGeneratedModule<{ A: Schema.Codec<unknown> }>(
+      "import * as Schema from \"effect/Schema\"\n" + result,
+      ({ A }) => {
+        const value = { sriov: { vfs: [{ sriov: { vfs: [] } }] } }
+        assert.deepStrictEqual(Schema.decodeUnknownSync(A)(value), value)
+        assert.isFalse(Schema.is(A)({ sriov: { vfs: [1] } }))
+      }
     )
   })
 
-  it("renders recursive definitions before non-recursive references for runtime generation", () => {
+  it("initializes recursive definitions used by non-recursive schemas", async () => {
     const generator = JsonSchemaGenerator.make()
     generator.addSchema("A", { $ref: "#/components/schemas/ErrorResponse" })
     const definitions = {
@@ -255,21 +264,20 @@ export const A = B
       }
     }
 
-    const runtimeResult = generator.generate("openapi-3.1", definitions, false)
-    const recursiveDeclaration =
-      "export const ErrorDetails = Schema.suspend((): Schema.Codec<ErrorDetails> => __recursive_ErrorDetails)"
-
-    expect(runtimeResult).toContain(recursiveDeclaration)
-    expect(runtimeResult).toContain("const __recursive_ErrorDetails =")
-    expect(runtimeResult.indexOf(recursiveDeclaration)).toBeLessThan(
-      runtimeResult.indexOf("export const ErrorResponse =")
-    )
-
-    const httpApiResult = generator.generateHttpApi("openapi-3.1", definitions)
-    expect(httpApiResult).toContain(recursiveDeclaration)
-    expect(httpApiResult).toContain("const __recursive_ErrorDetails =")
-    expect(httpApiResult.indexOf(recursiveDeclaration)).toBeLessThan(
-      httpApiResult.indexOf("export const ErrorResponse =")
-    )
+    for (
+      const source of [
+        generator.generate("openapi-3.1", definitions, false),
+        generator.generateHttpApi("openapi-3.1", definitions)
+      ]
+    ) {
+      await withGeneratedModule<{ A: Schema.Codec<unknown> }>(
+        "import * as Schema from \"effect/Schema\"\n" + source,
+        ({ A }) => {
+          const value = { errors: { path: { field: "a" } } }
+          assert.deepStrictEqual(Schema.decodeUnknownSync(A)(value), value)
+          assert.isFalse(Schema.is(A)({ errors: { path: { field: 1 } } }))
+        }
+      )
+    }
   })
 })
