@@ -3,6 +3,7 @@ import {
   extractClaudeSubagentSessionEvent,
   isClaudeProvisionalSubagentTool,
 } from "./claudeAcp.ts";
+import { readMistralVibeUsageLimits } from "./mistralVibeUsageLimits.ts";
 import {
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
@@ -38,6 +39,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
@@ -72,7 +74,12 @@ export const ACP_REGISTRY_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(ACP_R
 const DEFAULT_ACP_REGISTRY_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({});
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 
-export interface AcpRegistryAdapterV2Options {
+export interface AcpRegistryAdapterV2Extras {
+  /** Receives usage limits read from a live session; only Mistral Vibe reports them. */
+  readonly onUsageLimits?: (report: ProviderUsageLimitsReport) => Effect.Effect<void>;
+}
+
+export interface AcpRegistryAdapterV2Options extends AcpRegistryAdapterV2Extras {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
   readonly settings: AcpRegistrySettings;
   readonly environment: NodeJS.ProcessEnv;
@@ -299,7 +306,19 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                 ),
             ),
         }),
-    ...(isVibe ? { registerExtensions: registerMistralVibeAcpExtensions } : {}),
+    ...(isVibe
+      ? {
+          registerExtensions: registerMistralVibeAcpExtensions,
+          afterPromptSettled: ({ runtime, sessionId }) =>
+            options.onUsageLimits === undefined
+              ? Effect.void
+              : readMistralVibeUsageLimits({
+                  runtime,
+                  sessionId,
+                  onUsageLimits: options.onUsageLimits,
+                }),
+        }
+      : {}),
     ...(isClaude
       ? {
           followAgentWorkState: true,
@@ -426,6 +445,45 @@ export type AcpRegistryAdapterV2DriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 
+/** The driver's create, plus the extras the driver wires to its snapshot. */
+export const createAcpRegistryAdapterV2 = Effect.fn("AcpRegistryAdapterV2Driver.create")(
+  function* (
+    input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>,
+    extras?: AcpRegistryAdapterV2Extras,
+  ) {
+    const hostEnvironment = yield* HostProcess.Environment;
+    const selfInvocation = yield* resolveSelfInvocation();
+    const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+    const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
+    return yield* makeAcpRegistryAdapterV2({
+      instanceId: input.instanceId,
+      settings: { ...input.config, enabled: input.enabled },
+      environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+      selfInvocation,
+      continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
+      nativeLogging: (threadId) =>
+        makeNativeLogger({
+          nativeEventLogger: providerEventLoggers.native,
+          provider: ACP_REGISTRY_PROVIDER,
+          threadId,
+        }),
+      ...extras,
+    });
+  },
+  (effect, input, _extras?: AcpRegistryAdapterV2Extras) =>
+    effect.pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderAdapterDriverCreateError({
+            driver: ACP_REGISTRY_PROVIDER,
+            instanceId: input.instanceId,
+            detail: "Failed to create ACP Registry adapter.",
+            cause,
+          }),
+      ),
+    ),
+);
+
 export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
   AcpRegistrySettings,
   AcpRegistryAdapterV2DriverEnv
@@ -433,37 +491,5 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
   driverKind: ACP_REGISTRY_PROVIDER,
   configSchema: AcpRegistrySettings,
   defaultConfig: (): AcpRegistrySettings => DEFAULT_ACP_REGISTRY_SETTINGS,
-  create: Effect.fn("AcpRegistryAdapterV2Driver.create")(
-    function* (input: ProviderAdapterDriverCreateInput<AcpRegistrySettings>) {
-      const hostEnvironment = yield* HostProcess.Environment;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
-      return yield* makeAcpRegistryAdapterV2({
-        instanceId: input.instanceId,
-        settings: { ...input.config, enabled: input.enabled },
-        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-        selfInvocation,
-        continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
-        nativeLogging: (threadId) =>
-          makeNativeLogger({
-            nativeEventLogger: providerEventLoggers.native,
-            provider: ACP_REGISTRY_PROVIDER,
-            threadId,
-          }),
-      });
-    },
-    (effect, input) =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapterDriverCreateError({
-              driver: ACP_REGISTRY_PROVIDER,
-              instanceId: input.instanceId,
-              detail: "Failed to create ACP Registry adapter.",
-              cause,
-            }),
-        ),
-      ),
-  ),
+  create: (input) => createAcpRegistryAdapterV2(input),
 };

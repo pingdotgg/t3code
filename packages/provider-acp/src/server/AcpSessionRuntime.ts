@@ -1128,6 +1128,11 @@ export class AcpSessionRuntime extends Context.Service<
     readonly handleUnknownExtNotification: EffectAcpClient.AcpClient["Service"]["handleUnknownExtNotification"];
     readonly handleExtRequest: EffectAcpClient.AcpClient["Service"]["handleExtRequest"];
     readonly handleExtNotification: EffectAcpClient.AcpClient["Service"]["handleExtNotification"];
+    /** Sends an extension request; `method` goes out as written, including its leading `_`. */
+    readonly requestExt: (
+      method: string,
+      params: unknown,
+    ) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
     /** Reads capabilities without authentication, session creation, or MCP startup. */
     readonly initialize: () => Effect.Effect<
       EffectAcpSchema.InitializeResponse,
@@ -2659,6 +2664,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     handleUnknownExtNotification: acp.handleUnknownExtNotification,
     handleExtRequest: acp.handleExtRequest,
     handleExtNotification: acp.handleExtNotification,
+    requestExt: (method, params) => acp.raw.request(method, params),
     initialize: () => initialize,
     authenticate: (methodId) =>
       initialize.pipe(

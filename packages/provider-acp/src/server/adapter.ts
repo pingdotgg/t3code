@@ -601,6 +601,11 @@ export interface AcpAdapterV2Flavor {
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
   ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Forked after each prompt settles; it must absorb its own failures. */
+  readonly afterPromptSettled?: (input: {
+    readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+    readonly sessionId: string;
+  }) => Effect.Effect<void>;
   readonly extractSubagentSessionEvent?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => AcpSubagentSessionEvent | undefined;
@@ -9617,6 +9622,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const compactSession = isCompactionMessage(turnInput.message)
               ? flavor.compactSession
               : undefined;
+            const afterPromptSettled = flavor.afterPromptSettled?.({
+              runtime,
+              sessionId: requestedSessionId,
+            });
             yield* followPrompt(
               context,
               (superseded) =>
@@ -9633,7 +9642,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       } satisfies EffectAcpSchema.PromptResponse),
                     ),
               { generation: promptGeneration, checkPromptOutcome, promptParts, compactSession },
-            ).pipe(Effect.forkIn(sessionScope));
+            ).pipe(
+              // Runs on success and failure alike, so a rate-limited prompt still reports; an
+              // interrupted session is closing and sends nothing.
+              Effect.onExit((exit) =>
+                afterPromptSettled === undefined || Exit.hasInterrupts(exit)
+                  ? Effect.void
+                  : afterPromptSettled.pipe(
+                      Effect.interruptible,
+                      Effect.forkIn(sessionScope),
+                      Effect.asVoid,
+                    ),
+              ),
+              Effect.forkIn(sessionScope),
+            );
           },
           (effect, turnInput) =>
             effect.pipe(

@@ -2473,6 +2473,7 @@ describe("AcpAdapterV2", () => {
       Effect.gen(function* () {
         const instanceId = ProviderInstanceId.make(`vibe-retry-${outcome}`);
         const threadId = ThreadId.make(`thread-vibe-retry-${outcome}`);
+        const settledSessions = yield* Queue.unbounded<string>();
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
@@ -2480,6 +2481,8 @@ describe("AcpAdapterV2", () => {
             driver: ProviderDriverKind.make("acpRegistry"),
             capabilities: AcpProviderCapabilitiesV2,
             registerExtensions: registerMistralVibeAcpExtensions,
+            afterPromptSettled: ({ sessionId }) =>
+              Queue.offer(settledSessions, sessionId).pipe(Effect.asVoid),
             promptFailure: (cause) => acpRegistryPromptFailure("mistral-vibe", cause),
             makeRuntime: makeMockRuntime({
               childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
@@ -2548,6 +2551,8 @@ describe("AcpAdapterV2", () => {
           assert.equal(retries.at(-1)?.status, "completed");
           assert.equal(retries.at(-1)?.title, "Provider recovered");
         }
+        // Every outcome, failed included, settles the prompt and offers the native ACP session to the hook.
+        assert.equal(yield* Queue.take(settledSessions), "mock-session-1");
       }).pipe(Effect.provide(layerTest)),
   );
 
