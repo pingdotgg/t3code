@@ -840,6 +840,121 @@ describe("large text preview recovery", () => {
     expect(screen.container.textContent).toContain("C19");
   });
 
+  it("keeps row height and vertical position stable when scrolling horizontally past multiline cells", async () => {
+    const columns = 16;
+    const header = Array.from({ length: columns }, (_, i) => `Col ${i}`);
+    const wrapped = "long wrapped description text ".repeat(12).trim();
+    const multiline = "first line\nsecond line\nthird line\nfourth line";
+    const rows = [
+      header,
+      ...Array.from({ length: 24 }, (_, rowIndex) =>
+        Array.from({ length: columns }, (_, columnIndex) => {
+          if (columnIndex === 14 && rowIndex % 3 === 0) return wrapped;
+          if (columnIndex === 13 && rowIndex % 3 === 1) return multiline;
+          return `r${rowIndex + 1}-c${columnIndex}`;
+        }),
+      ),
+    ];
+    await using screen = await render(
+      <div style={{ display: "flex", height: 320, width: 480 }}>
+        <VirtualTablePreview
+          name="wide-wrapped.csv"
+          count={rows.length}
+          columns={columns}
+          header={header}
+          getRows={(page) => (page === 0 ? rows : undefined)}
+        />
+      </div>,
+    );
+    const horizontal = () => screen.container.querySelector('[role="table"]')!.parentElement!;
+    const vertical = () => screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+    const row = (index: number) =>
+      screen.container.querySelector<HTMLElement>(`[data-preview-row="${index}"]`)!;
+
+    await vi.waitFor(() => {
+      expect(row(1)).not.toBeNull();
+      expect(row(1).getBoundingClientRect().height).toBeGreaterThan(60);
+    });
+
+    const initialRow1Height = row(1).getBoundingClientRect().height;
+    const initialRow2Height = row(2).getBoundingClientRect().height;
+    const initialRow4Top = row(4).getBoundingClientRect().top;
+
+    // Scroll to the far right where the multiline columns mount and leading columns unmount.
+    await act(() => {
+      horizontal().scrollLeft = horizontal().scrollWidth;
+      horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("fourth line"));
+
+    expect(Math.abs(row(1).getBoundingClientRect().height - initialRow1Height)).toBeLessThan(1);
+    expect(Math.abs(row(2).getBoundingClientRect().height - initialRow2Height)).toBeLessThan(1);
+    expect(Math.abs(row(4).getBoundingClientRect().top - initialRow4Top)).toBeLessThan(1);
+
+    // Scroll vertically into the table, then sweep horizontally back to the left edge.
+    await act(() => {
+      vertical().scrollTop = 120;
+      vertical().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(row(7)).not.toBeNull());
+    const scrolledRow7Top = row(7).getBoundingClientRect().top;
+    const scrolledRow7Height = row(7).getBoundingClientRect().height;
+
+    await act(() => {
+      horizontal().scrollLeft = 0;
+      horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("r8-c0"));
+
+    expect(Math.abs(row(7).getBoundingClientRect().height - scrolledRow7Height)).toBeLessThan(1);
+    expect(Math.abs(row(7).getBoundingClientRect().top - scrolledRow7Top)).toBeLessThan(1);
+  });
+
+  it("keeps row height stable on wide tables above 30 columns and updates after resize", async () => {
+    const columns = 35;
+    const header = Array.from({ length: columns }, (_, i) => `C${i}`);
+    const wrapped = "wide table wrapped cell content ".repeat(10).trim();
+    const rows = [
+      header,
+      Array.from({ length: columns }, (_, c) => (c === 34 ? wrapped : `v-${c}`)),
+      Array.from({ length: columns }, (_, c) => `plain-${c}`),
+    ];
+    const view = (width: number) => (
+      <div style={{ display: "flex", height: 300, width }}>
+        <VirtualTablePreview
+          name="very-wide.csv"
+          count={rows.length}
+          columns={columns}
+          header={header}
+          getRows={(page) => (page === 0 ? rows : undefined)}
+        />
+      </div>
+    );
+    await using screen = await render(view(420));
+    const horizontal = () => screen.container.querySelector('[role="table"]')!.parentElement!;
+    const row = (index: number) =>
+      screen.container.querySelector<HTMLElement>(`[data-preview-row="${index}"]`)!;
+
+    await vi.waitFor(() => {
+      expect(row(1)).not.toBeNull();
+      expect(row(1).getBoundingClientRect().height).toBeGreaterThan(60);
+    });
+    const narrowHeight = row(1).getBoundingClientRect().height;
+
+    await act(() => {
+      horizontal().scrollLeft = horizontal().scrollWidth;
+      horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(screen.container.textContent).toContain("wide table wrapped"));
+    expect(Math.abs(row(1).getBoundingClientRect().height - narrowHeight)).toBeLessThan(1);
+
+    // Widening the container widens each uniform column, reducing wrapped line count.
+    await screen.rerender(view(1600));
+    await vi.waitFor(() =>
+      expect(row(1).getBoundingClientRect().height).toBeLessThan(narrowHeight),
+    );
+  });
+
   it("reveals and highlights requested source lines again for a new request", async () => {
     const view = (line: number, request: number, loaded = true) => (
       <div style={{ display: "flex", height: 400, width: 600 }}>

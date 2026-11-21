@@ -72,6 +72,10 @@ export default function VirtualTablePreview(props: {
   );
   const offset = (column: number) => offsets[column]!;
   const tableWidth = props.source ? "100%" : Math.max(width, offset(props.columns) + rowHeader);
+  const hasHorizontalOverflow = !props.source && offset(props.columns) + rowHeader > width;
+  const sizesKey = hasHorizontalOverflow
+    ? `${props.columns}:${columnWidth}:${measured ? measured.join(",") : ""}`
+    : "";
   return (
     <div
       ref={ref}
@@ -161,6 +165,8 @@ export default function VirtualTablePreview(props: {
             {...props}
             columnsVisible={columns}
             sizes={sizes}
+            sizesKey={sizesKey}
+            hasHorizontalOverflow={hasHorizontalOverflow}
             rowHeader={rowHeader}
             firstColumn={firstColumn}
             viewportHeight={size.height - (props.source ? 0 : 29)}
@@ -175,6 +181,7 @@ function RowPage(
     page: number;
     columnsVisible: number[];
     sizes: number[];
+    rowHeights?: ReadonlyMap<readonly string[], number> | undefined;
     rowHeader: number;
     firstColumn: number;
     viewportHeight: number;
@@ -197,6 +204,7 @@ function RowPage(
         const row = rows?.[local];
         const index = start + local;
         if (props.header && index === 0) return null;
+        const rowMinHeight = !props.source && row ? props.rowHeights?.get(row) : undefined;
         return (
           <div
             key={local}
@@ -208,6 +216,7 @@ function RowPage(
                 ? `flex min-h-[29px] font-mono ${props.revealLine != null && Math.min(props.count, Math.max(1, props.revealLine)) === index + 1 ? "bg-primary/10" : ""}`
                 : `flex min-h-[29px] border-b border-border/60 ${(index - (props.header ? 1 : 0)) % 2 ? "bg-muted/30" : ""}`
             }
+            style={rowMinHeight ? { minHeight: rowMinHeight } : undefined}
             data-preview-reveal={
               props.revealLine != null &&
               Math.min(props.count, Math.max(1, props.revealLine)) === index + 1
@@ -255,9 +264,23 @@ function RowPage(
   );
 }
 
-function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
+function ScaledRows(
+  props: Omit<Parameters<typeof RowPage>[0], "page" | "rowHeights"> & {
+    sizesKey: string;
+    hasHorizontalOverflow: boolean;
+  },
+) {
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const rowProbeRef = useRef<HTMLDivElement>(null);
+  const rowHeightCacheRef = useRef<{
+    key: string;
+    heights: WeakMap<readonly string[], number>;
+  }>({ key: "", heights: new WeakMap() });
+  const [rowHeights, setRowHeights] = useState<{
+    key: string;
+    heights: ReadonlyMap<readonly string[], number>;
+  }>({ key: "", heights: new Map() });
   const [layout, setLayout] = useState({ offset: 0, height: 0, rowHeight: 29 });
   const [top, setTop] = useState(0);
   const handledReveal = useRef<string | null>(null);
@@ -347,6 +370,59 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
   }, []);
   const page = Math.floor(first / PREVIEW_PAGE_ROWS);
   const visibleEnd = (first % PREVIEW_PAGE_ROWS) + Math.ceil(position.height / 29) + 1;
+  const pageCount = Math.min(
+    Math.ceil(visibleEnd / PREVIEW_PAGE_ROWS),
+    Math.ceil(props.count / PREVIEW_PAGE_ROWS) - page,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure mounted rows across all columns before paint so horizontal column virtualization keeps row heights and vertical scroll position stable.
+  useLayoutEffect(() => {
+    const probe = rowProbeRef.current;
+    if (!props.hasHorizontalOverflow || !probe) return;
+    if (rowHeightCacheRef.current.key !== props.sizesKey) {
+      rowHeightCacheRef.current = { key: props.sizesKey, heights: new WeakMap() };
+    }
+    const cache = rowHeightCacheRef.current.heights;
+    const mounted: (readonly string[])[] = [];
+    const uncached = new Set<readonly string[]>();
+    for (let pageOffset = 0; pageOffset < pageCount; pageOffset++) {
+      const currentPage = page + pageOffset;
+      const rows = props.getRows(currentPage);
+      if (!rows) continue;
+      const start = currentPage * PREVIEW_PAGE_ROWS;
+      const limit = visibleEnd - pageOffset * PREVIEW_PAGE_ROWS;
+      const count = Math.min(PREVIEW_PAGE_ROWS, props.count - start, limit);
+      for (let local = 0; local < count; local++) {
+        if (props.header && start + local === 0) continue;
+        const row = rows[local];
+        if (!row) continue;
+        mounted.push(row);
+        if (!cache.has(row)) uncached.add(row);
+      }
+    }
+    if (uncached.size > 0) {
+      const measuredHeights = measureRowsFullHeight(
+        probe,
+        [...uncached],
+        props.columns,
+        props.sizes,
+      );
+      for (const [row, height] of measuredHeights) cache.set(row, height);
+    }
+    const next = new Map<readonly string[], number>();
+    for (const row of mounted) {
+      const height = cache.get(row);
+      if (height && height > BASE_ROW_HEIGHT) next.set(row, height);
+    }
+    setRowHeights((old) =>
+      old.key === props.sizesKey && sameRowHeightMap(old.heights, next)
+        ? old
+        : { key: props.sizesKey, heights: next },
+    );
+  });
+  const activeRowHeights =
+    props.hasHorizontalOverflow && rowHeights.key === props.sizesKey
+      ? rowHeights.heights
+      : undefined;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure mounted row offsets and observe content resizes to position the virtual rows against the scroll track.
   useLayoutEffect(() => {
     if (atStart) return;
@@ -462,6 +538,13 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
       onScroll={(event) => setTop(event.currentTarget.scrollTop)}
     >
       <div className="relative" style={{ height: scrollHeight }}>
+        {!props.source ? (
+          <div
+            ref={rowProbeRef}
+            aria-hidden="true"
+            className="pointer-events-none invisible absolute top-0 left-0 h-0 w-0 overflow-hidden"
+          />
+        ) : null}
         <div
           ref={contentRef}
           className="absolute inset-x-0"
@@ -477,26 +560,146 @@ function ScaledRows(props: Omit<Parameters<typeof RowPage>[0], "page">) {
                       : -layout.offset - ((position.top / scale / 29) % 1) * layout.rowHeight),
           }}
         >
-          {Array.from(
-            {
-              length: Math.min(
-                Math.ceil(visibleEnd / PREVIEW_PAGE_ROWS),
-                Math.ceil(props.count / PREVIEW_PAGE_ROWS) - page,
-              ),
-            },
-            (_, offset) => (
-              <RowPage
-                key={page + offset}
-                {...props}
-                page={page + offset}
-                limit={visibleEnd - offset * PREVIEW_PAGE_ROWS}
-              />
-            ),
-          )}
+          {Array.from({ length: pageCount }, (_, offset) => (
+            <RowPage
+              key={page + offset}
+              {...props}
+              page={page + offset}
+              rowHeights={activeRowHeights}
+              limit={visibleEnd - offset * PREVIEW_PAGE_ROWS}
+            />
+          ))}
         </div>
       </div>
     </div>
   );
+}
+
+const BASE_ROW_HEIGHT = 29;
+const CELL_HORIZONTAL_INSET = 25;
+const MAX_MEASURED_CELLS_PER_ROW = 16;
+const PROBE_CELL_CLASS_NAME =
+  "box-border border-r border-b border-transparent px-3 py-1.5 whitespace-pre-wrap break-words tabular-nums";
+
+let textMeasureContext: CanvasRenderingContext2D | null | undefined;
+
+function getTextMeasureContext(probe: HTMLElement): CanvasRenderingContext2D | null {
+  if (textMeasureContext === undefined) {
+    textMeasureContext = document.createElement("canvas").getContext("2d");
+  }
+  if (textMeasureContext) {
+    textMeasureContext.font = getComputedStyle(probe).font;
+  }
+  return textMeasureContext;
+}
+
+function estimateWrappedLines(
+  text: string,
+  innerWidth: number,
+  ctx: CanvasRenderingContext2D | null,
+  fontSize: number,
+): number {
+  let lines = 0;
+  let start = 0;
+  while (start <= text.length) {
+    const next = text.indexOf("\n", start);
+    const end = next === -1 ? text.length : next;
+    const lineEnd = end > start && text.charCodeAt(end - 1) === 13 ? end - 1 : end;
+    const segment = text.slice(start, lineEnd);
+    if (segment.length === 0) {
+      lines += 1;
+    } else {
+      const width = ctx ? ctx.measureText(segment).width : segment.length * (fontSize * 0.65);
+      lines += Math.max(1, Math.ceil(width / innerWidth));
+    }
+    if (next === -1) break;
+    start = next + 1;
+  }
+  return lines;
+}
+
+function selectRowHeightCandidates(
+  row: readonly string[],
+  columns: number,
+  sizes: readonly number[],
+  ctx: CanvasRenderingContext2D | null,
+  fontSize: number,
+): Array<{ column: number; text: string }> {
+  const candidates: Array<{ column: number; text: string; score: number }> = [];
+  const limit = Math.min(columns, row.length);
+  const maxGlyphWidth = fontSize * 1.5;
+  for (let column = 0; column < limit; column++) {
+    const text = row[column];
+    if (!text) continue;
+    const width = sizes[column];
+    if (!width) continue;
+    const innerWidth = Math.max(1, width - CELL_HORIZONTAL_INSET);
+    const hasControlWhitespace = text.includes("\n") || text.includes("\r") || text.includes("\t");
+    if (!hasControlWhitespace && text.length * maxGlyphWidth <= innerWidth) continue;
+    if (
+      !hasControlWhitespace &&
+      ctx &&
+      ctx.measureText(text.replace(/\d/g, "0")).width <= innerWidth - 8
+    ) {
+      continue;
+    }
+    candidates.push({
+      column,
+      text,
+      score: estimateWrappedLines(text, innerWidth, ctx, fontSize),
+    });
+  }
+  if (candidates.length > MAX_MEASURED_CELLS_PER_ROW) {
+    candidates.sort((left, right) => right.score - left.score);
+    candidates.length = MAX_MEASURED_CELLS_PER_ROW;
+  }
+  return candidates;
+}
+
+function measureRowsFullHeight(
+  probe: HTMLElement,
+  rows: readonly (readonly string[])[],
+  columns: number,
+  sizes: readonly number[],
+): Map<readonly string[], number> {
+  const results = new Map<readonly string[], number>();
+  const fontSize = Number.parseFloat(getComputedStyle(probe).fontSize) || 12;
+  const ctx = getTextMeasureContext(probe);
+  const fragment = document.createDocumentFragment();
+  const entries: Array<{ row: readonly string[]; node: HTMLDivElement }> = [];
+  for (const row of rows) {
+    const candidates = selectRowHeightCandidates(row, columns, sizes, ctx, fontSize);
+    results.set(row, BASE_ROW_HEIGHT);
+    for (const candidate of candidates) {
+      const node = document.createElement("div");
+      node.className = PROBE_CELL_CLASS_NAME;
+      node.style.width = `${sizes[candidate.column]}px`;
+      node.textContent = candidate.text;
+      fragment.append(node);
+      entries.push({ row, node });
+    }
+  }
+  if (entries.length > 0) {
+    probe.replaceChildren(fragment);
+    for (const entry of entries) {
+      const height = entry.node.getBoundingClientRect().height;
+      const current = results.get(entry.row) ?? BASE_ROW_HEIGHT;
+      if (height > current) results.set(entry.row, height);
+    }
+    probe.replaceChildren();
+  }
+  return results;
+}
+
+function sameRowHeightMap(
+  left: ReadonlyMap<readonly string[], number>,
+  right: ReadonlyMap<readonly string[], number>,
+): boolean {
+  if (left.size !== right.size) return false;
+  for (const [row, height] of left) {
+    if (right.get(row) !== height) return false;
+  }
+  return true;
 }
 
 function columnLabel(index: number): string {
