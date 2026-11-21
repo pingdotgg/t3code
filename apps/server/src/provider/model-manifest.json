@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-05T22:38:29Z",
+  "updatedAt": "2026-11-20T23:50:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -35,6 +35,7 @@
     {
       "driver": "cursor",
       "t3CodeRange": ">=0.0.42",
+      "versionPattern": "^(\\d{4}\\.\\d{2}\\.\\d{2})-[a-f0-9]+$",
       "recommendedRange": ">=2026.05.09",
       "ranges": [
         { "range": ">=2026.05.09", "status": "supported" },
@@ -64,6 +65,7 @@
     {
       "driver": "opencode",
       "t3CodeRange": ">=0.0.46",
+      "versionPattern": "^(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
       "recommendedRange": ">=2.0.18",
       "ranges": [
         { "range": ">=2.0.18", "status": "supported" },
@@ -74,13 +76,24 @@
     },
     {
       "driver": "antigravity",
-      "t3CodeRange": ">=0.0.42",
+      "t3CodeRange": ">=0.0.42 <0.1.10",
+      "versionPattern": "^(?:agy_acp_server_)?(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?$",
       "recommendedRange": "=1.4.5 || =1.4.1",
       "ranges": [
         { "range": "=1.4.5", "status": "supported" },
         { "range": "=1.4.1", "status": "supported" },
         { "range": "=1.3.0", "status": "supported" },
         { "range": "=1.1.1", "status": "supported" }
+      ]
+    },
+    {
+      "driver": "antigravity",
+      "t3CodeRange": ">=0.1.10",
+      "versionPattern": "^(?:agy_acp_server_)?(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?$",
+      "recommendedRange": ">=1.5.12 <2",
+      "ranges": [
+        { "range": ">=1.5.0 <2", "status": "supported" },
+        { "range": "<1.5.0", "status": "broken" }
       ]
     },
     {
@@ -94,13 +107,14 @@
       "t3CodeRange": ">=0.0.46",
       "recommendedRange": ">=1.0.0",
       "ranges": [
-        { "range": ">=0.80.5", "status": "supported" },
-        { "range": "<0.80.5", "status": "unsupported" }
+        { "range": ">=0.84.3", "status": "supported" },
+        { "range": "<0.84.3", "status": "broken" }
       ]
     },
     {
       "driver": "muse",
       "t3CodeRange": ">=0.0.46",
+      "versionPattern": "^(\\d+\\.\\d+\\.\\d+)-R\\d+(?:\\.\\d+)?$",
       "recommendedRange": ">=1.4.2",
       "ranges": [
         { "range": ">=1.4.2", "status": "supported" },
@@ -125,8 +139,15 @@
       "gpt-daybreak-blue-latest",
       "gpt-daybreak-red-latest"
     ],
-    "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
-    "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
+    "claudeAgent": ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+    "antigravity": [
+      "gemini-4-carbon",
+      "gemini-4-argon",
+      "gemini-3.8-flash",
+      "gemini-3.8-flash-high",
+      "gemini-3.8-flash-medium",
+      "gemini-3.8-flash-low"
+    ]
   },
   "providers": {
     "codex": {
@@ -164,6 +185,64 @@
         "chat": "claude-opus-5-5"
       },
       "profiles": {
+        "fable-5-2": {
+          "capabilities": {
+            "optionDescriptors": [
+              {
+                "id": "effort",
+                "label": "Reasoning",
+                "type": "select",
+                "options": [
+                  {
+                    "id": "low",
+                    "label": "Low"
+                  },
+                  {
+                    "id": "medium",
+                    "label": "Medium",
+                    "isDefault": true
+                  },
+                  {
+                    "id": "high",
+                    "label": "High"
+                  },
+                  {
+                    "id": "xhigh",
+                    "label": "Extra High"
+                  },
+                  {
+                    "id": "max",
+                    "label": "Max"
+                  },
+                  {
+                    "id": "ultracode",
+                    "label": "Ultracode",
+                    "description": "xhigh effort plus multi-agent workflow orchestration"
+                  },
+                  {
+                    "id": "ultrathink",
+                    "label": "Ultrathink"
+                  }
+                ],
+                "promptInjectedValues": ["ultrathink"]
+              },
+              {
+                "id": "fastMode",
+                "label": "Fast Mode",
+                "type": "boolean"
+              }
+            ]
+          },
+          "adapter": {
+            "claudeCode": {
+              "effortMap": {
+                "ultracode": "xhigh",
+                "ultrathink": null
+              },
+              "fixedContextWindowTokens": 1000000
+            }
+          }
+        },
         "fable-5": {
           "capabilities": {
             "optionDescriptors": [
@@ -758,10 +837,18 @@
           "adapter": { "claudeCode": { "minVersion": "2.1.284" } }
         },
         {
+          "slug": "claude-fable-5-2",
+          "name": "Claude Fable 5.2",
+          "aliases": ["fable", "fable-5.2", "claude-fable-5.2"],
+          "status": "current",
+          "profile": "fable-5-2",
+          "adapter": { "claudeCode": { "minVersion": "2.1.321" } }
+        },
+        {
           "slug": "claude-fable-5-1",
           "name": "Claude Fable 5.1",
-          "aliases": ["fable", "fable-5.1", "claude-fable-5.1"],
-          "status": "current",
+          "aliases": ["fable-5.1", "claude-fable-5.1"],
+          "status": "legacy",
           "profile": "fable-5",
           "adapter": {
             "claudeCode": {
@@ -867,6 +954,14 @@
       },
       "profiles": {},
       "models": [
+        {
+          "slug": "gemini-4-carbon",
+          "name": "Gemini 4 Carbon",
+          "status": "current",
+          "releasedAt": "2026-11-10"
+        },
+        { "slug": "gemini-4-argon", "name": "Gemini 4 Argon", "status": "current" },
+        { "slug": "gemini-3.8-flash", "name": "Gemini 3.8 Flash", "status": "current" },
         {
           "slug": "gemini-3.8-flash-high",
           "name": "Gemini 3.8 Flash (High)",

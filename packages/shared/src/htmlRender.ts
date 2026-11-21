@@ -275,18 +275,52 @@ export function readHtmlRenderLinkRequest(data: unknown):
     : undefined;
 }
 
-/** Published local images arrive as `data:image/` URLs. */
+interface HtmlRenderImage {
+  readonly src: string;
+  readonly name: string;
+}
+
+function readHtmlRenderImage(src: unknown, name: unknown): HtmlRenderImage | undefined {
+  if (typeof src !== "string" || !/^(?:https?:\/\/|data:image\/)/i.test(src)) return undefined;
+  const trimmed = typeof name === "string" ? name.trim() : "";
+  // The page sends any alt text; never end the label on half an emoji.
+  const last = trimmed.charCodeAt(HTML_RENDER_MAX_TITLE_LENGTH - 1);
+  const end = HTML_RENDER_MAX_TITLE_LENGTH - (last >= 0xd800 && last <= 0xdbff ? 1 : 0);
+  const label = trimmed.slice(0, end);
+  return { src, name: label || "Image" };
+}
+
+/**
+ * Published local images arrive as `data:image/` URLs. `images` and `index` carry the
+ * page's other images; a page bootstrapped by an older server sends only `src` and `name`.
+ */
 export function readHtmlRenderImageRequest(
   data: unknown,
-): { readonly src: string; readonly name: string } | undefined {
+): { readonly images: ReadonlyArray<HtmlRenderImage>; readonly index: number } | undefined {
   if (typeof data !== "object" || data === null) return undefined;
   const { jsonrpc, method, params } = data as Record<string, unknown>;
   if (jsonrpc !== "2.0" || method !== OPEN_IMAGE_METHOD) return undefined;
   if (typeof params !== "object" || params === null) return undefined;
-  const { src, name } = params as Record<string, unknown>;
-  if (typeof src !== "string" || !/^(?:https?:\/\/|data:image\/)/i.test(src)) return undefined;
-  const label = typeof name === "string" ? name.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) : "";
-  return { src, name: label || "Image" };
+  const { src, name, images, index } = params as Record<string, unknown>;
+  const clicked = readHtmlRenderImage(src, name);
+  if (clicked === undefined) return undefined;
+  const gallery: HtmlRenderImage[] = [];
+  let at = -1;
+  if (Array.isArray(images)) {
+    images.forEach((entry: unknown, position) => {
+      if (typeof entry !== "object" || entry === null) return;
+      const image = readHtmlRenderImage(
+        (entry as Record<string, unknown>).src,
+        (entry as Record<string, unknown>).name,
+      );
+      if (image === undefined) return;
+      if (position === index) at = gallery.length;
+      gallery.push(image);
+    });
+  }
+  return at >= 0 && gallery[at]?.src === clicked.src
+    ? { images: gallery, index: at }
+    : { images: [clicked], index: 0 };
 }
 
 export function readHtmlRenderKeyDown(data: unknown):
@@ -345,6 +379,11 @@ export function htmlRenderThemeFragment(theme: HtmlRenderTheme): string {
   return `#${THEME_FRAGMENT_KEY}=${encodeURIComponent(JSON.stringify(theme))}`;
 }
 
+const CONTAIN_SCROLL_FRAGMENT_KEY = "t3-contain-scroll";
+
+/** Appended after the theme fragment for a frame whose page must not scroll the host. */
+export const HTML_RENDER_CONTAIN_SCROLL_FRAGMENT = `&${CONTAIN_SCROLL_FRAGMENT_KEY}`;
+
 export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
   return {
     jsonrpc: "2.0",
@@ -367,9 +406,15 @@ function rootRule(theme: HtmlRenderTheme): string {
   return `:root{color-scheme:${theme.appearance};${declarations}}`;
 }
 
+// Native scrollIntoView also scrolls every scroller outside a framed page, such as the chat around an
+// inline render. In a contained frame, it scrolls each scroller inside the page and then the page's own
+// viewport, innermost first, aligning the target as the browser would (block, inline, scroll-margin,
+// scroll-padding, clamped offsets), and stops there. A fixed target or ancestor leaves the viewport alone.
+const CONTAINED_SCROLL_INTO_VIEW = `Element.prototype.scrollIntoView=function(v){var o=v!==null&&(typeof v==="object"||typeof v==="function")?v:{block:v===undefined||v===null||v?"start":"end"},B=o.block||"start",I=o.inline||"nearest",H=o.behavior||"auto",m=function(z){return parseFloat(z)||0;},g=getComputedStyle(this),r=this.getBoundingClientRect(),t=r.top-m(g.scrollMarginTop),b=r.bottom+m(g.scrollMarginBottom),l=r.left-m(g.scrollMarginLeft),R=r.right+m(g.scrollMarginRight),x=0,y=0,e=this,f=g.position==="fixed",d=function(a,z,lo,hi,k){var L=z-a>hi-lo;return k==="start"?a-lo:k==="end"?z-hi:k==="center"?(a+z-lo-hi)/2:a<lo&&z>hi?0:a<lo?L?z-hi:a-lo:z>hi?L?a-lo:z-hi:0;},w=function(top,left,c,s,go){var p=function(n){return m(s["scrollPadding"+n]);},n=s.direction==="rtl"?c.clientWidth-c.scrollWidth:0,dy=d(t-y,b-y,top+p("Top"),top+c.clientHeight-p("Bottom"),B),dx=d(l-x,R-x,left+p("Left"),left+c.clientWidth-p("Right"),I);dy=Math.max(-c.scrollTop,Math.min(c.scrollHeight-c.clientHeight-c.scrollTop,dy));dx=Math.max(n-c.scrollLeft,Math.min(n+c.scrollWidth-c.clientWidth-c.scrollLeft,dx));if(dx||dy)go({left:dx,top:dy,behavior:H});x+=dx;y+=dy;},u=document.scrollingElement||document.documentElement;while(!f){e=e.parentElement||(e.getRootNode&&e.getRootNode().host);if(!e)break;if(e===u||e===document.documentElement)continue;var h=getComputedStyle(document.documentElement),s=getComputedStyle(e),c=e.getBoundingClientRect();if(e===document.body&&h.overflowX+h.overflowY==="visiblevisible")continue;if(/auto|scroll|hidden/.test(s.overflowX+s.overflowY))w(c.top+e.clientTop,c.left+e.clientLeft,e,s,e.scrollBy.bind(e));f=s.position==="fixed";}if(!f)w(0,0,u,getComputedStyle(u),window.scrollBy.bind(window));};`;
+
 // Apply overridable theme CSS before paint and strip the fragment before routing; framed navigation uses the client.
 // Forward shortcuts after page handlers; text fields retain their keys.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href,metaKey:e.metaKey,ctrlKey:e.ctrlKey}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);window.addEventListener("click",function(e){var t=e.composedPath()[0],u;if(!e.isTrusted||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||!t||t.tagName!=="IMG"||t.closest("a[href],button"))return;u=t.currentSrc||t.src;if(u)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(OPEN_IMAGE_METHOD)},params:{src:u,name:t.alt||t.title||""}},"*");});});var K=[],B=[],C=${JSON.stringify(EVENT_CODE_SHORTCUT_KEYS)};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(SHORTCUTS_METHOD)}&&p&&Array.isArray(p.shortcuts)&&Array.isArray(p.blocked)){K=p.shortcuts;B=p.blocked;}});window.addEventListener("keydown",function(e){var t=e.composedPath()[0],c=e.code||"",l=e.key.toLowerCase(),x=/^[a-z]$/.test(l)?[l]:[l,/^Key[A-Z]$/.test(c)?c.slice(3).toLowerCase():"",C.hasOwnProperty(c)?C[c]:""],f,m=function(s){return s&&s.metaKey===e.metaKey&&s.ctrlKey===e.ctrlKey&&s.shiftKey===e.shiftKey&&s.altKey===e.altKey&&x.indexOf(s.key)>-1;};if(!e.isTrusted||e.isComposing||e.getModifierState("AltGraph")&&!/^[a-z0-9]$/i.test(e.key)||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))||!K.some(m)||B.some(m))return;f=function(v){window.removeEventListener("keydown",f);if(v!==e||e.defaultPrevented)return;e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(KEY_DOWN_METHOD)},params:{key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,repeat:e.repeat}},"*");};window.addEventListener("keydown",f);setTimeout(function(){window.removeEventListener("keydown",f);});},true);}})();`;
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash);if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href,metaKey:e.metaKey,ctrlKey:e.ctrlKey}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);document.addEventListener("click",function(e){var t=e.composedPath()[0],l=t&&t.closest?t.closest("label,a[href],button,input,select,textarea"):null,c=l&&l.tagName==="LABEL"?l.control:null;if(e.isTrusted&&c&&document.activeElement!==c)c.focus({preventScroll:true});},true);if(window.parent!==window){if(P){${CONTAINED_SCROLL_INTO_VIEW}}var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);window.addEventListener("click",function(e){var t=e.composedPath()[0],u;if(!e.isTrusted||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||!t||t.tagName!=="IMG"||t.closest("a[href],button"))return;u=t.currentSrc||t.src;if(u)setTimeout(function(){var g=[],i=-1;if(e.defaultPrevented)return;Array.prototype.forEach.call(document.images,function(m){var v=m.currentSrc||m.src;if(!v||m.closest("a[href],button"))return;if(m===t)i=g.length;g.push({src:v,name:m.alt||m.title||""});});window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(OPEN_IMAGE_METHOD)},params:{src:u,name:t.alt||t.title||"",images:g,index:i}},"*");});});var K=[],B=[],C=${JSON.stringify(EVENT_CODE_SHORTCUT_KEYS)};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(SHORTCUTS_METHOD)}&&p&&Array.isArray(p.shortcuts)&&Array.isArray(p.blocked)){K=p.shortcuts;B=p.blocked;}});window.addEventListener("keydown",function(e){var t=e.composedPath()[0],c=e.code||"",l=e.key.toLowerCase(),x=/^[a-z]$/.test(l)?[l]:[l,/^Key[A-Z]$/.test(c)?c.slice(3).toLowerCase():"",l==="+"&&!e.shiftKey&&!e.altKey&&!/^Digit/.test(c)?"":C.hasOwnProperty(c)?C[c]:""],f,m=function(s){return s&&s.metaKey===e.metaKey&&s.ctrlKey===e.ctrlKey&&s.shiftKey===e.shiftKey&&s.altKey===e.altKey&&x.indexOf(s.key)>-1;};if(!e.isTrusted||e.isComposing||e.getModifierState("AltGraph")&&!/^[a-z0-9]$/i.test(e.key)||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))||!K.some(m)||B.some(m))return;f=function(v){window.removeEventListener("keydown",f);if(v!==e||e.defaultPrevented)return;e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(KEY_DOWN_METHOD)},params:{key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,repeat:e.repeat}},"*");};window.addEventListener("keydown",f);setTimeout(function(){window.removeEventListener("keydown",f);});},true);}})();`;
 
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");
@@ -415,12 +460,12 @@ const blankNonMarkup = (html: string) => {
 export function injectHtmlRenderBootstrap(html: string): string {
   const scan = blankNonMarkup(html);
   const markup = bootstrapMarkup(scan);
-  const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
+  const headOpen = /<head(?:\s(?:[^"'>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
     return html.slice(0, at) + markup + html.slice(at);
   }
-  const htmlOpen = /<html(?:\s[^>]*)?>/i.exec(scan);
+  const htmlOpen = /<html(?:\s(?:[^"'>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (htmlOpen) {
     const at = htmlOpen.index + htmlOpen[0].length;
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
@@ -431,4 +476,48 @@ export function injectHtmlRenderBootstrap(html: string): string {
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
   }
   return `<!doctype html><head>${markup}</head>${html}`;
+}
+
+const FILE_PREVIEW_SCROLL_METHOD = "t3/notifications/file-preview-scroll";
+const FILE_PREVIEW_RESTORE_SCROLL_METHOD = "t3/file-preview/restore-scroll";
+const FILE_PREVIEW_SCROLL_RESTORED_METHOD = "t3/notifications/file-preview-scroll-restored";
+
+export interface FilePreviewScroll {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Appended after a served workspace page so it lands at the end of the body without changing
+ * the doctype. A preview frame is an opaque origin, so only the page can report and restore its
+ * scroll position across the reload that follows each workspace change.
+ */
+export const FILE_PREVIEW_SCROLL_SCRIPT = `<script>(function(){var p=window.parent,f=0;if(p===window)return;addEventListener("scroll",function(){if(!f)f=requestAnimationFrame(function(){f=0;p.postMessage({jsonrpc:"2.0",method:${JSON.stringify(FILE_PREVIEW_SCROLL_METHOD)},params:{x:scrollX,y:scrollY}},"*");});},{passive:true});addEventListener("message",function(e){var d=e.data,q=d&&d.params;if(e.source!==p||!d||d.jsonrpc!=="2.0"||d.method!==${JSON.stringify(FILE_PREVIEW_RESTORE_SCROLL_METHOD)}||!q||typeof q.x!=="number"||typeof q.y!=="number")return;scrollTo({left:q.x,top:q.y,behavior:"instant"});p.postMessage({jsonrpc:"2.0",method:${JSON.stringify(FILE_PREVIEW_SCROLL_RESTORED_METHOD)}},"*");});})();</script>`;
+
+export function readFilePreviewScroll(data: unknown): FilePreviewScroll | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== FILE_PREVIEW_SCROLL_METHOD) return undefined;
+  if (typeof params !== "object" || params === null) return undefined;
+  const { x, y } = params as Record<string, unknown>;
+  return typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y)
+    ? { x, y }
+    : undefined;
+}
+
+export function isFilePreviewScrollRestored(data: unknown): boolean {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as Record<string, unknown>).jsonrpc === "2.0" &&
+    (data as Record<string, unknown>).method === FILE_PREVIEW_SCROLL_RESTORED_METHOD
+  );
+}
+
+export function filePreviewRestoreScrollMessage(scroll: FilePreviewScroll) {
+  return {
+    jsonrpc: "2.0",
+    method: FILE_PREVIEW_RESTORE_SCROLL_METHOD,
+    params: { x: scroll.x, y: scroll.y },
+  } as const;
 }

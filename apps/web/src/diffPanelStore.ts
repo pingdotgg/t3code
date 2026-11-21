@@ -18,21 +18,27 @@ export type DiffPanelSelection =
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
   | { kind: "commit"; sha: string; baseRef: string | null }
-  | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
+  | {
+      kind: "turn";
+      turnId: RunId;
+      /** From the thread's folder, so a tracked repository's file carries that repository's folder. */
+      filePath: string | null;
+      revealRequestId: number;
+      /** A turn diff section key to narrow to; absent shows every repository. */
+      repository?: string;
+    };
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
-  /** A link that selected a commit before opening the closed pane; opening keeps that selection. */
-  keepSelectionOnOpenThreadKey: string | null;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
-  selectCommit: (ref: ScopedThreadRef, sha: string, keepOnOpen?: boolean) => void;
-  consumeKeepSelectionOnOpen: (ref: ScopedThreadRef) => boolean;
+  selectTurnRepository: (ref: ScopedThreadRef, turnId: RunId, repository: string | null) => void;
+  selectCommit: (ref: ScopedThreadRef, sha: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -54,10 +60,9 @@ function branchBaseRef(
 
 export const useDiffPanelStore = create<DiffPanelStoreState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
-      keepSelectionOnOpenThreadKey: null,
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -103,19 +108,44 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
+          // Git reports paths with their edge whitespace; only a blank one means no file.
+          const requestedPath = filePath !== undefined && filePath.trim() !== "" ? filePath : null;
           return {
             byThreadKey: {
               ...state.byThreadKey,
               [threadKey]: {
                 kind: "turn",
                 turnId,
-                filePath: filePath?.trim() || null,
+                filePath: requestedPath,
                 revealRequestId: previous?.kind === "turn" ? previous.revealRequestId + 1 : 1,
+                // A requested file may sit outside the repository the view was narrowed to.
+                ...(requestedPath === null &&
+                previous?.kind === "turn" &&
+                previous.repository !== undefined
+                  ? { repository: previous.repository }
+                  : {}),
               },
             },
           };
         }),
-      selectCommit: (ref, sha, keepOnOpen = false) =>
+      selectTurnRepository: (ref, turnId, repository) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const previous = state.byThreadKey[threadKey];
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: {
+                kind: "turn",
+                turnId,
+                filePath: null,
+                revealRequestId: previous?.kind === "turn" ? previous.revealRequestId : 0,
+                ...(repository === null ? {} : { repository }),
+              },
+            },
+          };
+        }),
+      selectCommit: (ref, sha) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const baseRef = branchBaseRef(state, threadKey);
@@ -125,16 +155,8 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
               [threadKey]: { kind: "commit", sha, baseRef },
             },
             branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: baseRef },
-            keepSelectionOnOpenThreadKey: keepOnOpen
-              ? threadKey
-              : state.keepSelectionOnOpenThreadKey,
           };
         }),
-      consumeKeepSelectionOnOpen: (ref) => {
-        if (get().keepSelectionOnOpenThreadKey !== scopedThreadKey(ref)) return false;
-        set({ keepSelectionOnOpenThreadKey: null });
-        return true;
-      },
       reconcileTurnSelection: (ref, availableTurnIds) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -187,9 +209,13 @@ interface DiffPanelSessionStoreState {
     defaults: ReadonlySet<string>,
     update: (current: ReadonlySet<string>) => ReadonlySet<string>,
   ) => void;
+  // Null follows the diffIgnoreWhitespace setting until the panel toggle is used.
+  ignoreWhitespace: boolean | null;
+  setIgnoreWhitespace: (ignoreWhitespace: boolean) => void;
 }
 
-// Session-only so folds survive right-panel switches without changing reload defaults.
+// Session-only so folds and the whitespace toggle survive right-panel switches without
+// changing reload defaults.
 export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((set) => ({
   collapsedFileKeysByScopeKey: {},
   updateCollapsedFileKeys: (scopeKey, defaults, update) =>
@@ -201,6 +227,8 @@ export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((se
         collapsedFileKeysByScopeKey: { ...state.collapsedFileKeysByScopeKey, [scopeKey]: next },
       };
     }),
+  ignoreWhitespace: null,
+  setIgnoreWhitespace: (ignoreWhitespace) => set({ ignoreWhitespace }),
 }));
 
 export function selectThreadDiffPanelSelection(

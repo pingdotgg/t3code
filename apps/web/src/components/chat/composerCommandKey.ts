@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import {
+  type ComposerPromptHistoryMentions,
   type ComposerPromptHistoryPosition,
   buildComposerPromptHistoryEntries,
   stepComposerPromptHistory,
@@ -17,7 +18,12 @@ import {
   composerSubmissionIntentForKey,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
-import { type PreviewAnnotationPayload } from "@t3tools/contracts";
+import { promptSuggestionToAccept } from "./usePromptSuggestion";
+import {
+  type EnvironmentContextRecord,
+  type PreviewAnnotationPayload,
+  type ThreadContextRecord,
+} from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { composerTargetKey } from "../../composerDraftStore";
 import {
@@ -35,10 +41,11 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
  */
 export function composerCommandKeyHandler(input: {
   readonly keybindings: ChatComposerProps["keybindings"];
+  readonly getShortcutContext: ChatComposerProps["getShortcutContext"];
   readonly sendShortcut: ChatComposerProps["settings"]["sendShortcut"];
   readonly routeKind: ChatComposerProps["routeKind"];
   readonly phase: ChatComposerProps["phase"];
-  readonly isCompacting: boolean;
+  readonly canSteer: boolean;
   readonly followUpBehavior: ChatComposerProps["settings"]["followUpBehavior"];
   readonly isSoftwareKeyboardOpen: boolean;
   readonly isLiteralPendingAnswer: boolean;
@@ -56,12 +63,19 @@ export function composerCommandKeyHandler(input: {
   readonly composerPreviewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly composerReviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly composerEditorRef: RefObject<ComposerPromptEditorHandle | null>;
-  readonly composerMenuOpenRef: RefObject<boolean>;
   readonly composerMenuItemsRef: RefObject<ComposerCommandItem[]>;
   readonly activeComposerMenuItemRef: RefObject<ComposerCommandItem | null>;
   readonly setComposerDraftPrompt: (
     target: ChatComposerProps["composerDraftTarget"],
     prompt: string,
+  ) => void;
+  readonly setComposerDraftThreadContexts: (
+    target: ChatComposerProps["composerDraftTarget"],
+    records: ReadonlyArray<ThreadContextRecord>,
+  ) => void;
+  readonly setComposerDraftEnvironmentContexts: (
+    target: ChatComposerProps["composerDraftTarget"],
+    records: ReadonlyArray<EnvironmentContextRecord>,
   ) => void;
   readonly setComposerCursor: Dispatch<SetStateAction<number>>;
   readonly setComposerTrigger: (trigger: ComposerTrigger | null) => void;
@@ -88,10 +102,11 @@ export function composerCommandKeyHandler(input: {
 }) {
   const {
     keybindings,
+    getShortcutContext,
     sendShortcut,
     routeKind,
     phase,
-    isCompacting,
+    canSteer,
     followUpBehavior,
     isSoftwareKeyboardOpen,
     isLiteralPendingAnswer,
@@ -106,10 +121,11 @@ export function composerCommandKeyHandler(input: {
     composerPreviewAnnotations,
     composerReviewComments,
     composerEditorRef,
-    composerMenuOpenRef,
     composerMenuItemsRef,
     activeComposerMenuItemRef,
     setComposerDraftPrompt,
+    setComposerDraftThreadContexts,
+    setComposerDraftEnvironmentContexts,
     setComposerCursor,
     setComposerTrigger,
     setComposerHighlightedItemId,
@@ -129,9 +145,14 @@ export function composerCommandKeyHandler(input: {
   // otherwise turn B's own draft into a browsing position.
   const promptHistoryTargetKey = composerTargetKey(composerDraftTarget);
 
-  const replacePromptFromHistory = (nextPrompt: string) => {
+  const replacePromptFromHistory = (
+    nextPrompt: string,
+    mentions: ComposerPromptHistoryMentions,
+  ) => {
     promptRef.current = nextPrompt;
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+    setComposerDraftThreadContexts(composerDraftTarget, mentions.threadContexts);
+    setComposerDraftEnvironmentContexts(composerDraftTarget, mentions.environmentContexts);
     setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
     setComposerTrigger(null);
     setComposerHighlightedItemId(null);
@@ -176,7 +197,7 @@ export function composerCommandKeyHandler(input: {
     promptHistoryPositionRef.current = step.position
       ? { targetKey: promptHistoryTargetKey, position: step.position }
       : null;
-    replacePromptFromHistory(step.prompt);
+    replacePromptFromHistory(step.prompt, step.mentions);
     return true;
   };
 
@@ -203,9 +224,10 @@ export function composerCommandKeyHandler(input: {
     const submissionIntent = composerSubmissionIntentForKey({
       event,
       keybindings,
+      context: getShortcutContext(event.target),
       isSoftwareKeyboardOpen,
       isDraftThread: routeKind === "draft",
-      isRunning: phase === "running",
+      isRunning: phase === "running" || phase === "connecting",
       sendShortcut,
       prompt: promptRef.current,
     });
@@ -213,8 +235,7 @@ export function composerCommandKeyHandler(input: {
       return applyListEdit(event, listOutdentForTab);
     }
     const { trigger } = resolveActiveComposerTrigger();
-    const menuIsActive =
-      !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
+    const menuIsActive = !isLiteralPendingAnswer && trigger !== null;
     if (key === "Escape") {
       if (event.isComposing || event.keyCode === 229) return false;
       if (!menuIsActive && promptSuggestion !== null && promptRef.current.length === 0) {
@@ -223,10 +244,13 @@ export function composerCommandKeyHandler(input: {
       }
       if (!menuIsActive) return false;
       dismissComposerTrigger(trigger);
-      composerMenuOpenRef.current = false;
       return true;
     }
-    if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
+    if (
+      menuIsActive &&
+      !event.shiftKey &&
+      (submissionIntent === null || submissionIntent === "foreground")
+    ) {
       const currentItems = composerMenuItemsRef.current;
       const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
       if (key === "ArrowDown" && currentItems.length > 0) {
@@ -242,10 +266,10 @@ export function composerCommandKeyHandler(input: {
         return true;
       }
     }
+    const acceptedSuggestion = promptSuggestionToAccept(promptSuggestion, promptRef.current);
     if (
       key === "Tab" &&
-      promptSuggestion !== null &&
-      promptRef.current.length === 0 &&
+      acceptedSuggestion !== null &&
       !menuIsActive &&
       !event.shiftKey &&
       !event.altKey &&
@@ -255,7 +279,7 @@ export function composerCommandKeyHandler(input: {
       event.keyCode !== 229
     ) {
       // The typing guard must see this draft, so an approval that lands next is not answered with it.
-      return applyPromptReplacement(0, 0, promptSuggestion);
+      return applyPromptReplacement(0, 0, acceptedSuggestion);
     }
     if ((key === "ArrowUp" || key === "ArrowDown") && submissionIntent === null) {
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);
@@ -264,10 +288,10 @@ export function composerCommandKeyHandler(input: {
       submitComposer(
         undefined,
         resolveComposerDispatchMode({
-          running: phase === "running",
+          running: phase === "running" || phase === "connecting",
           alternateModifier: submissionIntent === "alternate",
           activeTurnDefault: followUpBehavior,
-          canSteer: !isCompacting,
+          canSteer,
         }),
         submissionIntent,
       );

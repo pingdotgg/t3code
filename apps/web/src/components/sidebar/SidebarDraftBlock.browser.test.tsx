@@ -1,11 +1,28 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { Profiler } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
+import { formatAssistantCitationForComposer } from "../../composer-logic";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import { SidebarDraftBlock } from "./SidebarDraftBlock";
+import { SidebarDraftBlock, useSidebarDrafts } from "./SidebarDraftBlock";
+
+function DraftBlock() {
+  const { draftIds, routeDraftComposer } = useSidebarDrafts(null, null);
+  return (
+    <SidebarDraftBlock
+      draftIds={draftIds}
+      routeDraftComposer={routeDraftComposer}
+      jumpLabelByDraftId={null}
+      projectByKey={new Map()}
+      projectDisplayNameByKey={new Map()}
+      routeDraftId={null}
+      onNavigateToDraft={vi.fn()}
+      onDraftContextMenu={vi.fn()}
+    />
+  );
+}
 
 it("keeps draft previews current through edits, promotion and removal", async () => {
   const initial = useComposerDraftStore.getState();
@@ -25,14 +42,7 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   await using screen = await render(
     <Profiler id="draft-block" onRender={onRender}>
       <ul>
-        <SidebarDraftBlock
-          projectByKey={new Map()}
-          projectDisplayNameByKey={new Map()}
-          scopedProjectKeys={null}
-          routeDraftId={null}
-          onNavigateToDraft={vi.fn()}
-          onDraftContextMenu={vi.fn()}
-        />
+        <DraftBlock />
       </ul>
     </Profiler>,
   );
@@ -52,6 +62,21 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   expect(onRender).toHaveBeenCalledTimes(rendersBeforeOtherComposer);
   await act(() => initial.setPrompt(draftId, "Updated draft preview"));
   await expect.element(row).toHaveAccessibleName("Updated draft preview, Unsent draft");
+
+  const quote = "Cache the parsed config per worktree.";
+  const citation = formatAssistantCitationForComposer({
+    version: 1,
+    environmentId,
+    threadId: ThreadId.make("source-thread"),
+    messageId: MessageId.make("source-message"),
+    text: quote,
+    start: 0,
+    end: quote.length,
+    prefix: "",
+    suffix: "",
+  });
+  await act(() => initial.setPrompt(draftId, `${citation}Why per worktree?`));
+  await expect.element(row).toHaveAccessibleName(`${quote} Why per worktree?, Unsent draft`);
 
   await act(() => initial.markDraftThreadPromoting(draftId));
   await expect.element(row).not.toBeInTheDocument();

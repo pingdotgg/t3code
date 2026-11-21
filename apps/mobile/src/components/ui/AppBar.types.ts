@@ -13,6 +13,8 @@ export interface AppBarAction {
   /** Android overflow menu: the row's second line. */
   readonly subtitle?: string;
   readonly destructive?: boolean;
+  /** Android: scales the toolbar glyph, for one that overshoots its neighbours' bounds. */
+  readonly iconScale?: number;
   /** Android: always in the overflow menu, never a toolbar button. */
   readonly overflowOnly?: boolean;
   /** iOS: false shares one glass capsule with neighbouring items. Defaults to true. */
@@ -78,7 +80,10 @@ export interface AppBarProps {
   readonly titleContent?: ReactNode;
   readonly subtitle?: string | null;
   readonly actions?: ReadonlyArray<AppBarAction>;
-  /** Pull-to-refresh is the gesture on both platforms; Android also lists this in the overflow menu. */
+  /**
+   * Pull-to-refresh is the gesture on both platforms. Android also lists this in the overflow
+   * menu, or shows it as a button in a bottom sheet, where the sheet owns the pull.
+   */
   readonly refresh?: Pick<AppBarAction, "accessibilityLabel" | "disabled" | "onPress">;
   readonly menus?: ReadonlyArray<AppBarMenu>;
   readonly search?: AppBarSearch;
@@ -120,8 +125,6 @@ export interface AppBarProps {
     readonly onPress?: () => void;
   };
   readonly hideBottomBorder?: boolean;
-  /** Android: one title row with the subtitle inline. iOS ignores it. */
-  readonly compact?: boolean;
   readonly trailing?: ReactNode;
   readonly matchSearchSurface?: boolean;
   readonly optionsVersion?: unknown;
