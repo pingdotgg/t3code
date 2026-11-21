@@ -33,6 +33,8 @@ export function ComposerInlineControl(props: {
   readonly renderIcon?: (size: number) => ReactNode;
   readonly label: string;
   readonly labelEllipsizeMode?: ComponentProps<typeof Text>["ellipsizeMode"];
+  /** Hides the whole overflowing label; use without a suffix or chevron. */
+  readonly hideOverflowingLabel?: boolean;
   readonly suffix?: ReactNode;
   readonly suffixWidth?: number;
   /** Show only the icon and chevron; the label still names the control for accessibility. */
@@ -49,10 +51,19 @@ export function ComposerInlineControl(props: {
   // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
   const iconSize = props.size === "large" ? 20 : smallIconSize;
+  const symbol = props.icon ? (
+    <SymbolView
+      name={props.icon}
+      size={iconSize}
+      tintColorClassName={props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"}
+      type="monochrome"
+    />
+  ) : null;
   return (
     <Animated.View
       style={{
         maxWidth: props.maxWidth ?? 190,
+        ...(props.hideOverflowingLabel && { flexShrink: 1, minWidth: 44 }),
         overflow: animatesLabel ? "hidden" : undefined,
       }}
     >
@@ -66,7 +77,12 @@ export function ComposerInlineControl(props: {
         className="h-[44px] flex-row items-center gap-2 rounded-xl px-2 active:bg-subtle"
         disabled={props.disabled || props.static}
         onPress={props.onPress}
-        style={{ opacity: props.disabled ? 0.45 : 1 }}
+        style={[
+          { opacity: props.disabled ? 0.45 : 1 },
+          props.hideOverflowingLabel
+            ? { flexWrap: "wrap", overflow: "hidden", justifyContent: "center" }
+            : undefined,
+        ]}
       >
         {props.renderIcon ? (
           <View
@@ -75,19 +91,15 @@ export function ComposerInlineControl(props: {
           >
             {props.renderIcon(iconSize)}
           </View>
-        ) : props.icon ? (
-          <SymbolView
-            name={props.icon}
-            size={iconSize}
-            tintColorClassName={
-              props.emphasized || props.selected ? "accent-icon" : "accent-icon-muted"
-            }
-            type="monochrome"
-          />
-        ) : null}
+        ) : props.hideOverflowingLabel ? (
+          <View className="h-full shrink-0 justify-center">{symbol}</View>
+        ) : (
+          symbol
+        )}
         {props.iconOnly ? null : (
           <Animated.View
-            className="shrink"
+            // A label that cannot fit wraps below the clipped, single-row control.
+            className={props.hideOverflowingLabel ? "h-full shrink-0 justify-center" : "shrink"}
             entering={animatesLabel && !reducedMotion ? INLINE_CONTROL_LABEL_ENTERING : undefined}
           >
             <Text

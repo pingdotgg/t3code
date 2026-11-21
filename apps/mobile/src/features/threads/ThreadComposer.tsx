@@ -194,6 +194,9 @@ export interface ThreadComposerProps {
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
+// Keep a 44dp input target after the floating editor's 4dp inset on each side.
+const INLINE_EDITOR_COMPACT_MIN_WIDTH = 52;
+
 const COMPOSER_ATTACHMENT_ENTERING =
   Platform.OS === "android"
     ? FadeIn.duration(160)
@@ -702,6 +705,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     props.compactBeforeSend && !showResumeAction && queuedEdit === null
       ? props.compactBeforeSend
       : null;
+  const reserveCompactInput =
+    Platform.OS === "android" &&
+    compactBeforeSend !== null &&
+    !compactEditor.isExpanded &&
+    stripAttachments.length === 0;
+  // Allow 52dp for the editor, 60dp for the model picker and 44dp per button (62dp for large Send).
+  const wrapCompactActions =
+    reserveCompactInput && compactRowWidth > 0 && compactRowWidth < (usesLargeControls ? 306 : 288);
   const compactTokens = compactBeforeSend ? formatTokens(compactBeforeSend.tokens) : null;
   const compactControl =
     compactBeforeSend && compactTokens !== null ? (
@@ -709,6 +720,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         size={usesLargeControls ? "large" : "regular"}
         icon="arrow.down.right.and.arrow.up.left"
         label={compactTokens}
+        hideOverflowingLabel={reserveCompactInput}
         selected={!compactBeforeSend.keepFullHistory}
         showChevron={false}
         disabled={!props.canOperateThread}
@@ -829,7 +841,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             }}
           >
             <ComposerDictationDraftContent
-              className="flex-row items-end"
+              className={wrapCompactActions ? "flex-row flex-wrap items-end" : "flex-row items-end"}
               compact
               hidden={showsCompactDictation}
             >
@@ -852,6 +864,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                         ? 0
                         : INLINE_EDITOR_MIN_WIDTH,
                   },
+                  reserveCompactInput && { minWidth: INLINE_EDITOR_COMPACT_MIN_WIDTH },
                   compactEditor.containerStyle,
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
                 ]}
