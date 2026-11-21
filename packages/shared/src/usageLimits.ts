@@ -728,9 +728,14 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       kind: first.kind,
       label: first.label,
       members,
-      columns: accounts.map(
-        (account) => memberByAccount.get(account.key) ?? { account, window: null },
-      ),
+      // Empty slots keep accounts aligned across rows; a lone reporter has nothing to align with.
+      columns:
+        members.length === 1 &&
+        !(first.kind === "monthly" && accounts.some((account) => account.limits.zeroSpendCap))
+          ? members
+          : accounts.map(
+              (account) => memberByAccount.get(account.key) ?? { account, window: null },
+            ),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
       pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),

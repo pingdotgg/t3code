@@ -1298,6 +1298,14 @@ describe("pooled account columns", () => {
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
   });
 
+  it("gives a window only one account reports the whole bar, keeping gaps in shared rows", () => {
+    const [pool] = collectLimitPools(
+      [account("a", [window, weekly]), account("b", [{ ...weekly, usedPercent: 10 }])],
+      now,
+    );
+    expect(keys(pool!)).toEqual([["a"], ["a", "b"]]);
+  });
+
   it.each([undefined, "invalid", "2026-09-03T11:30:00.000Z"])(
     "keeps blocked sessions empty without predicting a refill from a missing or stale clock (%s)",
     (resetsAt) => {

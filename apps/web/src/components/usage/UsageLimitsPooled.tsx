@@ -310,6 +310,7 @@ function PoolSegment({
   readonly now: number;
   readonly index: number;
   readonly showAccountName: boolean;
+  readonly showPercent: boolean;
 }) {
   return account.redeem ? (
     <RedeemableSegment account={account} redeemAt={account.redeem} {...props} />
@@ -357,12 +358,14 @@ function SegmentTriggers({
   now,
   index,
   showAccountName,
+  showPercent,
 }: SegmentPayload & {
   readonly refillPercent: number;
   readonly color: string;
   readonly now: number;
   readonly index: number;
   readonly showAccountName: boolean;
+  readonly showPercent: boolean;
 }) {
   const popover = use(SegmentPopoverContext) ?? undefined;
   const payload: SegmentPayload = { account, window, reset, redeem };
@@ -449,8 +452,8 @@ function SegmentTriggers({
               className="min-w-0 truncate font-medium text-foreground"
             />
           ) : null}
-          {/* A single-account bar repeats the headline percentage. */}
-          {showAccountName ? (
+          {/* A lone bar repeats the headline percentage. */}
+          {showPercent ? (
             <span className="shrink-0 font-semibold text-foreground tabular-nums">
               {remaining}%
             </span>
@@ -546,10 +549,12 @@ function PoolBar({
   pool,
   color,
   now,
+  named,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly named: boolean;
 }) {
   const restores = new Map(pool.resets.map((reset) => [reset.member.account.key, reset]));
   const gt = useGT();
@@ -570,7 +575,8 @@ function PoolBar({
               color={normalizeProviderAccentColor(member.account.accentColor) ?? color}
               now={now}
               index={position + 1}
-              showAccountName={pool.columns.length > 1}
+              showAccountName={named}
+              showPercent={pool.columns.length > 1}
             />
           ) : pool.kind === "monthly" && member.account.limits.zeroSpendCap ? (
             <div
@@ -597,10 +603,12 @@ function PoolWindowCard({
   now,
   label,
   description,
+  named,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
+  readonly named: boolean;
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
 }) {
@@ -628,7 +636,7 @@ function PoolWindowCard({
           </span>
         ) : null}
       </div>
-      <PoolBar pool={pool} color={color} now={now} />
+      <PoolBar pool={pool} color={color} now={now} named={named} />
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
@@ -662,6 +670,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
             pool={window}
             color={color}
             now={now}
+            named={pool.accounts.length > 1}
             label={details?.label}
             description={details?.description}
           />
