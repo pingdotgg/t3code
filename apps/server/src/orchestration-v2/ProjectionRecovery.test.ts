@@ -13,6 +13,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  RunAttemptId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -762,8 +763,10 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
     const now = yield* DateTime.now;
     const first = yield* createThread("shared-first");
     const second = yield* createThread("shared-second", { archivedAt: now });
+    const idleShared = [first, second];
+    const sharedWork = yield* createThread("shared-work");
     const providerSessionId = ProviderSessionId.make("session:recovery:shared");
-    for (const threadId of [first, second]) {
+    for (const threadId of [...idleShared, sharedWork]) {
       yield* projections.apply({
         id: EventId.make(`event:${threadId}:session`),
         type: "provider-session.attached",
@@ -785,6 +788,34 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
         },
       });
     }
+    yield* projections.apply({
+      id: EventId.make("event:recovery:shared-work"),
+      type: "provider-thread.updated",
+      threadId: sharedWork,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: ProviderThreadId.make("provider-thread:recovery:shared-work"),
+        appThreadId: sharedWork,
+        ownerNodeId: null,
+        driver,
+        providerInstanceId,
+        providerSessionId,
+        nativeThreadRef: { driver, nativeId: "native:shared-work", strength: "strong" },
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        pendingBackgroundTasks: [
+          { taskId: "awaited", description: "Awaited subagent", kind: "subagent" },
+        ],
+      },
+    });
     const roster = yield* createThread("roster");
     yield* projections.apply({
       id: EventId.make("event:recovery:roster"),
@@ -868,13 +899,16 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
       restartContinuationOfRunId: RunId.make("run:recovery:source"),
     });
     assert.deepEqual(
-      new Set(yield* projections.getRecoveryThreadIds("runtime")),
-      new Set([first, second, roster, prepared]),
-    );
-    assert.deepEqual(
       new Set(yield* projections.getRecoveryThreadIds("restart-continuations")),
-      new Set([first, second, prepared]),
+      new Set([sharedWork, prepared]),
     );
+    // One idle bound thread stops the shared session; the rest have nothing to recover.
+    const runtime = yield* projections.getRecoveryThreadIds("runtime");
+    assert.deepEqual(
+      new Set(runtime.filter((threadId) => !idleShared.includes(threadId))),
+      new Set([sharedWork, roster, prepared]),
+    );
+    assert.equal(runtime.filter((threadId) => idleShared.includes(threadId)).length, 1);
     assert.deepEqual(
       yield* projections.getRecoveryThreadIds("restart-continuations", { include: [] }),
       [],
@@ -891,7 +925,7 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
           include: ["project:recovery"],
         }),
       ),
-      new Set([first, second, prepared]),
+      new Set([sharedWork, prepared]),
     );
     const preparedState = yield* projections.getRuntimeRecoveryProjection(prepared);
     assert.deepEqual(
@@ -907,7 +941,7 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
     `;
     assert.deepEqual(
       new Set(yield* projections.getUnreadableThreadIds()),
-      new Set([first, second]),
+      new Set([...idleShared, sharedWork]),
     );
   }).pipe(Effect.provide(layerTest)),
 );
@@ -1239,7 +1273,13 @@ it.effect("reads the run that owns a background roster, not a queued or resumed 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("wakes the run whose subagent lost its shell, past a wake cut before it started", () =>
+it.effect.each([
+  ["a wake cut before it started", { status: "starting", startedAt: null }],
+  [
+    "a prompt the provider never accepted",
+    { status: "running", activeAttemptId: RunAttemptId.make("attempt:unaccepted") },
+  ],
+] as const)("wakes the run whose subagent lost its shell, past %s", ([, later]) =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
@@ -1269,11 +1309,11 @@ it.effect("wakes the run whose subagent lost its shell, past a wake cut before i
       },
     });
     const settledRun = yield* createRun(threadId, "completed", { providerThreadId });
-    yield* createRun(threadId, "starting", {
+    yield* createRun(threadId, later.status, {
       ordinal: 2,
       providerThreadId,
-      startedAt: null,
       completedAt: null,
+      ...later,
     });
     yield* projections.apply({
       id: EventId.make(`event:${threadId}:roster`),

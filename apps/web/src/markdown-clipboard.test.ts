@@ -12,6 +12,18 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import { markdownMathRanges, parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
 
+import { unified } from "unified";
+import remarkParse from "remark-parse";
+import {
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+} from "@t3tools/shared/markdownPipeline";
+
+const userMarkdown = unified()
+  .use(remarkParse)
+  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+  .use(CHAT_USER_MARKDOWN_REMARK_PLUGINS);
+
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
 
@@ -216,6 +228,39 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(paragraph.children.find((child) => child.type === "inlineCode")?.value).toBe(value);
   });
 
+  it.each([
+    String.raw`see C:\me\.t3\shot.png`,
+    String.raw`C:\work\_build`,
+    "C:/work/_build/out.txt",
+    String.raw`C:\work\a-_b.txt`,
+    "a*word*b and a_word_b; ~~literal~~ and ~single~",
+    String.raw`before\ after\	end`,
+  ])("copies prose that parses back unchanged: %s", (value) => {
+    const container = new FakeElement("DIV").append(new FakeText(value));
+    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
+      .children[0];
+    expect(paragraph).toMatchObject({ type: "paragraph", children: [{ type: "text", value }] });
+  });
+
+  it.each([
+    ["*", "EM", "word", "emphasis"],
+    ["\\", "CODE", "value", "inlineCode"],
+  ])("keeps a text edge %j beside %s", (edge, tag, value, type) => {
+    const container = new FakeElement("DIV").append(
+      new FakeText(edge),
+      new FakeElement(tag).append(new FakeText(value)),
+    );
+    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
+      .children[0];
+    expect(paragraph).toMatchObject({
+      type: "paragraph",
+      children: [
+        { type: "text", value: edge },
+        type === "inlineCode" ? { type, value } : { type, children: [{ type: "text", value }] },
+      ],
+    });
+  });
+
   it("copies email links with their address and drops in-app destinations", () => {
     const container = new FakeElement("DIV").append(
       new FakeElement("P").append(
@@ -254,19 +299,24 @@ describe("serializeRenderedMarkdownFragment", () => {
   });
 
   it.each([
-    "support@example.com?subject=Help",
-    "foo",
-    "support@example.internal1",
-    "support@example.com_",
-    "support@example.com-",
-  ])("keeps the destination when the email label is not a bare address: %s", (label) => {
-    const href = `mailto:${label}`;
+    ["array[index]", "https://example.com"] as const,
+    ...[
+      "support@example.com?subject=Help",
+      "foo",
+      "support@example.internal1",
+      "support@example.com_",
+      "support@example.com-",
+      "first_last@example.com",
+    ].map((label) => [label, `mailto:${label}`] as const),
+  ])("keeps the link label and destination: %s", (label, href) => {
     const anchor = new FakeElement("A", [], { href }).append(new FakeText(label));
     const container = new FakeElement("DIV").append(anchor);
-    const paragraph = parseMarkdownWithMath(serializeRenderedMarkdownFragment(asNode(container)))
+    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
       .children[0];
     if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
-    expect(paragraph.children.find((child) => child.type === "link")?.url).toBe(href);
+    expect(paragraph.children).toMatchObject([
+      { type: "link", url: href, children: [{ type: "text", value: label }] },
+    ]);
   });
 
   it("copies alert and insight callouts as their Markdown instead of the rendered label", () => {
@@ -415,7 +465,7 @@ describe("copying rendered Markdown tables", () => {
   it("keeps formula pipes as authored while escaping prose pipes", () => {
     const table = renderedTable(
       [new FakeText("Formula"), new FakeText("Note")],
-      [renderedFormula("|x|"), new FakeText("a | b")],
+      [renderedFormula("|x|"), new FakeText("*a* | ~~b~~")],
       [renderedFormula("\\|x\\|"), new FakeElement("CODE").append(new FakeText("\\(c|d\\)"))],
       [
         new FakeElement("A", [], { href: "https://example.com/?q=a|b" }).append(
@@ -444,7 +494,7 @@ describe("copying rendered Markdown tables", () => {
       "|z|",
     ]);
     expect(parsed.children[1]?.children[1]?.children).toMatchObject([
-      { type: "text", value: "a | b" },
+      { type: "text", value: "*a* | ~~b~~" },
     ]);
     expect(parsed.children[4]?.children[1]?.children).toMatchObject([
       { type: "text", value: "> c | d" },
