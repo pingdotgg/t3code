@@ -53,7 +53,11 @@ export function applyUsageLimitsUpdate(input: {
   readonly checkedAt: string;
 }): ServerProviderUsageLimits | undefined {
   const { previous, update } = input;
-  if (update.windows.length === 0 || previous?.unavailable?.reason === "unsupported") {
+  const removeWindowIds = update.removeWindowIds ?? [];
+  if (
+    (update.windows.length === 0 && removeWindowIds.length === 0) ||
+    previous?.unavailable?.reason === "unsupported"
+  ) {
     return previous;
   }
   const merged = new Map(previous?.windows.map((window) => [window.id, window] as const));
@@ -76,7 +80,10 @@ export function applyUsageLimitsUpdate(input: {
       changed = true;
     }
   }
-  if (!changed && previous !== undefined) {
+  for (const id of removeWindowIds) {
+    if (merged.delete(id)) changed = true;
+  }
+  if (!changed) {
     return previous;
   }
   const unavailable =
