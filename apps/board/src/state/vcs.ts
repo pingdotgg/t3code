@@ -7,6 +7,7 @@ import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { failureText } from "../settings/failureText";
+import { setupLine } from "./worktreeSetup";
 
 export const vcsEnvironment = createVcsEnvironmentAtoms(connectionAtomRuntime);
 
@@ -44,6 +45,8 @@ export const lastSetupSnapshotAtom = Atom.family((key: string) => {
       ),
       () => null,
     );
-    return live ?? Option.getOrNull(get.self<WorktreeSetupSnapshot | null>());
+    if (live !== null) return live;
+    const previous = Option.getOrNull(get.self<WorktreeSetupSnapshot | null>());
+    return setupLine(previous)?.kind === "failed" ? previous : null;
   }).pipe(Atom.keepAlive, Atom.withLabel(`worktree-setup-last:${key}`));
 });
