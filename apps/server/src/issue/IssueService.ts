@@ -721,11 +721,8 @@ const make = Effect.gen(function* () {
       const { supported } = yield* listProjects({ host: link.host, authority });
       const onHost = supported.filter((project) => project.tracker === tracker);
       const onAuthority = onHost.filter((project) => project.host === authority);
-      // A port-bearing link names a server of its own. Without a binding for that authority it
-      // names a server nobody configured, so it must not fall back to a default-port server on
-      // the same host. A port-less link may still be served by whichever binding has the host.
-      let onTracker = onAuthority;
-      if (onTracker.length === 0 && parsedUrl.port === "") onTracker = onHost;
+      // An explicit port names its own server; only a port-less link may borrow another binding's.
+      const onTracker = onAuthority.length > 0 || parsedUrl.port !== "" ? onAuthority : onHost;
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
       const scope = link.scope.toLowerCase();

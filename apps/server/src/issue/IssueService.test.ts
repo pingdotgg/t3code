@@ -273,18 +273,8 @@ describe("IssueService", () => {
         projectId: "plain",
         host: "gitea.test",
       });
-
-      // A port-bearing link names a distinct server; a default-port-only binding must not serve it.
-      const defaultPortOnly = yield* makeService({
-        projects: [
-          project({ id: "plain", repository: "acme/web", provider: "forgejo", host: "gitea.test" }),
-        ],
-        trackers: [fakeTracker({ kind: IssueTrackerKind.make("forgejo") })],
-      });
       expect(
-        yield* defaultPortOnly
-          .resolveUrl("https://gitea.test:8443/acme/web/issues/3")
-          .pipe(Effect.result),
+        yield* ported.resolveUrl("https://gitea.test:9443/acme/web/issues/3").pipe(Effect.result),
       ).toMatchObject({
         _tag: "Failure",
         failure: { _tag: "IssueUnavailableError", reason: "tracker-unsupported" },
