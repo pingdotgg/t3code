@@ -2847,6 +2847,8 @@
   "8f109e64ea66ebaf": "Failed to copy text to the clipboard.",
   "3444fc0e046baae6": "Clipboard API is unavailable while reading text.",
   "ec2160de6dd9c8d3": "Failed to read text from the clipboard.",
+  "d0d666e8667322ca": "Environment settings are still loading",
+  "aa985f3cefd7c4d2": "Wait for this environment to finish connecting, then try again.",
   "433bd7a75c28a858": "Could not create the {label} repository",
   "181a251357eeca66": "{error} Use Publish Repository in the Git menu to try again.",
   "fc6379bdbd00c0a3": "Published to {label}",

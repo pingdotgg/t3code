@@ -2847,6 +2847,8 @@
   "8f109e64ea66ebaf": "No se pudo copiar el texto al portapapeles.",
   "3444fc0e046baae6": "La API del portapapeles no está disponible al leer texto.",
   "ec2160de6dd9c8d3": "No se pudo leer el texto del portapapeles.",
+  "d0d666e8667322ca": "La configuración del entorno aún se está cargando",
+  "aa985f3cefd7c4d2": "Espera a que se conecte este entorno y vuelve a intentarlo.",
   "433bd7a75c28a858": "No se pudo crear el repositorio de {label}",
   "181a251357eeca66": "{error} Usa Publicar repositorio en el menú de Git para volver a intentarlo.",
   "fc6379bdbd00c0a3": "Publicado en {label}",
