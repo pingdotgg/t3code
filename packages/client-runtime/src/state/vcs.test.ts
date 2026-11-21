@@ -464,6 +464,13 @@ describe("cached VCS refs", () => {
       expect(yield* Ref.get(clears)).toBe(3);
       expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
 
+      yield* atoms.refreshLocalStatusForPicker.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { cwd: "/repo", localOnly: true },
+      });
+      expect(yield* Ref.get(clears)).toBe(3);
+      expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+
       const prepareResult = yield* Effect.exit(
         createGitEnvironmentAtoms(runtime).preparePullRequestThread.run(registry, {
           environmentId: TARGET.environmentId,
