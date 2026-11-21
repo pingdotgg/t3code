@@ -32,6 +32,7 @@ import {
 } from "./browserVoiceInput";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant } from "./voiceConsent";
+import { playVoiceInputCue } from "./voiceInputCue";
 import { msg } from "gt-react";
 import { m } from "../i18n/messages";
 
@@ -220,6 +221,7 @@ export class VoiceInputSession {
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
       configureRecording: async () => undefined,
+      playRecordingCue: playVoiceInputCue,
       releaseRecording: async () => platform.cancelRecording(),
       deleteRecording: platform.deleteRecording,
       postProcess,
