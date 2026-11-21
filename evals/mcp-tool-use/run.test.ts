@@ -850,8 +850,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
     base,
   );
   const headOf = (number: number) =>
-    (t3Default(sample, "pull_request_read", { number }) as { summary: { headSha: unknown } })
-      .summary.headSha;
+    (t3Default(sample, "pull_request_read", { number }) as { headSha: unknown }).headSha;
   // The checkout's commit is the branch PR's head, not another PR's.
   assert.equal(headOf(6), "local-head");
   const other = makeSample(
@@ -870,8 +869,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
     base,
   );
   assert.isNull(
-    (t3Default(other, "pull_request_read", { number: 6 }) as { summary: { headSha: unknown } })
-      .summary.headSha,
+    (t3Default(other, "pull_request_read", { number: 6 }) as { headSha: unknown }).headSha,
   );
   const listed = (state?: string) =>
     (
@@ -897,6 +895,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
               checks: [
                 { name: "Test", state: "pass" },
                 { name: "Lint", state: "cancelled" },
+                { name: "Deploy", state: "action-required" },
               ],
             },
           ],
@@ -938,13 +937,17 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
   ).checks.map((check) => check.log !== null);
   assert.deepEqual(logs, [true, true, true, true, true, false]);
   assert.deepEqual(ciNames({}), ["Lint"]);
+  const ciRead: Readonly<Record<string, unknown>> = t3Default(ciSample, "pull_request_read", {
+    number: 7,
+  });
+  assert.deepEqual(ciRead.checks, { passed: 1, pending: 1, failed: ["Lint"] });
   const read: Readonly<Record<string, unknown>> = t3Default(sample, "pull_request_read", {
     number: 5,
-    sections: ["summary", "diff", "conversation"],
+    include: ["diff", "comments"],
   });
   assert.deepEqual(read.diff, { patch: "+old", truncated: false, nextCursor: null });
-  assert.propertyVal(read.summary, "state", "merged");
-  assert.propertyVal(read.summary, "headSha", "pr-head");
+  assert.propertyVal(read, "state", "merged");
+  assert.propertyVal(read, "headSha", "pr-head");
   assert.nestedPropertyVal(read.conversation, "comments[0].author", "mark");
 });
 
