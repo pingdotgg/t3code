@@ -12,6 +12,7 @@ import type {
   CloudSpeechProvider,
   ClientSettings,
   EnvironmentId,
+  EnvironmentSpeechStatus,
   SpeechCustomWords,
   SpeechPostProcessingOptions,
   SpeechStreamText,
@@ -26,6 +27,8 @@ import { chooseRecordingMicrophone } from "./browserMicrophones";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant } from "./voiceConsent";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 
 export const IDLE_VOICE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 
@@ -106,6 +109,7 @@ export class VoiceInputSession {
   private readonly listeners = new Set<() => void>();
   private readonly activityListeners = new Set<() => void>();
   private disposed = false;
+  private onSpeechStatus: ((status: EnvironmentSpeechStatus) => void) | undefined;
 
   constructor(key: SessionKey) {
     this.key = key;
@@ -122,17 +126,18 @@ export class VoiceInputSession {
       cloudProvider: key.cloudProvider,
       cloudModel: key.cloudModel,
       hasAudioConsent,
+      getStatusListener: () => this.onSpeechStatus,
       getStreamingEnabled: () =>
         this.target?.readContext().clientSettings.speechStreaming ??
         DEFAULT_CLIENT_SETTINGS.speechStreaming,
       getTranscriptionOptions: (): SpeechTranscriptionOptions => {
         const context = this.target?.readContext();
-        if (!context) throw new Error("Voice input has no draft to record into.");
+        if (!context) throw new Error(m(msg("Voice input has no draft to record into.")));
         const settings = context.clientSettings;
         const cleanupGrant = context.cleanup ? readCleanupGrant() : null;
         const cleanupEnabled = cleanupGrant !== null;
         const cue = cleanupEnabled && context.cleanupPrepared ? settings.speechCorrectionWord : "";
-        const speechCustomWords = resolveSpeechVocabulary({
+        const { speechCustomWords, speechHints } = resolveSpeechVocabulary({
           personal: settings.speechCustomWords,
           project: context.projectWords,
           hints: [cue, context.projectName ?? ""],
@@ -152,6 +157,7 @@ export class VoiceInputSession {
           speechLanguage: settings.speechLanguage,
           speechTranslateToEnglish: settings.speechTranslateToEnglish,
           speechCustomWords,
+          ...(speechHints.length > 0 ? { speechHints } : {}),
           speechRemoveFillerWords: settings.speechRemoveFillerWords,
           ...(cue.trim() ? { speechCorrectionWord: cue } : {}),
           speechSilenceFiltering: settings.speechSilenceFiltering,
@@ -163,8 +169,8 @@ export class VoiceInputSession {
       onText: (preview) => {
         if (!this.disposed) this.publishActivity({ ...this.activity, preview });
       },
-      onError: (message) => {
-        if (!this.disposed) void this.controller.interruptRecording(message);
+      onError: (message, code) => {
+        if (!this.disposed) void this.controller.interruptRecording(message, null, code);
       },
     });
     const postProcess: NonNullable<VoiceInputControllerDependencies["postProcess"]> = (
@@ -181,7 +187,7 @@ export class VoiceInputSession {
         return null;
       if (!preferences.cleanupPrepared)
         return Promise.reject(
-          new Error("The draft's environment is unavailable for transcript cleanup."),
+          new Error(m(msg("The draft's environment is unavailable for transcript cleanup."))),
         );
       return runEnvironmentSpeech(
         postProcessEnvironmentTranscript(
@@ -195,6 +201,7 @@ export class VoiceInputSession {
       ).then((result) => result.text);
     };
     this.controller = new VoiceInputController({
+      resolve: m,
       retryFailedRecording: true,
       recorder: platform.recorder,
       getTranscriber: () => platform.transcriber,
@@ -206,8 +213,8 @@ export class VoiceInputSession {
       onPostProcessingError: () =>
         toastManager.add({
           type: "warning",
-          title: "Transcript cleanup failed",
-          description: "The original transcript was added.",
+          title: m(msg("Transcript cleanup failed")),
+          description: m(msg("The original transcript was added.")),
         }),
       readDraft: (): VoiceDraftSnapshot | null => {
         const target = this.target;
@@ -249,13 +256,17 @@ export class VoiceInputSession {
   readonly getActivity = (): VoiceInputSessionActivity => this.activity;
 
   /** Starts recording into `target`, or does nothing while another draft holds the microphone. */
-  start(target: VoiceInputTarget): Promise<void> {
+  start(
+    target: VoiceInputTarget,
+    onSpeechStatus?: (status: EnvironmentSpeechStatus) => void,
+  ): Promise<void> {
     if (this.disposed) return Promise.resolve();
     const busyElsewhere =
       voiceInputBlocksSubmission(this.controller.currentState) &&
       this.target?.ownerKey !== target.ownerKey;
     if (busyElsewhere) return Promise.resolve();
     this.target = target;
+    this.onSpeechStatus = onSpeechStatus;
     this.publishActivity(SILENT_ACTIVITY);
     this.publish({ ...this.snapshot, target });
     return this.controller.start();

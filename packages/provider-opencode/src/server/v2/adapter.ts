@@ -147,6 +147,7 @@ const OpenCode2ProviderCapabilities = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
@@ -166,6 +167,7 @@ const OpenCode2ProviderCapabilities = {
     emitsToolOutput: true,
     supportsMcpTools: false,
     supportsDynamicToolCallbacks: false,
+    supportsBackgroundWait: true,
   },
   approvals: {
     supportsCommandApproval: true,
@@ -312,6 +314,12 @@ interface Wake {
   readonly after: string | undefined;
   readonly first: string | undefined;
   readonly children: Set<string>;
+  readonly awaited: Set<string>;
+  /** Held shell launches whose end report arrived first; the report already cleared their status. */
+  readonly ended: Map<
+    string,
+    { readonly status: "completed" | "failed" | "interrupted"; readonly exit?: number }
+  >;
 }
 
 interface OpenBlock {
@@ -652,6 +660,19 @@ const OWNED_RECOVERY_RETRY = {
   schedule: OWNED_RECONNECT_SCHEDULE,
   while: (error: unknown) => !isPermanentRecoveryError(error),
 };
+// Retries an owned server's request until it answers or the process exits.
+const whileAlive = <A, E, R>(
+  processExit: Effect.Effect<unknown> | undefined,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  processExit === undefined
+    ? effect
+    : effect.pipe(
+        Effect.retry(OWNED_RECOVERY_RETRY),
+        Effect.raceFirst(
+          processExit.pipe(Effect.andThen(Effect.fail(new OpenCode2ServerExitedError()))),
+        ),
+      );
 class OpenCode2ServerExitedError extends Schema.TaggedError<OpenCode2ServerExitedError>()(
   "OpenCode2ServerExitedError",
   {},
@@ -997,6 +1018,38 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     >();
 
+    // A held wake routes its shell launches only when T3 starts its run, so marks wait on the wake.
+    const heldLaunch = (state: ThreadState, taskId: string) =>
+      sessionsOf(state)
+        .flatMap((session) => session.wakes)
+        .find((wake) =>
+          wake.events.some(
+            (event) =>
+              event.type === "session.tool.success" &&
+              stringField(event.data.metadata, "shellID") === taskId &&
+              event.data.metadata?.["exit"] === undefined &&
+              event.data.metadata?.["signal"] === undefined &&
+              event.data.metadata?.["timeout"] !== true,
+          ),
+        );
+    const wakeLaunchingShell = (state: ThreadState, taskId: string) => {
+      const wake = heldLaunch(state, taskId);
+      return wake === undefined ||
+        wake.ended.has(taskId) ||
+        (shellInfo.get(taskId)?.status ?? "running") !== "running" ||
+        // An end report held with the launch replays after it.
+        wake.events.some(
+          (event) =>
+            event.type === "session.inbox.enqueued" &&
+            event.data.item.type === "synthetic" &&
+            stringField(event.data.item.payload.metadata, "source") === "shell" &&
+            stringField(event.data.item.payload.metadata, "shellID") === taskId,
+        )
+        ? undefined
+        : wake;
+    };
+    let replaying: Wake | undefined;
+
     const owesWork = (state: ThreadState) =>
       [...shells.values()].some((shell) => shell.state === state && shell.running) ||
       [...state.imageJobs.values()].some((job) => job.status === "running") ||
@@ -1052,9 +1105,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         input: { sessionID: state.sessionId },
       });
       const goal = yield* decodeGoal(result.output);
-      yield* lock.withPermit(
+      return yield* lock.withPermit(
         Effect.gen(function* () {
-          if (state.goalRevision === revision) yield* updateGoal(state, goal);
+          if (state.goalRevision !== revision) return false;
+          yield* updateGoal(state, goal);
+          return true;
         }),
       );
     });
@@ -1497,6 +1552,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ...(summary === undefined || summary.length === 0 ? {} : { summary }),
         },
       });
+      // The pre-compaction step would otherwise settle the turn as its newest usage.
+      if (status === "completed") turn.lastStep = undefined;
+      if (status === "completed" && state.providerThread.contextUsage !== null) {
+        state.providerThread = {
+          ...state.providerThread,
+          contextUsage: null,
+          updatedAt,
+        };
+        yield* emitProviderThread(state);
+      }
       if (status !== "running") turn.compaction = undefined;
     });
 
@@ -1940,7 +2005,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               awaited:
                 state.providerThread.pendingBackgroundTasks?.some(
                   (task) => task.taskId === info.id && task.awaited === true,
-                ) === true,
+                ) === true || wakeLaunchingShell(state, info.id)?.awaited.has(info.id) === true,
               running: true,
               output: "",
               cursor: 0,
@@ -2837,25 +2902,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               toolId: event.data.id,
               tool,
               command: stringField(tool.input, "command") ?? "Shell command",
+              ...(replaying?.awaited.has(shellId) === true ? { awaited: true } : {}),
               running: true,
               output: "",
               cursor: 0,
             });
-            yield* readShellOutput(shellId).pipe(Effect.ignore({ log: true }));
             const known = shellInfo.get(shellId);
+            const ended = replaying?.ended.get(shellId);
             const tracked = shells.get(shellId)!;
-            tracked.running = known === undefined || known.status === "running";
+            tracked.running =
+              ended === undefined && (known === undefined || known.status === "running");
+            yield* readShellOutput(shellId, !tracked.running).pipe(Effect.ignore({ log: true }));
             yield* emitShell(
               shellId,
               tracked.running
                 ? "running"
-                : known?.status === "killed"
-                  ? "interrupted"
-                  : known?.exit === 0
-                    ? "completed"
-                    : "failed",
-              known?.exit,
+                : (ended?.status ??
+                    (known?.status === "killed"
+                      ? "interrupted"
+                      : known?.exit === 0
+                        ? "completed"
+                        : "failed")),
+              ended?.exit ?? known?.exit,
             );
+            if (ended !== undefined) shells.delete(shellId);
             yield* syncRosterAncestors(state);
             return;
           }
@@ -2983,6 +3053,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         after: delivered.at(-1)?.inboxId,
         first: leading ?? delivered[0]?.inboxId,
         children: new Set(),
+        awaited: new Set(),
+        ended: new Map(),
       };
       state.wakes.push(wake);
       yield* Effect.logInfo("OpenCode started a turn on its own; asking for a continuation.", {
@@ -3093,6 +3165,27 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             outcome: reportOutcome(stringField(payload.metadata, "state")),
           },
         });
+        if (id !== undefined && shell === undefined) {
+          const outcome = reportOutcome(stringField(payload.metadata, "state"));
+          const known = shellInfo.get(id);
+          const exit = known?.exit;
+          // A known exit outranks the report, which says "completed" for a timeout.
+          heldLaunch(state, id)?.ended.set(id, {
+            status:
+              known !== undefined && known.status !== "running"
+                ? known.status === "killed"
+                  ? "interrupted"
+                  : exit === 0
+                    ? "completed"
+                    : "failed"
+                : outcome === "failed"
+                  ? "failed"
+                  : outcome === "cancelled"
+                    ? "interrupted"
+                    : "completed",
+            ...(exit === undefined ? {} : { exit }),
+          });
+        }
         if (id !== undefined && shell?.stopping !== true) {
           if (shell?.running === true && shell.state === state) {
             yield* readShellOutput(id, true).pipe(Effect.ignore({ log: true }));
@@ -3182,6 +3275,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       if (end.status === "completed" && (turn.steers.size > 0 || goalHoldsTurn(state))) {
         turn.heldEnd = end;
+        // OpenCode can pause a goal without telling this server, such as another process's
+        // restart sweep, so confirm the goal is still active before waiting on it.
+        if (goalHoldsTurn(state) && !state.goalRefreshing) yield* refreshGoal(state);
         return;
       }
       yield* finishTurn(state, end);
@@ -3191,6 +3287,33 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn.heldEnd !== undefined && turn.steers.size === 0 && !goalHoldsTurn(state)
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
+
+    // Holds a goal turn until OpenCode's goal is read again; a failed read releases it.
+    const refreshGoal = Effect.fnUntraced(function* (state: ThreadState) {
+      state.goalFresh = false;
+      state.goalRefreshing = true;
+      state.goalRevision += 1;
+      const revision = state.goalRevision;
+      yield* Effect.forkIn(
+        readGoal(state).pipe(
+          Effect.timeout(INVENTORY_TIMEOUT),
+          Effect.catch(() =>
+            Effect.logWarning("Could not refresh OpenCode goal state.").pipe(Effect.as(false)),
+          ),
+          Effect.flatMap((applied) =>
+            lock.withPermit(
+              Effect.gen(function* () {
+                if (state.goalRevision === revision) state.goalRefreshing = false;
+                // A newer goal event or a reconnect's read owns settlement now.
+                else if (!applied) return;
+                if (state.active !== undefined) yield* endIfSettled(state, state.active);
+              }),
+            ),
+          ),
+        ),
+        sessionScope,
+      );
+    });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
       if (event.type === "shell.created") {
@@ -3353,33 +3476,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (!supportsNativeGoals()) return;
         const goal = yield* decodeGoal(event.data["goal"]).pipe(Effect.result);
         if (goal._tag === "Failure") {
-          state.goalFresh = false;
-          state.goalRefreshing = true;
-          state.goalRevision += 1;
-          const revision = state.goalRevision;
           yield* Effect.logWarning(
             "Could not decode an OpenCode goal update; refreshing its state.",
           );
-          yield* Effect.forkIn(
-            readGoal(state).pipe(
-              Effect.timeout(INVENTORY_TIMEOUT),
-              Effect.catch(() =>
-                Effect.logWarning(
-                  "Could not refresh OpenCode goal state after an unreadable update.",
-                ),
-              ),
-              Effect.ensuring(
-                lock.withPermit(
-                  Effect.gen(function* () {
-                    if (state.goalRevision === revision) state.goalRefreshing = false;
-                    if (state.active !== undefined) yield* endIfSettled(state, state.active);
-                  }),
-                ),
-              ),
-            ),
-            sessionScope,
-          );
-          return;
+          return yield* refreshGoal(state);
         }
         yield* updateGoal(state, goal.success);
         if (state.active !== undefined) yield* endIfSettled(state, state.active);
@@ -3758,7 +3858,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const scope = yield* Scope.make();
       const { next, stream } = yield* Effect.gen(function* () {
         const next = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
-        return { next, stream: yield* next.events.pipe(Effect.provideService(Scope.Scope, scope)) };
+        const events = next.events.pipe(Effect.provideService(Scope.Scope, scope));
+        return { next, stream: yield* whileAlive(next.processExit, events) };
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       const previous = currentScope;
       connection = next;
@@ -3794,15 +3895,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       // An owned process's exit, rather than a read deadline, bounds recovery; the bounded retry
       // below then borrows a restarted server. HTTP waits stay outside the event lock so Stop can still settle.
-      const exited = next.processExit;
-      yield* exited === undefined
+      yield* next.processExit === undefined
         ? reconcile().pipe(Effect.timeout(RECONCILE_TIMEOUT))
-        : reconcile().pipe(
-            Effect.retry(OWNED_RECOVERY_RETRY),
-            Effect.raceFirst(
-              exited.pipe(Effect.andThen(Effect.fail(new OpenCode2ServerExitedError()))),
-            ),
-          );
+        : whileAlive(next.processExit, reconcile());
       return stream;
     }).pipe(
       // Borrows and process exits stay bounded; only a live owned process is waited on above.
@@ -4396,7 +4491,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const replay = Effect.fnUntraced(function* (wake: Wake) {
       wake.dropped = true;
-      for (const event of wake.events) yield* route(event, sessionOfEvent(event), true);
+      replaying = wake;
+      yield* Effect.forEach(wake.events, (event) => route(event, sessionOfEvent(event), true), {
+        discard: true,
+      }).pipe(Effect.ensuring(Effect.sync(() => (replaying = undefined))));
     });
 
     const discardWakes = (caller: ThreadState, wakes: ReadonlyArray<Wake>) => {
@@ -5125,11 +5223,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const sessions = sessionsOf(state);
           const matched = [...new Set(taskIds)].filter((taskId) => {
             const shell = shells.get(taskId);
-            return shell !== undefined && shell.running && sessions.includes(shell.state);
+            return shell === undefined
+              ? wakeLaunchingShell(state, taskId) !== undefined
+              : shell.running && sessions.includes(shell.state);
           });
           if (matched.length === 0) return { matched };
           for (const taskId of matched) {
-            const shell = shells.get(taskId)!;
+            const shell = shells.get(taskId);
+            if (shell === undefined) {
+              const held = wakeLaunchingShell(state, taskId)!.awaited;
+              if (awaited) held.add(taskId);
+              else held.delete(taskId);
+              continue;
+            }
             shell.awaited = awaited;
             yield* syncRosterAncestors(shell.state);
           }

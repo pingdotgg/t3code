@@ -54,7 +54,7 @@ const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
-const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
+export const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
 const GIT_GREP_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -283,6 +283,28 @@ function buildContentSearchQuery(input: Omit<ProjectSearchContentsInput, "cwd">)
   return input.useRegex
     ? { searchQuery: `(?i)${input.query}`, regexMode: true }
     : { searchQuery: input.query.toLowerCase(), regexMode: false };
+}
+
+const ASCII_WORD = /^\w+$/;
+
+// A whole-word search for an ASCII word asks fff for the word itself, so substring hits are dropped
+// natively instead of filling pages with lines the JS check then discards. `-u` keeps `\b` and `i`
+// to ASCII: plain search does not fold `ſ` or `K`, and any non-ASCII neighbour stays a candidate.
+function buildWholeWordPattern(query: string, caseSensitive: boolean): string {
+  return `(?${caseSensitive ? "" : "i"}-u)\\b${query}\\b`;
+}
+
+// fff's ranges for that pattern are not used: the JS word check decides, on every hit in the line.
+function findWordRanges(
+  line: string,
+  word: string,
+  caseSensitive: boolean,
+): Array<{ readonly start: number; readonly end: number }> {
+  // No `u` flag: with it, `i` would fold `ſ` and `K` onto ASCII letters.
+  return Array.from(line.matchAll(new RegExp(word, caseSensitive ? "g" : "gi")), (match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
 }
 
 function mapContentMatchRanges(
@@ -526,13 +548,12 @@ const listGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.listGitIgnoredPaths"
       maxOutputBytes: 16 * 1024 * 1024,
     })
     .pipe(Effect.orElseSucceed(() => undefined));
-  if (!result || result.exitCode !== 0 || result.stdoutTruncated) return new Set<string>();
-  return new Set(
-    result.stdout
-      .split("\0")
-      .filter((entry) => entry.length > 0)
-      .map((entry) => trimDirectorySeparator(toPosixPath(entry, hostIsWindows))),
-  );
+  if (!result || result.exitCode !== 0 || result.stdoutTruncated) return [];
+  // Folders keep their trailing `/`.
+  return result.stdout
+    .split("\0")
+    .filter((entry) => entry.length > 0)
+    .map((entry) => toPosixPath(entry, hostIsWindows));
 });
 
 function mixedItemPath(item: MixedItem): string {
@@ -624,7 +645,50 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   // so content searches do not wait for it; git grep answers until it is ready.
   let contentIndexPending = variant === "content";
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
+
+  /** The nearest `.ignore` with a pattern matching `relativePath` itself decides. */
+  const makeIgnoreFileDecider = () => {
+    const ignoreFiles = new Map<string, IgnoreFile | undefined>();
+    const readIgnoreFile = Effect.fn("WorkspaceSearchIndex.readIgnoreFile")(function* (
+      directory: string,
+    ) {
+      if (ignoreFiles.has(directory)) return ignoreFiles.get(directory);
+      const contents = yield* fileSystem
+        .readFileString(path.join(cwd, directory, ".ignore"))
+        .pipe(Effect.option);
+      const file = Option.isSome(contents) ? parseIgnoreFile(contents.value) : undefined;
+      ignoreFiles.set(directory, file);
+      return file;
+    });
+    return Effect.fn("WorkspaceSearchIndex.decideByIgnoreFile")(function* (
+      relativePath: string,
+      isFolder: boolean,
+    ) {
+      const segments = relativePath.split("/");
+      for (let ancestor = segments.length - 1; ancestor >= 0; ancestor -= 1) {
+        const directory = segments.slice(0, ancestor).join("/");
+        const file = yield* readIgnoreFile(directory);
+        const relative = directory ? relativePath.slice(directory.length + 1) : relativePath;
+        const decision = file?.decide(relative, isFolder);
+        if (decision) return decision;
+      }
+      return undefined;
+    });
+  };
+
+  // Like ripgrep and fff, a `.ignore` that re-includes a path overrules Git's ignore rules for it.
+  const loadIgnoredPaths = Effect.fn("WorkspaceSearchIndex.loadIgnoredPaths")(function* () {
+    const decide = makeIgnoreFileDecider();
+    const ignored = new Set<string>();
+    for (const entry of yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows)) {
+      const relativePath = trimDirectorySeparator(entry);
+      if ((yield* decide(relativePath, entry.endsWith("/"))) !== "included") {
+        ignored.add(relativePath);
+      }
+    }
+    return ignored;
+  });
+  let ignoredPaths = yield* loadIgnoredPaths();
   if (variant === "paths") {
     yield* waitForIndexReady(
       cwd,
@@ -713,32 +777,14 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   // fff leaves out what `.ignore` files exclude, which git cannot evaluate; the nearest
   // `.ignore` that matches a path or one of its folders decides, as in decideByIgnoreFiles.
   const makeIgnoreFileFilter = () => {
-    const ignoreFiles = new Map<string, IgnoreFile | undefined>();
-    const readIgnoreFile = Effect.fn("WorkspaceSearchIndex.readIgnoreFile")(function* (
-      directory: string,
-    ) {
-      if (ignoreFiles.has(directory)) return ignoreFiles.get(directory);
-      const contents = yield* fileSystem
-        .readFileString(path.join(cwd, directory, ".ignore"))
-        .pipe(Effect.option);
-      const file = Option.isSome(contents) ? parseIgnoreFile(contents.value) : undefined;
-      ignoreFiles.set(directory, file);
-      return file;
-    });
+    const decide = makeIgnoreFileDecider();
     return Effect.fn("WorkspaceSearchIndex.isExcludedByIgnoreFiles")(function* (
       relativePath: string,
     ) {
       const segments = relativePath.split("/");
       for (let depth = 1; depth <= segments.length; depth += 1) {
         const candidate = segments.slice(0, depth).join("/");
-        for (let ancestor = depth - 1; ancestor >= 0; ancestor -= 1) {
-          const directory = segments.slice(0, ancestor).join("/");
-          const file = yield* readIgnoreFile(directory);
-          const relative = directory ? candidate.slice(directory.length + 1) : candidate;
-          const decision = file?.decide(relative, depth < segments.length);
-          if (decision === "ignored") return true;
-          if (decision === "included") break;
-        }
+        if ((yield* decide(candidate, depth < segments.length)) === "ignored") return true;
       }
       return false;
     });
@@ -1159,7 +1205,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
-    ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
+    ignoredPaths = yield* loadIgnoredPaths();
     invalidateSymlinkScan();
   });
 
@@ -1294,7 +1340,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       );
       contentIndexPending = false;
     }
-    let { searchQuery, regexMode } = buildContentSearchQuery(input);
+    // fff reads glob and path syntax out of a query even in regex mode, so only a bare word qualifies.
+    const wholeWordPrefilter = input.wholeWord && !input.useRegex && ASCII_WORD.test(input.query);
+    let { searchQuery, regexMode } = wholeWordPrefilter
+      ? { searchQuery: buildWholeWordPattern(input.query, input.caseSensitive), regexMode: true }
+      : buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
@@ -1327,9 +1377,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
       for (const match of result.items) {
         if (isIgnoredPath(ignoredPaths, match.relativePath, hostIsWindows)) continue;
-        const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
-          (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
-        );
+        const matchRanges = (
+          wholeWordPrefilter
+            ? findWordRanges(match.lineContent, input.query, input.caseSensitive)
+            : mapContentMatchRanges(match.lineContent, match.matchRanges)
+        ).filter((range) => !input.wholeWord || isWholeWordRange(match.lineContent, range));
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({
