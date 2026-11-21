@@ -505,6 +505,13 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
         ["open", "closed"],
       );
       assert.include(paths[0], "repos/acme/web/pulls?head=me%3Amain");
+      yield* gh.listChangeRequests({
+        cwd: "/repo",
+        headSelector: "me:main",
+        state: "open",
+        repository: "me/web",
+      });
+      assert.include(paths[2], "repos/me/web/pulls?head=me%3Amain");
       assert.lengthOf(graphqlCalls, 0);
     }).pipe(Effect.provide(layer));
   });
