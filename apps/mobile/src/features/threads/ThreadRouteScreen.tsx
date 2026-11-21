@@ -994,7 +994,12 @@ function ThreadRouteContent(
   // A thread this client is creating has nothing older to sync.
   const threadSyncLabel =
     creationState === null
-      ? threadSyncStatusLabel(selectedThreadDetailState.status, contentPresentation.kind, m)
+      ? threadSyncStatusLabel(
+          selectedThreadDetailState.status,
+          contentPresentation.kind,
+          Option.isSome(selectedThreadDetailState.error),
+          m,
+        )
       : null;
   // Transient states go in the header subtitle so the composer's status slot doesn't jump.
   const threadStatusLabel = useDelayedStatus(
