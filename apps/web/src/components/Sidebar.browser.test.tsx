@@ -132,6 +132,46 @@ describe("sidebar header new thread", () => {
   });
 });
 
+// regression: #40367 the project filter toggled on Shift-click, while the thread list toggles on Mod-click
+describe("sidebar project filter", () => {
+  it("adds and removes a project on Mod-click and keeps the menu open", async () => {
+    vi.mocked(useProjects).mockReturnValue([project("alpha"), project("beta"), project("gamma")]);
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+
+    await userEvent.click(screen.getByRole("combobox", { name: "Filter threads by project" }));
+    await userEvent.click(screen.getByRole("option", { name: "alpha" }), {
+      modifiers: [modifier],
+    });
+    await expect.element(screen.getByRole("listbox")).toBeVisible();
+    await userEvent.click(screen.getByRole("option", { name: "beta" }), {
+      modifiers: [modifier],
+    });
+
+    await expect
+      .element(screen.getByRole("option", { name: "alpha" }))
+      .toHaveAttribute("aria-selected", "true");
+    await expect
+      .element(screen.getByRole("option", { name: "beta" }))
+      .toHaveAttribute("aria-selected", "true");
+
+    await userEvent.click(screen.getByRole("option", { name: "alpha" }), {
+      modifiers: [modifier],
+    });
+
+    await expect
+      .element(screen.getByRole("option", { name: "alpha" }))
+      .toHaveAttribute("aria-selected", "false");
+    await expect
+      .element(screen.getByRole("option", { name: "beta" }))
+      .toHaveAttribute("aria-selected", "true");
+  });
+});
+
 // regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them
 describe("sidebar numbered jumps", () => {
   it("numbers the unsent draft at the top before the threads below it", async () => {
