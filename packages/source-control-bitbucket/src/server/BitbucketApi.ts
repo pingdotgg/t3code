@@ -250,7 +250,7 @@ export class BitbucketCheckoutError extends Schema.TaggedError<BitbucketCheckout
 }
 
 const MISSING_CREDENTIAL_DETAIL =
-  "Add a Bitbucket token in Settings → Source Control, or set the T3CODE_BITBUCKET_* environment variables on the server.";
+  "Add a Bitbucket token in Settings → Source control & issues, or set the T3CODE_BITBUCKET_* environment variables on the server.";
 
 /** Bitbucket rate-limits anonymous requests; without a credential a 429 will not clear. */
 export class BitbucketCredentialMissingError extends Schema.TaggedError<BitbucketCredentialMissingError>()(

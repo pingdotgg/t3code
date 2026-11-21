@@ -1,4 +1,6 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { createEnvironmentThreadShellAtoms } from "@t3tools/client-runtime/state/threads";
 import {
   applyShellStreamEvent,
@@ -21,6 +23,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ShellSnapshot,
@@ -86,6 +89,7 @@ const composerDraftFileMocks = vi.hoisted(() => {
     },
     File: class {
       exists = true;
+      size = 3;
       parentDirectory = null;
 
       create() {}
@@ -127,6 +131,9 @@ const composerAttachmentCleanupMocks = vi.hoisted(() => ({
   remove: vi.fn(async () => undefined),
   releaseUploads: vi.fn(async () => undefined),
 }));
+
+const pickMedia = vi.hoisted(() => vi.fn());
+vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: pickMedia }));
 
 const incomingShareStorageMocks = vi.hoisted(() => ({
   load: vi.fn<typeof import("../features/sharing/incoming-share-storage").loadIncomingShareDrafts>(
@@ -175,6 +182,11 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
+import { questionAttachmentDraftKey } from "./question-attachments";
+import {
+  pickQuestionAttachments,
+  resolveQuestionImagePreparations,
+} from "./question-attachment-preparation";
 import { threadOutboxManager } from "./thread-outbox";
 import {
   appendComposerDraftAttachments,
@@ -226,6 +238,71 @@ const DRAFT: ComposerDraft = {
   text: "hello",
   attachments: [],
 };
+
+it.each(["picker open", "reading image"] as const)(
+  "recovers only accepted screenshots when a question is cancelled while %s",
+  async (stage) => {
+    const questionKey = questionAttachmentDraftKey(
+      EnvironmentId.make("environment"),
+      ThreadId.make("thread"),
+      RuntimeRequestId.make("input"),
+      "language",
+    );
+    const threadKey = "environment:thread";
+    const screenshot = {
+      canceled: false,
+      assets: [
+        {
+          uri: "file:///picker/screenshot.png",
+          fileName: "screenshot.png",
+          type: "image",
+          mimeType: "image/png",
+        },
+      ],
+    } as const;
+    const opened = Promise.withResolvers<void>();
+    const selection = Promise.withResolvers<typeof screenshot>();
+    const reading = Promise.withResolvers<void>();
+    const bytes = Promise.withResolvers<string>();
+    composerDraftFileMocks.readImage.mockImplementationOnce(() => {
+      reading.resolve();
+      return bytes.promise;
+    });
+    pickMedia.mockImplementationOnce(() => {
+      opened.resolve();
+      return selection.promise;
+    });
+    const picking = pickQuestionAttachments({
+      key: questionKey,
+      kind: "media",
+      isActive: () => true,
+      append: (attachments) => appendComposerDraftAttachments(questionKey, attachments),
+    });
+    if (stage === "reading image") {
+      selection.resolve(screenshot);
+      await Promise.race([reading.promise, picking]);
+    } else {
+      await Promise.race([opened.promise, picking]);
+    }
+    resolveQuestionImagePreparations(questionKey, threadKey);
+    selection.resolve(screenshot);
+    bytes.resolve("YWJj");
+    await picking;
+
+    expect(getComposerDraftSnapshot(questionKey).attachments).toEqual([]);
+    expect(getComposerDraftSnapshot(threadKey).attachments).toEqual(
+      stage === "picker open"
+        ? []
+        : [
+            expect.objectContaining({
+              type: "image",
+              name: "screenshot.png",
+              dataUrl: "data:image/png;base64,YWJj",
+            }),
+          ],
+    );
+  },
+);
 
 afterEach(() => {
   vi.useRealTimers();
@@ -1213,63 +1290,67 @@ describe("mobile composer drafts", () => {
     expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledExactlyOnceWith(image.fileUri);
   });
 
-  it("keeps an image through an inline read after its draft is removed", async () => {
-    const { prepareTurnAttachments } =
-      await vi.importActual<typeof import("../lib/attachmentUpload")>("../lib/attachmentUpload");
-    const image = {
-      id: "image-reading",
-      type: "image" as const,
-      name: "photo.png",
-      mimeType: "image/png",
-      sizeBytes: 3,
-      fileUri: "file:///documents/t3-composer-attachments/photo.png",
-      previewUri: "file:///documents/t3-composer-attachments/photo.png",
-    };
-    const readStarted = Promise.withResolvers<void>();
-    const read = Promise.withResolvers<void>();
-    const removed = Promise.withResolvers<void>();
-    let imageExists = true;
-    composerDraftFileMocks.readImage.mockImplementation(async () => {
-      readStarted.resolve();
-      await read.promise;
-      if (!imageExists) throw new Error("The image was deleted during its read");
-      return "YWJj";
-    });
-    composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
-      imageExists = false;
-      removed.resolve();
-    });
-    appendComposerDraftAttachments("environment-1:thread-1", [image]);
-    await flushComposerDrafts();
-    const preparing = prepareTurnAttachments({
-      environmentId: EnvironmentId.make("environment-1"),
-      attachments: [image],
-    });
-    onTestFinished(async () => {
-      read.resolve();
-      await preparing.catch(() => undefined);
-    });
-    await readStarted.promise;
-    clearComposerDraftContent("environment-1:thread-1", { deferAttachmentCleanup: true });
-    await releaseUnusedComposerAttachmentFiles([image]);
-    expect(imageExists).toBe(true);
-
-    read.resolve();
-    const prepared = await preparing;
-    expect(prepared.status).toBe("ready");
-    if (prepared.status !== "ready") return;
-    expect(prepared.attachments).toEqual([
-      {
-        type: "image",
+  it.effect("keeps an image through an inline read after its draft is removed", () =>
+    Effect.gen(function* () {
+      const { prepareTurnAttachments } = yield* Effect.promise(() =>
+        vi.importActual<typeof import("../lib/attachmentUpload")>("../lib/attachmentUpload"),
+      );
+      const image = {
+        id: "image-reading",
+        type: "image" as const,
         name: "photo.png",
         mimeType: "image/png",
         sizeBytes: 3,
-        dataUrl: "data:image/png;base64,YWJj",
-      },
-    ]);
-    await removed.promise;
-    expect(imageExists).toBe(false);
-  });
+        fileUri: "file:///documents/t3-composer-attachments/photo.png",
+        previewUri: "file:///documents/t3-composer-attachments/photo.png",
+      };
+      const readStarted = Promise.withResolvers<void>();
+      const read = Promise.withResolvers<void>();
+      const removed = Promise.withResolvers<void>();
+      let imageExists = true;
+      composerDraftFileMocks.readImage.mockImplementation(async () => {
+        readStarted.resolve();
+        await read.promise;
+        if (!imageExists) throw new Error("The image was deleted during its read");
+        return "YWJj";
+      });
+      composerAttachmentCleanupMocks.remove.mockImplementationOnce(async () => {
+        imageExists = false;
+        removed.resolve();
+      });
+      appendComposerDraftAttachments("environment-1:thread-1", [image]);
+      yield* Effect.promise(() => flushComposerDrafts());
+      // Without image uploads the image is inlined, so nothing goes through the upload registry.
+      const preparing = yield* Effect.forkChild(
+        prepareTurnAttachments({
+          environmentId: EnvironmentId.make("environment-1"),
+          attachments: [image],
+          uploadAttachment: vi.fn(),
+        }),
+      );
+      onTestFinished(() => read.resolve());
+      yield* Effect.promise(() => readStarted.promise);
+      clearComposerDraftContent("environment-1:thread-1", { deferAttachmentCleanup: true });
+      yield* Effect.promise(() => releaseUnusedComposerAttachmentFiles([image]));
+      expect(imageExists).toBe(true);
+
+      read.resolve();
+      const prepared = yield* Fiber.join(preparing);
+      expect(prepared.status).toBe("ready");
+      if (prepared.status !== "ready") return;
+      expect(prepared.attachments).toEqual([
+        {
+          type: "image",
+          name: "photo.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+          dataUrl: "data:image/png;base64,YWJj",
+        },
+      ]);
+      yield* Effect.promise(() => removed.promise);
+      expect(imageExists).toBe(false);
+    }),
+  );
 
   it("keeps a failed-send draft's pending upload for retry", async () => {
     const outboxLoad = vi.spyOn(threadOutboxManager, "load").mockResolvedValue(true);
@@ -2046,6 +2127,14 @@ describe("mobile composer drafts", () => {
     await flushComposerDrafts();
     appAtomRegistry.set(composerDraftsAtom, {});
     resetComposerDraftsLoadState();
+
+    composerDraftFileMocks.blockRead();
+    const controller = new AbortController();
+    const cancelled = retargetSavedNewTaskDraft(key, to, controller.signal);
+    controller.abort();
+    composerDraftFileMocks.releaseRead();
+    await expect(cancelled).resolves.toBe(false);
+    expect(getComposerDraftSnapshot(key).project).toMatchObject(from);
 
     await expect(retargetSavedNewTaskDraft(key, to)).resolves.toBe(true);
     expect(getComposerDraftSnapshot(key)).toMatchObject({
