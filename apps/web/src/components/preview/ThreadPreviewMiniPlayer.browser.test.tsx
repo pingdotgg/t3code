@@ -6,6 +6,7 @@ import { type DeviceServiceState, type EnvironmentId, ThreadId } from "@t3tools/
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 import {
@@ -13,11 +14,13 @@ import {
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../../previewMiniPlayerStore";
+import { applyPreviewServerSnapshot, resetPreviewStateForTests } from "../../previewStateStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { deviceEnvironment } from "../../state/device";
 import { ChatCanvas } from "../chat/ChatCanvas";
 import { createChatCanvasStore } from "../chat/canvasStore";
 import { deviceStreamScreenAtom } from "../device/deviceStreamSession";
+import { PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX } from "./previewMiniPlayerLayout";
 import { ThreadPreviewMiniPlayer, useThreadPreviewCanvasSource } from "./ThreadPreviewMiniPlayer";
 
 vi.mock(import("../device/DeviceStreamView"), () => ({
@@ -118,4 +121,55 @@ it("holds its frame through a source change and stops when the gesture is interr
   await act(() => window.dispatchEvent(new Event("blur")));
   await point(handle("west"), "pointermove", landscape.left - 100, landscape.top + 10, 1);
   expect(rect()).toEqual(landscape);
+});
+
+it("keeps a desktop browser's controls above its hosted webview from inside an isolated pane", async () => {
+  using _preview = { [Symbol.dispose]: resetPreviewStateForTests };
+  using _store = {
+    [Symbol.dispose]: () => usePreviewMiniPlayerStore.getState().removeThread(threadRef),
+  };
+  applyPreviewServerSnapshot(threadRef, {
+    threadId: "thread-1",
+    tabId: "tab-1",
+    runtime: "desktop",
+    navStatus: { _tag: "Idle" },
+    canGoBack: false,
+    canGoForward: false,
+    updatedAt: "2026-11-17T00:00:00.000Z",
+  });
+  usePreviewMiniPlayerStore.getState().open(threadRef, { kind: "browser", tabId: "tab-1" });
+  const isolatedPane = document.createElement("div");
+  isolatedPane.style.cssText = "display:flex;position:fixed;inset:0;isolation:isolate";
+  await using _screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <Harness />
+    </RegistryContext.Provider>,
+    { container: isolatedPane },
+  );
+  const claimPaneFocus = vi.fn();
+  isolatedPane.addEventListener("pointerdown", claimPaneFocus);
+  const hostedWebviewWrapper = document.createElement("div");
+  hostedWebviewWrapper.style.cssText = `position:fixed;inset:0;z-index:${PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}`;
+  document.body.append(hostedWebviewWrapper);
+  using _hostedWebviewWrapper = { [Symbol.dispose]: () => hostedWebviewWrapper.remove() };
+
+  const close = page.getByRole("button", { name: "Close floating preview" }).element();
+  const handle = close.parentElement!.parentElement!;
+  const player = isolatedPane.querySelector("[data-preview-mini-player]")!.getBoundingClientRect();
+  const dot = handle.getBoundingClientRect();
+  expect([dot.left > player.left, dot.right < player.right]).toEqual([true, true]);
+  expect([dot.top > player.top, dot.bottom < player.bottom]).toEqual([true, true]);
+  const hit = (target: Element) => {
+    const { left, top, width, height } = target.getBoundingClientRect();
+    return document.elementFromPoint(left + width / 2, top + height / 2);
+  };
+  expect(handle.contains(hit(handle))).toBe(true);
+
+  await act(() => (close as HTMLElement).focus());
+  expect(close.contains(hit(close))).toBe(true);
+  await page.getByRole("button", { name: "Close floating preview" }).click();
+  expect(claimPaneFocus).toHaveBeenCalledOnce();
+  expect(
+    selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, threadRef),
+  ).toBeNull();
 });
