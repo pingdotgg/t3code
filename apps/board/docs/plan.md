@@ -1602,6 +1602,19 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends L1 to the base-branch stack and the operator lands it bottom-up.
 
+**Actuals.** L1 merged as PR #42 at `6969277d83`.
+
+- The issue picker searches with `issues.list`. `issues.candidates` returns labels and assignees, not search results.
+- The picker shows open issues only, and the UI does not say so.
+- The ask rule rides on the board's own Claude instances through `--settings`, not in each folder's `.claude/settings.local.json`. A base instance's own `--settings` is replaced by it.
+- Known gap, recorded by the operator: a child started on the operator's base Claude instance or on Codex can change issue state with no Approve, and agents running `gh` from Bash can close GitHub issues with no Approve.
+- Codex orchestrators are blocked with a reason in the UI, because gating Codex per tool needs an engine change.
+- The `tracker_write` card makes only what it shows: no host, labels, or assignees.
+- Jira is not offered by T3 0.1.10.
+- `vp run --filter @agent-board/app dev:web` drops `AGENT_BOARD_TOKEN`. Run `vp dev --port <port>` from `apps/board` instead.
+- Perf: GitHub-tab search median 734.5 ms against the 300 ms rule, a miss the operator moved to O1. Linear search was not timed.
+- Linear lanes ran in the operator's `t3-board` workspace, team T3.
+
 ## Port pstack to T3 and run the orchestrator in poteto-mode (B12)
 
 **Depends on.** L1.
