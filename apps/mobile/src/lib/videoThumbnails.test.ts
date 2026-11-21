@@ -60,32 +60,51 @@ describe("video thumbnails", () => {
     expect(first.release).toHaveBeenCalledTimes(1);
   });
 
-  it("finishes a started extraction after its reader leaves so a re-signed URL reuses it", async () => {
+  it.each([
+    { phase: "replacing its source", nextKey: "healthy" },
+    { phase: "waiting for attachment", nextKey: "stalled" },
+    { phase: "generating a frame", nextKey: "healthy" },
+  ])("unblocks the next poster when a tile leaves while $phase", async ({ phase, nextKey }) => {
     const started = Promise.withResolvers<void>();
-    const replaced = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const staleFrame = { width: 320, height: 180 };
     const first = player();
-    first.replaceAsync.mockImplementation(() => {
+    first.replaceAsync.mockImplementation(async () => {
+      if (phase !== "generating a frame") started.resolve();
+      if (phase === "replacing its source") await finish.promise;
+      if (phase !== "waiting for attachment") first.attach();
+    });
+    first.generateThumbnailsAsync.mockImplementation(async () => {
       started.resolve();
-      return replaced.promise;
+      await finish.promise;
+      return [staleFrame];
     });
     mocks.createPlayer.mockReturnValueOnce(first);
+
     const file = source();
     const controller = new AbortController();
-    const request = thumbnails.loadVideoThumbnail("video", async () => file, controller.signal);
+    const abandoned = thumbnails.loadVideoThumbnail("stalled", async () => file, controller.signal);
     await started.promise;
     controller.abort();
-    const resigned = thumbnails.loadVideoThumbnail(
-      "video",
-      async () => source(),
+    const next = thumbnails.loadVideoThumbnail(
+      nextKey,
+      async () => ({ ...source(), uri: "https://example.com/fresh.mp4" }),
       new AbortController().signal,
     );
-    replaced.resolve();
-    first.attach();
-    expect(await request).toBe(frame);
-    expect(await resigned).toBe(frame);
-    expect(mocks.createPlayer).toHaveBeenCalledTimes(1);
-    expect(first.release).toHaveBeenCalledTimes(1);
-    expect(file.dispose).toHaveBeenCalledTimes(1);
+
+    try {
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- Cut off the race before resolving the native work, without waiting for a timeout.
+      const endOfTurn = new Promise<null>((resolve) => setImmediate(() => resolve(null)));
+      expect(await Promise.race([next, endOfTurn])).toBe(frame);
+      expect(await abandoned).toBeNull();
+      expect(first.release).toHaveBeenCalledTimes(1);
+      expect(file.dispose).toHaveBeenCalledTimes(1);
+    } finally {
+      first.attach();
+      finish.resolve();
+      await Promise.all([abandoned, next]);
+    }
+    expect(thumbnails.cachedVideoThumbnail("stalled")).toBe(nextKey === "stalled" ? frame : null);
   });
 
   it("asks for a frame only once the player has attached the item", async () => {
