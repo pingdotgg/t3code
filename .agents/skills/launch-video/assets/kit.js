@@ -67,6 +67,14 @@ window.Kit = (() => {
       name === "*" ? frames().map((f) => f.contentDocument) : [beat(name).contentDocument];
     return docs.flatMap((doc) => query(doc, target.slice(split + 4)));
   };
+  // Extra CSS in beats ("*" for all), e.g. to uncap a scrolling modal so the whole page shows.
+  const css = (name, text) => {
+    for (const f of name === "*" ? frames() : [beat(name)]) {
+      const style = f.contentDocument.createElement("style");
+      style.textContent = text;
+      f.contentDocument.head.append(style);
+    }
+  };
   // A static edit to the frozen page, e.g. a dev-only label. Say so when you hand the video back.
   const text = (targets, value) => {
     for (const node of all(targets)) node.textContent = value;
@@ -97,9 +105,9 @@ window.Kit = (() => {
     for (const cam of cams) cam.style.animation = "none";
     for (const a of scripted) a.cancel();
     try {
-      const result = fn();
+      // Overlays first: fn() usually starts the camera, and they must be measured at rest.
       for (const place of overlays.splice(0)) place();
-      return result;
+      return fn();
     } finally {
       for (const cam of cams) cam.style.animation = "";
     }
@@ -258,6 +266,20 @@ window.Kit = (() => {
           ease: "cubic-bezier(.4,0,.2,1)",
         });
       }),
+    // Wipes an element in from one side (dashed lines, a drag line following the pointer).
+    reveal: (t, at, dur = 0.5, from = "left") => {
+      const start = {
+        left: "inset(0 100% 0 0)",
+        right: "inset(0 0 0 100%)",
+        top: "inset(0 0 100% 0)",
+        bottom: "inset(100% 0 0 0)",
+      }[from];
+      return anim(t, [{ clipPath: start }, { clipPath: "inset(0 0 0 0)" }], {
+        at,
+        dur,
+        ease: "linear",
+      });
+    },
     // A punch: brief scale-up pulse that draws the eye.
     punch: (t, at, scale = 1.06) =>
       anim(
@@ -377,6 +399,7 @@ window.Kit = (() => {
     visible,
     el,
     all,
+    css,
     text,
     rect,
     centerOf,

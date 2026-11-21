@@ -100,6 +100,10 @@ and vendor frames, so Grok and fx recordings lose their vendor-only behavior. A 
 request frame (`{ name, arguments }`) makes the agent call that T3 tool itself over its MCP
 session, and `<var:name>` in any frame is filled from the JSON file at `T3_DEV_REPLAY_VARS`.
 
+### Fake T3 Connect machines
+
+To stage T3 Connect account machines without an account (for launch videos), set localStorage `t3code:dev:fake-t3-connect` in the dev web client to `{"account":{"email":"demo@example.com"},"environments":[{"environmentId":"studio","label":"Studio","online":true,"machine":"mac-studio"}]}` and reload; see [devFakeConnect.ts](../../apps/web/src/cloud/devFakeConnect.ts) for the optional fields.
+
 ### Profiling dev startup
 
 Run `vp run profile:startup` to capture the first 20 seconds of inherited Node processes under

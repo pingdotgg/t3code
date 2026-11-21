@@ -56,7 +56,7 @@
         left: 40px;
         top: 26px;
         width: 1520px;
-        height: 760px;
+        height: 1235px;
         border-radius: 14px;
         overflow: hidden;
         background: #000;
@@ -69,7 +69,7 @@
         left: 0;
         top: 0;
         width: 1600px;
-        height: 800px;
+        height: 1300px;
         transform: scale(0.95);
         transform-origin: 0 0;
       }
@@ -77,7 +77,7 @@
         position: absolute;
         inset: 0;
         width: 1600px;
-        height: 800px;
+        height: 1300px;
         border: 0;
         opacity: 0;
         background: #000;
@@ -199,10 +199,16 @@
         <div class="win">
           <div class="app">
             <iframe data-beat="map" src="beats/map.html"></iframe>
-            <iframe data-beat="link-menu" src="beats/link-menu.html"></iframe>
-            <iframe data-beat="link-open" src="beats/link-open.html"></iframe>
-            <iframe data-beat="link-picked" src="beats/link-picked.html"></iframe>
-            <iframe data-beat="link-done" src="beats/link-done.html"></iframe>
+            <iframe data-beat="drag1-mid" src="beats/drag1-mid.html"></iframe>
+            <iframe data-beat="drag1-over" src="beats/drag1-over.html"></iframe>
+            <iframe data-beat="single-open" src="beats/single-open.html"></iframe>
+            <iframe data-beat="single-linked" src="beats/single-linked.html"></iframe>
+            <iframe data-beat="select-1" src="beats/select-1.html"></iframe>
+            <iframe data-beat="select-2" src="beats/select-2.html"></iframe>
+            <iframe data-beat="drag2-mid" src="beats/drag2-mid.html"></iframe>
+            <iframe data-beat="drag2-over" src="beats/drag2-over.html"></iframe>
+            <iframe data-beat="batch-open" src="beats/batch-open.html"></iframe>
+            <iframe data-beat="batch-done" src="beats/batch-done.html"></iframe>
             <iframe data-beat="linked" src="beats/linked.html"></iframe>
           </div>
         </div>
@@ -227,7 +233,12 @@
         <span class="n">2</span><span>Fleets fold <span class="m">into one card.</span></span>
       </div>
       <div class="cap" id="cap3">
-        <span class="n">3</span><span>Link several <span class="m">in one go.</span></span>
+        <span class="n">3</span
+        ><span>Drag to link <span class="m">a plus onto any machine.</span></span>
+      </div>
+      <div class="cap" id="cap4">
+        <span class="n">4</span
+        ><span>Select several <span class="m">and drop on them all.</span></span>
       </div>
     </div>
     <div class="outro">
@@ -253,17 +264,27 @@
           { at: from, dur: to - from, ease: "linear" },
         );
       const MAP = '[aria-label="Map of your machines"]';
-      const node = (beat, label) => `${beat} >> button[data-fleet-item][aria-label^="${label}"]`;
+      const node = (beat, label) => `${beat} >> button[data-fleet-item][aria-label^="${label},"]`;
+      const handle = (beat, label) =>
+        `${beat} >> button[aria-label="Link ${label} to another machine"]`;
+      const DRAG_LINE = `${MAP} path[stroke-dasharray="5 4"]`;
       const DIALOG = "[role=dialog][aria-labelledby]";
+      const WIDE = { on: [800, 560], s: 0.78, y: 440 };
 
       window.setup = () => {
         Kit.beats([
           ["map", 0],
-          ["link-menu", 9.85],
-          ["link-open", 10.9],
-          ["link-picked", 11.55],
-          ["link-done", 13.1],
-          ["linked", 14.35],
+          ["drag1-mid", 13.0],
+          ["drag1-over", 13.45],
+          ["single-open", 14.05],
+          ["single-linked", 15.2],
+          ["select-1", 17.25],
+          ["select-2", 17.75],
+          ["drag2-mid", 18.35],
+          ["drag2-over", 18.8],
+          ["batch-open", 19.4],
+          ["batch-done", 20.6],
+          ["linked", 21.65],
         ]);
         Kit.anim(
           ".win",
@@ -274,117 +295,156 @@
           { at: 0, dur: 0.8 },
         );
 
-        // 1. The map builds itself: machines, then the routes to them, then links.
-        Kit.stagger(`map >> ${MAP} button[data-fleet-item]`, 0.35, 0.07, "pop", { from: 0.85 });
-        Kit.draw(`map >> ${MAP} svg path`, 0.5, 0.7, 0.025);
-        Kit.stagger(`map >> ${MAP} > span`, 0.9, 0.03, "pop", { from: 0.7 });
-        Kit.glow(`map >> ${MAP} > span:text(LAN)`, 2.6, 1.6);
-        cap("#cap1", 0.9, 4.6);
+        // 1. The map builds itself.
+        Kit.stagger(`map >> ${MAP} button[data-fleet-item]`, 0.35, 0.06, "pop", { from: 0.85 });
+        Kit.draw(`map >> ${MAP} svg path`, 0.5, 0.7, 0.02);
+        Kit.stagger(`map >> ${MAP} > span`, 0.9, 0.025, "pop", { from: 0.7 });
+        Kit.glow(`map >> ${MAP} > span:text(LAN)`, 2.6, 1.4);
+        // Machines on the T3 Connect account that this app hasn't added: online and offline.
+        Kit.stagger(
+          `map >> ${MAP} button[data-fleet-item][aria-label*="T3 Connect account"]`,
+          5.0,
+          0.15,
+          "punch",
+        );
+        Kit.glow(node("map", "old-thinkpad"), 5.6, 1.3);
+        cap("#cap1", 0.9, 6.8);
 
-        // 2. The fleet
-        Kit.glow(node("map", "fs-44"), 5.5, 2.0);
-        Kit.punch(node("map", "fs-44"), 5.5, 1.05);
-        cap("#cap2", 4.8, 8.6);
+        // 2. The fleet card.
+        Kit.glow(node("map", "fs-44 … fs-87"), 7.7, 1.8);
+        Kit.punch(node("map", "fs-44 … fs-87"), 7.7, 1.05);
+        cap("#cap2", 7.0, 10.1);
 
-        // 3. Link several
-        Kit.press(`map >> button[data-slot=tooltip-trigger]:text(Link several)`, 9.6);
-        Kit.pop("link-menu >> [role=menu]", 9.85, { from: 0.9, origin: "top right" });
-        Kit.pop(`link-open >> ${DIALOG}`, 10.9, { from: 0.92 });
-        Kit.stagger(`link-picked >> ${DIALOG} [data-slot=checkbox-indicator]`, 11.55, 0.5, "pop", {
-          from: 0.3,
+        // 3. Drag a plus onto a machine.
+        Kit.press(handle("map", "MacBook"), 12.7);
+        Kit.reveal(`drag1-mid >> ${DRAG_LINE}`, 13.0, 0.45, "bottom");
+        Kit.pop(`drag1-over >> ${MAP} p[role=status]`, 13.5, { from: 0.6, origin: "left center" });
+        Kit.pop(`single-open >> ${DIALOG}`, 14.05, { from: 0.92 });
+        Kit.press(`single-open >> ${DIALOG} button:text(Link)`, 14.9);
+        Kit.draw(
+          `single-linked >> ${MAP} path[data-fleet-item]:text(Link from MacBook)`,
+          15.25,
+          0.7,
+        );
+        Kit.stagger(`single-linked >> ${MAP} > span:text(Supervised)`, 15.7, 0.1, "pop", {
+          from: 0.6,
         });
-        Kit.press(`link-picked >> ${DIALOG} [data-slot=dialog-footer] button:text(Link 2)`, 12.8);
-        Kit.rise(`link-done >> ${DIALOG} form > p`, 13.1, { y: 8 });
-        Kit.stagger(`link-done >> ${DIALOG} li:text(Linked)`, 13.15, 0.12, "punch");
-        Kit.press(`link-done >> button[data-slot=dialog-close]`, 14.15);
-        Kit.draw(`linked >> ${MAP} path[data-fleet-item]:text(Link from MacBook)`, 14.5, 0.7, 0.15);
-        Kit.stagger(`linked >> ${MAP} > span:text(Supervised)`, 15.0, 0.12, "pop", { from: 0.6 });
-        Kit.glow(node("linked", "MacBook"), 15.3, 1.6);
-        cap("#cap3", 9.0, 16.8);
+        Kit.glow(node("single-linked", "gpu-1"), 15.7, 1.3);
+        cap("#cap3", 9.0, 16.9);
 
-        Kit.anim(".outro", [{ opacity: 0 }, { opacity: 1 }], { at: 17.0, dur: 0.5 });
-        Kit.stagger(".outro .logo, .outro h2, .outro p, .outro .url", 17.05, 0.08, "rise", {
+        // 4. Select several, drop on the selection.
+        Kit.press(node("select-1", "gpu-2"), 17.2);
+        Kit.press(node("select-2", "gpu-3"), 17.7);
+        Kit.press(handle("select-2", "MacBook"), 18.2);
+        Kit.reveal(`drag2-mid >> ${DRAG_LINE}`, 18.35, 0.45, "bottom");
+        Kit.pop(`drag2-over >> ${MAP} p[role=status]`, 18.85, { from: 0.6, origin: "left center" });
+        Kit.pop(`batch-open >> ${DIALOG}`, 19.4, { from: 0.92 });
+        Kit.press(`batch-open >> ${DIALOG} [data-slot=dialog-footer] button:text(Link 2)`, 20.35);
+        Kit.rise(`batch-done >> ${DIALOG} form > p`, 20.6, { y: 8 });
+        Kit.press(`batch-done >> button[data-slot=dialog-close]`, 21.4);
+        Kit.draw(`linked >> ${MAP} path[data-fleet-item]:text(Link from MacBook)`, 21.7, 0.7, 0.12);
+        Kit.stagger(`linked >> ${MAP} > span:text(Supervised)`, 22.1, 0.1, "pop", { from: 0.6 });
+        Kit.glow(node("linked", "MacBook"), 22.4, 1.6);
+        cap("#cap4", 17.0, 24.0);
+
+        Kit.anim(".outro", [{ opacity: 0 }, { opacity: 1 }], { at: 24.2, dur: 0.5 });
+        Kit.stagger(".outro .logo, .outro h2, .outro p, .outro .url", 24.25, 0.08, "rise", {
           y: 18,
         });
       };
 
-      window.layoutTime = 16.9;
+      window.layoutTime = 24.1;
       window.placeCursor = () =>
         Kit.measure(() => {
+          const drag = [node("map", "gpu-2"), { dx: -40, s: 1.55, y: 430 }];
+          const dialogAt = (beat) => ({ on: `${beat} >> ${DIALOG}`, s: 1.35, y: 430 });
           Kit.camera([
-            { t: 0, on: "full" },
-            { t: 1.6, on: "full" },
+            { t: 0, ...WIDE },
+            { t: 1.6, ...WIDE },
             {
               t: 2.2,
               on: node("map", "studio"),
-              dx: -120,
+              dx: -150,
               s: 1.8,
               y: 380,
               ease: "cubic-bezier(.3,1.2,.4,1)",
             },
-            { t: 4.4, on: node("map", "studio"), dx: -120, s: 1.8, y: 380 },
-            { t: 5.1, on: node("map", "fs-44"), dx: -200, s: 1.6, y: 420 },
-            { t: 8.2, on: node("map", "fs-44"), dx: -200, s: 1.6, y: 420 },
-            {
-              t: 8.9,
-              on: `map >> button[data-slot=tooltip-trigger]:text(Link several)`,
-              dx: -220,
-              dy: 140,
-              s: 1.3,
-              y: 360,
-            },
-            {
-              t: 10.5,
-              on: `map >> button[data-slot=tooltip-trigger]:text(Link several)`,
-              dx: -220,
-              dy: 140,
-              s: 1.3,
-              y: 360,
-            },
-            { t: 11.0, on: `link-open >> ${DIALOG}`, s: 1.3, y: 430 },
-            { t: 14.2, on: `link-open >> ${DIALOG}`, s: 1.3, y: 430 },
-            { t: 14.8, on: node("linked", "gpu-2"), dx: -60, dy: 40, s: 1.45, y: 420 },
-            { t: 17.0, on: node("linked", "gpu-2"), dx: -60, dy: 40, s: 1.45, y: 420 },
+            { t: 4.1, on: node("map", "studio"), dx: -150, s: 1.8, y: 380 },
+            { t: 4.8, on: node("map", "office-pc"), dx: -120, s: 1.7, y: 420 },
+            { t: 6.6, on: node("map", "office-pc"), dx: -120, s: 1.7, y: 420 },
+            { t: 7.3, on: node("map", "fs-44 … fs-87"), dx: -200, s: 1.6, y: 420 },
+            { t: 9.8, on: node("map", "fs-44 … fs-87"), dx: -200, s: 1.6, y: 420 },
+            { t: 10.5, ...WIDE },
+            { t: 11.4, ...WIDE },
+            { t: 12.1, on: drag[0], ...drag[1] },
+            { t: 13.9, on: drag[0], ...drag[1] },
+            { t: 14.3, ...dialogAt("single-open") },
+            { t: 15.0, ...dialogAt("single-open") },
+            { t: 15.4, on: drag[0], ...drag[1] },
+            { t: 19.2, on: drag[0], ...drag[1] },
+            { t: 19.6, ...dialogAt("batch-open") },
+            { t: 21.5, ...dialogAt("batch-open") },
+            { t: 21.9, on: drag[0], ...drag[1] },
+            { t: 24.1, on: drag[0], ...drag[1] },
           ]);
+          const over = (beat, label) => ({ at: node(beat, label), dx: -30 });
           Kit.cursor("#cur", [
-            { t: 8.6, at: [1250, 620], hidden: true },
-            { t: 8.8 },
+            { t: 11.6, at: [1200, 760], hidden: true },
+            { t: 11.8 },
+            { t: 12.65, at: handle("map", "MacBook"), click: true },
+            { t: 12.95 },
+            { t: 13.9, ...over("drag1-over", "gpu-1") },
+            { t: 14.0, hidden: true },
+            { t: 14.4, at: `single-open >> ${DIALOG} button:text(Link)`, hidden: true },
+            { t: 14.6 },
+            { t: 14.85, at: `single-open >> ${DIALOG} button:text(Link)`, click: true },
+            { t: 15.3, hidden: true },
+            { t: 16.7, at: node("select-1", "gpu-2"), hidden: true },
+            { t: 16.9 },
+            { t: 17.15, at: node("select-1", "gpu-2"), click: true },
+            { t: 17.65, at: node("select-2", "gpu-3"), click: true },
+            { t: 18.15, at: handle("select-2", "MacBook"), click: true },
+            { t: 18.3 },
+            { t: 19.25, ...over("drag2-over", "gpu-3") },
+            { t: 19.35, hidden: true },
             {
-              t: 9.55,
-              at: `map >> button[data-slot=tooltip-trigger]:text(Link several)`,
+              t: 19.9,
+              at: `batch-open >> ${DIALOG} [data-slot=dialog-footer] button:text(Link 2)`,
+              hidden: true,
+            },
+            { t: 20.05 },
+            {
+              t: 20.3,
+              at: `batch-open >> ${DIALOG} [data-slot=dialog-footer] button:text(Link 2)`,
               click: true,
             },
-            { t: 10.55, at: "link-menu >> [role=menuitem]:text(From MacBook)", click: true },
-            { t: 11.45, at: `link-picked >> ${DIALOG} li:text(gpu-1)`, dx: -120, click: true },
-            { t: 11.95, at: `link-picked >> ${DIALOG} li:text(gpu-2)`, dx: -120, click: true },
-            {
-              t: 12.75,
-              at: `link-picked >> ${DIALOG} [data-slot=dialog-footer] button:text(Link 2)`,
-              click: true,
-            },
-            { t: 14.1, at: `link-done >> button[data-slot=dialog-close]`, click: true },
-            { t: 14.5, hidden: true },
-            { t: 17, hidden: true },
+            { t: 21.35, at: "batch-done >> button[data-slot=dialog-close]", click: true },
+            { t: 21.7, hidden: true },
+            { t: 24, hidden: true },
           ]);
         });
       Kit.timeline([
         [1.6, 0, 1.6],
         [0.8, 1.6, 2.2],
-        [2.6, 2.2, 4.4],
-        [0.8, 4.4, 5.1],
-        [3.4, 5.1, 8.2],
-        [0.8, 8.2, 8.9],
-        [1.2, 8.9, 9.85],
-        [0.9, 9.85, 10.6],
-        [0.6, 10.6, 11.0],
-        [1.6, 11.0, 12.1],
-        [1.0, 12.1, 12.8],
-        [0.8, 12.8, 13.1],
-        [1.6, 13.1, 14.2],
-        [0.6, 14.2, 14.8],
-        [2.2, 14.8, 16.9],
-        [0.7, 16.9, 17.6],
-        [2.8, 17.6, 17.6],
+        [2.4, 2.2, 4.1],
+        [0.8, 4.1, 4.8],
+        [2.4, 4.8, 6.6],
+        [0.8, 6.6, 7.3],
+        [2.8, 7.3, 9.8],
+        [0.8, 9.8, 10.5],
+        [0.9, 10.5, 11.4],
+        [1.0, 11.4, 12.1],
+        [0.8, 12.1, 12.9],
+        [1.4, 12.9, 14.0],
+        [1.4, 14.0, 15.1],
+        [1.8, 15.1, 16.6],
+        [1.2, 16.6, 17.8],
+        [1.4, 17.8, 19.3],
+        [1.4, 19.3, 20.4],
+        [1.4, 20.4, 21.6],
+        [2.2, 21.6, 24.1],
+        [0.7, 24.1, 24.8],
+        [2.8, 24.8, 24.8],
       ]);
     </script>
   </body>

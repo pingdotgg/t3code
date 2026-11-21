@@ -1,5 +1,5 @@
 // Machines for the environments-map video. Real servers: MacBook (web, this device), studio,
-// devbox, and gpu-1/gpu-2 for "Link several"; nas starts once so the browser knows it, then
+// devbox, and gpu-1..3 to link by dragging; nas starts once so the browser knows it, then
 // stops (offline). Link rows are seeded: studio <-> devbox both ways, and devbox -> fs-44..fs-87
 // of which 7 answer through descriptor stubs. Writes <out>/stage.json. Usage: serve.mjs <out-dir>
 import * as NodeChildProcess from "node:child_process";
@@ -37,6 +37,7 @@ const machines = {
   nas: { label: "nas", machine: "linux" },
   gpu1: { label: "gpu-1", machine: "cloud" },
   gpu2: { label: "gpu-2", machine: "cloud" },
+  gpu3: { label: "gpu-3", machine: "cloud" },
 };
 for (const [name, identity] of Object.entries(machines)) {
   prepareHome(NodePath.join(root, name), { ...identity, settings: linked });
@@ -50,7 +51,8 @@ let devbox = await startEnvironment(home("devbox"), { allowedOrigins });
 const nas = await startEnvironment(home("nas"), { allowedOrigins });
 const gpu1 = await startEnvironment(home("gpu1"), { host: tailnetIp, allowedOrigins });
 const gpu2 = await startEnvironment(home("gpu2"), { host: tailnetIp, allowedOrigins });
-console.log("started 6 environments");
+const gpu3 = await startEnvironment(home("gpu3"), { host: tailnetIp, allowedOrigins });
+console.log("started 7 environments");
 
 // Seeded links need the servers stopped: they read the table on start.
 const fleet = Array.from({ length: 44 }, (_, i) => ({
@@ -80,7 +82,7 @@ const stage = {
   macbook,
   tailnetName,
   machines: Object.fromEntries(
-    Object.entries({ studio, devbox, nas, gpu1, gpu2 }).map(([name, env]) => [
+    Object.entries({ studio, devbox, nas, gpu1, gpu2, gpu3 }).map(([name, env]) => [
       name,
       {
         environmentId: env.environmentId,

@@ -12,11 +12,35 @@ NodeFS.rmSync(NodePath.join(out, "beats"), { recursive: true, force: true });
 NodeFS.mkdirSync(NodePath.join(out, "shots"), { recursive: true });
 
 // Fictional tailnet names resolve to this machine in the browser only.
-const { browser, page } = await openBrowser({
+const { browser, context, page } = await openBrowser({
   width: 1600,
-  height: 800,
+  height: 1300,
   args: ["--host-resolver-rules=MAP *.tail-demo.ts.net 127.0.0.1"],
 });
+// T3 Connect account machines this client isn't saved to, through the dev-only fake account.
+await context.addInitScript(
+  (value) => localStorage.setItem("t3code:dev:fake-t3-connect", value),
+  JSON.stringify({
+    account: { email: "demo@example.com" },
+    environments: [
+      {
+        environmentId: "connect-mac-mini",
+        label: "mac-mini",
+        online: true,
+        machine: "mac-mini",
+        os: "darwin",
+        arch: "arm64",
+      },
+      { environmentId: "connect-office", label: "office-pc", online: true, machine: "desktop" },
+      {
+        environmentId: "connect-thinkpad",
+        label: "old-thinkpad",
+        online: false,
+        machine: "laptop",
+      },
+    ],
+  }),
+);
 const started = Date.now();
 const beat = async (name) => {
   await page.mouse.move(1439, 719);
@@ -68,6 +92,7 @@ const routes = [
   route(machines.nas, `http://nas.tail-demo.ts.net:${machines.nas.port}`),
   route(machines.gpu1, `http://${tailnetName}:${machines.gpu1.port}`),
   route(machines.gpu2, `http://${tailnetName}:${machines.gpu2.port}`),
+  route(machines.gpu3, `http://${tailnetName}:${machines.gpu3.port}`),
 ];
 const catalog = JSON.stringify({
   schemaVersion: 1,
@@ -106,29 +131,63 @@ try {
   await page.waitForTimeout(2000);
   await beat("map");
 
-  const linkSeveral = page.getByRole("button", { name: "Link several…" });
-  await linkSeveral.click();
-  await page.getByRole("menuitem", { name: "From MacBook" }).waitFor({ timeout: 10_000 });
-  await page.waitForTimeout(300);
-  await beat("link-menu");
-  await page.getByRole("menuitem", { name: "From MacBook" }).click();
-  const dialog = page.getByRole("dialog", { name: /Link several machines from MacBook/ });
-  await dialog.getByText("gpu-1", { exact: true }).waitFor({ timeout: 30_000 });
-  await page.waitForTimeout(800);
-  await beat("link-open");
-  await dialog.getByText("gpu-1", { exact: true }).click();
-  await dialog.getByText("gpu-2", { exact: true }).click();
-  await page.waitForTimeout(300);
-  await beat("link-picked");
-  await dialog.getByRole("button", { name: /^Link 2 machines/ }).click();
-  await page.waitForTimeout(500);
-  await beat("linking");
-  await dialog.getByText("Linked 2 machines", { exact: false }).waitFor({ timeout: 120_000 });
+  // Drags a node's plus handle onto `target`, freezing a beat halfway and one over the target.
+  const center = async (locator) => {
+    const box = await locator.boundingBox();
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+  };
+  const node = (label) => page.locator(`button[data-fleet-item][aria-label^="${label},"]`);
+  const dragLink = async (from, target, name) => {
+    const plus = page.getByRole("button", { name: `Link ${from} to another machine` });
+    await plus.scrollIntoViewIfNeeded();
+    const start = await center(plus);
+    const end = await center(node(target));
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    for (let i = 1; i <= 12; i++) {
+      await page.mouse.move(
+        start.x + ((end.x - start.x) * i) / 12,
+        start.y + ((end.y - start.y) * i) / 12,
+      );
+      await page.waitForTimeout(30);
+      if (i === 6) await saveBeat(page, out, `${name}-mid`);
+    }
+    await page.waitForTimeout(300);
+    await saveBeat(page, out, `${name}-over`);
+    await page.screenshot({ path: NodePath.join(out, "shots", `${name}-over.png`) });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+  };
+
+  // One machine: drag MacBook's plus onto gpu-1.
+  await dragLink("MacBook", "gpu-1", "drag1");
+  await beat("single-open");
+  const single = page.getByRole("dialog", { name: /Link MacBook to gpu-1/ });
+  await single.getByRole("button", { name: "Link", exact: true }).click();
+  await single.waitFor({ state: "hidden", timeout: 60_000 });
+  await page.getByText("1 link out", { exact: false }).last().waitFor({ timeout: 60_000 });
+  await page.waitForTimeout(1500);
+  await beat("single-linked");
+
+  // Several: Shift-click gpu-2 and gpu-3, then drag MacBook's plus onto the selection.
+  await node("gpu-2").click({ modifiers: ["Shift"] });
+  await page.waitForTimeout(250);
+  await beat("select-1");
+  await node("gpu-3").click({ modifiers: ["Shift"] });
+  await page.waitForTimeout(250);
+  await beat("select-2");
+  await dragLink("MacBook", "gpu-3", "drag2");
+  const batch = page.getByRole("dialog", { name: /Link several machines from MacBook/ });
+  await batch.waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(600);
+  await beat("batch-open");
+  await batch.getByRole("button", { name: /^Link 2 machines/ }).click();
+  await batch.getByText("Linked 2 machines", { exact: false }).waitFor({ timeout: 120_000 });
   await page.waitForTimeout(400);
-  await beat("link-done");
-  await dialog.getByRole("button", { name: "Done" }).click();
-  await dialog.waitFor({ state: "hidden", timeout: 10_000 });
-  await page.getByText("2 links out", { exact: false }).first().waitFor({ timeout: 60_000 });
+  await beat("batch-done");
+  await batch.getByRole("button", { name: "Done" }).click();
+  await batch.waitFor({ state: "hidden", timeout: 10_000 });
+  await page.getByText("3 links out", { exact: false }).first().waitFor({ timeout: 60_000 });
   await page.waitForTimeout(1500);
   await beat("linked");
 } catch (error) {
