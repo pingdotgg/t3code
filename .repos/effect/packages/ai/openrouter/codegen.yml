@@ -1,16 +1,30 @@
 # yaml-language-server: $schema=../../tools/ai-codegen/codegen.schema.json
-spec: https://openrouter.ai/openapi.yaml
+# OpenRouter API 1.0.0 (MIT), archived with TypeScript SDK 1.5.75.
+# Use out.openapi.yaml to retain OpenRouter's header and nullability overlays.
+# To update, pin a newer SDK commit and run from the repository root:
+#   node packages/tools/ai-codegen/src/bin.ts generate --provider openrouter
+# Input SHA-256: 7912d068fd25ee550b56622a3a31084df4c9d1966680f1e7b3c7919d49288c09
+spec: https://raw.githubusercontent.com/OpenRouterTeam/typescript-sdk/cc53c9882d4a37270bddfc1a13162fc895385394/.speakeasy/out.openapi.yaml
 output: src/Generated.ts
 name: OpenRouterClient
 header: |
   /**
+   * Generated from OpenRouter's MIT-licensed specification.
+   * Source: https://raw.githubusercontent.com/OpenRouterTeam/typescript-sdk/cc53c9882d4a37270bddfc1a13162fc895385394/.speakeasy/out.openapi.yaml
+   *
    * @stability unstable
    * @since 1.0.0
    */
 excludeAnnotations:
   - default
-disableAdditionalProperties: true
+closeObjects: true
 patches:
+  # Replace credential-shaped examples that GitHub secret scanning rejects.
+  - '[{"op":"replace","path":"/paths/~1auth~1keys/post/responses/200/content/application~1json/example/key","value":"OPENROUTER_API_KEY"},{"op":"replace","path":"/paths/~1auth~1keys/post/responses/200/content/application~1json/schema/example/key","value":"OPENROUTER_API_KEY"},{"op":"replace","path":"/paths/~1auth~1keys/post/responses/200/content/application~1json/schema/properties/key/example","value":"OPENROUTER_API_KEY"},{"op":"replace","path":"/paths/~1keys/post/responses/201/content/application~1json/example/key","value":"OPENROUTER_API_KEY"},{"op":"replace","path":"/paths/~1keys/post/responses/201/content/application~1json/schema/example/key","value":"OPENROUTER_API_KEY"},{"op":"replace","path":"/paths/~1keys/post/responses/201/content/application~1json/schema/properties/key/example","value":"OPENROUTER_API_KEY"}]'
+  # Fix confirm_default_workspace_deletion's boolean schema: its enum and example use strings upstream.
+  - '[{"op":"remove","path":"/paths/~1workspaces~1{id}/delete/parameters/1/schema/enum"},{"op":"replace","path":"/paths/~1workspaces~1{id}/delete/parameters/1/schema/example","value":false}]'
+  # Extend the closed Alignment object without intersecting incompatible closed property sets.
+  - '[{"op":"replace","path":"/components/schemas/OpenResponsesErrorMetadata/properties/alignment","value":{"type":"object","description":"Beta. The result of the alignment plugin for this request; the shape may change.","properties":{"calls":{"type":"array","items":{"$ref":"#/components/schemas/AlignmentCallRecord"}},"rejected":{"$ref":"#/components/schemas/AlignmentRejected"}},"required":["calls"],"additionalProperties":false}}]'
   # Use JSON for transcriptions to preserve structured provider.options.
   - '[{"op":"remove","path":"/paths/~1audio~1transcriptions/post/requestBody/content/multipart~1form-data"}]'
   # Flatten Responses streaming event allOf wrappers to keep generated schemas referential
@@ -25,6 +39,8 @@ patches:
   - '[{"op":"add","path":"/components/schemas/ChatStreamDelta/properties/annotations","value":{"anyOf":[{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"type":"string","const":"url_citation"},"url_citation":{"type":"object","properties":{"url":{"type":"string"},"title":{"type":"string"},"start_index":{"type":"number"},"end_index":{"type":"number"},"content":{"type":"string"}},"required":["url"]}},"required":["type","url_citation"]},{"type":"object","properties":{"type":{"type":"string","const":"file_annotation"},"file_annotation":{"type":"object","properties":{"file_id":{"type":"string"},"quote":{"type":"string"}},"required":["file_id"]}},"required":["type","file_annotation"]},{"type":"object","properties":{"type":{"type":"string","const":"file"},"file":{"type":"object","properties":{"hash":{"type":"string"},"name":{"type":"string"},"content":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"text":{"type":"string"}},"required":["type"]}}},"required":["hash","name"]}},"required":["type","file"]}]}},{"type":"null"}]}}]'
   # Make tool call delta fields nullable (models like kimi-k2.5, minimax-m2.5 send null)
   - '[{"op":"replace","path":"/components/schemas/ChatStreamToolCall/properties/id","value":{"anyOf":[{"type":"string"},{"type":"null"}]}},{"op":"replace","path":"/components/schemas/ChatStreamToolCall/properties/type","value":{"anyOf":[{"type":"string","const":"function"},{"type":"null"}]}},{"op":"replace","path":"/components/schemas/ChatStreamToolCall/properties/function/properties/name","value":{"anyOf":[{"type":"string"},{"type":"null"}]}}]'
+  # Make ChatToolCall.id and ChatStreamToolCall.index optional (some providers omit them)
+  - '[{"op":"remove","path":"/components/schemas/ChatToolCall/required/0"},{"op":"remove","path":"/components/schemas/ChatStreamToolCall/required/0"}]'
   # Make finish_reason optional (only present on final streaming chunk)
   - '[{"op":"remove","path":"/components/schemas/ChatStreamChoice/required/1"}]'
 replacements:

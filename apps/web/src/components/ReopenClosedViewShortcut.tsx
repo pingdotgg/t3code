@@ -1,3 +1,5 @@
+import { m } from "../i18n/messages";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import {
   scopeProjectRef,
@@ -6,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
@@ -23,12 +26,14 @@ import {
   reopenClosedView,
 } from "../reopenClosedView";
 import {
+  ISSUES_PANEL_REF,
   PULL_REQUESTS_PANEL_REF,
   selectActiveRightPanel,
   selectSelectedRightPanelSurface,
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "../rightPanelStore";
+import { serverEnvironment } from "../state/server";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProject, readThreadShell } from "../state/entities";
 import { previewEnvironment } from "../state/preview";
@@ -42,6 +47,7 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
+import { readIssueListPreferences } from "./issue/issueListPreferences";
 
 const PREVIEW_FORWARDED_COMMANDS = [
   "workspace.focusNext",
@@ -49,14 +55,22 @@ const PREVIEW_FORWARDED_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "rightPanel.new",
+  "rightPanel.close",
   "preview.focusUrl",
+  "preview.zoomIn",
+  "preview.zoomOut",
+  "preview.resetZoom",
   "preview.find",
 ] as const;
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
   scopedThreadKey(ref) === scopedThreadKey(PULL_REQUESTS_PANEL_REF);
+const isGlobalIssues = (ref: ScopedThreadRef) =>
+  scopedThreadKey(ref) === scopedThreadKey(ISSUES_PANEL_REF);
 
 export function ReopenClosedViewShortcut() {
+  const gt = useGT();
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const target = resolveThreadRouteTarget(params);
@@ -88,7 +102,7 @@ export function ReopenClosedViewShortcut() {
     const { drop, restore } = planNextReopen(useClosedViewStore.getState().entries, (entry) => {
       const ref = entry.threadRef;
       const panel = selectThreadRightPanelState(panelsByThread, ref);
-      if (isGlobalPullRequests(ref)) {
+      if (isGlobalPullRequests(ref) || isGlobalIssues(ref)) {
         return {
           environmentKnown: true,
           catalogReady: true,
@@ -104,8 +118,11 @@ export function ReopenClosedViewShortcut() {
         ownerExists: readThreadShell(ref) !== null || drafts.getDraftThreadByRef(ref) !== null,
         sideChatExists:
           entry.kind !== "panel-tab" ||
-          entry.surface.kind !== "side-chat" ||
-          readThreadShell(scopeThreadRef(ref.environmentId, entry.surface.threadId)) !== null,
+          entry.surface.kind !== "thread" ||
+          readThreadShell(scopeThreadRef(ref.environmentId, entry.surface.threadId)) !== null ||
+          // The shell leaves idle subagents out, so one it does not list may still exist.
+          appAtomRegistry.get(serverEnvironment.configValueAtom(ref.environmentId))
+            ?.shellThreadFamilies === true,
         shellLive:
           appAtomRegistry.get(environmentShell.stateValueAtom(ref.environmentId)).status === "live",
         panel,
@@ -116,7 +133,8 @@ export function ReopenClosedViewShortcut() {
 
     const ref = restore.threadRef;
     const globalPullRequests = isGlobalPullRequests(ref);
-    const thread = globalPullRequests ? null : readThreadShell(ref);
+    const globalIssues = isGlobalIssues(ref);
+    const thread = globalPullRequests || globalIssues ? null : readThreadShell(ref);
     const owner = thread ?? drafts.getDraftThreadByRef(ref);
     const project = owner ? readProject(scopeProjectRef(ref.environmentId, owner.projectId)) : null;
     if (!(await reopenClosedView(restore, { openPreview, workspaceAvailable: project !== null }))) {
@@ -133,6 +151,8 @@ export function ReopenClosedViewShortcut() {
         to: "/pull-requests",
         search: (previous) => pullRequestsSearchForRestore(previous, selected),
       });
+    } else if (globalIssues) {
+      await navigate({ to: "/issues", search: readIssueListPreferences() });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
       if (draftId !== null)
@@ -147,8 +167,8 @@ export function ReopenClosedViewShortcut() {
       .catch((error: unknown) => {
         toastManager.add({
           type: "error",
-          title: "Could not reopen view",
-          description: error instanceof Error ? error.message : String(error),
+          title: gt("Could not reopen view"),
+          description: thrownErrorMessage(error, m) ?? String(error),
         });
       });
   });
@@ -196,6 +216,7 @@ export function ReopenClosedViewShortcut() {
       context: {
         previewFocus: true,
         previewOpen: true,
+        rightPanelOpen: true,
         terminalFocus: false,
         terminalOpen,
         editableFocus: false,
