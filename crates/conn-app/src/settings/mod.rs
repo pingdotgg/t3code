@@ -158,7 +158,6 @@ pub(crate) struct SettingsModal {
     search_input: Entity<InputState>,
     _search_sub: Subscription,
     operator_url_input: Entity<InputState>,
-    operator_token_input: Entity<InputState>,
     operator_saved_notice: Option<String>,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
@@ -212,18 +211,11 @@ impl SettingsModal {
         });
 
         let operator_cfg = conn_desktop::operator::OperatorConfig::load_effective();
-        let operator_url = operator_cfg.base_url.clone();
-        let operator_token = operator_cfg.token.unwrap_or_default();
+        let operator_url = operator_cfg.base_url;
         let operator_url_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(conn_desktop::operator::DEFAULT_OPERATOR_URL)
                 .default_value(operator_url)
-        });
-        let operator_token_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("Paste token from Operator → Settings → Local API")
-                .masked(true)
-                .default_value(operator_token)
         });
 
         Self {
@@ -238,7 +230,6 @@ impl SettingsModal {
             search_input,
             _search_sub: search_sub,
             operator_url_input,
-            operator_token_input,
             operator_saved_notice: None,
             focus_handle,
             scroll: ScrollHandle::new(),
@@ -288,21 +279,16 @@ impl SettingsModal {
 
     fn save_operator_config(&mut self, cx: &mut Context<'_, Self>) {
         let base_url = self.operator_url_input.read(cx).value().trim().to_owned();
-        let raw_token = self.operator_token_input.read(cx).value().trim().to_owned();
         let cfg = conn_desktop::operator::OperatorConfig {
             base_url: if base_url.is_empty() {
                 conn_desktop::operator::DEFAULT_OPERATOR_URL.to_owned()
             } else {
                 base_url
             },
-            token: (!raw_token.is_empty()).then_some(raw_token),
+            token: None,
         };
         self.operator_saved_notice = match cfg.save_default() {
-            Ok(()) => Some(if cfg.token.is_some() {
-                "Saved".to_owned()
-            } else {
-                "Cleared token".to_owned()
-            }),
+            Ok(()) => Some("Saved".to_owned()),
             Err(err) => Some(format!("Save failed: {err}")),
         };
         cx.notify();
@@ -1150,20 +1136,48 @@ impl SettingsModal {
                 .child(msg.clone())
         });
 
+        let operator_control = conn_desktop::operator::OperatorControlInfo::load_default();
+        let (operator_status_text, operator_status_color) = match operator_control {
+            Some(ref info) if info.enabled == Some(false) => (
+                "Local API off in Operator".to_owned(),
+                hsla(self.tokens.warning),
+            ),
+            Some(ref info) if info.token.is_some() => (
+                "Auto-detected from Operator".to_owned(),
+                hsla(self.tokens.success),
+            ),
+            _ => (
+                "Not detected (enable Local API in Operator)".to_owned(),
+                muted,
+            ),
+        };
+
         let operator_rows = vec![
             settings_row(
-                "Local API URL",
-                Some("Operator local HTTP endpoint on this Mac (default http://127.0.0.1:12321)."),
+                "Status",
+                Some("Automatically reads Operator's local control.json token on this Mac."),
                 div()
-                    .w(px(240.0))
-                    .child(Input::new(&self.operator_url_input))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .text_size(px(self.geometry.ui_font_size_px))
+                    .line_height(px(self.geometry.ui_line_height_px))
+                    .text_color(fg)
+                    .child(
+                        div()
+                            .size(px(8.0))
+                            .rounded(px(9999.0))
+                            .bg(operator_status_color),
+                    )
+                    .child(operator_status_text)
                     .into_any_element(),
                 &self.tokens,
                 &self.geometry,
             ),
             settings_row(
-                "Local API token",
-                Some("Copy from Operator → Settings → Local API (sent as Authorization: Bearer)."),
+                "Local API URL",
+                Some("Operator local HTTP endpoint on this Mac (default http://127.0.0.1:12321)."),
                 div()
                     .flex()
                     .flex_row()
@@ -1171,8 +1185,8 @@ impl SettingsModal {
                     .gap(px(8.0))
                     .child(
                         div()
-                            .w(px(200.0))
-                            .child(Input::new(&self.operator_token_input)),
+                            .w(px(220.0))
+                            .child(Input::new(&self.operator_url_input)),
                     )
                     .children(operator_notice)
                     .child(operator_save_btn)

@@ -24,6 +24,60 @@ use url::Url;
 /// Default local Operator HTTP endpoint on macOS.
 pub const DEFAULT_OPERATOR_URL: &str = "http://127.0.0.1:12321";
 
+/// Documented path to Operator's own Local API config (`token`, `enabled`, optional `port`).
+/// See `~/apps/operator/mac/README.md` ("Local recording API").
+const OPERATOR_CONTROL_REL_PATH: &str =
+    "Library/Application Support/com.nckrtl.operator/control.json";
+
+/// Fields read from Operator's documented `control.json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OperatorControlInfo {
+    pub enabled: Option<bool>,
+    pub port: Option<u16>,
+    pub token: Option<String>,
+}
+
+impl OperatorControlInfo {
+    /// Default location of Operator's `control.json` on macOS.
+    #[must_use]
+    pub fn default_path() -> Option<PathBuf> {
+        let home = std::env::var_os("HOME")?;
+        Some(PathBuf::from(home).join(OPERATOR_CONTROL_REL_PATH))
+    }
+
+    /// Reads Operator's `control.json` from `path`, returning `None` if absent or unreadable.
+    #[must_use]
+    pub fn load_from(path: &Path) -> Option<Self> {
+        let raw = std::fs::read_to_string(path).ok()?;
+        let val: Value = serde_json::from_str(&raw).ok()?;
+        let obj = val.as_object()?;
+        let enabled = obj.get("enabled").and_then(Value::as_bool);
+        let port = obj
+            .get("port")
+            .and_then(Value::as_u64)
+            .and_then(|p| u16::try_from(p).ok())
+            .filter(|&p| p > 0);
+        let token = obj
+            .get("token")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToOwned::to_owned);
+        Some(Self {
+            enabled,
+            port,
+            token,
+        })
+    }
+
+    /// Reads Operator's `control.json` from the default macOS path.
+    #[must_use]
+    pub fn load_default() -> Option<Self> {
+        let path = Self::default_path()?;
+        Self::load_from(&path)
+    }
+}
+
 /// Request timeout for fast control calls (`start`, `cancel`, legacy `start`).
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 /// Request timeout for calls that wait on audio transcription (`stop`, `wait`).
@@ -80,13 +134,26 @@ impl OperatorConfig {
         cfg
     }
 
-    /// Loads config from the default path, with `CONN_OPERATOR_URL` / `CONN_OPERATOR_TOKEN`
-    /// environment overrides taking precedence.
+    /// Loads config from `conn-gpui`'s saved override, auto-discovering Operator's documented
+    /// `com.nckrtl.operator/control.json` (`token` & `port`) when not overridden, with
+    /// `CONN_OPERATOR_URL` / `CONN_OPERATOR_TOKEN` env vars taking highest precedence.
     #[must_use]
     pub fn load_effective() -> Self {
         let mut cfg = Self::default_path()
             .map(|p| Self::load_from(&p))
             .unwrap_or_default();
+
+        if let Some(control) = OperatorControlInfo::load_default() {
+            if cfg.token.is_none() {
+                cfg.token = control.token;
+            }
+            if cfg.base_url == DEFAULT_OPERATOR_URL
+                && let Some(port) = control.port
+            {
+                cfg.base_url = format!("http://127.0.0.1:{port}");
+            }
+        }
+
         if let Ok(url) = std::env::var("CONN_OPERATOR_URL") {
             let trimmed = url.trim();
             if !trimmed.is_empty() {
@@ -465,6 +532,21 @@ mod tests {
         };
         cfg.save_to(&path).unwrap();
         assert_eq!(OperatorConfig::load_from(&path), cfg);
+    }
+
+    #[test]
+    fn control_info_parses_operator_control_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("control.json");
+        std::fs::write(
+            &path,
+            r#"{"enabled":true,"port":12321,"token":"abcdef0123456789"}"#,
+        )
+        .unwrap();
+        let info = OperatorControlInfo::load_from(&path).unwrap();
+        assert_eq!(info.enabled, Some(true));
+        assert_eq!(info.port, Some(12321));
+        assert_eq!(info.token.as_deref(), Some("abcdef0123456789"));
     }
 
     #[tokio::test]

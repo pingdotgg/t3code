@@ -2023,7 +2023,7 @@ fn friendly_operator_error(err: &conn_desktop::operator::OperatorError) -> Strin
             "Operator isn't running".to_owned()
         }
         conn_desktop::operator::OperatorError::Unauthorized(_) => {
-            "Set Operator token in ⌘, → Connections".to_owned()
+            "Enable Local API in Operator → Settings".to_owned()
         }
         other => other.to_string(),
     }
