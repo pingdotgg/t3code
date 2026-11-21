@@ -30,7 +30,9 @@ import {
   KeyboardController,
   KeyboardStickyView,
   useKeyboardState,
+  useReanimatedKeyboardAnimation,
 } from "react-native-keyboard-controller";
+import Animated, { useAnimatedStyle } from "react-native-reanimated";
 
 import {
   ComposerToolbarButton,
@@ -243,6 +245,21 @@ type TerminalToolbarAction =
       readonly modifier: PendingModifier;
     };
 
+// The route spans the Duo rail, so content that is not the terminal body insets itself.
+function TerminalUnavailable(props: { readonly title: string; readonly detail: string }) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      className="flex-1 bg-screen"
+      style={
+        Platform.OS === "ios" ? { paddingLeft: insets.left, paddingRight: insets.right } : undefined
+      }
+    >
+      <EmptyState title={props.title} detail={props.detail} />
+    </View>
+  );
+}
+
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
   return first === undefined || first.trim().length === 0 ? null : first;
@@ -353,12 +370,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     }
 
     return (
-      <View className="flex-1 bg-screen">
-        <EmptyState
-          title={gt("Thread unavailable")}
-          detail={gt("This terminal route needs an active thread and workspace.")}
-        />
-      </View>
+      <TerminalUnavailable
+        title={gt("Thread unavailable")}
+        detail={gt("This terminal route needs an active thread and workspace.")}
+      />
     );
   }
 
@@ -616,6 +631,47 @@ function ThreadTerminal(props: {
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const keyboardHeight = useKeyboardState((state) => state.height);
   const keyboardShowEpoch = useSyncExternalStore(subscribeKeyboardShowing, getKeyboardShowEpoch);
+  const { height: keyboardTranslation } = useReanimatedKeyboardAnimation();
+  const isIos = Platform.OS === "ios";
+  const accessoryStyle = useAnimatedStyle(() => {
+    if (!isIos) return { paddingLeft: 0, paddingRight: 0 };
+    const accessoryInsets = { left: insets.left, right: insets.right };
+    if (
+      nativeColumnMetrics?.hasHinge &&
+      nativeColumnMetrics.verticalBarEdge !== "none" &&
+      // In short landscape columns, UIKit's floating tabs sit beside this row.
+      nativeColumnMetrics.width < nativeColumnMetrics.height
+    ) {
+      const edge = nativeColumnMetrics.verticalBarEdge;
+      // Match KeyboardStickyView's live translation so this stays in column
+      // coordinates when the keyboard or window changes without a show event.
+      const top =
+        nativeColumnMetrics.height + keyboardTranslation.value - TERMINAL_ACCESSORY_HEIGHT;
+      // UIKit reserves the whole rail in its safe area. At keyboard height, keep
+      // clearance only for occlusions that actually overlap the accessory row.
+      accessoryInsets[edge] = 0;
+      for (const region of nativeColumnMetrics.reservedRegions) {
+        if (
+          region.kind !== "occlusion" ||
+          region.y >= top + TERMINAL_ACCESSORY_HEIGHT ||
+          region.y + region.height <= top
+        )
+          continue;
+        if (edge === "left" && region.x < insets.left) {
+          accessoryInsets.left = Math.max(accessoryInsets.left, region.x + region.width);
+        } else if (
+          edge === "right" &&
+          region.x + region.width > nativeColumnMetrics.width - insets.right
+        ) {
+          accessoryInsets.right = Math.max(
+            accessoryInsets.right,
+            nativeColumnMetrics.width - region.x,
+          );
+        }
+      }
+    }
+    return { paddingLeft: accessoryInsets.left, paddingRight: accessoryInsets.right };
+  });
   // The accessory follows the keyboard, except that the dismiss and show
   // buttons flip it ahead of the keyboard animation.
   const [accessory, setAccessory] = useState({ keyboardShowEpoch, dismissed: false });
@@ -859,14 +915,12 @@ function ThreadTerminal(props: {
 
   if (!selectedThreadProject?.workspaceRoot) {
     return (
-      <View className="flex-1 bg-screen">
-        <EmptyState
-          title={gt("Terminal unavailable")}
-          detail={gt(
-            "This thread does not have a workspace root yet, so there is nowhere to open a shell.",
-          )}
-        />
-      </View>
+      <TerminalUnavailable
+        title={gt("Terminal unavailable")}
+        detail={gt(
+          "This thread does not have a workspace root yet, so there is nowhere to open a shell.",
+        )}
+      />
     );
   }
 
@@ -920,6 +974,8 @@ function ThreadTerminal(props: {
                 : terminalTheme.background,
             // Measured top reservation is zero when UIKit already inset the body or moved the bar.
             paddingTop: contentTopInset,
+            paddingLeft: Platform.OS === "ios" ? insets.left : 0,
+            paddingRight: Platform.OS === "ios" ? insets.right : 0,
             paddingBottom: Platform.OS === "android" && !isKeyboardVisible ? insets.bottom : 0,
           }}
         >
@@ -1064,13 +1120,16 @@ function ThreadTerminal(props: {
                   style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
                   offset={{ closed: 0, opened: 0 }}
                 >
-                  <View
+                  <Animated.View
                     className="border-t"
-                    style={{
-                      backgroundColor: terminalTheme.background,
-                      borderTopColor: terminalTheme.border,
-                      minHeight: TERMINAL_ACCESSORY_HEIGHT,
-                    }}
+                    style={[
+                      {
+                        backgroundColor: terminalTheme.background,
+                        borderTopColor: terminalTheme.border,
+                        minHeight: TERMINAL_ACCESSORY_HEIGHT,
+                      },
+                      accessoryStyle,
+                    ]}
                   >
                     <ComposerToolbarRow
                       paddingBottom={TERMINAL_ACCESSORY_VERTICAL_PADDING}
@@ -1117,7 +1176,7 @@ function ThreadTerminal(props: {
                         showChevron={false}
                       />
                     </ComposerToolbarRow>
-                  </View>
+                  </Animated.View>
                 </KeyboardStickyView>
               ) : canOperateTerminal && !isKeyboardVisible && Platform.OS !== "android" ? (
                 <Pressable
@@ -1129,7 +1188,7 @@ function ThreadTerminal(props: {
                     borderRadius: 28,
                     opacity: pressed ? 0.72 : 1,
                     position: "absolute",
-                    right: 16,
+                    right: 16 + insets.right,
                   })}
                 >
                   <GlassSurface

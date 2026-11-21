@@ -51,6 +51,8 @@ export interface PageRouteOptions {
   readonly duoMinimize?: "never" | "onScrollUp";
   /** The page is the root of its column, so it never shows Back. */
   readonly root?: boolean;
+  /** The page spans the Duo's rail, and its content insets itself. */
+  readonly spansRail?: boolean;
 }
 
 /** A page in the workspace: pushed on compact windows, a column page on wide ones. */
@@ -62,7 +64,8 @@ export function pageRoute(options: PageRouteOptions = {}): AppScreenOptions {
       ? { unstable_headerMinimizationBehavior: options.duoMinimize }
       : undefined),
     ...(options.root ? { headerBackVisible: false } : undefined),
-  };
+    ...(options.spansRail ? { nativeContentInsetHorizontally: false } : undefined),
+  } as AppScreenOptions;
 }
 
 export interface SheetRouteOptions {
