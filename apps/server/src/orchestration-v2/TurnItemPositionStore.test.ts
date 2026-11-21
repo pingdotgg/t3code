@@ -3,6 +3,7 @@ import { RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -53,6 +54,46 @@ it.effect("reuses an item's position without attempting another allocation inser
     assert.equal(
       yield* positions.allocate({ ...input, threadId: ThreadId.make("thread:other") }),
       1,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("places, reuses and moves an item's position with one read and at most one write", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const positions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const threadId = ThreadId.make("thread:position-statements");
+    const runId = RunId.make("run:position-statements");
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs (
+        run_id, thread_id, ordinal, provider, status, requested_at, payload_json
+      ) VALUES (${runId}, ${threadId}, 3, 'codex', 'running', '2026-01-01T00:00:00.000Z', '{}')
+    `;
+    const counted = (input: { readonly runId: RunId; readonly runOrdinal?: number }) =>
+      Effect.suspend(() => {
+        let statements = 0;
+        const count: Statement.Transformer = (statement) => {
+          statements++;
+          return Effect.succeed(statement);
+        };
+        return positions
+          .allocate({ threadId, turnItemId: TurnItemId.make("item:streaming"), ...input })
+          .pipe(
+            Effect.provideService(Statement.CurrentTransformer, count),
+            Effect.map((ordinal) => [ordinal, statements]),
+          );
+      });
+    assert.deepEqual(
+      [
+        yield* counted({ runId }),
+        yield* counted({ runId }),
+        yield* counted({ runId: RunId.make("run:next"), runOrdinal: 4 }),
+      ],
+      [
+        [3_000_001, 2],
+        [3_000_001, 1],
+        [4_000_001, 2],
+      ],
     );
   }).pipe(Effect.provide(layerTest)),
 );
