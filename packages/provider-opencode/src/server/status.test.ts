@@ -924,9 +924,11 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ["opencode", "flash-free", "flash", "2026-09-10", "active"],
         ["opencode", "big-pickle", undefined, "2025-10-17", "active"],
         ["openrouter", "opus-4-5", "claude-opus", "2025-11-24", "active"],
-        ["opencode", "gemini-4-argon", "gemini", "2026-10-13", "active"],
-        ["opencode", "gemini-4-carbon", "gemini", "2026-11-10", "active"],
-        ["opencode", "gemini-4-hydrogen", "gemini", "2026-11-12", "active"],
+        ["opencode", "gemini-4-argon", "gemini", "2026-10-13", "active", [2, 10]],
+        ["opencode", "gemini-4-carbon", "gemini", "2026-11-10", "active", [2, 10]],
+        ["opencode", "gemini-4-hydrogen", "gemini", "2026-11-12", "active", [1.5, 7.5]],
+        ["opencode", "muse-wonder-1.0", "muse", "2026-10-12", "active", [4, 20]],
+        ["opencode", "muse-ember-1.0", "muse", "2026-11-09", "active", [0.1, 0.5]],
       ] as const;
       const legacySlugs = (
         models: ReadonlyArray<{ readonly slug: string; readonly isLegacy?: boolean | undefined }>,
@@ -935,7 +937,8 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
           .filter((model) => model.isLegacy)
           .map((model) => model.slug)
           .toSorted();
-      // One OpenCode `family` can hold several model lines: Carbon and Hydrogen are both current.
+      // One OpenCode `family` can hold several model sizes: Carbon replaces Argon at its price,
+      // while Hydrogen, Wonder and Ember are other sizes.
       const expected = ["opencode/gemini-4-argon", "opencode/opus-4-5", "opencode/opus-preview"];
 
       runtimeMock.state.inventory = {
@@ -947,9 +950,17 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             models: Object.fromEntries(
               releases
                 .filter(([provider]) => provider === providerID)
-                .map(([, id, family, releaseDate, status]) => [
+                .map(([, id, family, releaseDate, status, cost]) => [
                   id,
-                  { id, name: id, family, release_date: releaseDate, status, variants: {} },
+                  {
+                    id,
+                    name: id,
+                    family,
+                    release_date: releaseDate,
+                    status,
+                    variants: {},
+                    ...(cost ? { cost: { input: cost[0], output: cost[1] } } : {}),
+                  },
                 ]),
             ),
           })),
@@ -969,7 +980,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         undefined,
         undefined,
         Effect.succeed(
-          releases.map(([providerID, id, family, releaseDate, status]) => ({
+          releases.map(([providerID, id, family, releaseDate, status, cost]) => ({
             providerID,
             id,
             name: id,
@@ -977,6 +988,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
             family,
             released: Date.parse(releaseDate),
             deprecated: status === "deprecated",
+            ...(cost ? { price: `${cost[0]}/${cost[1]}` } : {}),
           })),
         ),
       );
