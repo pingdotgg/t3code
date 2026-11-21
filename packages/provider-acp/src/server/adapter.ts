@@ -8791,8 +8791,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 : undefined;
             if (!(yield* isCurrent)) return;
             if (hiddenFailure !== undefined) {
-              yield* Ref.set(runtimeRestartRequired, true);
               yield* terminalizeOpenForegroundTools(context, "failed");
+              if (!(yield* isCurrent)) return;
+              yield* Ref.set(runtimeRestartRequired, true);
               yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
                 childTurnsContinue: hasSurvivingBackgroundWork(context),
                 threadDisposition: hiddenFailure.threadDisposition,
