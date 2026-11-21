@@ -743,25 +743,31 @@ export const layer: Layer.Layer<
           };
           // A pull or rebase can change thousands of files the turn did not write.
           const files = previousExists
-            ? yield* Effect.all([
-                checkpointStore.diffCheckpoints({
-                  ...refs,
-                  fallbackFromToHead: false,
-                  ignoreWhitespace: false,
-                  format: "numstat",
-                  // An earlier checkpoint can predate a nested folder getting its own scope.
-                  ...(input.excludePaths === undefined ? {} : { excludePaths: input.excludePaths }),
-                }),
-                checkpointStore.listAuthoredPaths(refs).pipe(
-                  Effect.catch((cause) =>
-                    Effect.logWarning("orchestration V2 checkpoint authored paths failed", {
-                      scopeId: input.scope.id,
-                      checkpointRef,
-                      cause: String(cause),
-                    }).pipe(Effect.as(null)),
-                  ),
+            ? yield* checkpointStore.resolveTurnStart(refs).pipe(
+                Effect.flatMap((turnStart) =>
+                  Effect.all([
+                    checkpointStore.diffCheckpoints({
+                      ...refs,
+                      turnStart,
+                      fallbackFromToHead: false,
+                      ignoreWhitespace: false,
+                      format: "numstat",
+                      // An earlier checkpoint can predate a nested folder getting its own scope.
+                      ...(input.excludePaths === undefined
+                        ? {}
+                        : { excludePaths: input.excludePaths }),
+                    }),
+                    checkpointStore.listAuthoredPaths({ ...refs, turnStart }).pipe(
+                      Effect.catch((cause) =>
+                        Effect.logWarning("orchestration V2 checkpoint authored paths failed", {
+                          scopeId: input.scope.id,
+                          checkpointRef,
+                          cause: String(cause),
+                        }).pipe(Effect.as(null)),
+                      ),
+                    ),
+                  ]),
                 ),
-              ]).pipe(
                 Effect.map(([diff, authoredPaths]) =>
                   parseTurnDiffFilesFromNumstat(diff)
                     .filter((file) => !isGitImport(file, authoredPaths))

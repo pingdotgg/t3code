@@ -221,6 +221,7 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
             getCheckpointContext: () => Effect.succeed(context),
           }),
           Layer.mock(CheckpointStore.CheckpointStore)({
+            resolveTurnStart: (input) => Effect.succeed(input.fromCheckpointRef),
             listAuthoredPaths: () => Effect.succeed(null),
             diffCheckpoints: (input) => {
               assert.equal(input.cwd, "/prepared-repo");
