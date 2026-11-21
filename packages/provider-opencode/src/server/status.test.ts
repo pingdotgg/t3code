@@ -929,6 +929,8 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ["opencode", "gemini-4-hydrogen", "gemini", "2026-11-12", "active", [1.5, 7.5]],
         ["opencode", "muse-wonder-1.0", "muse", "2026-10-12", "active", [4, 20]],
         ["opencode", "muse-ember-1.0", "muse", "2026-11-09", "active", [0.1, 0.5]],
+        ["opencode", "llama-3.1-8b", "llama", "2026-07-23", "active", [0.05, 0.08]],
+        ["opencode", "llama-3.3-70b", "llama", "2026-12-06", "active", [0.6, 0.8]],
       ] as const;
       const legacySlugs = (
         models: ReadonlyArray<{ readonly slug: string; readonly isLegacy?: boolean | undefined }>,
@@ -938,7 +940,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
           .map((model) => model.slug)
           .toSorted();
       // One OpenCode `family` can hold several model sizes: Carbon replaces Argon at its price,
-      // while Hydrogen, Wonder and Ember are other sizes.
+      // while Hydrogen, Wonder, Ember and the 8b and 70b Llamas are other sizes.
       const expected = ["opencode/gemini-4-argon", "opencode/opus-4-5", "opencode/opus-preview"];
 
       runtimeMock.state.inventory = {

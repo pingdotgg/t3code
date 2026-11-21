@@ -303,8 +303,16 @@ interface OpenCodeRelease {
 export const openCodePrice = (cost: { readonly input: number; readonly output: number }) =>
   `${cost.input}/${cost.output}`;
 
-/** `claude-opus-5` and `claude-opus-5-5` are one release line; `gemini-4-carbon` is another. */
-const releaseLine = (id: string) => id.toLowerCase().replace(/[\d._-]+/g, "");
+/**
+ * `claude-opus-5` and `claude-opus-5-5` are one release line; `gemini-4-carbon` is another.
+ * A parameter count such as `8b` or `70b` names a size, so it stays in the line.
+ */
+const releaseLine = (id: string) =>
+  id
+    .toLowerCase()
+    .split(/[-_]/)
+    .map((token) => (/^\d+(\.\d+)?[bm]$/.test(token) ? token : token.replace(/[\d.]+/g, "")))
+    .join("");
 
 /**
  * One OpenCode family can hold several model sizes, such as Gemini 4 Carbon and Hydrogen.
