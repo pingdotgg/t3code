@@ -23,8 +23,16 @@ function decodeSegment(segment: string): string {
   }
 }
 
-/** One spelling per segment, so every link to a file shares its fetch URL. */
-const routeValue = (segment: string) => encodeURIComponent(decodeSegment(segment));
+/** One spelling per segment, rejecting dot segments, path separators, and control characters. */
+function routeValue(segment: string): string | null {
+  const decoded = decodeSegment(segment);
+  return decoded.length === 0 ||
+    decoded === "." ||
+    decoded === ".." ||
+    /[\p{Cc}/\\]/u.test(decoded)
+    ? null
+    : encodeURIComponent(decoded);
+}
 
 /**
  * Azure DevOps Services pull request attachments, the URLs Azure puts in a description or comment
@@ -52,25 +60,28 @@ export function azureDevOpsPullRequestAttachment(
   }
   if (organization === undefined || !ORGANIZATION_PATTERN.test(organization)) return null;
   const match = ATTACHMENT_PATH_PATTERN.exec(path);
-  const [, project, repository, pullRequestId, fileName] = match ?? [];
-  if (!project || !repository || !pullRequestId || !fileName) return null;
+  const [, rawProject, rawRepository, pullRequestId, rawFileName] = match ?? [];
+  if (!rawProject || !rawRepository || !pullRequestId || !rawFileName) return null;
+  const project = routeValue(rawProject);
+  const repository = routeValue(rawRepository);
+  const fileName = routeValue(rawFileName);
+  if (project === null || repository === null || fileName === null) return null;
   const number = Number(pullRequestId);
   if (!Number.isSafeInteger(number) || number < 1) return null;
   return {
     organization: legacy
       ? `https://${organization}.visualstudio.com`
       : `https://dev.azure.com/${organization}`,
-    project: routeValue(project),
-    repository: routeValue(repository),
+    project,
+    repository,
     pullRequestId: number,
-    fileName: routeValue(fileName),
+    fileName,
   };
 }
 
 export function azureDevOpsMediaUrl(url: URL): SourceControlMediaUrl | null {
   const attachment = azureDevOpsPullRequestAttachment(url);
   if (attachment === null) return null;
-  const name = decodeSegment(attachment.fileName).replace(/[\p{Cc}\\/]/gu, "");
   return {
     fetchUrl: [
       attachment.organization,
@@ -82,6 +93,6 @@ export function azureDevOpsMediaUrl(url: URL): SourceControlMediaUrl | null {
       "attachments",
       attachment.fileName,
     ].join("/"),
-    fileName: name.length > 0 ? name : "azure-devops-media",
+    fileName: decodeSegment(attachment.fileName),
   };
 }
