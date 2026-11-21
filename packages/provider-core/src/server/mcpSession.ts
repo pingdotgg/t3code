@@ -16,6 +16,8 @@ export interface McpProviderSessionConfig {
   readonly authorizationHeader: string;
   /** Omit preview_* instructions when the user withholds agent browser access. */
   readonly browserToolsAvailable: boolean;
+  /** Recheck permission because a provider session can outlive a settings change. */
+  readonly browserAccessAllowed?: Effect.Effect<boolean>;
   readonly capabilities?: ReadonlySet<string>;
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /** True while a delegated task this thread started will wake it with its result. */

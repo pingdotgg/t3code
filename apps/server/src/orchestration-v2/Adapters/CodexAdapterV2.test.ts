@@ -78,6 +78,7 @@ import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
+import { requestBrowserAccess } from "../../provider/testFixtures/browserAccessClient.ts";
 import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
@@ -1560,9 +1561,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    environment: NodeJS.ProcessEnv = {},
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      let launchEnvironment: NodeJS.ProcessEnv = {};
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const serverConfig = yield* ProviderReplayHarness.makeReplayServerConfig(
         transcript.scenario,
@@ -1578,6 +1581,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
         open: (openInput) =>
           Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
+            Effect.tap(() => Effect.sync(() => (launchEnvironment = openInput.environment))),
             Effect.mapError(
               (cause) =>
                 new ProviderAdapter.ProviderAdapterOpenSessionError({
@@ -1620,7 +1624,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
-        environment: {},
+        environment,
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
@@ -1695,6 +1699,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         providerThread,
         threadId,
         serverConfig,
+        launchEnvironment,
         events,
         continuationRequests,
         commandStopWatchers,
@@ -2225,6 +2230,128 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.lengthOf(images, 1);
       assert.equal(images[0]?.viewedImagePath, imagePath);
       assert.equal(images[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("answers the browser plugin's access check only for this session's running turns", () =>
+    Effect.gen(function* () {
+      const scenario = "browser-access";
+      const nativeThreadId = "browser-access-thread";
+      const nativeTurnId = "browser-access-turn";
+      const completeTurn = yield* Deferred.make<void>();
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const browserAccessWithdrawn = yield* Deferred.make<void>();
+      const mcpSession = {
+        environmentId: EnvironmentId.make("environment-browser-access"),
+        threadId: ThreadId.make(`thread-${scenario}`),
+        providerSessionId: "browser-access-mcp",
+        providerInstanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        endpoint: "http://127.0.0.1:1/mcp",
+        authorizationHeader: "Bearer fixture",
+        browserToolsAvailable: true,
+        browserAccessAllowed: Deferred.isDone(browserAccessWithdrawn).pipe(
+          Effect.map((done) => !done),
+        ),
+      };
+      yield* sessions.set(mcpSession);
+      const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+      entries[5] = {
+        type: "expect_outbound",
+        label: "turn/start",
+        frame: {
+          id: 3,
+          method: "turn/start",
+          params: yield* CodexAdapterV2.buildCodexTurnStartParams({
+            nativeThreadId,
+            codexInput: [{ type: "text", text: "work" }],
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            hasT3Mcp: true,
+          }),
+        },
+      };
+      entries.push({
+        type: "emit_inbound",
+        label: "browser turn completed",
+        frame: {
+          method: "turn/completed",
+          params: {
+            threadId: nativeThreadId,
+            turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+          },
+        },
+      });
+      const inherited = {
+        BROWSER_USE_ACCESS_EXECUTOR_ID: "other-app-executor",
+        BROWSER_USE_ACCESS_PIPE_PATH: "/other-app/socket",
+        BROWSER_USE_ACCESS_VERIFYING_IDENTITY: "other-app-identity",
+      };
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({ scenario, entries }),
+        undefined,
+        undefined,
+        undefined,
+        (entry) =>
+          entry.label === "browser turn completed" ? Deferred.await(completeTurn) : Effect.void,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        inherited,
+      );
+      const environment = harness.launchEnvironment;
+      assert.notEqual(
+        environment.BROWSER_USE_ACCESS_EXECUTOR_ID,
+        inherited.BROWSER_USE_ACCESS_EXECUTOR_ID,
+      );
+      assert.notEqual(
+        environment.BROWSER_USE_ACCESS_PIPE_PATH,
+        inherited.BROWSER_USE_ACCESS_PIPE_PATH,
+      );
+      const allowed = (
+        request: { sessionId?: string; turnId?: string; executorId?: string } = {},
+      ) =>
+        requestBrowserAccess(environment, {
+          sessionId: nativeThreadId,
+          turnId: nativeTurnId,
+          ...request,
+        });
+
+      assert.isFalse(yield* allowed());
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("browser-access-attempt"),
+          text: "work",
+        }),
+      );
+      assert.isTrue(yield* allowed());
+      assert.isFalse(yield* allowed({ sessionId: "other-session" }));
+      assert.isFalse(yield* allowed({ turnId: "other-turn" }));
+      assert.isFalse(yield* allowed({ executorId: "other-executor" }));
+      yield* Deferred.succeed(browserAccessWithdrawn, undefined);
+      assert.isFalse(yield* allowed());
+      yield* sessions.set({ ...mcpSession, browserToolsAvailable: false });
+      assert.isFalse(yield* allowed());
+      yield* sessions.clear(mcpSession.threadId);
+      assert.isFalse(yield* allowed());
+      yield* sessions.set({ ...mcpSession, browserAccessAllowed: Effect.succeed(true) });
+      assert.isTrue(yield* allowed());
+      yield* Deferred.succeed(completeTurn, undefined);
+      yield* harness.firstTerminal;
+      assert.isFalse(yield* allowed());
     }).pipe(
       Effect.scoped,
       Effect.provide(

@@ -18,6 +18,7 @@ import {
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
 import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
+import { makeCodexBrowserAccessHost } from "../../provider/CodexBrowserAccessHost.ts";
 import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
@@ -2020,13 +2021,49 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+        const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
+        // OpenAI's browser plugin asks the host before each turn; never inherit another app's host.
+        const browserAccessEnvironment = yield* makeCodexBrowserAccessHost(
+          Effect.fn("CodexAdapterV2.authorizeBrowserAccess")(function* (request) {
+            const context = (yield* Ref.get(activeTurns)).get(request.turnId);
+            if (context === undefined) return false;
+            let root = context;
+            while (root.subagent !== null) root = root.subagent.parentContext;
+            // Codex reports the root session id for subagent turns.
+            if (
+              context.providerThread.nativeThreadRef?.nativeId !== request.sessionId &&
+              root.providerThread.nativeThreadRef?.nativeId !== request.sessionId
+            )
+              return false;
+            const session = yield* readMcpSession(context.input.threadId);
+            if (session?.browserToolsAvailable !== true) return false;
+            return session.browserAccessAllowed === undefined
+              ? true
+              : yield* session.browserAccessAllowed;
+          }),
+        ).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Browser plugin access is unavailable for this session.", {
+              cause,
+            }).pipe(
+              Effect.as({
+                BROWSER_USE_ACCESS_EXECUTOR_ID: "",
+                BROWSER_USE_ACCESS_PIPE_PATH: "",
+                BROWSER_USE_ACCESS_VERIFYING_IDENTITY: "",
+              }),
+            ),
+          ),
+        );
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          environment: {
+            ...(resolvedRuntime?.environment ?? adapterOptions.environment),
+            ...browserAccessEnvironment,
+          },
         });
         const codexZone = codexTimeZone(resolvedRuntime?.environment ?? adapterOptions.environment);
         const additionalContextByThread = yield* Ref.make(
@@ -2183,7 +2220,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
-        const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         // Codex reports MCP startup on thread start, usually before the turn context exists.
         const mcpStartupFailures = new Map<string, Map<string, CodexMcpStartupFailure>>();
         // By server name: the shared app-server signs a server in for every thread at once.

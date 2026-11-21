@@ -655,6 +655,9 @@ export const layerWithOptions = (
                 });
                 yield* mcpSessions.set({
                   ...credential.config,
+                  browserAccessAllowed: agentAccessSettings(threadId).pipe(
+                    Effect.map((access) => access.browser),
+                  ),
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
                     .pipe(
