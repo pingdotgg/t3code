@@ -52,6 +52,8 @@ const makeDebuggee = (
     readonly loading?: boolean;
     /** Like a guest of a hidden window: it answers a capture only once Electron captures it. */
     readonly drawsOnlyWhenCaptured?: () => boolean;
+    /** Electron's capture of this guest never settles. */
+    readonly capturesStall?: () => boolean;
     readonly refuse?: (method: string, sessionId: string | undefined) => boolean;
   } = {},
 ) => {
@@ -96,6 +98,7 @@ const makeDebuggee = (
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
     capturePage: () => {
       nativeCaptures += 1;
+      if (options.capturesStall?.()) return new Promise(() => {});
       if (options.drawsOnlyWhenCaptured?.()) pending.splice(0).forEach((resolve) => resolve());
       return Promise.resolve({});
     },
@@ -376,8 +379,12 @@ describe("DesktopBrowserHost", () => {
   it.effect("prods a guest its window stopped drawing until what waits on it settles", () =>
     Effect.gen(function* () {
       let drawsWhenCaptured = true;
+      let capturesStall = false;
       const host = yield* makeDrawnHost;
-      const debuggee = makeDebuggee({ drawsOnlyWhenCaptured: () => drawsWhenCaptured });
+      const debuggee = makeDebuggee({
+        drawsOnlyWhenCaptured: () => drawsWhenCaptured,
+        capturesStall: () => capturesStall,
+      });
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
 
@@ -403,9 +410,9 @@ describe("DesktopBrowserHost", () => {
       yield* TestClock.adjust("1 second");
       expect(debuggee.nativeCaptures()).toBe(2);
 
-      // A long wait, such as a page awaiting a timer, is prodded less often as it goes on.
+      // A long wait is prodded less often as it goes on, once per tick though it holds focus too.
       drawsWhenCaptured = false;
-      yield* command(host, 4, "Runtime.evaluate");
+      yield* command(host, 4, "Page.captureScreenshot");
       yield* settle;
       for (const [wait, prods] of [
         ["250 millis", 3],
@@ -421,6 +428,38 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(4);
       yield* TestClock.adjust("10 seconds");
       expect(debuggee.nativeCaptures()).toBe(7);
+
+      // A wait the agent's turn gave up on is no longer prodded.
+      yield* command(host, 5, "Runtime.evaluate");
+      yield* settle;
+      yield* TestClock.adjust("250 millis");
+      expect(debuggee.nativeCaptures()).toBe(8);
+      yield* host.handleCommandLine(
+        encodeJson({ type: "turn", threadId: key.threadId, active: false }),
+      );
+      yield* TestClock.adjust("10 seconds");
+      expect(debuggee.nativeCaptures()).toBe(8);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(5);
+
+      // Captures Electron never settles pile up no further than two.
+      capturesStall = true;
+      yield* command(host, 6, "Runtime.evaluate");
+      yield* settle;
+      yield* TestClock.adjust("10 seconds");
+      expect(debuggee.nativeCaptures()).toBe(10);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(replies)).toBe(6);
+      // Even across a reattach of the same guest, as when DevTools closes.
+      host.detach(key);
+      host.attach(key, debuggee.tab);
+      const reattached = yield* watchReplies(host);
+      yield* command(host, 7, "Runtime.evaluate");
+      yield* settle;
+      yield* TestClock.adjust("10 seconds");
+      expect(debuggee.nativeCaptures()).toBe(10);
+      debuggee.releaseFirst();
+      expect(yield* Queue.take(reattached)).toBe(7);
     }).pipe(Effect.scoped),
   );
 
