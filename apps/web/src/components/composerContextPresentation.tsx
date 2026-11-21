@@ -192,6 +192,19 @@ function attachmentTooltip(
   return lines.join("\n");
 }
 
+function AttachmentFailureHighlight(props: { id: string; failed: boolean; children: ReactNode }) {
+  if (!props.failed) return props.children;
+  return (
+    <span
+      className="composer-inline-attachment-failure composer-attachment-failure"
+      contentEditable={false}
+      data-failed-attachment-id={props.id}
+    >
+      {props.children}
+    </span>
+  );
+}
+
 function ImageContextChip(props: {
   record: ComposerImageAttachment;
   upload: AttachmentUploadState | undefined;
@@ -199,23 +212,34 @@ function ImageContextChip(props: {
   const actions = use(ComposerContextActionsContext);
   const messages = useMessages();
   const suffix = useUploadStatusSuffix(props.record.id, props.upload);
+  const gt = useGT();
+  const size = formatAttachmentSize(props.record.sizeBytes, messages);
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <ImageChipButton
-            name={props.record.name}
-            previewUrl={props.record.previewUrl}
-            size={formatAttachmentSize(props.record.sizeBytes, messages)}
-            suffix={suffix}
-            onClick={() => actions.expandImage(props.record.id)}
-          />
-        }
-      />
-      <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {attachmentTooltip(props.record, props.upload, messages)}
-      </TooltipPopup>
-    </Tooltip>
+    <AttachmentFailureHighlight id={props.record.id} failed={props.upload?.status === "failed"}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ImageChipButton
+              name={props.record.name}
+              previewUrl={props.record.previewUrl}
+              size={size}
+              suffix={suffix}
+              {...(props.upload?.status === "failed" ? { state: "invalid" as const } : {})}
+              aria-label={[
+                gt("Image attachment, {name}, {size}", { name: props.record.name, size }),
+                suffix,
+              ]
+                .filter(Boolean)
+                .join(", ")}
+              onClick={() => actions.expandImage(props.record.id)}
+            />
+          }
+        />
+        <TooltipPopup side="top" className="whitespace-pre-wrap">
+          {attachmentTooltip(props.record, props.upload, messages)}
+        </TooltipPopup>
+      </Tooltip>
+    </AttachmentFailureHighlight>
   );
 }
 
@@ -233,42 +257,47 @@ function FileContextChip(props: {
   const size = formatAttachmentSize(props.record.sizeBytes, messages);
   const isVideo = videoMimeType(props.record) !== null;
   return (
-    <FileChip
-      name={props.record.name}
-      svgPreview={
-        isSvgAttachment(props.record)
-          ? {
-              file: props.record.file,
-              environmentId: props.record.uploadEnvironmentId,
-              attachmentId: props.record.uploadedAttachmentId,
-            }
-          : undefined
-      }
-      size={size}
-      isVideo={isVideo}
-      theme={resolvedTheme}
-      error={props.upload?.status === "failed"}
-      unresolved={needsReattach}
-      suffix={suffix}
-      accessibleLabel={
-        isVideo && !needsReattach
-          ? gt("Preview video attachment, {name}, {size}", { name: props.record.name, size })
-          : gt("File attachment, {name}, {size}", { name: props.record.name, size })
-      }
-      onOpen={
-        !needsReattach
-          ? () =>
-              isVideo ? actions.expandVideo(props.record.id) : actions.openFile(props.record.id)
-          : undefined
-      }
-      tooltip={
-        needsReattach
-          ? gt("{name} was not saved with this draft. Attach it again to send it.", {
-              name: props.record.name,
-            })
-          : attachmentTooltip(props.record, props.upload, messages)
-      }
-    />
+    <AttachmentFailureHighlight
+      id={props.record.id}
+      failed={props.upload?.status === "failed" && !needsReattach}
+    >
+      <FileChip
+        name={props.record.name}
+        svgPreview={
+          isSvgAttachment(props.record)
+            ? {
+                file: props.record.file,
+                environmentId: props.record.uploadEnvironmentId,
+                attachmentId: props.record.uploadedAttachmentId,
+              }
+            : undefined
+        }
+        size={size}
+        isVideo={isVideo}
+        theme={resolvedTheme}
+        error={props.upload?.status === "failed"}
+        unresolved={needsReattach}
+        suffix={suffix}
+        accessibleLabel={
+          isVideo && !needsReattach
+            ? gt("Preview video attachment, {name}, {size}", { name: props.record.name, size })
+            : gt("File attachment, {name}, {size}", { name: props.record.name, size })
+        }
+        onOpen={
+          !needsReattach
+            ? () =>
+                isVideo ? actions.expandVideo(props.record.id) : actions.openFile(props.record.id)
+            : undefined
+        }
+        tooltip={
+          needsReattach
+            ? gt("{name} was not saved with this draft. Attach it again to send it.", {
+                name: props.record.name,
+              })
+            : attachmentTooltip(props.record, props.upload, messages)
+        }
+      />
+    </AttachmentFailureHighlight>
   );
 }
 

@@ -77,8 +77,11 @@ export function createAttachmentUploadRegistry<Request>(options: {
   ) => Effect.Effect<void, AttachmentUploadError>;
   readonly onChange?: (statuses: Readonly<Record<string, AttachmentUploadStatus>>) => void;
 }) {
+  const rejected = new Map<string, string>();
   let statuses: Readonly<Record<string, AttachmentUploadStatus>> = {};
   function setStatus(key: string, status: AttachmentUploadStatus | undefined) {
+    const reason = rejected.get(key);
+    if (status !== undefined && reason !== undefined) status = { status: "failed", reason };
     const previous = statuses[key];
     if (
       previous === status ||
@@ -115,6 +118,8 @@ export function createAttachmentUploadRegistry<Request>(options: {
   const transfer = (key: UploadKey<Request>, owner: object) => {
     const request = key.request!;
     return Effect.suspend(() => {
+      const reason = rejected.get(key.id);
+      if (reason !== undefined) return Effect.fail(attachmentUploadError(new Error(reason)));
       if (statuses[key.id]?.status !== "uploading") {
         setOwnStatus(owner, key.id, uploading(0, key.retry));
       }
@@ -199,6 +204,7 @@ export function createAttachmentUploadRegistry<Request>(options: {
   /** Drops the key's upload and replaces it if `sync` holds it. */
   function restart(key: string) {
     const retry = statuses[key]?.status === "failed";
+    rejected.delete(key);
     invalidate(key);
     synced.get(key)?.();
     synced.delete(key);
@@ -216,6 +222,15 @@ export function createAttachmentUploadRegistry<Request>(options: {
     },
     invalidate,
     restart,
+    /** Keeps a server-rejected upload failed across draft moves until an explicit retry. */
+    markFailed(key: string, reason: string) {
+      if (disposed) return;
+      rejected.set(key, reason);
+      setStatus(key, { status: "failed", reason });
+      const fiber = running.get(key);
+      if (fiber !== undefined) Effect.runFork(Fiber.interrupt(fiber));
+      invalidate(key);
+    },
     /**
      * Uploads the request, joining its running or finished upload. A failed one starts again,
      * so a retrying send never just rejoins the failure.
@@ -250,6 +265,7 @@ export function createAttachmentUploadRegistry<Request>(options: {
     },
     dispose() {
       disposed = true;
+      rejected.clear();
       synced.clear();
       Effect.runFork(Scope.close(scope, Exit.void));
       statuses = {};

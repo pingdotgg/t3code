@@ -42,6 +42,43 @@ html[data-mobile-composer-route-transition="true"]::view-transition-new(t3-mobil
   mix-blend-mode: normal;
 }
 
+.composer-attachment-failure {
+  outline: 1px solid color-mix(in oklab, var(--destructive) 70%, transparent);
+  outline-offset: 1px;
+  background-color: color-mix(in oklab, var(--destructive) 8%, transparent);
+  animation: composer-attachment-failure-glow 1.2s ease-out 750ms 2;
+}
+
+.composer-inline-attachment-failure {
+  display: inline-flex;
+  max-width: 100%;
+  border-radius: 0.25rem;
+  padding-inline: 0.25em;
+  color: var(--destructive-foreground);
+}
+
+@keyframes composer-attachment-failure-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 transparent;
+  }
+  40% {
+    box-shadow: 0 0 0.75rem color-mix(in oklab, var(--destructive) 65%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (forced-colors: active) {
+  .composer-attachment-failure {
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .composer-attachment-failure {
+    outline-color: Highlight;
+  }
+}
+
 /* The expanded and compact composers have different internal layouts. Use a
    brief crossfade while their shared wrapper moves so the layout change does
    not read as a single-frame cut. */

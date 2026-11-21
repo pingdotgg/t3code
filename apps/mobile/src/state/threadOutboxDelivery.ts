@@ -59,7 +59,10 @@ import {
 } from "./pending-thread-creation";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
-import { uploadComposerAttachmentShared } from "./composer-attachment-uploads";
+import {
+  markComposerAttachmentUploadFailed,
+  uploadComposerAttachmentShared,
+} from "./composer-attachment-uploads";
 import { gitEnvironment } from "./git";
 import { environmentSession, readEnvironmentScope, sessionHasScope } from "./session";
 import {
@@ -457,12 +460,30 @@ export const recoverEditedCreationAfterDelivery = Effect.fn("ThreadOutbox.recove
   },
 );
 
+/** A server claim rejected this upload; restore with local bytes so the next send uploads fresh. */
+function withoutRejectedUpload(
+  attachments: QueuedThreadMessage["attachments"],
+  rejectedAttachmentId: string | undefined,
+): QueuedThreadMessage["attachments"] {
+  if (rejectedAttachmentId === undefined) return attachments;
+  return attachments.map((attachment) => {
+    const hasLocalBytes =
+      attachment.fileUri !== undefined ||
+      (attachment.type === "image" && attachment.dataUrl !== undefined);
+    if (attachment.uploadedAttachmentId !== rejectedAttachmentId || !hasLocalBytes) {
+      return attachment;
+    }
+    const { uploadedAttachmentId: _id, uploadEnvironmentId: _environmentId, ...rest } = attachment;
+    return rest;
+  });
+}
+
 /**
  * Hands an undeliverable message back to its draft with the reason. "blocked" means the draft
  * cannot take it yet (attachment cap); "deferred" means an editor or newer write owns it.
  */
 export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejectedMessage")(
-  function* (queuedMessage: QueuedThreadMessage, message: string) {
+  function* (queuedMessage: QueuedThreadMessage, message: string, rejectedAttachmentId?: string) {
     const draftKey = recoveryDraftKey(queuedMessage);
     const threadKey = scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
     const editing = () => isEditingQueuedMessage(queuedMessage.messageId);
@@ -523,7 +544,7 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
         mergeComposerDraftContent(draftKey, {
           text: queuedMessage.text,
           context: queuedMessage.context,
-          attachments: queuedMessage.attachments,
+          attachments: withoutRejectedUpload(queuedMessage.attachments, rejectedAttachmentId),
         }),
       ).pipe(
         Effect.ensuring(
@@ -569,6 +590,18 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
       if (!removed) return yield* withdraw(restoredDraft);
       // After queue removal, the draft owns content and must never roll back.
       rollback = null;
+      const rejectedAttachment = queuedMessage.attachments.find(
+        (attachment) =>
+          rejectedAttachmentId !== undefined &&
+          attachment.uploadedAttachmentId === rejectedAttachmentId,
+      );
+      if (rejectedAttachment) {
+        markComposerAttachmentUploadFailed(
+          queuedMessage.environmentId,
+          rejectedAttachment.id,
+          message,
+        );
+      }
       if (queuedMessage.creation) {
         clearThreadComposerError(threadKey, queuedMessage.messageId);
         recordPendingThreadCreationOutcome({
@@ -732,7 +765,11 @@ function reportCommandFailure(
   queuedMessage: QueuedThreadMessage,
   commandResult: AtomCommandResult<unknown, unknown>,
   stage: ThreadOutboxCommandStage,
-): { readonly action: "retry" | "restore"; readonly message: string } | null {
+): {
+  readonly action: "retry" | "restore";
+  readonly message: string;
+  readonly rejectedAttachmentId?: string;
+} | null {
   if (!AsyncResult.isFailure(commandResult)) {
     return null;
   }
@@ -751,6 +788,12 @@ function reportCommandFailure(
   return {
     action,
     message: errorDisplayMessage(error, m) ?? m(msg("The message could not be sent.")),
+    ...(typeof error === "object" &&
+    error !== null &&
+    "attachmentId" in error &&
+    typeof error.attachmentId === "string"
+      ? { rejectedAttachmentId: error.attachmentId }
+      : {}),
   };
 }
 
@@ -831,8 +874,13 @@ export function createThreadOutboxDelivery(): {
   const restoreQueuedMessage = Effect.fn("ThreadOutbox.restoreQueuedMessage")(function* (
     queuedMessage: QueuedThreadMessage,
     message: string,
+    rejectedAttachmentId?: string,
   ) {
-    const result = yield* restoreRejectedQueuedMessage(queuedMessage, message);
+    const result = yield* restoreRejectedQueuedMessage(
+      queuedMessage,
+      message,
+      rejectedAttachmentId,
+    );
     if (result === "retry") return yield* retryDelivery;
     if (result !== "blocked" || disposed || blockedRecoveries.has(queuedMessage.messageId)) {
       return;
@@ -1042,7 +1090,11 @@ export function createThreadOutboxDelivery(): {
       return yield* retryDelivery;
     }
     if (failure?.action === "restore") {
-      return yield* restoreQueuedMessage(persistedMessage, failure.message);
+      return yield* restoreQueuedMessage(
+        persistedMessage,
+        failure.message,
+        failure.rejectedAttachmentId,
+      );
     }
     acknowledgedExistingThreadMessageIds.add(persistedMessage.messageId);
     const outcome = yield* completeQueuedMessageDelivery(
@@ -1153,7 +1205,11 @@ export function createThreadOutboxDelivery(): {
       const failure = reportCommandFailure(queuedMessage, checkout, "start-turn");
       if (failure?.action === "retry") return yield* retryDelivery;
       if (failure?.action === "restore")
-        return yield* restoreQueuedMessage(persistedMessage, failure.message);
+        return yield* restoreQueuedMessage(
+          persistedMessage,
+          failure.message,
+          failure.rejectedAttachmentId,
+        );
       if (!AsyncResult.isSuccess(checkout)) return yield* retryDelivery;
       if (!checkout.value.worktreePath || !checkout.value.isOnPullRequestHead) {
         const term = changeRequestTermKind(
@@ -1219,7 +1275,11 @@ export function createThreadOutboxDelivery(): {
       return yield* retryDelivery;
     }
     if (failure?.action === "restore") {
-      return yield* restoreQueuedMessage(persistedMessage, failure.message);
+      return yield* restoreQueuedMessage(
+        persistedMessage,
+        failure.message,
+        failure.rejectedAttachmentId,
+      );
     }
     recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
     const outcome = yield* completeQueuedMessageDelivery(

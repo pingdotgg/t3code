@@ -30,6 +30,7 @@ const harness = vi.hoisted(() => ({
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
   removePersistedFile: vi.fn(async () => undefined),
+  markAttachmentUploadFailed: vi.fn(),
   removeOutboxMessage: vi.fn(async (_message: QueuedThreadMessage) => undefined),
   prepareTurnAttachments: vi.fn<typeof import("../lib/attachmentUpload").prepareTurnAttachments>(),
   draftFile: (() => {
@@ -88,7 +89,10 @@ vi.mock("../lib/uuid", () => ({
 vi.mock("../lib/attachmentUpload", () => ({
   prepareTurnAttachments: harness.prepareTurnAttachments,
 }));
-vi.mock("./composer-attachment-uploads", () => ({ uploadComposerAttachmentShared: vi.fn() }));
+vi.mock("./composer-attachment-uploads", () => ({
+  uploadComposerAttachmentShared: vi.fn(),
+  markComposerAttachmentUploadFailed: harness.markAttachmentUploadFailed,
+}));
 
 vi.mock("./projects", () => ({ environmentProjects: {} }));
 
@@ -236,6 +240,7 @@ afterEach(() => {
   appAtomRegistry.set(threadComposerErrorsAtom, {});
   harness.draftFile.setWriteError(null);
   harness.removePersistedFile.mockClear();
+  harness.markAttachmentUploadFailed.mockClear();
   harness.removeOutboxMessage.mockClear();
   harness.prepareTurnAttachments.mockReset();
 });
@@ -977,6 +982,44 @@ describe("thread outbox recovery rollback", () => {
         ],
       ).toEqual({ message: "rejected", messageId: message.messageId });
     }),
+  );
+
+  it.effect(
+    "restores a server-rejected upload as failed and without its ID so retry uploads fresh",
+    () =>
+      Effect.gen(function* () {
+        const base = withReusedFileUpload(
+          queuedMessage({
+            messageId: "message-claim-rejected",
+            text: "two reports",
+            fileUri: "file:///a.pdf",
+          }),
+          "pending-kept",
+        );
+        const rejected = {
+          ...base.attachments[0]!,
+          id: "file-rejected",
+          fileUri: "file:///b.pdf",
+          uploadedAttachmentId: "pending-rejected",
+        };
+        const message = { ...base, attachments: [base.attachments[0]!, rejected] };
+        yield* Effect.promise(() => harness.manager.enqueue(message));
+
+        expect(yield* restoreRejectedQueuedMessage(message, "rejected", "pending-rejected")).toBe(
+          "restored",
+        );
+
+        const restored = composerDrafts.getComposerDraftSnapshot(
+          `${message.environmentId}:${message.threadId}`,
+        ).attachments;
+        expect(restored.map((attachment) => attachment.uploadedAttachmentId)).toEqual([
+          "pending-kept",
+          undefined,
+        ]);
+        expect(harness.markAttachmentUploadFailed.mock.calls).toEqual([
+          [message.environmentId, "file-rejected", "rejected"],
+        ]);
+      }),
   );
 
   it.effect("leaves no error when the restored text is resent before recovery finishes", () =>

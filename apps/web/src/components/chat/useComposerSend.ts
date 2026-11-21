@@ -112,6 +112,7 @@ import type { SideChatMessage } from "./useSideChat";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   getUploadedAttachments,
+  markAttachmentClaimFailure,
   refreshExpiredAttachmentUploads,
   readAttachmentUpload,
   releaseDraftAttachments,
@@ -1662,6 +1663,11 @@ export function useComposerSend(input: ComposerSendInput) {
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
+        markAttachmentClaimFailure({
+          environmentId,
+          attachments: composerAttachmentsSnapshot,
+          error,
+        });
         setThreadError(
           threadIdForSend,
           thrownErrorMessage(error, m) ?? m(msg("Failed to send message.")),

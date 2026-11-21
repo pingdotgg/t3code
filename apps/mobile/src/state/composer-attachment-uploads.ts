@@ -72,6 +72,17 @@ export function retryComposerAttachmentUpload(environmentId: EnvironmentId, atta
   uploadQueue?.retry(composerAttachmentUploadKey(environmentId, attachmentId));
 }
 
+export function markComposerAttachmentUploadFailed(
+  environmentId: EnvironmentId,
+  attachmentId: string,
+  reason: string,
+) {
+  composerAttachmentUploads().markFailed(
+    composerAttachmentUploadKey(environmentId, attachmentId),
+    reason,
+  );
+}
+
 type ComposerAttachmentUploadRequest = {
   readonly environmentId: EnvironmentId;
   readonly attachment: DraftComposerAttachment;

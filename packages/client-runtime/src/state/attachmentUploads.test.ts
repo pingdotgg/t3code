@@ -52,6 +52,31 @@ function createQueue(options: {
 }
 
 describe("attachment upload registry", () => {
+  it("keeps a server-rejected attachment failed across restore until retry", async () => {
+    let states: Readonly<Record<string, AttachmentUploadStatus>> = {};
+    const upload = vi.fn(async (_request: UploadRequest): Promise<string> => "uploaded");
+    const queue = createQueue({ upload, onChange: (next) => (states = next) });
+    const rejectedKey = uploadKey(environmentId, "rejected");
+    const keptKey = uploadKey(environmentId, "kept");
+    queue.markFailed(rejectedKey, "stored size does not match");
+    queue.sync([request("kept"), request("rejected")]);
+    await queue.settled();
+    expect(states).toEqual({
+      [keptKey]: { status: "ready" },
+      [rejectedKey]: { status: "failed", reason: "stored size does not match" },
+    });
+    queue.sync([]);
+    queue.sync([request("kept"), request("rejected")]);
+    queue.markFailed(keptKey, "attachment not found");
+    await queue.settled();
+    expect(upload.mock.calls.map(([{ attachment }]) => attachment.id)).not.toContain("rejected");
+    expect(states[keptKey]?.status).toBe("failed");
+    queue.retry(rejectedKey);
+    await queue.settled();
+    expect(states[rejectedKey]).toEqual({ status: "ready" });
+    queue.dispose();
+  });
+
   it("bounds concurrency, deduplicates updates, and drains all attachments", async () => {
     const gates = new Map<string, ReturnType<typeof Promise.withResolvers<string>>>();
     const fourthStarted = Promise.withResolvers<void>();
@@ -85,6 +110,42 @@ describe("attachment upload registry", () => {
     await queue.settled();
     expect(maximum).toBe(3);
     expect(upload).toHaveBeenCalledTimes(4);
+    queue.dispose();
+  });
+
+  it("interrupts a rejected running upload and ignores its late progress", async () => {
+    const started = Promise.withResolvers<void>();
+    let report: (progress: number) => void = () => {};
+    let signal: AbortSignal | undefined;
+    let states: Readonly<Record<string, AttachmentUploadStatus>> = {};
+    const upload = vi.fn(
+      async (
+        _request: UploadRequest,
+        currentSignal: AbortSignal,
+        onProgress: (progress: number) => void,
+      ) => {
+        signal = currentSignal;
+        report = onProgress;
+        started.resolve();
+        return new Promise<string>((resolve) =>
+          currentSignal.addEventListener("abort", () => resolve("cancelled"), { once: true }),
+        );
+      },
+    );
+    const queue = createQueue({ upload, onChange: (next) => (states = next) });
+    const key = uploadKey(environmentId, "rejected");
+    queue.sync([request("rejected")]);
+    await started.promise;
+    queue.markFailed(key, "attachment not found");
+    await queue.settled();
+    report(0.9);
+    expect(signal?.aborted).toBe(true);
+    expect(states[key]).toEqual({ status: "failed", reason: "attachment not found" });
+    upload.mockResolvedValueOnce("fresh");
+    queue.retry(key);
+    await queue.settled();
+    report(1);
+    expect(states[key]).toEqual({ status: "ready" });
     queue.dispose();
   });
 

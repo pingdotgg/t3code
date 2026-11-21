@@ -57,6 +57,7 @@ interface UploadJob {
   /** Original owner; completion resolves the current owner because uploads can outlive draft moves. */
   readonly draftTarget?: ComposerThreadTarget;
   readonly previous?: ReadyAttachmentUpload;
+  readonly forceReupload?: boolean;
   /** Draft-owned; delete only through releasePersistedAttachmentUpload, never queue cancel/retry. */
   readonly persistedAttachmentId?: string;
 }
@@ -92,6 +93,39 @@ function clearUploadState(imageId: string): void {
 
 export function readAttachmentUpload(imageId: string): AttachmentUploadState | undefined {
   return useAttachmentUploadStore.getState().uploadsByImageId[imageId];
+}
+
+/** Associate a server claim failure with the local draft attachment, regardless of its name. */
+export function markAttachmentClaimFailure(input: {
+  readonly environmentId: EnvironmentId;
+  readonly attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
+  readonly error: unknown;
+}): void {
+  if (
+    typeof input.error !== "object" ||
+    input.error === null ||
+    !("attachmentId" in input.error) ||
+    typeof input.error.attachmentId !== "string"
+  )
+    return;
+  for (const attachment of input.attachments) {
+    const upload = readAttachmentUpload(attachment.id);
+    if (
+      upload?.status !== "ready" ||
+      upload.environmentId !== input.environmentId ||
+      upload.attachmentId !== input.error.attachmentId
+    )
+      continue;
+    setUploadState(attachment.id, {
+      status: "failed",
+      environmentId: input.environmentId,
+      forceReupload: attachment.file !== null,
+      ...(attachment.type !== "file" || attachment.uploadedAttachmentId !== upload.attachmentId
+        ? { attachmentId: upload.attachmentId }
+        : {}),
+      reason: input.error instanceof Error ? input.error.message : "Attachment could not be sent.",
+    });
+  }
 }
 
 function resolveCurrentFileDraftTarget(job: DraftFileOwner): ComposerThreadTarget | undefined {
@@ -188,6 +222,7 @@ const failUpload = (job: UploadJob, reasonMessage: string, attachmentId?: string
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
+      ...(job.forceReupload ? { forceReupload: true } : {}),
       reason: m(reasonMessage),
       reasonMessage,
       ...(attachmentId ? { attachmentId } : {}),
@@ -398,6 +433,7 @@ export function startAttachmentUpload(input: {
     environmentId: input.environmentId,
     ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
     ...(previous ? { previous } : {}),
+    ...(input.force ? { forceReupload: true } : {}),
     ...(!input.force &&
     input.image.type === "file" &&
     input.image.uploadEnvironmentId === input.environmentId &&
@@ -527,7 +563,10 @@ export function retryAttachmentUpload(input: {
   } else {
     clearUploadState(input.image.id);
   }
-  startAttachmentUpload(input);
+  startAttachmentUpload({
+    ...input,
+    force: previous?.status === "failed" && previous.forceReupload === true,
+  });
 }
 
 /** Verifies uploads before stash restore; pending uploads expire after 24 hours. */

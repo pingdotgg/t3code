@@ -77,6 +77,7 @@ vi.mock("./session", async () => {
       sessionHasScope(appAtomRegistry.get(sessionStateAtom(environmentId)), scope),
   };
 });
+
 vi.mock("./projects", async () => {
   const { Atom } = await import("effect/reactivity");
   return { environmentProjects: { projectsAtom: Atom.make([]) } };
@@ -124,7 +125,10 @@ vi.mock("./git", async () => ({
 vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));
-vi.mock("./composer-attachment-uploads", () => ({ uploadComposerAttachmentShared: vi.fn() }));
+vi.mock("./composer-attachment-uploads", () => ({
+  uploadComposerAttachmentShared: vi.fn(),
+  markComposerAttachmentUploadFailed: vi.fn(),
+}));
 vi.mock("./thread-outbox", async () => {
   const { createThreadOutboxManager } = await import("./thread-outbox-manager");
   const { appAtomRegistry } = await import("./atom-registry");

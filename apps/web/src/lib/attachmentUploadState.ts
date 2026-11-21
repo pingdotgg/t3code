@@ -21,6 +21,8 @@ export type AttachmentUploadState =
       readonly status: "failed";
       readonly environmentId: EnvironmentId;
       readonly reason: string;
+      /** A server claim rejected this upload; retry must not reuse its persisted ID. */
+      readonly forceReupload?: boolean;
       /** `reason` as a `msg()`, so the composer shows it in the current language. */
       readonly reasonMessage?: string;
       /** Retry/release deletes this id; never use a persisted draft attachment id. */

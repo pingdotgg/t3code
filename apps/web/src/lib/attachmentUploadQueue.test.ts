@@ -82,6 +82,7 @@ vi.mock("../state/session", () => ({
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
+  markAttachmentClaimFailure,
   readAttachmentUpload,
   refreshExpiredAttachmentUploads,
   releaseAttachmentUpload,
@@ -235,6 +236,66 @@ describe("attachmentUploadQueue", () => {
       releaseAttachmentUpload(imageId);
     }
     vi.unstubAllGlobals();
+  });
+
+  it("marks only the matching upload when same-named images fail server validation", () => {
+    const images = [makeImage("first"), makeImage("second")].map((image) => ({
+      ...image,
+      name: "image.png",
+    }));
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        first: { status: "ready", environmentId: firstEnvironment, attachmentId: "pending-1" },
+        second: { status: "ready", environmentId: firstEnvironment, attachmentId: "pending-2" },
+      },
+    });
+    markAttachmentClaimFailure({
+      environmentId: firstEnvironment,
+      attachments: images,
+      error: { attachmentId: "pending-2" },
+    });
+    expect(readAttachmentUpload("first")?.status).toBe("ready");
+    expect(readAttachmentUpload("second")).toMatchObject({
+      status: "failed",
+      attachmentId: "pending-2",
+    });
+  });
+
+  it("reuploads a server-rejected persisted document instead of reusing its ID", async () => {
+    const file = {
+      ...makeFile("rejected"),
+      uploadedAttachmentId: "pending-original",
+      uploadEnvironmentId: firstEnvironment,
+    };
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [file.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-original",
+        },
+      },
+    });
+    markAttachmentClaimFailure({
+      environmentId: firstEnvironment,
+      attachments: [file],
+      error: { attachmentId: "pending-original" },
+    });
+    retryAttachmentUpload({ environmentId: firstEnvironment, image: file });
+    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(1));
+    const failed = awaitAttachmentUploads([file.id]);
+    TestXmlHttpRequest.requests[0]!.complete(500);
+    await failed;
+    expect(readAttachmentUpload(file.id)).toMatchObject({ status: "failed", forceReupload: true });
+    retryAttachmentUpload({ environmentId: firstEnvironment, image: file });
+    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(2));
+    const settled = awaitAttachmentUploads([file.id]);
+    TestXmlHttpRequest.requests[1]!.complete();
+    await settled;
+    expect(
+      getUploadedAttachments({ environmentId: firstEnvironment, images: [file] })?.[0]?.id,
+    ).not.toBe("pending-original");
+    expect(mocks.executeAtomQuery).not.toHaveBeenCalled();
   });
 
   it("reuploads an expired image while retaining other ready images", async () => {
