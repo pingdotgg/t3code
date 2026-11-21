@@ -1,6 +1,6 @@
 {
   "name": "@lathe/contracts",
-  "version": "0.1.7",
+  "version": "0.1.11",
   "private": true,
   "files": [
     "dist"

@@ -394,9 +394,10 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
         ...PREPARED,
         environmentId: target.environmentId,
         label: target.label,
-        httpAuthorization: Option.isSome(credential)
-          ? { _tag: "Bearer", token: credential.value.token }
-          : null,
+        httpAuthorization:
+          Option.isSome(credential) && credential.value._tag === "BearerConnectionCredential"
+            ? { _tag: "Bearer", token: credential.value.token }
+            : null,
         target,
       };
       if (options?.prepareError) return yield* options.prepareError;
@@ -1421,11 +1422,13 @@ describe("EnvironmentRegistry", () => {
           target._tag !== "BearerConnectionTarget" || storedCredentials === undefined
             ? Effect.undefined
             : Ref.get(storedCredentials).pipe(
-                Effect.map((current) =>
-                  current.get(target.connectionId)?.token === "old-bearer"
+                Effect.map((current) => {
+                  const stored = current.get(target.connectionId);
+                  return stored?._tag === "BearerConnectionCredential" &&
+                    stored.token === "old-bearer"
                     ? new ConnectionBlockedError({ reason: "authentication", detail: "revoked" })
-                    : undefined,
-                ),
+                    : undefined;
+                }),
               ),
       });
       storedCredentials = harness.storedCredentials;

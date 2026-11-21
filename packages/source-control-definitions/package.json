@@ -15,6 +15,7 @@
     "@lathe/source-control-azure-devops": "workspace:*",
     "@lathe/source-control-bitbucket": "workspace:*",
     "@lathe/source-control-core": "workspace:*",
+    "@lathe/source-control-cursor-origin": "workspace:*",
     "@lathe/source-control-forgejo": "workspace:*",
     "@lathe/source-control-gitcafe": "workspace:*",
     "@lathe/source-control-github": "workspace:*",

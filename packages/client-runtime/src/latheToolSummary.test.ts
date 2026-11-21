@@ -52,6 +52,58 @@ describe("summarizeLatheToolCalls", () => {
     expect(summarizeLatheToolCalls("unlink-pr", [uncounted]).label).toBe("Unlinked pull requests");
   });
 
+  it("tells opened and merged pull requests from found ones and auto-merges", () => {
+    const create = (created: boolean) => completed({ title: "t" }, { number: 1, created });
+    expect(summarizeLatheToolCalls("create-pr", [create(true)]).label).toBe(
+      "Opened 1 pull request",
+    );
+    expect(summarizeLatheToolCalls("create-pr", [create(false)]).label).toBe(
+      "Found 1 open pull request",
+    );
+    expect(summarizeLatheToolCalls("create-pr", [create(true), create(false)]).label).toBe(
+      "Opened 1 pull request, found 1 open",
+    );
+    const merge = (auto: boolean, state: string) => completed({ auto }, { number: 1, state });
+    expect(summarizeLatheToolCalls("merge-pr", [merge(false, "merged")]).label).toBe(
+      "Merged 1 pull request",
+    );
+    expect(summarizeLatheToolCalls("merge-pr", [merge(false, "open")]).label).toBe(
+      "Queued 1 pull request to merge",
+    );
+    expect(summarizeLatheToolCalls("merge-pr", [merge(true, "open")]).label).toBe(
+      "Queued 1 pull request to merge",
+    );
+    expect(
+      summarizeLatheToolCalls("merge-pr", [merge(true, "merged"), merge(true, "open")]).label,
+    ).toBe("Merged 1 pull request, queued 1");
+    expect(
+      summarizeLatheToolCalls("review-pr", [completed({ verdict: "approve" }, {})]).label,
+    ).toBe("Reviewed 1 pull request");
+  });
+
+  it("counts the checks a CI rerun restarted, and the ones the host refused", () => {
+    const rerun = (...outcomes: boolean[]) =>
+      completed(
+        {},
+        { checks: outcomes.map((outcome, index) => ({ name: `c${index}`, rerun: outcome })) },
+      );
+    expect(summarizeLatheToolCalls("ci-rerun", [rerun(true, true)])).toEqual({
+      label: "Re-ran 2 checks",
+      failedCount: 0,
+    });
+    expect(summarizeLatheToolCalls("ci-rerun", [rerun(true, false)])).toEqual({
+      label: "Re-ran 1 check, 1 refused",
+      failedCount: 1,
+    });
+    expect(summarizeLatheToolCalls("ci-rerun", [rerun(false)])).toEqual({
+      label: "Could not re-run 1 check",
+      failedCount: 1,
+    });
+    expect(summarizeLatheToolCalls("ci-rerun", [rerun()]).label).toBe(
+      "Found no failed checks to re-run",
+    );
+  });
+
   it("excludes failed and unfinished sends even if the provider reports completed", () => {
     const calls: LatheToolSummaryCall[] = [
       completed({ threadId: "success" }, { messageId: "ok", threadId: "success" }),

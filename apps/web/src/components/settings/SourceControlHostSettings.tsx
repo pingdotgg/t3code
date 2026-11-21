@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@lathe/contracts";
 import type { SourceControlDefinition } from "@lathe/client-runtime/source-control-clients";
 import * as Equal from "effect/Equal";
+import { T } from "gt-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -68,7 +69,7 @@ export function SourceControlHostSettings({
               void save(Object.fromEntries(Object.keys(saved ?? {}).map((key) => [key, ""])))
             }
           >
-            Remove
+            <T>Remove</T>
           </Button>
         </div>
       ) : null}

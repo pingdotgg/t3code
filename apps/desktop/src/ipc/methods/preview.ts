@@ -1,8 +1,11 @@
 import {
   DesktopPreviewAnnotationSendEnabledInputSchema,
   DesktopPreviewAnnotationThemeInputSchema,
+  DesktopPreviewAnnotationVoiceStateSchema,
+  DesktopPreviewPickElementInputSchema,
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewConfigInputSchema,
+  DesktopPreviewFindInPageInputSchema,
   DesktopPreviewNavigateInputSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
@@ -10,6 +13,7 @@ import {
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetShownInputSchema,
+  DesktopPreviewSetCaptureDrawnInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
   DesktopPreviewSetZoomFactorInputSchema,
   BrowserImportResult,
@@ -18,6 +22,10 @@ import {
   DesktopPreviewImportCookiesInputSchema,
   DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
+  DesktopPreviewTunnelAccessResolutionInputSchema,
+  DesktopPortForwardInputSchema,
+  DesktopPortForwardSchema,
+  DesktopSharesLoopbackInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewCaptureFailure,
@@ -33,6 +41,7 @@ import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
+import * as LoopbackTunnel from "../../preview/LoopbackTunnel.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { normalizeCaptureFailure } from "../../preview/captureErrors.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
@@ -56,6 +65,13 @@ export const installPreviewEventForwarding = Effect.fn(
   );
   yield* manager.subscribeOpenLinks((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event),
+  );
+  yield* manager.subscribeFindResults((event) =>
+    electronWindow.sendAll(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, event),
+  );
+  const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+  yield* tunnel.subscribeForwards((forwards) =>
+    electronWindow.sendAll(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, forwards),
   );
 });
 
@@ -114,6 +130,21 @@ const navigate = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const findInPage = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_FIND_IN_PAGE_CHANNEL,
+  payload: DesktopPreviewFindInPageInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.findInPage")(function* ({
+    tabId,
+    text,
+    forward,
+    newSession,
+  }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.findInPage(tabId, text, { forward, newSession });
+  }),
+});
+
 const tabMethod = (
   channel: string,
   name: string,
@@ -147,6 +178,11 @@ const refresh = tabMethod(
   "desktop.ipc.preview.refresh",
   (manager, tabId) => manager.refresh(tabId),
 );
+const stopLoading = tabMethod(
+  IpcChannels.PREVIEW_STOP_LOADING_CHANNEL,
+  "desktop.ipc.preview.stopLoading",
+  (manager, tabId) => manager.stopLoading(tabId),
+);
 const zoomIn = tabMethod(
   IpcChannels.PREVIEW_ZOOM_IN_CHANNEL,
   "desktop.ipc.preview.zoomIn",
@@ -166,6 +202,11 @@ const hardReload = tabMethod(
   IpcChannels.PREVIEW_HARD_RELOAD_CHANNEL,
   "desktop.ipc.preview.hardReload",
   (manager, tabId) => manager.hardReload(tabId),
+);
+const stopFindInPage = tabMethod(
+  IpcChannels.PREVIEW_STOP_FIND_IN_PAGE_CHANNEL,
+  "desktop.ipc.preview.stopFindInPage",
+  (manager, tabId) => manager.stopFindInPage(tabId),
 );
 const setZoomFactor = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_SET_ZOOM_FACTOR_CHANNEL,
@@ -201,6 +242,15 @@ const setShown = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setShown")(function* ({ tabId, shown }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setShown(tabId, shown);
+  }),
+});
+const setCaptureDrawn = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_CAPTURE_DRAWN_CHANNEL,
+  payload: DesktopPreviewSetCaptureDrawnInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setCaptureDrawn")(function* ({ tabId, drawn }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setCaptureDrawn(tabId, drawn);
   }),
 });
 const openDevTools = tabMethod(
@@ -306,16 +356,73 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_GET_CONFIG_CHANNEL,
   payload: DesktopPreviewConfigInputSchema,
   result: DesktopPreviewWebviewConfigSchema,
-  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({ environmentId, profileId }) {
+  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({
+    environmentId,
+    profileId,
+    tunnelLoopback,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
-    yield* manager.getBrowserSession(scope, persistent, namespace);
+    const session = yield* manager.getBrowserSession(scope, persistent, namespace);
+    // Routed before the renderer learns the partition, so no guest loads loopback directly.
+    yield* tunnel.route({ environmentId, session, tunnelled: tunnelLoopback === true });
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
       preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
     };
+  }),
+});
+
+const resolveTunnelAccess = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL,
+  payload: DesktopPreviewTunnelAccessResolutionInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.resolveTunnelAccess")(function* (input) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    yield* tunnel.resolveAccess(input);
+  }),
+});
+
+const forwardPort = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_START_CHANNEL,
+  payload: DesktopPortForwardInputSchema,
+  result: DesktopPortForwardSchema,
+  handler: Effect.fn("desktop.ipc.preview.forwardPort")(function* (input) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    return yield* tunnel.forward(input);
+  }),
+});
+
+const stopPortForward = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_STOP_CHANNEL,
+  payload: DesktopPortForwardInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.stopPortForward")(function* (input) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    yield* tunnel.stopForward(input);
+  }),
+});
+
+const listPortForwards = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_LIST_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(DesktopPortForwardSchema),
+  handler: Effect.fn("desktop.ipc.preview.listPortForwards")(function* () {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    return yield* tunnel.forwards;
+  }),
+});
+
+const sharesLoopback = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_SHARES_LOOPBACK_CHANNEL,
+  payload: DesktopSharesLoopbackInputSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.preview.sharesLoopback")(function* ({ environmentId }) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    return yield* tunnel.sharesLoopback(environmentId);
   }),
 });
 
@@ -363,11 +470,21 @@ const setAnnotationTheme = DesktopIpc.makeIpcMethod({
 
 const pickElement = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
+  payload: DesktopPreviewPickElementInputSchema,
   result: Schema.NullOr(PreviewAnnotationSubmissionResultSchema),
-  handler: Effect.fn("desktop.ipc.preview.pickElement")(function* ({ tabId }) {
+  handler: Effect.fn("desktop.ipc.preview.pickElement")(function* ({ tabId, voice }) {
     const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.pickElement(tabId);
+    return yield* manager.pickElement(tabId, voice);
+  }),
+});
+
+const updateAnnotationVoice = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_ANNOTATION_VOICE_STATE_CHANNEL,
+  payload: DesktopPreviewAnnotationVoiceStateSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.updateAnnotationVoice")(function* (state) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.updateAnnotationVoice(state);
   }),
 });
 
@@ -428,6 +545,7 @@ const saveRecording = DesktopIpc.makeIpcMethod({
 
 export const methods = [
   setForwardedShortcuts,
+  updateAnnotationVoice,
   createTab,
   closeTab,
   registerWebview,
@@ -435,18 +553,27 @@ export const methods = [
   goBack,
   goForward,
   refresh,
+  stopLoading,
   zoomIn,
   zoomOut,
   resetZoom,
   hardReload,
+  findInPage,
+  stopFindInPage,
   setColorScheme,
   setZoomFactor,
   setAudioMuted,
   setShown,
+  setCaptureDrawn,
   openDevTools,
   clearCookies,
   clearCache,
   getPreviewConfig,
+  resolveTunnelAccess,
+  forwardPort,
+  stopPortForward,
+  listPortForwards,
+  sharesLoopback,
   setAnnotationTheme,
   setAnnotationSendEnabled,
   pickElement,

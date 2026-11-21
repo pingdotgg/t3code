@@ -13,6 +13,7 @@ import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "@lathe/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@lathe/provider-core/server/ProviderAdapter";
 import { ProviderAdapterDriverCreateError } from "@lathe/provider-core/server/adapterDriver";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
   makeReplayServerConfig,
@@ -142,6 +143,7 @@ export function layer(input: {
         NodeServices.layer,
         NodeCrypto.layer,
         IdAllocator.layer,
+        PortScanner.layerTest,
       ),
     ),
   );

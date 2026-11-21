@@ -15,6 +15,7 @@ import { appAtomRegistry } from "./rpc/atomRegistry";
 
 export interface DesktopPreviewOverlay {
   hasWebContents: boolean;
+  navStatus: PreviewSessionSnapshot["navStatus"];
   canGoBack: boolean;
   canGoForward: boolean;
   loading: boolean;
@@ -375,6 +376,21 @@ function haveSameValues<T>(left: Record<string, T>, right: Record<string, T>): b
   return keys.length === Object.keys(right).length && keys.every((key) => left[key] === right[key]);
 }
 
+function sameDesktopNavStatus(
+  previous: DesktopPreviewOverlay["navStatus"],
+  next: DesktopPreviewOverlay["navStatus"],
+): boolean {
+  if (previous._tag === "Idle" || next._tag === "Idle") return previous._tag === next._tag;
+  return (
+    previous._tag === next._tag &&
+    previous.url === next.url &&
+    previous.title === next.title &&
+    (previous._tag !== "LoadFailed" ||
+      next._tag !== "LoadFailed" ||
+      (previous.code === next.code && previous.description === next.description))
+  );
+}
+
 function isPreviewStateEqual(
   previous: DesktopPreviewOverlay | null,
   next: DesktopPreviewOverlay | null,
@@ -384,6 +400,7 @@ function isPreviewStateEqual(
     (previous !== null &&
       next !== null &&
       previous.hasWebContents === next.hasWebContents &&
+      sameDesktopNavStatus(previous.navStatus, next.navStatus) &&
       previous.canGoBack === next.canGoBack &&
       previous.canGoForward === next.canGoForward &&
       previous.loading === next.loading &&

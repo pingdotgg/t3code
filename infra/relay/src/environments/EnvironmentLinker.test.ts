@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
+import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -111,6 +112,8 @@ const makeRequest = Effect.gen(function* () {
 
 function layerTest(input?: {
   readonly upsert?: EnvironmentLinks.EnvironmentLinks["Service"]["upsert"];
+  readonly getForUser?: EnvironmentLinks.EnvironmentLinks["Service"]["getForUser"];
+  readonly prepareDeprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["prepareDeprovision"];
   readonly consume?: DpopProofs.DpopProofReplay["Service"]["consume"];
   readonly deprovision?: ManagedEndpointProvider.ManagedEndpointProvider["Service"]["deprovision"];
 }) {
@@ -119,6 +122,7 @@ function layerTest(input?: {
     Layer.provide(
       Layer.mergeAll(
         RelayConfiguration.layer(config),
+        Layer.succeed(RelayDb.RelayTransactions, { withTransaction: (effect) => effect }),
         Layer.succeed(DpopProofs.DpopProofReplay, {
           verifyAndConsume: () => Effect.die("unexpected DPoP proof verification"),
           consume: input?.consume ?? (() => Effect.succeed(true)),
@@ -128,8 +132,10 @@ function layerTest(input?: {
           upsert: input?.upsert ?? (() => Effect.void),
           listDeliveryUsersForEnvironment: () => Effect.succeed([]),
           listForUser: () => Effect.succeed([]),
-          getForUser: () => Effect.succeed(null),
+          getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
           findActiveManagedForEnvironment: () => Effect.succeed([]),
+          updateLiveActivityPreference: () =>
+            Effect.die("unexpected Live Activity preference update"),
           setHoldWebhooksWhileOffline: () => Effect.void,
           revokeForUser: () => Effect.succeed(false),
         }),
@@ -140,7 +146,7 @@ function layerTest(input?: {
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
           reconcileOrigin: () => Effect.succeed("ready"),
-          prepareDeprovision: () => Effect.succeed(null),
+          prepareDeprovision: input?.prepareDeprovision ?? (() => Effect.succeed(null)),
           deprovision: input?.deprovision ?? (() => Effect.succeed(true)),
           release: () => Effect.succeed(true),
           provision: () =>
@@ -288,6 +294,90 @@ describe("EnvironmentLinker", () => {
       ),
     );
   });
+
+  it.effect("refuses to move an active link to a different environment key", () => {
+    const touched: Array<string> = [];
+    const activeLink = (environmentPublicKey: string) => ({
+      environmentId: "env-link-test" as RelayEnvironmentLinkProofPayload["environmentId"],
+      label: "Link Test Environment",
+      endpoint: {
+        httpBaseUrl: "https://managed.example.test/",
+        wsBaseUrl: "wss://managed.example.test/ws",
+        providerKind: "cloudflare_tunnel" as const,
+      },
+      environmentPublicKey,
+      linkedAt: "2026-01-01T00:00:00.000Z",
+    });
+    let linkedKey = "another-environment-key";
+    return Effect.gen(function* () {
+      const linker = yield* EnvironmentLinker.EnvironmentLinker;
+      const refused = yield* linker
+        .link({ userId: "user_123", request: (yield* makeRequest).request })
+        .pipe(Effect.flip);
+      expect(refused).toMatchObject({
+        _tag: "EnvironmentLinkProofInvalid",
+        reason: "environment_key_mismatch",
+      });
+      expect(touched).toEqual([]);
+
+      linkedKey = environmentKeyPair.publicKey.trim();
+      yield* linker.link({ userId: "user_123", request: (yield* makeRequest).request });
+      expect(touched).toEqual(["deprovision", "upsert"]);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          getForUser: () => Effect.succeed(activeLink(linkedKey)),
+          upsert: () => Effect.sync(() => void touched.push("upsert")),
+          deprovision: () => Effect.sync(() => touched.push("deprovision") > 0),
+        }),
+      ),
+    );
+  });
+
+  it.effect.each([{ managedTunnelsEnabled: true }, { managedTunnelsEnabled: false }])(
+    "finishes a failed unlink teardown before a new link: %o",
+    ({ managedTunnelsEnabled }) => {
+      const touched: Array<string> = [];
+      let tornDown = false;
+      return Effect.gen(function* () {
+        const linker = yield* EnvironmentLinker.EnvironmentLinker;
+        const link = Effect.gen(function* () {
+          const { request } = yield* makeRequest;
+          return yield* linker.link({
+            userId: "user_123",
+            request: { ...request, managedTunnelsEnabled },
+          });
+        });
+        expect((yield* link.pipe(Effect.flip))._tag).toBe("ManagedEndpointDeprovisioningFailed");
+        expect(touched).toEqual(["deprovision"]);
+
+        tornDown = true;
+        yield* link;
+        expect(touched).toEqual(["deprovision", "deprovision", "upsert"]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            prepareDeprovision: () =>
+              Effect.succeed({
+                userId: "user_123",
+                environmentId: "env-link-test",
+                hostname: "managed.example.test",
+                tunnelId: "left-behind-tunnel",
+                tunnelName: "left-behind",
+                dnsRecordId: null,
+                readyAt: null,
+                origin: null,
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                generation: 1,
+                tunnelReleasedAt: null,
+              }),
+            deprovision: () => Effect.sync(() => touched.push("deprovision") > 0 && tornDown),
+            upsert: () => Effect.sync(() => void touched.push("upsert")),
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("rejects replayed JWT ids", () =>
     Effect.gen(function* () {

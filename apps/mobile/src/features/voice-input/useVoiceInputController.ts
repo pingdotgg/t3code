@@ -15,7 +15,6 @@ export function useVoiceInputController(input: {
   readonly ownerKey: string | null;
   readonly label: string;
   readonly readDraftMessage: () => string | null;
-  readonly subscribeToDraftChanges: (onChange: () => void) => () => void;
   readonly selection: ComposerEditorSelection;
   readonly disabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
@@ -58,7 +57,6 @@ export function useVoiceInputController(input: {
           }
         },
         captured.selection,
-        captured.subscribeToDraftChanges,
       ),
       label: captured.label,
     });

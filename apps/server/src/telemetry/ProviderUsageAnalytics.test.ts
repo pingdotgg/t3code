@@ -30,6 +30,14 @@ const providers = [
   { driver: "codex", models: [{ slug: "gpt-6-sol" }, { slug: "acme-azure-deployment" }] },
   { driver: "claudeAgent", models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }] },
   { driver: "opencode", models: [{ slug: "ollama/acme-internal" }] },
+  // Antigravity ships models before the bundled manifest lists them.
+  {
+    driver: "antigravity",
+    models: [
+      { slug: "gemini-4-neon", aliases: ["antigravity-default"] },
+      { slug: "gemini-4-hydrogen" },
+    ],
+  },
 ].map(
   ({ driver, models }) =>
     ({
@@ -323,6 +331,12 @@ describe("provider usage reporting", () => {
       expect(local).not.toHaveProperty("observedModel");
     }
     expect(routed("ollama/acme-internal", "secret-variant")).not.toHaveProperty("effort");
+  });
+
+  it("reports Antigravity catalog models the bundled manifest does not list", () => {
+    expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
+    expect(label("antigravity-default")).toBe("gemini-4-neon");
+    expect(label("gemini-4-unlisted")).toBeUndefined();
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {

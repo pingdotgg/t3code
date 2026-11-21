@@ -190,7 +190,8 @@ export function NativeStackScreenOptions(props: {
 }) {
   const navigation = useNativeStackNavigation();
   const setOptions = useScreenOptionsWriter();
-  const tabActive = use(NativeWorkspaceTabActivityContext)?.active ?? true;
+  const tabActivity = use(NativeWorkspaceTabActivityContext);
+  const tabActive = tabActivity ? tabActivity.active || tabActivity.headerOnly === true : true;
   const lastAppliedOptionsSignatureRef = useRef<string | undefined>(undefined);
   const latestOptionFunctionsRef = useRef(new Map<string, (...args: unknown[]) => unknown>());
   const optionFunctionWrappersRef = useRef(new Map<string, (...args: unknown[]) => unknown>());

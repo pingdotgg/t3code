@@ -145,16 +145,14 @@ function completionSentinelPattern(token: string): RegExp {
   return new RegExp(`${COMPLETION_SENTINEL_PREFIX}_${token}:(-?\\d+)`);
 }
 
+// ECMA-48: CSI, OSC, then any other escape as intermediates (0x20-0x2F) and one final byte.
 function stripTerminalControl(text: string): string {
   return text
-    .replace(
-      /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>]/g,
-      "",
-    )
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ -/]*[0-~]/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
-// Line editors (zsh, fish, bash 5.1+) enable bracketed paste when they start reading a command.
+// Line editors (zsh, fish, nu, bash 5.1+) enable bracketed paste when they start reading a command.
 const BRACKETED_PASTE_ON = "\x1b[?2004h";
 const BRACKETED_PASTE_OFF = "\x1b[?2004l";
 // Longer than one subprocess poll plus its ps timeout, so a startup prompt is seen as busy first.
@@ -166,17 +164,68 @@ function lineEditorReading(text: string, previous: boolean): boolean {
   return on === off ? previous : on > off;
 }
 
-type CompletionShell = "posix" | "fish" | "powershell";
+type CompletionShell = "posix" | "fish" | "nushell" | "powershell";
 
 function resolveCompletionShell(shell: string): CompletionShell | null {
   const name = (shell.split(/[/\\]/).at(-1) ?? shell).toLowerCase().replace(/\.exe$/, "");
   if (name === "cmd") return null;
   if (name === "fish") return "fish";
+  if (name === "nu") return "nushell";
   if (name === "pwsh" || name === "powershell") return "powershell";
   return "posix";
 }
 
-// A block with its own closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
+const utf8 = new TextEncoder();
+// Canonical TTY input (before a line editor starts reading) caps a line below 1 KiB on Linux.
+const POSIX_MAX_LINE_BYTES = 1_023;
+const POSIX_APPEND = '__lathe_command="$__lathe_command"';
+
+function encodePosixScript(text: string): string {
+  let encoded = "";
+  for (const character of text) {
+    const code = character.charCodeAt(0);
+    if (character === "'") {
+      encoded += "'\\''";
+    } else if (character === "\\" || code <= 0x1f || code === 0x7f) {
+      encoded += `\\0${code.toString(8).padStart(3, "0")}`;
+    } else {
+      encoded += character;
+    }
+  }
+  return encoded;
+}
+
+// Line editors run each submitted line on its own, so every line must be a complete command.
+function wrapPosixCommand(command: string, sentinel: string): string {
+  const normalized = command.replace(/\r\n/g, "\n");
+  // The `_` suffix keeps trailing newlines; the subshell contains exits and syntax errors.
+  const evaluate = (payload: string) =>
+    `( __lathe_command=$(printf '%b_' ${payload}); eval "\${__lathe_command%_}" ); printf '\\n${sentinel}%s\\n' "$?"`;
+  const inline = evaluate(`'${encodePosixScript(normalized)}'`);
+  if (utf8.encode(` ${inline}\r`).byteLength <= POSIX_MAX_LINE_BYTES) return inline;
+
+  const maxChunkBytes = POSIX_MAX_LINE_BYTES - utf8.encode(` ${POSIX_APPEND}''\r`).byteLength;
+  const lines: string[] = [];
+  let prefix = "__lathe_command=";
+  let chunk = "";
+  let chunkBytes = 0;
+  for (const character of normalized) {
+    const encoded = encodePosixScript(character);
+    const bytes = utf8.encode(encoded).byteLength;
+    if (chunkBytes + bytes > maxChunkBytes) {
+      lines.push(`${prefix}'${chunk}'`);
+      prefix = POSIX_APPEND;
+      chunk = "";
+      chunkBytes = 0;
+    }
+    chunk += encoded;
+    chunkBytes += bytes;
+  }
+  lines.push(`${prefix}'${chunk}'`, `${evaluate('"$__lathe_command"')}; unset __lathe_command`);
+  // The leading space gives every line the history suppression a short command gets.
+  return lines.join("\r ");
+}
+
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
@@ -188,8 +237,22 @@ function wrapCommandForCompletion(
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__lathec = $LASTEXITCODE } elseif ($?) { $__lathec = 0 } else { $__lathec = 1 }; Write-Host "${sentinel}$__lathec"`;
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
+    case "nushell": {
+      const escaped = command.replace(/["\\\x00-\x1f]/g, (char) =>
+        char === '"' || char === "\\" ? `\\${char}` : `\\u{${char.charCodeAt(0).toString(16)}}`,
+      );
+      // Nu resolves imports before running cd; source a file rooted in the worktree.
+      return [
+        "$env.LAST_EXIT_CODE = 0",
+        "let __lathef = try { mktemp --tmpdir-path $env.LATHE_WORKTREE_PATH --suffix .nu .lathe-setup-XXXXXXXX } catch {|e| print -e $e.msg; null }",
+        `if $__lathef == null { $env.LAST_EXIT_CODE = 1 } else { try { [$"rm --permanent ($__lathef | to nuon)" "${escaped}"] | str join (char newline) | save --force --raw $__lathef; ^$nu.current-exe --login --commands $"cd $env.LATHE_WORKTREE_PATH; source ($__lathef | to nuon)" } catch {|e| if $e != null and $e.exit_code? == null { print -e $e.msg }; if $env.LAST_EXIT_CODE == 0 { $env.LAST_EXIT_CODE = 1 } } }`,
+        "let __lathec = $env.LAST_EXIT_CODE",
+        "try { if $__lathef != null and ($__lathef | path exists) { rm --permanent $__lathef } } catch {|e| print -e $e.msg }",
+        `print $"\\n${sentinel}($__lathec)"`,
+      ].join("; ");
+    }
     case "posix":
-      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
+      return wrapPosixCommand(command, sentinel);
   }
 }
 
@@ -440,6 +503,8 @@ export const make = Effect.gen(function* () {
       }),
       // Before client attachment, truecolor probes wait for terminal replies nobody can send.
       COLORTERM: "",
+      // Project scripts keep the default shell; the preference is for interactive terminals only.
+      LATHE_TERMINAL_SHELL: "",
     };
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;
@@ -466,6 +531,7 @@ export const make = Effect.gen(function* () {
         .open({
           threadId: input.threadId,
           terminalId,
+          stopOnSettle: script.stopOnSettle ?? false,
           cwd,
           worktreePath: input.worktreePath,
           env: { ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
@@ -516,9 +582,9 @@ export const make = Effect.gen(function* () {
     // Return once the terminal exists so callers can show it while a startup prompt waits.
     // PowerShell and cmd have no line-editor signal.
     yield* (
-      completionShell === "posix" || completionShell === "fish"
-        ? readiness.wait
-        : Effect.succeed("ready" as const)
+      completionShell === "powershell" || completionShell === null
+        ? Effect.succeed("ready" as const)
+        : readiness.wait
     ).pipe(
       Effect.flatMap((shell) =>
         shell === "exited" || commandLine === null

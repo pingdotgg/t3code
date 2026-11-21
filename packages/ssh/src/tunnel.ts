@@ -1,3 +1,7 @@
+import {
+  DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+  DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
+} from "@lathe/contracts";
 import type { DesktopSshEnvironmentBootstrap, DesktopSshEnvironmentTarget } from "@lathe/contracts";
 import { waitForHttpReady as waitForHttpReadyShared } from "@lathe/shared/httpReadiness";
 import { cliReleaseDownloadBaseUrl } from "@lathe/shared/cliRelease";
@@ -7,12 +11,14 @@ import { extractJsonObject, fromLenientJson } from "@lathe/shared/schemaJson";
 import { satisfiesSemverRange } from "@lathe/shared/semver";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -23,11 +29,14 @@ import * as SshAuth from "./auth.ts";
 import {
   baseSshArgs,
   buildSshHostSpecEffect,
+  controlMasterArgs,
+  findLiveControlPath,
   getLastNonEmptyOutputLine,
   remoteStateKey,
   resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
+  shellSingleQuote,
   sshTargetLogFields,
   targetConnectionKey,
 } from "./command.ts";
@@ -45,10 +54,15 @@ const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
 const SSH_READY_TIMEOUT_MS = 20_000;
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
+// Probes through the forward pay several link round trips, about 4s at a 1s RTT.
+const SSH_TUNNEL_READY_PROBE_TIMEOUT_MS = 5_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
-const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
+const REMOTE_LAUNCH_BASE_TIMEOUT_MS = 90_000;
+// Matches the node-script launch command's ssh run without the launch lock wait.
+const SSH_TUNNEL_CONNECT_TIMEOUT_MS = REMOTE_LAUNCH_BASE_TIMEOUT_MS;
+const SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS = 100;
 // Cold archive launches download and extract ~70 MB and may wait on an install lock.
 // Lock waits must outlast both downloads and extraction; SSH must outlast install or wait plus readiness.
 // Leave slack for verification and extraction, which have no timeout.
@@ -57,6 +71,38 @@ const REMOTE_ARCHIVE_DOWNLOAD_SECONDS = 240;
 const REMOTE_ARCHIVE_LOCK_WAIT_SECONDS = 360;
 const REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS = 900_000;
 const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
+const REMOTE_PID_EXIT_WAIT_MS = 2_000;
+// The server answers HTTP before it writes server-runtime.json, which is how
+// a launch for another alias finds it.
+const REMOTE_RUNTIME_RECORD_WAIT_SECONDS = 10;
+// The desktop update wait runs under the home lock. Its last poll and the
+// adoption after it each add a reuse probe, and the poll adds one sleep.
+const REMOTE_UPDATE_WAIT_MS =
+  DESKTOP_UPDATE_IN_PROGRESS_TTL_MS +
+  2 * (REMOTE_REUSE_READY_TIMEOUT_MS + SSH_READY_PROBE_TIMEOUT_MS) +
+  1_000;
+// A launch waits this long for a server that holds the home to answer; its
+// last poll adds a reuse probe.
+const REMOTE_OWNER_WAIT_MS =
+  REMOTE_READY_TIMEOUT_MS + REMOTE_REUSE_READY_TIMEOUT_MS + SSH_READY_PROBE_TIMEOUT_MS;
+// A launch holds the home lock through up to two reuse probes, readiness, two
+// server exit waits, the runtime record wait, the update wait, and the owner
+// wait; each probe may overrun its deadline by one request.
+const REMOTE_LAUNCH_LOCK_WAIT_SECONDS = Math.ceil(
+  (REMOTE_READY_TIMEOUT_MS +
+    2 * REMOTE_REUSE_READY_TIMEOUT_MS +
+    2 * REMOTE_PID_EXIT_WAIT_MS +
+    REMOTE_RUNTIME_RECORD_WAIT_SECONDS * 1000 +
+    4 * SSH_READY_PROBE_TIMEOUT_MS +
+    REMOTE_UPDATE_WAIT_MS +
+    REMOTE_OWNER_WAIT_MS) /
+    1000,
+);
+const REMOTE_LAUNCH_TIMEOUT_MS =
+  REMOTE_LAUNCH_LOCK_WAIT_SECONDS * 1000 +
+  REMOTE_UPDATE_WAIT_MS +
+  REMOTE_OWNER_WAIT_MS +
+  REMOTE_LAUNCH_BASE_TIMEOUT_MS;
 
 export interface RemoteLatheRunnerOptions {
   readonly nodeScriptPath?: string | null;
@@ -67,6 +113,8 @@ export interface RemoteLatheRunnerOptions {
 
 export interface SshEnvironmentManagerOptions {
   readonly resolveCliRunner?: Effect.Effect<RemoteLatheRunnerOptions>;
+  // Identifies this install to the remote across edits of a connection; null when unknown.
+  readonly resolveLauncherId?: Effect.Effect<string | null>;
 }
 
 interface SshTunnelEntry {
@@ -138,6 +186,8 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  /** Closes every tunnel, as the manager's scope finalizer does. */
+  readonly closeAllTunnels: Effect.Effect<void>;
 }
 
 const RemoteLaunchResult = Schema.Struct({
@@ -203,10 +253,6 @@ function normalizeSshErrorMessage(stderr: string, fallbackMessage: string): stri
 
 function stripTrailingNewlines(value: string): string {
   return value.replace(/\n+$/u, "");
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function applyScriptPlaceholders(
@@ -297,26 +343,29 @@ function probe() {
       (response) => {
         response.resume();
         response.once("end", () => {
-          resolve(response.statusCode >= 200 && response.statusCode < 300);
+          resolve(response.statusCode >= 200 && response.statusCode < 300 ? "ready" : "not-ready");
         });
       },
     );
     request.once("timeout", () => {
       request.destroy();
-      resolve(false);
+      resolve("not-ready");
     });
-    request.once("error", () => resolve(false));
+    request.once("error", (error) => resolve(error?.code === "ECONNREFUSED" ? "refused" : "not-ready"));
   });
 }
 
 (async () => {
+  let refusedOnly = true;
   while (Date.now() < deadline) {
-    if (await probe()) {
+    const result = await probe();
+    if (result === "ready") {
       process.exit(0);
     }
+    refusedOnly &&= result === "refused";
     await sleep(100);
   }
-  process.exit(1);
+  process.exit(refusedOnly ? 2 : 1);
 })().catch(() => process.exit(1));
 `;
 
@@ -433,6 +482,12 @@ if [ -z "$LATHE_ARCHIVE_VERSION" ]; then
   printf 'No t3 release version was provided for the remote runtime.\\n' >&2
   exit 1
 fi
+LATHE_SYSTEM_EXECUTABLE="$(command -v t3 2>/dev/null || true)"
+if [ -n "$LATHE_SYSTEM_EXECUTABLE" ] && LATHE_SYSTEM_VERSION="$("$LATHE_SYSTEM_EXECUTABLE" --version 2>/dev/null)" && [ "$LATHE_SYSTEM_VERSION" = "t3 v$LATHE_ARCHIVE_VERSION" ]; then
+  # A matching host-provided runtime supports platforms such as musl Linux,
+  # where the portable release archive cannot run.
+  exec "$LATHE_SYSTEM_EXECUTABLE" "$@"
+fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
 # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
 LATHE_RELEASE_BASE_URL=@@LATHE_RELEASE_BASE_URL@@
@@ -472,37 +527,47 @@ if ! lathe_runtime_ready; then
   trap 'rm -rf "$LATHE_LOCK"' EXIT
 fi
 if ! lathe_runtime_ready; then
-  case "$(uname -s)" in
-    Darwin) LATHE_PLATFORM="darwin" ;;
-    Linux) LATHE_PLATFORM="linux" ;;
-    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s)" >&2; exit 1 ;;
+  # Keep aligned with CLI_ARCHIVE_PLATFORM_KEYS in packages/shared/src/cliRelease.ts.
+  case "$(uname -s) $(uname -m)" in
+    "Darwin arm64") LATHE_PLATFORM_KEY="darwin-arm64" ;;
+    "Linux arm64" | "Linux aarch64") LATHE_PLATFORM_KEY="linux-arm64" ;;
+    "Linux x86_64" | "Linux amd64") LATHE_PLATFORM_KEY="linux-x64" ;;
+    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s) $(uname -m)" >&2; exit 1 ;;
   esac
-  case "$(uname -m)" in
-    arm64 | aarch64) LATHE_ARCH="arm64" ;;
-    x86_64 | amd64) LATHE_ARCH="x64" ;;
-    *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -m)" >&2; exit 1 ;;
-  esac
-  LATHE_ARCHIVE="t3-$LATHE_ARCHIVE_VERSION-$LATHE_PLATFORM-$LATHE_ARCH.tar.gz"
+  LATHE_ARCHIVE="t3-$LATHE_ARCHIVE_VERSION-$LATHE_PLATFORM_KEY.tar.gz"
+  if ! command -v tar >/dev/null 2>&1; then
+    printf 'Remote host needs tar to unpack %s. Install tar on it and try again.\\n' "$LATHE_ARCHIVE" >&2
+    exit 1
+  fi
   LATHE_STAGING="$(mktemp -d "$HOME/.lathe/runtime/versions/.staging-XXXXXX")"
   trap 'rm -rf "$LATHE_STAGING" "$LATHE_LOCK"' EXIT
   lathe_fetch() {
     if command -v curl >/dev/null 2>&1; then curl -fsSL --connect-timeout 30 --max-time "$3" "$1" -o "$2"
     elif command -v wget >/dev/null 2>&1; then wget -q --timeout=30 --tries=1 "$1" -O "$2"
     else printf 'Remote host needs curl or wget to download %s.\\n' "$LATHE_ARCHIVE" >&2; exit 1
-    fi
+    fi || {
+      printf 'Could not download t3 %s from %s. If this host cannot reach it, install t3 %s on it with https://t3.codes/install.sh (LATHE_VERSION=%s; LATHE_RELEASE_BASE_URL selects a mirror).\\n' "$LATHE_ARCHIVE_VERSION" "$1" "$LATHE_ARCHIVE_VERSION" "$LATHE_ARCHIVE_VERSION" >&2
+      exit 1
+    }
   }
   lathe_fetch "$LATHE_RELEASE_BASE_URL/v$LATHE_ARCHIVE_VERSION/SHA256SUMS" "$LATHE_STAGING/SHA256SUMS" @@LATHE_ARCHIVE_CHECKSUMS_SECONDS@@
   lathe_fetch "$LATHE_RELEASE_BASE_URL/v$LATHE_ARCHIVE_VERSION/$LATHE_ARCHIVE" "$LATHE_STAGING/$LATHE_ARCHIVE" @@LATHE_ARCHIVE_DOWNLOAD_SECONDS@@
   LATHE_EXPECTED="$(grep " \\*\\{0,1\\}$LATHE_ARCHIVE$" "$LATHE_STAGING/SHA256SUMS" | cut -d' ' -f1)"
   if command -v sha256sum >/dev/null 2>&1; then
-    LATHE_ACTUAL="$(sha256sum "$LATHE_STAGING/$LATHE_ARCHIVE" | cut -d' ' -f1)"
+    LATHE_ACTUAL="$(sha256sum < "$LATHE_STAGING/$LATHE_ARCHIVE" | cut -d' ' -f1)"
   else
-    LATHE_ACTUAL="$(shasum -a 256 "$LATHE_STAGING/$LATHE_ARCHIVE" | cut -d' ' -f1)"
+    LATHE_ACTUAL="$(shasum -a 256 < "$LATHE_STAGING/$LATHE_ARCHIVE" | cut -d' ' -f1)"
   fi
   if [ -z "$LATHE_EXPECTED" ] || [ "$LATHE_ACTUAL" != "$LATHE_EXPECTED" ]; then
     printf 'Checksum mismatch for %s.\\n' "$LATHE_ARCHIVE" >&2; exit 1
   fi
-  tar -xzf "$LATHE_STAGING/$LATHE_ARCHIVE" -C "$LATHE_STAGING" --strip-components=1
+  if ! LATHE_TAR_ERROR="$(tar -xzf "$LATHE_STAGING/$LATHE_ARCHIVE" -C "$LATHE_STAGING" --strip-components=1 2>&1)"; then
+    # Some tars (BusyBox) gunzip internally, so gzip is only blamed once extraction fails.
+    if command -v gzip >/dev/null 2>&1; then printf '%s\\n' "$LATHE_TAR_ERROR" >&2
+    else printf 'Remote host needs gzip to unpack %s. Install gzip on it and try again.\\n' "$LATHE_ARCHIVE" >&2
+    fi
+    exit 1
+  fi
   rm -f "$LATHE_STAGING/$LATHE_ARCHIVE" "$LATHE_STAGING/SHA256SUMS"
   # Prove the binary runs here (libc, arch) before marking it ready, or every
   # later launch would exec a broken install instead of retrying.
@@ -520,9 +585,30 @@ fi
 exec "$LATHE_RUNTIME_DIR/t3" "$@"
 `;
 
+// kill -0 also passes for a zombie, a reused PID and, on Linux, a thread ID,
+// which ps does not list. Only the serve command the launcher started counts;
+// where ps cannot look up a PID at all, trust kill -0.
+const REMOTE_MANAGED_SERVER_RUNNING_SCRIPT = `managed_server_running() {
+  [ -n "$1" ] && kill -0 "$1" 2>/dev/null || return 1
+  if MANAGED_ARGS="$(ps -ww -o args= -p "$1" 2>/dev/null)"; then
+    case "$MANAGED_ARGS" in
+      *" serve --host 127.0.0.1 --port "[0-9]*) return 0 ;;
+    esac
+    return 1
+  fi
+  ! ps -ww -o args= -p "$$" >/dev/null 2>&1
+}`;
+
+// NFS-shared homes can link ~/.lathe to a directory that does not exist yet, and
+// mkdir -p fails with EEXIST on a dangling symlink, so create its target first.
+const REMOTE_ENSURE_LATHE_HOME_SCRIPT = `if [ -L "$HOME/.lathe" ] && [ ! -e "$HOME/.lathe" ]; then
+  (cd "$HOME" && mkdir -p "$(readlink .lathe)")
+fi`;
+
 const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@LATHE_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
+LAUNCHER_ID="\${2:-}"
 STATE_DIR="$HOME/.lathe/ssh-launch/$STATE_KEY"
 DEFAULT_SERVER_HOME="$HOME/.lathe"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
@@ -532,29 +618,87 @@ MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-lathe.sh"
 RUNNER_NEXT="$STATE_DIR/run-lathe.next.$$"
+LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
+LAUNCH_BREAK_LOCK="$LAUNCH_LOCK.break"
+@@LATHE_ENSURE_LATHE_HOME_SCRIPT@@
 mkdir -p "$STATE_DIR"
-cleanup_runner_next() {
+cleanup_launch() {
   rm -f "$RUNNER_NEXT"
+  for OWNED_LOCK in "$LAUNCH_LOCK" "$LAUNCH_BREAK_LOCK"; do
+    if [ "$(cat "$OWNED_LOCK" 2>/dev/null || true)" = "$$" ]; then
+      rm -f "$OWNED_LOCK"
+    fi
+  done
 }
-trap cleanup_runner_next EXIT
+trap cleanup_launch EXIT
+# A dropped SSH session signals the launch (PIPE on its next write); exit so
+# the lock is released.
+trap 'exit 1' HUP INT PIPE TERM
 cat >"$RUNNER_NEXT" <<'SH'
 @@LATHE_RUNNER_SCRIPT@@
 SH
-RUNNER_CHANGED=0
-if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
-  RUNNER_CHANGED=1
-fi
-mv "$RUNNER_NEXT" "$RUNNER_FILE"
-chmod 700 "$RUNNER_FILE"
+chmod 700 "$RUNNER_NEXT"
 LATHE_ARCHIVE_MODE=@@LATHE_ARCHIVE_MODE@@
 if [ "$LATHE_ARCHIVE_MODE" = "1" ]; then
   # The archive ships the helpers below inside the executable; the remote
   # needs no Node at all. Resolving the runner once here also downloads the
   # archive before the port and readiness probes rely on it.
-  "$RUNNER_FILE" --version >/dev/null
+  "$RUNNER_NEXT" --version >/dev/null
 elif ! ensure_remote_node_path; then
-  printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+  if ! command -v node >/dev/null 2>&1; then
+    printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+  fi
   exit 1
+fi
+# Recovery runs under its own lock and re-reads the owner there, so a waiter
+# that judged an earlier lock stale cannot remove its successor's lock. No
+# launch removes another's recovery lock: only SIGKILL inside these lines
+# leaves one behind, and the wait below then fails naming it.
+discard_stale_launch_lock() {
+  (set -C; printf '%s\\n' "$$" >"$LAUNCH_BREAK_LOCK") 2>/dev/null || return 1
+  if [ "$(cat "$LAUNCH_LOCK" 2>/dev/null || true)" = "$1" ]; then
+    rm -f "$LAUNCH_LOCK"
+  fi
+  rm -f "$LAUNCH_BREAK_LOCK"
+}
+# Concurrent launches share this home's owner lock and may share this record.
+# Hold the lock from comparing the runner until the server is recorded and
+# ready, so a waiting launch reuses that server instead of starting or
+# replacing one.
+LAUNCH_LOCK_WAITED=0
+LAUNCH_LOCK_UNOWNED=0
+while ! (set -C; printf '%s\\n' "$$" >"$LAUNCH_LOCK") 2>/dev/null; do
+  LAUNCH_LOCK_OWNER="$(cat "$LAUNCH_LOCK" 2>/dev/null || true)"
+  if [ -n "$LAUNCH_LOCK_OWNER" ]; then
+    LAUNCH_LOCK_UNOWNED=0
+    if ! kill -0 "$LAUNCH_LOCK_OWNER" 2>/dev/null && discard_stale_launch_lock "$LAUNCH_LOCK_OWNER"; then
+      continue
+    fi
+  else
+    LAUNCH_LOCK_UNOWNED=$((LAUNCH_LOCK_UNOWNED + 1))
+    if [ "$LAUNCH_LOCK_UNOWNED" -ge 5 ] && discard_stale_launch_lock ""; then
+      LAUNCH_LOCK_UNOWNED=0
+      continue
+    fi
+  fi
+  if [ "$LAUNCH_LOCK_WAITED" -ge @@LATHE_LAUNCH_LOCK_WAIT_SECONDS@@ ]; then
+    if [ -e "$LAUNCH_BREAK_LOCK" ]; then
+      printf 'A Lathe server launch stopped while recovering %s. If no launch is running, delete %s.\\n' "$LAUNCH_LOCK" "$LAUNCH_BREAK_LOCK" >&2
+    else
+      printf 'Another Lathe server launch has held %s for too long.\\n' "$LAUNCH_LOCK" >&2
+    fi
+    exit 1
+  fi
+  sleep 1
+  LAUNCH_LOCK_WAITED=$((LAUNCH_LOCK_WAITED + 1))
+done
+RUNNER_CHANGED=0
+if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
+  RUNNER_CHANGED=1
+fi
+mv "$RUNNER_NEXT" "$RUNNER_FILE"
+if [ -n "$LAUNCHER_ID" ]; then
+  printf '%s\\n' "$LAUNCHER_ID" >"$STATE_DIR/launcher"
 fi
 pick_port() {
   if [ "$LATHE_ARCHIVE_MODE" = "1" ]; then
@@ -577,7 +721,7 @@ NODE
 wait_for_pid_exit() {
   PID_TO_WAIT="$1"
   WAIT_COUNT=0
-  while kill -0 "$PID_TO_WAIT" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+  while kill -0 "$PID_TO_WAIT" 2>/dev/null && [ "$WAIT_COUNT" -lt @@LATHE_PID_EXIT_WAIT_TICKS@@ ]; do
     WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 0.1
   done
@@ -589,6 +733,54 @@ server_running() {
   case "$(ps -o stat= -p "$1" 2>/dev/null || true)" in
     *Z*) return 1 ;;
   esac
+}
+# An older client replacing a same-or-newer server would run below the database's migrations.
+keeps_running_server() {
+  [ "$LATHE_ARCHIVE_MODE" = "1" ] &&
+    "$RUNNER_FILE" __ssh-helper keep-server "$DEFAULT_RUNTIME_FILE" "$REMOTE_PID" >/dev/null 2>&1
+}
+@@LATHE_MANAGED_SERVER_RUNNING_SCRIPT@@
+# The server publishes its runtime record only after it answers, so one that
+# has published and now refuses every connection has closed its listener to
+# shut down; a starting server has not published yet. Exit 2 means refused.
+managed_server_stopping() {
+  [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ] || return 1
+  READY_STATUS=0
+  wait_ready "@@LATHE_REUSE_READY_TIMEOUT_MS@@" || READY_STATUS=$?
+  [ "$READY_STATUS" -eq 2 ]
+}
+# Both are SQLite locks the OS drops with their holder: a server holds
+# server-owner.sqlite, and a boot service holds service-serving.lock from
+# before it starts a server, between two of them during its own update, until
+# it stops or idles behind another server.
+home_owned() {
+  if [ "$LATHE_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper home-owned "$DEFAULT_SERVER_HOME" 2>/dev/null
+    return
+  fi
+  node - "$DEFAULT_SERVER_HOME" 2>/dev/null <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
+const held = (file) => {
+  if (!fs.existsSync(file)) return false;
+  const db = new DatabaseSync(file);
+  try {
+    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    return false;
+  } catch (error) {
+    return error?.errcode === 5;
+  } finally {
+    db.close();
+  }
+};
+const home = process.argv[2];
+process.exitCode =
+  held(path.join(home, "runtime", "service-serving.lock")) ||
+  held(path.join(home, "userdata", "server-owner.sqlite"))
+    ? 0
+    : 1;
+NODE
 }
 resolve_default_runtime_port() {
   if [ "$LATHE_ARCHIVE_MODE" = "1" ]; then
@@ -616,9 +808,29 @@ try {
 }
 NODE
 }
+# This script ships with the SSH client; older clients do not honor this marker.
+update_remaining() {
+  if [ "$LATHE_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper update-remaining "$DEFAULT_SERVER_HOME/runtime/@@LATHE_UPDATE_MARKER_FILE@@"
+    return
+  fi
+  node - "$DEFAULT_SERVER_HOME/runtime/@@LATHE_UPDATE_MARKER_FILE@@" <<'NODE'
+const fs = require("node:fs");
+const path = process.argv[2];
+try {
+  const { startedAt, expiresAt } = JSON.parse(fs.readFileSync(path, "utf8"));
+  const now = Date.now();
+  if (Number.isFinite(startedAt) && Number.isFinite(expiresAt) &&
+      startedAt <= now && expiresAt > now && expiresAt > startedAt) {
+    process.stdout.write(String(Math.min(expiresAt - now, @@LATHE_UPDATE_TTL_MS@@)));
+  }
+} catch {}
+NODE
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+adopt_default_server() {
 DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
 DEFAULT_RUNTIME_PID=""
 DEFAULT_REMOTE_PORT=""
@@ -633,12 +845,13 @@ fi
 if [ -n "$DEFAULT_REMOTE_PORT" ] && [ "$REMOTE_MANAGED" = "managed" ] && [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+  return 0
 elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@LATHE_REUSE_READY_TIMEOUT_MS@@"; then
     ADOPTED_PID="$DEFAULT_RUNTIME_PID"
     if [ "$REMOTE_MANAGED" = "managed" ]; then
-      if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+      if managed_server_running "$REMOTE_PID"; then
         kill "$REMOTE_PID" 2>/dev/null || true
         wait_for_pid_exit "$REMOTE_PID"
       fi
@@ -654,11 +867,37 @@ elif [ -n "$DEFAULT_REMOTE_PORT" ]; then
       REMOTE_PID=""
       REMOTE_MANAGED="external"
     fi
+    return 0
   else
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
     REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
   fi
+fi
+return 1
+}
+# Editing a connection's alias, host, user or port changes its key, so the
+# adopted server may be one this desktop started under another key. Ownership
+# then moves here, leaving one managed record, so updates keep replacing it.
+# Another desktop's server stays external. Only this first adoption runs
+# before the replace decision, which the previous key's runner settles.
+if adopt_default_server && [ -n "$ADOPTED_PID" ] && [ -n "$LAUNCHER_ID" ]; then
+  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+    [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
+    [ "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" = "$ADOPTED_PID" ] && managed_server_running "$ADOPTED_PID" || continue
+    [ "$(cat "$SIBLING_DIR/launcher" 2>/dev/null || true)" = "$LAUNCHER_ID" ] || break
+    REMOTE_PID="$ADOPTED_PID"
+    REMOTE_MANAGED="managed"
+    printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+    printf 'managed\\n' >"$MANAGED_FILE"
+    printf 'external\\n' >"$SIBLING_DIR/managed"
+    rm -f "$SIBLING_DIR/pid"
+    RUNNER_CHANGED=1
+    if cmp -s "$RUNNER_FILE" "$SIBLING_DIR/run-lathe.sh"; then
+      RUNNER_CHANGED=0
+    fi
+    break
+  done
 fi
 if [ "$REMOTE_MANAGED" = "external" ]; then
   # A server adopted above has just answered. While it is still alive, probing
@@ -670,12 +909,21 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
     REMOTE_PORT=""
     REMOTE_MANAGED=""
   fi
-elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && server_running "$REMOTE_PID"; then
+elif [ -n "$REMOTE_PORT" ] && managed_server_running "$REMOTE_PID"; then
   # Reconnect owns the local tunnel, not the lifetime of an already running
-  # server. A changed runner is the update path and still replaces it.
-  if [ "$RUNNER_CHANGED" -eq 1 ]; then
+  # server. A changed runner is the update path and replaces an older server.
+  if [ "$RUNNER_CHANGED" -eq 1 ] && ! keeps_running_server; then
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
+    REMOTE_PID=""
+    REMOTE_PORT=""
+    REMOTE_MANAGED=""
+  elif managed_server_stopping; then
+    wait_for_pid_exit "$REMOTE_PID"
+    if managed_server_running "$REMOTE_PID"; then
+      printf 'The previous remote Lathe server (PID %s) is still shutting down. Retry once it has exited.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
@@ -688,6 +936,68 @@ else
   REMOTE_PORT=""
   REMOTE_MANAGED=""
 fi
+# The server may answer long before it publishes its runtime record, or never
+# publish one; another alias's launch record still names it. Only one server
+# owns the home, so the first live one decides.
+if [ -z "$REMOTE_PORT" ] && [ -z "$DEFAULT_RUNTIME_INFO" ]; then
+  for SIBLING_DIR in "$DEFAULT_SERVER_HOME"/ssh-launch/*; do
+    [ "$SIBLING_DIR" != "$STATE_DIR" ] && [ "$(cat "$SIBLING_DIR/managed" 2>/dev/null || true)" = "managed" ] || continue
+    managed_server_running "$(cat "$SIBLING_DIR/pid" 2>/dev/null || true)" || continue
+    REMOTE_PORT="$(cat "$SIBLING_DIR/port" 2>/dev/null || true)"
+    if [ -n "$REMOTE_PORT" ] && wait_ready "@@LATHE_REUSE_READY_TIMEOUT_MS@@"; then
+      REMOTE_MANAGED="external"
+      rm -f "$PID_FILE"
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+      printf 'external\\n' >"$MANAGED_FILE"
+    else
+      REMOTE_PORT=""
+    fi
+    break
+  done
+fi
+if [ -z "$REMOTE_PORT" ]; then
+  # The sleep count bounds a host clock that stops advancing.
+  UPDATE_WAITED=0
+  UPDATE_SAW_MARKER=0
+  while [ "$UPDATE_WAITED" -le @@LATHE_UPDATE_TTL_SECONDS@@ ]; do
+    UPDATE_REMAINING="$(update_remaining 2>/dev/null || true)"
+    [ -n "$UPDATE_REMAINING" ] || break
+    UPDATE_SAW_MARKER=1
+    [ "$UPDATE_WAITED" -lt @@LATHE_UPDATE_TTL_SECONDS@@ ] || break
+    if adopt_default_server; then break; fi
+    REMOTE_PID=""
+    REMOTE_PORT=""
+    REMOTE_MANAGED=""
+    sleep 1
+    UPDATE_WAITED=$((UPDATE_WAITED + 1))
+  done
+  # The desktop clears the marker after publishing runtime, possibly before the first marker read,
+  # so refresh once more before falling back. A cleanly stopped server leaves no runtime file.
+  if { [ "$UPDATE_SAW_MARKER" -eq 1 ] || [ -f "$DEFAULT_RUNTIME_FILE" ]; } && [ -z "$REMOTE_PORT" ] && ! adopt_default_server; then
+    REMOTE_PID=""
+    REMOTE_PORT=""
+    REMOTE_MANAGED=""
+  fi
+fi
+# A server that holds the home without answering yet is still starting, and a
+# boot service holds it between two servers while it updates. A second server
+# would lose the home to it or take the home from it, so wait while the home is
+# held and start one only once it is free. The managed server an update just
+# stopped may still be exiting. The sleep count bounds a host clock that stops.
+OWNER_WAITED=0
+OWNER_DEADLINE=$(($(date +%s) + @@LATHE_READY_TIMEOUT_SECONDS@@))
+while [ -z "$REMOTE_PORT" ] && ! managed_server_running "$(cat "$PID_FILE" 2>/dev/null || true)" && home_owned; do
+  if adopt_default_server; then break; fi
+  REMOTE_PID=""
+  REMOTE_PORT=""
+  REMOTE_MANAGED=""
+  if [ "$OWNER_WAITED" -ge @@LATHE_READY_TIMEOUT_SECONDS@@ ] || [ "$(date +%s)" -ge "$OWNER_DEADLINE" ]; then
+    printf 'A Lathe server or boot service holds %s but did not become ready, so no second server was started. Retry once it has started.\\n' "$DEFAULT_SERVER_HOME" >&2
+    exit 1
+  fi
+  sleep 1
+  OWNER_WAITED=$((OWNER_WAITED + 1))
+done
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
@@ -698,11 +1008,18 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
+  # Start this launch's log empty. Unlink rather than truncate: a process from an
+  # earlier launch can still hold the old log open and keep writing to it.
+  rm -f "$LOG_FILE"
   nohup env LATHE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
+  # A stop keeps the launcher file; it must not name this server's owner.
+  if [ -z "$LAUNCHER_ID" ]; then
+    rm -f "$STATE_DIR/launcher"
+  fi
   if ! wait_ready "@@LATHE_READY_TIMEOUT_MS@@"; then
     printf 'Remote Lathe server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     if [ -s "$LOG_FILE" ]; then
@@ -715,6 +1032,27 @@ if [ -z "$REMOTE_PORT" ]; then
     rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
     exit 1
   fi
+  # Keep the lock until another alias's launch can find this server, or it
+  # would start a second one that loses the home's owner lock.
+  RECORD_DEADLINE=$(($(date +%s) + @@LATHE_RUNTIME_RECORD_WAIT_SECONDS@@))
+  while [ "$(date +%s)" -lt "$RECORD_DEADLINE" ]; do
+    DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+    [ "\${DEFAULT_RUNTIME_INFO%% *}" = "$REMOTE_PID" ] && break
+    # A host wrapper can spawn the server instead of replacing itself.
+    RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
+    if [ "\${DEFAULT_RUNTIME_INFO#* }" = "$REMOTE_PORT" ] && managed_server_running "$RUNTIME_PID"; then
+      RUNTIME_ANCESTOR="$RUNTIME_PID"
+      while [ -n "$RUNTIME_ANCESTOR" ] && [ "$RUNTIME_ANCESTOR" != "1" ] && [ "$RUNTIME_ANCESTOR" != "$REMOTE_PID" ]; do
+        RUNTIME_ANCESTOR="$(ps -o ppid= -p "$RUNTIME_ANCESTOR" 2>/dev/null | tr -d '[:space:]')"
+      done
+      if [ "$RUNTIME_ANCESTOR" = "$REMOTE_PID" ]; then
+        REMOTE_PID="$RUNTIME_PID"
+        printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+        break
+      fi
+    fi
+    sleep 0.1
+  done
 fi
 printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGED:-managed}"
 `;
@@ -723,6 +1061,7 @@ const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.lathe/ssh-launch/@@LATHE_STATE_KEY@@"
 DEFAULT_SERVER_HOME="$HOME/.lathe"
 RUNNER_FILE="$STATE_DIR/run-lathe.sh"
+@@LATHE_ENSURE_LATHE_HOME_SCRIPT@@
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
 @@LATHE_RUNNER_SCRIPT@@
@@ -739,7 +1078,8 @@ PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+@@LATHE_MANAGED_SERVER_RUNNING_SCRIPT@@
+if [ "$REMOTE_MANAGED" != "external" ] && managed_server_running "$REMOTE_PID"; then
   kill "$REMOTE_PID" 2>/dev/null || true
   WAIT_COUNT=0
   while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
@@ -822,24 +1162,34 @@ export function buildRemoteNodeEnvScript(input?: RemoteLatheRunnerOptions): stri
   );
 }
 
-function buildRemoteLaunchScript(input?: RemoteLatheRunnerOptions): string {
+export function buildRemoteLaunchScript(input?: RemoteLatheRunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    LATHE_UPDATE_MARKER_FILE: DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+    LATHE_UPDATE_TTL_MS: String(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS),
+    LATHE_UPDATE_TTL_SECONDS: String(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS / 1000),
     LATHE_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     LATHE_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     LATHE_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteLatheRunnerScript(input)),
     LATHE_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
     LATHE_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
+    LATHE_MANAGED_SERVER_RUNNING_SCRIPT: REMOTE_MANAGED_SERVER_RUNNING_SCRIPT,
+    LATHE_ENSURE_LATHE_HOME_SCRIPT: REMOTE_ENSURE_LATHE_HOME_SCRIPT,
     LATHE_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
     LATHE_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
     LATHE_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
+    LATHE_READY_TIMEOUT_SECONDS: String(REMOTE_READY_TIMEOUT_MS / 1000),
     LATHE_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     LATHE_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    LATHE_PID_EXIT_WAIT_TICKS: String(REMOTE_PID_EXIT_WAIT_MS / 100),
+    LATHE_LAUNCH_LOCK_WAIT_SECONDS: String(REMOTE_LAUNCH_LOCK_WAIT_SECONDS),
+    LATHE_RUNTIME_RECORD_WAIT_SECONDS: String(REMOTE_RUNTIME_RECORD_WAIT_SECONDS),
   });
 }
 
 function buildRemotePairingScript(stateKey: string, input?: RemoteLatheRunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
     LATHE_STATE_KEY: stateKey,
+    LATHE_ENSURE_LATHE_HOME_SCRIPT: REMOTE_ENSURE_LATHE_HOME_SCRIPT,
     LATHE_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteLatheRunnerScript(input)),
   });
 }
@@ -847,6 +1197,7 @@ function buildRemotePairingScript(stateKey: string, input?: RemoteLatheRunnerOpt
 function buildRemoteStopScript(stateKey: string): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
     LATHE_STATE_KEY: stateKey,
+    LATHE_MANAGED_SERVER_RUNNING_SCRIPT: REMOTE_MANAGED_SERVER_RUNNING_SCRIPT,
   });
 }
 
@@ -856,24 +1207,40 @@ function buildRemoteLogTailScript(stateKey: string): string {
   });
 }
 
+// Shells known to take `-l -c` with a POSIX-style `exec` read their own login
+// profiles first; any other shell (csh, pwsh, ...) keeps the plain `sh -l` launch.
+const remoteLoginShellArgs = (args = "") => [
+  "sh",
+  "-c",
+  shellSingleQuote(
+    `case "\${SHELL##*/}" in bash|zsh|ksh|fish|nu) exec "$SHELL" -l -c "exec sh -s${args ? ` -- ${args}` : ""}" ;; *) exec sh -l -s${args ? ` -- ${args}` : ""} ;; esac`,
+  ),
+];
+
 export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemoteServer")(
   function* (
     target: DesktopSshEnvironmentTarget,
     input?: SshAuth.SshAuthOptions,
     runner?: RemoteLatheRunnerOptions,
+    launcherId?: string | null,
   ): Effect.fn.Return<
     { readonly remotePort: number; readonly remoteServerKind: "external" | "managed" | null },
     SshCommandError | SshInvalidTargetError | SshLaunchError,
     ChildProcessSpawner.ChildProcessSpawner | Digest.Digest | FileSystem.FileSystem | Path.Path
   > {
     const stateKey = yield* remoteStateKey(target);
+    // The launcher ID is interpolated into the remote shell command, so only hex passes.
+    const launchArgs =
+      typeof launcherId === "string" && /^[0-9a-f]{32}$/u.test(launcherId)
+        ? `${stateKey} ${launcherId}`
+        : stateKey;
     yield* Effect.logInfo("ssh.remoteServer.launch.start", {
       ...sshTargetLogFields(target),
       ...sshRunnerLogFields(runner),
       stateKey,
     });
     const result = yield* runSshCommand(target, {
-      remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
+      remoteCommandArgs: remoteLoginShellArgs(launchArgs),
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
@@ -934,7 +1301,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     stateKey,
   });
   const result = yield* runSshCommand(target, {
-    remoteCommandArgs: ["sh", "-s"],
+    remoteCommandArgs: remoteLoginShellArgs(),
     stdin: buildRemotePairingScript(stateKey, runner),
     ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
@@ -1029,7 +1396,7 @@ const waitForHttpReady = (input: {
     ...(input.path === undefined ? {} : { path: input.path }),
     ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     ...(input.intervalMs === undefined ? {} : { intervalMs: input.intervalMs }),
-    probeTimeoutMs: input.probeTimeoutMs ?? SSH_READY_PROBE_TIMEOUT_MS,
+    probeTimeoutMs: input.probeTimeoutMs ?? SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
     makeError: ({ requestUrl, probeTimeoutMs, cause }) => {
       if (typeof cause === "object" && cause !== null && "kind" in cause) {
         const kind = (cause as { readonly kind?: unknown }).kind;
@@ -1093,6 +1460,29 @@ const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(fu
   return yield* net.reserveLoopbackPort();
 });
 
+// ssh only binds the forward after it connects, which can take ConnectTimeout per dead address.
+const waitForTunnelForward = Effect.fn("ssh/tunnel.waitForTunnelForward")(function* (input: {
+  readonly target: DesktopSshEnvironmentTarget;
+  readonly localPort: number;
+}) {
+  const net = yield* NetService.NetService;
+  yield* net.hasListenerOnHost(input.localPort, "127.0.0.1").pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced(Duration.millis(SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS)),
+      until: (listening) => listening,
+    }),
+    Effect.timeoutOrElse({
+      duration: Duration.millis(SSH_TUNNEL_CONNECT_TIMEOUT_MS),
+      orElse: () =>
+        Effect.fail(
+          new SshReadinessError({
+            message: `SSH connection to ${input.target.alias} did not come up within ${SSH_TUNNEL_CONNECT_TIMEOUT_MS}ms.`,
+          }),
+        ),
+    }),
+  );
+});
+
 const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: {
   readonly key: string;
   readonly resolvedTarget: DesktopSshEnvironmentTarget;
@@ -1101,6 +1491,8 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   readonly httpBaseUrl: string;
   readonly wsBaseUrl: string;
   readonly authOptions: SshAuth.SshAuthOptions;
+  /** Forward through this live ControlMaster instead of signing in again. */
+  readonly controlPath: string | null;
   readonly remoteServerKind: "external" | "managed" | null;
   readonly scope: Scope.Closeable;
 }): Effect.fn.Return<
@@ -1133,7 +1525,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         }),
     ),
   );
-  const args = [
+  const directArgs = [
     ...baseSshArgs(input.resolvedTarget, {
       batchMode: input.authOptions.batchMode ?? "no",
     }),
@@ -1156,10 +1548,56 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     "--",
     hostSpec,
   ];
+  const { controlPath, scope } = input;
+  // The master's own GatewayPorts would otherwise decide the bind address.
+  const controlMasterForward = `127.0.0.1:${input.localPort}:127.0.0.1:${input.remotePort}`;
+  const { args, stdin } =
+    controlPath === null
+      ? { args: directArgs, stdin: { stream: Stream.empty, endOnDone: true } }
+      : {
+          // A mux client with -N exits once the master takes the forward, so hold a session
+          // open on stdin to keep a process whose exit means the tunnel is gone.
+          args: [
+            ...baseSshArgs(input.resolvedTarget, { batchMode: "yes" }),
+            ...controlMasterArgs(controlPath),
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-o",
+            "ControlMaster=no",
+            "-T",
+            "-L",
+            controlMasterForward,
+            "--",
+            hostSpec,
+            "sh -c 'exec cat >/dev/null'",
+          ],
+          stdin: "pipe" as const,
+        };
   const sshCommand = yield* resolveSshCommand;
   const tunnelCommand = [sshCommand, ...args];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const { scope } = input;
+  if (controlPath !== null) {
+    const fileSystemService = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    // The master keeps a forward after the mux client that asked for it exits.
+    yield* Scope.addFinalizer(
+      scope,
+      runSshCommand(input.resolvedTarget, {
+        preHostArgs: [
+          ...controlMasterArgs(controlPath),
+          "-O",
+          "cancel",
+          "-L",
+          controlMasterForward,
+        ],
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystemService),
+        Effect.provideService(Path.Path, pathService),
+        Effect.ignore,
+      ),
+    );
+  }
   yield* Effect.logDebug("ssh.tunnel.spawn.start", {
     ...sshTargetLogFields(input.resolvedTarget),
     command: tunnelCommand,
@@ -1173,10 +1611,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
       ChildProcess.make(sshCommand, args, {
         env: childEnvironment,
         extendEnv: true,
-        stdin: {
-          stream: Stream.empty,
-          endOnDone: true,
-        },
+        stdin,
       }),
     )
     .pipe(
@@ -1268,10 +1703,14 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     }),
   );
   yield* Effect.raceFirst(
-    waitForHttpReady({
-      baseUrl: input.httpBaseUrl,
-      timeoutMs: SSH_READY_TIMEOUT_MS,
-    }),
+    waitForTunnelForward({ target: input.resolvedTarget, localPort: input.localPort }).pipe(
+      Effect.andThen(
+        waitForHttpReady({
+          baseUrl: input.httpBaseUrl,
+          timeoutMs: SSH_READY_TIMEOUT_MS,
+        }),
+      ),
+    ),
     exitFailure,
   ).pipe(
     Effect.tap(() =>
@@ -1372,15 +1811,14 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
   });
 
-  yield* Scope.addFinalizer(
-    managerScope,
-    Effect.sync(() => [...tunnels.values()]).pipe(
-      Effect.flatMap((entries) =>
-        Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded" }),
-      ),
-      Effect.ignore,
+  const closeAllTunnels = Effect.sync(() => [...tunnels.values()]).pipe(
+    Effect.flatMap((entries) =>
+      Effect.forEach(entries, closeTunnelEntry, { concurrency: "unbounded" }),
     ),
+    Effect.ignore,
   );
+
+  yield* Scope.addFinalizer(managerScope, closeAllTunnels);
 
   const promptForPassword = Effect.fn("ssh/tunnel.promptForPassword")(function* (
     target: DesktopSshEnvironmentTarget,
@@ -1507,11 +1945,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(input.runner),
       key: input.key,
     });
+    const launcherId =
+      options.resolveLauncherId === undefined ? null : yield* options.resolveLauncherId;
     const remoteLaunch = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
       operation: (authOptions) =>
-        launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner),
+        launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner, launcherId),
     });
     const remotePort = remoteLaunch.remotePort;
     yield* Effect.logDebug("ssh.environment.remotePort.ready", {
@@ -1533,18 +1973,32 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const tunnelEntry = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
-      operation: (authOptions) =>
-        startSshTunnel({
-          key: input.key,
-          resolvedTarget: input.resolvedTarget,
-          remotePort,
-          localPort,
-          httpBaseUrl,
-          wsBaseUrl,
-          authOptions,
-          remoteServerKind: remoteLaunch.remoteServerKind,
-          scope: entryScope,
-        }),
+      operation: (authOptions) => {
+        const start = (controlPath: string | null) =>
+          startSshTunnel({
+            key: input.key,
+            resolvedTarget: input.resolvedTarget,
+            remotePort,
+            localPort,
+            httpBaseUrl,
+            wsBaseUrl,
+            authOptions,
+            controlPath,
+            remoteServerKind: remoteLaunch.remoteServerKind,
+            scope: entryScope,
+          });
+        // A fresh login cannot answer a second factor such as Duo, but the user's signed-in
+        // ControlMaster already has. Without one, the auth failure goes on to the password prompt.
+        return start(null).pipe(
+          Effect.catchIf(SshAuth.isSshAuthFailure, (error) =>
+            findLiveControlPath(input.resolvedTarget).pipe(
+              Effect.flatMap((controlPath) =>
+                controlPath === null ? Effect.fail(error) : start(controlPath),
+              ),
+            ),
+          ),
+        );
+      },
     }).pipe(
       Effect.onExit((exit) =>
         Exit.isSuccess(exit) ? Effect.void : Scope.close(entryScope, Exit.void).pipe(Effect.ignore),
@@ -1627,9 +2081,45 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         localPort: entry.localPort,
         remotePort: entry.remotePort,
       });
+      let answered = false;
+      const markAnswered = Effect.sync(() => {
+        answered = true;
+      });
+      const client = yield* HttpClient.HttpClient;
       const readinessExit = yield* Effect.exit(
-        waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
+        waitForHttpReady({
+          baseUrl: entry.httpBaseUrl,
+          timeoutMs: SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            client.pipe(
+              HttpClient.transform((request) =>
+                request.pipe(
+                  Effect.tap(() => markAnswered),
+                  Effect.tapError(() => markAnswered),
+                ),
+              ),
+            ),
+          ),
+        ),
       );
+      // ssh closes the channel when nothing listens remotely, so a forward that
+      // is up but got no answer leads to a live server that is only slow.
+      const keepSlowForward =
+        Exit.isFailure(readinessExit) &&
+        !answered &&
+        (yield* entry.process.isRunning.pipe(Effect.orElseSucceed(() => false))) &&
+        (yield* (yield* NetService.NetService).hasListenerOnHost(entry.localPort, "127.0.0.1"));
+      if (keepSlowForward) {
+        yield* Effect.logWarning("ssh.environment.tunnel.existing.slow", {
+          ...sshTargetLogFields(resolvedTarget),
+          key,
+          localPort: entry.localPort,
+          remotePort: entry.remotePort,
+        });
+        return entry;
+      }
       if (Exit.isSuccess(readinessExit)) {
         yield* Effect.logDebug("ssh.environment.tunnel.reused", {
           ...sshTargetLogFields(resolvedTarget),
@@ -1720,7 +2210,8 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           issuedPairingToken: pairingToken !== null,
         });
         return {
-          target: entry.target,
+          // Callers save this target; a port ssh -G resolved would pin the alias's current Port.
+          target: { ...entry.target, port: target.port },
           httpBaseUrl: entry.httpBaseUrl,
           wsBaseUrl: entry.wsBaseUrl,
           pairingToken,
@@ -1771,7 +2262,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment, closeAllTunnels });
 });
 
 /**

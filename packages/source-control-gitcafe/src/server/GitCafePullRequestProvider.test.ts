@@ -677,6 +677,46 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect("reads a GitHub-mirrored check's log, and re-runs only GitCafe Actions runs", () => {
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/ci/github/checks/555/log": {
+        content: "install\ntest\nFAIL a.test.ts\n",
+        truncated: true,
+      },
+      "POST /repos/owner/repo/actions/runs/actwfrun_abc/rerun": {},
+      "GET /repos/owner/repo/ci/github/checks/401/log": new Response("{}", { status: 401 }),
+    });
+    const mirrored = { name: "Test", url: "https://github.com/owner/repo/runs/555" };
+    const missing = { name: "Gone", url: "https://github.com/owner/repo/runs/404" };
+    const signedOut = { name: "Lint", url: "https://github.com/owner/repo/runs/401" };
+    const native = { name: "Build", url: "https://git.cafe/owner/repo/actions/runs/actwfrun_abc" };
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const logs = yield* provider.getCheckLogs!({
+        ...target,
+        checks: [mirrored, missing],
+        tailLines: 1,
+      });
+      assert.deepInclude(logs[0], { log: "FAIL a.test.ts", truncated: true, detail: null });
+      assert.isNotNull(logs[1]?.detail);
+      const refused = yield* Effect.flip(
+        provider.getCheckLogs!({ ...target, checks: [signedOut], tailLines: 1 }),
+      );
+      assert.strictEqual(refused.reason, "unauthenticated");
+      const reruns = yield* provider.rerunChecks!({ ...target, checks: [mirrored, native] });
+      assert.deepStrictEqual(
+        reruns.map(({ name, rerun }) => [name, rerun]),
+        [
+          ["Test", false],
+          ["Build", true],
+        ],
+      );
+      assert.deepStrictEqual(server.writes(), [
+        "POST /repos/owner/repo/actions/runs/actwfrun_abc/rerun",
+      ]);
+    }).pipe(Effect.provide(server.layer));
+  });
+
   it.effect(
     "lands a stack through a layer only while its heads are the ones the reader saw",
     () => {
@@ -1097,7 +1137,8 @@ describe("GitCafePullRequestProvider", () => {
 
   it.effect("reads a pull request GitHub merged as merged before the sync reports it", () => {
     const mergedAt = "2026-09-12T13:00:00Z";
-    const server = detailWith({ providerMerge: { mergedAt } });
+    const mergeCommitOid = "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9";
+    const server = detailWith({ providerMerge: { mergedAt, mergeCommitOid } });
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
       const detail = yield* provider.getChangeRequest(target);
@@ -1105,6 +1146,7 @@ describe("GitCafePullRequestProvider", () => {
       assert.strictEqual(detail.mergedAt, mergedAt);
       const preview = yield* provider.getChangeRequestPreview!(target);
       assert.strictEqual(preview.state, "merged");
+      assert.strictEqual(detail.mergeCommitSha, mergeCommitOid);
     }).pipe(Effect.provide(server.layer));
   });
 

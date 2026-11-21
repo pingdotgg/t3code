@@ -32,7 +32,7 @@ const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
   "-v",
 ]);
 
-const PI_ARGUMENTS_WITH_VALUES = new Set([
+export const PI_ARGUMENTS_WITH_VALUES = new Set([
   "--api-key",
   "--append-system-prompt",
   "--exclude-tools",
@@ -231,7 +231,16 @@ export const materializePiLatheMcpExtension = Effect.fn("materializePiLatheMcpEx
     const dest = piLatheMcpExtensionDestPath(cacheDir);
     const existing = yield* fs.readFileString(dest).pipe(Effect.orElseSucceed(() => ""));
     if (existing !== PI_LATHE_MCP_EXTENSION_SOURCE) {
-      yield* fs.writeFileString(dest, PI_LATHE_MCP_EXTENSION_SOURCE);
+      // Concurrent pi launches read this file: stage it in a per-call directory
+      // and rename so readers and other writers never see a partial file.
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const stagingDir = yield* fs.makeTempDirectoryScoped({ directory: cacheDir });
+          const staging = `${stagingDir.replace(/\\/g, "/")}/${PI_LATHE_MCP_EXTENSION_FILENAME}`;
+          yield* fs.writeFileString(staging, PI_LATHE_MCP_EXTENSION_SOURCE);
+          yield* fs.rename(staging, dest).pipe(Effect.retry({ times: 3 }));
+        }),
+      );
     }
     return dest;
   },

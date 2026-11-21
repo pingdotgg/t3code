@@ -1,4 +1,5 @@
 import { scopeProjectRef } from "@lathe/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@lathe/client-runtime/state/shell";
 import type { EnvironmentId, ModelSelection, ProjectId, ScopedProjectRef } from "@lathe/contracts";
 import type { ComposerThreadDraftState, DraftThreadEnvMode } from "../composerDraftStore";
 
@@ -60,6 +61,24 @@ export function hasExplicitComposerModelSelection(
     activeProvider !== undefined &&
     draft.modelSelectionByProvider[activeProvider] !== undefined
   );
+}
+
+export function threadHasStarted(
+  thread: Pick<EnvironmentThreadShell, "latestRun" | "itemCount" | "runtime"> | null | undefined,
+): boolean {
+  return Boolean(thread && (thread.latestRun !== null || thread.itemCount > 0 || thread.runtime));
+}
+
+/**
+ * A draft is seeded from sticky state, project defaults, prompt links, or a carried selection.
+ * That seed is what an unstarted thread sends; once the thread has started, its own selection
+ * wins unless the user picked a model or traits for it.
+ */
+export function draftModelSelectionApplies(
+  draft: Pick<ComposerThreadDraftState, "modelSelectionExplicit"> | null | undefined,
+  threadStarted: boolean,
+): boolean {
+  return !threadStarted || draft?.modelSelectionExplicit === true;
 }
 
 export function resolveThreadActionProjectRef(

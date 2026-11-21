@@ -32,6 +32,7 @@ const TAP_SLOP_PX = 8;
 const MULTI_CLICK_MS = 500;
 const MULTI_CLICK_SLOP_PX = 4;
 const WHEEL_LINE_PX = 16;
+const SCROLL_REPORT_PX = 24;
 const MAX_PIXEL_RATIO = 2;
 // Reuse nearby probe answers: slow replies arrive too late after touch-end to raise the iOS keyboard.
 const PROBE_REUSE_PX = 24;
@@ -74,14 +75,14 @@ export function start(configuration: PreviewStreamConfiguration) {
   const container = document.createElement("div");
   const canvas = document.createElement("canvas");
   canvas.setAttribute("role", "img");
-  canvas.setAttribute("aria-label", "Browser page");
+  canvas.setAttribute("aria-label", configuration.labels.page);
   const agentCursor = document.createElement("div");
   agentCursor.className = "agent-cursor";
   agentCursor.setAttribute("aria-hidden", "true");
   agentCursor.innerHTML = AGENT_CURSOR_SVG;
   container.append(canvas, agentCursor);
   const input = document.createElement("textarea");
-  input.setAttribute("aria-label", "Browser page input");
+  input.setAttribute("aria-label", configuration.labels.pageInput);
   input.autocapitalize = "off";
   input.autocomplete = "off";
   input.spellcheck = false;
@@ -307,12 +308,20 @@ export function start(configuration: PreviewStreamConfiguration) {
     };
   };
 
+  let scrolled = 0;
   const flushWheel = () => {
     if (wheelFrame !== null) cancelAnimationFrame(wheelFrame);
     wheelFrame = null;
     const wheel = pendingWheel;
     pendingWheel = null;
-    if (wheel) send(wheel);
+    if (!wheel) return;
+    send(wheel);
+    // The app shrinks its bar while the page scrolls down, so it only needs the direction.
+    scrolled =
+      Math.sign(scrolled) === Math.sign(wheel.deltaY) ? scrolled + wheel.deltaY : wheel.deltaY;
+    if (Math.abs(scrolled) < SCROLL_REPORT_PX) return;
+    post({ type: "scroll", direction: scrolled > 0 ? "down" : "up" });
+    scrolled = 0;
   };
   const queueWheel = (point: { x: number; y: number }, deltaX: number, deltaY: number) => {
     pendingWheel = {
@@ -650,7 +659,7 @@ export function start(configuration: PreviewStreamConfiguration) {
       return;
     }
     if (element.readyState === HTMLMediaElement.HAVE_NOTHING) {
-      reportPictureInPicture("The page has not shown yet. Try again in a moment.");
+      reportPictureInPicture(configuration.labels.pictureInPictureNotReady);
       return;
     }
     // The page may have changed since the video's last frame. WebKit captures only on a draw.
@@ -659,7 +668,7 @@ export function start(configuration: PreviewStreamConfiguration) {
     const fail = (error: unknown) => {
       element.pause();
       reportPictureInPicture(
-        error instanceof Error ? error.message : "Picture in picture is unavailable.",
+        error instanceof Error ? error.message : configuration.labels.pictureInPictureUnavailable,
       );
     };
     if (document.pictureInPictureEnabled) {

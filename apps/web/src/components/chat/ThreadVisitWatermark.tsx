@@ -3,11 +3,13 @@ import { scopedThreadKey } from "@lathe/client-runtime/environment";
 import { createThreadVisitTracker } from "@lathe/client-runtime/state/thread-visits";
 import { type ScopedThreadRef } from "@lathe/contracts";
 
+import { environmentCatalog } from "../../connection/catalog";
 import { useUiStateStore } from "../../uiStateStore";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 
 const threadVisitTracker = createThreadVisitTracker({
   threadShellAtom: environmentThreadShells.threadShellAtom,
+  sessionGenerationAtom: environmentCatalog.sessionGenerationAtom,
   visit: threadEnvironment.visit,
   markLocalVisit: (ref, visitedAt) =>
     useUiStateStore.getState().markThreadVisited(scopedThreadKey(ref), visitedAt),

@@ -10,7 +10,9 @@ import {
   type RuntimeMode,
 } from "@lathe/contracts";
 import { deriveThreadTitleSeed, threadTitleTextFromPrompt } from "@lathe/client-runtime/operations";
+import { msg } from "gt-react-native";
 
+import { m } from "../i18n/messages";
 import type { UploadedMobileAttachment } from "./attachmentUpload";
 
 export interface ProjectThreadStartTurnSpec {
@@ -35,10 +37,10 @@ export interface ProjectThreadStartTurnSpec {
 }
 
 export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpec) {
-  const title = deriveThreadTitleSeed({
-    text: spec.titleText ?? spec.text,
-    attachments: spec.uploadedAttachments,
-  });
+  const title = deriveThreadTitleSeed(
+    { text: spec.titleText ?? spec.text, attachments: spec.uploadedAttachments },
+    m,
+  );
   const isWorktree = spec.workspaceMode === "worktree";
   return {
     commandId: CommandId.make(spec.commandId),
@@ -83,6 +85,6 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
 }
 
 export function deriveThreadTitleFromPrompt(value: string): string {
-  const title = threadTitleTextFromPrompt(value) || "New thread";
+  const title = threadTitleTextFromPrompt(value, m) || m(msg("New thread"));
   return title.length <= 72 ? title : `${title.slice(0, 69).trimEnd()}...`;
 }

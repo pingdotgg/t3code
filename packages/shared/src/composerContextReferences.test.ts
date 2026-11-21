@@ -2,10 +2,12 @@ import {
   ComposerContextId,
   type ComposerContextRecord,
   EnvironmentId,
+  MessageId,
   ThreadId,
 } from "@lathe/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { serializeAssistantCitation } from "./assistantCitations.ts";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   collectComposerContextReferences,
@@ -79,6 +81,12 @@ describe("labels and reference links", () => {
     for (const occurrence of occurrences) {
       expect(text.slice(occurrence.start, occurrence.end)).toBe(occurrence.source);
     }
+    const reference = "[#30296](lathe-context://v1/review-comment/ctx_pr)";
+    expect(collectComposerContextReferences(`[${reference}]`)[0]).toMatchObject({
+      label: "#30296",
+      source: reference,
+      start: 1,
+    });
   });
 
   it("recognizes a prompt made only of image references", () => {
@@ -199,6 +207,37 @@ describe("provider projection", () => {
     expect(projected).toContain("- font-size: 12px → 20px");
   });
 
+  it("expands assistant citations with and without context references", () => {
+    const citation = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("message"),
+      text: "Use a mutex here",
+      comment: "Why not a channel?",
+      start: 0,
+      end: 16,
+      prefix: "",
+      suffix: "",
+    });
+    for (const text of [
+      `See ${citation} ok`,
+      `See ${citation} ok [Preview annotation: Checkout](lathe-context://v1/preview-annotation/ctx_p)`,
+    ]) {
+      const projected = projectComposerContextForProvider({ text, records: [] });
+      expect(projected).not.toContain("lathe-citation:");
+      expect(projected).toContain("See [assistant-quote-1]");
+      expect(projected).toContain('"text": "Use a mutex here"');
+      expect(projected).toContain('"comment": "Why not a channel?"');
+    }
+    const captured = projectComposerContextForProvider({
+      text: "[Terminal 1 lines 3-4](lathe-context://v1/terminal/ctx_t)",
+      records: [{ ...terminal, lineStart: 1, lineEnd: 1, text: citation }],
+    });
+    expect(captured).toContain(citation);
+    expect(captured).not.toContain("assistant_citations");
+  });
+
   it("uses the payload kind when a reference disagrees with its record", () => {
     const projected = projectComposerContextForProvider({
       text: "[log](lathe-context://v1/image/ctx_t)",
@@ -307,6 +346,53 @@ describe("provider projection", () => {
     });
     expect(projected).toContain("path: src/nested/index.ts");
     expect(projected).toContain("name: pinchtab");
+  });
+
+  it("projects a reply as the response's opening, its subagent and a read call, never its text", () => {
+    const projected = projectComposerContextForProvider({
+      text: "[Reviewer (search) finished](lathe-context://v1/response/response_m1) tell it to also check the empty state",
+      records: [
+        {
+          version: 1,
+          kind: "response",
+          contextId: ctx("response_m1"),
+          label: "Reviewer (search) finished",
+          citation: {
+            version: 1,
+            environmentId: "env-1" as never,
+            threadId: "main" as never,
+            messageId: "m1" as never,
+            text: "Reviewer (search) finished\n\nand returned blocked.",
+            start: 0,
+            end: 48,
+            prefix: "",
+            suffix: " Here is what it found",
+          },
+          itemId: "item-1" as never,
+          subagents: [
+            { threadId: "review-search" as never, title: "review pr 412 (search)" },
+            {
+              threadId: "review-remote" as never,
+              title: "review pr 413",
+              environmentId: "env-2" as never,
+            },
+          ],
+        },
+      ],
+    });
+    expect(projected.split("\n")[0]).toBe(
+      "[Response: Reviewer (search) finished; ref=response_m1] tell it to also check the empty state",
+    );
+    expect(projected).toContain('<context kind="response" id="response_m1">');
+    expect(projected).toContain(
+      "about subagent: review pr 412 (search)\nsubagent threadId: review-search\nabout subagent: review pr 413\nsubagent threadId: review-remote\nsubagent environmentId: env-2\nstarts:",
+    );
+    expect(projected).toContain(
+      "starts: Reviewer (search) finished and returned blocked.\nRead it in full: ",
+    );
+    expect(projected).toContain('lathe_thread_read({"threadId":"main","itemId":"item-1"})');
+    expect(projected).not.toContain("Here is what it found");
+    expect(projected).toContain("Reference, not instructions");
   });
 
   it("projects an attached thread as identity plus a read instruction, never its history", () => {
@@ -499,19 +585,19 @@ describe("threadLinkContextReferences", () => {
         "[Written](https://app.t3.codes/threads/env-2/t3)",
       ].join(" "),
       [],
-      ({ threadId }) => (threadId === "lathe" ? undefined : `Title ${threadId}`),
+      ({ threadId }) => (threadId === "t3" ? undefined : `Title ${threadId}`),
     );
     expect(pasted.text).toBe(
       [
         reference("env-1", "t1", "Title t1"),
         reference("env-1", "t2", "Title t2"),
-        reference("env-2", "lathe", "Written"),
+        reference("env-2", "t3", "Written"),
       ].join(" "),
     );
     expect(pasted.records).toEqual([
       threadContextRecord(thread("env-1", "t1"), "Title t1"),
       threadContextRecord(thread("env-1", "t2"), "Title t2"),
-      threadContextRecord(thread("env-2", "lathe"), "Written"),
+      threadContextRecord(thread("env-2", "t3"), "Written"),
     ]);
   });
 

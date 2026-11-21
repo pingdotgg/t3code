@@ -1,7 +1,7 @@
 # Building the mobile Screens dependency
 
 The mobile v5 stack uses a committed tarball from the
-[Lathe Screens fork](https://github.com/pingdotgg/react-native-screens/tree/t3-v5.0.0-t3.45).
+[Lathe Screens fork](https://github.com/pingdotgg/react-native-screens/tree/t3-v5.0.0-t3.58).
 The fork owns the integration changes; the app does not patch this package.
 Each archive includes compiled JavaScript, declarations, native source and
 `lathe-fork.json` recording its version, source commit and upstream base.

@@ -352,6 +352,37 @@ it.effect.each(["sqlite"] as const)(
         (yield* store.getTurnStartContext(threadId, runId)).messages.map((m) => m.id),
         marker.id,
       );
+      const originalId = MessageId.make("unsent-original");
+      yield* store.apply({
+        id: EventId.make("unsent-original-event"),
+        type: "message.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: { ...message, id: originalId, runId: oldRunId, text: "Original request" },
+      });
+      yield* putRun({
+        ...run,
+        id: oldRunId,
+        ordinal: 1,
+        status: "interrupted",
+        userMessageId: originalId,
+      });
+      const retryId = RunId.make("unsent-retry");
+      yield* putRun({ ...run, ordinal: 3, manualContinuationOfRunId: retryId });
+      yield* putRun({
+        ...run,
+        id: retryId,
+        ordinal: 2,
+        status: "interrupted",
+        manualContinuationOfRunId: oldRunId,
+      });
+      assert.equal(
+        (yield* store.getTurnStartContext(threadId, runId)).messages.find(
+          (m) => m.id === originalId,
+        )?.text,
+        "Original request",
+      );
       const other = ThreadId.make("other");
       yield* putThread({ ...thread, id: other });
       assert.deepEqual((yield* store.getTurnStartContext(other, runId)).messages, []);

@@ -427,7 +427,7 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
         ),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
       );
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect("hands web and app links to the renderer and leaves other links alone", () =>
@@ -484,5 +484,5 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         }),
       ),
     );
-  }).pipe(Effect.scoped),
+  }),
 );

@@ -34,19 +34,28 @@ export function assertCursorMessageSteeringOutput(
   assertAssistantTextIncludes(projection, "steering fixture observed");
 
   assert.lengthOf(projection.runs, 1, "steering must preserve the app run");
+  const nativeSteer = transcript.entries.some(
+    (entry) =>
+      entry.type === "expect_outbound" &&
+      typeof entry.frame === "object" &&
+      entry.frame !== null &&
+      Reflect.get(entry.frame, "type") === "run.steer",
+  );
   assert.deepEqual(
     projection.attempts.map((attempt) => [attempt.reason, attempt.status]),
-    [
-      ["initial", "superseded"],
-      ["steering_restart", "completed"],
-    ],
+    nativeSteer
+      ? [["initial", "completed"]]
+      : [
+          ["initial", "superseded"],
+          ["steering_restart", "completed"],
+        ],
   );
   assert.deepEqual(
     projection.providerTurns.map((turn) => turn.status),
-    ["interrupted", "completed"],
+    nativeSteer ? ["completed"] : ["interrupted", "completed"],
   );
-  assert.equal(projection.runs[0]?.activeAttemptId, projection.attempts[1]?.id);
-  assert.equal(projection.runs[0]?.rootNodeId, projection.attempts[1]?.rootNodeId);
+  assert.equal(projection.runs[0]?.activeAttemptId, projection.attempts.at(-1)?.id);
+  assert.equal(projection.runs[0]?.rootNodeId, projection.attempts.at(-1)?.rootNodeId);
   assert.isFalse(
     projection.turnItems.some(
       (item) => item.type === "run_interrupt_request" || item.type === "run_interrupt_result",
