@@ -64,6 +64,24 @@ describe("resolveComposerMenuSelection", () => {
 });
 
 describe("mobile slash commands", () => {
+  it("offers only Claude's inline skills after the start of a message", () => {
+    const names = (driver: string, atMessageStart: boolean) =>
+      buildComposerSlashCommandItems({
+        query: "",
+        atMessageStart,
+        hasThread: true,
+        selectedProviderStatus: {
+          driver: ProviderDriverKind.make(driver),
+          slashCommands: [{ name: "code-review" }, { name: "verify" }],
+        },
+      })
+        .filter((item) => item.type === "provider-slash-command")
+        .map((item) => item.command.name);
+    expect(names("claudeAgent", false)).toEqual(["code-review"]);
+    expect(names("codex", false)).toEqual([]);
+    expect(names("claudeAgent", true)).toEqual(["code-review", "verify"]);
+  });
+
   it("keeps a provider's native /plan", () => {
     const items = buildComposerSlashCommandItems({
       query: "pl",
