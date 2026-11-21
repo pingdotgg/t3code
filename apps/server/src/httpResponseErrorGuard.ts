@@ -2,6 +2,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import type * as NodeHttp from "node:http";
 import type * as NodeStream from "node:stream";
+import type { DatabaseMigrationProgress, ServerStartupStatus } from "@t3tools/contracts";
 
 export function guardHttpResponseWriteErrors<T extends NodeHttp.Server>(
   server: T,
@@ -51,9 +52,31 @@ export function keepIdleConnections<T extends NodeHttp.Server>(server: T): T {
  * between would hang. Install this after the write-error guards so only the
  * serving handlers trigger the handoff.
  */
-export function rejectRequestsUntilServing<T extends NodeHttp.Server>(server: T): T {
-  const rejectRequest = (_request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => {
-    response.writeHead(503, { "retry-after": "1", connection: "close" }).end();
+export function rejectRequestsUntilServing<T extends NodeHttp.Server>(
+  server: T,
+  migrationProgress: () => DatabaseMigrationProgress | null = () => null,
+): T {
+  const rejectRequest = (request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => {
+    const migration = migrationProgress();
+    const html = request.headers.accept?.includes("text/html") === true;
+    const status: ServerStartupStatus = { status: "starting", migration };
+    const message = migration
+      ? `Upgrading database (${migration.current} of ${migration.total})`
+      : "Starting T3 Code…";
+    const body = html
+      ? `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="1"><title>Starting T3 Code</title><style>:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-content:center;text-align:center;font:16px system-ui}h1{font-size:20px}p{opacity:.7}</style></head><body><h1>${message}</h1><p>The app will open when startup finishes.</p></body></html>`
+      : JSON.stringify(status);
+    response
+      .writeHead(503, {
+        "retry-after": "1",
+        connection: "close",
+        "cache-control": "no-store",
+        "content-type": html ? "text/html; charset=utf-8" : "application/json; charset=utf-8",
+        "content-security-policy":
+          "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+        "x-content-type-options": "nosniff",
+      })
+      .end(body);
   };
   const rejectUpgrade = (_request: NodeHttp.IncomingMessage, socket: NodeStream.Duplex) => {
     socket.end(

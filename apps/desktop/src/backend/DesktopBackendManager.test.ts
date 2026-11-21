@@ -130,6 +130,9 @@ interface MakeInstanceInput {
   readonly onReady?: Effect.Effect<void>;
   readonly onShutdown?: Effect.Effect<void>;
   readonly onStateDirOwned?: Effect.Effect<void>;
+  readonly onMigrationProgress?: (
+    progress: { current: number; total: number } | null,
+  ) => Effect.Effect<void>;
   readonly onStartupFailure?: (
     failure: DesktopBackendManager.BackendStartupFailure,
   ) => Effect.Effect<void>;
@@ -193,6 +196,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...(input.onStateDirOwned ? { onStateDirOwned: () => input.onStateDirOwned! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
     ...(input.onStartupFailure ? { onStartupFailure: input.onStartupFailure } : {}),
+    ...(input.onMigrationProgress ? { onMigrationProgress: input.onMigrationProgress } : {}),
   });
 
   return instance.pipe(Effect.provide(layerServices));
@@ -695,7 +699,8 @@ describe("DesktopBackendManager", () => {
     "reports exit $code with the server output after $exits exits",
     ({ code, exits, managedPolicy }) =>
       Effect.gen(function* () {
-        const message = "Error: Cannot find module 'zod/v4' in /Users/René";
+        const message = `${DATABASE_MIGRATION_PROGRESS_MESSAGE} (1 of 3)\n  progress: 1 of 3\nError: Cannot find module 'zod/v4' in /Users/René`;
+        const progress: Array<{ current: number; total: number } | null> = [];
         let exitCount = 0;
         const firstExit = yield* Deferred.make<void>();
         const reports = yield* Queue.unbounded<{
@@ -729,6 +734,10 @@ describe("DesktopBackendManager", () => {
               return Deferred.succeed(firstExit, undefined).pipe(Effect.asVoid);
             },
           },
+          onMigrationProgress: (value) =>
+            Effect.sync(() => {
+              progress.push(value);
+            }),
           onStartupFailure: (failure) =>
             Queue.offer(reports, { exitCount, failure }).pipe(Effect.asVoid),
         });
@@ -741,13 +750,21 @@ describe("DesktopBackendManager", () => {
         assert.equal(failure.managedPolicy, managedPolicy);
         assert.isTrue(failure.output.endsWith(message));
         assert.isTrue(failure.output.isWellFormed());
+        assert.isTrue(progress.some((value) => value?.current === 1 && value.total === 3));
+        assert.isNull(progress.at(-1));
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("waits out a slow startup and reports one that never becomes ready", () =>
     Effect.gen(function* () {
       const reports = yield* Queue.unbounded<DesktopBackendManager.BackendStartupFailure>();
-      const startInstance = (status: Ref.Ref<number>, onReady?: Effect.Effect<void>, stdout = "") =>
+      const progress: Array<{ current: number; total: number } | null> = [];
+      const outputProcessed = yield* Queue.unbounded<void>();
+      const startInstance = (
+        status: Ref.Ref<number>,
+        onReady?: Effect.Effect<void>,
+        stdout: string | Stream.Stream<Uint8Array> = "",
+      ) =>
         makeTestInstance({
           spawnerLayer: Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
@@ -755,7 +772,10 @@ describe("DesktopBackendManager", () => {
               Effect.succeed(
                 makeProcess({
                   exitCode: Effect.never,
-                  stdout: Stream.make(new TextEncoder().encode(stdout)),
+                  stdout:
+                    typeof stdout === "string"
+                      ? Stream.make(new TextEncoder().encode(stdout))
+                      : stdout,
                 }),
               ),
             ),
@@ -763,6 +783,13 @@ describe("DesktopBackendManager", () => {
           httpClientLayer: layerHttpClient((request) =>
             Ref.get(status).pipe(Effect.map((code) => responseForRequest(request, code))),
           ),
+          backendOutputLog: {
+            writeOutputChunk: () => Queue.offer(outputProcessed, undefined).pipe(Effect.asVoid),
+          },
+          onMigrationProgress: (value) =>
+            Effect.sync(() => {
+              progress.push(value);
+            }),
           onStartupFailure: (failure) => Queue.offer(reports, failure).pipe(Effect.asVoid),
           ...(onReady ? { onReady } : {}),
         }).pipe(Effect.tap((instance) => instance.start));
@@ -770,6 +797,7 @@ describe("DesktopBackendManager", () => {
       const slowStatus = yield* Ref.make(503);
       const ready = yield* Deferred.make<void>();
       yield* startInstance(slowStatus, Deferred.succeed(ready, undefined).pipe(Effect.asVoid));
+      yield* Queue.take(outputProcessed);
       yield* TestClock.adjust(Duration.seconds(66));
       yield* Ref.set(slowStatus, 200);
       yield* TestClock.adjust(Duration.millis(100));
@@ -778,22 +806,56 @@ describe("DesktopBackendManager", () => {
 
       const migratingStatus = yield* Ref.make(503);
       const migrated = yield* Deferred.make<void>();
+      const output = yield* Queue.unbounded<Uint8Array>();
+      const writeOutput = (text: string) =>
+        Queue.offer(output, new TextEncoder().encode(text)).pipe(
+          Effect.andThen(Queue.take(outputProcessed)),
+        );
       yield* startInstance(
         migratingStatus,
         Deferred.succeed(migrated, undefined).pipe(Effect.asVoid),
+        Stream.fromQueue(output),
+      );
+      yield* writeOutput(`INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n`);
+      yield* TestClock.adjust(Duration.minutes(3));
+      assert.isNull(progress.at(-1));
+      assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+      yield* writeOutput(
         // Enough progress lines that the start line scrolls out of the output tail.
         `INFO ${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n` +
           Array.from(
             { length: 80 },
             (_, index) =>
-              `INFO ${DATABASE_MIGRATION_PROGRESS_MESSAGE} migration=${index}_Migration progress="${index + 1} of 80"\n`,
+              `INFO ${DATABASE_MIGRATION_PROGRESS_MESSAGE} (${index + 1} of 80)\n  migration: ${index}_Migration\n  progress: ${index + 1} of 80\n`,
           ).join(""),
       );
       yield* TestClock.adjust(Duration.minutes(10));
+      assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
       assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+      const noise = "unrelated backend output\n".repeat(400);
+      yield* writeOutput(noise);
+      assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
+      yield* writeOutput(noise);
+      assert.deepStrictEqual(progress.at(-1), { current: 80, total: 80 });
+      yield* TestClock.adjust(Duration.minutes(3));
+      assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
+      yield* writeOutput(`${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n${noise}`);
+      assert.isNull(progress.at(-1));
+      yield* writeOutput(`${DATABASE_MIGRATION_PROGRESS_MESSAGE} (1 of 2)\n${noise}`);
+      assert.deepStrictEqual(progress.at(-1), { current: 1, total: 2 });
+      yield* writeOutput(DATABASE_MIGRATIONS_FINISHED_MESSAGE.slice(0, 12));
+      yield* writeOutput(`${DATABASE_MIGRATIONS_FINISHED_MESSAGE.slice(12)}\n${noise}`);
+      assert.isNull(progress.at(-1));
+      yield* writeOutput(noise);
+      assert.isNull(progress.at(-1));
+      yield* writeOutput(
+        `${DATABASE_MIGRATIONS_STARTED_MESSAGE}\n${DATABASE_MIGRATION_PROGRESS_MESSAGE} (1 of 1)\n`,
+      );
+      assert.deepStrictEqual(progress.at(-1), { current: 1, total: 1 });
       yield* Ref.set(migratingStatus, 200);
       yield* TestClock.adjust(Duration.millis(100));
       yield* Deferred.await(migrated);
+      assert.isNull(progress.at(-1));
 
       yield* startInstance(
         yield* Ref.make(503),
@@ -804,6 +866,7 @@ describe("DesktopBackendManager", () => {
       assert.isTrue(Option.isNone(yield* Queue.poll(reports)));
       yield* TestClock.adjust(Duration.seconds(1));
       const failure = yield* Queue.take(reports);
+      assert.isNull(progress.at(-1));
       assert.equal(failure.reason, "The server started but did not become ready in time.");
     }).pipe(Effect.provide(TestClock.layer())),
   );

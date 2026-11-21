@@ -115,7 +115,7 @@ function makeFakeBrowserWindow() {
     isMaximized: vi.fn(() => false),
     isMinimized: vi.fn(() => false),
     isVisible: vi.fn(() => true),
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn<(url: string) => Promise<void>>(() => Promise.resolve()),
     maximize: vi.fn(),
     on: vi.fn((eventName: string, listener: (...args: readonly unknown[]) => void) => {
       windowListeners.set(eventName, listener);
@@ -485,6 +485,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           }),
         ),
       ),
+      Layer.merge(DesktopState.layer),
     );
 
     return { layer, createCalls, mainWindow, revealedWindows } as const;
@@ -1667,9 +1668,21 @@ describe("DesktopWindow", () => {
 
         yield* Effect.gen(function* () {
           const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          const state = yield* DesktopState.DesktopState;
+          const splashHtml = () =>
+            decodeURIComponent(String(splash.loadURL.mock.calls.at(-1)?.[0]).split(",")[1] ?? "");
 
           yield* desktopWindow.showConnectingSplash;
           assert.equal(yield* Ref.get(scenario.createCalls), 1);
+          yield* TestClock.adjust("1 second");
+          assert.include(splashHtml(), "Connecting to WSL…");
+          const initialLoads = splash.loadURL.mock.calls.length;
+          yield* TestClock.adjust("1 second");
+          assert.equal(splash.loadURL.mock.calls.length, initialLoads);
+
+          yield* Ref.set(state.databaseMigrationProgress, { current: 2, total: 7 });
+          yield* TestClock.adjust("1 second");
+          assert.include(splashHtml(), "Upgrading database (2 of 7)");
 
           const readyExit = yield* Effect.exit(
             desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773")),
@@ -1678,11 +1691,24 @@ describe("DesktopWindow", () => {
           assert.equal(yield* Ref.get(scenario.createCalls), 2);
           assert.isTrue(Option.isNone(yield* Ref.get(scenario.mainWindow)));
 
+          yield* Ref.set(state.databaseMigrationProgress, { current: 3, total: 7 });
+          yield* TestClock.adjust("1 second");
+          assert.include(splashHtml(), "Upgrading database (3 of 7)");
+          yield* Ref.set(state.databaseMigrationProgress, null);
+          yield* TestClock.adjust("1 second");
+          assert.include(splashHtml(), "Connecting to WSL…");
+          assert.notInclude(splashHtml(), "Upgrading database");
+
           yield* desktopWindow.activate;
           assert.equal(yield* Ref.get(scenario.createCalls), 3);
           const registeredMain = yield* Ref.get(scenario.mainWindow);
           assert.isTrue(Option.isSome(registeredMain));
           assert.equal(Option.getOrThrow(registeredMain), main.window);
+          splash.windowListeners.get("closed")?.();
+          const loadsAtClose = splash.loadURL.mock.calls.length;
+          yield* Ref.set(state.databaseMigrationProgress, { current: 4, total: 7 });
+          yield* TestClock.adjust("2 seconds");
+          assert.equal(splash.loadURL.mock.calls.length, loadsAtClose);
         }).pipe(Effect.provide(scenario.layer));
       }),
   );

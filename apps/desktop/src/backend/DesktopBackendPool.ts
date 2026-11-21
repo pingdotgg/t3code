@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as Exit from "effect/Exit";
 import * as FiberHandle from "effect/FiberHandle";
 import * as Layer from "effect/Layer";
@@ -126,7 +127,7 @@ export const layer = Layer.effect(
     const electronDialog = yield* ElectronDialog.ElectronDialog;
     const electronApp = yield* ElectronApp.ElectronApp;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-    const { primaryBackendStartup } = yield* DesktopState.DesktopState;
+    const { primaryBackendStartup, databaseMigrationProgress } = yield* DesktopState.DesktopState;
     // Parent instance scopes to the pool so shutdown runs stop finalizers before the OS kills backends.
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
@@ -241,6 +242,7 @@ export const layer = Layer.effect(
         ),
       onStartupFailure: (failure) =>
         SubscriptionRef.set(primaryBackendStartup, { _tag: "Failing", ...failure }),
+      onMigrationProgress: (progress) => Ref.set(databaseMigrationProgress, progress),
       onShutdown: () =>
         FiberHandle.clear(updateMarkerWait).pipe(
           Effect.andThen(desktopWindow.handleBackendNotReady),
