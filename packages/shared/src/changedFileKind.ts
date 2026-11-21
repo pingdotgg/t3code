@@ -63,12 +63,14 @@ const MOCK_DIRS = new Set([
 ]);
 
 const TEST_NAME =
-  /(\.(test|spec|e2e|eval|stories)\.[^.]+$|_(test|spec)\.[^.]+$|^test_.+\.py$|^conftest\.py$|^(vitest|jest)\.setup\.[^.]+$)/i;
+  /(\.(test|spec|e2e|eval|stories)\.[^.]+$|_(test|spec)\.[^.]+$|^test_.+\.py$|^conftest\.py$|^(vitest|jest)\.setup\.[^.]+$|\.bru$)/i;
 // Case-sensitive: `FooTest.java` is a test class, `Latest.java` is not.
 const CLASS_TEST_NAME = /(Tests?|Spec)\.(java|kt|kts|scala|groovy|cs|php|swift|m)$/;
 const TEST_DIRS = new Set([
   "__tests__",
   "__test__",
+  "bruno",
+  ".bruno",
   "cypress",
   "e2e",
   "evals",
