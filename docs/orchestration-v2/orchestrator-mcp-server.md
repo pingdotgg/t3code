@@ -450,14 +450,29 @@ Sends a message to any ordinary or delegated thread in the environment:
   applies: the provider cannot stop a turn, Stop has already reached the turn,
   or the turn or the new message is `/compact` or `/logout`.
 
-Only one kind of send reports back: a send to the caller's own delegated child after
-the child's original task has finished. It runs as a fresh task with a `taskId` whose
-completion wakes the caller. Every other send creates no reporting task and returns no
-`taskId`, including a send queued to the caller's own child while its original task is
-still running, and a send to a child that another thread delegated. For those, the
-caller is recorded as `senderThreadId` for attribution only; nothing is delivered when
-the run ends, so the caller follows the returned `runId` with `t3_thread_wait` or reads
-the thread with `t3_thread_read`.
+A send reports back only through a delegated task, and a delegated task always
+reports to the thread that delegated the child. The result's `taskId` names that
+task. These rules decide whether a send has one:
+
+- A send that starts a new run (it starts an idle child, queues behind active
+  work, or restarts a run that has no task) on a delegated child after the
+  child's original task has a result starts a fresh follow-up task and returns
+  its `taskId`. This applies only when the sender is the thread that delegated
+  the child, or when the send has no `senderThreadId` (a linked client acting
+  for the owner, like a user send).
+- A send that starts a new run while the original task has no result yet starts
+  no task and returns no `taskId`.
+- A steer, or a restart of a run that already has a task, keeps that run's task
+  and starts no task. When the run belongs to a follow-up task, the result
+  returns that task's existing `taskId`; that task reports to the thread that
+  delegated the child, not to a different caller.
+- A send from a thread that did not delegate the child, and any send to a
+  thread that is not a delegated child, starts no task.
+
+When no task of its own reports back, the caller is recorded as `senderThreadId`
+for attribution only; nothing is delivered to it when the run ends, so it
+follows the returned `runId` with `t3_thread_wait` or reads the thread with
+`t3_thread_read`.
 
 The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for

@@ -283,7 +283,7 @@ const ThreadUpdateTool = Tool.make("t3_thread_update", {
 
 const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
-    "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send to a child thread you delegated, after its task finished, starts a fresh task and returns its `taskId`; only that task reports back to you. Any other target's answer is not delivered: follow it with `t3_thread_wait` or `t3_thread_read`. In your reply, name it as its `link` verbatim.",
+    "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send that starts a new run on a child thread you delegated, after its original task finished, starts a fresh task and returns its `taskId`; only that task reports back to you. A steer, or a restart of a run that already has a task, starts no task; a `taskId` it returns is that run's task, which reports to the thread that delegated the child. No other send's answer is delivered to you: follow the returned `runId` with `t3_thread_wait` or `t3_thread_read`. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpThreadSendInput,
   success: OrchestratorMcpThreadSendResult,
   failure: OrchestratorMcpFailure,
