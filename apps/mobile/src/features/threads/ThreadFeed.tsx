@@ -3456,6 +3456,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
     return lookup().catch(() => relativePath);
   };
+  const resolveLinkMedia = (href: string, imageEmbed = false) => {
+    const media = resolveMarkdownMediaPreview(href, {
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+      workspaceRoot: props.workspaceRoot,
+      imageEmbed,
+    });
+    if (!media || media.kind === "file") return null;
+    const resource = "resource" in media.source ? media.source.resource : null;
+    return { media, path: resource && "path" in resource ? resource.path : null };
+  };
   const onMarkdownLinkPress = (
     href: string,
     imageEmbed = false,
@@ -3485,13 +3496,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (target) openThreadLink(target);
       return;
     }
-    const media = resolveMarkdownMediaPreview(href, {
-      environmentId: props.environmentId,
-      threadId: props.threadId,
-      workspaceRoot: props.workspaceRoot,
-      imageEmbed,
-    });
-    if (media && media.kind !== "file") {
+    const linkMedia = resolveLinkMedia(href, imageEmbed);
+    if (linkMedia) {
+      const { media, path: mediaPath } = linkMedia;
       void Haptics.selectionAsync();
       const scope = markdownLinkScope;
       const openMediaPreview = () => {
@@ -3503,8 +3510,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             : { file: withGallery ? withGallery(media.source) : media.source },
         );
       };
-      const resource = "resource" in media.source ? media.source.resource : null;
-      const mediaPath = resource && "path" in resource ? resource.path : null;
       if (
         typeof mediaPath === "string" &&
         readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
@@ -3648,6 +3653,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         case "copy-full-path":
         case "copy-relative-path":
         case "save": {
+          if (actionId === "save") {
+            const mediaPath = resolveLinkMedia(href)?.path;
+            if (typeof mediaPath === "string") {
+              markdownSaveRequest.current?.abort();
+              void shareFileChip(
+                isAbsolutePath(mediaPath) ? { fullPath: mediaPath } : { relativePath: mediaPath },
+              );
+              return;
+            }
+          }
           const presentation = resolveMarkdownLinkPresentation(href);
           const path =
             presentation.kind === "file"

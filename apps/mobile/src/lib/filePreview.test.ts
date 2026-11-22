@@ -11,6 +11,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useWorkspaceFileSave } from "../features/files/useWorkspaceFileSave";
+import type { FileChipTarget } from "../features/threads/fileChipMenu";
 import { inlineFilePreviewKind, isPdfFile } from "./filePreview";
 import { ThreadInlineFilePreview } from "../features/threads/ThreadInlineFilePreview";
 import {
@@ -63,7 +64,7 @@ const audio = vi.hoisted(() => ({
   videoStatusListeners: new Set<(event: { status: string }) => void>(),
   videoEndListeners: new Set<() => void>(),
   videoRequestListeners: new Set<(event: { isPlaybackRequested: boolean }) => void>(),
-  shareFile: vi.fn<() => Promise<void>>(),
+  shareFile: vi.fn<(target: FileChipTarget) => Promise<void>>(),
   createUrl: vi.fn<() => Promise<{ _tag: "Success"; value: { relativeUrl: string } }>>(),
   downloadFile: vi.fn<(...args: unknown[]) => Promise<void>>(),
   focused: true,
@@ -211,13 +212,25 @@ vi.mock("../native/SelectableMarkdownText", () => ({
   SelectableMarkdownText: (props: {
     markdown: string;
     onLinkPress(href: string): void;
+    onFileContextMenuAction?(href: string, actionId: string): void;
     renderImage?: MarkdownImageRenderer;
   }) => {
     const embeds = [...props.markdown.matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)];
+    const link = props.markdown.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
     return createElement(
       "div",
       null,
-      createElement("button", { onClick: () => props.onLinkPress("target.ts") }, props.markdown),
+      createElement(
+        "button",
+        { onClick: () => props.onLinkPress(link?.[2] ?? "target.ts") },
+        link?.[1] ?? props.markdown,
+      ),
+      link &&
+        createElement(
+          "button",
+          { onClick: () => props.onFileContextMenuAction?.(link[2]!, "save") },
+          "Save or share",
+        ),
       embeds.map(([, alt, href], index) =>
         createElement(
           Fragment,
@@ -413,6 +426,10 @@ describe("ThreadInlineFilePreview playback", () => {
     await act(async () => root?.unmount());
     root = undefined;
     vi.clearAllMocks();
+    audio.createUrl.mockReset();
+    audio.downloadFile.mockReset();
+    audio.shareFile.mockReset();
+    audio.query.mockReset();
     audio.refresh.mockReset();
     audio.setAudioMode.mockReset();
     audio.setActive.mockReset();
@@ -534,6 +551,85 @@ describe("ThreadInlineFilePreview playback", () => {
       expect(button.textContent).toBe("save");
     },
   );
+
+  it.each([
+    { name: "report.pdf", expectedPath: "/repo/report.pdf", media: true },
+    { name: "target.ts", expectedPath: "/repo/archive/target.ts", media: false },
+  ])("saves the same $name that Open selects", async ({ name, expectedPath, media }) => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const environmentId = EnvironmentId.make("environment-1");
+    const threadId = ThreadId.make("thread-1");
+    const messageId = MessageId.make("message-1");
+    const timestamp = "2026-10-20T00:00:00.000Z";
+    audio.query.mockImplementation(async (_registry, query: { input: { path?: string } }) => ({
+      _tag: "Success",
+      value: query.input.path
+        ? { kind: "file" }
+        : { entries: [{ path: `archive/${name}`, kind: "file" }] },
+    }));
+    const container = document.createElement("div");
+    root = createRoot(container);
+    await act(async () =>
+      root!.render(
+        createElement(ThreadFeed, {
+          environmentId,
+          threadId,
+          detailRef: null,
+          threadTitle: "preview",
+          workspaceRoot: "/repo",
+          feed: [
+            {
+              type: "message",
+              id: messageId,
+              createdAt: timestamp,
+              message: {
+                id: messageId,
+                role: "assistant",
+                text: `[Open file](${name})`,
+                attachments: [],
+                createdAt: timestamp,
+                updatedAt: timestamp,
+                runId: null,
+                streaming: false,
+                visibility: "local",
+                sourceThreadId: threadId,
+              },
+            },
+          ],
+          queuedMessages: [],
+          dispatchingMessageId: null,
+          onEditPendingMessage: null,
+          contentPresentation: { kind: "ready" },
+          latestRun: null,
+          activeWorkStartedAt: null,
+          listRef: { current: null },
+          freeze: { value: false } as Parameters<typeof ThreadFeed>[0]["freeze"],
+          contentInsetEndAdjustment: { value: 0 } as Parameters<
+            typeof ThreadFeed
+          >[0]["contentInsetEndAdjustment"],
+          anchorMessageId: null,
+          keyboardOffset: 0,
+        }),
+      ),
+    );
+    const [open, save] = container.querySelectorAll("button");
+    await act(async () => open!.click());
+    if (media) {
+      expect(
+        container.querySelector("[data-file-preview]")?.getAttribute("data-selected-path"),
+      ).toBe(expectedPath);
+    } else {
+      expect(audio.navigate).toHaveBeenCalledExactlyOnceWith("ThreadFile", {
+        environmentId,
+        threadId,
+        path: ["archive", name],
+      });
+    }
+    await act(async () => save!.click());
+    expect(audio.shareFile).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ fullPath: expectedPath }),
+    );
+  });
 
   it.each(
     (["user", "assistant"] as const).flatMap((role) =>
