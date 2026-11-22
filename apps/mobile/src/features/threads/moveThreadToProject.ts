@@ -8,8 +8,10 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { threadMoveNotice } from "@t3tools/shared/threadMove";
 import * as Haptics from "expo-haptics";
+import { msg } from "gt-react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { projectEnvironment } from "../../state/projects";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -29,18 +31,20 @@ export function moveThreadToProject(
   thread: EnvironmentThreadShell,
   project: EnvironmentProject,
 ): void {
-  const failureTitle = "Could not move thread";
+  const failureTitle = m(msg("Could not move thread"));
   if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
-    Dialog.alert(failureTitle, "This connection cannot change threads.");
+    Dialog.alert(failureTitle, m(msg("This connection cannot change threads.")));
     return;
   }
   Dialog.confirm({
-    title: `Move "${thread.title}" to ${project.title}?`,
+    title: m(
+      msg('Move "{thread}" to {project}?', { thread: thread.title, project: project.title }),
+    ),
     message: threadMoveNotice({
       projectTitle: project.title,
       fromWorktree: thread.worktreePath !== null,
     }),
-    confirmText: "Move",
+    confirmText: m(msg("Move", { $context: "verb, moves a thread" })),
     onConfirm: () => {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       void runAtomCommand(
@@ -54,7 +58,7 @@ export function moveThreadToProject(
       ).then((result) => {
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          Dialog.alert(failureTitle, error instanceof Error ? error.message : "Try again.");
+          Dialog.alert(failureTitle, error instanceof Error ? error.message : m(msg("Try again.")));
         }
       });
     },

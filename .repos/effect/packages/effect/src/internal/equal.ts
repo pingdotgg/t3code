@@ -1,3 +1,8 @@
+// JavaScriptCore (Bun, Safari) stamps the construction site onto every Error as
+// non-enumerable own properties. Like `stack`, they describe where the error was
+// created, not what it is.
+const errorSiteKeys = ["line", "column", "sourceURL", "originalLine", "originalColumn"]
+
 /** @internal */
 export const getAllObjectKeys = (obj: object): Set<PropertyKey> => {
   const keys = new Set<PropertyKey>(Reflect.ownKeys(obj))
@@ -5,6 +10,9 @@ export const getAllObjectKeys = (obj: object): Set<PropertyKey> => {
 
   if (obj instanceof Error) {
     keys.delete("stack")
+    for (const key of errorSiteKeys) {
+      if (!Object.prototype.propertyIsEnumerable.call(obj, key)) keys.delete(key)
+    }
   }
 
   const proto = Object.getPrototypeOf(obj)

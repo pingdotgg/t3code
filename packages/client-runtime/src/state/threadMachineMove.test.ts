@@ -5,8 +5,9 @@ import {
   ThreadId,
   type ProjectExportThreadResult,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { AtomCommand } from "./runtime.ts";
@@ -33,6 +34,10 @@ const exported: ProjectExportThreadResult = {
 
 type Step = "export" | "import" | "finish";
 
+class StepFailed extends Schema.TaggedError<StepFailed>()("StepFailed", {
+  message: Schema.String,
+}) {}
+
 function setup(failing: ReadonlySet<Step>, exportGate: Promise<void> = Promise.resolve()) {
   const calls: Array<{ readonly step: Step; readonly environmentId: string }> = [];
   const command = <A>(
@@ -44,13 +49,13 @@ function setup(failing: ReadonlySet<Step>, exportGate: Promise<void> = Promise.r
     unknown
   > => ({
     label: step,
-    run: async (_registry, { environmentId }) => {
-      calls.push({ step, environmentId });
-      if (step === "export") await exportGate;
-      return failing.has(step)
-        ? AsyncResult.failure(Cause.fail(new Error(`${step} failed`)))
-        : AsyncResult.success(value);
-    },
+    run: (_registry, { environmentId }) =>
+      Effect.gen(function* () {
+        calls.push({ step, environmentId });
+        if (step === "export") yield* Effect.promise(() => exportGate);
+        if (failing.has(step)) return yield* new StepFailed({ message: `${step} failed` });
+        return value;
+      }),
   });
   const commands: ThreadMachineMoveCommands = {
     exportThread: command("export", exported),

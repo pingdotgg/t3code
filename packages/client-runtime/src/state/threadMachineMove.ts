@@ -9,6 +9,8 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import { scopedThreadKey } from "../environment/scoped.ts";
 import { type EnvironmentProject, threadMoveProjects } from "./models.ts";
@@ -16,6 +18,7 @@ import {
   type AtomCommand,
   type AtomCommandResult,
   isAtomCommandInterrupted,
+  runAtomCommand,
   squashAtomCommandFailure,
 } from "./runtime.ts";
 
@@ -94,13 +97,18 @@ export function threadMachineMoveTargets<
   });
 }
 
-function failureMessage(result: AtomCommandResult<unknown, unknown>): string {
-  if (result._tag !== "Failure") return "Try again.";
-  const error = squashAtomCommandFailure(result);
-  return error instanceof Error && error.message !== "" ? error.message : "Try again.";
+function failureMessage(
+  result: AtomCommandResult<unknown, unknown>,
+  resolve: MFunctionType,
+): string {
+  const error = result._tag === "Failure" ? squashAtomCommandFailure(result) : undefined;
+  return error instanceof Error && error.message !== ""
+    ? error.message
+    : resolve(msg("Try again."));
 }
 
 const movesInFlight = new Set<string>();
+const quiet = { reportFailure: false };
 
 /**
  * Copies the thread's conversation to a project on another machine, then archives it here. The
@@ -116,6 +124,7 @@ export async function moveThreadToMachine(input: {
   /** "api on VPS": where the archived thread says it went. */
   readonly targetLabel: string;
   readonly confirm: (exported: ProjectExportThreadResult) => Promise<boolean>;
+  readonly resolve?: MFunctionType;
 }): Promise<ThreadMachineMoveOutcome> {
   // A second pick while one runs would import the conversation twice.
   const key = scopedThreadKey(input.source);
@@ -131,42 +140,57 @@ export async function moveThreadToMachine(input: {
 async function moveOnce(
   input: Parameters<typeof moveThreadToMachine>[0],
 ): Promise<ThreadMachineMoveOutcome> {
-  const { registry, commands, source, target } = input;
+  const { registry, commands, source, target, resolve = mFallback } = input;
   const settled = (result: AtomCommandResult<unknown, unknown>): ThreadMachineMoveOutcome =>
     isAtomCommandInterrupted(result)
       ? { _tag: "Cancelled" }
-      : { _tag: "Failed", message: failureMessage(result) };
+      : { _tag: "Failed", message: failureMessage(result, resolve) };
 
-  const exported = await commands.exportThread.run(registry, {
-    environmentId: source.environmentId,
-    input: { threadId: source.threadId },
-  });
+  const exported = await runAtomCommand(
+    registry,
+    commands.exportThread,
+    {
+      environmentId: source.environmentId,
+      input: { threadId: source.threadId },
+    },
+    quiet,
+  );
   if (exported._tag !== "Success") return settled(exported);
   if (!(await input.confirm(exported.value))) return { _tag: "Cancelled" };
 
-  const imported = await commands.importThread.run(registry, {
-    environmentId: target.environmentId,
-    input: {
-      projectId: target.projectId,
-      bundle: exported.value.bundle,
-      movedFrom: input.sourceLabel,
-      leftBehind: exported.value.leftBehind,
+  const imported = await runAtomCommand(
+    registry,
+    commands.importThread,
+    {
+      environmentId: target.environmentId,
+      input: {
+        projectId: target.projectId,
+        bundle: exported.value.bundle,
+        movedFrom: input.sourceLabel,
+        leftBehind: exported.value.leftBehind,
+      },
     },
-  });
+    quiet,
+  );
   if (imported._tag !== "Success") return settled(imported);
   const threadRef = { environmentId: target.environmentId, threadId: imported.value.threadId };
 
-  const finished = await commands.finishThreadMove.run(registry, {
-    environmentId: source.environmentId,
-    input: {
-      threadId: source.threadId,
-      movedTo: input.targetLabel,
-      revision: exported.value.revision,
+  const finished = await runAtomCommand(
+    registry,
+    commands.finishThreadMove,
+    {
+      environmentId: source.environmentId,
+      input: {
+        threadId: source.threadId,
+        movedTo: input.targetLabel,
+        revision: exported.value.revision,
+      },
     },
-  });
+    quiet,
+  );
   return {
     _tag: "Moved",
     threadRef,
-    archiveError: finished._tag === "Success" ? null : failureMessage(finished),
+    archiveError: finished._tag === "Success" ? null : failureMessage(finished, resolve),
   };
 }

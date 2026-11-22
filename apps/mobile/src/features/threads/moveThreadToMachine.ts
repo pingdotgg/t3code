@@ -8,8 +8,10 @@ import {
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import { threadMachineMoveNotice } from "@t3tools/shared/threadMove";
 import * as Haptics from "expo-haptics";
+import { msg } from "gt-react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { m } from "../../i18n/messages";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { connectedEnvironmentIdsAtom, environmentPresentations } from "../../state/presentation";
 import { projectEnvironment } from "../../state/projects";
@@ -43,7 +45,7 @@ export async function moveThreadToMachine(
 ): Promise<void> {
   const fromMachine = machineLabel(thread.environmentId) ?? "this machine";
   if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) {
-    Dialog.alert("Could not move thread", "This connection cannot change threads.");
+    Dialog.alert(m(msg("Could not move thread")), m(msg("This connection cannot change threads.")));
     return;
   }
   const outcome = await runThreadMachineMove({
@@ -56,14 +58,16 @@ export async function moveThreadToMachine(
     confirm: ({ leftBehind }) =>
       new Promise((resolve) =>
         Dialog.confirm({
-          title: `Move "${thread.title}" to ${machine.label}?`,
+          title: m(
+            msg('Move "{thread}" to {machine}?', { thread: thread.title, machine: machine.label }),
+          ),
           message: threadMachineMoveNotice({
             fromMachine,
             toMachine: machine.label,
             projectTitle: project.title,
             leftBehind,
           }),
-          confirmText: "Move",
+          confirmText: m(msg("Move", { $context: "verb, moves a thread" })),
           onCancel: () => resolve(false),
           onConfirm: () => {
             void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -71,12 +75,18 @@ export async function moveThreadToMachine(
           },
         }),
       ),
+    resolve: m,
   });
-  if (outcome._tag === "Failed") Dialog.alert("Could not move thread", outcome.message);
+  if (outcome._tag === "Failed") Dialog.alert(m(msg("Could not move thread")), outcome.message);
   if (outcome._tag === "Moved" && outcome.archiveError !== null) {
     Dialog.alert(
-      `Moved, but the original is still active on ${fromMachine}`,
-      `${outcome.archiveError} The moved copy is on ${machine.label}.`,
+      m(msg("Moved, but the original is still active on {machine}", { machine: fromMachine })),
+      m(
+        msg("{error} The moved copy is on {machine}.", {
+          error: outcome.archiveError,
+          machine: machine.label,
+        }),
+      ),
     );
   }
 }

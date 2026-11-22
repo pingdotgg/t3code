@@ -377,6 +377,7 @@ export async function moveThreadToMachineAndOpen(
       );
       return confirmed._tag === "Success" && confirmed.value;
     },
+    resolve: m,
   });
   if (outcome._tag === "Cancelled") return;
   if (outcome._tag === "Failed") {

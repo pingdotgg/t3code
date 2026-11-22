@@ -19,6 +19,26 @@ describe("Result", () => {
   })
 
   describe("all", () => {
+    it("checks symbol fields and accepts object type aliases", () => {
+      const key = Symbol()
+      type Fields = {
+        text: typeof string$string
+        [key]: typeof boolean$Error
+      }
+      const fields: Fields = { text: string$string, [key]: boolean$Error }
+      expect(Result.all(fields)).type.toBe<Result.Result<{ text: string; [key]: boolean }, string | Error>>()
+      type IndexedFields = {
+        [key: string]: typeof number$string
+      }
+      const indexed: IndexedFields = { value: number$string }
+      expect(Result.all(indexed)).type.toBe<Result.Result<{ [key: string]: number }, string>>()
+      expect(Result.all(new Set([number$string]))).type.toBe<Result.Result<Array<number>, string>>()
+      expect(Result.all).type.not.toBeCallableWith({ [key]: 42 })
+      expect(Result.all).type.not.toBeCallableWith(42)
+      expect(Result.all).type.not.toBeCallableWith("value")
+      expect(Result.all).type.not.toBeCallableWith({ text: string$string, [key]: 42 })
+    })
+
     it("tuple", () => {
       expect(Result.all([])).type.toBe<Result.Result<[], never>>()
       expect(Result.all([number$string])).type.toBe<Result.Result<[number], string>>()
