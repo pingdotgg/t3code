@@ -515,7 +515,9 @@ const make = Effect.gen(function* () {
 
   // Large snapshots take seconds; use the reader worker instead of blocking the event loop.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
-    const snapshot = yield* projections.getShellSnapshot().pipe(NodeSqliteClient.readOnly);
+    const snapshot = yield* projections
+      .getShellSnapshot({ includeItemCounts: false })
+      .pipe(NodeSqliteClient.readOnly);
     const projects = yield* projectStore.listShells();
     return { projects, threads: [...snapshot.threads, ...snapshot.archivedThreads] };
   });
