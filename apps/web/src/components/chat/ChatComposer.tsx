@@ -3942,7 +3942,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
-                    draftKey={composerDraftTargetKey}
+                    draftKey={attachmentTargetKey}
                     // Switching threads lands focus here, so the label names the thread.
                     ariaLabel={
                       activeThread
