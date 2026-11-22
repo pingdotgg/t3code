@@ -20,14 +20,12 @@ import type {
   AgentActivityRowProps,
 } from "./AgentActivity";
 
-type AgentActivityConfiguration = { smallTap?: "agent" | "new" };
-
 // Home-screen and Lock Screen counterpart of the AgentActivity Live Activity.
 // It shares the Live Activity's name, but expo-widgets stores widget and Live
 // Activity layouts under different keys, so each needs its own registration.
 export function AgentActivityWidget(
   publishedProps: Partial<AgentActivityProps> | undefined,
-  environment: WidgetEnvironment<AgentActivityConfiguration>,
+  environment: WidgetEnvironment,
 ) {
   "widget";
   // The extension evaluates this function without the app's module scope.
@@ -37,8 +35,6 @@ export function AgentActivityWidget(
   const family = environment.widgetFamily;
   const accessory = family === "accessoryRectangular";
   const small = family === "systemSmall";
-  // The small widget has a single tap target, chosen in Edit Widget.
-  const smallOpensNewThread = small && environment.configuration?.smallTap === "new";
   const monochrome =
     environment.widgetRenderingMode === "accented" ||
     environment.widgetRenderingMode === "vibrant" ||
@@ -79,7 +75,7 @@ export function AgentActivityWidget(
   const rows = [...(props.activities ?? [])].sort(
     (a, b) => phasePriority(a.phase) - phasePriority(b.phase),
   );
-  const shown = rows.slice(0, smallOpensNewThread ? 1 : accessory || small ? 2 : 4);
+  const shown = rows.slice(0, accessory || small ? 2 : 4);
   const attentionCount = rows.filter(
     (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
   ).length;
@@ -116,7 +112,7 @@ export function AgentActivityWidget(
   const widgetBackground = accessory ? "clear" : isLightScheme ? "#ffffff" : "#1c1c1e";
   const rootModifiers = [
     containerBackground(widgetBackground, "widget"),
-    ...(smallOpensNewThread ? [widgetURL("t3code://new")] : deepLink ? [widgetURL(deepLink)] : []),
+    ...(deepLink ? [widgetURL(deepLink)] : []),
   ];
 
   // The template image ignores frame/foregroundStyle applied to itself; size
@@ -219,6 +215,7 @@ export function AgentActivityWidget(
           {summary || (accessory ? "T3 Code" : "")}
         </Text>
         <Spacer minLength={0} />
+        {/* Small and Lock Screen widgets have a single tap target. */}
         {accessory || small ? null : <Link destination="t3code://new">{newThreadButton}</Link>}
       </HStack>
       {shown.length > 0 ? (
@@ -231,12 +228,8 @@ export function AgentActivityWidget(
         </Text>
       )}
       {accessory ? null : <Spacer minLength={0} />}
-      {smallOpensNewThread ? newThreadButton : null}
     </VStack>
   );
 }
 
-export default createWidget<Partial<AgentActivityProps>, AgentActivityConfiguration>(
-  "AgentActivity",
-  AgentActivityWidget,
-);
+export default createWidget<Partial<AgentActivityProps>>("AgentActivity", AgentActivityWidget);
