@@ -4191,6 +4191,87 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
+  it.effect("opens the pull request as a draft when the setting is on", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/draft-pr"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+
+      const { manager, providerCalls } = yield* makeManager({
+        serverSettings: { openPullRequestsAsDrafts: true },
+        providerScenario: {
+          prListSequence: [
+            [],
+            [
+              {
+                number: 78,
+                title: "Add draft PR flow",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/78",
+                baseRefName: "main",
+                headRefName: "feature/draft-pr",
+              },
+            ],
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(
+        providerCalls.flatMap((call) =>
+          call.operation === "createChangeRequest" ? [call.draft] : [],
+        ),
+      ).toEqual([true]);
+    }),
+  );
+
+  it.effect("opens the pull request ready for review when the setting is off", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/ready-pr"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListSequence: [
+            [],
+            [
+              {
+                number: 79,
+                title: "Add ready PR flow",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/79",
+                baseRefName: "main",
+                headRefName: "feature/ready-pr",
+              },
+            ],
+          ],
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(
+        providerCalls.flatMap((call) =>
+          call.operation === "createChangeRequest" ? [call.draft] : [],
+        ),
+      ).toEqual([undefined]);
+    }),
+  );
+
   it.effect("pushes existing commits without committing dirty worktree changes", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

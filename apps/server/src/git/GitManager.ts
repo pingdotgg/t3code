@@ -133,6 +133,7 @@ interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly projectId: ProjectId | null;
   readonly style: SourceControlWritingStyleSettings;
+  readonly openPullRequestsAsDrafts: boolean;
 }
 
 export interface GitCreatePullRequestResult {
@@ -2896,7 +2897,7 @@ export const make = Effect.gen(function* () {
       emit,
       pushRemoteRef,
       undefined,
-      false,
+      settings.openPullRequestsAsDrafts,
       ({ provider, baseBranch, baseRef, headBranch }) =>
         Effect.gen(function* () {
           const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -4157,6 +4158,7 @@ export const make = Effect.gen(function* () {
                   modelSelection: settings.textGenerationModelSelection,
                   projectId,
                   style: settings.sourceControlWritingStyle,
+                  openPullRequestsAsDrafts: settings.openPullRequestsAsDrafts,
                 })
               : providerRegistry.getProviders.pipe(
                   Effect.map((providers) => ({
@@ -4167,6 +4169,7 @@ export const make = Effect.gen(function* () {
                     ),
                     projectId,
                     style: settings.sourceControlWritingStyle,
+                    openPullRequestsAsDrafts: settings.openPullRequestsAsDrafts,
                   })),
                 ),
           ),

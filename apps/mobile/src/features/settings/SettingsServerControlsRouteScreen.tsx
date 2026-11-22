@@ -64,7 +64,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "sidebarAutoSettleOnMerge",
     "sidebarAutoSettleAfterDays",
   ],
-  "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge"],
+  "source-control": ["defaultAutoPull", "removeAgentCreditsOnMerge", "openPullRequestsAsDrafts"],
   worktrees: [
     "newWorktreesStartFromOrigin",
     "worktreeSubmodules",
@@ -433,6 +433,17 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     value={uniform("removeAgentCreditsOnMerge")}
                     disabled={disabledFor("removeAgentCreditsOnMerge")}
                     onValueChange={(value) => write({ removeAgentCreditsOnMerge: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon={PullRequestGlyph.draft}
+                    label={gt("Open pull requests as drafts")}
+                    subtitle={managedSubtitle(
+                      "openPullRequestsAsDrafts",
+                      gt("New pull requests and merge requests open as drafts."),
+                    )}
+                    value={uniform("openPullRequestsAsDrafts")}
+                    disabled={disabledFor("openPullRequestsAsDrafts")}
+                    onValueChange={(value) => write({ openPullRequestsAsDrafts: value })}
                   />
                 </SettingsSection>
                 <SettingsSection title={gt("Default branch")}>
