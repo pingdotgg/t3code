@@ -1,3 +1,5 @@
+import { fileBasename } from "./path.ts";
+
 /** The formulas a Markdown parser finds in text, as source offsets. */
 export type FindMathRanges = (
   text: string,
@@ -172,4 +174,17 @@ export function collectComposerInlineTokens(
       (match) => !math.some((formula) => match.start < formula.end && match.end > formula.start),
     )
     .sort((left, right) => left.start - right.start);
+}
+
+/** Shows each `@`-file link by its file name, as its composer chip does, for one-line previews. */
+export function composerFileLinksToPlainText(text: string): string {
+  let result = "";
+  let cursor = 0;
+  // The composer reads a link as a mention only before whitespace, so one may end the text.
+  for (const token of collectMentionTokens(`${text} `)) {
+    if (!token.source.startsWith("[")) continue;
+    result += text.slice(cursor, token.start) + fileBasename(token.value);
+    cursor = token.end;
+  }
+  return result + text.slice(cursor);
 }

@@ -201,6 +201,7 @@ import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts";
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
+import { withSocketHeartbeat } from "./socketHeartbeat.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -3826,20 +3827,21 @@ export const layer = Layer.unwrap(
             ),
           ),
         );
-        const framedRpcWebSocketHttpEffect = url.value.searchParams.has(
-          SOCKET_FRAME_PARTS_QUERY_PARAM,
-        )
-          ? rpcWebSocketHttpEffect.pipe(
-              Effect.provideService(
-                HttpServerRequest.HttpServerRequest,
-                // The RPC server upgrades the request itself, so its socket is
-                // wrapped through the request it reads.
-                Object.create(request, {
-                  upgrade: { value: Effect.map(request.upgrade, splitLargeSocketFrames) },
-                }),
-              ),
-            )
-          : rpcWebSocketHttpEffect;
+        const splitFrames = url.value.searchParams.has(SOCKET_FRAME_PARTS_QUERY_PARAM);
+        const framedRpcWebSocketHttpEffect = rpcWebSocketHttpEffect.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            // The RPC server upgrades the request itself, so its socket is
+            // wrapped through the request it reads.
+            Object.create(request, {
+              upgrade: {
+                value: Effect.map(request.upgrade, (socket) =>
+                  withSocketHeartbeat(splitFrames ? splitLargeSocketFrames(socket) : socket),
+                ),
+              },
+            }),
+          ),
+        );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () =>
