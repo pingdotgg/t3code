@@ -66,7 +66,7 @@ const result = <A>(evaluate: () => A): Result.Result<A, CodecError> => {
 }
 
 const textEncoder = new TextEncoder()
-const textDecoder = new TextDecoder("utf-8", { fatal: true })
+const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
 
 const writeInt16 = (bytes: Uint8Array, offset: number, value: number): void => {
   bytes[offset] = value >>> 8
@@ -237,6 +237,50 @@ const decodeUtf8 = (bytes: Uint8Array, offset: number, size: number): string => 
   }
 }
 
+/**
+ * The UTF-8 fallback for an OID with no codec. PostgreSQL's text output never
+ * contains a NUL byte, while binary layouts almost always do, so a NUL marks
+ * the value as binary data rather than text. The context is only built when
+ * the value is rejected.
+ */
+const decodeUnregistered = (
+  bytes: Uint8Array,
+  offset: number,
+  size: number,
+  oid: number,
+  column: Column | undefined,
+  index: number
+): string => {
+  let text: string
+  try {
+    text = decodeUtf8(bytes, offset, size)
+  } catch {
+    return failUnregistered("is not valid UTF-8", oid, column, index)
+  }
+  if (text.indexOf("\u0000") !== -1) {
+    return failUnregistered("contains a NUL byte, so it is binary data rather than text", oid, column, index)
+  }
+  return text
+}
+
+const failUnregistered = (reason: string, oid: number, column: Column | undefined, index: number): never => {
+  let subject: string
+  if (column === undefined) {
+    subject = `a value of type OID ${oid}`
+  } else {
+    const name = column.name === undefined ? `${index}` : JSON.stringify(column.name)
+    const table = column.tableOid === undefined || column.tableOid === 0
+      ? ""
+      : `, table OID ${column.tableOid}, attribute number ${column.columnAttributeNumber}`
+    subject = `column ${name} (type OID ${oid}${table})`
+  }
+  return fail(
+    `Cannot decode ${subject}: no codec is registered for the type, so it is read as UTF-8 text, ` +
+      `but the value ${reason}. Register a codec with PgTypes.makeRegistry().register and pass the registry ` +
+      `as the client's types option, or cast the value to text in the query.`
+  )
+}
+
 const requireSize = (size: number, expected: number, name: string): void => {
   if (size !== expected) {
     fail(`Expected ${expected} byte(s) for ${name}, received ${size}`)
@@ -322,6 +366,7 @@ export const OID = {
   timetz: 1266,
   numeric: 1700,
   regclass: 2205,
+  record: 2249,
   uuid: 2950,
   jsonb: 3802,
   boolArray: 1000,
@@ -347,6 +392,7 @@ export const OID = {
   timetzArray: 1270,
   numericArray: 1231,
   regclassArray: 2210,
+  recordArray: 2287,
   uuidArray: 2951,
   jsonbArray: 3807
 } as const
@@ -375,6 +421,7 @@ const arrayToElement = new Map<number, number>([
   [OID.timetzArray, OID.timetz],
   [OID.numericArray, OID.numeric],
   [OID.regclassArray, OID.regclass],
+  [OID.recordArray, OID.record],
   [OID.uuidArray, OID.uuid],
   [OID.jsonbArray, OID.jsonb]
 ])
@@ -1394,13 +1441,30 @@ const makeArrayCodec = (elementOid: number, lookup: Lookup): UnsafeCodec<Readonl
     (sink, value) => writeArray(sink, value, elementOid, lookup)
   )
 
-const builtins = new Map<number, UnsafeCodec<any>>(builtinScalars)
+/**
+ * Anonymous `record` values (`ROW(...)`, `(a, b)`) decode as an array of their
+ * fields. The binary form names each field's type, so fields use the same
+ * lookup as columns. PostgreSQL does not accept anonymous records as input,
+ * so there is nothing to encode.
+ */
+const makeRecordCodec = (lookup: Lookup): UnsafeCodec<ReadonlyArray<unknown>> =>
+  codecOf(
+    (bytes, offset, size) => decodeRecord(bytes, offset, size, lookup),
+    () => fail("Encoding an anonymous record is not supported; bind its fields as separate parameters")
+  )
 
 /**
- * Built-ins with registered codecs layered over them, so `encode` and `decode`
- * resolve an OID with a single lookup.
+ * The built-ins for one registry. Arrays and records decode their contents
+ * through the lookup, so each registry builds its own.
  */
-const codecs = new Map<number, UnsafeCodec<any>>(builtins)
+const makeBuiltins = (lookup: Lookup): Map<number, UnsafeCodec<any>> => {
+  const codecs = new Map<number, UnsafeCodec<any>>(builtinScalars)
+  for (const [arrayOid, elementOid] of arrayToElement) {
+    codecs.set(arrayOid, makeArrayCodec(elementOid, lookup))
+  }
+  codecs.set(OID.record, makeRecordCodec(lookup))
+  return codecs
+}
 
 /**
  * Every built-in OID is below this, and PostgreSQL hands user-defined types
@@ -1413,11 +1477,14 @@ const table = new Array<UnsafeCodec<any> | undefined>(tableSize)
 
 const lookup = (oid: number): UnsafeCodec<any> | undefined => oid >= 0 && oid < tableSize ? table[oid] : codecs.get(oid)
 
-for (const [arrayOid, elementOid] of arrayToElement) {
-  const codec = makeArrayCodec(elementOid, lookup)
-  builtins.set(arrayOid, codec)
-  codecs.set(arrayOid, codec)
-}
+const builtins = makeBuiltins(lookup)
+
+/**
+ * Built-ins with registered codecs layered over them, so `encode` and `decode`
+ * resolve an OID with a single lookup.
+ */
+const codecs = new Map<number, UnsafeCodec<any>>(builtins)
+
 for (const [oid, codec] of codecs) table[oid] = codec
 
 interface RegistryState {
@@ -1455,15 +1522,9 @@ const registerInState = <A>(
  * @since 4.0.0
  */
 export const makeRegistry = (): Registry => {
-  const codecs = new Map<number, UnsafeCodec<any>>(builtinScalars)
-  const state: RegistryState = {
-    codecs,
-    elementToArray: new Map(elementToArray),
-    lookup: (oid) => codecs.get(oid)
-  }
-  for (const [arrayOid, elementOid] of arrayToElement) {
-    codecs.set(arrayOid, makeArrayCodec(elementOid, state.lookup))
-  }
+  const lookup: Lookup = (oid) => codecs.get(oid)
+  const codecs = makeBuiltins(lookup)
+  const state: RegistryState = { codecs, elementToArray: new Map(elementToArray), lookup }
   const registry: Registry = {
     register: (oid, codec, options) => registerInState(state, oid, codec, options)
   }
@@ -1481,9 +1542,10 @@ const lookupFor = (registry: Registry | undefined): Lookup =>
  * **Details**
  *
  * Unregistered OIDs decode as UTF-8 text. Register binary user-defined types
- * to avoid garbled output or codec errors, which close the connection when
- * reading rows. For arrays, use `makeRegistry().register` with
- * `RegisterOptions.arrayOid` and pass the registry as the client's `types` option.
+ * to avoid codec errors, which fail the query that read the row, or garbled
+ * output from a binary layout without NUL bytes. For arrays, use
+ * `makeRegistry().register` with `RegisterOptions.arrayOid` and pass the
+ * registry as the client's `types` option.
  *
  * @stability unstable
  * @category registry
@@ -1659,6 +1721,40 @@ const decodeArray = (
   return values
 }
 
+/**
+ * PostgreSQL record_send: an int32 field count, then for each field its type
+ * OID, an int32 length (-1 for NULL) and its bytes.
+ */
+const decodeRecord = (bytes: Uint8Array, start: number, size: number, lookup: Lookup): ReadonlyArray<unknown> => {
+  if (size < 4) return fail("Truncated record value")
+  const count = readInt32(bytes, start)
+  if (count < 0) return fail(`Invalid record field count: ${count}`)
+  const values: Array<unknown> = new Array(count)
+  const limit = start + size
+  let offset = start + 4
+  for (let i = 0; i < count; i++) {
+    if (offset + 8 > limit) return fail("Truncated record field")
+    const oid = readUint32(bytes, offset)
+    const fieldSize = readInt32(bytes, offset + 4)
+    offset += 8
+    if (fieldSize < -1) return fail(`Invalid record field length: ${fieldSize}`)
+    if (fieldSize === -1) {
+      values[i] = null
+      continue
+    }
+    if (offset + fieldSize > limit) return fail("Truncated record field")
+    const codec = lookup(oid)
+    values[i] = codec === undefined
+      ? decodeUnregistered(bytes, offset, fieldSize, oid, undefined, 0)
+      : codec.read !== undefined
+      ? codec.read(bytes, offset, fieldSize)
+      : codec.decode(region(bytes, offset, fieldSize))
+    offset += fieldSize
+  }
+  if (offset !== limit) return fail("Record value has trailing bytes")
+  return values
+}
+
 // -----------------------------------------------------------------------------
 // entry points
 // -----------------------------------------------------------------------------
@@ -1673,6 +1769,12 @@ const decodeArray = (
 export interface Column {
   readonly dataTypeOid: number
   readonly format: number
+  /** Names the column in decoding errors. */
+  readonly name?: string | undefined
+  /** The source table, or `0` when the column is not a table column. */
+  readonly tableOid?: number | undefined
+  /** The column's attribute number within `tableOid`. */
+  readonly columnAttributeNumber?: number | undefined
 }
 
 /**
@@ -1681,8 +1783,11 @@ export interface Column {
  * **Details**
  *
  * Codecs are resolved once per column. SQL `NULL` becomes `null`.
- * Unregistered OIDs decode as UTF-8 text. Invalid UTF-8 and text-format
- * columns fail with `CodecError`.
+ * Unregistered OIDs decode as UTF-8 text. Text-format columns fail with
+ * `CodecError`, as do unregistered values that are invalid UTF-8 or contain a
+ * NUL byte, which no PostgreSQL text value does. Those errors name the column
+ * and its type OID. A binary layout with no NUL bytes still decodes as
+ * garbled text, so register a codec for binary user-defined types.
  *
  * **Example** (Updating the reader after `RowDescription`)
  *
@@ -1714,7 +1819,9 @@ export const makeFieldReader = (
     return (bytes: Uint8Array, offset: number, size: number, column: number): unknown => {
       if (size < 0) return null
       const codec = codecs[column]
-      if (codec === undefined) return decodeUtf8(bytes, offset, size)
+      if (codec === undefined) {
+        return decodeUnregistered(bytes, offset, size, columns[column].dataTypeOid, columns[column], column)
+      }
       const read = codec.read
       return read === undefined ? codec.decode(bytes.subarray(offset, offset + size)) : read(bytes, offset, size)
     }
@@ -1745,8 +1852,9 @@ export const encode = (value: unknown, oid: number, registry?: Registry): Result
  * **Details**
  *
  * Only binary format (`1`) is supported. Unregistered OIDs decode as UTF-8
- * text; invalid UTF-8 fails with `CodecError`. See `register` for binary
- * user-defined types, including arrays.
+ * text; a value that is invalid UTF-8 or contains a NUL byte fails with
+ * `CodecError`. See `register` for binary user-defined types, including
+ * arrays.
  *
  * @stability unstable
  * @category decoding
@@ -1763,7 +1871,7 @@ export const decode = (
       return fail(`Only the binary format is supported, received format ${format}`)
     }
     const codec = lookupFor(registry)(oid)
-    return codec === undefined ? decodeUtf8(bytes, 0, bytes.length) : codec.decode(bytes)
+    return codec === undefined ? decodeUnregistered(bytes, 0, bytes.length, oid, undefined, 0) : codec.decode(bytes)
   })
 
 // -----------------------------------------------------------------------------

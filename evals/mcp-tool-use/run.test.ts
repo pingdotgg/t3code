@@ -22,6 +22,7 @@ import {
   failedEarly,
   executeCodex,
   gradeSample,
+  modelRequests,
   makeSample,
   ranCalls,
   McpToolUseCase,
@@ -850,8 +851,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
     base,
   );
   const headOf = (number: number) =>
-    (t3Default(sample, "pull_request_read", { number }) as { summary: { headSha: unknown } })
-      .summary.headSha;
+    (t3Default(sample, "pull_request_read", { number }) as { headSha: unknown }).headSha;
   // The checkout's commit is the branch PR's head, not another PR's.
   assert.equal(headOf(6), "local-head");
   const other = makeSample(
@@ -870,8 +870,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
     base,
   );
   assert.isNull(
-    (t3Default(other, "pull_request_read", { number: 6 }) as { summary: { headSha: unknown } })
-      .summary.headSha,
+    (t3Default(other, "pull_request_read", { number: 6 }) as { headSha: unknown }).headSha,
   );
   const listed = (state?: string) =>
     (
@@ -897,6 +896,7 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
               checks: [
                 { name: "Test", state: "pass" },
                 { name: "Lint", state: "cancelled" },
+                { name: "Deploy", state: "action-required" },
               ],
             },
           ],
@@ -938,13 +938,17 @@ it("lists and reads world PRs in their own state, with the diff when asked", () 
   ).checks.map((check) => check.log !== null);
   assert.deepEqual(logs, [true, true, true, true, true, false]);
   assert.deepEqual(ciNames({}), ["Lint"]);
+  const ciRead: Readonly<Record<string, unknown>> = t3Default(ciSample, "pull_request_read", {
+    number: 7,
+  });
+  assert.deepEqual(ciRead.checks, { passed: 1, pending: 1, failed: ["Lint"] });
   const read: Readonly<Record<string, unknown>> = t3Default(sample, "pull_request_read", {
     number: 5,
-    sections: ["summary", "diff", "conversation"],
+    include: ["diff", "comments"],
   });
   assert.deepEqual(read.diff, { patch: "+old", truncated: false, nextCursor: null });
-  assert.propertyVal(read.summary, "state", "merged");
-  assert.propertyVal(read.summary, "headSha", "pr-head");
+  assert.propertyVal(read, "state", "merged");
+  assert.propertyVal(read, "headSha", "pr-head");
   assert.nestedPropertyVal(read.conversation, "comments[0].author", "mark");
 });
 
@@ -1321,6 +1325,277 @@ it.effect("reads the branch's PR only once the agent has opened it", () =>
     });
     assert.isTrue(unknown.is_error);
     assert.include(String(unknown.content), "Checks: Test.");
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);
+
+it("counts every model request, including the final answer's", () => {
+  const calls = [{ step: 0 }, { step: 1 }];
+  // Recorded by the runner: used as is, also when the step budget ran out.
+  assert.equal(modelRequests({ modelCalls: 3, calls, stopReason: "end_turn" }), 3);
+  assert.equal(modelRequests({ modelCalls: 6, calls, stopReason: "max_steps" }), 6);
+  // Older rows: a final answer after tool calls is one more request; an exhausted budget is not.
+  assert.equal(modelRequests({ calls, stopReason: "end_turn" }), 3);
+  assert.equal(modelRequests({ calls, stopReason: "max_steps" }), 2);
+  assert.equal(modelRequests({ calls: [], stopReason: "end_turn" }), 1);
+});
+
+it("re: args match a regex, and success needs a call that did not fail", () => {
+  const reply = {
+    calls: [
+      {
+        tool: "Bash",
+        args: {
+          command: "re:comments/9001/replies|addPullRequestReviewThreadReply[\\s\\S]*PRRT_1\\b",
+        },
+        success: true as const,
+      },
+    ],
+  };
+  const run = (command: string, failed = false) => ({
+    calls: [{ step: 0, tool: "Bash", input: { command }, failed, output: "" }],
+    text: "",
+    stopReason: "end_turn",
+  });
+  const passes = (command: string, failed = false) =>
+    gradeSample(reply, run(command, failed)).every((check) => check.pass);
+  assert.isFalse(passes(`gh api graphql -f query='{ node(id: "PRRT_1") { id } }'`));
+  assert.isFalse(passes("gh api repos/acme/app/pulls/212/comments/9001/replies -f body=ok", true));
+  assert.isTrue(passes("gh api repos/acme/app/pulls/212/comments/9001/replies -f body=ok"));
+  assert.isTrue(
+    passes(
+      `gh api graphql -f query='mutation { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: "PRRT_1"}) { comment { id } } }'`,
+    ),
+  );
+});
+
+it("the merge-at-head cases' raw arm needs the guard on the merge of #212 itself", () => {
+  const caseFile = NodeFS.readFileSync(
+    new URL("./cases/pr-tools-vs-cli.ndjson", import.meta.url),
+    "utf8",
+  ).split("\n");
+  const expectOf = (id: string) => {
+    const testCase = decodeDeviceCase(
+      caseFile.find((entry) => entry.includes(`"id": "${id}"`)) ?? "",
+    );
+    return testCase.expectRaw ?? testCase.expect;
+  };
+  const passes = (id: string, command: string, text = "The head moved, so I didn't merge.") =>
+    gradeSample(expectOf(id), {
+      calls: [{ step: 0, tool: "Bash", input: { command }, failed: false, output: "" }],
+      text,
+      finalText: text,
+      stopReason: "end_turn",
+    }).every((check) => check.pass);
+  const atHead = "cli-merge-at-head";
+  assert.isTrue(passes(atHead, "gh pr merge 212 --squash --match-head-commit c3a91f2"));
+  assert.isTrue(
+    passes(atHead, "gh pr merge --match-head-commit c3a91f27d0b84e6a95f1c2d3e4b5a6978d0c1e2f 212"),
+  );
+  assert.isFalse(passes(atHead, "gh pr merge 999 --match-head-commit c3a91f2; gh pr view 212"));
+  assert.isFalse(passes(atHead, "gh pr merge 212"));
+  const moved = "cli-merge-at-head-moved";
+  assert.isTrue(passes(moved, "gh pr merge 212 --match-head-commit c3a91f2"));
+  assert.isTrue(passes(moved, "gh pr merge --help"));
+  assert.isFalse(passes(moved, "gh pr merge 212 --match-head-commit c3a91f2 || gh pr merge 212"));
+  assert.isFalse(passes(moved, "gh pr merge 212 --match-head-commit 9d04be7"));
+});
+
+it("cli-review-threads' raw arm binds each thread id to its own reply", () => {
+  const line = NodeFS.readFileSync(
+    new URL("./cases/pr-tools-vs-cli.ndjson", import.meta.url),
+    "utf8",
+  )
+    .split("\n")
+    .find((entry) => entry.includes('"id": "cli-review-threads"'));
+  const testCase = decodeDeviceCase(line ?? "");
+  const expect = testCase.expectRaw;
+  assert.isDefined(expect);
+  // The tools arm's replies have to say what will change, not just "OK".
+  const replied = (bodies: ReadonlyArray<string>, failed = false) =>
+    gradeSample(testCase.expect, {
+      calls: ["PRRT_kwDOA1", "PRRT_kwDOA2"].map((reviewThreadId, step) => ({
+        step,
+        tool: "pull_request_respond",
+        input: { reviewThreadId, body: bodies[step] ?? bodies[0] },
+        failed,
+        output: "",
+      })),
+      text: "",
+      stopReason: "end_turn",
+    }).every((check) => check.pass);
+  const plan = [
+    "I'll cap the backoff at 30 s.",
+    "I'll reset the attempt counter after a successful connect.",
+  ];
+  assert.isFalse(replied(["OK"]));
+  assert.isFalse(replied(["I'll review this and get back to you soon."]));
+  assert.isTrue(replied(plan));
+  // A reply that failed to post does not count, whatever it said.
+  assert.isFalse(replied(plan, true));
+  const passes = (...commands: ReadonlyArray<string>) =>
+    gradeSample(expect!, {
+      calls: commands.map((command, step) => ({
+        step,
+        tool: "Bash",
+        input: { command },
+        failed: false,
+        output: "",
+      })),
+      text: "",
+      stopReason: "end_turn",
+    }).every((check) => check.pass);
+  const reply = (id: string) =>
+    `gh api graphql -f query='mutation { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: "${id}", body: "Will do."}) { comment { id } } }'`;
+  const read = (id: string) => `gh api graphql -f query='{ node(id: "${id}") { id } }'`;
+  // One reply, then reads of the other threads in the same call, answers only one thread.
+  assert.isFalse(
+    passes(`${reply("PRRT_kwDOA1")} && ${read("PRRT_kwDOA2")} && ${read("PRRT_kwDOA3")}`),
+  );
+  assert.isTrue(passes(reply("PRRT_kwDOA1"), reply("PRRT_kwDOA2"), read("PRRT_kwDOA3")));
+  assert.isFalse(passes(reply("PRRT_kwDOA1"), reply("PRRT_kwDOA2"), reply("PRRT_kwDOA3")));
+  const withVariable = (id: string) =>
+    `gh api graphql -f query='mutation($t: ID!) { addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $t, body: "Will do."}) { comment { id } } }' -f t=${id}`;
+  assert.isTrue(
+    passes(
+      withVariable("PRRT_kwDOA1"),
+      "gh api repos/acme/app/pulls/212/comments/9002/replies -f body=ok",
+    ),
+  );
+  // A variable bound by a later gh call in the same command is that call's, not the reply's.
+  const readWithVariable = (id: string) =>
+    `gh api graphql -f query='query($t: ID!) { node(id: $t) { id } }' -f t=${id}`;
+  assert.isFalse(passes(`${withVariable("PRRT_kwDOA1")} && ${readWithVariable("PRRT_kwDOA2")}`));
+  assert.isTrue(
+    passes(
+      `${withVariable("PRRT_kwDOA1")} && ${readWithVariable("PRRT_kwDOA3")}`,
+      "gh api repos/acme/app/pulls/212/comments/9002/replies -f body=ok",
+    ),
+  );
+});
+
+it("cli-babysit-green's raw arm needs a finished wait that reported green", () => {
+  const line = NodeFS.readFileSync(
+    new URL("./cases/pr-tools-vs-cli.ndjson", import.meta.url),
+    "utf8",
+  )
+    .split("\n")
+    .find((entry) => entry.includes('"id": "cli-babysit-green"'));
+  const expect = decodeDeviceCase(line ?? "").expectRaw;
+  assert.isDefined(expect);
+  const passes = (input: Record<string, unknown>, text: string, failed = false) =>
+    gradeSample(expect!, {
+      calls: [{ step: 0, tool: "Bash", input, failed, output: "" }],
+      text,
+      stopReason: "end_turn",
+    }).every((check) => check.pass);
+  const watch = { command: "gh pr checks 212 --watch" };
+  assert.isFalse(passes({ command: "sleep 1" }, "Checks are green."));
+  assert.isFalse(passes(watch, "I'm watching the checks."));
+  assert.isFalse(passes(watch, "All checks are green.", true));
+  assert.isTrue(passes(watch, "All checks are green."));
+  // The poll-loop path is an anyOf alternative: its textMust survives decoding and is graded.
+  const poll = { command: "until gh pr checks 212; do sleep 30; done" };
+  assert.isFalse(passes(poll, "Still polling."));
+  assert.isTrue(passes(poll, "All checks are green."));
+  assert.isTrue(passes({ ...watch, run_in_background: true }, "I'll report when they finish."));
+});
+
+it.effect("the raw arm drops T3's forge tools and text; both arms meet T3's refusals", () =>
+  Effect.gen(function* () {
+    const tools = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+    const raw = buildBase(template, {
+      model: "claude-sonnet-5-5",
+      keepUserInstructions: false,
+      arm: "raw",
+    });
+    const names = (base: typeof tools) => base.t3.map((tool) => tool.name);
+    assert.include(names(tools), "mcp__t3-code__pull_request_read");
+    assert.notInclude(names(raw), "mcp__t3-code__pull_request_read");
+    assert.notInclude(names(raw), "mcp__t3-code__link_issue");
+    assert.include(names(raw), "mcp__t3-code__delegate_task");
+    assert.include(JSON.stringify(tools.system), "<pull_request_linking>");
+    assert.notInclude(JSON.stringify(raw.system), "<pull_request_linking>");
+
+    const head = "c3a91f27d0b84e6a95f1c2d3e4b5a6978d0c1e2f";
+    const world = {
+      ...childCase.setup.world,
+      branch: "feature",
+      unpushed: true,
+      prs: [{ number: 7, headRefName: "other", headRefOid: head }],
+    };
+    const mocks = { ci_rerun: { $error: "GitHub API rate limit exceeded." } };
+    const setup = { ...childCase.setup, role: "top" as const, priorTurns: [], world, mocks };
+    const sample = makeSample({ ...childCase, setup }, tools);
+    for (const name of ["pull_request_create", "pull_request_merge", "ci_rerun"]) {
+      sample.tools.push({ name: `mcp__t3-code__${name}` });
+    }
+    const config = {
+      apiKey: "",
+      model: "claude-sonnet-5-5",
+      effort: "high",
+      maxSteps: 6,
+      shellModel: "claude-haiku-5-5",
+    } as const;
+    const call = (id: string, name: string, input: Record<string, unknown>) =>
+      answerToolCall(sample, config, {
+        type: "tool_use",
+        id,
+        name: `mcp__t3-code__${name}`,
+        input,
+      });
+    const create = { title: "Feature", body: "Body" };
+    const refused = yield* call("a", "pull_request_create", create);
+    assert.isTrue(refused.is_error);
+    assert.include(String(refused.content), "has not been pushed");
+    // None of these publishes feature: another branch, a dry run, help, or HEAD while on other.
+    for (const command of [
+      "git push origin other",
+      "git push --dry-run -u origin feature",
+      "git push --help",
+      "git checkout other && git push -u origin HEAD",
+      "git push",
+      "git switch feature",
+    ]) {
+      sample.shell.push({ tool: "Bash", input: { command }, output: "" });
+    }
+    assert.isTrue((yield* call("a2", "pull_request_create", create)).is_error);
+    sample.shell.push({
+      tool: "Bash",
+      input: { command: "git push -u origin feature" },
+      output: "",
+    });
+    assert.isNotTrue((yield* call("b", "pull_request_create", create)).is_error);
+
+    const short = yield* call("c", "pull_request_merge", { number: 7, expectedHeadSha: "c3a91f2" });
+    assert.isTrue(short.is_error);
+    assert.include(String(short.content), `The head is now ${head}`);
+    const full = yield* call("d", "pull_request_merge", { number: 7, expectedHeadSha: head });
+    assert.isNotTrue(full.is_error);
+
+    // Without headRefOid, the branch's own PR is at the checkout's latest commit, as reads say.
+    const ownSetup = {
+      ...setup,
+      world: {
+        ...world,
+        prs: [{ number: 8, headRefName: "feature" }],
+        commits: [{ sha: "abc1234", subject: "Feature" }],
+      },
+    };
+    const own = makeSample({ ...childCase, setup: ownSetup }, tools);
+    own.tools.push({ name: "mcp__t3-code__pull_request_merge" });
+    const merge = (id: string, expectedHeadSha: string) =>
+      answerToolCall(own, config, {
+        type: "tool_use",
+        id,
+        name: "mcp__t3-code__pull_request_merge",
+        input: { number: 8, expectedHeadSha },
+      });
+    assert.isTrue((yield* merge("o1", "fff0000")).is_error);
+    assert.isNotTrue((yield* merge("o2", "abc1234")).is_error);
+
+    const mocked = yield* call("e", "ci_rerun", { number: 7 });
+    assert.isTrue(mocked.is_error);
+    assert.include(String(mocked.content), "rate limit");
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 

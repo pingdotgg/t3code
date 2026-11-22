@@ -9,7 +9,12 @@ import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import { expect, it, vi } from "vite-plus/test";
 
 import { stubGlobal } from "../../test/render";
-import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import { resolveAppleSpeechLocale } from "./appleSpeech";
+import { createBrowserPcmCapture } from "./browserPcmCapture";
+import {
+  createAppleSpeechVoiceInputPlatform,
+  createBrowserVoiceInputPlatform,
+} from "./browserVoiceInput";
 
 vi.mock("../connection/runtime", async () => {
   const [{ Atom }, { layerRemoteHttpClient }] = await Promise.all([
@@ -158,13 +163,15 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
   await vi.waitFor(() => expect(_network).toHaveBeenCalled());
   streaming = true;
   options = { ...options, speechLanguage: "en" };
-  resolveStatus(Response.json(status));
   await start;
   expect(controller.currentState.phase).toBe("recording");
   microphone.feed(new Float32Array([0.1, 0.2]));
   microphone.feed(new Float32Array([0.3]));
   expect(requests).toHaveLength(0);
-  await controller.stop();
+  const stop = controller.stop();
+  await vi.waitFor(() => expect(microphone.stopTrack).toHaveBeenCalledOnce());
+  resolveStatus(Response.json(status));
+  await stop;
   expect(controller.currentState.phase).toBe("error");
   expect(platform.recorder.uri).not.toBeNull();
   await controller.start();
@@ -189,6 +196,101 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
   await vi.waitFor(() => expect(microphone.stopTrack).toHaveBeenCalledTimes(2));
   expect(requests).toHaveLength(2);
   expect(platform.recorder.uri).toBeNull();
+});
+
+it.each([
+  ["fr", ["en-US"], "fr"],
+  ["auto", ["nl-NL", "en-US"], "en-US"],
+] as const)(
+  "resolves Apple Speech language %s with Mac preferences %j",
+  (preference, system, expected) => {
+    expect(resolveAppleSpeechLocale(["en-US", "fr-FR"], preference, system)).toBe(expected);
+  },
+);
+
+it.each(["prepare", "transcribe"] as const)(
+  "cancels Apple Speech while native %s is pending",
+  async (stage) => {
+    const entered = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<{ ok: true; value: string }>();
+    using _bridge = stubGlobal("desktopBridge", {
+      appleSpeech: {
+        prepare: async () => {
+          if (stage !== "prepare") return { ok: true, value: "en-US" };
+          entered.resolve();
+          return pending.promise;
+        },
+        transcribe: async () => {
+          entered.resolve();
+          return pending.promise;
+        },
+      },
+    });
+    const platform = createAppleSpeechVoiceInputPlatform({
+      hasAudioConsent: () => true,
+      getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      getMicrophoneId: () => "",
+      onLevel() {},
+      onDurationLimit() {},
+      onError() {},
+    });
+    const abort = new AbortController();
+    using _cleanup = {
+      [Symbol.dispose]: () => {
+        abort.abort();
+        pending.resolve({ ok: true, value: "late" });
+        platform.cancelRecording();
+      },
+    };
+    const options = { signal: abort.signal };
+    const transcription = await platform.transcriber.prepare(options);
+    const uri = URL.createObjectURL(new Blob([new Float32Array([0.5])]));
+    using _blob = { [Symbol.dispose]: () => URL.revokeObjectURL(uri) };
+    const result = transcription.transcribe(uri, options);
+    await entered.promise;
+    abort.abort();
+    await expect(result).rejects.toThrow();
+  },
+);
+
+it("streams the opening audio in order when the destination becomes ready during capture", async () => {
+  using microphone = capture();
+  const feed = vi.fn();
+  const finish = vi.fn(async () => "hello");
+  const ready = Promise.withResolvers<void>();
+  const platform = createBrowserPcmCapture(
+    {
+      getMicrophoneId: () => "",
+      onLevel() {},
+      onDurationLimit() {},
+      onError() {},
+    },
+    async () => {
+      await ready.promise;
+      return { locale: "en", streaming: { feed, finish }, transcribe: async () => "" };
+    },
+  );
+  const abort = new AbortController();
+  using _abort = {
+    [Symbol.dispose]: () => {
+      abort.abort();
+      platform.cancelRecording();
+    },
+  };
+  const transcription = await platform.transcriber.prepare({ signal: abort.signal });
+  await platform.recorder.prepareToRecordAsync(abort.signal);
+  platform.recorder.record({ forDuration: 1 });
+  const opening = new Float32Array([0.1]);
+  const continuing = new Float32Array([0.2]);
+  microphone.feed(opening);
+  expect(feed).not.toHaveBeenCalled();
+  ready.resolve();
+  await vi.waitFor(() => expect(feed).toHaveBeenCalledExactlyOnceWith(opening));
+  microphone.feed(continuing);
+  await platform.recorder.stop();
+  expect(feed.mock.calls).toEqual([[opening], [continuing]]);
+  expect(platform.recorder.uri).toBeNull();
+  await expect(transcription.streaming?.finish({ signal: abort.signal })).resolves.toBe("hello");
 });
 
 it.each([
@@ -241,8 +343,8 @@ it.each([
       onError() {},
     });
     const transcription = await platform.transcriber.prepare({ signal: abort.signal });
+    await vi.waitFor(() => expect(transcription.locale).toBe(native && enabled ? "fr" : "en"));
     expect(Boolean(transcription.streaming)).toBe(live);
-    expect(transcription.locale).toBe(native && enabled ? "fr" : "en");
     expect(sockets).toEqual(
       live ? ["wss://transcription.example.test/ws/voice?wsTicket=stream-ticket"] : [],
     );
