@@ -905,10 +905,10 @@ fn attach_row_interactions(
         .when(ctx.hover_open, |row| {
             row.child(render_thread_hover_card(
                 thread,
-                ctx.hover_rect,
-                cx.entity().downgrade(),
                 ctx.project,
                 ctx.environment_label,
+                ctx.hover_rect,
+                cx.entity().downgrade(),
                 ctx.tokens,
             ))
         });

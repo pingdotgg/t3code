@@ -2419,28 +2419,6 @@ impl ConnApp {
                 url_rx = next_url_rx;
                 control_rx = next_control_rx;
                 match ev {
-    /// Mirrors `Tooltip disabled={isRenaming || ...}`: no hover card while a thread menu is
-    /// open or a title is being renamed.
-    #[must_use]
-    pub(crate) fn thread_hover_suppressed(&self) -> bool {
-        self.thread_menu.is_some() || self.renaming_thread_id.is_some()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn open_thread_hover_for_test(
-        &mut self,
-        thread_id: &str,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let now = std::time::Instant::now();
-        if let crate::sidebar::hover_card_state::Entered::Wait(generation) =
-            self.thread_hover.enter(thread_id, now)
-        {
-            self.thread_hover.elapse(generation);
-        }
-        cx.notify();
-    }
-
                     Ev::Closed => break,
                     Ev::Url(url) => {
                         let ok = entity.update(cx, |app, cx| {
@@ -2472,6 +2450,28 @@ impl ConnApp {
             }
         });
         self._activation_task = Some(task);
+    }
+
+    /// Mirrors `Tooltip disabled={isRenaming || ...}`: no hover card while a thread menu is
+    /// open or a title is being renamed.
+    #[must_use]
+    pub(crate) fn thread_hover_suppressed(&self) -> bool {
+        self.thread_menu.is_some() || self.renaming_thread_id.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_thread_hover_for_test(
+        &mut self,
+        thread_id: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let now = std::time::Instant::now();
+        if let crate::sidebar::hover_card_state::Entered::Wait(generation) =
+            self.thread_hover.enter(thread_id, now)
+        {
+            self.thread_hover.elapse(generation);
+        }
+        cx.notify();
     }
 
     fn workspace_candidates(&self) -> Vec<(String, String)> {
@@ -2756,6 +2756,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.thread_details.copy_menu = None;
+        self.thread_hover.dismiss();
         self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
         self.thread_menu = Some(ThreadMenuAnchor {
             thread_id,
@@ -2816,7 +2817,6 @@ impl ConnApp {
                 .timer(crate::sidebar::thread_menu::SUBMENU_CLOSE_DELAY)
                 .await;
             let _ = this.update(cx, |app, cx| {
-        self.thread_hover.dismiss();
                 if app.thread_menu_copy_close_gen == generation
                     && let Some(menu) = &mut app.thread_menu
                     && menu.copy_open
@@ -3321,6 +3321,7 @@ impl ConnApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.thread_hover.dismiss();
         self.renaming_thread_id = Some(thread_id);
         self.rename_in_header = in_header;
         self.rename_input.update(cx, |input, cx| {
@@ -3381,7 +3382,6 @@ impl ConnApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        self.thread_hover.dismiss();
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -5093,6 +5093,14 @@ impl Render for ConnApp {
                         .filter(|_| !self.rename_in_header),
                     &self.rename_input,
                     self.sidebar_filter_menu_open,
+                    &ThreadHoverView {
+                        open_for: self
+                            .thread_hover
+                            .open_for()
+                            .filter(|_| !self.thread_hover_suppressed()),
+                        environment_label: self.server_label.as_deref(),
+                        rect: self.thread_hover.row_rect(),
+                    },
                     &self.tokens,
                     &self.geometry,
                     cx,
@@ -5153,14 +5161,6 @@ impl Render for ConnApp {
                                     if app.seam_drag.take().is_some() {
                                         cx.notify();
                                     }
-                    &ThreadHoverView {
-                        open_for: self
-                            .thread_hover
-                            .open_for()
-                            .filter(|_| !self.thread_hover_suppressed()),
-                        environment_label: self.server_label.as_deref(),
-                        rect: self.thread_hover.row_rect(),
-                    },
                                 });
                             },
                         );
