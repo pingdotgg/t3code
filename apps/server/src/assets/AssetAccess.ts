@@ -561,7 +561,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     // 3D files are served as a preview image, which needs the file's exact identity.
     const isDraftMedia =
       (input.resource._tag === "draft-workspace-file" &&
-        (isWorkspaceAudioPreviewPath(resolved.relativePath) ||
+        (input.resource.disposition === "attachment" ||
+          isWorkspaceAudioPreviewPath(resolved.relativePath) ||
           isWorkspaceVideoPreviewPath(resolved.relativePath))) ||
       modelPreviewFormat(resolved.relativePath) !== null;
     if (!isDraftMedia && !isWorkspacePreviewEntryPath(resolved.relativePath)) {

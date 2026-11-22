@@ -870,7 +870,6 @@ export function useThreadComposerState(input: {
     }
 
     // Resolve at send time because outbox delivery may be delayed.
-    // Steering uses "auto" so an ended turn queues a run instead of restoring the draft.
     // An approval redirect must steer the waiting turn instead of queueing behind it.
     const activeTurnDefault = beforeDispatch !== undefined ? "steer" : followUpBehavior;
     const followUpAction = resolveComposerDispatchMode({
@@ -885,9 +884,7 @@ export function useThreadComposerState(input: {
       ? "queue"
       : followUpAction === "auto"
         ? null
-        : followUpAction === "queue"
-          ? "queue"
-          : "auto";
+        : followUpAction;
 
     // A redirect belongs to the approval it answers; the armed session waits for the next message.
     const freshContext = beforeDispatch === undefined && isFreshSessionPending(threadKey);
