@@ -29,6 +29,7 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import * as DateTime from "effect/DateTime";
+import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -1354,6 +1355,9 @@ it.effect.each(["settled", "terminal-race", "consumed-between-reads"] as const)(
       let completeDuringPendingRead = Effect.void;
       let lockedRequeue = false;
       const lockedEffectRead = yield* Deferred.make<void>();
+      const LaterOneDispatch = Context.Reference<boolean>("test/SteerRace/LaterOneDispatch", {
+        defaultValue: () => false,
+      });
       const steerEntered = yield* Deferred.make<void>();
       const acceptSteer = yield* Deferred.make<void>();
       let completeDuringPrecheck = Effect.void;
@@ -1380,9 +1384,16 @@ it.effect.each(["settled", "terminal-race", "consumed-between-reads"] as const)(
                 .steerForProviderTurn(input)
                 .pipe(
                   Effect.tap((effect) =>
-                    lockedRequeue && Option.isSome(effect) && effect.value.status === "running"
-                      ? Deferred.succeed(lockedEffectRead, undefined)
-                      : Effect.void,
+                    LaterOneDispatch.pipe(
+                      Effect.flatMap((laterOne) =>
+                        laterOne &&
+                        lockedRequeue &&
+                        Option.isSome(effect) &&
+                        effect.value.status === "running"
+                          ? Deferred.succeed(lockedEffectRead, undefined)
+                          : Effect.void,
+                      ),
+                    ),
                   ),
                 ),
           }),
@@ -1531,7 +1542,7 @@ it.effect.each(["settled", "terminal-race", "consumed-between-reads"] as const)(
         const firstStarted = yield* Deferred.make<void>();
         const firstDispatch = yield* Effect.gen(function* () {
           yield* Deferred.succeed(firstStarted, undefined);
-          yield* dispatchMessage("later-one");
+          yield* dispatchMessage("later-one").pipe(Effect.provideService(LaterOneDispatch, true));
         }).pipe(Effect.forkScoped);
         yield* Deferred.await(firstStarted);
 
@@ -1986,11 +1997,10 @@ it.effect.each(["complete", "stop-before-end"] as const)(
             .toSorted((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0));
           assert.deepEqual(
             queued.map((run) => [run.userMessageId, run.queueHeld === true]),
-            [
-              [MessageId.make("message:steer"), false],
-              [MessageId.make("message:queued-later"), false],
-            ],
+            [[MessageId.make("message:queued-later"), true]],
           );
+          assert.deepEqual(steered, []);
+          assert.lengthOf(started, 1);
           return;
         }
         yield* orchestrator.resumeQueuedRuns;
