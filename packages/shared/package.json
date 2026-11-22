@@ -519,6 +519,10 @@
       "types": "./src/markdownGithubAlerts.ts",
       "import": "./src/markdownGithubAlerts.ts"
     },
+    "./markdownHast": {
+      "types": "./src/markdownHast.ts",
+      "import": "./src/markdownHast.ts"
+    },
     "./markdownFrontmatter": {
       "types": "./src/markdownFrontmatter.ts",
       "import": "./src/markdownFrontmatter.ts"
@@ -646,6 +650,18 @@
     "./paletteSearchCopy": {
       "types": "./src/paletteSearchCopy.ts",
       "import": "./src/paletteSearchCopy.ts"
+    },
+    "./markdownTaskEdits": {
+      "types": "./src/markdownTaskEdits.ts",
+      "import": "./src/markdownTaskEdits.ts"
+    },
+    "./threadFindBlockTags": {
+      "types": "./src/threadFindBlockTags.ts",
+      "import": "./src/threadFindBlockTags.ts"
+    },
+    "./assistantInsights": {
+      "types": "./src/assistantInsights.ts",
+      "import": "./src/assistantInsights.ts"
     }
   },
   "scripts": {
@@ -660,6 +676,7 @@
     "ffi-rs": "1.3.2",
     "get-east-asian-width": "^1.6.0",
     "gt-i18n": "1.0.40",
+    "hast-util-sanitize": "^5.0.2",
     "mdast-util-directive": "catalog:",
     "mdast-util-to-hast": "^13.2.1",
     "micromark-extension-directive": "catalog:",
@@ -679,8 +696,10 @@
   "devDependencies": {
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
+    "@types/hast": "^3.0.5",
     "@types/mdast": "^4.0.4",
     "@types/node": "catalog:",
+    "hast-util-to-html": "^9.0.5",
     "micromark-util-types": "catalog:",
     "vite-plus": "catalog:"
   }
