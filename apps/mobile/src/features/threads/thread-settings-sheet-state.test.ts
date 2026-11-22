@@ -11,7 +11,12 @@ import {
   rememberModelOptions,
   withRememberedModelOptions,
 } from "../../state/use-model-option-memory";
-import { canCommitPendingModel, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  FAVORITES_PROVIDER_FILTER,
+  canCommitPendingModel,
+  pendingModelAfterPress,
+  restoredProviderFilter,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -157,5 +162,18 @@ describe("thread settings sheet state", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it("restores a saved provider filter only while that provider is in the catalog", () => {
+    const codex = { providerKey: "codex", providerLabel: "Codex", models: [modelOption("gpt")] };
+    const restore = (saved: string | null, catalogProviderKeys: ReadonlyArray<string>) =>
+      restoredProviderFilter({ saved, providerGroups: [codex], catalogProviderKeys });
+
+    expect(restore("codex", ["codex"])).toBe("codex");
+    expect(restore(FAVORITES_PROVIDER_FILTER, [])).toBe(FAVORITES_PROVIDER_FILTER);
+    expect(restore("claude", ["codex", "claude"])).toBeNull();
+    // A removed provider can still have a fallback group for the thread's selected model.
+    expect(restore("codex", [])).toBeNull();
+    expect(restore(null, ["codex"])).toBeNull();
   });
 });
