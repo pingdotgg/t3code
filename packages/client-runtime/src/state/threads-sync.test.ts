@@ -39,6 +39,7 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "../connection/model.ts";
+import { recordServerClock, toServerClock } from "../clock.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
@@ -2546,6 +2547,13 @@ describe("EnvironmentThreads", () => {
 
   it.effect("publishes a 20-event catch-up as one state change at its marker", () =>
     Effect.gen(function* () {
+      // Replayed events can predate a backward host clock correction, so only live ones
+      // may raise the recorded offset.
+      recordServerClock(PREPARED.environmentId, {
+        serverTimeMs: 0,
+        requestedAtMs: 0,
+        receivedAtMs: 0,
+      });
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
       yield* awaitSubscriptionCount(harness, 1);
       expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
@@ -2564,10 +2572,14 @@ describe("EnvironmentThreads", () => {
       const live = yield* Queue.take(harness.observed);
       expect(live.status).toBe("live");
       expect(Option.getOrThrow(live.data).thread.title).toBe("Title 20");
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(0);
 
       yield* Queue.offer(harness.inputs, titleUpdated("Live title", CACHED_SNAPSHOT_SEQUENCE + 21));
       const next = yield* Queue.take(harness.observed);
       expect(Option.getOrThrow(next.data).thread.title).toBe("Live title");
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(
+        DateTime.toEpochMillis(Option.getOrThrow(next.data).thread.updatedAt),
+      );
     }),
   );
 
