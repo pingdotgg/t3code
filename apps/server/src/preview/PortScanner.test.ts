@@ -22,6 +22,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { expect, vi } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
 
+import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
 
@@ -44,12 +45,18 @@ const processProbeFailure: ProcessRunner.ProcessRunner["Service"]["run"] = (inpu
 
 const layerNoProc = FileSystem.layerNoop({});
 
+const layerForeground = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+  shouldRunOpportunisticWork: Effect.succeed(true),
+});
+
+const layerScanner = PortScanner.layer.pipe(Layer.provide(layerForeground));
+
 const layerProbeFailure = (
   run: ProcessRunner.ProcessRunner["Service"]["run"],
   fetch: typeof globalThis.fetch = globalThis.fetch,
   fileSystem: Layer.Layer<FileSystem.FileSystem> = layerNoProc,
 ) =>
-  PortScanner.layer.pipe(
+  layerScanner.pipe(
     Layer.provide(
       Layer.mergeAll(
         fileSystem,
@@ -86,10 +93,12 @@ const layerLsofScanner = (input: {
   readonly pid: () => number;
   readonly fetch: typeof globalThis.fetch;
   readonly stdout?: () => string;
+  readonly backgroundPolicy?: Layer.Layer<BackgroundPolicy.BackgroundPolicy>;
 }) =>
   PortScanner.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        input.backgroundPolicy ?? layerForeground,
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: () =>
@@ -284,6 +293,41 @@ effectIt.effect("stops probing a subscriber's configured paths after its scope c
     yield* TestClock.adjust(Duration.seconds(15));
     expect(requests).toContain(adminUrl);
     expect(requests).not.toContain(docsUrl);
+  }).pipe(Effect.scoped, Effect.provide(layer));
+});
+
+effectIt.effect("skips scheduled scans while no client is in the foreground", () => {
+  let lsofRuns = 0;
+  let foreground = true;
+  const layer = layerLsofScanner({
+    pid: () => 1234,
+    fetch: (() => Promise.resolve(new Response("not found", { status: 404 }))) as typeof fetch,
+    stdout: () => {
+      lsofRuns += 1;
+      return `p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`;
+    },
+    backgroundPolicy: Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+      shouldRunOpportunisticWork: Effect.sync(() => foreground),
+    }),
+  });
+
+  return Effect.gen(function* () {
+    const scanner = yield* PortScanner.PortDiscovery;
+    yield* scanner.subscribe(
+      { configuredUrls: [`http://localhost:${LSOF_TEST_PORT}/`], initialSnapshot: [] },
+      () => Effect.void,
+    );
+    yield* scanner.retain;
+    const afterInitialScan = lsofRuns;
+    expect(afterInitialScan).toBeGreaterThan(0);
+
+    foreground = false;
+    yield* TestClock.adjust(Duration.seconds(15));
+    expect(lsofRuns).toBe(afterInitialScan);
+
+    foreground = true;
+    yield* TestClock.adjust(Duration.seconds(3));
+    expect(lsofRuns).toBeGreaterThan(afterInitialScan);
   }).pipe(Effect.scoped, Effect.provide(layer));
 });
 
@@ -554,7 +598,7 @@ effectIt.effect.each([
   let lsofSpawns = 0;
   let procWalks = 0;
   const missing = FileSystem.makeNoop({});
-  const layer = PortScanner.layer.pipe(
+  const layer = layerScanner.pipe(
     Layer.provide(
       Layer.mergeAll(
         FileSystem.layerNoop({
@@ -635,7 +679,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
     requests.push(String(input));
     return Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } }));
   }) as typeof globalThis.fetch;
-  const layer = PortScanner.layer.pipe(
+  const layer = layerScanner.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerNoProc,
@@ -744,7 +788,7 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
     const fileReads: string[] = [];
     const requests: string[] = [];
     const missing = FileSystem.makeNoop({});
-    const layer = PortScanner.layer.pipe(
+    const layer = layerScanner.pipe(
       Layer.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({
@@ -798,7 +842,9 @@ effectIt.effect.each(["linux", "darwin"] as const)(
   (platform) => {
     const agentPort = 43_124;
     const otherPort = 43_125;
-    const agentListener = `p4242\ncnode\nn127.0.0.1:${agentPort}\n`;
+    // The agent CLI has the thread in its environment too; its own port is not a server.
+    const agentListener =
+      `p4242\ncnode\nn127.0.0.1:${agentPort}\n` + `p4300\ncagy\nn127.0.0.1:43126\n`;
     const otherListener = `p5000\ncpostgres\nn127.0.0.1:${otherPort}\n`;
     let lsofStdout = otherListener;
     let lsofFails = false;
@@ -811,11 +857,18 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       "/proc/4242/environ": `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
       "/proc/5000/environ": "PATH=/usr/bin\0",
     };
-    const layer = PortScanner.layer.pipe(
+    const procAgent: Record<string, string> = {
+      "/proc/4242/stat": "4242 (node) S 4300 4300 4300 0",
+      "/proc/4300/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
+      "/proc/4300/stat": `4300 (agy acp) S ${process.pid} 4300 4300 0`,
+    };
+    const layer = layerScanner.pipe(
       Layer.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({
             readFileString: (path) => {
+              const agent = procAgent[path];
+              if (agent !== undefined) return Effect.succeed(agent);
               const content = procEnviron[path];
               if (content === undefined) return missing.readFileString(path);
               environmentReads += 1;
@@ -837,9 +890,9 @@ effectIt.effect.each(["linux", "darwin"] as const)(
                     )
                   : Effect.succeed(processOutput(lsofStdout));
               }
-              // A direct child of this process, so stop refuses it without signaling anything.
+              // In its agent CLI's process group, so stop refuses it without signaling anything.
               if (input.args[0] === "-A") {
-                return Effect.succeed(processOutput(`4242 ${process.pid} 4242\n`));
+                return Effect.succeed(processOutput(`4242 4300 4300\n4300 ${process.pid} 4300\n`));
               }
               if (environmentFails) {
                 return Effect.fail(
@@ -853,8 +906,9 @@ effectIt.effect.each(["linux", "darwin"] as const)(
               environmentReads += 1;
               return Effect.succeed(
                 processOutput(
-                  `  4242 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n` +
-                    "  5000 postgres -D /data PATH=/usr/bin\n",
+                  `  4242 4300 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n` +
+                    `  4300 ${process.pid} agy acp ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n` +
+                    "  5000     1 postgres -D /data PATH=/usr/bin\n",
                 ),
               );
             },
@@ -1051,7 +1105,7 @@ effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        PortScanner.layer.pipe(
+        layerScanner.pipe(
           Layer.provide(ProcessRunner.layer),
           Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
         ),

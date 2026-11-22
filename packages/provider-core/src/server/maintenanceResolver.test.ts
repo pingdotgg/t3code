@@ -1510,6 +1510,82 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  it.effect(
+    "asks npm about every provider package installed into the same global prefix",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-latest-shared");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = linkIntoPackage(tempDir, "package-tool", [
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+        const otherToolDir = NodePath.join(
+          tempDir,
+          "lib",
+          "node_modules",
+          "@example",
+          "other-tool",
+        );
+        NodeFS.mkdirSync(otherToolDir, { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(otherToolDir, "package.json"), "{}");
+        // Registers a second provider package; the others this file registers are not installed.
+        makePackageManagedProviderMaintenanceResolver({
+          provider: driver("otherTool"),
+          npmPackageName: "@example/other-tool",
+          nativeUpdate: null,
+        });
+        const spawned: Array<ReadonlyArray<string>> = [];
+        const latestVersion = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath, env: { PATH: npmBinDir } },
+        ).pipe(
+          Effect.flatMap(resolveLatestProviderVersion),
+          Effect.provideService(HostProcess.Environment, { PATH: "" }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (_command, args) => {
+                spawned.push(args);
+                return JSON.stringify(
+                  args[0] === "outdated"
+                    ? { "@example/other-tool": { current: "1.0.0", latest: "1.1.0" } }
+                    : { dependencies: { "@example/package-tool": { version: "1.0.0" } } },
+                );
+              },
+              (args) => (args[0] === "outdated" ? 1 : 0),
+            ),
+          ),
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make(),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("npm answers for the package")),
+          ),
+        );
+
+        expect(latestVersion).toBe("1.0.0");
+        expect(spawned).toEqual([
+          [
+            "outdated",
+            "-g",
+            "--prefix",
+            tempDir,
+            "--json",
+            "@example/package-tool",
+            "@example/other-tool",
+          ],
+          ["ls", "-g", "--prefix", tempDir, "--depth", "0", "--json", "@example/package-tool"],
+        ]);
+      }),
+    { skip: !symlinksSupported || windowsHost },
+  );
+
   it.effect.each([
     {
       case: "the eligible release under minimumReleaseAge",
@@ -1616,7 +1692,11 @@ it.layer(
         nativePackageToolUpdate,
         {
           binaryPath: "native-package-tool",
-          env: { PATH: nativeBinDir },
+          env: {
+            PATH: nativeBinDir,
+            MISE_SHIMS_DIR: nativeBinDir,
+            MISE_SYSTEM_SHIMS_DIR: nativeBinDir,
+          },
         },
       ).pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
@@ -1636,10 +1716,10 @@ it.layer(
     }),
   );
 
-  it.effect.each(["wrapper", "symlink"])(
+  it.effect.each(["wrapper", "symlink", "custom-data"])(
     "keeps a mise-owned %s in a native install location manual-only",
     (launcher, { skip }) => {
-      if (windowsHost || (launcher === "symlink" && !symlinksSupported)) skip();
+      if (windowsHost || (launcher !== "wrapper" && !symlinksSupported)) skip();
       return Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-native-mise");
         const nativePath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
@@ -1652,7 +1732,7 @@ it.layer(
         } else {
           const target = NodePath.join(
             tempDir,
-            "mise",
+            launcher === "custom-data" ? "managed-tools" : "mise",
             "installs",
             "native-package-tool",
             "1.0.0",
@@ -1665,7 +1745,15 @@ it.layer(
 
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           nativePackageToolUpdate,
-          { binaryPath: nativePath, env: { PATH: "" } },
+          {
+            binaryPath: nativePath,
+            env: {
+              PATH: "",
+              ...(launcher === "custom-data"
+                ? { MISE_DATA_DIR: NodePath.join(tempDir, "managed-tools") }
+                : {}),
+            },
+          },
         ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn));
 
         expect(capabilities.update).toBeNull();
@@ -2492,6 +2580,55 @@ it.layer(
           command: "volta install @example/package-tool@latest",
           lockKey: "volta",
         });
+      }),
+  );
+
+  it.effect.each([
+    { name: "Volta's script shim", script: "@echo off\r\nvolta run %~n0 %*\r\n", owned: true },
+    {
+      name: "a fixed-target wrapper",
+      script: '#!/bin/bash\nvolta run node /other/opencode/index.js "$@"\n',
+      owned: false,
+    },
+    {
+      name: "an unreachable forwarding line",
+      script: "@echo off\r\nexit /b 0\r\nvolta run %~n0 %*\r\n",
+      owned: false,
+    },
+    {
+      name: "Volta's bash shim without a final newline",
+      script: '#!/bin/bash\nvolta run "$(basename $0)" "$@"',
+      owned: true,
+    },
+  ])(
+    "updates Windows Volta installs from $name only when Volta has the package",
+    ({ script, owned }) =>
+      Effect.gen(function* () {
+        const voltaHome = NodePath.join(yield* makeTempDir("t3-volta-windows"), "Volta");
+        const shim = NodePath.join(voltaHome, "bin", "package-tool.CMD");
+        NodeFS.mkdirSync(NodePath.dirname(shim), { recursive: true });
+        NodeFS.writeFileSync(shim, script);
+        const resolve = resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
+          binaryPath: shim,
+          env: { PATH: "" },
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        );
+
+        expect((yield* resolve).update).toBeNull();
+        NodeFS.mkdirSync(
+          NodePath.join(voltaHome, "tools", "image", "packages", "@example", "package-tool"),
+          { recursive: true },
+        );
+        expect((yield* resolve).update).toEqual(
+          owned
+            ? expect.objectContaining({
+                command: "volta install @example/package-tool@latest",
+                lockKey: "volta",
+              })
+            : null,
+        );
       }),
   );
 
