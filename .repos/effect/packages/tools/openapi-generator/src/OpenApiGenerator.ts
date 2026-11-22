@@ -10,20 +10,26 @@
  *
  * @since 4.0.0
  */
+import * as Codegen from "effect/Codegen"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import type { OpenAPISecurityScheme, OpenAPISpec, OpenAPISpecOperation } from "effect/http-api/OpenApi"
+import type {
+  OpenAPISecurityScheme,
+  OpenAPISpec,
+  OpenAPISpecOperation,
+  OpenAPISpecPathItem
+} from "effect/http-api/OpenApi"
 import type { HttpMethod } from "effect/http/HttpMethod"
 import * as JsonPointer from "effect/JsonPointer"
 import type * as JsonSchema from "effect/JsonSchema"
 import * as Layer from "effect/Layer"
 import * as Predicate from "effect/Predicate"
 import * as Rec from "effect/Record"
-import * as String from "effect/String"
 import SwaggerToOpenApi from "swagger2openapi"
 import * as HttpApiTransformer from "./HttpApiTransformer.ts"
+import * as HttpClientGenerator from "./internal/httpClient.ts"
+import * as InternalJsonPointer from "./internal/jsonPointer.ts"
 import * as JsonSchemaGenerator from "./JsonSchemaGenerator.ts"
-import * as OpenApiTransformer from "./OpenApiTransformer.ts"
 import * as ParsedOperation from "./ParsedOperation.ts"
 import * as Utils from "./Utils.ts"
 
@@ -150,6 +156,14 @@ export interface OpenApiGenerateOptions {
    */
   readonly onEnter?: ((js: JsonSchema.JsonSchema) => JsonSchema.JsonSchema) | undefined
   /**
+   * Closes objects with declared properties when every contributing object schema omits `additionalProperties`.
+   * Closing happens after composition is normalized, preserving inherited fields.
+   * Explicit additional-property declarations and free-form objects are preserved.
+   *
+   * @stability experimental
+   */
+  readonly closeObjects?: boolean | undefined
+  /**
    * Component schemas to generate even when no operation references them.
    */
   readonly includeSchemas?: ReadonlyArray<string> | undefined
@@ -189,7 +203,6 @@ export const make = Effect.gen(function*() {
   const generate = Effect.fn(
     function*(spec: OpenAPISpec, options: OpenApiGenerateOptions) {
       const generator = JsonSchemaGenerator.make()
-      const openApiTransformer = yield* OpenApiTransformer.OpenApiTransformer
       const emitWarning = makeWarningEmitter(options)
 
       if (isSwaggerSpec(spec)) {
@@ -215,38 +228,55 @@ export const make = Effect.gen(function*() {
       const source = getDialect(spec)
       const schemaOptions = {
         onEnter: options.onEnter,
+        closeObjects: options.closeObjects,
         multipartSchemaRefs: multipart.refs,
+        binarySchemas: new Set(parsed.operations.flatMap((operation) =>
+          [
+            ...operation.requestBodyRepresentable,
+            ...operation.responses.flatMap((response) => response.representable)
+          ].flatMap((media) => media.encoding === "binary" && media.effectStream === undefined ? [media.schema] : [])
+        )),
         includeSchemas: options.includeSchemas
       }
-      const generation = options.format === "httpapi"
-        ? generator.generateHttpApi(source, multipart.definitions, schemaOptions)
-        : generator.generate(source, multipart.definitions, options.format === "httpclient-type-only", schemaOptions)
-
-      if (options.format === "httpapi") {
-        const needsMultipartImport = generation.includes("Multipart.")
-        return String.stripMargin(
-          `|${HttpApiTransformer.imports(importName, { multipart: needsMultipartImport })}
-           |${generation}
-           |${HttpApiTransformer.toImplementation(importName, options.name, parsed)}`
+      const module = new Codegen.Module(
+        options.format === "httpapi" ? ["ReadonlyArray"] : [
+          "Array",
+          "Object",
+          "String",
+          "TypeError",
+          "JSON",
+          "Uint8Array",
+          "ReadonlyArray",
+          "Record",
+          "Parameters",
+          "encodeURIComponent"
+        ]
+      )
+      const registration = options.format === "httpapi"
+        ? HttpApiTransformer.registerModule(module, importName, options.name, parsed)
+        : HttpClientGenerator.registerModule(
+          module,
+          importName,
+          options.name,
+          parsed,
+          options.format === "httpclient-type-only"
         )
-      }
-
-      return String.stripMargin(
-        `|${openApiTransformer.imports(importName, parsed)}
-         |${generation}
-         |${openApiTransformer.toImplementation(importName, options.name, parsed)}
-         |
-         |${openApiTransformer.toTypes(importName, options.name, parsed)}`
+      const schemas = JsonSchemaGenerator.compile(
+        module,
+        generator.schemas,
+        source,
+        multipart.definitions,
+        options.format === "httpclient-type-only",
+        schemaOptions
       )
-    },
-    (effect, _, options) =>
-      Effect.provideServiceEffect(
-        effect,
-        OpenApiTransformer.OpenApiTransformer,
-        options.format === "httpclient-type-only"
-          ? Effect.sync(OpenApiTransformer.makeTransformerTs)
-          : Effect.sync(OpenApiTransformer.makeTransformerSchema)
-      )
+      const bound = ParsedOperation.mapSchemas(parsed, (name) => {
+        const binding = schemas.get(name)
+        if (binding === undefined) throw new Error(`Missing schema ${name}`)
+        return binding
+      })
+      module.add(Codegen.deferred((render) => render(registration(ParsedOperation.mapSchemas(bound, render)))))
+      return module.print()
+    }
   )
 
   return { generate } as const
@@ -269,6 +299,7 @@ const parseOpenApi = (
   const operations: Array<ParsedOperation.ParsedOperation> = []
   const reservedSchemaNames = new Set<string>(Object.keys(spec.components?.schemas ?? {}))
   const isHttpApi = format === "httpapi"
+  const dialect = getDialect(spec)
   const securitySchemes = isHttpApi ? parseSecuritySchemes(spec, resolveRef) : []
 
   const addSchema = (
@@ -292,12 +323,11 @@ const parseOpenApi = (
     return generator.addSchema(candidate, schema)
   }
 
-  for (const [path, methods] of Object.entries(spec.paths)) {
-    const pathItem: Partial<Record<Lowercase<HttpMethod>, OpenAPISpecOperation>> = methods
+  for (const [path, entry] of Object.entries(spec.paths)) {
+    if (!path.startsWith("/")) continue
+    const pathItem = resolvePathItem(spec, entry)
     for (const method of methodNames) {
-      const operation = method === "query"
-        ? pathItem.query ?? methods["x-oai-additionalOperations"]?.QUERY
-        : pathItem[method]
+      const operation = pathItem[method]
       if (Predicate.isUndefined(operation)) {
         continue
       }
@@ -307,7 +337,12 @@ const parseOpenApi = (
 
       const description = Utils.nonEmptyString(operation.description) ?? Utils.nonEmptyString(operation.summary)
 
-      const { pathIds, pathTemplate } = processPath(path)
+      const parameters = resolveOperationParameters(
+        Array.isArray(pathItem.parameters) ? pathItem.parameters : undefined,
+        Array.isArray(operation.parameters) ? operation.parameters : undefined,
+        resolveRef
+      )
+      const { pathIds, pathSchema, pathTemplate } = processPath(path, isHttpApi ? [] : parameters)
 
       const op = ParsedOperation.makeDeepMutable({
         id,
@@ -341,14 +376,6 @@ const parseOpenApi = (
 
       const schemaId = Utils.identifier(operation.operationId ?? path)
 
-      const pathParameters = Array.isArray(methods.parameters)
-        ? methods.parameters
-        : undefined
-      const parameters = resolveOperationParameters(
-        pathParameters,
-        Array.isArray(operation.parameters) ? operation.parameters : undefined,
-        resolveRef
-      )
       const droppedCookies = new Set<OpenApiParameter>()
       for (const parameter of parameters) {
         const parsedParameter: ParsedOperation.ParsedOperationParameter = {
@@ -457,6 +484,8 @@ const parseOpenApi = (
           op.headersSchema = addSchema(`${schemaId}Headers`, headerParameterSchema.schema, op)
           op.headersSchemaOptional = headerParameterSchema.optional
         }
+      } else if (pathSchema !== undefined) {
+        op.pathSchema = addSchema(`${schemaId}PathParams`, pathSchema, op)
       }
 
       if (Predicate.isNotUndefined(requestBody) && Predicate.isObject(requestBody)) {
@@ -494,13 +523,16 @@ const parseOpenApi = (
         }
 
         if (Predicate.isNotUndefined(content["application/x-www-form-urlencoded"]?.schema)) {
-          op.payload = addSchema(
+          const schemaName = addSchema(
             `${schemaId}RequestFormUrlEncoded`,
             content["application/x-www-form-urlencoded"].schema,
             op
           )
-          op.payloadFormUrlEncoded = true
-          requestSchemaNames.set("application/x-www-form-urlencoded", op.payload)
+          requestSchemaNames.set("application/x-www-form-urlencoded", schemaName)
+          if (!op.payloadFormData) {
+            op.payload = schemaName
+            op.payloadFormUrlEncoded = true
+          }
         }
 
         if (isHttpApi) {
@@ -684,7 +716,7 @@ const parseOpenApi = (
                 effectStream: "sse",
                 schema: addSchema(
                   `${schemaId}${status}Sse`,
-                  mediaType.schema as JsonSchema.JsonSchema,
+                  normalizeSseEventSchema(mediaType.schema as JsonSchema.JsonSchema, resolveRef, dialect),
                   op
                 ),
                 errorSchema: addSchema(
@@ -770,7 +802,7 @@ const parseOpenApi = (
             `${schemaId}${status}Sse`,
             httpClientResponses.sseSchemaMode === "event"
               ? makeSseEventSchema(
-                resolveReference(sseResponseSchema, resolveRef),
+                normalizeSseEventSchema(sseResponseSchema, resolveRef, dialect),
                 effectStream?.encoding === "sse" ? effectStream.failureEvent : undefined
               )
               : sseResponseSchema,
@@ -838,6 +870,31 @@ const isOpenApiParameter = (parameter: unknown): parameter is OpenApiParameter =
     typeof parameter.name === "string" &&
     (parameter.in === "path" || parameter.in === "query" || parameter.in === "header" || parameter.in === "cookie")
   )
+}
+
+type PathItem = OpenAPISpecPathItem & Partial<Record<Lowercase<HttpMethod>, OpenAPISpecOperation>>
+
+const normalizeQuery = (item: PathItem): PathItem => {
+  const query = item["x-oai-additionalOperations"]?.QUERY
+  return item.query == null && query !== undefined ? { ...item, query } : item
+}
+
+const resolvePathItem = (spec: OpenAPISpec, entry: OpenAPISpecPathItem): PathItem => {
+  const item: PathItem = {}
+  const seen = new Set<string>()
+  let current: unknown = entry
+  while (Predicate.isObject(current)) {
+    // Fields closer to the route take precedence over inherited fields.
+    for (const [key, value] of Object.entries(normalizeQuery(current as PathItem))) {
+      if (!Object.hasOwn(item, key)) Rec.assignProperty(item, key, value)
+    }
+    const ref = current.$ref
+    if (typeof ref !== "string" || seen.has(ref)) break
+    seen.add(ref)
+    const tokens = JsonPointer.parseUriFragment(ref)
+    current = tokens?.length ? InternalJsonPointer.lookup(spec, tokens) : undefined
+  }
+  return item
 }
 
 const resolveOperationParameters = (
@@ -1271,10 +1328,9 @@ const getEffectStreamErrorSchema = (mediaType: object): JsonSchema.JsonSchema | 
 }
 
 const makeSseEventSchema = (
-  input: JsonSchema.JsonSchema,
+  eventSchema: JsonSchema.JsonSchema,
   failureEvent: string | undefined
 ): JsonSchema.JsonSchema => {
-  const eventSchema = normalizeSseEventSchema(input)
   if (failureEvent === undefined) {
     return eventSchema
   }
@@ -1285,7 +1341,7 @@ const makeSseEventSchema = (
         type: "object",
         properties: {
           id: { type: "string" },
-          event: { const: failureEvent },
+          event: { enum: [failureEvent] },
           data: { type: "string" }
         },
         required: ["event", "data"],
@@ -1295,32 +1351,49 @@ const makeSseEventSchema = (
   }
 }
 
-const normalizeSseEventSchema = (input: JsonSchema.JsonSchema): JsonSchema.JsonSchema => {
-  const schema = { ...input } as Record<string, any>
-  for (const key of ["allOf", "anyOf", "oneOf"] as const) {
-    if (Array.isArray(schema[key])) {
-      schema[key] = schema[key].map(normalizeSseEventSchema)
+const normalizeSseEventSchema = (
+  root: JsonSchema.JsonSchema,
+  resolveRef: (ref: string) => unknown,
+  dialect: ReturnType<typeof getDialect>
+): JsonSchema.JsonSchema => {
+  const go = (input: JsonSchema.JsonSchema, ancestors: ReadonlySet<unknown>): JsonSchema.JsonSchema => {
+    if (ancestors.has(input)) return input
+    const nextAncestors = new Set(ancestors).add(input)
+    const schema = { ...input } as Record<string, any>
+    if (typeof schema.$ref === "string") {
+      const { $ref, ...siblings } = schema
+      const target = go(resolveRef($ref) as JsonSchema.JsonSchema, nextAncestors)
+      // OpenAPI 3.0 ignores reference siblings. In 3.1 they constrain the target; neither side overrides the other.
+      return dialect === "openapi-3.0" || Object.keys(siblings).length === 0
+        ? target
+        : { allOf: [target, go(siblings, nextAncestors)] }
     }
-  }
-  if (
-    schema.type !== "object" ||
-    !Predicate.isObject(schema.properties) ||
-    !Object.hasOwn(schema.properties, "id") ||
-    !Object.hasOwn(schema.properties, "event") ||
-    !Object.hasOwn(schema.properties, "data")
-  ) {
+    for (const key of ["allOf", "anyOf", "oneOf"] as const) {
+      if (Array.isArray(schema[key])) {
+        schema[key] = schema[key].map((member) => go(member, nextAncestors))
+      }
+    }
+    if (
+      schema.type !== "object" ||
+      !Predicate.isObject(schema.properties) ||
+      !Object.hasOwn(schema.properties, "id") ||
+      !Object.hasOwn(schema.properties, "event") ||
+      !Object.hasOwn(schema.properties, "data")
+    ) {
+      return schema as JsonSchema.JsonSchema
+    }
+
+    // OpenAPI represents `undefined` as required nullable; restore the SSE parser's optional wire field.
+    schema.properties = {
+      ...schema.properties,
+      id: { type: "string" }
+    }
+    if (Array.isArray(schema.required)) {
+      schema.required = schema.required.filter((name: unknown) => name !== "id")
+    }
     return schema as JsonSchema.JsonSchema
   }
-
-  // OpenAPI represents `undefined` as required nullable; restore the SSE parser's optional wire field.
-  schema.properties = {
-    ...schema.properties,
-    id: { type: "string" }
-  }
-  if (Array.isArray(schema.required)) {
-    schema.required = schema.required.filter((name: unknown) => name !== "id")
-  }
-  return schema as JsonSchema.JsonSchema
+  return go(root, new Set())
 }
 
 const primitiveSchemaTypes = new Set(["string", "number", "integer", "boolean", "null"])
@@ -1566,21 +1639,38 @@ const convertSwaggerSpec = Effect.fn((spec: OpenAPISpec) =>
   }).pipe(Effect.withSpan("OpenApi.convertSwaggerSpec"))
 )
 
-const processPath = (path: string): {
+const processPath = (path: string, parameters: ReadonlyArray<OpenApiParameter>): {
   readonly pathIds: Array<string>
   readonly pathTemplate: string
+  readonly pathSchema: JsonSchema.JsonSchema | undefined
 } => {
   const pathIds: Array<string> = []
   const fragments: Array<string> = []
+  const properties: Record<string, JsonSchema.JsonSchema> = {}
+  const required: Array<string> = []
   let offset = 0
   for (const match of path.matchAll(/{([^}]+)}/g)) {
     fragments.push(JSON.stringify(path.slice(offset, match.index)))
-    const id = Utils.camelize(match[1])
+    const name = match[1]
+    const parameter = parameters.find((parameter) => parameter.in === "path" && parameter.name === name)
+    const style = parameter?.style ?? "simple"
+    if (style !== "simple" && style !== "label" && style !== "matrix") {
+      throw new Error(`Unsupported path parameter style "${style}" for "${name}" in "${path}"`)
+    }
+    const id = Utils.camelize(name)
     pathIds.push(id)
-    fragments.push(`__encodePathParam(${id})`)
+    fragments.push(
+      `__encodePathParam(${JSON.stringify(name)}, ${id}, ${JSON.stringify(style)}, ${parameter?.explode === true})`
+    )
+    Rec.assignProperty(properties, name, parameter?.schema as JsonSchema.JsonSchema ?? { type: "string" })
+    required.push(name)
     offset = match.index + match[0].length
   }
   fragments.push(JSON.stringify(path.slice(offset)))
   const pathTemplate = fragments.join(" + ")
-  return { pathIds, pathTemplate } as const
+  return {
+    pathIds,
+    pathTemplate,
+    pathSchema: pathIds.length === 0 ? undefined : { type: "object", properties, required, additionalProperties: false }
+  }
 }

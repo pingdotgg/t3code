@@ -5,8 +5,12 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
+  ScheduledTaskId,
+  type ScheduledTask,
 } from "@t3tools/contracts";
 import {
+  createDraft,
+  editDraft,
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
@@ -206,4 +210,38 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
+});
+
+describe("scheduled task worktree base", () => {
+  const rootTask = {
+    id: ScheduledTaskId.make("task"),
+    title: "Review issues",
+    prompt: "Review open issues",
+    enabled: true,
+    schedule: { type: "interval", everyMs: 60_000 },
+    projectId: ProjectId.make("project"),
+    threadId: null,
+    workspaceStrategy: { type: "root" },
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    createdBy: "user",
+    creationSource: "mobile",
+    createdAt: "2026-09-17T00:00:00.000Z",
+    updatedAt: "2026-09-17T00:00:00.000Z",
+    nextRunAt: null,
+    lastRunAt: null,
+    lastRunStatus: "never",
+    lastRunError: null,
+    runCount: 0,
+  } satisfies ScheduledTask;
+
+  it("leaves the base automatic for new tasks and tasks without a worktree", () => {
+    expect(createDraft(ProjectId.make("project"), null).baseRef).toBe("");
+    expect(editDraft(rootTask).baseRef).toBe("");
+    expect(
+      editDraft({ ...rootTask, workspaceStrategy: { type: "worktree", baseRef: "release" } })
+        .baseRef,
+    ).toBe("release");
+  });
 });
