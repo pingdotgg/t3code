@@ -229,6 +229,16 @@ function PullRequestIdentity(props: {
             <Text className={`text-xs font-t3-medium ${status.text}`}>{status.label}</Text>
           </View>
         )}
+        {"visibility" in pr && pr.visibility === "private" ? (
+          <View className="flex-row items-center gap-1">
+            <SymbolView
+              name={PullRequestGlyph.private}
+              size={12}
+              tintColorClassName="accent-icon-muted"
+            />
+            <Text className="text-xs font-t3-medium text-foreground-muted">{gt("Private")}</Text>
+          </View>
+        ) : null}
         <PullRequestDiffStats additions={pr.additions ?? 0} deletions={pr.deletions ?? 0} compact />
         {"changedFiles" in pr && pr.changedFiles !== undefined ? (
           <Text className="text-2xs text-foreground-muted">
@@ -259,20 +269,6 @@ function PullRequestIdentity(props: {
         </Text>
       </View>
       <View className="flex-row items-start gap-1.5">
-        {"visibility" in pr && pr.visibility === "private" ? (
-          <View
-            className="pt-0.5"
-            accessible
-            accessibilityRole="image"
-            accessibilityLabel={gt("Private")}
-          >
-            <SymbolView
-              name={PullRequestGlyph.private}
-              size={11}
-              tintColorClassName="accent-icon-muted"
-            />
-          </View>
-        ) : null}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={gt("Copy base branch {branch}", { branch: pr.baseBranch })}
