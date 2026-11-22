@@ -12,7 +12,7 @@ export function SheetIntro(props: SheetIntroProps) {
           {props.eyebrow}
         </Text>
       ) : null}
-      <Text className="text-center text-3xl font-t3-bold">{props.title}</Text>
+      <Text className="text-center text-3xl font-display-bold">{props.title}</Text>
       <Text className="text-center text-sm font-medium leading-normal text-foreground-secondary">
         {props.description}
       </Text>

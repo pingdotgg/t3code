@@ -1,16 +1,21 @@
 import { Platform, Text as NativeText, View } from "react-native";
 
 import { cn } from "../../lib/cn";
+import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { MOBILE_CODE_SURFACE } from "../../lib/typography";
 
 import type { ReviewRenderableLineRow } from "./reviewModel";
 import type { ReviewHighlightedToken } from "./reviewHighlightedToken.types";
 
-export const REVIEW_MONO_FONT_FAMILY = Platform.select({
-  ios: "ui-monospace",
-  android: "monospace",
-  default: "monospace",
-});
+export const REVIEW_MONO_FONT_FAMILY =
+  FONT_FAMILIES.mono ??
+  Platform.select({
+    ios: "ui-monospace",
+    android: "monospace",
+    default: "monospace",
+  });
+// Diff text renders at 500; a named face keeps Android from synthesizing the weight.
+const REVIEW_MONO_MEDIUM_FONT_FAMILY = FONT_FAMILIES.monoMedium ?? REVIEW_MONO_FONT_FAMILY;
 
 const REVIEW_DIFF_LINE_HEIGHT = MOBILE_CODE_SURFACE.rowHeight;
 
@@ -123,7 +128,8 @@ export function DiffTokenText(props: {
               selectable
               style={{
                 color: token.color ?? undefined,
-                fontFamily: REVIEW_MONO_FONT_FAMILY,
+                fontFamily:
+                  fontWeight === "500" ? REVIEW_MONO_MEDIUM_FONT_FAMILY : REVIEW_MONO_FONT_FAMILY,
                 fontWeight,
                 fontStyle,
                 backgroundColor:

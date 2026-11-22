@@ -21,7 +21,7 @@ export type MobileThemeRuntimeOperation =
   | {
       readonly kind: "update-text-variables";
       readonly themeName: "light" | "dark" | MobileUniwindThemeName;
-      readonly variables: Readonly<Record<string, number>>;
+      readonly variables: Readonly<Record<string, number | string>>;
     }
   | {
       readonly kind: "set-appearance-mode";
@@ -47,14 +47,16 @@ export function getMobileUniwindThemeName(
     : `${themeId}-${appearance}`;
 }
 
+/** `fontVariables` are the build's font family overrides, sent with the text scale. */
 export function createMobileThemeRuntimeOperations(
   previous: MobileThemeRuntimeState | null,
   next: MobileThemeRuntimeState,
+  fontVariables: Readonly<Record<string, string>> = {},
 ): ReadonlyArray<MobileThemeRuntimeOperation> {
   const operations: MobileThemeRuntimeOperation[] = [];
 
   if (previous === null || previous.baseFontSize !== next.baseFontSize) {
-    const variables = resolveTextScaleVariables(next.baseFontSize);
+    const variables = { ...resolveTextScaleVariables(next.baseFontSize), ...fontVariables };
     for (const themeName of UNIWIND_THEME_NAMES) {
       operations.push({ kind: "update-text-variables", themeName, variables });
     }

@@ -56,6 +56,7 @@ import {
 import { useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { FONT_FAMILIES } from "../../lib/fontFamilies";
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentScope } from "../../state/session";
@@ -639,7 +640,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
                     ? selectedThreadRowColors.mutedForegroundClassName
                     : rowAppearance.mutedForegroundClassName,
                 )}
-                style={{ fontFamily: MONO_FONT }}
+                style={{ fontFamily: FONT_FAMILIES.mono ?? MONO_FONT }}
               >
                 {branch}
               </Text>
@@ -1524,7 +1525,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             <Text
               accessibilityLabel={pr.accessibilityLabel}
               className={cn("text-xs", pr.textClassName)}
-              style={{ fontFamily: MONO_FONT }}
+              style={{ fontFamily: FONT_FAMILIES.mono ?? MONO_FONT }}
             >
               {pr.label}
             </Text>
@@ -1687,7 +1688,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   ? rowAppearance.mutedForegroundClassName
                   : rowAppearance.tertiaryForegroundClassName,
             )}
-            style={{ fontFamily: MONO_FONT }}
+            style={{ fontFamily: FONT_FAMILIES.mono ?? MONO_FONT }}
           >
             {snoozedRow && snoozeWakeLabelText !== undefined ? snoozeWakeLabelText : timeLabel}
           </Text>

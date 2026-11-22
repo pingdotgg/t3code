@@ -168,6 +168,29 @@
       ]
     },
     {
+      "bundles": ["android", "assets", "ios", "mobile"],
+      "license": "OFL-1.1",
+      "name": "Inter",
+      "noticeFile": "apps/mobile/assets/fonts/inter/OFL.txt",
+      "sourceUrl": "https://github.com/rsms/inter/releases/tag/v4.1",
+      "version": "4.1"
+    },
+    {
+      "bundles": ["android", "assets", "ios", "mobile"],
+      "license": "OFL-1.1",
+      "name": "JetBrains Mono",
+      "noticeFile": "apps/mobile/assets/fonts/jetbrains-mono/OFL.txt",
+      "sourceUrl": "https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304",
+      "version": "2.304"
+    },
+    {
+      "bundles": ["android", "assets", "ios", "mobile"],
+      "license": "OFL-1.1",
+      "name": "Outfit",
+      "noticeFile": "apps/mobile/assets/fonts/outfit/OFL.txt",
+      "sourceUrl": "https://github.com/Outfitio/Outfit-Fonts/tree/902773808eb372f70fb34e8946dd1ffe604efc79"
+    },
+    {
       "bundles": ["android", "assets", "mobile"],
       "license": "Apache-2.0",
       "name": "MesloLGS NF",

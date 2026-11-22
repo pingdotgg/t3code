@@ -35,6 +35,7 @@ import { useRetryingImageSource } from "./useRetryingImageSource";
 import * as Dialog from "../components/ui/Dialog";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import type { HighlightScheme } from "../lib/highlights";
+import { FONT_FAMILIES } from "../lib/fontFamilies";
 import {
   ENRICHED_INLINE_FILE_LINK_REGEX,
   enrichedTextLinkRegex,
@@ -48,7 +49,7 @@ function enrichedStyle(
   dark: boolean,
   fontScale: number,
 ): MarkdownStyle {
-  const monospace = Platform.OS === "ios" ? "Menlo" : "monospace";
+  const monospace = FONT_FAMILIES.mono ?? (Platform.OS === "ios" ? "Menlo" : "monospace");
   // Keep the radius modest: iOS clips square table-cell borders without stroking the corner arcs.
   const block = {
     marginTop: 4,
