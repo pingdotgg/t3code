@@ -34,7 +34,14 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { nextPoolReset, poolSources, resolveThreadDetailsLimits } from "./ThreadDetailsUsage.logic";
+import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./threadDetailsPanelStyles";
+import {
+  foldLimitRows,
+  limitTone,
+  nextPoolReset,
+  poolSources,
+  resolveThreadDetailsLimits,
+} from "./ThreadDetailsUsage.logic";
 
 const USAGE_ROW_CLASS =
   "col-span-full grid min-w-0 grid-cols-subgrid items-center gap-x-1.5 text-meta";
@@ -51,13 +58,7 @@ export interface ThreadDetailsUsageInput {
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
 }
-type UsageTone = "error" | "warning" | null;
-
-function limitTone(left: number): UsageTone {
-  if (left <= 10) return "error";
-  if (left <= 20) return "warning";
-  return null;
-}
+type UsageTone = ReturnType<typeof limitTone>;
 
 /** Provider limits share the canvas's icon and label columns; each row opens the usage page. */
 export function ThreadDetailsUsage({
@@ -80,16 +81,24 @@ export function ThreadDetailsUsage({
         ? limitsNotice(limits, m)
         : null;
   const pool = resolved?.kind === "pool" ? resolved.windows : undefined;
+  const driver = providers.find((provider) => provider.instanceId === providerInstanceId)?.driver;
+  const [folded, setFolded] = useLocalStorage(
+    "thread-details:collapsed:Other limits",
+    true,
+    Schema.Boolean,
+  );
   const rows = pool
     ? pool.map((pooled) => {
         const from = poolSources(pooled);
         return {
+          driver: pooled.members[0]?.account.driver ?? driver,
           window: pooledWindow(pooled, now),
           accounts: pooled.members.length,
           sources: [...from.hubs, ...(from.signedIn ? [gt("Signed-in accounts")] : [])],
         };
       })
-    : (limits?.windows ?? []).map((window) => ({ window, accounts: 1, sources: [] }));
+    : (limits?.windows ?? []).map((window) => ({ driver, window, accounts: 1, sources: [] }));
+  const fold = foldLimitRows(rows, model);
   const poolNotice =
     providerInstanceId !== null && ownNotice !== null && !pool
       ? limitPoolNotice(providerInstanceId, providers, sources)
@@ -113,7 +122,7 @@ export function ThreadDetailsUsage({
         />
       ) : (
         <>
-          {rows.map(({ window, accounts, sources }) => (
+          {(folded ? fold.shown : rows).map(({ window, accounts, sources }) => (
             <LimitRow
               key={window.id}
               window={window}
@@ -122,6 +131,21 @@ export function ThreadDetailsUsage({
               sources={sources}
             />
           ))}
+          {fold.hidden.length > 0 ? (
+            <ThreadDetailsControl
+              size="sm"
+              variant="ghost"
+              part="row"
+              tone="muted"
+              aria-expanded={!folded}
+              onClick={() => setFolded(!folded)}
+              className="col-span-full"
+            >
+              <span className={cn("ms-3", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                {folded ? gt("Show {count} more", { count: fold.hidden.length }) : gt("Show fewer")}
+              </span>
+            </ThreadDetailsControl>
+          ) : null}
         </>
       )}
     </ThreadDetailsSection>
