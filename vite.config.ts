@@ -184,6 +184,8 @@ export default defineConfig({
       ".repos/**",
       // The Conn Server (Rust) formats and checks itself (apps/conn-server/tools/check.sh).
       "apps/conn-server/**",
+      // So does the GPUI desktop client (apps/conn-gpui/scripts/check.sh).
+      "apps/conn-gpui/**",
       "infra/task-cache/vendor/**",
       // Macroscope requires one glob per line; Markdown formatting corrupts it.
       ".macroscope/ignore.md",
@@ -221,6 +223,7 @@ export default defineConfig({
       ".repos",
       ".repos/**",
       "apps/conn-server/**",
+      "apps/conn-gpui/**",
       "infra/task-cache/vendor/**",
       "dist",
       "dist-electron",

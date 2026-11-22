@@ -13,6 +13,8 @@ const INERT = [
   // The Conn Server (Rust) has its own workflows (conn-server-*.yml); no Conn job reads it.
   /^apps\/conn-server\//,
   /^\.github\/workflows\/conn-server-/,
+  // The GPUI desktop client (Rust) checks itself with apps/conn-gpui/scripts/check.sh.
+  /^apps\/conn-gpui\//,
 ];
 
 // Shared test setup and vendored mobile dependencies affect every package.

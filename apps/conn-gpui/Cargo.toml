@@ -1,0 +1,116 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = [".refs", "vendor"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+rust-version = "1.95"
+
+[workspace.dependencies]
+# Local workspace crates
+conn-client = { path = "crates/conn-client" }
+conn-desktop = { path = "crates/conn-desktop" }
+conn-state = { path = "crates/conn-state" }
+conn-theme = { path = "crates/conn-theme" }
+conn-web = { path = "crates/conn-web" }
+
+# Shared wire and contract crates from the sibling conn-server app in this monorepo.
+conn-wire = { path = "../conn-server/crates/conn-wire" }
+conn-contract = { path = "../conn-server/crates/conn-contract" }
+
+# GPUI + UI component kit (pinned to match .refs/threadbear/desktop/gpui/Cargo.toml)
+# Note: if macOS polish patches are needed, vendor into vendor/ and add [patch.crates-io]
+# following .refs/threadbear/desktop/Cargo.toml.
+gpui-kit = { version = "=0.9.0", features = ["syntect"] }
+rust-embed = { version = "=8.13.0", features = ["debug-embed"] }
+markdown = "=1.0.0"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "gif", "ico"] }
+alacritty_terminal = { version = "=0.26.0", default-features = false }
+raw-window-handle = "=0.6.2"
+
+# Async, networking, serialization, errors
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+tempfile = "=3.27.0"
+thiserror = "2"
+futures = "=0.3.34"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros"] }
+tokio-tungstenite = "0.29"
+tracing = "=0.1.44"
+url = "2"
+
+# Embedded Chromium (CEF-on-demand, feature-gated in conn-web; pinned to match .refs/threadbear)
+bzip2 = "=0.6.1"
+cc = "=1.11.3"
+cef = { version = "=156.4.0", default-features = false }
+cef-dll-sys = { version = "=156.4.0", features = ["dox"] }
+libc = "=0.2.191"
+sha1 = "=0.10.7"
+sha2 = "=0.10.9"
+tar = { version = "=0.4.46", default-features = false }
+ureq = { version = "=3.5.1", default-features = false, features = ["rustls"] }
+
+# BeautifulRust + Threadbear lint set.
+# `unsafe_code` is forbidden per-crate in conn-client, conn-state, and conn-theme;
+# conn-app (AppKit shims) and conn-web (CEF FFI) require `// SAFETY:` on every block.
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+rc_mutex = "deny"
+redundant_clone = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+unwrap_used = "warn"
+expect_used = "warn"
+panic_in_result_fn = "warn"
+string_add = "warn"
+missing_assert_message = "warn"
+rc_buffer = "warn"
+large_futures = "warn"
+# GPUI callback types and enum variants follow Zed/Threadbear conventions.
+type_complexity = "allow"
+large_enum_variant = "allow"
+
+[profile.dev]
+# Keep GPUI + dependencies snappy while iterating on workspace crates.
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# Optimize wire decoding and state reducers even in dev/hot-reload builds so large
+# thread snapshots decode at full speed while conn-app stays opt-level = 0 for fast hot-patches.
+[profile.dev.package.conn-client]
+opt-level = 2
+
+[profile.dev.package.conn-state]
+opt-level = 2
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+strip = true
+
+[patch.crates-io]
+# gpui-pre-macos 0.3.11 as published, plus Threadbear's patch (vendor/gpui-pre-macos/src/window.rs,
+# another_view_has_the_keyboard): with a native view holding the keyboard (an embedded web page),
+# keys without Cmd or Control go to that view rather than a hidden GPUI text box.
+# conn-gpui also paces frames with CVDisplayLink instead of CAMetalDisplayLink (window.rs, at
+# `metal_frames`): under the Metal link, frames drawn during key dispatch stayed off screen until
+# the next mouse event (2026-11-21, reproduced in nick-vm). CONN_GPUI_METAL_DISPLAY_LINK=1 opts back in.
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }

@@ -1,0 +1,28 @@
+[package]
+name = "conn-client"
+description = "Effect RPC WebSocket and HTTP client for conn-server."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-contract.workspace = true
+conn-wire.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+conn-state = { workspace = true, features = ["testkit"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

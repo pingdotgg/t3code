@@ -1,0 +1,3 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" data-slot="icon">
+  <path d="M4.75 5.854v7.396a.75.75 0 0 1-1.5 0V5.854a2 2 0 1 1 1.5 0ZM12 14a2 2 0 1 1 1.414-.586A2 2 0 0 1 12 14Zm.981-6.305A1 1 0 0 1 11 7.5V7a1 1 0 0 1 2 0v.5c0 .066-.006.131-.019.195Zm0-4A1 1 0 0 1 11 3.5V3a1 1 0 0 1 2 0v.5c0 .066-.006.131-.019.195Z"/>
+</svg>

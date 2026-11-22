@@ -1,0 +1,6 @@
+# Pinned reference commits used as inputs and Upstream Radar baselines for conn-gpui.
+# Advance pins via `scripts/radar.sh --bump <name>` after reviewing an Upstream Radar digest.
+# Conn itself (web, desktop, mobile, conn-server) is this monorepo, so it has no pin.
+t3code=316c3256a3a09cef7ed68914ebe74c7183ac08e1
+threadbear=7c9cbe3ffcffece79747c5fd8172ad44eb8c59d5
+rune=7a707454fbfb8d3fd200723c65778fb7b98fd31e
