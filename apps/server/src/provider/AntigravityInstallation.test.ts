@@ -1084,6 +1084,151 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       }),
   );
 
+  it.effect("reports a join when setup starts during another release lookup", () =>
+    Effect.gen(function* () {
+      const firstLookup = yield* Deferred.make<void>();
+      const resumeLookup = yield* Deferred.make<void>();
+      const downloading = yield* Deferred.make<void>();
+      let lookups = 0;
+      const { installation } = yield* makeHarness({
+        native: true,
+        platform: "win32",
+        archive: Buffer.from(serverContents),
+        beforeManifest: Effect.suspend(() =>
+          ++lookups === 1
+            ? Deferred.succeed(firstLookup, undefined).pipe(
+                Effect.andThen(Deferred.await(resumeLookup)),
+              )
+            : Effect.void,
+        ),
+        body: Stream.fromEffect(Deferred.succeed(downloading, undefined)).pipe(
+          Stream.flatMap(() => Stream.never),
+        ),
+      });
+      const starting = yield* installation.startOperation().pipe(Effect.forkScoped);
+      yield* Deferred.await(firstLookup);
+      const setup = yield* installation.start;
+      yield* Deferred.await(downloading);
+      yield* Deferred.succeed(resumeLookup, undefined);
+      expect(yield* Fiber.join(starting)).toMatchObject({
+        owned: false,
+        state: { operationId: setup.operationId, phase: "downloading" },
+      });
+      if (setup.operationId !== null) yield* installation.cancel(setup.operationId);
+    }),
+  );
+
+  it.effect("keeps the explicit offer when an older background lookup finishes last", () =>
+    Effect.gen(function* () {
+      const backgroundStarted = yield* Deferred.make<void>();
+      const finishBackground = yield* Deferred.make<void>();
+      let lookups = 0;
+      let channelVersion = "1.5.13";
+      const { installation } = yield* makeHarness({
+        native: true,
+        platform: "win32",
+        archive: Buffer.from(serverContents),
+        beforeManifest: Effect.suspend(() =>
+          ++lookups === 1
+            ? Deferred.succeed(backgroundStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(finishBackground)),
+              )
+            : Effect.void,
+        ),
+        nativeManifest: (manifest) => ({
+          ...manifest,
+          version: channelVersion,
+          url: manifest.url.replace(manifest.version, channelVersion),
+        }),
+      });
+      const background = yield* installation.checkForUpdate.pipe(Effect.forkScoped);
+      yield* Deferred.await(backgroundStarted);
+      yield* installation.refreshUpdate;
+      expect((yield* installation.state).version).toBe("1.5.13");
+
+      channelVersion = "1.5.12";
+      yield* Deferred.succeed(finishBackground, undefined);
+      yield* Fiber.join(background);
+      expect((yield* installation.state).version).toBe("1.5.13");
+    }),
+  );
+
+  it.effect("replaces a withdrawn offer with the eligible installed version", () =>
+    Effect.gen(function* () {
+      let channelVersion = "1.5.13";
+      const { installation } = yield* makeHarness({
+        native: true,
+        platform: "win32",
+        previous: true,
+        archive: Buffer.from(serverContents),
+        nativeManifest: (manifest) => ({
+          ...manifest,
+          version: channelVersion,
+          url: manifest.url.replace(manifest.version, channelVersion),
+        }),
+        manifest: Effect.succeed({
+          ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+          compatibility: [
+            {
+              driver: "antigravity",
+              t3CodeRange: ">=0.0.42",
+              ranges: [{ range: "1.5.14", status: "broken" }],
+            },
+          ],
+        }),
+      });
+      yield* installation.checkForUpdate;
+      expect((yield* installation.state).version).toBe("1.5.13");
+
+      channelVersion = "1.5.14";
+      yield* installation.refreshUpdate;
+      expect((yield* installation.state).version).toBe(previousVersion);
+      yield* installation.startOperation(previousVersion);
+      expect(yield* terminalState(installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: previousVersion,
+      });
+    }),
+  );
+
+  it.effect("refreshes within the background throttle and only starts the checked release", () =>
+    Effect.gen(function* () {
+      let channelVersion = "1.5.12";
+      const { installation, requests, stagingReleased } = yield* makeHarness({
+        native: true,
+        platform: "win32",
+        archive: Buffer.from(serverContents),
+        nativeManifest: (manifest) => ({
+          ...manifest,
+          version: channelVersion,
+          url: manifest.url.replace(manifest.version, channelVersion),
+        }),
+      });
+      yield* installation.checkForUpdate;
+      expect((yield* installation.state).version).toBe("1.5.12");
+
+      channelVersion = "1.5.13";
+      yield* installation.checkForUpdate;
+      expect((yield* installation.state).version).toBe("1.5.12");
+      yield* installation.refreshUpdate;
+      expect((yield* installation.state).version).toBe("1.5.13");
+      expect(yield* installation.startOperation("1.5.12").pipe(Effect.flip)).toMatchObject({
+        operation: "start",
+        detail: expect.stringContaining("release changed"),
+      });
+      expect((yield* installation.state).operationId).toBeNull();
+      expect(requests).toHaveLength(2);
+
+      channelVersion = "1.5.14";
+      yield* installation.startOperation("1.5.13");
+      expect(yield* terminalState(installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.5.13",
+      });
+      yield* Deferred.await(stagingReleased);
+    }),
+  );
+
   it.effect("keeps leased releases available while new sessions resolve the new release", () =>
     Effect.gen(function* () {
       const manifestEntered = yield* Deferred.make<void>();

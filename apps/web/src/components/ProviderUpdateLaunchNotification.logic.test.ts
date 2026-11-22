@@ -130,6 +130,28 @@ describe("provider update launch notification logic", () => {
     ).toBe(true);
   });
 
+  it("offers one-click updates for a runtime the server installs, which has no command", () => {
+    const managed = updateCandidate({ driver: driver("antigravity"), updateCommand: null });
+    const ownExecutable = provider({
+      driver: driver("antigravity"),
+      instanceId: instanceId("antigravity_custom"),
+      latestVersion: null,
+      advisoryStatus: "unknown",
+      canUpdate: false,
+      updateCommand: null,
+    });
+    const manualOnly = updateCandidate({
+      driver: driver("claudeAgent"),
+      canUpdate: false,
+      updateCommand: null,
+    });
+
+    expect(canOneClickUpdateProviderCandidate(managed, [managed, ownExecutable])).toBe(true);
+    expect(isProviderSettingsUpdateCandidate(managed)).toBe(true);
+    expect(canOneClickUpdateProviderCandidate(manualOnly, [manualOnly])).toBe(false);
+    expect(isProviderSettingsUpdateCandidate(manualOnly)).toBe(false);
+  });
+
   it("keeps the inline update action available while a provider update is already running", () => {
     const candidate = updateCandidate({
       driver: driver("codex"),

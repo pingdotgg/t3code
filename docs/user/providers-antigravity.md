@@ -58,9 +58,12 @@ Leave the field blank to use the managed runtime, or a compatible executable on
 ## Update the managed runtime
 
 In web or desktop provider settings, choose **Update Antigravity** when an update
-is available. T3 checks Google's CLI release channel while provider update checks
-are enabled. Installing or reinstalling also checks that channel. Updates keep
-your profile and existing runtime available if the new release fails validation.
+is available. **Update all** updates it along with your other providers; an
+executable you set a path to stays yours to update. T3 checks Google's CLI
+release channel while provider update checks are enabled. Use **Check for updates**
+to look up the current release immediately. Installing or reinstalling also checks
+that channel. Updates keep your profile and existing
+runtime available if the new release fails validation.
 
 T3 needs Antigravity 1.5 or newer and recommends 1.5.12 or newer. Sessions do not
 start on an older runtime: update the managed runtime here, or update the executable

@@ -6,7 +6,7 @@ import {
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
-import { ServerProviderUpdateError } from "@t3tools/contracts";
+import { ProviderSetupError, ServerProviderUpdateError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -29,6 +29,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as TextGenerators from "../textGeneration/TextGenerators.ts";
+import * as ProviderInstallation from "./providerInstallation.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -249,6 +250,8 @@ const makeTestRunner = (
     })),
   },
   latestVersions: Layer.Layer<ProviderLatestVersions.ProviderLatestVersions> = ProviderLatestVersions.layer,
+  runInstall: ProviderInstallation.ProviderInstallation["Service"]["run"] = () =>
+    Effect.die("Only a managed install runs the provider installation."),
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
@@ -264,6 +267,7 @@ const makeTestRunner = (
               refreshInBackground: Effect.void,
             }),
             latestVersions,
+            Layer.mock(ProviderInstallation.ProviderInstallation)({ run: runInstall }),
             // Layers memoize by reference, so a test that provides the gate shares it.
             ProviderInstallationGate.layer,
           ),
@@ -904,6 +908,192 @@ describe("providerMaintenanceRunner", () => {
       ),
     );
   });
+
+  it.effect.each([
+    {
+      name: "updates through the provider installation",
+      installError: null,
+      targetVersion: undefined,
+      installs: 1,
+      expected: [
+        ["running", "Waiting for running provider work to finish."],
+        ["running", "Downloading."],
+        ["running", "Verifying the installed version"],
+        ["succeeded", "Provider updated."],
+      ],
+    },
+    {
+      name: "reports why its install failed",
+      installError: "Could not download Antigravity from Google.",
+      targetVersion: undefined,
+      installs: 1,
+      expected: [
+        ["running", "Waiting for running provider work to finish."],
+        ["running", "Downloading."],
+        ["failed", "Could not download Antigravity from Google."],
+      ],
+    },
+    {
+      name: "cannot install a chosen version",
+      installError: null,
+      targetVersion: "1.5.13",
+      installs: 0,
+      expected: [
+        [
+          "failed",
+          "This version is no longer recommended or this installer cannot install a specific version. Refresh provider settings.",
+        ],
+      ],
+    },
+  ])(
+    "a provider with a managed runtime $name",
+    ({ installError, targetVersion, installs, expected }) => {
+      const driver = ProviderDriverKind.make("antigravity");
+      const instanceId = ProviderInstanceId.make("antigravity");
+      const installed: Array<ProviderInstanceId> = [];
+      const commands: Array<string> = [];
+      return Effect.gen(function* () {
+        const { registry, updateStatesRef } = yield* makeRegistry(
+          { ...baseProvider, instanceId, driver, version: "1.5.12" },
+          { installedVersionAfterUpdate: "1.5.13" },
+        );
+        const updater = yield* makeTestRunner(
+          {
+            ...registry,
+            getProviderMaintenanceCapabilitiesForInstance: () =>
+              Effect.succeed({
+                provider: driver,
+                packageName: null,
+                update: null,
+                managedInstall: { lockKey: "antigravity-managed" },
+                latestVersion: "1.5.13",
+              }),
+          },
+          undefined,
+          undefined,
+          (input, onProgress) =>
+            Effect.gen(function* () {
+              installed.push(input.instanceId);
+              yield* onProgress("Downloading.");
+              if (installError !== null) {
+                return yield* new ProviderSetupError({
+                  instanceId: input.instanceId,
+                  operation: "install",
+                  detail: installError,
+                });
+              }
+              return {
+                driver,
+                operationId: "install-1",
+                phase: "succeeded",
+                downloadedBytes: 0,
+                totalBytes: null,
+                version: "1.5.13",
+                installedVersion: "1.5.13",
+                canRemove: true,
+                message: null,
+              } as const;
+            }),
+        );
+
+        yield* updater.updateProvider({
+          provider: driver,
+          instanceId,
+          ...(targetVersion === undefined ? {} : { targetVersion }),
+        });
+        assert.deepStrictEqual(
+          (yield* Ref.get(updateStatesRef))
+            .map((state) => [state.status, state.message])
+            .slice(-expected.length),
+          expected,
+        );
+        assert.deepStrictEqual(
+          installed,
+          Array.from({ length: installs }, () => instanceId),
+        );
+        assert.deepStrictEqual(commands, []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerNonWindowsPlatform,
+            layerLatestVersionHttpClient("1.5.13"),
+            layerMockSpawner((command) => {
+              commands.push(command);
+              return {};
+            }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect("installs the fresh managed offer even if the previous offer was current", () =>
+    Effect.gen(function* () {
+      const driver = ProviderDriverKind.make("antigravity");
+      const instanceId = ProviderInstanceId.make("antigravity");
+      const { registry, providersRef, updateStatesRef } = yield* makeRegistry(
+        { ...baseProvider, instanceId, driver, version: "1.5.12" },
+        { installedVersionAfterUpdate: "1.5.13" },
+      );
+      const offers = yield* Ref.make(0);
+      const startedVersion = yield* Ref.make<string | undefined>(undefined);
+      const updater = yield* makeTestRunner(
+        {
+          ...registry,
+          refreshInstance: () =>
+            Ref.updateAndGet(providersRef, (providers) =>
+              providers.map((provider) => ({ ...provider, checkedAt: "2026-04-11T00:00:00.000Z" })),
+            ),
+          getProviderMaintenanceCapabilitiesForInstance: () =>
+            Ref.get(offers).pipe(
+              Effect.map((count) => ({
+                provider: driver,
+                packageName: null,
+                update: null,
+                managedInstall: {
+                  lockKey: "antigravity-managed",
+                  refreshLatestVersion: Ref.update(offers, (checks) => checks + 1).pipe(
+                    Effect.as("1.5.13"),
+                  ),
+                },
+                latestVersion: count === 0 ? "1.5.12" : "1.5.13",
+              })),
+            ),
+        },
+        undefined,
+        undefined,
+        (_input, _onProgress, expectedVersion) =>
+          Ref.set(startedVersion, expectedVersion).pipe(
+            Effect.as({
+              driver,
+              operationId: "install-1",
+              phase: "succeeded",
+              downloadedBytes: 0,
+              totalBytes: null,
+              version: "1.5.13",
+              installedVersion: "1.5.13",
+              canRemove: true,
+              message: null,
+            } as const),
+          ),
+      );
+
+      yield* updater.updateProvider({ provider: driver, instanceId });
+      assert.strictEqual(yield* Ref.get(startedVersion), "1.5.13");
+      assert.strictEqual(yield* Ref.get(offers), 1);
+      assert.strictEqual((yield* Ref.get(updateStatesRef)).at(-1)?.message, "Provider updated.");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.5.13"),
+          layerMockSpawner(() => {
+            throw new Error("A managed update must not run a command.");
+          }),
+        ),
+      ),
+    ),
+  );
 
   it.effect("an interrupted update ends failed instead of running forever", () => {
     const started = Deferred.makeUnsafe<void>();

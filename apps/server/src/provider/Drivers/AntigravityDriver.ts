@@ -1,3 +1,4 @@
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
   AntigravitySettings,
@@ -22,6 +23,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -58,6 +60,11 @@ import {
 } from "../acp/AntigravityAcpSupport.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  enrichProviderSnapshotWithVersionAdvisory,
+  makeManualOnlyProviderMaintenanceCapabilities,
+  type ProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
 import {
   removeAntigravitySessionFiles,
   retireAntigravityRuntimeTempDirs,
@@ -111,6 +118,7 @@ function refreshFailureDetail(cause: unknown) {
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
   | ProviderHost.ProviderHost
+  | ProviderLatestVersions.ProviderLatestVersions
   | ChildProcessSpawner.ChildProcessSpawner
   | Digest.Digest
   | SecureRandom.SecureRandom
@@ -219,10 +227,59 @@ export const AntigravityDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    const classifyModels = (draft: ServerProviderDraft) =>
-      currentCatalog.pipe(
-        Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
+    const manualMaintenance = makeManualOnlyProviderMaintenanceCapabilities({
+      provider: DRIVER,
+      packageName: null,
+    });
+    // Keep ownership from the last executable resolution so snapshot enrichment avoids disk I/O.
+    const usesManagedRuntime = yield* Ref.make(false);
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+    const updateChecksEnabled = host.settings.get.pipe(
+      Effect.map((current) => current.enableProviderUpdateChecks),
+      Effect.orElseSucceed(() => false),
+    );
+    const resolveMaintenance = Effect.fn("AntigravityDriver.resolveMaintenance")(
+      function* (options?: {
+        readonly fresh?: boolean;
+      }): Effect.fn.Return<ProviderMaintenanceCapabilities> {
+        if (options?.fresh && settings.enabled && !settings.binaryPath) {
+          const executable = yield* installation
+            .resolve(settings.binaryPath, processEnvironment)
+            .pipe(Effect.orElseSucceed(() => null));
+          yield* Ref.set(usesManagedRuntime, executable?.source === "managed");
+        }
+        if (!(yield* Ref.get(usesManagedRuntime))) return manualMaintenance;
+        const install = yield* installation.state;
+        return {
+          provider: DRIVER,
+          packageName: null,
+          update: null,
+          managedInstall: {
+            lockKey: "antigravity-managed",
+            refreshLatestVersion: installation.refreshUpdate,
+          },
+          latestVersion: install.version,
+          // The installer has already chosen between the channel release and the installed version.
+          compareVersions: (current, latest) => (current === latest ? 0 : -1),
+        };
+      },
+    );
+    const classifyModels = Effect.fn("AntigravityDriver.classifyModels")(function* (
+      draft: ServerProviderDraft,
+    ) {
+      const catalog = yield* currentCatalog;
+      const snapshot = stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog));
+      return yield* enrichProviderSnapshotWithVersionAdvisory(
+        snapshot,
+        yield* resolveMaintenance(),
+        {
+          enableProviderUpdateChecks: yield* updateChecksEnabled,
+        },
+      ).pipe(
+        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
       );
+    });
 
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
@@ -550,6 +607,7 @@ export const AntigravityDriver: ProviderDriver<
         });
       }
       const executable = yield* installation.resolve(settings.binaryPath, processEnvironment).pipe(
+        Effect.tapError(() => Ref.set(usesManagedRuntime, false)),
         Effect.mapError(
           (cause) =>
             new ProviderSetupError({
@@ -560,6 +618,9 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      yield* Ref.set(usesManagedRuntime, executable.source === "managed");
+      // Throttled by the installation; the release it finds is republished below.
+      if (executable.source === "managed") yield* Effect.forkDetach(installation.checkForUpdate);
       return {
         protocolVersion: 1,
         agentCapabilities: {
@@ -588,6 +649,12 @@ export const AntigravityDriver: ProviderDriver<
     const provider = yield* makeAntigravityProvider(settings, {
       environment: processEnvironment,
       stampIdentity: classifyModels,
+      resolveMaintenance,
+      releaseChanges: installation.changes.pipe(
+        Stream.map((state) => state.version),
+        Stream.changes,
+        Stream.map(() => undefined),
+      ),
       probe,
       probeUsage: usage.probe,
       clearUsage: usage.clear,

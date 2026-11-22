@@ -8,6 +8,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -59,6 +60,7 @@ function instance(kind = driver, id = instanceId): ProviderInstance {
 
 const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function* (
   input: {
+    beforeInstallStart?: Effect.Effect<void>;
     instance?: ProviderInstance;
     others?: ReadonlyArray<ProviderInstance>;
     settings?: Parameters<typeof ServerSettings.layerTest>[0];
@@ -75,6 +77,20 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   const all = [configured, ...(input.others ?? [])];
   const refreshedInstances: ProviderInstanceId[] = [];
   let watches = 0;
+  const startOperation = Effect.gen(function* () {
+    calls.push("start");
+    yield* input.beforeInstallStart ?? Effect.void;
+    const current = yield* SubscriptionRef.get(installationState);
+    if (current.phase === "downloading") return { state: current, owned: false };
+    const started = {
+      ...state,
+      operationId: "install-1",
+      phase: "downloading",
+      message: "Downloading.",
+    } satisfies ProviderInstallState;
+    yield* SubscriptionRef.set(installationState, started);
+    return { state: started, owned: true };
+  });
   const dependencies = Layer.mergeAll(
     ServerSettings.layerTest(input.settings),
     Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
@@ -119,14 +135,20 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
       checkForUpdate: Effect.void,
       start: Effect.sync(() => {
         calls.push("start");
-        return { ...state, operationId: "install-1", phase: "downloading" as const };
+        return {
+          ...state,
+          operationId: "install-1",
+          phase: "downloading" as const,
+          message: "Downloading.",
+        };
       }).pipe(Effect.tap((started) => SubscriptionRef.set(installationState, started))),
+      startOperation: () => startOperation,
       cancel: () =>
         Effect.sync(() => {
           calls.push("cancel");
           return state;
         }),
-      state: Effect.succeed(state),
+      state: SubscriptionRef.get(installationState),
       changes: all.some((entry) => entry.refreshModels)
         ? SubscriptionRef.changes(installationState).pipe(
             Stream.onStart(
@@ -277,6 +299,85 @@ describe("provider installation routing", () => {
         assert.deepEqual(harness.refreshedInstances, [work.instanceId, personal.instanceId]);
         assert.strictEqual(harness.watches(), 1);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  const watched = () => Object.assign(instance(), { refreshModels: () => Effect.void });
+  const running = {
+    ...state,
+    operationId: "install-1",
+    phase: "downloading",
+    message: "Downloading.",
+  } satisfies ProviderInstallState;
+
+  it.effect.each([
+    { phase: "succeeded", message: null, error: null },
+    {
+      phase: "failed",
+      message: "Could not download Antigravity from Google.",
+      error: "Could not download Antigravity from Google.",
+    },
+    { phase: "cancelled", message: null, error: "The installation did not finish." },
+  ] as const)("runs an install until it is $phase", ({ phase, message, error }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ instance: watched() });
+      const progress: string[] = [];
+      const reported = yield* Deferred.make<void>();
+      const run = yield* harness.router
+        .run({ instanceId }, (line) =>
+          Effect.sync(() => progress.push(line)).pipe(
+            Effect.andThen(Deferred.succeed(reported, undefined)),
+          ),
+        )
+        .pipe(Effect.result, Effect.forkScoped);
+      yield* Deferred.await(reported);
+      // Download progress keeps the message, so it is reported once.
+      yield* SubscriptionRef.set(harness.installationState, { ...running, downloadedBytes: 1 });
+      yield* SubscriptionRef.set(harness.installationState, { ...running, phase, message });
+      const result = yield* Fiber.join(run);
+      assert.deepEqual(progress, ["Downloading."]);
+      assert.strictEqual(result._tag === "Failure" ? result.failure.detail : null, error);
+      assert.deepEqual(harness.calls, ["start"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    { name: "cancels the install it started", joined: false, calls: ["start", "cancel"] },
+    { name: "leaves an install it joined running", joined: true, calls: ["start"] },
+  ])("an interrupted run $name", ({ joined, calls }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ instance: watched() });
+      if (joined) yield* SubscriptionRef.set(harness.installationState, running);
+      const reported = yield* Deferred.make<void>();
+      const run = yield* harness.router
+        .run({ instanceId }, () => Deferred.succeed(reported, undefined))
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(reported);
+      yield* Fiber.interrupt(run);
+      assert.deepEqual(harness.calls, calls);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves a setup install running when it starts during the update's lookup", () =>
+    Effect.gen(function* () {
+      const lookingUp = yield* Deferred.make<void>();
+      const resumeLookup = yield* Deferred.make<void>();
+      const reported = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        instance: watched(),
+        beforeInstallStart: Deferred.succeed(lookingUp, undefined).pipe(
+          Effect.andThen(Deferred.await(resumeLookup)),
+        ),
+      });
+      const run = yield* harness.router
+        .run({ instanceId }, () => Deferred.succeed(reported, undefined))
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(lookingUp);
+      yield* SubscriptionRef.set(harness.installationState, running);
+      yield* Deferred.succeed(resumeLookup, undefined);
+      yield* Deferred.await(reported);
+      yield* Fiber.interrupt(run);
+      assert.deepEqual(harness.calls, ["start"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("keeps external installs manual without hiding shared install status", () =>

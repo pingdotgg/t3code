@@ -2278,12 +2278,16 @@ it.layer(
     it.effect("invalidates model caches only for an explicit model refresh", () =>
       Effect.gen(function* () {
         const forceRefreshCalls = yield* Ref.make(0);
+        const releaseChecks = yield* Ref.make(0);
+        const refreshLatestVersion = Ref.update(releaseChecks, (count) => count + 1).pipe(
+          Effect.as("1.5.13"),
+        );
         const manifest = yield* Ref.make(ModelManifest.BUNDLED_MODEL_MANIFEST);
         const updateEvents = yield* Ref.make<ReadonlyArray<string>>([]);
         const hookFails = yield* Ref.make(false);
-        const makeInstance = (name: string) =>
+        const makeInstance = (name: string, kind = "codex") =>
           Effect.gen(function* () {
-            const driver = ProviderDriverKind.make("codex");
+            const driver = ProviderDriverKind.make(kind);
             const instanceId = ProviderInstanceId.make(name);
             const provider = {
               instanceId,
@@ -2306,19 +2310,27 @@ it.layer(
               driverKind: driver,
               continuationIdentity: {
                 driverKind: driver,
-                continuationKey: `codex:instance:${name}`,
+                continuationKey: `${kind}:instance:${name}`,
               },
               displayName: undefined,
               enabled: true,
               snapshot: {
                 resolveMaintenance: (options) =>
                   Ref.update(maintenanceReads, (reads) => [...reads, options?.fresh === true]).pipe(
-                    Effect.as(
-                      makeManualOnlyProviderMaintenanceCapabilities({
+                    Effect.as({
+                      ...makeManualOnlyProviderMaintenanceCapabilities({
                         provider: driver,
-                        packageName: `${name}-package`,
+                        packageName: kind === "antigravity" ? null : `${name}-package`,
                       }),
-                    ),
+                      ...(kind === "antigravity" && options?.fresh
+                        ? {
+                            managedInstall: {
+                              lockKey: "antigravity-managed",
+                              refreshLatestVersion,
+                            },
+                          }
+                        : {}),
+                    }),
                   ),
                 getSnapshot: Effect.succeed(provider),
                 refresh: Ref.update(probes, (count) => count + 1).pipe(Effect.as(provider)),
@@ -2352,7 +2364,9 @@ it.layer(
           });
         const first = yield* makeInstance("codex_first");
         const second = yield* makeInstance("codex_second");
-        const instances = [first.instance, second.instance];
+        const agiFirst = yield* makeInstance("antigravity_first", "antigravity");
+        const agiSecond = yield* makeInstance("antigravity_second", "antigravity");
+        const instances = [first.instance, second.instance, agiFirst.instance, agiSecond.instance];
         const layerInstanceRegistry = Layer.succeed(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           {
@@ -2391,6 +2405,7 @@ it.layer(
           yield* registry.refreshInstance(first.instance.instanceId);
           yield* registry.refresh();
           assert.strictEqual(yield* Ref.get(forceRefreshCalls), 0);
+          assert.strictEqual(yield* Ref.get(releaseChecks), 0);
           assert.strictEqual(yield* Ref.get(first.invalidations), 0);
           assert.strictEqual(yield* readCachedVersion("codex_first-package"), "1.0.0");
           yield* first.takeMaintenanceReads;
@@ -2399,12 +2414,14 @@ it.layer(
           // The instance refresh that follows resolves installer metadata fresh itself.
           assert.deepStrictEqual(yield* first.takeMaintenanceReads, [false]);
           assert.strictEqual(yield* Ref.get(forceRefreshCalls), 1);
+          assert.strictEqual(yield* Ref.get(releaseChecks), 0);
           assert.strictEqual(yield* Ref.get(first.invalidations), 1);
           assert.strictEqual(yield* Ref.get(second.invalidations), 0);
           assert.strictEqual(yield* readCachedVersion("codex_first-package"), "2.0.0");
           assert.strictEqual(yield* readCachedVersion("codex_second-package"), "1.0.0");
 
           yield* registry.invalidateModelCaches({});
+          assert.strictEqual(yield* Ref.get(releaseChecks), 1);
           assert.strictEqual(yield* Ref.get(first.invalidations), 2);
           assert.strictEqual(yield* Ref.get(second.invalidations), 1);
           assert.strictEqual(yield* readCachedVersion("codex_second-package"), "2.0.0");
