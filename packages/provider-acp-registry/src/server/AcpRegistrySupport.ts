@@ -671,6 +671,7 @@ export class AcpRegistryCatalog extends Context.Service<
       readonly maxAgeMs: number;
       readonly failureBackoffMs: number;
     }) => Effect.Effect<number, AcpRegistryError>;
+    readonly currentIndexRevision?: () => Effect.Effect<number>;
     readonly invalidateIndex: () => Effect.Effect<void>;
     readonly inspect: (
       settings: AcpRegistrySettings,
@@ -720,10 +721,15 @@ const UNPACKING_AGENT_IDS: ReadonlySet<string> = new Set(["antigravity-acp"]);
 const INSTALL_LOCK_RETRY_COUNT = 300;
 const INSTALL_LOCK_RETRY_DELAY = "100 millis";
 const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
+const LEGACY_BASELINES_LOCK_RETRY_COUNT = 20;
+const LEGACY_BASELINES_LOCK_STALE_MS = 10 * 1_000;
 const PREPARED_BINARY_RESERVATION_MS = 30 * 1_000;
 
 const BINARY_ARTIFACT_RECEIPT_FILENAME = ".t3-artifact.json";
 const BINARY_LEGACY_BASELINES_FILENAME = "legacy-baselines.json";
+// Sentinel recorded for unrecoverable unreceipted slots when rebuilding a corrupt baselines file;
+// never equals binaryArtifactIdentityKey (which is always JSON) so the slot must be reinstalled.
+const LEGACY_BASELINE_UNKNOWN = "unknown";
 const BINARY_ARTIFACT_SLOT_HASH_LENGTH = 12;
 const DOWNLOAD_RETRY_REGISTRY_BACKOFF_MS = 60 * 1_000;
 
@@ -1069,6 +1075,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     invalidationGeneration: 0,
   });
   const registrySemaphore = yield* Semaphore.make(1);
+  const legacyBaselinesSemaphore = yield* Semaphore.make(1);
   // Long installs must only block operations on the same agent.
   const installPermits = new Map<string, Semaphore.Semaphore>();
   const withInstallPermit = (agentId: string) => {
@@ -1336,10 +1343,16 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return { registry, text: collected.text };
   });
 
-  const acquireFileLock = Effect.fn("AcpRegistryCatalog.acquireInstallLock")(function* (
+  const acquireFileLock = Effect.fn("AcpRegistryCatalog.acquireFileLock")(function* (
     lockPath: string,
+    options?: {
+      readonly retryCount?: number;
+      readonly staleMs?: number;
+    },
   ) {
-    for (let attempt = 0; attempt < INSTALL_LOCK_RETRY_COUNT; attempt += 1) {
+    const retryCount = options?.retryCount ?? INSTALL_LOCK_RETRY_COUNT;
+    const staleMs = options?.staleMs ?? INSTALL_LOCK_STALE_MS;
+    for (let attempt = 0; attempt < retryCount; attempt += 1) {
       const acquired = yield* fileSystem.writeFileString(lockPath, "", { flag: "wx" }).pipe(
         Effect.as(true),
         Effect.catchIf(
@@ -1351,7 +1364,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const now = yield* Clock.currentTimeMillis;
       const lockInfo = yield* fileSystem.stat(lockPath).pipe(Effect.option);
       const mtime = Option.flatMap(lockInfo, (info) => info.mtime);
-      if (Option.isSome(mtime) && now - mtime.value.getTime() > INSTALL_LOCK_STALE_MS) {
+      if (Option.isSome(mtime) && now - mtime.value.getTime() > staleMs) {
         yield* fileSystem.remove(lockPath, { force: true });
         continue;
       }
@@ -1362,6 +1375,20 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       detail: `Timed out waiting for ACP Registry install lock ${lockPath}.`,
     });
   });
+
+  const withFileLock = <A, E, R>(
+    lockPath: string,
+    effect: Effect.Effect<A, E, R>,
+    options?: {
+      readonly retryCount?: number;
+      readonly staleMs?: number;
+    },
+  ) =>
+    Effect.acquireUseRelease(
+      acquireFileLock(lockPath, options),
+      () => effect,
+      () => fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore),
+    );
 
   const writeLegacyBaselinesAtomically = (baselines: Readonly<Record<string, string>>) =>
     random.uuidV4().pipe(
@@ -1377,19 +1404,17 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       }),
     );
 
-  const withLegacyBaselinesLock = <A, E, R>(effect: Effect.Effect<A, E, R>) => {
-    const lockPath = `${legacyBaselinesPath}.lock`;
-    return fileSystem
-      .makeDirectory(registryDirectory, { recursive: true })
-      .pipe(
-        Effect.andThen(acquireFileLock(lockPath)),
+  const withLegacyBaselinesLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    legacyBaselinesSemaphore.withPermits(1)(
+      fileSystem.makeDirectory(registryDirectory, { recursive: true }).pipe(
         Effect.andThen(
-          effect.pipe(
-            Effect.ensuring(fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore)),
-          ),
+          withFileLock(`${legacyBaselinesPath}.lock`, effect, {
+            retryCount: LEGACY_BASELINES_LOCK_RETRY_COUNT,
+            staleMs: LEGACY_BASELINES_LOCK_STALE_MS,
+          }),
         ),
-      );
-  };
+      ),
+    );
 
   const recordLegacyBaselines = Effect.fn("AcpRegistryCatalog.recordLegacyBaselines")(function* (
     inMemoryPrevious: AcpRegistryIndex | undefined,
@@ -1397,37 +1422,48 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   ) {
     if (platformTarget === undefined) return true;
     const candidates = resolveAcpRegistryPlatformTargetCandidates(platformTarget);
-    const listDirectories = (directory: string) =>
-      fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): Array<string> => []));
-    const unreceiptedLegacySlots: Array<{
-      readonly agentId: string;
-      readonly encodedVersion: string;
-      readonly candidateTarget: AcpRegistryPlatformTarget;
-      readonly slotKey: string;
-    }> = [];
-    for (const agentId of yield* listDirectories(installsDirectory)) {
-      const agentRoot = path.join(installsDirectory, agentId);
-      for (const encodedVersion of yield* listDirectories(agentRoot)) {
-        const versionRoot = path.join(agentRoot, encodedVersion);
-        for (const candidateTarget of candidates) {
-          const installRoot = path.join(versionRoot, candidateTarget);
-          const installExists = yield* fileSystem
-            .exists(installRoot)
-            .pipe(Effect.orElseSucceed(() => false));
-          if (!installExists) continue;
-          const hasReceipt = yield* fileSystem
-            .exists(path.join(installRoot, BINARY_ARTIFACT_RECEIPT_FILENAME))
-            .pipe(Effect.orElseSucceed(() => false));
-          if (hasReceipt) continue;
-          unreceiptedLegacySlots.push({
-            agentId,
-            encodedVersion,
-            candidateTarget,
-            slotKey: legacyBaselineSlotKey(agentId, encodedVersion, candidateTarget),
-          });
+    const readDirectoryOrMissing = (directory: string) =>
+      fileSystem.readDirectory(directory).pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed<Array<string>>([]),
+        ),
+      );
+    const scanUnreceiptedLegacySlots = Effect.gen(function* () {
+      const slots: Array<{
+        readonly agentId: string;
+        readonly encodedVersion: string;
+        readonly candidateTarget: AcpRegistryPlatformTarget;
+        readonly slotKey: string;
+      }> = [];
+      for (const agentId of yield* readDirectoryOrMissing(installsDirectory)) {
+        const agentRoot = path.join(installsDirectory, agentId);
+        for (const encodedVersion of yield* readDirectoryOrMissing(agentRoot)) {
+          const versionRoot = path.join(agentRoot, encodedVersion);
+          for (const candidateTarget of candidates) {
+            const installRoot = path.join(versionRoot, candidateTarget);
+            if (!(yield* fileSystem.exists(installRoot))) continue;
+            if (yield* fileSystem.exists(path.join(installRoot, BINARY_ARTIFACT_RECEIPT_FILENAME)))
+              continue;
+            slots.push({
+              agentId,
+              encodedVersion,
+              candidateTarget,
+              slotKey: legacyBaselineSlotKey(agentId, encodedVersion, candidateTarget),
+            });
+          }
         }
       }
+      return slots;
+    });
+    const scanResult = yield* Effect.result(scanUnreceiptedLegacySlots);
+    if (Result.isFailure(scanResult)) {
+      yield* Effect.logDebug(
+        "Could not scan managed ACP binary directories for legacy baselines; keeping existing disk registry cache.",
+      );
+      return false;
     }
+    const unreceiptedLegacySlots = scanResult.success;
     if (unreceiptedLegacySlots.length === 0) return true;
 
     const recordDivergingInMemory = Effect.fn("AcpRegistryCatalog.recordDivergingLegacyBaselines")(
@@ -1441,9 +1477,38 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           return true;
         });
         if (unpersistedSlots.length === 0) {
-          return { newBaselines: {} as Record<string, string>, hasUpdates: false };
+          return {
+            newBaselines: {} as Record<string, string>,
+            hasUpdates: false,
+            readError: false,
+          };
         }
-        const previousIndex = inMemoryPrevious ?? Option.getOrUndefined(yield* readCachedRegistry);
+        // Prefer the on-disk registry cache over in-memory state so a recovery refresh after a
+        // previous skipped disk write still compares against the index persisted on disk.
+        const diskIndexResult = yield* fileSystem.readFileString(registryCachePath).pipe(
+          Effect.flatMap((text) =>
+            decodeRegistryText(text).pipe(
+              Effect.map((index) => ({ status: "ok" as const, index })),
+              Effect.orElseSucceed(() => ({ status: "missing" as const })),
+            ),
+          ),
+          Effect.catch((error) =>
+            Effect.succeed(
+              error.reason._tag === "NotFound"
+                ? ({ status: "missing" as const } as const)
+                : ({ status: "io_error" as const } as const),
+            ),
+          ),
+        );
+        if (diskIndexResult.status === "io_error") {
+          return {
+            newBaselines: {} as Record<string, string>,
+            hasUpdates: false,
+            readError: true,
+          };
+        }
+        const previousIndex =
+          diskIndexResult.status === "ok" ? diskIndexResult.index : inMemoryPrevious;
         const previousById = new Map(
           (previousIndex?.agents ?? []).map((agent) => [agent.id, agent] as const),
         );
@@ -1481,7 +1546,15 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           newBaselines[slot.slotKey] = previousKey;
           hasUpdates = true;
         }
-        return { newBaselines, hasUpdates };
+        return { newBaselines, hasUpdates, readError: false };
+      },
+    );
+
+    const preserveAndFail = Effect.fn("AcpRegistryCatalog.preserveLegacyBaselinesOnError")(
+      function* (existingBaselines: Readonly<Record<string, string>>, reason: string) {
+        yield* recordDivergingInMemory(existingBaselines);
+        yield* Effect.logDebug(reason);
+        return false;
       },
     );
 
@@ -1496,34 +1569,42 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       return true;
     }
     if (initialDisk.status === "io_error") {
-      // Preserve diverging legacy baselines in memory across transient read failures so a later
-      // recovery refresh still writes artifact A instead of comparing B against B.
-      yield* recordDivergingInMemory({});
-      return false;
+      return yield* preserveAndFail(
+        {},
+        "Could not read ACP Registry legacy baselines; keeping existing disk registry cache.",
+      );
     }
 
     return yield* withLegacyBaselinesLock(
       Effect.gen(function* () {
         const disk = yield* readLegacyBaselinesFile(fileSystem, legacyBaselinesPath);
         if (disk.status === "io_error") {
-          yield* recordDivergingInMemory({});
-          return false;
+          return yield* preserveAndFail(
+            {},
+            "Could not read ACP Registry legacy baselines; keeping existing disk registry cache.",
+          );
         }
-        let baseBaselines: Readonly<Record<string, string>>;
-        let mustRewrite = false;
-        if (disk.status === "corrupt") {
-          // Quarantine a corrupt baselines file and rebuild cleanly so disk registry updates do not freeze.
+        const isCorrupt = disk.status === "corrupt";
+        const baseBaselines: Readonly<Record<string, string>> = isCorrupt ? {} : disk.baselines;
+        const { newBaselines, hasUpdates, readError } =
+          yield* recordDivergingInMemory(baseBaselines);
+        if (readError) return false;
+        if (!hasUpdates && !isCorrupt) return true;
+        const mergedBaselines: Record<string, string> = { ...baseBaselines, ...newBaselines };
+        if (isCorrupt) {
+          // Copy the corrupt bytes aside before atomically replacing legacy-baselines.json so there
+          // is no missing-file window, and mark any unrecoverable legacy slot as unknown so a
+          // rebuilt file never treats an unverified pre-receipt install as matching the new target.
           yield* fileSystem
-            .rename(legacyBaselinesPath, `${legacyBaselinesPath}.corrupt`)
+            .copyFile(legacyBaselinesPath, `${legacyBaselinesPath}.corrupt`)
             .pipe(Effect.ignore);
-          baseBaselines = {};
-          mustRewrite = true;
-        } else {
-          baseBaselines = disk.baselines;
+          for (const slot of unreceiptedLegacySlots) {
+            if (mergedBaselines[slot.slotKey] === undefined) {
+              mergedBaselines[slot.slotKey] = LEGACY_BASELINE_UNKNOWN;
+              legacyBaselineBySlotKey.set(slot.slotKey, LEGACY_BASELINE_UNKNOWN);
+            }
+          }
         }
-        const { newBaselines, hasUpdates } = yield* recordDivergingInMemory(baseBaselines);
-        if (!hasUpdates && !mustRewrite) return true;
-        const mergedBaselines = { ...baseBaselines, ...newBaselines };
         return yield* writeLegacyBaselinesAtomically(mergedBaselines).pipe(
           Effect.as(true),
           Effect.catch(() =>
@@ -1535,13 +1616,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       }),
     ).pipe(
       Effect.catch(() =>
-        recordDivergingInMemory(initialDisk.status === "ok" ? initialDisk.baselines : {}).pipe(
-          Effect.andThen(
-            Effect.logDebug(
-              "Could not lock ACP Registry legacy baselines; keeping existing disk registry cache.",
-            ),
-          ),
-          Effect.as(false),
+        preserveAndFail(
+          initialDisk.status === "ok" ? initialDisk.baselines : {},
+          "Could not lock ACP Registry legacy baselines; keeping existing disk registry cache.",
         ),
       ),
     );
@@ -2225,15 +2302,17 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
-  const isCachedBinarySlotMatching = Effect.fn("AcpRegistryCatalog.isCachedBinarySlotMatching")(
+  const readMatchingBinaryReceipt = Effect.fn("AcpRegistryCatalog.readMatchingBinaryReceipt")(
     function* (root: string, executablePath: string, target: typeof AcpRegistryBinaryTarget.Type) {
       if (!(yield* fileSystem.exists(executablePath).pipe(Effect.orElseSucceed(() => false)))) {
-        return false;
+        return Option.none<AcpRegistryBinaryArtifactReceipt>();
       }
       const receiptPath = path.join(root, BINARY_ARTIFACT_RECEIPT_FILENAME);
       const rawReceipt = yield* fileSystem.readFileString(receiptPath).pipe(Effect.option);
       const decoded = Option.flatMap(rawReceipt, decodeBinaryArtifactReceipt);
-      return Option.isSome(decoded) && binaryArtifactReceiptMatches(decoded.value, target);
+      return Option.isSome(decoded) && binaryArtifactReceiptMatches(decoded.value, target)
+        ? Option.some(decoded.value)
+        : Option.none<AcpRegistryBinaryArtifactReceipt>();
     },
   );
 
@@ -2283,18 +2362,28 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     paths: NonNullable<ReturnType<typeof binaryPaths>>,
     target: typeof AcpRegistryBinaryTarget.Type,
   ) {
-    if (
-      yield* isCachedBinarySlotMatching(paths.artifactRoot, paths.artifactExecutablePath, target)
-    ) {
+    const artifactReceipt = yield* readMatchingBinaryReceipt(
+      paths.artifactRoot,
+      paths.artifactExecutablePath,
+      target,
+    );
+    if (Option.isSome(artifactReceipt)) {
       return Option.some({
         root: paths.artifactRoot,
         executablePath: paths.artifactExecutablePath,
+        receipt: artifactReceipt.value,
       });
     }
-    if (yield* isCachedBinarySlotMatching(paths.installRoot, paths.executablePath, target)) {
+    const primaryReceipt = yield* readMatchingBinaryReceipt(
+      paths.installRoot,
+      paths.executablePath,
+      target,
+    );
+    if (Option.isSome(primaryReceipt)) {
       return Option.some({
         root: paths.installRoot,
         executablePath: paths.executablePath,
+        receipt: primaryReceipt.value,
       });
     }
     if (yield* isLegacyBinarySlotEligible(paths, target)) {
@@ -2303,8 +2392,43 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         executablePath: paths.executablePath,
       });
     }
-    return Option.none<{ readonly root: string; readonly executablePath: string }>();
+    return Option.none<{
+      readonly root: string;
+      readonly executablePath: string;
+      readonly receipt?: AcpRegistryBinaryArtifactReceipt;
+    }>();
   });
+
+  const syncReceiptLaunchOptions = Effect.fn("AcpRegistryCatalog.syncReceiptLaunchOptions")(
+    function* (
+      slot: {
+        readonly root: string;
+        readonly receipt?: AcpRegistryBinaryArtifactReceipt;
+      },
+      agent: AcpRegistryAgent,
+      target: typeof AcpRegistryBinaryTarget.Type,
+    ) {
+      if (slot.receipt === undefined) return;
+      const sameArgs = Equal.equals(slot.receipt.args ?? [], target.args ?? []);
+      const sameEnv = Equal.equals(slot.receipt.env ?? {}, target.env ?? {});
+      if (sameArgs && sameEnv) return;
+      const receiptPath = path.join(slot.root, BINARY_ARTIFACT_RECEIPT_FILENAME);
+      yield* random.uuidV4().pipe(
+        Effect.flatMap((id) => {
+          const temporaryPath = `${receiptPath}.${process.pid}-${id}.tmp`;
+          return fileSystem
+            .writeFileString(temporaryPath, encodeBinaryArtifactReceipt(agent, target))
+            .pipe(
+              Effect.andThen(fileSystem.rename(temporaryPath, receiptPath)),
+              Effect.ensuring(
+                fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignore),
+              ),
+            );
+        }),
+        Effect.ignore,
+      );
+    },
+  );
 
   const installBinary = Effect.fn("AcpRegistryCatalog.installBinary")(function* (
     agent: AcpRegistryAgent,
@@ -2324,8 +2448,13 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       });
     }
     const { commandSegments, installRoot, artifactRoot } = paths;
-    const validateCachedSlot = (slot: { readonly root: string; readonly executablePath: string }) =>
+    const validateCachedSlot = (slot: {
+      readonly root: string;
+      readonly executablePath: string;
+      readonly receipt?: AcpRegistryBinaryArtifactReceipt;
+    }) =>
       assertExecutableInRoot(slot.root, slot.executablePath).pipe(
+        Effect.tap(() => syncReceiptLaunchOptions(slot, agent, target)),
         Effect.mapError(
           (cause) =>
             new AcpRegistryError({
@@ -2353,213 +2482,234 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       ),
     );
     const lockPath = `${installRoot}.lock`;
-    yield* acquireFileLock(lockPath).pipe(
-      Effect.mapError((cause) =>
-        isAcpRegistryError(cause)
-          ? cause
-          : new AcpRegistryError({
-              reason: "install_failed",
-              detail: `Could not acquire install lock for ACP Registry agent ${agent.id}.`,
-              cause,
-            }),
-      ),
-    );
 
-    return yield* Effect.gen(function* () {
-      const lockedSlot = yield* findMatchingBinarySlot(paths, target);
-      if (Option.isSome(lockedSlot)) {
-        return yield* validateCachedSlot(lockedSlot.value);
-      }
-      const primaryExists = yield* fileSystem
-        .exists(installRoot)
-        .pipe(Effect.orElseSucceed(() => false));
-      // Keep an existing primary directory intact for active sessions (and Windows file locks)
-      // by installing same-version replacements into an immutable artifact-scoped sibling slot.
-      const destinationRoot = primaryExists ? artifactRoot : installRoot;
-      const destinationExecutable = path.join(destinationRoot, ...commandSegments);
-      const temporaryRoot = yield* fileSystem.makeTempDirectoryScoped({
-        directory: path.dirname(installRoot),
-        prefix: `.${agent.id}-install-`,
-      });
-      if (
-        destinationRoot === artifactRoot &&
-        (yield* fileSystem.exists(artifactRoot).pipe(Effect.orElseSucceed(() => false)))
-      ) {
-        // Under a freshly acquired lock after findMatchingBinarySlot returned None, an existing
-        // artifactRoot is a broken/incomplete slot (e.g., deleted executable). Move it into the
-        // scoped temp directory so promotion can publish cleanly without a post-download TOCTOU.
-        yield* fileSystem
-          .rename(artifactRoot, path.join(temporaryRoot, "replaced-broken-slot"))
-          .pipe(Effect.ignore);
-      }
-      const extractionRoot = path.join(temporaryRoot, "extracted");
-      yield* fileSystem.makeDirectory(extractionRoot, { recursive: true });
-      const kind = archiveKind(target.archive);
-      const archivePath = path.join(temporaryRoot, archiveFileName(kind));
-      const response = yield* httpClient.execute(HttpClientRequest.get(target.archive)).pipe(
-        Effect.flatMap(HttpClientResponse.filterStatusOk),
-        Effect.mapError(
-          (cause) =>
-            new AcpRegistryError({
-              reason: "download_failed",
-              detail: `Could not download ACP Registry agent ${agent.id} ${agent.version}.`,
-              cause,
-            }),
-        ),
-        Effect.timeoutOrElse({
-          duration: ARCHIVE_REQUEST_TIMEOUT,
-          orElse: () =>
-            Effect.fail(
-              new AcpRegistryError({
-                reason: "download_failed",
-                detail: `Timed out downloading ACP Registry agent ${agent.id} ${agent.version}.`,
-              }),
-            ),
-        }),
-      );
-      // Stream hashes to avoid buffering large archives; Effect Crypto requires a whole buffer.
-      const hash = sha256.create();
-      let downloadedBytes = 0;
-      yield* response.stream.pipe(
-        Stream.tap((chunk) => {
-          if (downloadedBytes + chunk.byteLength > MAX_ARCHIVE_BYTES) {
-            return Effect.fail(
-              new AcpRegistryError({
-                reason: "archive_invalid",
-                detail: `ACP Registry agent ${agent.id} archive exceeds ${MAX_ARCHIVE_BYTES} bytes.`,
-              }),
+    return yield* withFileLock(
+      lockPath,
+      Effect.gen(function* () {
+        const lockedSlot = yield* findMatchingBinarySlot(paths, target);
+        if (Option.isSome(lockedSlot)) {
+          return yield* validateCachedSlot(lockedSlot.value);
+        }
+        const primaryExists = yield* fileSystem
+          .exists(installRoot)
+          .pipe(Effect.orElseSucceed(() => false));
+        // Keep an existing primary directory intact for active sessions (and Windows file locks)
+        // by installing same-version replacements into an immutable artifact-scoped sibling slot.
+        const destinationRoot = primaryExists ? artifactRoot : installRoot;
+        const destinationExecutable = path.join(destinationRoot, ...commandSegments);
+        const temporaryRoot = yield* fileSystem.makeTempDirectoryScoped({
+          directory: path.dirname(installRoot),
+          prefix: `.${agent.id}-install-`,
+        });
+        if (
+          destinationRoot === artifactRoot &&
+          (yield* fileSystem.exists(artifactRoot).pipe(Effect.orElseSucceed(() => false)))
+        ) {
+          // Under a freshly acquired lock after findMatchingBinarySlot returned None, an existing
+          // artifactRoot is a broken/incomplete slot (e.g., deleted executable). Move it aside
+          // before downloading; fail fast if moving fails (e.g., locked files on Windows) instead
+          // of wasting a full archive download.
+          yield* fileSystem
+            .rename(artifactRoot, path.join(temporaryRoot, "replaced-broken-slot"))
+            .pipe(
+              Effect.catchIf(
+                (error) => error.reason._tag === "NotFound",
+                () => Effect.void,
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new AcpRegistryError({
+                    reason: "install_failed",
+                    detail: `Could not replace broken ACP Registry install slot for ${agent.id}.`,
+                    cause,
+                  }),
+              ),
             );
-          }
-          downloadedBytes += chunk.byteLength;
-          hash.update(chunk);
-          return Effect.void;
-        }),
-        Stream.run(fileSystem.sink(archivePath)),
-        Effect.mapError((cause) =>
-          isAcpRegistryError(cause)
-            ? cause
-            : new AcpRegistryError({
+        }
+        const extractionRoot = path.join(temporaryRoot, "extracted");
+        yield* fileSystem.makeDirectory(extractionRoot, { recursive: true });
+        const kind = archiveKind(target.archive);
+        const archivePath = path.join(temporaryRoot, archiveFileName(kind));
+        const response = yield* httpClient.execute(HttpClientRequest.get(target.archive)).pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.mapError(
+            (cause) =>
+              new AcpRegistryError({
                 reason: "download_failed",
-                detail: `Could not save ACP Registry agent ${agent.id} ${agent.version}.`,
+                detail: `Could not download ACP Registry agent ${agent.id} ${agent.version}.`,
                 cause,
               }),
-        ),
-        Effect.timeoutOrElse({
-          duration: ARCHIVE_REQUEST_TIMEOUT,
-          orElse: () =>
-            Effect.fail(
-              new AcpRegistryError({
-                reason: "download_failed",
-                detail: `Timed out reading ACP Registry agent ${agent.id} download.`,
-              }),
-            ),
-        }),
-      );
-      if (target.sha256 !== undefined) {
-        const actual = Hex.encode(hash.digest());
-        if (actual !== target.sha256.toLowerCase()) {
-          return yield* new AcpRegistryError({
-            reason: "checksum_mismatch",
-            detail: `ACP Registry agent ${agent.id} download did not match its declared SHA-256.`,
-          });
+          ),
+          Effect.timeoutOrElse({
+            duration: ARCHIVE_REQUEST_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new AcpRegistryError({
+                  reason: "download_failed",
+                  detail: `Timed out downloading ACP Registry agent ${agent.id} ${agent.version}.`,
+                }),
+              ),
+          }),
+        );
+        // Stream hashes to avoid buffering large archives; Effect Crypto requires a whole buffer.
+        const hash = sha256.create();
+        let downloadedBytes = 0;
+        yield* response.stream.pipe(
+          Stream.tap((chunk) => {
+            if (downloadedBytes + chunk.byteLength > MAX_ARCHIVE_BYTES) {
+              return Effect.fail(
+                new AcpRegistryError({
+                  reason: "archive_invalid",
+                  detail: `ACP Registry agent ${agent.id} archive exceeds ${MAX_ARCHIVE_BYTES} bytes.`,
+                }),
+              );
+            }
+            downloadedBytes += chunk.byteLength;
+            hash.update(chunk);
+            return Effect.void;
+          }),
+          Stream.run(fileSystem.sink(archivePath)),
+          Effect.mapError((cause) =>
+            isAcpRegistryError(cause)
+              ? cause
+              : new AcpRegistryError({
+                  reason: "download_failed",
+                  detail: `Could not save ACP Registry agent ${agent.id} ${agent.version}.`,
+                  cause,
+                }),
+          ),
+          Effect.timeoutOrElse({
+            duration: ARCHIVE_REQUEST_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new AcpRegistryError({
+                  reason: "download_failed",
+                  detail: `Timed out reading ACP Registry agent ${agent.id} download.`,
+                }),
+              ),
+          }),
+        );
+        if (target.sha256 !== undefined) {
+          const actual = Hex.encode(hash.digest());
+          if (actual !== target.sha256.toLowerCase()) {
+            return yield* new AcpRegistryError({
+              reason: "checksum_mismatch",
+              detail: `ACP Registry agent ${agent.id} download did not match its declared SHA-256.`,
+            });
+          }
         }
-      }
 
-      if (kind === "raw") {
-        const targetPath = path.join(extractionRoot, ...commandSegments);
-        yield* fileSystem.makeDirectory(path.dirname(targetPath), { recursive: true });
-        yield* fileSystem.rename(archivePath, targetPath);
-      } else {
-        const tarCommand =
-          platformTarget === "windows-aarch64" &&
-          paths.platformTarget === "windows-x86_64" &&
-          kind === "zip"
-            ? cliArchiveTarCommand(platform, hostEnvironment)
-            : "tar";
-        const listArgs =
-          kind === "tar_gz"
-            ? ["-tzf", archivePath]
-            : kind === "tar_bz2"
-              ? ["-tjf", archivePath]
-              : platform === "win32"
-                ? ["-tf", archivePath]
-                : undefined;
-        const listingOptions = {
-          maxStdoutBytes: MAX_ARCHIVE_LISTING_BYTES,
-          timeout: ARCHIVE_EXTRACT_TIMEOUT,
-          timeoutReason: "archive_invalid",
-          nonZeroExitReason: "archive_invalid",
-        } as const;
-        const extractOptions = {
-          timeout: ARCHIVE_EXTRACT_TIMEOUT,
-          timeoutReason: "archive_invalid",
-          nonZeroExitReason: "archive_invalid",
-        } as const;
-        const entries =
-          listArgs === undefined
-            ? yield* runCommand("unzip", ["-Z1", archivePath], listingOptions)
-            : yield* runCommand(tarCommand, listArgs, listingOptions);
-        if (!validateArchiveEntries(entries)) {
+        if (kind === "raw") {
+          const targetPath = path.join(extractionRoot, ...commandSegments);
+          yield* fileSystem.makeDirectory(path.dirname(targetPath), { recursive: true });
+          yield* fileSystem.rename(archivePath, targetPath);
+        } else {
+          const tarCommand =
+            platformTarget === "windows-aarch64" &&
+            paths.platformTarget === "windows-x86_64" &&
+            kind === "zip"
+              ? cliArchiveTarCommand(platform, hostEnvironment)
+              : "tar";
+          const listArgs =
+            kind === "tar_gz"
+              ? ["-tzf", archivePath]
+              : kind === "tar_bz2"
+                ? ["-tjf", archivePath]
+                : platform === "win32"
+                  ? ["-tf", archivePath]
+                  : undefined;
+          const listingOptions = {
+            maxStdoutBytes: MAX_ARCHIVE_LISTING_BYTES,
+            timeout: ARCHIVE_EXTRACT_TIMEOUT,
+            timeoutReason: "archive_invalid",
+            nonZeroExitReason: "archive_invalid",
+          } as const;
+          const extractOptions = {
+            timeout: ARCHIVE_EXTRACT_TIMEOUT,
+            timeoutReason: "archive_invalid",
+            nonZeroExitReason: "archive_invalid",
+          } as const;
+          const entries =
+            listArgs === undefined
+              ? yield* runCommand("unzip", ["-Z1", archivePath], listingOptions)
+              : yield* runCommand(tarCommand, listArgs, listingOptions);
+          if (!validateArchiveEntries(entries)) {
+            return yield* new AcpRegistryError({
+              reason: "archive_invalid",
+              detail: `ACP Registry agent ${agent.id} archive contains an unsafe path.`,
+            });
+          }
+          if (kind === "zip" && platform !== "win32") {
+            yield* runCommand("unzip", ["-q", archivePath, "-d", extractionRoot], extractOptions);
+          } else {
+            const extractFlag = kind === "tar_gz" ? "-xzf" : kind === "tar_bz2" ? "-xjf" : "-xf";
+            yield* runCommand(
+              tarCommand,
+              [extractFlag, archivePath, "-C", extractionRoot],
+              extractOptions,
+            );
+          }
+        }
+
+        const stagedExecutable = path.join(extractionRoot, ...commandSegments);
+        if (!(yield* fileSystem.exists(stagedExecutable).pipe(Effect.orElseSucceed(() => false)))) {
           return yield* new AcpRegistryError({
             reason: "archive_invalid",
-            detail: `ACP Registry agent ${agent.id} archive contains an unsafe path.`,
+            detail: `ACP Registry archive for ${agent.id} did not contain '${target.cmd}'.`,
           });
         }
-        if (kind === "zip" && platform !== "win32") {
-          yield* runCommand("unzip", ["-q", archivePath, "-d", extractionRoot], extractOptions);
-        } else {
-          const extractFlag = kind === "tar_gz" ? "-xzf" : kind === "tar_bz2" ? "-xjf" : "-xf";
-          yield* runCommand(
-            tarCommand,
-            [extractFlag, archivePath, "-C", extractionRoot],
-            extractOptions,
-          );
-        }
-      }
-
-      const stagedExecutable = path.join(extractionRoot, ...commandSegments);
-      if (!(yield* fileSystem.exists(stagedExecutable).pipe(Effect.orElseSucceed(() => false)))) {
-        return yield* new AcpRegistryError({
-          reason: "archive_invalid",
-          detail: `ACP Registry archive for ${agent.id} did not contain '${target.cmd}'.`,
-        });
-      }
-      yield* assertExecutableInRoot(extractionRoot, stagedExecutable, { makeExecutable: true });
-      yield* fileSystem.writeFileString(
-        path.join(extractionRoot, BINARY_ARTIFACT_RECEIPT_FILENAME),
-        encodeBinaryArtifactReceipt(agent, target),
-      );
-      // Recheck right before promotion in case a stale-lock takeover let another installer publish
-      // a valid receipt-matching slot while this staging download was in flight. Never remove an
-      // existing destinationRoot before rename so a concurrent publisher's directory cannot be deleted.
-      const concurrentSlot = yield* findMatchingBinarySlot(paths, target);
-      if (Option.isSome(concurrentSlot)) {
-        const validated = yield* assertExecutableInRoot(
-          concurrentSlot.value.root,
-          concurrentSlot.value.executablePath,
-        ).pipe(Effect.option);
-        if (Option.isSome(validated)) {
-          return validated.value;
-        }
-      }
-      const promotedPath = yield* fileSystem.rename(extractionRoot, destinationRoot).pipe(
-        Effect.andThen(() => assertExecutableInRoot(destinationRoot, destinationExecutable)),
-        Effect.catch((renameError) =>
-          findMatchingBinarySlot(paths, target).pipe(
-            Effect.flatMap(
-              Option.match({
-                onNone: () => Effect.fail(renameError),
-                onSome: (slot) => assertExecutableInRoot(slot.root, slot.executablePath),
-              }),
+        yield* assertExecutableInRoot(extractionRoot, stagedExecutable, { makeExecutable: true });
+        yield* fileSystem
+          .writeFileString(
+            path.join(extractionRoot, BINARY_ARTIFACT_RECEIPT_FILENAME),
+            encodeBinaryArtifactReceipt(agent, target),
+            { flag: "wx" },
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              isAlreadyExists(cause)
+                ? new AcpRegistryError({
+                    reason: "archive_invalid",
+                    detail: `ACP Registry archive for ${agent.id} contains a reserved '${BINARY_ARTIFACT_RECEIPT_FILENAME}' entry.`,
+                    cause,
+                  })
+                : new AcpRegistryError({
+                    reason: "install_failed",
+                    detail: `Could not write ACP Registry artifact receipt for ${agent.id}.`,
+                    cause,
+                  }),
             ),
-            Effect.mapError(() => renameError),
+          );
+        // Recheck right before promotion in case a stale-lock takeover let another installer publish
+        // a valid receipt-matching slot while this staging download was in flight. Never remove an
+        // existing destinationRoot before rename so a concurrent publisher's directory cannot be deleted.
+        const concurrentSlot = yield* findMatchingBinarySlot(paths, target);
+        if (Option.isSome(concurrentSlot)) {
+          const validated = yield* assertExecutableInRoot(
+            concurrentSlot.value.root,
+            concurrentSlot.value.executablePath,
+          ).pipe(Effect.option);
+          if (Option.isSome(validated)) {
+            return validated.value;
+          }
+        }
+        const promotedPath = yield* fileSystem.rename(extractionRoot, destinationRoot).pipe(
+          Effect.andThen(() => assertExecutableInRoot(destinationRoot, destinationExecutable)),
+          Effect.catch((renameError) =>
+            findMatchingBinarySlot(paths, target).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => Effect.fail(renameError),
+                  onSome: (slot) => assertExecutableInRoot(slot.root, slot.executablePath),
+                }),
+              ),
+              Effect.mapError(() => renameError),
+            ),
           ),
-        ),
-      );
-      return promotedPath;
-    }).pipe(
-      Effect.scoped,
-      Effect.ensuring(fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore)),
+        );
+        return promotedPath;
+      }).pipe(Effect.scoped),
+    ).pipe(
       Effect.mapError((cause) =>
         isAcpRegistryError(cause)
           ? cause
@@ -2767,18 +2917,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             }
             yield* consumePreparedBinaryReservation(agent.id);
             const activeSlot = yield* findMatchingBinarySlot(paths, distribution.binaryTarget!);
-            const primaryExists =
-              Option.isNone(activeSlot) &&
-              (yield* fileSystem
-                .exists(paths.executablePath)
-                .pipe(Effect.orElseSucceed(() => false)));
-            const slotToValidate = Option.isSome(activeSlot)
-              ? activeSlot.value
-              : primaryExists
-                ? { root: paths.installRoot, executablePath: paths.executablePath }
-                : undefined;
             // Any prepared version keeps the agent ready; resolve installs the current one on demand.
-            if (slotToValidate === undefined && !(yield* hasInstalledBinaryVersion(agent.id))) {
+            if (Option.isNone(activeSlot) && !(yield* hasInstalledBinaryVersion(agent.id))) {
               return {
                 status: "unprepared",
                 agentId,
@@ -2787,10 +2927,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 indexRevision,
               } as const;
             }
-            if (slotToValidate !== undefined) {
+            if (Option.isSome(activeSlot)) {
               yield* assertExecutableInRoot(
-                slotToValidate.root,
-                slotToValidate.executablePath,
+                activeSlot.value.root,
+                activeSlot.value.executablePath,
               ).pipe(
                 Effect.mapError((cause) =>
                   isAcpRegistryError(cause)
@@ -3300,30 +3440,43 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                   legacyBaselineBySlotKey.delete(key);
                 }
               }
-              if (
-                yield* fileSystem
-                  .exists(legacyBaselinesPath)
-                  .pipe(Effect.orElseSucceed(() => false))
-              ) {
-                yield* withLegacyBaselinesLock(
-                  Effect.gen(function* () {
-                    const disk = yield* readLegacyBaselinesFile(fileSystem, legacyBaselinesPath);
-                    if (disk.status !== "ok") return;
-                    const remaining = Object.fromEntries(
-                      Object.entries(disk.baselines).filter(([key]) => !key.startsWith(prefix)),
-                    );
-                    if (Object.keys(remaining).length !== Object.keys(disk.baselines).length) {
-                      yield* writeLegacyBaselinesAtomically(remaining);
-                    }
-                  }),
-                ).pipe(Effect.ignore);
-              }
             }
             return { agentId: safeAgentId, removed };
           }),
         ),
       )
       .pipe(
+        Effect.tap(({ agentId: removedAgentId, removed }) =>
+          removed
+            ? fileSystem.exists(legacyBaselinesPath).pipe(
+                Effect.orElseSucceed(() => false),
+                Effect.flatMap((hasBaselinesFile) =>
+                  hasBaselinesFile
+                    ? withLegacyBaselinesLock(
+                        Effect.gen(function* () {
+                          const disk = yield* readLegacyBaselinesFile(
+                            fileSystem,
+                            legacyBaselinesPath,
+                          );
+                          if (disk.status !== "ok") return;
+                          const prefix = `${removedAgentId}\0`;
+                          const remaining = Object.fromEntries(
+                            Object.entries(disk.baselines).filter(
+                              ([key]) => !key.startsWith(prefix),
+                            ),
+                          );
+                          if (
+                            Object.keys(remaining).length !== Object.keys(disk.baselines).length
+                          ) {
+                            yield* writeLegacyBaselinesAtomically(remaining);
+                          }
+                        }),
+                      ).pipe(Effect.ignore)
+                    : Effect.void,
+                ),
+              )
+            : Effect.void,
+        ),
         Effect.catchTags({
           ServerSettingsError: (cause) =>
             new AcpRegistryError({
@@ -3335,10 +3488,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         }),
       );
 
+  const currentIndexRevision = () =>
+    Ref.get(registryState).pipe(Effect.map((state) => state.indexRevision));
+
   return AcpRegistryCatalog.of({
     search,
     prepare,
     refreshIndex,
+    currentIndexRevision,
     invalidateIndex,
     inspect,
     resolve,

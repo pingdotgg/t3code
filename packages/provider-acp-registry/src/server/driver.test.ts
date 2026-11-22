@@ -893,7 +893,7 @@ describe("acpRegistryEnrichmentCache", () => {
     expect(updated.entry).toBeNull();
   });
 
-  it("ignores live updates tagged for a different runtime identity than the cached entry", () => {
+  it("advances the incoming runtime's generation without replacing another runtime's cached entry", () => {
     const provider = providerWithModels(
       [{ id: "smodel", name: "Default", description: null }],
       "smodel",
@@ -904,7 +904,7 @@ describe("acpRegistryEnrichmentCache", () => {
       entry: { provider, expiresAt: 1_000, launchIdentity: "runtime-v1" },
     };
 
-    const ignored = updateAcpRegistryEnrichmentCache({
+    const updated = updateAcpRegistryEnrichmentCache({
       cache,
       configuration: settledConfiguration,
       customModels: [],
@@ -912,10 +912,11 @@ describe("acpRegistryEnrichmentCache", () => {
       runtimeIdentity: "runtime-v2",
     });
 
-    expect(ignored).toBe(cache);
-    expect(ignored.invalidationGeneration).toBe(3);
-    expect(ignored.liveGenerationByRuntime.size).toBe(0);
-    expect(ignored.entry?.provider.models.map((m) => m.slug)).toEqual(["smodel"]);
+    expect(updated.entry).toBe(cache.entry);
+    expect(updated.invalidationGeneration).toBe(3);
+    expect(updated.liveGenerationByRuntime.get("runtime-v2")).toBe(1);
+    expect(updated.liveGenerationByRuntime.get("runtime-v1")).toBeUndefined();
+    expect(updated.entry?.provider.models.map((m) => m.slug)).toEqual(["smodel"]);
   });
 });
 
@@ -1635,6 +1636,7 @@ describe("AcpRegistryDriver registry recovery", () => {
         let remoteWebsite: string | undefined = undefined;
         let remoteExtraAgentVersion: string | undefined = undefined;
         let failArchiveDownload = false;
+        let inspectCalls = 0;
         let probeResolveAttempts = 0;
         let onFallbackResolved: (() => Effect.Effect<void>) | null = null;
         let onEnrichmentEnd: ((exit: Exit.Exit<unknown, unknown>) => void) | null = null;
@@ -1697,6 +1699,10 @@ describe("AcpRegistryDriver registry recovery", () => {
         );
         const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
           ...realCatalog,
+          inspect: (settings, environment) =>
+            Effect.sync(() => {
+              inspectCalls += 1;
+            }).pipe(Effect.andThen(() => realCatalog.inspect(settings, environment))),
           resolve: (settings, cwd, environment) =>
             Effect.sync(() => {
               if (environment?.MISE_OFFLINE === "1") {
@@ -1925,6 +1931,22 @@ describe("AcpRegistryDriver registry recovery", () => {
           "https://example.test/v4-updated-docs",
         );
         expect(metadataBackoffSnapshot.message).toBe(fallbackSnapshot.message);
+
+        // A follow-up refresh at the same revision inside backoff skips enrichment recheck
+        // completely because targetIndexRevision was updated to the new revision.
+        const inspectsBeforeSameRevBackoff = inspectCalls;
+        const sameRevBackoffDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = (exit) => {
+          if (Exit.isSuccess(exit)) {
+            Deferred.doneUnsafe(sameRevBackoffDone, Exit.void);
+          }
+        };
+        yield* instance.snapshot.refresh.pipe(Effect.provideService(Tracer.Tracer, testTracer));
+        yield* Deferred.await(sameRevBackoffDone);
+        onEnrichmentEnd = null;
+        expect(probeResolveAttempts).toBe(resolvesBeforeMetadataBackoff);
+        // Only checkProvider + auth.refreshMethods run; 0 enrichment inspectReadiness rechecks.
+        expect(inspectCalls).toBe(inspectsBeforeSameRevBackoff + 2);
 
         // Once backoff expires, recovering without invalidating the cached 4.0.0 index still upgrades
         // because fallback did not acknowledge the 4.0.0 revision.
@@ -2832,6 +2854,7 @@ describe("AcpRegistryDriver registry recovery", () => {
 
         let remoteVersion = "1.0.0";
         let failProbeSpawn = false;
+        let failProbeSpawnOnce = false;
         let inspectCalls = 0;
         let resolveGate: {
           readonly matchVersion: string;
@@ -2909,7 +2932,8 @@ describe("AcpRegistryDriver registry recovery", () => {
                 yield* Deferred.succeed(gate.started, undefined);
                 yield* Deferred.await(gate.release);
               }
-              if (environment?.MISE_OFFLINE === "1" && failProbeSpawn) {
+              if (environment?.MISE_OFFLINE === "1" && (failProbeSpawn || failProbeSpawnOnce)) {
+                failProbeSpawnOnce = false;
                 return yield* new AcpRegistrySupport.AcpRegistryError({
                   reason: "install_failed",
                   detail: `Simulated probe install failure for ${resolved.agent?.version ?? "unknown"}.`,
@@ -3421,8 +3445,68 @@ describe("AcpRegistryDriver registry recovery", () => {
         const v4Recovered = Option.getOrThrow(yield* Fiber.join(recoveredToV4));
         expect(v4Recovered.models.map((model) => model.slug)).toEqual(["v4-model-a", "v4-model-b"]);
         expect(v4Recovered.message).toBeUndefined();
+        const v4Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
+        expect(v4Inspection.status).toBe("ready");
+        const v4Identity = v4Inspection.status === "ready" ? v4Inspection.launchIdentity! : "";
 
-        // 7. Disposing a driver instance removes its coordinator state and marks earlier metadata stale.
+        // 7. Rolling the shared registry back to a previously retired version (3.0.0) allows a new
+        // 3.0.0 session's live state to reconcile the driver back to 3.0.0.
+        remoteVersion = "3.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const rolledBackToV3 = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "3.0.0" &&
+              snapshot.nativeSessions !== undefined &&
+              snapshot.slashCommands.some((command) => command.name === "v3-rollback-cmd"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishAvailableCommands(
+          identity.instanceId,
+          { slashCommands: [{ name: "v3-rollback-cmd" }], skills: [] },
+          v3Identity,
+        );
+        expect(Option.isSome(yield* Fiber.join(rolledBackToV3))).toBe(true);
+
+        // 8. If a live update parks in pendingReconcileIdentity while an upgrade probe is in flight
+        // (while 3.0.0 is still displayed) and that probe fails, releasing inFlightProbeIdentity
+        // first lets the parked identity drain and reconcile automatically without another event.
+        remoteVersion = "4.0.0";
+        yield* realCatalog.invalidateIndex();
+        const v4ParkedGate = {
+          matchVersion: "4.0.0",
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        resolveGate = v4ParkedGate;
+        failProbeSpawnOnce = true;
+        const v4ReconciledFromParked = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "4.0.0" &&
+              snapshot.status === "ready" &&
+              snapshot.nativeSessions !== undefined &&
+              snapshot.slashCommands.some((command) => command.name === "v4-parked-after-fail"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(v4ParkedGate.started);
+        yield* coordinator.publishAvailableCommands(
+          identity.instanceId,
+          { slashCommands: [{ name: "v4-parked-after-fail" }], skills: [] },
+          v4Identity,
+        );
+        yield* Deferred.succeed(v4ParkedGate.release, undefined);
+        const reconciledFromParked = Option.getOrThrow(yield* Fiber.join(v4ReconciledFromParked));
+        expect(reconciledFromParked.version).toBe("4.0.0");
+        expect(reconciledFromParked.message).toBeUndefined();
+
+        // 9. Disposing a driver instance removes its coordinator state and marks earlier metadata stale.
         const disposedInstanceId = ProviderInstanceId.make("acpRegistry_disposed_cleanup");
         const disposedScope = yield* Scope.make();
         let disposedMeta: AcpRegistryRuntimeCoordinator.AcpRegistryLiveUpdateMeta | null = null;

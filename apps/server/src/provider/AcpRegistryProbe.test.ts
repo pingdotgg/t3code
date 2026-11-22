@@ -625,7 +625,7 @@ await import(pathToFileURL(agentPath).href);
           instanceId,
           settings: decodeSettings({ agentId: "mock-agent" }),
           cwd: process.cwd(),
-          environment: process.env,
+          environment: {},
         }).pipe(
           Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
           Effect.forkScoped({ startImmediately: true }),

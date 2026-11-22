@@ -3892,6 +3892,8 @@ describe("AcpRegistrySupport", () => {
         version,
       });
       let upstream = binaryAgent("1.2.3", archiveAUrl);
+      let archiveRequestsDuringLockedSlot = 0;
+      let countArchiveRequests = false;
 
       return Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -3928,6 +3930,31 @@ describe("AcpRegistrySupport", () => {
         expect(yield* fileSystem.readFileString(repairedB.spawn.command)).toBe(
           "#!/bin/sh\necho archive-b\n",
         );
+
+        // If moving a broken artifact slot fails (e.g., locked files on Windows), fail fast with
+        // install_failed before making any archive download request.
+        yield* fileSystem.remove(repairedB.spawn.command);
+        const brokenSlotRoot = path.dirname(path.dirname(repairedB.spawn.command));
+        archiveRequestsDuringLockedSlot = 0;
+        countArchiveRequests = true;
+        const unmovableSlotFs: FileSystem.FileSystem = {
+          ...fileSystem,
+          rename: (oldPath, newPath) =>
+            oldPath === brokenSlotRoot
+              ? fileSystem.readFileString(repairDir).pipe(Effect.asVoid)
+              : fileSystem.rename(oldPath, newPath),
+        };
+        const lockedSlotResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: repairDir,
+          toolsDir: `${repairDir}/tools`,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, unmovableSlotFs));
+        const lockedSlotError = yield* lockedSlotResolver
+          .resolve(settings(), "/workspace")
+          .pipe(Effect.flip);
+        countArchiveRequests = false;
+        expect(lockedSlotError.reason).toBe("install_failed");
+        expect(archiveRequestsDuringLockedSlot).toBe(0);
 
         // 2. A transient I/O failure reading legacy-baselines.json preserves A's baseline in memory
         // so the next successful refresh still persists A and updates registry.json to B.
@@ -3987,8 +4014,63 @@ describe("AcpRegistrySupport", () => {
           "#!/bin/sh\necho archive-b\n",
         );
 
-        // 3. A corrupt legacy-baselines.json is quarantined and rebuilt cleanly so disk registry
-        // updates do not freeze, and uninstallManagedBinary prunes removed agents from disk.
+        // 2b. An incomplete tools-directory scan during A -> B keeps disk registry.json on A; once
+        // the directory is readable again, the next refresh compares against disk A and records A.
+        const scanDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-scan-error-",
+        });
+        const scanRegistryDir = `${scanDir}/acp-registry`;
+        const scanRegistryPath = `${scanRegistryDir}/registry.json`;
+        const scanBaselinesPath = `${scanRegistryDir}/legacy-baselines.json`;
+        const scanToolsDir = `${scanDir}/tools`;
+        const scanLegacyExe = `${scanToolsDir}/example-agent/1.0.0/linux-x86_64/bin/example-agent`;
+        yield* fileSystem.makeDirectory(path.dirname(scanLegacyExe), { recursive: true });
+        yield* fileSystem.writeFileString(scanLegacyExe, "#!/bin/sh\necho legacy-a\n");
+        yield* fileSystem.chmod(scanLegacyExe, 0o755);
+        yield* fileSystem.makeDirectory(scanRegistryDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          scanRegistryPath,
+          makeRegistry(binaryAgent("1.0.0", archiveAUrl)),
+        );
+        let failToolsScan = true;
+        const flakyScanFs: FileSystem.FileSystem = {
+          ...fileSystem,
+          readDirectory: (dirPath, options) =>
+            failToolsScan && dirPath === scanToolsDir
+              ? fileSystem.readDirectory(scanLegacyExe, options)
+              : fileSystem.readDirectory(dirPath, options),
+        };
+        upstream = binaryAgent("1.0.0", archiveBUrl);
+        const scanResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: scanDir,
+          toolsDir: scanToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, flakyScanFs));
+        yield* scanResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect(yield* fileSystem.readFileString(scanRegistryPath)).toContain(archiveAUrl);
+        expect(yield* fileSystem.exists(scanBaselinesPath)).toBe(false);
+
+        failToolsScan = false;
+        yield* scanResolver.invalidateIndex();
+        yield* scanResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect(yield* fileSystem.readFileString(scanRegistryPath)).toContain(archiveBUrl);
+        expect(yield* fileSystem.readFileString(scanBaselinesPath)).toContain(archiveAUrl);
+        const restartedScanResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: scanDir,
+          toolsDir: scanToolsDir,
+          registryUrl,
+        });
+        const resolvedAfterScanRecovery = yield* restartedScanResolver.resolve(
+          settings(),
+          "/workspace",
+        );
+        expect(yield* fileSystem.readFileString(resolvedAfterScanRecovery.spawn.command)).toBe(
+          "#!/bin/sh\necho archive-b\n",
+        );
+
+        // 3. A corrupt legacy-baselines.json is copied aside and rebuilt cleanly so disk registry
+        // updates do not freeze, unrecoverable legacy slots are marked unknown rather than trusted,
+        // and uninstallManagedBinary prunes removed agents from disk.
         const corruptDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-baseline-corrupt-",
         });
@@ -4024,6 +4106,47 @@ describe("AcpRegistrySupport", () => {
         const otherSlotKey = "other-agent\u00001.0.0\u0000linux-x86_64";
         expect(rebuiltBaselines[exampleSlotKey]).toContain(archiveAUrl);
 
+        // When legacy-baselines.json corrupts AFTER registry.json already moved to same-version B
+        // and the server restarts (comparing B vs B), rebuilding must mark the legacy slot unknown
+        // so resolve() installs B instead of running legacy A as B.
+        const unrecoverableDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-baseline-unrecoverable-",
+        });
+        const unrecoverableRegistryDir = `${unrecoverableDir}/acp-registry`;
+        const unrecoverableBaselinesPath = `${unrecoverableRegistryDir}/legacy-baselines.json`;
+        const unrecoverableLegacyExe = `${unrecoverableDir}/tools/example-agent/1.0.0/linux-x86_64/bin/example-agent`;
+        yield* fileSystem.makeDirectory(path.dirname(unrecoverableLegacyExe), { recursive: true });
+        yield* fileSystem.writeFileString(unrecoverableLegacyExe, "#!/bin/sh\necho legacy-a\n");
+        yield* fileSystem.chmod(unrecoverableLegacyExe, 0o755);
+        yield* fileSystem.makeDirectory(unrecoverableRegistryDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${unrecoverableRegistryDir}/registry.json`,
+          makeRegistry(binaryAgent("1.0.0", archiveBUrl)),
+        );
+        yield* fileSystem.writeFileString(unrecoverableBaselinesPath, "{corrupt");
+
+        upstream = binaryAgent("1.0.0", archiveBUrl);
+        const unrecoverableResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: unrecoverableDir,
+          toolsDir: `${unrecoverableDir}/tools`,
+          registryUrl,
+        });
+        yield* unrecoverableResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect(yield* fileSystem.readFileString(`${unrecoverableBaselinesPath}.corrupt`)).toBe(
+          "{corrupt",
+        );
+        const unknownBaselines = JSON.parse(
+          yield* fileSystem.readFileString(unrecoverableBaselinesPath),
+        ) as Record<string, string>;
+        expect(unknownBaselines[exampleSlotKey]).toBe("unknown");
+        const resolvedAfterCorruptRebuild = yield* unrecoverableResolver.resolve(
+          settings(),
+          "/workspace",
+        );
+        expect(yield* fileSystem.readFileString(resolvedAfterCorruptRebuild.spawn.command)).toBe(
+          "#!/bin/sh\necho archive-b\n",
+        );
+
         // Add another agent's baseline entry, uninstall example-agent, and verify only example-agent is pruned.
         rebuiltBaselines[otherSlotKey] = "other-baseline";
         yield* fileSystem.writeFileString(corruptBaselinesPath, JSON.stringify(rebuiltBaselines));
@@ -4046,6 +4169,9 @@ describe("AcpRegistrySupport", () => {
               return Effect.succeed(
                 HttpClientResponse.fromWeb(request, new Response(makeRegistry(upstream))),
               );
+            }
+            if (countArchiveRequests) {
+              archiveRequestsDuringLockedSlot += 1;
             }
             const bytes =
               request.url === archiveAUrl ? bytesA : request.url === archiveBUrl ? bytesB : bytesC;
@@ -4092,8 +4218,9 @@ describe("AcpRegistrySupport", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-        // 1. Post-retry concurrent removal: retry B fails with checksum_mismatch while the agent is
-        // concurrently removed from the index -> resolve() fails with agent_not_found without fallback.
+        // 1. Post-retry concurrent removal: initial A fails checksum_mismatch while the index
+        // advances to B, then recheck-retry B fails checksum_mismatch while the agent is removed ->
+        // resolve() rechecks after retry B and fails with agent_not_found instead of falling back.
         const removalDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-post-retry-remove-",
         });
@@ -4105,38 +4232,69 @@ describe("AcpRegistrySupport", () => {
         const v1Resolved = yield* removalResolver.resolve(settings(), "/workspace");
         expect(v1Resolved.agent?.version).toBe("1.0.0");
 
-        // Cache 2.0.0 archive A (which returns 503), then point upstream to failing 2.0.0 archive B.
-        upstreamAgents = [binaryAgent("2.0.0", archiveV2AUrl)];
+        upstreamAgents = [binaryAgent("2.0.0", archiveV2AUrl, "0".repeat(64))];
         yield* removalResolver.invalidateIndex();
         yield* removalResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        upstreamAgents = [binaryAgent("2.0.0", archiveV2BUrl, "0".repeat(64))];
-        yield* removalResolver.invalidateIndex();
+        const aGate = {
+          url: archiveV2AUrl,
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
         const bGate = {
           url: archiveV2BUrl,
           started: yield* Deferred.make<void>(),
           release: yield* Deferred.make<void>(),
         };
-        downloadGate = bGate;
+        downloadGate = aGate;
         const resolveFiber = yield* removalResolver
           .resolve(settings(), "/workspace")
           .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(aGate.started);
+
+        // Advance the index from A to B while A's download is in flight, then arm bGate.
+        upstreamAgents = [binaryAgent("2.0.0", archiveV2BUrl, "0".repeat(64))];
+        yield* removalResolver.invalidateIndex();
+        yield* removalResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        downloadGate = bGate;
+        yield* Deferred.succeed(aGate.release, undefined);
         yield* Deferred.await(bGate.started);
 
-        // Concurrently remove the agent from the registry index while retry B's download is in flight.
+        // Concurrently remove the agent while the recheck's own retry B download is in flight.
         upstreamAgents = [];
         yield* removalResolver.invalidateIndex();
         yield* removalResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         yield* Deferred.succeed(bGate.release, undefined);
         expect((yield* Fiber.join(resolveFiber)).reason).toBe("agent_not_found");
 
-        // 2. Archive extraction timeout maps to archive_invalid (falls back when a prior receipted
-        // version exists, and surfaces archive_invalid while releasing locks when none exists).
+        // 2. Both archive extraction and listing timeouts map to archive_invalid (falling back when
+        // a prior receipted version exists, and surfacing archive_invalid while releasing locks
+        // when none exists).
         let tarStartedGate: Deferred.Deferred<void> | null = null;
+        let hangTarStage: "list" | "extract" = "extract";
         const hangingTarSpawner = ChildProcessSpawner.make((command) => {
           if (
             ChildProcess.isStandardCommand(command) &&
             (command.command === "tar" || command.command.endsWith("/tar"))
           ) {
+            const firstArg = command.args[0];
+            const isListing = typeof firstArg === "string" && firstArg.startsWith("-t");
+            if (isListing && hangTarStage === "extract") {
+              return Effect.succeed(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(1),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: Stream.make(new TextEncoder().encode("bin/example-agent\n")),
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                }),
+              );
+            }
             const gate = tarStartedGate;
             tarStartedGate = null;
             return (gate === null ? Effect.void : Deferred.succeed(gate, undefined)).pipe(
@@ -4170,6 +4328,7 @@ describe("AcpRegistrySupport", () => {
         upstreamAgents = [binaryAgent("3.0.0", archiveTarUrl)];
         yield* timeoutFallbackResolver.invalidateIndex();
         yield* timeoutFallbackResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        hangTarStage = "extract";
         tarStartedGate = yield* Deferred.make<void>();
         const tarWithFallback = tarStartedGate;
         const fallbackTimeoutFiber = yield* timeoutFallbackResolver
@@ -4192,6 +4351,7 @@ describe("AcpRegistrySupport", () => {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, hangingTarSpawner),
           Effect.provideService(SpawnExecutableResolution, (command) => command),
         );
+        hangTarStage = "list";
         tarStartedGate = yield* Deferred.make<void>();
         const tarWithoutFallback = tarStartedGate;
         const noFallbackTimeoutFiber = yield* noFallbackResolver
@@ -4267,12 +4427,14 @@ describe("AcpRegistrySupport", () => {
           .resolve(settings(), "/workspace")
           .pipe(Effect.forkScoped({ startImmediately: true }));
         yield* Deferred.await(firstReceiptGate.started);
-        // Age installer1's lock so installer2 takes over and publishes the artifact slot first.
+        // Age installer1's lock and advance the clock past the 5-minute stale threshold explicitly
+        // so this check is independent of earlier clock adjustments.
         yield* fileSystem.utimes(
           `${concurrentDir}/tools/example-agent/1.2.3/linux-x86_64.lock`,
           0,
           0,
         );
+        yield* TestClock.adjust("6 minutes");
         const secondResult = yield* installer2.resolve(settings(), "/workspace");
         expect(renameToArtifactCount).toBe(1);
 
@@ -4292,11 +4454,6 @@ describe("AcpRegistrySupport", () => {
                 ),
               );
             }
-            if (request.url === archiveV2AUrl) {
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
-              );
-            }
             const respond = Effect.succeed(
               HttpClientResponse.fromWeb(request, new Response(binaryBytes.buffer as ArrayBuffer)),
             );
@@ -4309,6 +4466,135 @@ describe("AcpRegistrySupport", () => {
               );
             }
             return respond;
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "rejects reserved receipt command paths, ignores superseded broken primaries on inspect, and syncs receipt launch options for fallback",
+    () => {
+      const archiveAUrl = "https://registry.test/receipt-a.bin";
+      const archiveBUrl = "https://registry.test/receipt-b.bin";
+      const archiveFailUrl = "https://registry.test/receipt-fail.bin";
+      const bytesA = new TextEncoder().encode("#!/bin/sh\necho receipt-a\n");
+      const bytesB = new TextEncoder().encode("#!/bin/sh\necho receipt-b\n");
+      const makeBinary = (
+        version: string,
+        target: {
+          readonly archive: string;
+          readonly cmd: string;
+          readonly args?: ReadonlyArray<string>;
+          readonly env?: Readonly<Record<string, string>>;
+        },
+      ) => ({
+        ...makeAgent({ binary: { "linux-x86_64": target } }),
+        version,
+      });
+      let upstream = makeBinary("1.0.0", { archive: archiveAUrl, cmd: ".t3-artifact.json" });
+
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        // 1. A raw binary declaring .t3-artifact.json as its command fails with archive_invalid
+        // instead of letting the receipt overwrite the staged executable.
+        const reservedDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-reserved-receipt-",
+        });
+        const reservedResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: reservedDir,
+          toolsDir: `${reservedDir}/tools`,
+          registryUrl,
+        });
+        const reservedError = yield* reservedResolver
+          .resolve(settings(), "/workspace")
+          .pipe(Effect.flip);
+        expect(reservedError.reason).toBe("archive_invalid");
+
+        // 2. A superseded primary executable that lost execute permission must not fail inspect()
+        // when the registry selects a different same-version artifact.
+        const supersededDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-superseded-inspect-",
+        });
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--v1"],
+          env: { STAGE: "initial" },
+        });
+        const supersededResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: supersededDir,
+          toolsDir: `${supersededDir}/tools`,
+          registryUrl,
+        });
+        const installedA = yield* supersededResolver.resolve(settings(), "/workspace");
+        expect(installedA.spawn.args).toEqual(["--v1"]);
+        expect(installedA.spawn.env?.STAGE).toBe("initial");
+
+        // 3. Updating args/env on the same binary syncs the existing receipt so a later fallback
+        // launches with the last resolved args and env.
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--v1", "--updated"],
+          env: { STAGE: "updated" },
+        });
+        yield* supersededResolver.invalidateIndex();
+        yield* supersededResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const syncedA = yield* supersededResolver.resolve(settings(), "/workspace");
+        expect(syncedA.spawn.command).toBe(installedA.spawn.command);
+        expect(syncedA.spawn.args).toEqual(["--v1", "--updated"]);
+        expect(syncedA.spawn.env?.STAGE).toBe("updated");
+
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* supersededResolver.invalidateIndex();
+        yield* supersededResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const fallbackA = yield* supersededResolver.resolve(settings(), "/workspace");
+        expect(fallbackA.fallback).toBe(true);
+        expect(fallbackA.agent?.version).toBe("1.0.0");
+        expect(fallbackA.spawn.args).toEqual(["--v1", "--updated"]);
+        expect(fallbackA.spawn.env?.STAGE).toBe("updated");
+
+        // Now remove execute permission on primary A and swap same-version 1.0.0 to archive B:
+        // inspect() must stay ready so resolve() can install replacement B in a sibling slot.
+        yield* fileSystem.chmod(installedA.spawn.command, 0o644);
+        upstream = makeBinary("1.0.0", {
+          archive: archiveBUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* supersededResolver.invalidateIndex();
+        yield* supersededResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect(yield* supersededResolver.inspect(settings())).toMatchObject({
+          status: "ready",
+          version: "1.0.0",
+        });
+        const installedB = yield* supersededResolver.resolve(settings(), "/workspace");
+        expect(installedB.spawn.command).not.toBe(installedA.spawn.command);
+        expect(yield* fileSystem.readFileString(installedB.spawn.command)).toBe(
+          "#!/bin/sh\necho receipt-b\n",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            if (request.url === registryUrl) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response(makeRegistry(upstream))),
+              );
+            }
+            if (request.url === archiveFailUrl) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
+              );
+            }
+            const bytes = request.url === archiveAUrl ? bytesA : bytesB;
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(bytes.buffer as ArrayBuffer)),
+            );
           }),
         ),
       );
