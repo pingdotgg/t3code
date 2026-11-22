@@ -43,30 +43,23 @@ const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): DpopFailur
 };
 
 /**
- * Proofs this process consumed, kept until their time window closes, so a replay check needs
- * no disk write. Markers on disk only cover proofs an earlier process could have accepted:
- * those have `iat` at most the skew past this process's first consume, and still wait on disk.
+ * Proofs this process consumed, kept until their time window closes, so a replay check needs no
+ * disk write. Markers on disk tell a later process which proofs were used; they are listed once,
+ * on the first consume, and kept while a proof an earlier process accepted could still pass.
  */
 export const DpopReplayGuard = Context.Reference<{
   readonly consumed: Map<string, number>;
-  diskCheckedThroughIat: number | undefined;
+  earlierMarkers: ReadonlySet<string> | undefined;
+  earlierMarkersUntil: number;
   nextSweepAt: number;
 }>("t3/auth/dpop/DpopReplayGuard", {
-  defaultValue: () => ({ consumed: new Map(), diskCheckedThroughIat: undefined, nextSweepAt: 0 }),
+  defaultValue: () => ({
+    consumed: new Map(),
+    earlierMarkers: undefined,
+    earlierMarkersUntil: 0,
+    nextSweepAt: 0,
+  }),
 });
-
-export const mapDpopReplayStoreError = (
-  error: ServerSecretStore.SecretStoreError,
-): ServerAuthInvalidCredentialError | ServerAuthInternalError =>
-  ServerSecretStore.isSecretAlreadyExistsError(error)
-    ? new ServerAuthInvalidCredentialError({
-        diagnostic: "DPoP proof replayed.",
-        dpopFailureReason: "replay",
-        cause: error,
-      })
-    : new ServerAuthDpopReplayStateRecordError({
-        cause: error,
-      });
 
 /** Checks a proof without recording it; `consume` records its jti so it cannot be replayed. */
 export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(function* (input: {
@@ -116,16 +109,29 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
               }),
           ),
         );
+      const markerName = `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`;
       const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
       const guard = yield* DpopReplayGuard;
-      guard.diskCheckedThroughIat ??= nowSeconds + DPOP_MAX_CLOCK_SKEW_SECONDS;
+      if (guard.earlierMarkers === undefined) {
+        const names = secretStore.list
+          ? yield* secretStore
+              .list(DPOP_REPLAY_MARKER_PREFIX)
+              .pipe(Effect.mapError((cause) => new ServerAuthDpopReplayStateRecordError({ cause })))
+          : [];
+        if (guard.earlierMarkers === undefined) {
+          guard.earlierMarkers = new Set(names);
+          // An earlier process stopped before now, so it accepted no proof dated past now + skew.
+          guard.earlierMarkersUntil = nowSeconds + 2 * DPOP_MAX_CLOCK_SKEW_SECONDS;
+        }
+      }
       if (nowSeconds >= guard.nextSweepAt) {
         for (const [key, expiresAt] of guard.consumed) {
           if (expiresAt < nowSeconds) guard.consumed.delete(key);
         }
+        if (nowSeconds > guard.earlierMarkersUntil) guard.earlierMarkers = new Set();
         guard.nextSweepAt = nowSeconds + 60;
       }
-      if (guard.consumed.has(replayKey)) {
+      if (guard.consumed.has(replayKey) || guard.earlierMarkers.has(markerName)) {
         yield* Effect.annotateCurrentSpan({ "environment.dpop.failure_code": "replay" });
         return yield* new ServerAuthInvalidCredentialError({
           diagnostic: "DPoP proof replayed.",
@@ -133,42 +139,25 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
         });
       }
       guard.consumed.set(replayKey, result.iat + DPOP_MAX_CLOCK_SKEW_SECONDS);
-      const recordMarker = secretStore.create(
-        `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
-        new TextEncoder().encode(
-          [
-            `thumbprint=${result.thumbprint}`,
-            `jti=${result.jti}`,
-            `iat=${result.iat}`,
-            `consumedAt=${DateTime.formatIso(now)}`,
-          ].join("\n"),
-        ),
-      );
-      if (result.iat > guard.diskCheckedThroughIat) {
-        // Only a later process reads the marker, so this request need not wait for the write.
-        return yield* recordMarker.pipe(
+      // Only a later process reads the marker, so this request need not wait for the write.
+      yield* secretStore
+        .create(
+          markerName,
+          new TextEncoder().encode(
+            [
+              `thumbprint=${result.thumbprint}`,
+              `jti=${result.jti}`,
+              `iat=${result.iat}`,
+              `consumedAt=${DateTime.formatIso(now)}`,
+            ].join("\n"),
+          ),
+        )
+        .pipe(
           Effect.catch((cause) =>
             Effect.logWarning("Failed to record DPoP replay marker", { cause }),
           ),
           Effect.forkDetach,
-          Effect.asVoid,
         );
-      }
-      yield* recordMarker.pipe(
-        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-          Effect.gen(function* () {
-            const mapped = mapDpopReplayStoreError(error);
-            if (mapped._tag === "ServerAuthInvalidCredentialError") {
-              yield* Effect.annotateCurrentSpan({
-                "environment.dpop.failure_code": mapped.dpopFailureReason,
-              });
-            } else {
-              guard.consumed.delete(replayKey);
-            }
-            return yield* mapped;
-          }),
-        ),
-      );
     });
   return { thumbprint: result.thumbprint, consume };
 });
