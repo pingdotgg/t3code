@@ -317,7 +317,7 @@ describe("AntigravitySwarm", () => {
       }),
     ).toBe("deny");
 
-    // Once the session records worker-a's worktree (while rejecting root "/" paths),
+    // Once the session records worker-a's worktree (while rejecting root "/" and collapsing ".." paths),
     // edits inside the tracked worktree are allowed and outside paths remain denied.
     tracker.applyNotification({
       sessionId: "root-1",
@@ -330,7 +330,17 @@ describe("AntigravitySwarm", () => {
           name: "alpha",
           role: "worker",
           conversationId: "worker-a",
-          workspaces: ["/tmp/isolated-worktree", "/"],
+          workspaces: [
+            "/tmp/scratch/../isolated-worktree",
+            "/",
+            "/tmp/..",
+            "/a/b/../..",
+            "C:/",
+            "C:\\work\\..",
+            "//server/share",
+            "//server/share/dir/..",
+            "relative/worktree",
+          ],
           state: "working",
         },
       ],
@@ -356,5 +366,63 @@ describe("AntigravitySwarm", () => {
         { extraWritableRoots: tracker.childPermissionWorkspaces(childWorktreeRequest) },
       ),
     ).toBe("deny");
+  });
+
+  it("clears round-1 board report when a parked worker wakes for a quiet round 2", () => {
+    const tracker = makeAntigravitySwarmTracker();
+
+    tracker.applyNotification({
+      sessionId: "root-r2",
+      head: 1,
+      activeWorkers: 0,
+      workingWorkers: 0,
+      waitingWorkers: 1,
+      members: [{ name: "alpha", role: "worker", conversationId: "worker-a", state: "waiting" }],
+      posts: [{ seq: 1, agent: "alpha", text: "@coordinator Round 1 summary." }],
+    });
+
+    const woken = tracker.applyNotification({
+      sessionId: "root-r2",
+      head: 1,
+      activeWorkers: 1,
+      workingWorkers: 1,
+      waitingWorkers: 0,
+      members: [{ name: "alpha", role: "worker", conversationId: "worker-a", state: "working" }],
+    });
+    expect(woken.subagents[0]?.subagent).toMatchObject({ status: "running", result: null });
+
+    const quietIdle = tracker.applyNotification({
+      sessionId: "root-r2",
+      head: 1,
+      activeWorkers: 0,
+      workingWorkers: 0,
+      waitingWorkers: 1,
+      members: [{ name: "alpha", role: "worker", conversationId: "worker-a", state: "waiting" }],
+    });
+    expect(quietIdle.subagents[0]?.subagent).toMatchObject({ status: "idle", result: null });
+
+    // A fresh post delivered in the same frame as a re-wake is preserved.
+    const wokenWithPost = tracker.applyNotification({
+      sessionId: "root-r2",
+      head: 2,
+      activeWorkers: 1,
+      workingWorkers: 1,
+      waitingWorkers: 0,
+      members: [{ name: "alpha", role: "worker", conversationId: "worker-a", state: "working" }],
+      posts: [{ seq: 2, agent: "alpha", text: "@coordinator Round 3 update." }],
+    });
+    expect(wokenWithPost.subagents[0]?.subagent).toMatchObject({ status: "running", result: null });
+    const round3Idle = tracker.applyNotification({
+      sessionId: "root-r2",
+      head: 2,
+      activeWorkers: 0,
+      workingWorkers: 0,
+      waitingWorkers: 1,
+      members: [{ name: "alpha", role: "worker", conversationId: "worker-a", state: "waiting" }],
+    });
+    expect(round3Idle.subagents[0]?.subagent).toMatchObject({
+      status: "idle",
+      result: "Round 3 update.",
+    });
   });
 });

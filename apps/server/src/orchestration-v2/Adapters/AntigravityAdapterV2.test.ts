@@ -6,8 +6,10 @@ import {
   MessageId,
   NodeId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -2793,6 +2795,13 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         assert.isTrue(yield* session.hasPendingBackgroundWork ?? Effect.succeed(false));
 
         // Workers finish and hold coordinatorPendingWake through the coordinator's out-of-turn synthesis.
+        yield* onSessionUpdate!({
+          sessionId: alphaSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Round 1 UI check." },
+          },
+        });
         yield* onSwarmNotification!({
           sessionId: rootSessionId,
           head: 3,
@@ -2923,11 +2932,64 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         yield* TestClock.adjust("5 seconds");
         yield* Effect.yieldNow;
         assert.equal(subagentsByTitle().get("@alpha")?.status, "running");
+        assert.equal(subagentsByTitle().get("@alpha")?.result, null);
         assert.equal(
           subagentsByTitle().get("@alpha")?.childThreadId,
           alphaAfterTurn1?.childThreadId,
         );
         assert.equal(collected.filter((event) => event.type === "turn.terminal").length, 1);
+
+        // Round 2 streams its own assistant reply and parks without a board post; round 1's
+        // assistant item must stay intact under a distinct id and round 1's stale board report
+        // ("Frontend passed.") must not reappear on the round-2 idle update.
+        yield* onSessionUpdate!({
+          sessionId: alphaSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Round 2 UI recheck." },
+          },
+        });
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 5,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          coordinatorPendingWake: true,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+          ],
+        });
+        yield* Effect.yieldNow;
+        assert.equal(subagentsByTitle().get("@alpha")?.status, "idle");
+        assert.equal(subagentsByTitle().get("@alpha")?.result, "Round 2 UI recheck.");
+
+        // Round 3 wakes and parks without any board post or assistant reply; result must be null.
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 5,
+          activeWorkers: 1,
+          workingWorkers: 1,
+          waitingWorkers: 0,
+          coordinatorPendingWake: false,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "working" },
+          ],
+        });
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 5,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          coordinatorPendingWake: true,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+          ],
+        });
+        yield* Effect.yieldNow;
+        assert.equal(subagentsByTitle().get("@alpha")?.status, "idle");
+        assert.equal(subagentsByTitle().get("@alpha")?.result, null);
 
         yield* onSwarmNotification!({
           sessionId: rootSessionId,
@@ -2953,6 +3015,21 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         assert.equal(subagentsByTitle().get("@beta")?.status, "completed");
         assert.equal(subagentsByTitle().get("@beta")?.result, "Backend wrap-up.");
 
+        const alphaMessagesById = new Map<string, string>();
+        for (const event of collected) {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === alphaAfterTurn1?.childThreadId &&
+            event.turnItem.type === "assistant_message"
+          ) {
+            alphaMessagesById.set(event.turnItem.id, event.turnItem.text);
+          }
+        }
+        assert.deepEqual(
+          [...alphaMessagesById.values()],
+          ["Round 1 UI check.", "Round 2 UI recheck.", "Follow-up complete."],
+        );
+
         yield* Fiber.interrupt(reader);
       }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
@@ -2975,6 +3052,9 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
           | Parameters<RuntimeService["handleRequestPermission"]>[0]
           | undefined;
         let onSwarmNotification:
+          | ((payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+          | undefined;
+        let onCancelRequestNotification:
           | ((payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
           | undefined;
         let onOutgoingResponse: ((requestId: string) => Effect.Effect<void>) | undefined;
@@ -3126,6 +3206,8 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
                   Effect.sync(() => {
                     if (method === "_antigravity/swarm") {
                       onSwarmNotification = handler;
+                    } else if (method === "$/cancel_request") {
+                      onCancelRequestNotification = handler;
                     }
                   }),
               } as unknown as RuntimeService;
@@ -3448,6 +3530,376 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
           outcome: { outcome: "selected", optionId: "reject_once" },
         });
         assert.equal(continuationOffers, offersBeforeIdleChecks);
+
+        // ACP $/cancel_request withdraws open permissions by transport requestId even when they
+        // carry no swarm metadata (root or non-swarm subagent), both before and after turn admission.
+        assert.isDefined(onCancelRequestNotification, "adapter must handle $/cancel_request");
+        const preAdmittedApproval = yield* sendPermission(
+          {
+            sessionId: rootSessionId,
+            options: permOptions,
+            toolCall: {
+              toolCallId: "detached-subagent-cmd-1",
+              kind: "execute",
+              status: "pending",
+              title: "pnpm build",
+              rawInput: { CommandLine: "pnpm build" },
+            },
+          },
+          "42",
+        ).pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* onCancelRequestNotification!({ requestId: 42 });
+        assert.deepEqual(yield* Fiber.join(preAdmittedApproval), {
+          outcome: { outcome: "cancelled" },
+        });
+
+        yield* session.startTurn({
+          ...turn1,
+          runId: RunId.make("run-perm-4"),
+          runOrdinal: 4,
+          providerTurnOrdinal: 4,
+          attemptId: RunAttemptId.make("attempt-perm-4"),
+          rootNodeId: NodeId.make("root-perm-4"),
+          runtimePolicy: supervisedPolicy,
+        });
+        yield* Effect.yieldNow;
+        const cancelByIdApproval = yield* sendPermission(
+          {
+            sessionId: rootSessionId,
+            options: permOptions,
+            toolCall: {
+              toolCallId: "root-cmd-cancel-1",
+              kind: "execute",
+              status: "pending",
+              title: "pnpm check",
+              rawInput: { CommandLine: "pnpm check" },
+            },
+          },
+          "req-cancel-99",
+        ).pipe(Effect.forkScoped({ startImmediately: true }));
+        const cancelByIdCard = yield* takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.status === "waiting" &&
+            event.turnItem.prompt === "pnpm check",
+        );
+        assert.equal(cancelByIdCard.type, "turn_item.updated");
+        yield* onCancelRequestNotification!({ requestId: "req-cancel-99" });
+        assert.deepEqual(yield* Fiber.join(cancelByIdApproval), {
+          outcome: { outcome: "cancelled" },
+        });
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 1,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+          ],
+        });
+        yield* onSessionUpdate!({
+          sessionId: rootSessionId,
+          update: { sessionUpdate: "usage_update", used: 200, size: 100_000 },
+        });
+        yield* TestClock.adjust("4 seconds");
+        yield* Effect.yieldNow;
+        assert.equal(
+          collected.filter((event) => event.type === "turn.terminal").length,
+          4,
+          "$/cancel_request must cancel the approval card and allow the turn to settle",
+        );
+
+        yield* Fiber.interrupt(reader);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.effect(
+    "offers a continuation run after resuming a session with an already running swarm",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ag-swarm-resume-",
+        });
+
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let onSessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        let onSwarmNotification:
+          | ((payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+          | undefined;
+        let continuationOffers = 0;
+
+        const rootSessionId = "33333333-3333-4000-8000-000000000001";
+        const alphaSessionId = "33333333-3333-4000-8000-00000000000a";
+
+        const continuationRequests = {
+          offer: () =>
+            Effect.sync(() => {
+              continuationOffers += 1;
+              return true;
+            }),
+        } as unknown as NonNullable<
+          Parameters<typeof makeAntigravityAdapterV2>[0]["continuationRequests"]
+        >;
+
+        const instanceId = ProviderInstanceId.make("antigravity-swarm-resume");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          continuationRequests,
+          selfInvocation: yield* resolveSelfInvocation(),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+          makeRuntime: () =>
+            Effect.sync(
+              () =>
+                ({
+                  start: () =>
+                    Effect.gen(function* () {
+                      // Simulate session/resume delivering an active swarm snapshot before returning.
+                      yield* onSwarmNotification!({
+                        sessionId: rootSessionId,
+                        head: 1,
+                        activeWorkers: 1,
+                        workingWorkers: 1,
+                        waitingWorkers: 0,
+                        coordinatorWorking: false,
+                        coordinatorPendingWake: false,
+                        members: [
+                          {
+                            name: "alpha",
+                            role: "worker",
+                            conversationId: alphaSessionId,
+                            brief: "Finish indexing",
+                            state: "working",
+                          },
+                        ],
+                      });
+                      return {
+                        initializeResult: {
+                          protocolVersion: 1,
+                          agentInfo: { name: "Antigravity ACP Server", version: "1.5.14" },
+                          agentCapabilities: {
+                            loadSession: true,
+                            _meta: { antigravity: { swarm: true } },
+                          },
+                        },
+                        sessionId: rootSessionId,
+                        resumed: true,
+                        sessionSetupResult: {
+                          sessionId: rootSessionId,
+                          modes: {
+                            currentModeId: "default",
+                            availableModes: [{ id: "default", name: "Default" }],
+                          },
+                          models: {
+                            currentModelId: "test-model",
+                            availableModels: [{ modelId: "test-model", name: "Test Model" }],
+                          },
+                          configOptions: [],
+                        },
+                      } as unknown as AcpSessionRuntime.AcpSessionRuntimeStartResult;
+                    }),
+                  getEvents: () => Stream.empty,
+                  drainEvents: Effect.void,
+                  getSessionId: Effect.succeed(rootSessionId),
+                  getConfigOptions: Effect.succeed([]),
+                  getModeState: Effect.succeed({
+                    currentModeId: "default",
+                    availableModes: [{ id: "default", name: "Default" }],
+                  }),
+                  getModelState: Effect.succeed({
+                    currentModelId: "test-model",
+                    availableModels: [{ modelId: "test-model", name: "Test Model" }],
+                  }),
+                  setConfigOption: () => Effect.succeed({ configOptions: [] }),
+                  setMode: () => Effect.void,
+                  setModel: () => Effect.void,
+                  prompt: () => Effect.die("continuation turn should not send a prompt"),
+                  cancel: () => Effect.void,
+                  closeSession: () => Effect.void,
+                  extRequest: () => Effect.die("unused"),
+                  extNotification: () => Effect.void,
+                  handleSessionUpdate: (
+                    handler: Parameters<RuntimeService["handleSessionUpdate"]>[0],
+                  ) =>
+                    Effect.sync(() => {
+                      onSessionUpdate = handler;
+                    }),
+                  handleRequestPermission: () => Effect.void,
+                  handleReadTextFile: () => Effect.void,
+                  handleWriteTextFile: () => Effect.void,
+                  handleCreateTerminal: () => Effect.void,
+                  handleTerminalOutput: () => Effect.void,
+                  handleWaitForTerminalExit: () => Effect.void,
+                  handleKillTerminalCommand: () => Effect.void,
+                  handleReleaseTerminal: () => Effect.void,
+                  handleElicitation: () => Effect.void,
+                  handleElicitationComplete: () => Effect.void,
+                  handleExtRequest: () => Effect.void,
+                  handleExtNotification: (
+                    method: string,
+                    _schema: unknown,
+                    handler: (payload: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>,
+                  ) =>
+                    Effect.sync(() => {
+                      if (method === "_antigravity/swarm") {
+                        onSwarmNotification = handler;
+                      }
+                    }),
+                }) as unknown as RuntimeService,
+            ),
+        });
+
+        const threadId = ThreadId.make("thread-ag-swarm-resume");
+        const modelSelection = { instanceId, model: "antigravity-default" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("ps-ag-swarm-resume"),
+          initialNativeThreadId: rootSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.isTrue(
+          yield* session.hasPendingBackgroundWork ?? Effect.succeed(false),
+          "idle eviction must stay blocked as soon as openSession observes the active swarm",
+        );
+        assert.equal(
+          continuationOffers,
+          0,
+          "no continuation offer fires before a providerThread id is bound",
+        );
+
+        // Live worker output arriving after resume settles (before the continuation run opens)
+        // is buffered and replayed onto the continuation turn.
+        yield* onSessionUpdate!({
+          sessionId: alphaSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Resumed progress." },
+          },
+        });
+
+        const eventQueue = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const reader = yield* session.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              collected.push(event);
+            }).pipe(Effect.andThen(Queue.offer(eventQueue, event))),
+          ),
+          Effect.forkScoped,
+        );
+        const takeUntil = (predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
+          Effect.gen(function* () {
+            while (true) {
+              const event = yield* Queue.take(eventQueue);
+              if (predicate(event)) return event;
+            }
+          });
+        const now = yield* DateTime.now;
+        const providerThread = yield* session.resumeThread({
+          providerThread: {
+            id: ProviderThreadId.make("pt-ag-swarm-resume"),
+            driver: ProviderDriverKind.make("antigravity"),
+            providerInstanceId: instanceId,
+            appThreadId: threadId,
+            ownerNodeId: null,
+            providerSessionId: ProviderSessionId.make("ps-ag-swarm-prior"),
+            nativeThreadRef: {
+              driver: ProviderDriverKind.make("antigravity"),
+              nativeId: rootSessionId,
+              strength: "strong",
+            },
+            nativeConversationHeadRef: null,
+            status: "idle",
+            forkedFrom: null,
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            nativeMetadata: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(
+          continuationOffers,
+          1,
+          "resumeThread must immediately offer a continuation run for an active resumed swarm",
+        );
+        const continuationTurn = makeTurnInput({
+          instanceId,
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        });
+        yield* session.startTurn({
+          ...continuationTurn,
+          message: {
+            ...continuationTurn.message,
+            createdBy: "agent",
+            creationSource: "provider",
+          },
+        });
+        yield* takeUntil(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.title === "@alpha" &&
+            event.subagent.status === "running",
+        );
+        assert.isTrue(
+          collected.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.text === "Resumed progress.",
+          ),
+        );
+
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 2,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          coordinatorWorking: false,
+          coordinatorPendingWake: false,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+          ],
+          posts: [{ seq: 2, agent: "alpha", text: "@coordinator Indexing finished." }],
+        });
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("4 seconds");
+        yield* takeUntil((event) => event.type === "turn.terminal");
+        assert.equal(collected.filter((event) => event.type === "turn.terminal").length, 1);
+
+        // A coordinatorPendingWake pulse with all workers waiting also wakes a continuation run.
+        yield* onSwarmNotification!({
+          sessionId: rootSessionId,
+          head: 2,
+          activeWorkers: 0,
+          workingWorkers: 0,
+          waitingWorkers: 1,
+          coordinatorWorking: false,
+          coordinatorPendingWake: true,
+          members: [
+            { name: "alpha", role: "worker", conversationId: alphaSessionId, state: "waiting" },
+          ],
+        });
+        assert.equal(continuationOffers, 2);
 
         yield* Fiber.interrupt(reader);
       }).pipe(Effect.provide(layerSession), Effect.scoped),

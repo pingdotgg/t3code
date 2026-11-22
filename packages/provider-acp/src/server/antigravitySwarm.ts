@@ -91,12 +91,40 @@ interface TrackedSwarmSession {
   readonly briefsByMention: Map<string, string>;
 }
 
-function isNonRootWorkspacePath(candidate: string): boolean {
-  const normalized = candidate.replaceAll("\\", "/").replace(/\/+$/, "");
-  if (normalized.length === 0) return false;
-  if (/^[a-z]:$/i.test(normalized)) return false;
-  if (/^\/\/[^/]+(?:\/[^/]+)?$/.test(normalized)) return false;
-  return true;
+function normalizeNonRootWorkspacePath(candidate: string): string | undefined {
+  const slashed = candidate.trim().replaceAll("\\", "/");
+  if (slashed.length === 0) return undefined;
+
+  let prefix = "";
+  let rest = slashed;
+  const uncMatch = /^\/\/([^/]+)\/([^/]+)(\/.*)?$/.exec(slashed);
+  const driveMatch = /^([a-z]:)(\/.*)?$/i.exec(slashed);
+  if (slashed.startsWith("//")) {
+    if (uncMatch === null) return undefined;
+    prefix = `//${uncMatch[1]}/${uncMatch[2]}`;
+    rest = uncMatch[3] ?? "";
+  } else if (driveMatch !== null) {
+    if (driveMatch[2] === undefined) return undefined;
+    prefix = driveMatch[1]!;
+    rest = driveMatch[2];
+  } else if (slashed.startsWith("/")) {
+    prefix = "";
+    rest = slashed;
+  } else {
+    return undefined;
+  }
+
+  const segments: Array<string> = [];
+  for (const part of rest.split("/")) {
+    if (part.length === 0 || part === ".") continue;
+    if (part === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(part);
+  }
+  if (segments.length === 0) return undefined;
+  return `${prefix}/${segments.join("/")}`;
 }
 
 function nonEmpty(value: string | undefined): string | undefined {
@@ -289,6 +317,7 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
       nativeProtocolSessions.add(notification.sessionId);
       const session = sessionFor(notification.sessionId);
 
+      const freshPostAuthors = new Set<string>();
       for (const post of notification.posts ?? []) {
         if (post.control !== undefined) continue;
         const author = post.agent.trim().toLowerCase();
@@ -306,6 +335,7 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
         if (author === "coordinator" || author.length === 0) continue;
         const report = cleanBoardReport(post.text);
         if (report === null) continue;
+        freshPostAuthors.add(author);
         session.latestPostsByAgent.set(author, report);
         const tracked = session.membersByName.get(author);
         if (tracked !== undefined) {
@@ -352,10 +382,23 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
           }
         }
         for (const extraWorkspace of member.workspaces ?? []) {
-          const trimmed = nonEmpty(extraWorkspace);
-          if (trimmed !== undefined && isNonRootWorkspacePath(trimmed)) {
-            tracked.workspaces.add(trimmed);
+          const normalized = normalizeNonRootWorkspacePath(extraWorkspace);
+          if (normalized !== undefined) {
+            tracked.workspaces.add(normalized);
           }
+        }
+
+        const previousStatus = tracked.status;
+        const nextStatus = mapSwarmMemberStatus(member.state, tracked.sawIdleOrReport);
+        if (
+          previousStatus === "idle" &&
+          (nextStatus === "running" || nextStatus === "pending") &&
+          !freshPostAuthors.has(nameKey)
+        ) {
+          // Clear round-1 report when a parked worker re-wakes so a quiet round 2
+          // never re-projects stale text from an earlier turn.
+          tracked.latestReport = null;
+          session.latestPostsByAgent.delete(nameKey);
         }
 
         const latestPost = session.latestPostsByAgent.get(nameKey) ?? tracked.latestReport;
@@ -364,7 +407,6 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
           tracked.sawIdleOrReport = true;
         }
 
-        const nextStatus = mapSwarmMemberStatus(member.state, tracked.sawIdleOrReport);
         if (nextStatus === "idle") {
           tracked.sawIdleOrReport = true;
         }
@@ -445,7 +487,9 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
         const tracked = session.membersByConversationId.get(childSessionId);
         if (tracked === undefined) continue;
         for (const workspace of tracked.workspaces) {
-          if (isNonRootWorkspacePath(workspace)) roots.add(workspace);
+          if (normalizeNonRootWorkspacePath(workspace) !== undefined) {
+            roots.add(workspace);
+          }
         }
       }
       return [...roots];
