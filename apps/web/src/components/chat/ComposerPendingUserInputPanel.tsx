@@ -450,6 +450,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
+                            if (
+                              e.nativeEvent.isComposing ||
+                              e.nativeEvent.keyCode === 229 ||
+                              e.keyCode === 229
+                            ) {
+                              return;
+                            }
                             e.preventDefault();
                             if (progress.canAdvance) {
                               advance();

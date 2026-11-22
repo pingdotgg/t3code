@@ -594,7 +594,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onInterrupt,
     onSelectActivePendingUserInputOption,
     onSelectActivePendingUserInputOther,
-    onAdvanceActivePendingUserInput,
+    onAdvanceActivePendingUserInput: _onAdvanceActivePendingUserInput,
     onDismissActivePendingUserInput,
     onPreviousActivePendingUserInputQuestion,
     onChangeActivePendingUserInputCustomAnswer,
@@ -1928,6 +1928,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const handlePanelCustomAnswerChange = useStableCallback((questionId: string, value: string) => {
     promptRef.current = value;
+    setComposerCursor(value.length);
     onChangeActivePendingUserInputCustomAnswer(questionId, value, value.length, value.length, true);
   });
 
@@ -2490,6 +2491,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const submitCitationAndSendStable = useStableCallback(submitCitationAndSend);
+  const handlePanelAdvance = useStableCallback(() => {
+    submitComposer();
+  });
   // A question took the editor while a citation comment was
   // unsaved. Keep the comment in the prompt that comes back afterward.
   const saveCitationDraftToPrompt = (replacedValue: string, savedValue: string) => {
@@ -3705,7 +3709,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onSelectOther={onSelectActivePendingUserInputOther}
                     onChangeCustomAnswer={handlePanelCustomAnswerChange}
-                    onAdvance={onAdvanceActivePendingUserInput}
+                    onAdvance={handlePanelAdvance}
                     onDismiss={onDismissActivePendingUserInput}
                     onFocusComposer={scheduleComposerFocus}
                   />
