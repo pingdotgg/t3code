@@ -3,6 +3,7 @@
 //!
 //! Port of `apps/web/src/orbit/tasks/TasksPanel.tsx` and `TaskCardButton.tsx`.
 
+use crate::a11y::ConnA11yExt as _;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -521,6 +522,7 @@ fn render_task_card(
 
     v_flex()
         .id(SharedString::from(format!("tasks-card-{task_id}")))
+        .a11y_button(format!("panel.tasks.card.{task_id}"), task.title.clone())
         .w_full()
         .gap(px(6.0))
         .rounded(px(8.0))
@@ -703,6 +705,7 @@ pub(super) fn render_notice(
             col.child(
                 div()
                     .id("tasks-notice-retry")
+                    .a11y_button("panel.tasks-notice-retry", "Retry")
                     .h(px(28.0))
                     .px(px(12.0))
                     .flex()

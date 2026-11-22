@@ -103,11 +103,15 @@ fn card_shadow() -> Vec<BoxShadow> {
 }
 
 fn detail_row(
+    key: &'static str,
+    ax_label: String,
     icon: AnyElement,
     text: impl Into<SharedString>,
     color: gpui_kit::Hsla,
-) -> gpui_kit::Div {
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     div()
+        .id(key)
+        .a11y_group(format!("sidebar.thread-hover-card.{key}"), ax_label)
         .flex()
         .flex_row()
         .items_center()
@@ -123,7 +127,11 @@ fn detail_row(
         )
 }
 
-fn pull_request_line(pr: &HoverPullRequest, tokens: &Tokens) -> gpui_kit::Div {
+fn pull_request_line(
+    idx: usize,
+    pr: &HoverPullRequest,
+    tokens: &Tokens,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     let (icon, color) = match pr.state {
         Some((PullRequestState::Open, false)) => {
             ("superhero/pull-request.svg", hsla(tokens.success))
@@ -140,6 +148,11 @@ fn pull_request_line(pr: &HoverPullRequest, tokens: &Tokens) -> gpui_kit::Div {
         None => ("superhero/pull-request.svg", hsla(tokens.muted_foreground)),
     };
     div()
+        .id(("hover-card-pr", idx))
+        .a11y_group(
+            format!("sidebar.thread-hover-card.pr.{idx}"),
+            format!("Pull request #{}: {}", pr.number, pr.title),
+        )
         .flex()
         .flex_row()
         .items_center()
@@ -220,6 +233,11 @@ pub(crate) fn render_thread_hover_card(
 
     if let Some(name) = &model.project {
         let mut row = div()
+            .id("hover-card-project")
+            .a11y_group(
+                "sidebar.thread-hover-card.project",
+                format!("Project {name}"),
+            )
             .flex()
             .flex_row()
             .items_center()
@@ -240,6 +258,8 @@ pub(crate) fn render_thread_hover_card(
     }
     if let Some(label) = &model.environment {
         rows = rows.child(detail_row(
+            "environment",
+            format!("Environment {label}"),
             icon("superhero/server.svg", muted),
             label.clone(),
             text,
@@ -247,6 +267,8 @@ pub(crate) fn render_thread_hover_card(
     }
     if let Some(branch) = &model.branch {
         rows = rows.child(detail_row(
+            "branch",
+            format!("Branch {branch}"),
             icon("superhero/branch.svg", muted),
             middle_truncate(branch, BRANCH_CHAR_BUDGET),
             text,
@@ -263,6 +285,8 @@ pub(crate) fn render_thread_hover_card(
         model.model.clone()
     };
     rows = rows.child(detail_row(
+        "model",
+        format!("Model {model_label}"),
         div()
             .flex()
             .flex_shrink_0()
@@ -275,6 +299,8 @@ pub(crate) fn render_thread_hover_card(
     if let Some(count) = model.subagents {
         let noun = if count == 1 { "subagent" } else { "subagents" };
         rows = rows.child(detail_row(
+            "subagents",
+            format!("{count} {noun}"),
             icon("superhero/agent.svg", muted),
             format!("{count} {noun}"),
             text,
@@ -282,6 +308,8 @@ pub(crate) fn render_thread_hover_card(
     }
     if let Some(from) = &model.handed_off_from {
         rows = rows.child(detail_row(
+            "handoff",
+            format!("Handed off from {from}"),
             icon("superhero/switch.svg", muted),
             format!("Handed off from {from}"),
             text,
@@ -293,6 +321,8 @@ pub(crate) fn render_thread_hover_card(
             HoverError::Failed => hsla(tokens.destructive),
         };
         rows = rows.child(detail_row(
+            "error",
+            error.label().to_owned(),
             icon("superhero/warning.svg", color),
             error.label(),
             color,
@@ -309,6 +339,12 @@ pub(crate) fn render_thread_hover_card(
         .py(px(8.0))
         .child(
             div()
+                .id("hover-card-title")
+                .a11y(
+                    gpui_kit::Role::Heading,
+                    "sidebar.thread-hover-card.title",
+                    model.title.clone(),
+                )
                 .min_w_0()
                 .truncate()
                 .text_size(px(TITLE_FONT_PX))
@@ -317,11 +353,16 @@ pub(crate) fn render_thread_hover_card(
                 .text_color(hsla(tokens.foreground))
                 .child(model.title.clone()),
         )
-        .child(rows);
+        .child(
+            rows.id("hover-card-details")
+                .a11y_group("sidebar.thread-hover-card.details", "Thread details"),
+        );
 
     if !model.pull_requests.is_empty() {
         body = body.child(
             div()
+                .id("hover-card-prs")
+                .a11y_group("sidebar.thread-hover-card.prs", "Linked pull requests")
                 .flex()
                 .flex_col()
                 .gap(px(6.0))
@@ -337,7 +378,8 @@ pub(crate) fn render_thread_hover_card(
                     model
                         .pull_requests
                         .iter()
-                        .map(|pr| pull_request_line(pr, tokens)),
+                        .enumerate()
+                        .map(|(idx, pr)| pull_request_line(idx, pr, tokens)),
                 ),
         );
     }

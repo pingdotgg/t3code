@@ -2,6 +2,7 @@
 //! loading skeleton (`PullRequestDetailGhost`), and empty/unavailable states
 //! (`PullRequestsUnavailableState`).
 
+use crate::a11y::ConnA11yExt as _;
 use std::rc::Rc;
 
 use conn_contract::{
@@ -213,6 +214,7 @@ pub(super) fn render_title_header(
                 div().invisible().group_hover(group, |s| s.visible()).child(
                     div()
                         .id("pr-edit-title-btn")
+                        .a11y_button("panel.pr-edit-title-btn", "Edit title")
                         .flex()
                         .flex_shrink_0()
                         .size(px(24.0))
@@ -259,6 +261,7 @@ pub(super) fn render_title_header(
     let mut overflow_anchor = div().relative().child(
         div()
             .id("pr-actions-menu-btn")
+            .a11y_button("panel.pr-actions-menu-btn", "Actions menu")
             .flex()
             .flex_shrink_0()
             .size(px(24.0))
@@ -298,6 +301,7 @@ pub(super) fn render_title_header(
     let on_toggle_condensed = cb.on_toggle_header_condensed.clone();
     let collapse_btn = div()
         .id("pr-header-collapse-btn")
+        .a11y_button("panel.pr-header-collapse-btn", "Toggle header details")
         .flex()
         .flex_shrink_0()
         .size(px(24.0))
@@ -401,6 +405,10 @@ fn render_primary_control(
             Some(
                 h_flex()
                     .id("pr-primary-conflicts")
+                    .a11y_button(
+                        "panel.pr-primary-conflicts",
+                        "Resolve conflicts in this thread",
+                    )
                     .h(px(24.0))
                     .px(px(8.0))
                     .gap(px(4.0))
@@ -1047,6 +1055,7 @@ pub(super) fn render_condensed_header_row(
 
     h_flex()
         .id("pr-condensed-header-row")
+        .a11y_button("panel.pr-condensed-header-row", "Show details")
         .w_full()
         .flex_shrink_0()
         .px(px(HEADER_INSET_X_PX))
@@ -1130,6 +1139,7 @@ pub(super) fn render_header_body(
         let on_open = cb.on_open_url.clone();
         div()
             .id("pr-meta-repo")
+            .a11y_button("panel.pr-meta-repo", "Repository")
             .min_w_0()
             .truncate()
             .cursor_pointer()
@@ -1158,6 +1168,7 @@ pub(super) fn render_header_body(
         .child(
             h_flex()
                 .id("pr-meta-number-link")
+                .a11y_button("panel.pr-meta-number-link", "Pull request link")
                 .flex_shrink_0()
                 .items_center()
                 .gap(px(4.0))
@@ -1231,6 +1242,7 @@ pub(super) fn render_header_body(
         .child(
             div()
                 .id("pr-head-branch-copy")
+                .a11y_button("panel.pr-head-branch-copy", "Copy head branch")
                 .max_w(px(220.0))
                 .truncate()
                 .px(px(4.0))

@@ -14,12 +14,14 @@ use gpui_kit::component::h_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyElement, AnyView, App, BoxShadow, ClickEvent, Context, Div, ElementId, FontWeight, Hsla,
-    InteractiveElement, IntoElement, MouseButton, ObjectFit, ParentElement, Render, SharedString,
-    SharedUri, Stateful, StatefulInteractiveElement, Styled, Window, deferred, div, img, point, px,
+    InteractiveElement, IntoElement, MouseButton, ObjectFit, ParentElement, Render, Role,
+    SharedString, SharedUri, Stateful, StatefulInteractiveElement, Styled, Window, deferred, div,
+    img, point, px,
 };
 
 use super::color::to_hsla;
 use super::header::superhero_icon;
+use crate::a11y::ConnA11yExt as _;
 use crate::theme::MONO_FONT;
 
 /// Default tooltip show delay matching Conn's Base UI `TooltipProvider` (`600ms`).
@@ -380,8 +382,10 @@ pub(crate) fn icon_button(
 ) -> Stateful<Div> {
     let hover = to_hsla(tokens.shell_highlight);
     let color = to_hsla(tokens.muted_foreground);
+    let id = id.into();
     let button = div()
-        .id(id)
+        .id(id.clone())
+        .a11y_button(format!("panel.{id}"), icon_action_label(icon_path))
         .flex()
         .flex_shrink_0()
         .size(px(ICON_BUTTON_PX))
@@ -399,6 +403,21 @@ pub(crate) fn icon_button(
     }
 }
 
+/// AX label of an icon-only button, from its glyph (`superhero/refresh.svg` -> `Refresh`).
+fn icon_action_label(icon_path: &str) -> String {
+    let stem = icon_path
+        .rsplit('/')
+        .next()
+        .unwrap_or(icon_path)
+        .trim_end_matches(".svg")
+        .replace(['-', '_'], " ");
+    let mut chars = stem.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 /// A ghost `xs` text button (`h-6 gap-1 px-[7px] text-xs`, `size-3.5` glyph), such as
 /// "Add header".
 pub(crate) fn text_button(
@@ -410,8 +429,11 @@ pub(crate) fn text_button(
 ) -> Stateful<Div> {
     let hover = to_hsla(tokens.shell_highlight);
     let fg = to_hsla(tokens.foreground);
+    let id = id.into();
+    let label = label.into();
     let mut button = h_flex()
-        .id(id)
+        .id(id.clone())
+        .a11y_button(format!("panel.{id}"), label.clone())
         .flex_shrink_0()
         .h(px(24.0))
         .px(px(7.0))
@@ -431,7 +453,7 @@ pub(crate) fn text_button(
             to_hsla(tokens.muted_foreground),
         ));
     }
-    button.child(label.into())
+    button.child(label)
 }
 
 /// The soft input group (`InputGroup variant="soft"`): `h-8`, pill radius, `--shell-field`
@@ -489,6 +511,7 @@ pub(crate) fn section_tabs(
         let tab_id = tab.id;
         let mut button = h_flex()
             .id(SharedString::from(format!("{id}-{tab_id}")))
+            .a11y_tab(format!("panel.{id}.{tab_id}"), tab.label, is_active)
             .relative()
             .items_center()
             .gap(px(6.0))
@@ -621,8 +644,10 @@ pub(crate) fn dropdown_menu(
         spread_radius: px(-18.0),
         inset: false,
     };
+    let id = id.into();
     let mut list = div()
-        .id(id)
+        .id(id.clone())
+        .a11y(Role::Menu, format!("panel.menu.{id}"), "Menu")
         .flex()
         .flex_col()
         .min_w(px(160.0))
@@ -641,6 +666,8 @@ pub(crate) fn dropdown_menu(
             }
             MenuEntry::Row(row) => {
                 let on_select = row.on_select;
+                let ax_id = format!("panel.menu.item.{}", row.id);
+                let ax_label = row.label.clone();
                 let mut label = div().min_w_0().flex_1().truncate().child(row.label);
                 if row.mono {
                     label = label.font_family(mono_font.clone());
@@ -648,6 +675,7 @@ pub(crate) fn dropdown_menu(
                 list = list.child(
                     h_flex()
                         .id(row.id)
+                        .a11y(Role::MenuItem, ax_id, ax_label)
                         .w_full()
                         .min_h(px(28.0))
                         .px(px(8.0))

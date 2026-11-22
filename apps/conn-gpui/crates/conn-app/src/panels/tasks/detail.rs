@@ -3,6 +3,7 @@
 //!
 //! Port of `apps/web/src/orbit/tasks/TaskDetail.tsx`.
 
+use crate::a11y::ConnA11yExt as _;
 use std::rc::Rc;
 
 use conn_desktop::orbit::board::tasks_error_notice;
@@ -107,6 +108,7 @@ pub(super) fn render_task_detail(
         .child(
             h_flex()
                 .id("tasks-detail-back")
+                .a11y_button("panel.tasks-detail-back", "Tasks")
                 .flex_shrink_0()
                 .items_center()
                 .gap(px(4.0))
@@ -127,6 +129,7 @@ pub(super) fn render_task_detail(
                 .child(
                     div()
                         .id("tasks-detail-crumb-task")
+                        .a11y_button("panel.tasks-detail-crumb-task", "Task")
                         .max_w(gpui_kit::relative(0.45))
                         .min_w_0()
                         .flex_shrink(1.0)
@@ -210,6 +213,7 @@ pub(super) fn render_task_detail(
                 .child(
                     div()
                         .id("tasks-detail-retry")
+                        .a11y_button("panel.tasks-detail-retry", "Retry")
                         .h(px(28.0))
                         .px(px(12.0))
                         .flex()
@@ -470,6 +474,7 @@ fn render_key_values(
             "Pull request",
             h_flex()
                 .id("tasks-detail-pr-link")
+                .a11y_button("panel.tasks-detail-pr-link", "Linked pull request")
                 .min_w_0()
                 .items_center()
                 .gap(px(6.0))
@@ -561,6 +566,7 @@ fn render_task_tabs(
         let on_select = Rc::clone(&callbacks.on_set_tab);
         h_flex()
             .id(SharedString::from(format!("tasks-detail-tab-{tab:?}")))
+            .a11y_tab(format!("panel.tasks.detail.tab.{tab:?}"), label, selected)
             .relative()
             .h(px(TABS_HEIGHT_PX))
             .px(px(2.0))
@@ -855,6 +861,10 @@ fn render_subtask_row(
     let on_open = Rc::clone(&callbacks.on_open_subtask);
     h_flex()
         .id(SharedString::from(format!("tasks-subtask-row-{sub_id}")))
+        .a11y_button(
+            format!("panel.tasks.subtask.{sub_id}"),
+            subtask.title.clone(),
+        )
         .w_full()
         .items_start()
         .rounded(px(8.0))

@@ -5,6 +5,7 @@
 //! wired directly to `device.configure`, `device.list`, `device.testHost`, `device.easAccount`,
 //! `device.simlockIdentity`, `server.getConfig`, and `server.updateSettings`.
 
+use crate::a11y::ConnA11yExt as _;
 use conn_contract::{
     DeviceEasAccount, DeviceHostStatus, DeviceHostSummary, DeviceListInputUpdateTool,
     DevicePlatformAvailability, DeviceSimlockIdentity, EasDeviceHostConfig,
@@ -1261,6 +1262,7 @@ fn render_ssh_form(
     let mut options = v_flex().w_full().gap(px(8.0)).child(
         div()
             .id("device-ssh-options-toggle")
+            .a11y_button("panel.device-ssh-options-toggle", "Toggle SSH options")
             .cursor_pointer()
             .text_size(px(UI_TEXT_PX))
             .line_height(px(UI_LINE_HEIGHT_PX))

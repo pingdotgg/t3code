@@ -195,6 +195,7 @@ pub(crate) fn render_chat_header(
         breadcrumb = breadcrumb.child(
             div()
                 .id("header-thread-rename")
+                .a11y_group("header.thread-title.rename", "Rename thread")
                 .flex_1()
                 .min_w_0()
                 .px(px(4.0))
@@ -264,6 +265,7 @@ pub(crate) fn render_chat_header(
                 .child(
                     div()
                         .id("header-thread-title-chevron")
+                        .a11y_button("header.thread-title.menu", "Open thread actions menu")
                         .flex_shrink_0()
                         .opacity(0.0)
                         .group_hover("header-thread-title", |s| s.opacity(1.0))

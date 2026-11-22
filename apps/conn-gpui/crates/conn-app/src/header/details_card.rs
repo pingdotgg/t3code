@@ -315,18 +315,34 @@ fn label(text: impl Into<SharedString>) -> gpui_kit::Div {
     div().flex_1().min_w_0().truncate().child(text.into())
 }
 
+/// A card section exposed as an `AXGroup` (`ax_id` = `thread-details.<section>`).
 fn section(
+    ax_id: &'static str,
+    ax_label: &'static str,
     title: Option<String>,
     separated: bool,
     actions: Option<AnyElement>,
     tokens: &Tokens,
-) -> gpui_kit::Div {
-    let mut s = div().flex().flex_col().px(px(8.0)).pt(px(8.0)).pb(px(10.0));
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let mut s = div()
+        .id(ax_id)
+        .a11y_group(ax_id, ax_label)
+        .flex()
+        .flex_col()
+        .px(px(8.0))
+        .pt(px(8.0))
+        .pb(px(10.0));
     if separated {
         s = s.border_t_1().border_color(hsla(tokens.glass_divider));
     }
     if let Some(title) = title {
         let mut heading = div()
+            .id(SharedString::from(format!("{ax_id}-heading")))
+            .a11y(
+                gpui_kit::Role::Heading,
+                format!("{ax_id}.heading"),
+                title.clone(),
+            )
             .flex()
             .flex_row()
             .items_center()
@@ -362,9 +378,15 @@ fn split_separator(group: SharedString, tokens: &Tokens) -> gpui_kit::Div {
         .group_hover(group, move |s| s.bg(divider))
 }
 
-fn small_menu(id: &'static str, tokens: &Tokens) -> gpui_kit::Stateful<gpui_kit::Div> {
+fn small_menu(
+    id: &'static str,
+    ax_id: &'static str,
+    ax_label: &'static str,
+    tokens: &Tokens,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     div()
         .id(id)
+        .a11y(gpui_kit::Role::Menu, ax_id, ax_label)
         .flex()
         .flex_col()
         .p(px(4.0))
@@ -378,13 +400,16 @@ fn small_menu(id: &'static str, tokens: &Tokens) -> gpui_kit::Stateful<gpui_kit:
 
 fn menu_row(
     id: impl Into<gpui_kit::ElementId>,
+    ax_id: impl Into<SharedString>,
     icon: &'static str,
     text: impl Into<SharedString>,
     tokens: &Tokens,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
     let highlight = hsla(tokens.shell_highlight);
+    let text = text.into();
     div()
         .id(id)
+        .a11y(gpui_kit::Role::MenuItem, ax_id, text.clone())
         .flex()
         .flex_row()
         .items_center()
@@ -403,7 +428,7 @@ fn menu_row(
             ICON_PX,
             hsla(tokens.muted_foreground).opacity(0.8),
         ))
-        .child(div().flex_1().min_w_0().truncate().child(text.into()))
+        .child(div().flex_1().min_w_0().truncate().child(text))
 }
 
 /// Renders the anchored Thread Details card.
@@ -473,9 +498,16 @@ pub(crate) fn render_thread_details_card(
         let text = match target {
             DetailsCopyTarget::Path(p) | DetailsCopyTarget::Branch(p) => p.clone(),
         };
-        let menu = small_menu("thread-details-copy-menu", tokens).child(
+        let menu = small_menu(
+            "thread-details-copy-menu",
+            "thread-details.copy-menu",
+            "Copy menu",
+            tokens,
+        )
+        .child(
             menu_row(
                 "thread-details-copy-row",
+                "thread-details.copy-menu.copy",
                 "superhero/copy.svg",
                 target.label(),
                 tokens,
@@ -494,7 +526,7 @@ pub(crate) fn render_thread_details_card(
 fn render_workspace_section(
     props: &DetailsCardProps<'_>,
     cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Div {
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     let tokens = props.tokens;
     let thread = props.thread;
     let muted = hsla(tokens.muted_foreground);
@@ -513,8 +545,17 @@ fn render_workspace_section(
         "superhero/folder.svg"
     };
     let copy_path = path.clone();
+    let workspace_label = if path.is_empty() {
+        "No workspace path".to_owned()
+    } else {
+        format!("Workspace {path}")
+    };
     rows = rows.child(
         row_base("thread-details-environment", tokens)
+            .a11y_group(
+                "thread-details.environment",
+                format!("Environment {}", props.environment_label),
+            )
             .hover(move |s| s.bg(highlight))
             .on_mouse_down(
                 MouseButton::Right,
@@ -535,9 +576,34 @@ fn render_workspace_section(
                 },
                 tokens,
             )
-            .child(icons::concept("superhero/desktop.svg", 18.0, muted))
-            .child(label(props.environment_label.to_owned()))
-            .child(icons::concept(workspace_icon, ICON_PX, muted)),
+            .child(
+                div()
+                    .id("thread-details-environment-host")
+                    .a11y(
+                        gpui_kit::Role::Label,
+                        "thread-details.environment.host",
+                        format!("Machine {}", props.environment_label),
+                    )
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(ROW_GAP_PX))
+                    .flex_1()
+                    .min_w_0()
+                    .child(icons::concept("superhero/desktop.svg", 18.0, muted))
+                    .child(label(props.environment_label.to_owned())),
+            )
+            .child(
+                div()
+                    .id("thread-details-environment-workspace")
+                    .a11y(
+                        gpui_kit::Role::Image,
+                        "thread-details.environment.workspace",
+                        workspace_label,
+                    )
+                    .flex_shrink_0()
+                    .child(icons::concept(workspace_icon, ICON_PX, muted)),
+            ),
     );
 
     // `Open in <Editor>` split row (`OpenInPicker displayMode="panel"`).
@@ -546,6 +612,7 @@ fn render_workspace_section(
     let menu_open = props.state.open_in_menu_open;
     let mut split = div()
         .id("thread-details-open-in")
+        .a11y_group("thread-details.open-in", "Open in editor")
         .group(group.clone())
         .relative()
         .flex()
@@ -558,6 +625,10 @@ fn render_workspace_section(
         .when(menu_open, move |s| s.bg(highlight))
         .child(
             row_base("thread-details-open-in-primary", tokens)
+                .a11y_button(
+                    "thread-details.open-in.primary",
+                    format!("Open in {}", editor.label()),
+                )
                 .flex_1()
                 .rounded_r(px(0.0))
                 .cursor_pointer()
@@ -571,6 +642,8 @@ fn render_workspace_section(
         .child(
             div()
                 .id("thread-details-open-in-chevron")
+                .a11y_button("thread-details.open-in.menu-toggle", "Choose editor")
+                .aria_expanded(menu_open)
                 .flex()
                 .items_center()
                 .justify_center()
@@ -584,7 +657,13 @@ fn render_workspace_section(
                 .child(icons::concept("superhero/chevron-down.svg", ICON_PX, muted)),
         );
     if menu_open {
-        let mut menu = small_menu("thread-details-open-in-menu", tokens).w_full();
+        let mut menu = small_menu(
+            "thread-details-open-in-menu",
+            "thread-details.open-in.menu",
+            "Editors",
+            tokens,
+        )
+        .w_full();
         let installed: Vec<EditorTarget> = EditorTarget::ALL
             .into_iter()
             .filter(|e| e.installed())
@@ -592,6 +671,10 @@ fn render_workspace_section(
         for target in installed {
             let mut row = menu_row(
                 SharedString::from(format!("thread-details-editor-{}", target.label())),
+                format!(
+                    "thread-details.open-in.menu.{}",
+                    target.label().to_lowercase().replace(' ', "-")
+                ),
                 target.icon(),
                 target.label(),
                 tokens,
@@ -624,6 +707,7 @@ fn render_workspace_section(
             let scripts_open = props.state.scripts_menu_open;
             let mut split = div()
                 .id("thread-details-scripts")
+                .a11y_group("thread-details.scripts", "Project scripts")
                 .group(group.clone())
                 .relative()
                 .flex()
@@ -636,6 +720,10 @@ fn render_workspace_section(
                 .when(scripts_open, move |s| s.bg(highlight))
                 .child(
                     row_base("thread-details-script-primary", tokens)
+                        .a11y_button(
+                            "thread-details.scripts.primary",
+                            format!("Run {}", primary.name),
+                        )
                         .flex_1()
                         .conn_tooltip(format!("Run {}", primary.name), tokens)
                         .child(icons::concept("superhero/terminal.svg", ICON_PX, muted))
@@ -645,6 +733,8 @@ fn render_workspace_section(
                 .child(
                     div()
                         .id("thread-details-scripts-chevron")
+                        .a11y_button("thread-details.scripts.menu-toggle", "Choose script")
+                        .aria_expanded(scripts_open)
                         .flex()
                         .items_center()
                         .justify_center()
@@ -658,10 +748,17 @@ fn render_workspace_section(
                         .child(icons::concept("superhero/chevron-down.svg", ICON_PX, muted)),
                 );
             if scripts_open {
-                let mut menu = small_menu("thread-details-scripts-menu", tokens).w_full();
+                let mut menu = small_menu(
+                    "thread-details-scripts-menu",
+                    "thread-details.scripts.menu",
+                    "Project scripts",
+                    tokens,
+                )
+                .w_full();
                 for (idx, script) in project.scripts.iter().enumerate() {
                     menu = menu.child(menu_row(
                         ("thread-details-script", idx),
+                        format!("thread-details.scripts.menu.{idx}"),
                         "superhero/terminal.svg",
                         script.name.clone(),
                         tokens,
@@ -681,6 +778,7 @@ fn render_workspace_section(
         } else {
             rows = rows.child(
                 row_base("thread-details-add-script", tokens)
+                    .a11y_button("thread-details.scripts.add", "Add project script")
                     .conn_tooltip("Add project script", tokens)
                     .child(icons::concept("superhero/add.svg", ICON_PX, muted))
                     .child(label("Add project script")),
@@ -688,13 +786,21 @@ fn render_workspace_section(
         }
     }
 
-    section(None, false, None, tokens).child(rows)
+    section(
+        "thread-details.workspace",
+        "Workspace",
+        None,
+        false,
+        None,
+        tokens,
+    )
+    .child(rows)
 }
 
 fn render_version_control_section(
     props: &DetailsCardProps<'_>,
     cx: &mut Context<'_, ConnApp>,
-) -> Option<gpui_kit::Div> {
+) -> Option<gpui_kit::Stateful<gpui_kit::Div>> {
     let tokens = props.tokens;
     let thread = props.thread;
     let muted = hsla(tokens.muted_foreground);
@@ -716,6 +822,7 @@ fn render_version_control_section(
         let copy = branch.clone();
         rows = rows.child(
             row_base("thread-details-branch", tokens)
+                .a11y_group("thread-details.branch", format!("Branch {branch}"))
                 .hover(move |s| s.bg(highlight))
                 .on_mouse_down(
                     MouseButton::Right,
@@ -747,6 +854,10 @@ fn render_version_control_section(
         for (idx, line) in prs.iter().take(shown).enumerate() {
             rows = rows.child(
                 row_base(("thread-details-pr", idx), tokens)
+                    .a11y_button(
+                        format!("thread-details.pr.{idx}"),
+                        format!("Pull request {line}"),
+                    )
                     .cursor_pointer()
                     .hover(move |s| s.bg(highlight))
                     .on_click(cx.listener(|app, _, _, cx| {
@@ -761,6 +872,15 @@ fn render_version_control_section(
         if rest > 0 {
             rows = rows.child(
                 row_base("thread-details-pr-toggle", tokens)
+                    .a11y_button(
+                        "thread-details.pr.toggle",
+                        if expanded {
+                            "Show fewer pull requests".to_owned()
+                        } else {
+                            format!("Show {rest} more pull requests")
+                        },
+                    )
+                    .aria_expanded(expanded)
                     .cursor_pointer()
                     .text_color(muted)
                     .hover(move |s| s.bg(highlight))
@@ -790,6 +910,7 @@ fn render_version_control_section(
             let pending = props.state.git_init_pending;
             rows = rows.child(
                 row_base("thread-details-init-git", tokens)
+                    .a11y_button("thread-details.init-git", "Initialize Git")
                     .cursor_pointer()
                     .hover(move |s| s.bg(highlight))
                     .on_click(cx.listener(|app, _, _, cx| app.init_git_for_thread(cx)))
@@ -817,6 +938,7 @@ fn render_version_control_section(
             };
             rows = rows.child(
                 row_base("thread-details-changes", tokens)
+                    .a11y_button("thread-details.changes", format!("Changes +{ins} -{del}"))
                     .cursor_pointer()
                     .hover(move |s| s.bg(highlight))
                     .on_click(cx.listener(|app, _, _, cx| {
@@ -838,7 +960,17 @@ fn render_version_control_section(
         None => {}
     }
 
-    any.then(|| section(None, true, None, tokens).child(rows))
+    any.then(|| {
+        section(
+            "thread-details.version-control",
+            "Version Control",
+            None,
+            true,
+            None,
+            tokens,
+        )
+        .child(rows)
+    })
 }
 
 fn status_dot_color(status: ScheduledTaskRunStatus, tokens: &Tokens) -> Hsla {
@@ -854,12 +986,16 @@ fn render_automations_section(
     props: &DetailsCardProps<'_>,
     tasks: &[&ScheduledTask],
     cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Div {
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     let tokens = props.tokens;
     let muted = hsla(tokens.muted_foreground);
     let highlight = hsla(tokens.shell_highlight);
     let manage = div()
         .id("thread-details-manage-tasks")
+        .a11y_button(
+            "thread-details.automations.manage",
+            "Manage scheduled tasks",
+        )
         .flex()
         .items_center()
         .justify_center()
@@ -897,6 +1033,10 @@ fn render_automations_section(
                 "thread-details-task-{}",
                 task.id
             )))
+            .a11y_group(
+                format!("thread-details.task.{}", task.id),
+                format!("Scheduled task {}, {schedule}", task.title),
+            )
             .flex()
             .flex_row()
             .items_center()
@@ -952,6 +1092,10 @@ fn render_automations_section(
                         "thread-details-task-run-{}",
                         task.id
                     )))
+                    .a11y_button(
+                        format!("thread-details.task.{}.run", task.id),
+                        format!("Run {} now", task.title),
+                    )
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1002,11 +1146,24 @@ fn render_automations_section(
         );
         list = list.child(row);
     }
-    let mut s = section(Some("Automations".to_owned()), true, Some(manage), tokens)
-        .child(div().max_h(px(216.0)).child(list));
+    let mut s = section(
+        "thread-details.automations",
+        "Automations",
+        Some("Automations".to_owned()),
+        true,
+        Some(manage),
+        tokens,
+    )
+    .child(div().max_h(px(216.0)).child(list));
     if let Some(error) = &props.state.tasks_error {
         s = s.child(
             div()
+                .id("thread-details-automations-error")
+                .a11y(
+                    gpui_kit::Role::Alert,
+                    "thread-details.automations.error",
+                    format!("Automations error: {error}"),
+                )
                 .px(px(ROW_PAD_X_PX))
                 .text_size(px(11.0))
                 .text_color(hsla(tokens.destructive))
@@ -1018,6 +1175,7 @@ fn render_automations_section(
 
 fn lineage_row(
     id: SharedString,
+    ax_id: String,
     child: &ThreadShell,
     icon: AnyElement,
     trailing: Option<String>,
@@ -1029,6 +1187,7 @@ fn lineage_row(
     let muted = hsla(tokens.muted_foreground);
     let thread_id = child.id.clone();
     let mut row = row_base(id, tokens)
+        .a11y_button(ax_id, format!("Open thread {}", child.title))
         .cursor_pointer()
         .hover(move |s| s.bg(highlight))
         .on_click(cx.listener(move |app, _, _, cx| {
@@ -1096,7 +1255,7 @@ fn render_lineage_section(
     props: &DetailsCardProps<'_>,
     lineage: &Lineage<'_>,
     cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Div {
+) -> gpui_kit::Stateful<gpui_kit::Div> {
     let tokens = props.tokens;
     let muted = hsla(tokens.muted_foreground);
     let highlight = hsla(tokens.shell_highlight);
@@ -1111,6 +1270,7 @@ fn render_lineage_section(
         };
         list = list.child(lineage_row(
             SharedString::from("thread-details-parent"),
+            "thread-details.lineage.parent".to_owned(),
             parent,
             icons::concept(icon, ICON_PX, muted).into_any_element(),
             None,
@@ -1136,6 +1296,7 @@ fn render_lineage_section(
             );
         list = list.child(lineage_row(
             SharedString::from(format!("thread-details-running-{idx}")),
+            format!("thread-details.lineage.running.{}", child.id),
             child,
             relationship_icon(child, child_status_dot(child, tokens), tokens),
             Some(elapsed),
@@ -1148,6 +1309,8 @@ fn render_lineage_section(
         let expanded = props.state.previous_agents_expanded;
         let failed = lineage.failed_count();
         let mut trigger = row_base("thread-details-previous-agents", tokens)
+            .a11y_button("thread-details.lineage.previous-agents", "Previous agents")
+            .aria_expanded(expanded)
             .cursor_pointer()
             .hover(move |s| s.bg(highlight))
             .on_click(cx.listener(|app, _, _, cx| app.toggle_details_previous_agents(cx)))
@@ -1188,6 +1351,7 @@ fn render_lineage_section(
             {
                 list = list.child(lineage_row(
                     SharedString::from(format!("thread-details-previous-{idx}")),
+                    format!("thread-details.lineage.previous.{}", child.id),
                     child,
                     relationship_icon(child, child_status_dot(child, tokens), tokens),
                     Some(child_status_text(child).to_owned()),
@@ -1198,7 +1362,15 @@ fn render_lineage_section(
         }
     }
 
-    section(Some(lineage.title()), true, None, tokens).child(div().max_h(px(216.0)).child(list))
+    section(
+        "thread-details.lineage",
+        "Lineage",
+        Some(lineage.title()),
+        true,
+        None,
+        tokens,
+    )
+    .child(div().max_h(px(216.0)).child(list))
 }
 
 #[cfg(test)]

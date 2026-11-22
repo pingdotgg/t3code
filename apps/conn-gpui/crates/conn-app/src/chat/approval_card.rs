@@ -86,6 +86,10 @@ impl ChatView {
 
         let mut card = div()
             .id(SharedString::from(format!("approval-{id}")))
+            .a11y_group(
+                format!("chat.approval.{id}"),
+                format!("Needs approval: {}", title.trim()),
+            )
             .flex()
             .flex_col()
             .gap(px(8.0))
@@ -107,6 +111,8 @@ impl ChatView {
         if let Some(note) = view.note.as_deref() {
             card = card.child(
                 div()
+                    .id(SharedString::from(format!("approval-note-{id}")))
+                    .a11y_group(format!("chat.approval.{id}.note"), note.to_owned())
                     .pl(px(22.0))
                     .text_size(px(UI_FONT_PX))
                     .line_height(px(16.0))
@@ -238,6 +244,11 @@ impl ChatView {
         }
 
         div()
+            .id(SharedString::from(format!("approval-command-{id}")))
+            .a11y_group(
+                format!("chat.approval.{id}.command"),
+                "Command awaiting approval",
+            )
             .flex()
             .flex_row()
             .items_start()
@@ -287,6 +298,11 @@ impl ChatView {
             };
         div()
             .id("approval-more-menu")
+            .a11y(
+                gpui_kit::Role::Menu,
+                format!("chat.approval.{id}.more-menu"),
+                "More approval options",
+            )
             .rounded(px(10.0))
             .bg(hsla(self.tokens.popover))
             .border_1()

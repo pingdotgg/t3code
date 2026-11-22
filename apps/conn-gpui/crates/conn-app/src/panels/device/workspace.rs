@@ -1,6 +1,7 @@
 //! Active Device workspace: screen area (`DeviceStreamView`), right floating controls rail
 //! (`DeviceControlsRail`), and collapsible `DeviceToolsPanel` drawer.
 
+use crate::a11y::ConnA11yExt as _;
 use std::rc::Rc;
 
 use conn_client::device_hub::HardwareButton;
@@ -2000,6 +2001,7 @@ fn render_tools_panel(
         let mut log_block = v_flex().w_full().child(
             h_flex()
                 .id("device-tools-event-log-toggle")
+                .a11y_button("panel.device-tools-event-log-toggle", "Event log")
                 .w_full()
                 .items_center()
                 .gap(px(6.0))

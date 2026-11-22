@@ -9,6 +9,7 @@ mod log;
 mod server;
 mod widgets;
 
+use crate::a11y::ConnA11yExt as _;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1067,6 +1068,7 @@ impl McpPanel {
         // Transport menu trigger inside the soft command/URL field.
         let transport_trigger = h_flex()
             .id("mcp-transport-btn")
+            .a11y_button("panel.mcp-transport-btn", "Transport")
             .h(px(24.0))
             .px(px(7.0))
             .gap(px(4.0))

@@ -4,6 +4,7 @@
 //! - Base-branch freshness popover (`PullRequestBaseBranch.tsx`)
 //! - Emoji reaction bar + picker (`IssueReactions.tsx`)
 
+use crate::a11y::ConnA11yExt as _;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -94,6 +95,7 @@ pub(super) fn render_reviewer_picker(
 
     let trigger = div()
         .id("pr-reviewer-picker-btn")
+        .a11y_button("panel.pr-reviewer-picker-btn", "Request a review")
         .flex()
         .flex_shrink_0()
         .size(px(24.0))
@@ -269,6 +271,7 @@ pub(super) fn render_label_picker(
 
     let trigger = div()
         .id("pr-label-picker-btn")
+        .a11y_button("panel.pr-label-picker-btn", "Change labels")
         .flex()
         .flex_shrink_0()
         .size(px(24.0))
@@ -440,6 +443,7 @@ pub(super) fn render_base_branch_freshness(
 
     let trigger = h_flex()
         .id("pr-base-freshness-trigger")
+        .a11y_button("panel.pr-base-freshness-trigger", "Base branch freshness")
         .max_w(px(180.0))
         .px(px(4.0))
         .py(px(2.0))

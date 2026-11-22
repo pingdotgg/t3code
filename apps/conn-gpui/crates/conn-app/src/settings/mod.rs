@@ -543,6 +543,7 @@ impl SettingsModal {
             search_bar = search_bar.child(
                 div()
                     .id("conn-settings-search-clear")
+                    .a11y_button("settings.search.clear", "Clear search")
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1619,6 +1620,7 @@ impl SettingsModal {
 
         let operator_save_btn = div()
             .id("conn-settings-operator-save")
+            .a11y_button("settings.operator.save", "Save operator settings")
             .px(px(10.0))
             .py(px(5.0))
             .rounded(px(7.0))

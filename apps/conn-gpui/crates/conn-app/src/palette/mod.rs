@@ -313,8 +313,21 @@ impl CommandPalette {
         let hover_bg = hsla(self.tokens.sidebar_row_hover);
         let row_clone = row.clone();
 
+        let (ax_kind, ax_title) = match row {
+            PaletteRow::Thread(t) => ("thread", t.title.as_str()),
+            PaletteRow::Project(p) => ("project", p.title.as_str()),
+            PaletteRow::Target(t) => ("target", t.title.as_str()),
+            PaletteRow::Theme(t) => ("theme", t.name.as_str()),
+            PaletteRow::Action(a) => ("action", a.title),
+        };
         let mut container = div()
             .id(SharedString::from(format!("conn-palette-row-{flat_idx}")))
+            .a11y(
+                gpui_kit::Role::ListItem,
+                format!("palette.row.{flat_idx}"),
+                format!("{ax_kind}: {ax_title}"),
+            )
+            .aria_selected(is_selected)
             .flex()
             .flex_row()
             .items_center()

@@ -1,6 +1,7 @@
 //! Pull request tab bar (`PullRequestDetailTabBar`), Description, Checks, Timeline, Code tabs,
 //! and the floating bottom-right Comment composer (`PullRequestComposer` / `PullRequestCommentForm`).
 
+use crate::a11y::ConnA11yExt as _;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -137,6 +138,7 @@ pub(super) fn render_tab_bar(
         let on_select = cb.on_select_tab.clone();
         let mut btn = div()
             .id(SharedString::from(format!("pr-tab-{}", tab.id())))
+            .a11y_tab(format!("panel.pr.tab.{}", tab.id()), tab.label(), is_active)
             .relative()
             .h_full()
             .px(px(2.0))
@@ -218,6 +220,7 @@ pub(super) fn render_checks_tab_trailing(
         let on_arm = cb.on_arm_confirm.clone();
         let mut btn = h_flex()
             .id("pr-approve-workflows-btn")
+            .a11y_button("panel.pr-approve-workflows-btn", "Approve workflows")
             .flex_shrink_0()
             .h(px(24.0))
             .px(px(8.0))
@@ -322,6 +325,7 @@ pub(super) fn render_timeline_tab_trailing(
     let mut filter_anchor = div().relative().child(
         div()
             .id("pr-timeline-filter-btn")
+            .a11y_button("panel.pr-timeline-filter-btn", "Filter timeline")
             .flex()
             .flex_shrink_0()
             .size(px(28.0))
@@ -426,6 +430,7 @@ pub(super) fn render_timeline_tab_trailing(
     let on_order = cb.on_toggle_timeline_order.clone();
     let order_btn = h_flex()
         .id("pr-timeline-order-btn")
+        .a11y_button("panel.pr-timeline-order-btn", "Timeline order")
         .flex_shrink_0()
         .h(px(28.0))
         .px(px(12.0))
@@ -683,6 +688,7 @@ pub(super) fn render_description_tab(
             div().invisible().group_hover(group, |s| s.visible()).child(
                 div()
                     .id("pr-edit-body-btn")
+                    .a11y_button("panel.pr-edit-body-btn", "Edit description")
                     .flex()
                     .flex_shrink_0()
                     .size(px(24.0))
@@ -2434,6 +2440,7 @@ pub(super) fn render_floating_composer(
     };
     let trigger = div()
         .id("pr-composer-trigger")
+        .a11y_button("panel.pr-composer-trigger", "Open review composer")
         .flex()
         .size(px(34.0))
         .items_center()
@@ -2538,6 +2545,7 @@ pub(super) fn render_floating_composer(
                     .child(
                         div()
                             .id("pr-composer-close")
+                            .a11y_button("panel.pr-composer-close", "Close")
                             .flex()
                             .size(px(24.0))
                             .items_center()

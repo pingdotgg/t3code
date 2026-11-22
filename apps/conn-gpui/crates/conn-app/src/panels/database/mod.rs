@@ -1105,6 +1105,7 @@ impl DatabasePanel {
             let entity = entity.clone();
             let base = h_flex()
                 .id("db-run-btn")
+                .a11y_button("panel.db-run-btn", "Run")
                 .flex_shrink_0()
                 .h(px(24.0))
                 .px(px(7.0))

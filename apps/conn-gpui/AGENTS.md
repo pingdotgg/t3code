@@ -69,6 +69,7 @@ Keep crate boundaries strict so parallel sub-agents do not collide:
 - If a `gpui-kit`, `gpui-base`, or `gpui-pre` limitation blocks pixel-for-pixel macOS parity, check `.refs/threadbear/desktop/vendor/` first—Threadbear has already solved several of these. Document any vendored patch in `Cargo.toml`.
 - No `unwrap()` in production code; handle errors or document invariants cleanly.
 - No continuously repainting animations that peg the GPU on high-refresh displays.
+- Every new interactive element, card, row or section gets an AX element through `crates/conn-app/src/a11y.rs` (`.id(...)` + `a11y_button` / `a11y_group` / `a11y_tab` / …): a stable dotted id (`thread-details.pr.0`, `chat.approval.<id>`) and a human label. Nick's annotator selects UI only through the AX tree. Nest separately selectable controls inside their row's group.
 - GPUI has no Tokio runtime on its main thread: run `conn-client` on a dedicated Tokio runtime and bridge events into GPUI entities over bounded channels (see `.refs/threadbear/desktop/gpui/src/main.rs`).
 
 ## Verification and git

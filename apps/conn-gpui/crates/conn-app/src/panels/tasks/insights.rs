@@ -2,6 +2,7 @@
 //!
 //! Port of `apps/web/src/orbit/tasks/TasksInsights.tsx`.
 
+use crate::a11y::ConnA11yExt as _;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -227,6 +228,7 @@ fn render_insight_card(
 
     let mut card = v_flex()
         .id(SharedString::from(format!("tasks-insight-{:?}", spec.id)))
+        .a11y_group(format!("panel.tasks.insight.{:?}", spec.id), spec.label)
         .min_w(px(min_w))
         .flex_grow(span as f32)
         .flex_shrink(1.0)

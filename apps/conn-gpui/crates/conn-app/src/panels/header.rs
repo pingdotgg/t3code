@@ -205,6 +205,13 @@ pub(crate) fn render_panel_header(
         // `PanelTabCloseButton`: the surface icon, swapped for an `X` while the tab is hovered.
         let close_slot = div()
             .id(SharedString::from(format!("right-panel-tab-close-{idx}")))
+            .a11y_button(
+                format!(
+                    "panel.tab.{}.close",
+                    label.to_ascii_lowercase().replace(' ', "-")
+                ),
+                format!("Close {label}"),
+            )
             .relative()
             .flex()
             .flex_shrink_0()
@@ -504,6 +511,7 @@ fn render_add_panel_menu(
 
     let mut list = div()
         .id("right-panel-add-menu")
+        .a11y(gpui_kit::Role::Menu, "panel.add-menu", "Add panel")
         .flex()
         .flex_col()
         .min_w(px(MENU_MIN_WIDTH_PX))
@@ -521,6 +529,14 @@ fn render_add_panel_menu(
         let on_add = on_add_tab.clone();
         let mut row = h_flex()
             .id(SharedString::from(format!("right-panel-add-{label}")))
+            .a11y(
+                gpui_kit::Role::MenuItem,
+                format!(
+                    "panel.add-menu.{}",
+                    label.to_ascii_lowercase().replace(' ', "-")
+                ),
+                label,
+            )
             .w_full()
             .min_h(px(MENU_ROW_HEIGHT_PX))
             .px(px(8.0))

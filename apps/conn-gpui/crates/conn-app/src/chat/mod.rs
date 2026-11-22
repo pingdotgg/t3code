@@ -1456,8 +1456,8 @@ impl ChatView {
                 }
             }
             VirtualItem::Notice { row_idx } => {
-                if let TimelineEntry::Notice { text, is_error, .. } = &rows[*row_idx].entry {
-                    self.render_notice_row(text, *is_error)
+                if let TimelineEntry::Notice { id, text, is_error } = &rows[*row_idx].entry {
+                    self.render_notice_row(id, text, *is_error)
                 } else {
                     div().into_any_element()
                 }
@@ -2208,10 +2208,15 @@ impl ChatView {
                 view.toggle_expanded(&toggle_id, cx);
             }));
 
-        if let Some((_, ref thought_text)) = latest_thought {
+        if let Some((thought_id, ref thought_text)) = latest_thought {
             // Conn `WorkLogRow wrapLabel`: `items-start gap-1.5 min-h-6 text-sm leading-relaxed`.
             col = col.child(
                 div()
+                    .id(SharedString::from(format!("live-thought-{thought_id}")))
+                    .a11y_group(
+                        format!("timeline.work.{thought_id}.live"),
+                        format!("Thought: {}", ax_snippet(thought_text)),
+                    )
                     .flex()
                     .flex_row()
                     .items_start()
@@ -2244,12 +2249,14 @@ impl ChatView {
         if let Some(entry) = active_entry {
             match entry {
                 TimelineEntry::Tool {
+                    id,
                     kind,
                     title,
                     status,
                     ..
                 } => {
                     let rel_title = self.relative_title(title);
+                    let ax_label = tool_ax_label(kind, &rel_title, *status);
                     let failed = matches!(status, ItemStatus::Failed);
                     // Conn `latestToolKeepsActivityLive`: active when running OR succeeded during
                     // an active turn (so shimmer stays alive between consecutive tool calls).
@@ -2271,6 +2278,8 @@ impl ChatView {
                     };
                     col = col.child(
                         div()
+                            .id(SharedString::from(format!("live-tool-{id}")))
+                            .a11y_group(format!("timeline.work.{id}.live"), ax_label)
                             .flex()
                             .flex_row()
                             .items_center()
@@ -2318,6 +2327,11 @@ impl ChatView {
                         };
                         col = col.child(
                             div()
+                                .id(SharedString::from(format!("live-status-{id}")))
+                                .a11y_group(
+                                    format!("timeline.work.{id}.live"),
+                                    if shimmer { "Thinking" } else { "Thought" },
+                                )
                                 .flex()
                                 .flex_row()
                                 .items_center()
@@ -2415,6 +2429,12 @@ impl ChatView {
             label.into_any_element()
         };
 
+        let ax_label = format!(
+            "{}: {}",
+            if streaming { "Thinking" } else { "Thought" },
+            ax_snippet(preview_line.unwrap_or_default())
+        );
+        let ax_id = format!("timeline.work.{id}");
         // Conn `WorkLogRow`: `min-h-6` (24px), `gap-1.5` (6px), `px-0.5`, `24px` icon box, `text-sm leading-relaxed`.
         let mut line = div()
             .id(SharedString::from(format!("thinking-{id}")))
@@ -2454,6 +2474,12 @@ impl ChatView {
                     .child(label_el),
             );
 
+        line = if has_body {
+            line.a11y_button(ax_id.clone(), ax_label)
+                .aria_expanded(expanded)
+        } else {
+            line.a11y_group(ax_id.clone(), ax_label)
+        };
         if has_body {
             line = line.child(
                 div()
@@ -2479,6 +2505,8 @@ impl ChatView {
             // Conn `WorkLogDetails kind="text"`: `ms-7` (28px), `px-0.5 py-1`.
             container = container.child(
                 div()
+                    .id(SharedString::from(format!("thinking-detail-{id}")))
+                    .a11y_group(format!("{ax_id}.detail"), "Thought details")
                     .ml(px(28.0))
                     .px(px(2.0))
                     .py(px(4.0))
@@ -2540,6 +2568,8 @@ impl ChatView {
             }
         };
 
+        let ax_id = format!("timeline.work.{id}");
+        let ax_label = tool_ax_label(kind, title, status);
         // Conn `WorkLogRow`: `min-h-6` (24px), `gap-1.5` (6px), `px-0.5`, `24px` icon box, `text-sm leading-relaxed`.
         let mut line = div()
             .id(SharedString::from(format!("tool-{id}")))
@@ -2574,6 +2604,12 @@ impl ChatView {
                     .child(title_el),
             );
 
+        line = if has_detail {
+            line.a11y_button(ax_id.clone(), ax_label)
+                .aria_expanded(expanded)
+        } else {
+            line.a11y_group(ax_id.clone(), ax_label)
+        };
         if has_detail {
             line = line
                 .cursor_pointer()
@@ -2609,6 +2645,11 @@ impl ChatView {
             // indented under label (`30px`), monospace `11.5px` / `18px`, `muted_foreground`.
             container = container.child(
                 div()
+                    .id(SharedString::from(format!("tool-detail-{id}")))
+                    .a11y_group(
+                        format!("{ax_id}.detail"),
+                        format!("Details: {}", ax_snippet(title)),
+                    )
                     .ml(px(30.0))
                     .mt(px(2.0))
                     .mb(px(6.0))
@@ -2628,10 +2669,18 @@ impl ChatView {
         container.into_any_element()
     }
 
-    fn render_notice_row(&self, text: &str, is_error: bool) -> AnyElement {
+    fn render_notice_row(&self, id: &str, text: &str, is_error: bool) -> AnyElement {
+        let ax_id = format!("timeline.notice.{id}");
+        let element_id = SharedString::from(format!("notice-{id}"));
         if is_error {
             // Conn `WorkEntryLogRow` error: `WorkLogRow` with `CircleAlertIcon` + destructive `text-sm font-medium`.
             return div()
+                .id(element_id)
+                .a11y(
+                    gpui_kit::Role::Alert,
+                    ax_id,
+                    format!("Error: {}", ax_snippet(text)),
+                )
                 .w_full()
                 .min_w_0()
                 .pb(px(8.0))
@@ -2673,6 +2722,8 @@ impl ChatView {
 
         // Conn `TimelineSystemDivider`: centered pill between 1px `--shell-divider` hairlines.
         div()
+            .id(element_id)
+            .a11y_group(ax_id, format!("Notice: {}", ax_snippet(text)))
             .w_full()
             .min_w_0()
             .pb(px(8.0))
@@ -2759,6 +2810,8 @@ impl ChatView {
                     .border_color(hsla(self.tokens.shell_divider))
                     .child(
                         div()
+                            .id("timeline-working")
+                            .a11y_group("timeline.working", label.clone())
                             .flex()
                             .flex_row()
                             .items_center()
@@ -3009,6 +3062,38 @@ fn now_epoch_ms() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
+/// First line of `text`, cut at 120 characters, for an AX label.
+fn ax_snippet(text: &str) -> String {
+    const MAX_CHARS: usize = 120;
+    let line = text
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    match line.char_indices().nth(MAX_CHARS) {
+        Some((cut, _)) => format!("{}…", &line[..cut]),
+        None => line.to_owned(),
+    }
+}
+
+/// AX label of a work-log tool row: the kind (when the title does not say it) plus the title.
+fn tool_ax_label(kind: &str, title: &str, status: ItemStatus) -> String {
+    let title = ax_snippet(title);
+    let mut label = match kind {
+        "command" => format!("Command: {title}"),
+        "web_search" => format!("Web search: {title}"),
+        "subagent" => format!("Subagent: {title}"),
+        "dynamic_tool" | "tool" | "mcp" => format!("Tool: {title}"),
+        "file_change" | "file_read" | "read" | "file_search" | "todo_list" | "thread_created"
+        | "approval" | "secret_request" | "link_request" => title,
+        _ => format!("Tool: {title}"),
+    };
+    if matches!(status, ItemStatus::Failed) {
+        label.push_str(" (failed)");
+    }
+    label
+}
+
 /// Formats Conn's live `WorkingTimelineRow` header (`Working for 44s` / `Working for 1m 12s`).
 #[must_use]
 fn format_working_elapsed(elapsed_ms: u64) -> String {
@@ -3254,6 +3339,26 @@ mod worked_label_tests {
             "Continued for 4s"
         );
         assert_eq!(format_fold_label(None, true, true), "Continued");
+    }
+
+    #[test]
+    fn work_log_ax_labels_name_the_kind_and_text() {
+        use conn_state::ItemStatus::{Completed, Failed};
+
+        use crate::chat::{ax_snippet, tool_ax_label};
+        assert_eq!(
+            tool_ax_label("command", "curl -s x\nsecond line", Completed),
+            "Command: curl -s x"
+        );
+        assert_eq!(
+            tool_ax_label("file_read", "Read /tmp/a.jpg", Completed),
+            "Read /tmp/a.jpg"
+        );
+        assert_eq!(
+            tool_ax_label("dynamic_tool", "mcp__t3-code__delegate_task", Failed),
+            "Tool: mcp__t3-code__delegate_task (failed)"
+        );
+        assert_eq!(ax_snippet(&"é".repeat(130)).chars().count(), 121);
     }
 
     #[test]

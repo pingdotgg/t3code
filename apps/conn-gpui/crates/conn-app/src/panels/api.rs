@@ -2,6 +2,7 @@
 //! `ApiResponseView.tsx`): build a request, send it natively (`conn_desktop::api_request`),
 //! read the response. Requests persist per project, as Conn's `t3code:api-requests:v1`.
 
+use crate::a11y::ConnA11yExt as _;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -306,6 +307,7 @@ impl ApiPanel {
         // Method menu inside the soft URL field.
         let method_trigger = h_flex()
             .id("api-method-btn")
+            .a11y_button("panel.api-method-btn", "HTTP method")
             .relative()
             .h(px(24.0))
             .px(px(7.0))
