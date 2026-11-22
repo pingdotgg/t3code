@@ -638,10 +638,14 @@ export interface AcpAdapterV2Flavor {
    */
   readonly toolOutlivesPrompt?: (toolCall: AcpToolCallState) => boolean;
   /**
-   * Finalize a settled turn held by an outliving tool once the session has been silent this long,
-   * so a command that never reports back cannot leave the thread in Working forever.
+   * Finalize a settled turn held only by running commands once the session has been silent for
+   * `timeout`, so a command that never reports back cannot leave the thread in Working forever.
+   * Other holds (questions, schedules, subagents) keep the turn open as before.
    */
-  readonly postSettleBackgroundHoldTimeout?: Duration.Input;
+  readonly postSettleCommandHold?: {
+    readonly timeout: Duration.Input;
+    readonly isCommand: (toolCall: AcpToolCallState) => boolean;
+  };
   readonly isProviderWakeNotification?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => boolean;
@@ -2749,7 +2753,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Effect.fnUntraced(function* (notification?: EffectAcpSchema.SessionNotification) {
             if (
               promptInactivityTimeoutMillis === undefined &&
-              flavor.postSettleBackgroundHoldTimeout === undefined
+              flavor.postSettleCommandHold === undefined
             ) {
               return;
             }
@@ -4284,11 +4288,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const isMonitorEndNoticeText = (text: string): boolean =>
           /Monitor\s+["']?[0-9a-f-]{8,}/i.test(text) && /ended/i.test(text);
 
-        const hasDeferredBackgroundWork = (context: ActiveAcpTurn): boolean => {
+        const hasDeferredBackgroundWork = (
+          context: ActiveAcpTurn,
+          ignoreTool?: (tool: AcpToolCallState) => boolean,
+        ): boolean => {
           if (flavor.wakeOnDetachedRequest && agentRequests.size > 0) return true;
           if (flavor.toolOutlivesPrompt !== undefined) {
             // A tool that never started has nothing to report later.
             for (const tool of context.tools.values()) {
+              if (ignoreTool?.(tool) === true) continue;
               if (toolStatus(tool.status) === "running" && flavor.toolOutlivesPrompt(tool))
                 return true;
             }
@@ -8847,30 +8855,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const schedulePostSettleHoldExpiry = Effect.fn("AcpAdapterV2.schedulePostSettleHoldExpiry")(
           function* (context: ActiveAcpTurn) {
-            const timeout = flavor.postSettleBackgroundHoldTimeout;
-            if (timeout === undefined) return;
+            const hold = flavor.postSettleCommandHold;
+            if (hold === undefined) return;
             if (!context.promptSettled || context.finalized) return;
-            const timeoutMillis = Duration.toMillis(timeout);
-            const armedAt = yield* Clock.currentTimeMillis;
-            // Armed even without held work yet: a pending reply can still start the command.
+            const timeoutMillis = Duration.toMillis(hold.timeout);
+            const isRunningCommand = (tool: AcpToolCallState) =>
+              toolStatus(tool.status) === "running" && hold.isCommand(tool);
+            let quietSince = yield* Clock.currentTimeMillis;
+            // Armed even without a command yet: a pending reply can still start one.
             yield* Effect.gen(function* () {
-              while (true) {
-                const quietSince = Math.max(armedAt, context.lastProgressAt);
-                const remaining = quietSince + timeoutMillis - (yield* Clock.currentTimeMillis);
-                if (remaining <= 0) break;
-                yield* Effect.sleep(Duration.millis(remaining));
+              while (!context.finalized) {
+                quietSince = Math.max(quietSince, context.lastProgressAt);
+                const now = yield* Clock.currentTimeMillis;
+                const remaining = quietSince + timeoutMillis - now;
+                if (remaining > 0) {
+                  yield* Effect.sleep(Duration.millis(remaining));
+                  continue;
+                }
+                if (
+                  context.tools.values().some(isRunningCommand) &&
+                  !hasDeferredBackgroundWork(context, isRunningCommand)
+                ) {
+                  yield* finalizeTurn(context, context.promptSettledStatus ?? "completed");
+                  return;
+                }
+                // Something else still holds the turn; count silence again once it clears.
+                quietSince = now;
               }
-              if (context.finalized || !context.promptSettled) return;
-              if (!hasDeferredBackgroundWork(context)) return;
-              // Only an outliving tool gets bounded here. Queued wakes, hydration and detached
-              // subagents still have their own settlement paths.
-              const heldCommand = [...context.tools.values()].some(
-                (tool) =>
-                  toolStatus(tool.status) === "running" &&
-                  flavor.toolOutlivesPrompt?.(tool) === true,
-              );
-              if (!heldCommand) return;
-              yield* finalizeTurn(context, context.promptSettledStatus ?? "completed");
             }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           },
         );

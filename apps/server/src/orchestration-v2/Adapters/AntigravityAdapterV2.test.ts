@@ -1393,6 +1393,81 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  it.effect("keeps a silent scheduled wake in its run past the command hold bound", () =>
+    Effect.gen(function* () {
+      const { usage, offers, send, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            {
+              sessionUpdate: "tool_call",
+              toolCallId: "call_schedule",
+              kind: "other",
+              title: "Run schedule",
+              status: "in_progress",
+              rawInput: { DurationSeconds: 3600, Prompt: "Continue the task" },
+            },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("61 minutes");
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_schedule",
+        status: "completed",
+      });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Picked the task back up." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      assert.include(
+        JSON.stringify(run),
+        "Picked the task back up.",
+        "the wake reply stays in the run",
+      );
+      assert.lengthOf(offers, 0);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("keeps an unanswered question open past the command hold bound", () =>
+    Effect.gen(function* () {
+      const { command, usage, send, startTurn, until, throughPromptSettled, requestPermission } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      const question = yield* requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: { toolCallId: "interaction_1", kind: "other", title: "Which port?" },
+          options: [
+            { optionId: "3000", name: "3000", kind: "allow_once" },
+            { optionId: "8080", name: "8080", kind: "allow_once" },
+          ],
+        },
+        { requestId: "question-1", method: "session/request_permission" },
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* TestClock.adjust("31 minutes");
+      yield* Fiber.interrupt(question);
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Here is the chart." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(run), "Here is the chart.", "the question kept the run open");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   // Command 2 finishes during reply 1; agy dequeues command 2 after reply 1's usage_update and
   // needs >3 s before streaming reply 2. Wait for reply 2 (bounded by the 2-minute quiet limit),
   // but still finalize at 3 s when both commands were batched into reply 1.
