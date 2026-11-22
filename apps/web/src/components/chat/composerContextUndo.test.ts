@@ -41,7 +41,7 @@ const annotation = {
 } satisfies PreviewAnnotationPayload;
 
 function retention(): RetainedAttachmentContextPayloads {
-  return { files: new Map(), previewAnnotations: new Map() };
+  return { files: new Map(), previewAnnotations: new Map(), restoredQueuedImageIds: new Set() };
 }
 
 describe("reconcileAttachmentContextReferences", () => {
@@ -93,7 +93,7 @@ describe("reconcileAttachmentContextReferences", () => {
     ]);
   });
 
-  it("drops a queued file with its chip, keeps a queued image, and restores either on undo", () => {
+  it("drops a queued file with its chip, keeps a queued image, and lets undo and redo restore and remove either", () => {
     const file = {
       attachment: {
         type: "file" as const,
@@ -129,5 +129,28 @@ describe("reconcileAttachmentContextReferences", () => {
       removedQueuedAttachments: [file, queuedImage],
     });
     expect(undone.queuedAttachmentsToRestore).toEqual([file.attachment, queuedImage.attachment]);
+
+    const redone = reconcileAttachmentContextReferences({
+      ...base,
+      referencedContextIds: new Set(),
+      queuedAttachments: [file, queuedImage],
+      fromHistory: true,
+    });
+    expect(redone.queuedAttachmentIdsToRemove).toEqual([
+      file.attachment.id,
+      queuedImage.attachment.id,
+    ]);
+
+    reconcileAttachmentContextReferences({
+      ...base,
+      referencedContextIds: new Set(["image_local"]),
+      removedQueuedAttachments: [queuedImage],
+    });
+    const backspaced = reconcileAttachmentContextReferences({
+      ...base,
+      referencedContextIds: new Set(),
+      queuedAttachments: [queuedImage],
+    });
+    expect(backspaced.queuedAttachmentIdsToRemove).toEqual([]);
   });
 });
