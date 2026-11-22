@@ -344,141 +344,6 @@ describe("useQueuedRunEdit", () => {
     );
   });
 
-  it("binds existing attachment context ids for inline chips, preserves original order on restore, and omits removed chips and records on save", async () => {
-    const { hook } = setup();
-    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
-    const messageId = MessageId.make("message-1");
-    const imageId = ChatAttachmentId.make("server-image-1");
-    const fileId = ChatAttachmentId.make("server-file-1");
-    const unreferencedFileId = ChatAttachmentId.make("server-file-2");
-    const imageContextId = ComposerContextId.make("image_local-image-1");
-    const fileContextId = ComposerContextId.make("file_local-file-1");
-    const staleContextId = ComposerContextId.make("file_stale-file-2");
-    const imageAttachment = {
-      type: "image" as const,
-      id: imageId,
-      name: "image.png",
-      mimeType: "image/png",
-      sizeBytes: 67,
-    };
-    const fileAttachment = {
-      type: "file" as const,
-      id: fileId,
-      name: "notes.txt",
-      mimeType: "text/plain",
-      sizeBytes: 12,
-    };
-    const unreferencedFile = {
-      type: "file" as const,
-      id: unreferencedFileId,
-      name: "legacy.pdf",
-      mimeType: "application/pdf",
-      sizeBytes: 40,
-    };
-    const imageChip = formatInlineContextReference({
-      kind: "image",
-      contextId: imageContextId,
-      label: "image.png",
-    });
-    const fileChip = formatInlineContextReference({
-      kind: "file",
-      contextId: fileContextId,
-      label: "notes.txt",
-    });
-    const text = `Check ${imageChip} and ${fileChip} map`;
-    const imageRecord = {
-      version: 1 as const,
-      kind: "image" as const,
-      contextId: imageContextId,
-      label: "image.png",
-      attachmentId: imageId,
-      name: "image.png",
-      mimeType: "image/png",
-      sizeBytes: 67,
-    };
-    const fileRecord = {
-      version: 1 as const,
-      kind: "file" as const,
-      contextId: fileContextId,
-      label: "notes.txt",
-      attachmentId: fileId,
-      name: "notes.txt",
-      mimeType: "text/plain",
-      sizeBytes: 12,
-    };
-    const staleRecord = {
-      version: 1 as const,
-      kind: "file" as const,
-      contextId: staleContextId,
-      label: "legacy.pdf",
-      attachmentId: unreferencedFileId,
-      name: "legacy.pdf",
-      mimeType: "application/pdf",
-      sizeBytes: 40,
-    };
-    const messages = [
-      {
-        id: messageId,
-        text,
-        context: { version: 1, records: [imageRecord, fileRecord, staleRecord] },
-      },
-    ];
-    await using screen = await render(view(THREAD_A, "queued", hook, messages));
-
-    await act(() =>
-      requireHook(hook).beginEdit({
-        runId: RUN,
-        messageId,
-        text,
-        attachments: [imageAttachment, fileAttachment, unreferencedFile],
-      }),
-    );
-    expect(requireHook(hook).editingAttachments).toEqual([
-      expect.objectContaining({ attachment: imageAttachment, contextIds: [imageContextId] }),
-      expect.objectContaining({ attachment: fileAttachment, contextIds: [fileContextId] }),
-      expect.objectContaining({ attachment: unreferencedFile, contextIds: [] }),
-    ]);
-
-    await act(() => requireHook(hook).removeEditingAttachment(fileId));
-    expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment.id)).toEqual([
-      imageId,
-      unreferencedFileId,
-    ]);
-    expect(requireHook(hook).removedEditingAttachments).toEqual([
-      { attachment: fileAttachment, contextIds: [fileContextId] },
-    ]);
-    await act(() => requireHook(hook).restoreEditingAttachment(fileAttachment));
-    expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment.id)).toEqual([
-      imageId,
-      fileId,
-      unreferencedFileId,
-    ]);
-    expect(requireHook(hook).removedEditingAttachments).toEqual([]);
-
-    await act(() => requireHook(hook).removeEditingAttachment(imageId));
-    await act(() => requireHook(hook).removeEditingAttachment(fileId));
-    expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment.id)).toEqual([
-      unreferencedFileId,
-    ]);
-    expect(
-      useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt,
-    ).toBe("Check and map");
-
-    await screen.getByRole("button", { name: "Update queued message" }).click();
-    await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
-    expect(mocks.editQueuedRun).toHaveBeenCalledWith(
-      expect.objectContaining({
-        input: expect.objectContaining({
-          text: "Check and map",
-          edit: expect.objectContaining({
-            attachments: [unreferencedFile],
-            context: { version: 1, records: [staleRecord] },
-          }),
-        }),
-      }),
-    );
-  });
-
   it("opens an edit with only the thread and machine records its text still mentions", async () => {
     const { hook } = setup();
     const thread = threadContextRecord(THREAD_B, "Support Any File Uploads");
@@ -499,22 +364,83 @@ describe("useQueuedRunEdit", () => {
     expect(draft?.environmentContexts).toEqual([machine]);
   });
 
-  it("saves only the thread mentions still in the edited message", async () => {
+  it("saves only the thread mentions and attachments still in the edited message", async () => {
     const { hook } = setup();
     mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
     const kept = threadContextRecord(THREAD_B, "Kept");
     const removed = threadContextRecord(THREAD_A, "Removed");
+    const removedImageId = ChatAttachmentId.make("server-image-removed");
+    const keptFileId = ChatAttachmentId.make("server-file-kept");
+    const removedImageContextId = ComposerContextId.make("image_local-removed");
+    const keptFileContextId = ComposerContextId.make("file_local-kept");
+    const removedImage = {
+      type: "image" as const,
+      id: removedImageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const keptFile = {
+      type: "file" as const,
+      id: keptFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
+    const removedImageRecord = {
+      version: 1 as const,
+      kind: "image" as const,
+      contextId: removedImageContextId,
+      label: "image.png",
+      attachmentId: removedImageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const keptFileRecord = {
+      version: 1 as const,
+      kind: "file" as const,
+      contextId: keptFileContextId,
+      label: "legacy.pdf",
+      attachmentId: keptFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
     const messageId = MessageId.make("message-1");
-    const text = [kept, removed]
-      .map((record) => formatInlineContextReference(threadContextReference(record)))
-      .join(" and ");
-    const messages = [{ id: messageId, text, context: { version: 1, records: [kept, removed] } }];
+    const text = [
+      formatInlineContextReference(threadContextReference(kept)),
+      formatInlineContextReference(threadContextReference(removed)),
+      formatInlineContextReference({
+        kind: "image",
+        contextId: removedImageContextId,
+        label: "image.png",
+      }),
+    ].join(" and ");
+    const messages = [
+      {
+        id: messageId,
+        text,
+        context: { version: 1, records: [kept, removed, removedImageRecord, keptFileRecord] },
+      },
+    ];
     await using _screen = await render(view(THREAD_A, "queued", hook, messages));
-    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId,
+        text,
+        attachments: [removedImage, keptFile],
+      }),
+    );
     const target = requireHook(hook).draftTarget;
-    await act(() => useComposerDraftStore.getState().setThreadContexts(target, [kept]));
+    await act(() => {
+      useComposerDraftStore.getState().setThreadContexts(target, [kept]);
+      requireHook(hook).removeEditingAttachment(removedImageId);
+    });
 
     const draft = useComposerDraftStore.getState().getComposerDraft(target);
+    expect(draft?.prompt).not.toContain(removedImageContextId);
     await requireHook(hook).saveEdit(
       { ...savedContent(draft?.prompt ?? ""), threadContexts: draft?.threadContexts ?? [] },
       () => {},
@@ -523,7 +449,11 @@ describe("useQueuedRunEdit", () => {
     expect(mocks.editQueuedRun).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
-          edit: expect.objectContaining({ context: { version: 1, records: [kept] } }),
+          text: draft?.prompt,
+          edit: expect.objectContaining({
+            attachments: [keptFile],
+            context: { version: 1, records: [keptFileRecord, kept] },
+          }),
         }),
       }),
     );

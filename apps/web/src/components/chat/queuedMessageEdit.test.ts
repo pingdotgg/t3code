@@ -19,6 +19,7 @@ import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attach
 import { environmentContextRecord, responseContextRecord } from "../../lib/composerContextRecords";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import {
+  attachmentContextIdsForRecord,
   matchRestorableQueuedAttachment,
   prepareQueuedEditAttachments,
   recoverQueuedMessageEdit,
@@ -233,6 +234,64 @@ describe("queued message file edits", () => {
       }),
     ).toBe("discarded");
     expect(store.getComposerDraft(threadTarget)).toBeNull();
+  });
+
+  it("maps existing queued attachments to matching wire context ids", () => {
+    const imageId = ChatAttachmentId.make("server-image-1");
+    const fileId = ChatAttachmentId.make("server-file-1");
+    const otherFileId = ChatAttachmentId.make("server-file-2");
+    const imageContextId = ComposerContextId.make("image_local-1");
+    const fileContextId = ComposerContextId.make("file_local-1");
+    const imageAttachment = {
+      type: "image" as const,
+      id: imageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const fileAttachment = {
+      type: "file" as const,
+      id: fileId,
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+    };
+    const unreferencedFile = {
+      type: "file" as const,
+      id: otherFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
+    const context = {
+      version: 1 as const,
+      records: [
+        {
+          version: 1 as const,
+          kind: "image" as const,
+          contextId: imageContextId,
+          label: "image.png",
+          attachmentId: imageId,
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 67,
+        },
+        {
+          version: 1 as const,
+          kind: "file" as const,
+          contextId: fileContextId,
+          label: "notes.txt",
+          attachmentId: fileId,
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 12,
+        },
+      ],
+    };
+
+    expect(attachmentContextIdsForRecord(context, imageAttachment)).toEqual([imageContextId]);
+    expect(attachmentContextIdsForRecord(context, fileAttachment)).toEqual([fileContextId]);
+    expect(attachmentContextIdsForRecord(context, unreferencedFile)).toEqual([]);
   });
 
   it("matches a removed queued attachment for same-environment paste while rejecting other environments or payloads", () => {

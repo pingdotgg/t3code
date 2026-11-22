@@ -806,11 +806,17 @@ type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
 const SILENT_SELECTION_META = "composerSilentSelection";
 
+const CARRIED_HISTORY_DIRECTION_META = "composerCarriedHistoryDirection";
+
 function replaceSkillChips(
   editor: TiptapEditor,
   replacements: ReturnType<typeof skillChipReplacements>,
+  carriedHistoryDirection?: ComposerPromptHistoryChange["direction"],
 ): void {
   const transaction = editor.state.tr.setMeta("addToHistory", false);
+  if (carriedHistoryDirection) {
+    transaction.setMeta(CARRIED_HISTORY_DIRECTION_META, carriedHistoryDirection);
+  }
   for (const { from, to, node } of replacements) transaction.replaceWith(from, to, node);
   editor.view.dispatch(transaction);
 }
@@ -1058,7 +1064,6 @@ function ComposerPromptEditorTiptapInner(
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
-  const pendingHistoryDirectionRef = useRef<ComposerPromptHistoryChange["direction"]>(null);
   const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
@@ -1137,11 +1142,13 @@ function ComposerPromptEditorTiptapInner(
       );
     const textChanged = previousSnapshot.value !== nextValue;
     const rawHistory = composerHistoryRevisionOf(updated.state);
+    const carriedDirection = transaction.getMeta(CARRIED_HISTORY_DIRECTION_META) as
+      | ComposerPromptHistoryChange["direction"]
+      | undefined;
     const history =
-      pendingHistoryDirectionRef.current !== null && rawHistory.direction === null
-        ? { ...rawHistory, direction: pendingHistoryDirectionRef.current }
+      carriedDirection && rawHistory.direction === null
+        ? { ...rawHistory, direction: carriedDirection }
         : rawHistory;
-    pendingHistoryDirectionRef.current = null;
     readCallbacks().onChange(
       nextValue,
       nextCursor,
@@ -1579,8 +1586,7 @@ function ComposerPromptEditorTiptapInner(
             isKnownModel,
           ).filter(({ node }) => node.isText);
           if (stale.length > 0) {
-            pendingHistoryDirectionRef.current = composerHistoryRevisionOf(updated.state).direction;
-            replaceSkillChips(updated, stale);
+            replaceSkillChips(updated, stale, composerHistoryRevisionOf(updated.state).direction);
             return;
           }
         }

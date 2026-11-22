@@ -440,7 +440,7 @@ export function useComposerContextImport(input: {
         case "image":
         case "file": {
           if (skippedDependentAttachmentIds.has(record.contextId)) break;
-          if (!conflicts) {
+          if (questionAttachmentTarget === null && !conflicts) {
             const restored = matchRestorableQueuedAttachment({
               environmentId,
               sourceEnvironmentId,

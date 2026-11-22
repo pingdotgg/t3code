@@ -668,6 +668,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           activePendingProgress.activeQuestion.id,
         )
       : null;
+  const queuedEditOwnsComposer =
+    questionAttachmentTarget === null && pendingUserInputs.length === 0;
+  const activeEditingQueuedAttachments = queuedEditOwnsComposer ? editingQueuedAttachments : null;
+  const activeRemovedEditingQueuedAttachments = queuedEditOwnsComposer
+    ? removedEditingQueuedAttachments
+    : undefined;
   const attachmentDraftTarget = questionAttachmentTarget ?? composerDraftTarget;
   const attachmentDraft = useComposerThreadDraft(attachmentDraftTarget);
   const questionTakesSnapShots =
@@ -771,7 +777,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const preview =
         buildExpandedImagePreview(composerImages, imageId, copyComposerSnapshotStable) ??
         buildExpandedImagePreview(
-          (editingQueuedAttachments ?? []).flatMap(({ attachment, url }) =>
+          (activeEditingQueuedAttachments ?? []).flatMap(({ attachment, url }) =>
             isQueuedImageAttachment(attachment) && url ? [{ ...attachment, previewUrl: url }] : [],
           ),
           imageId,
@@ -783,7 +789,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setPreviewFileId(fileId);
         return;
       }
-      const queuedFile = editingQueuedAttachments?.find(
+      const queuedFile = activeEditingQueuedAttachments?.find(
         ({ attachment }) => isQueuedFileAttachment(attachment) && attachment.id === fileId,
       )?.attachment;
       if (queuedFile && isQueuedFileAttachment(queuedFile)) onFileOpen(queuedFile);
@@ -810,7 +816,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (persistedPreview) onExpandImage(persistedPreview);
         return;
       }
-      const queuedFile = editingQueuedAttachments?.find(
+      const queuedFile = activeEditingQueuedAttachments?.find(
         ({ attachment }) => isQueuedFileAttachment(attachment) && attachment.id === fileId,
       )?.attachment;
       if (!queuedFile || !isQueuedFileAttachment(queuedFile) || !isVideoAttachment(queuedFile)) {
@@ -831,7 +837,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentContexts: composerEnvironmentContexts,
     images: composerImages,
     files: composerFiles,
-    existingAttachments: editingQueuedAttachments ?? undefined,
+    existingAttachments: activeEditingQueuedAttachments ?? undefined,
     environmentId,
     uploadsByImageId,
   });
@@ -1430,7 +1436,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           if (attachment.file) copiedFiles.set(record.attachmentId, attachment.file);
           return [record];
         }),
-      ...(editingQueuedAttachments ?? []).flatMap(({ attachment, contextIds }) => {
+      ...(activeEditingQueuedAttachments ?? []).flatMap(({ attachment, contextIds }) => {
         if (!isQueuedImageAttachment(attachment) && !isQueuedFileAttachment(attachment)) return [];
         return (contextIds ?? [])
           .filter((contextId) => wanted.has(contextId))
@@ -1491,8 +1497,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
-    removedQueuedAttachments: removedEditingQueuedAttachments,
+    removedQueuedAttachments: activeRemovedEditingQueuedAttachments,
     onRestoreQueuedAttachment: (attachment) => {
+      if (!queuedEditOwnsComposer) return;
       if (isQueuedImageAttachment(attachment)) {
         retainedContextPayloads.queuedImageHistory.pendingRestoredIds.add(attachment.id);
       }
@@ -1502,16 +1509,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const onControlledHistoryChangeStable = useStableCallback(
     (history: ComposerPromptHistoryChange) => {
+      if (!queuedEditOwnsComposer) return;
       recordQueuedImageHistoryRevision(
         retainedContextPayloads.queuedImageHistory,
         history,
-        removedEditingQueuedAttachments ?? [],
+        activeRemovedEditingQueuedAttachments ?? [],
       );
     },
   );
 
   const onRemoveEditingQueuedAttachmentStable = useStableCallback((attachmentId: string) => {
-    const entry = editingQueuedAttachments?.find((item) => item.attachment.id === attachmentId);
+    const entry = activeEditingQueuedAttachments?.find(
+      (item) => item.attachment.id === attachmentId,
+    );
     if (
       entry &&
       isQueuedImageAttachment(entry.attachment) &&
@@ -1838,11 +1848,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const attachmentChanges = reconcileAttachmentContextReferences({
       referencedContextIds: referenced,
       files: composerFiles,
-      queuedAttachments: (editingQueuedAttachments ?? []).map(({ attachment, contextIds }) => ({
-        attachment,
-        contextIds: contextIds ?? [],
-      })),
-      removedQueuedAttachments: removedEditingQueuedAttachments ?? [],
+      queuedAttachments: (activeEditingQueuedAttachments ?? []).map(
+        ({ attachment, contextIds }) => ({
+          attachment,
+          contextIds: contextIds ?? [],
+        }),
+      ),
+      removedQueuedAttachments: activeRemovedEditingQueuedAttachments ?? [],
       history,
       textChanged,
       images: composerImages,
@@ -3903,11 +3915,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
 
               {!isComposerCollapsedMobile &&
-                pendingUserInputs.length === 0 &&
-                editingQueuedAttachments !== null &&
-                editingQueuedAttachments.length > 0 && (
+                activeEditingQueuedAttachments !== null &&
+                activeEditingQueuedAttachments.length > 0 && (
                   <ComposerQueuedAttachmentRow
-                    attachments={editingQueuedAttachments}
+                    attachments={activeEditingQueuedAttachments}
                     onRemove={onRemoveEditingQueuedAttachmentStable}
                   />
                 )}
