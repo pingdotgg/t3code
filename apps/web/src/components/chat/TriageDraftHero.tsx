@@ -22,20 +22,18 @@ export function TriageDraftHero(props: {
     },
   });
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+    <div className="mx-auto flex w-full max-w-110 flex-col items-center">
+      <h1 className="w-full text-center text-title text-foreground">
         <T>What went wrong?</T>
       </h1>
-      <p className="mt-2 flex h-6 w-full items-center justify-center gap-1.5 text-sm">
+      <p className="mt-2 flex h-6 w-full items-center justify-center gap-1.5 text-label">
         <Tooltip>
           <TooltipTrigger
-            render={<span tabIndex={0} className="min-w-0 truncate font-medium text-foreground" />}
+            render={<span tabIndex={0} className="min-w-0 truncate text-label text-foreground" />}
           >
             {props.machineLabel ?? <T>This machine</T>}
             {props.serverVersion === null ? null : (
-              <span className="ml-1.5 font-normal text-muted-foreground">
-                v{props.serverVersion}
-              </span>
+              <span className="ml-1.5 text-muted-foreground">v{props.serverVersion}</span>
             )}
           </TooltipTrigger>
           <TooltipPopup side="bottom">
@@ -45,9 +43,6 @@ export function TriageDraftHero(props: {
             </T>
           </TooltipPopup>
         </Tooltip>
-        <span aria-hidden className="text-muted-foreground">
-          ·
-        </span>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -63,7 +58,7 @@ export function TriageDraftHero(props: {
             ) : (
               <T>
                 or run
-                <code className="ml-1 font-mono text-xs">
+                <code className="ml-1 font-mono text-caption">
                   <Var>{TRIAGE_CLI_COMMAND}</Var>
                 </code>
               </T>

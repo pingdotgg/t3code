@@ -316,7 +316,7 @@ export function UsagePriceOverrides({
               </Label>
               <Menu>
                 <MenuTrigger
-                  render={<Button variant="outline" size="sm" className="min-w-0" />}
+                  render={<Button variant="secondary" size="sm" className="min-w-0" />}
                   aria-labelledby="usage-prices-apply-label usage-prices-selection"
                   disabled={pending || hasChanges}
                 >
@@ -627,11 +627,16 @@ export function UsagePriceOverrides({
                           : "text-muted-foreground"
                       }
                     >
-                      {result?.status === "failed"
-                        ? gt("Not saved · {error}", { error: result.error })
-                        : result?.status === "saved"
-                          ? gt("Saved")
-                          : gt("Saving…")}
+                      {result?.status === "failed" ? (
+                        <>
+                          <span className="block">{gt("Not saved")}</span>
+                          <span className="block">{result.error}</span>
+                        </>
+                      ) : result?.status === "saved" ? (
+                        gt("Saved")
+                      ) : (
+                        gt("Saving…")
+                      )}
                     </span>
                   </div>
                 );

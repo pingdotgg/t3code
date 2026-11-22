@@ -229,7 +229,7 @@ function ActiveSshPasswordPrompt({
           </form>
         </DialogPanel>
         <DialogFooter>
-          <Button disabled={isResponding} type="button" variant="outline" onClick={cancelPrompt}>
+          <Button disabled={isResponding} type="button" variant="secondary" onClick={cancelPrompt}>
             {isExpired ? gt("Dismiss") : gt("Cancel")}
           </Button>
           <Button disabled={isResponding || isExpired} form={formId} type="submit">

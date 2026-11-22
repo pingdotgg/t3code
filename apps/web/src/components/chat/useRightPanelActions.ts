@@ -58,8 +58,6 @@ interface RightPanelActionsInput {
   readonly diffOpen: boolean;
   readonly previewPanelOpen: boolean;
   readonly rightPanelOpen: boolean;
-  readonly canMaximizeRightPanel: boolean;
-  readonly rightPanelMaximized: boolean;
   readonly supportsPullRequests: boolean;
   readonly pullRequestsSurfaceAvailable: boolean;
   readonly gitCwd: string | null;
@@ -91,8 +89,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     diffOpen,
     previewPanelOpen,
     rightPanelOpen,
-    canMaximizeRightPanel,
-    rightPanelMaximized,
     supportsPullRequests,
     pullRequestsSurfaceAvailable,
     gitCwd,
@@ -189,7 +185,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
           deviceStateLoaded ? deviceState : null,
         );
       }
-      useRightPanelStore.getState().setMaximized(activeThreadRef, false);
       useRightPanelStore.getState().close(activeThreadRef);
     }
   };
@@ -263,12 +258,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     store.toggleThreadPanel(activeThreadRef, threadPanelPresentation);
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
-  const toggleRightPanelMaximized = () => {
-    if (!canMaximizeRightPanel || !activeThreadRef) return;
-    if (!rightPanelMaximized) requestWorkspaceFocus({ area: "panel" });
-    useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
-  };
-  const toggleRightPanelMaximizedStable = useStableCallback(toggleRightPanelMaximized);
   const moveRightPanelSurface = (surfaceId: string, toIndex: number) => {
     if (activeThreadRef)
       useRightPanelStore.getState().moveSurface(activeThreadRef, surfaceId, toIndex);
@@ -333,9 +322,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
 
   const shortcuts = {
     "rightPanel.toggle": () => toggleRightPanel(),
-    "rightPanel.toggleMaximized": ({ event }) => {
-      if (!event.repeat) toggleRightPanelMaximized();
-    },
     "threadPanel.toggle": () => toggleThreadPanel(),
     "rightPanel.close": ({ event }) => {
       if (!activeRightPanelSurface) return false;
@@ -363,7 +349,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     onToggleDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
-    toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
     toggleThreadPanelStable,
   };

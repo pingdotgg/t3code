@@ -2,7 +2,7 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 import { preloadPatchFile } from "@pierre/diffs/ssr";
 import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -30,6 +30,7 @@ function noop() {}
 
 export function PromptFontPreview() {
   const gt = useGT();
+  const messages = useMessages();
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
   const [prompt, setPrompt] = useState(PROMPT_PREVIEW_TEXT);
   const [cursor, setCursor] = useState(PROMPT_PREVIEW_TEXT.length);
@@ -38,7 +39,7 @@ export function PromptFontPreview() {
     setCursor(nextCursor);
   };
   return (
-    <div className="mt-1 mb-2 rounded-lg border border-border bg-background px-3 py-2">
+    <div className="mt-1 mb-2 rounded-control surface-well px-3 py-2">
       <ComposerPromptEditor
         ariaLabel={gt("Prompt font preview")}
         editorRef={editorRef}
@@ -47,7 +48,7 @@ export function PromptFontPreview() {
         contextRecords={EMPTY_COMPOSER_CONTEXT_RECORDS}
         skills={PREVIEW_SKILLS}
         disabled={false}
-        placeholder={DEFAULT_COMPOSER_PLACEHOLDER}
+        placeholder={messages(DEFAULT_COMPOSER_PLACEHOLDER)}
         className="max-h-42"
         onChange={onChange}
         onPaste={noop}
@@ -123,8 +124,9 @@ export function CodeFontPreview() {
   const [htmlByFile, setHtmlByFile] = useState(loadedHtml);
   if (loadedHtml !== null && loadedHtml !== htmlByFile) setHtmlByFile(loadedHtml);
   if (htmlByFile === null) return null;
+  // Boxed like the terminal preview below it.
   return (
-    <div className="mt-1 mb-2 space-y-2">
+    <div className="mt-1 mb-2 space-y-2 overflow-hidden rounded-control border border-border">
       {htmlByFile.map((html) => (
         <StaticDiffHtml key={html} html={html} />
       ))}
@@ -244,7 +246,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   return (
     <div
       ref={mountSurface}
-      className="relative mt-1 mb-2 h-52 overflow-hidden rounded-lg border border-border"
+      className="relative mt-1 mb-2 h-52 overflow-hidden rounded-control border border-border"
       aria-label={gt("Terminal font preview")}
     />
   );

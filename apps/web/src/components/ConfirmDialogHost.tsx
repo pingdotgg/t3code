@@ -90,7 +90,7 @@ export function ConfirmDialogHost() {
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>
+          <AlertDialogClose render={<Button variant="secondary" />}>
             <T>Cancel</T>
           </AlertDialogClose>
           {focusConfirm && confirmVariant === "default" ? (

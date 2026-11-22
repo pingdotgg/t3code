@@ -58,8 +58,10 @@ export function ComposerContextPermissions(props: {
           <ComposerContextLabel>{label}</ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>
-          <T>Permissions</T>
-          {shortcutLabel ? ` · ${shortcutLabel}` : null}
+          <span className="grid gap-1">
+            <T>Permissions</T>
+            {shortcutLabel ? <span>{shortcutLabel}</span> : null}
+          </span>
         </TooltipPopup>
       </Tooltip>
       <MenuPopup side="top" align="end" {...composerMenuProps}>

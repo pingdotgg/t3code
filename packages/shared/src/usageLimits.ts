@@ -1064,16 +1064,25 @@ export function collectProviderUsageLimits(
       limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
     });
   }
+  let proxyAccountNumber = 0;
   for (const source of shownHubs) {
     const matching = source.accounts.filter(routes);
     for (const account of matching) {
       const key = resolveKey(account);
       if (key && nativeAccountKeys.has(key)) continue;
+      proxyAccountNumber += 1;
+      const driverLabel =
+        account.driver === "claudeAgent"
+          ? "Claude"
+          : String(account.driver).charAt(0).toUpperCase() + String(account.driver).slice(1);
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
-        label: `${source.label} · ${hubAccountName(account)}`,
-        sourceLabel: "CLI Proxy",
+        label:
+          account.email?.trim() ||
+          hubAccountName(account) ||
+          `${driverLabel} account ${proxyAccountNumber}`,
+        sourceLabel: source.label,
         ...(account.usageLimits.resetCredits?.nextCreditId
           ? {
               resetCreditInput: {

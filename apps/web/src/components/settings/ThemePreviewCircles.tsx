@@ -43,15 +43,15 @@ const STANDARD_THEME_PREVIEW_COLORS: Record<
   light: {
     sidebar: "#fafafa",
     surface: "#ffffff",
-    accentSurface: "#f4f4f5",
-    messageSurface: "#e4e4e7",
+    accentSurface: "#f4f4f4",
+    messageSurface: "#e4e4e4",
     ...SHARED_STANDARD_THEME_PREVIEW_COLORS.light,
   },
   dark: {
-    sidebar: "#0f0f10",
+    sidebar: "#0f0f0f",
     surface: "#121212",
-    accentSurface: "#27272a",
-    messageSurface: "#27272a",
+    accentSurface: "#272727",
+    messageSurface: "#272727",
     ...SHARED_STANDARD_THEME_PREVIEW_COLORS.dark,
   },
 };
@@ -66,13 +66,6 @@ export const STANDARD_THEME_CARDS: ReadonlyArray<ThemeCardDefinition> = [
     })),
   },
 ];
-
-export function previewColorsOf(
-  card: ThemeCardDefinition,
-  mode: ThemeAppearance,
-): ThemeCardPreviewColors | null {
-  return card.previews.find((preview) => preview.mode === mode)?.colors ?? null;
-}
 
 export function getThemeCardDefinition(theme: ThemeDefinition): ThemeCardDefinition {
   return {
@@ -193,7 +186,7 @@ export function ThemePreviewCircles({
                       <span
                         aria-hidden
                         className="pointer-events-none absolute inset-0 rounded-full"
-                        style={{ boxShadow: "inset 0 0 0 2px var(--ring)" }}
+                        style={{ boxShadow: "inset 0 0 0 2px var(--settings-active-rim)" }}
                       />
                       <span
                         aria-hidden

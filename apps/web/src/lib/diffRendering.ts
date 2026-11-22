@@ -330,12 +330,35 @@ export function buildFileDiffEntries(files: ReadonlyArray<FileDiffMetadata>) {
   });
 }
 
+export function getDiffCollapseIconClassName(fileDiff: FileDiffMetadata): string {
+  switch (fileDiff.type) {
+    case "new":
+      return "text-diff-addition-foreground";
+    case "deleted":
+      return "text-diff-deletion-foreground";
+    case "change":
+    case "rename-pure":
+    case "rename-changed":
+      return "text-diff-modified";
+    default:
+      return "text-muted-foreground/80";
+  }
+}
+
 export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
+:host,
 [data-diffs-header],
 [data-diff],
 [data-file],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
+  --diffs-addition-color-override: var(--diff-addition-foreground);
+  --diffs-deletion-color-override: var(--diff-deletion-foreground);
+  --diffs-modified-color-override: var(--diff-modified);
+  --diffs-fg-number-override: var(--code-gutter);
+  --diffs-selection-number-fg: var(--code-gutter);
+  --diffs-fg-number-addition-override: var(--code-gutter);
+  --diffs-fg-number-deletion-override: var(--code-gutter);
   --diffs-header-font-family: var(--font-sans) !important;
   --diffs-font-family: var(--font-mono) !important;
   --diffs-bg: var(--code-background) !important;
@@ -343,6 +366,9 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   --diffs-dark-bg: var(--code-background) !important;
   --diffs-token-light-bg: transparent;
   --diffs-token-dark-bg: transparent;
+  /* Keep Pierre's 2px gutter gap for alignment, but let each gutter cell paint
+     it with its own tint so the gutter abuts the row. */
+  --diffs-gap-style: 2px solid transparent;
 
   /* Gutter, context, and row tints all derive from the code surface the diff
      body sits on. Mixing from the canvas leaves the gutter looking unthemed
@@ -356,14 +382,13 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   );
   --diffs-bg-buffer-override: color-mix(in srgb, var(--code-background) 90%, var(--code-foreground));
 
+  /* Pierre blends row overrides again (12% light / 20% dark).
+     Pre-scale these inputs to retain the intended 9% tint. */
   --diffs-bg-addition-override: light-dark(
-    color-mix(in srgb, var(--code-background) calc(50% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition)),
-    color-mix(in srgb, var(--code-background) calc(70% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition))
+    color-mix(in srgb, var(--code-background) calc(25% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition)),
+    color-mix(in srgb, var(--code-background) calc(55% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition))
   );
-  --diffs-bg-addition-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) calc(35% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition)),
-    color-mix(in srgb, var(--code-background) calc(60% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-addition))
-  );
+  --diffs-bg-addition-number-override: var(--diff-addition);
   --diffs-bg-addition-hover-override: color-mix(in srgb, var(--code-background) 85%, var(--diff-addition));
   /* Pierre resolves emphasis on the host, before the diff's overrides can inherit. */
   /* Light emphasis stays above t3-light's readable syntax luminance floor. */
@@ -373,13 +398,10 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   );
 
   --diffs-bg-deletion-override: light-dark(
-    color-mix(in srgb, var(--code-background) calc(50% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion)),
-    color-mix(in srgb, var(--code-background) calc(70% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion))
+    color-mix(in srgb, var(--code-background) calc(25% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion)),
+    color-mix(in srgb, var(--code-background) calc(55% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion))
   );
-  --diffs-bg-deletion-number-override: light-dark(
-    color-mix(in srgb, var(--code-background) calc(35% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion)),
-    color-mix(in srgb, var(--code-background) calc(60% - var(--appearance-contrast-boost, 0%) / 4), var(--diff-deletion))
-  );
+  --diffs-bg-deletion-number-override: var(--diff-deletion);
   --diffs-bg-deletion-hover-override: color-mix(
     in srgb,
     var(--code-background) 85%,
@@ -394,23 +416,17 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   color: var(--code-foreground) !important;
 }
 
-/* The library's change-icon colors are tuned for dark canvases; light mode takes the app's darker tokens. */
-[data-change-icon="new"] {
-  color: var(
-    --diff-added-icon,
-    light-dark(var(--diff-addition-foreground), var(--diffs-addition-base))
-  ) !important;
+/* Use the final gutter colors after Pierre's row mixing. */
+[data-column-number][data-line-type="change-addition"] {
+  --diffs-computed-diff-line-bg: var(
+    --diff-addition-gutter,
+    color-mix(in srgb, var(--code-background) 77%, var(--diff-addition))
+  );
 }
-[data-change-icon="deleted"] {
-  color: light-dark(var(--diff-deletion-foreground), var(--diffs-deletion-base)) !important;
-}
-/* The page sets --diff-modified-icon to a muted T3 blue, so the common case stays quiet. */
-[data-change-icon="change"],
-[data-change-icon="rename-pure"],
-[data-change-icon="rename-changed"] {
-  color: var(
-    --diff-modified-icon,
-    light-dark(var(--info-foreground), var(--diffs-modified-base))
-  ) !important;
+[data-column-number][data-line-type="change-deletion"] {
+  --diffs-computed-diff-line-bg: var(
+    --diff-deletion-gutter,
+    color-mix(in srgb, var(--code-background) 77%, var(--diff-deletion))
+  );
 }
 `;

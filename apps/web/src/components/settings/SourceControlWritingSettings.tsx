@@ -273,7 +273,7 @@ export function SourceControlWritingSettingsSection() {
                 />
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   disabled={allInstructions === null}
                   onClick={() => {
                     if (allInstructions === null) return;
@@ -292,7 +292,7 @@ export function SourceControlWritingSettingsSection() {
             ) : (
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 onClick={() => {
                   setAllInstructions(null);
                   setEditingAllInstructions(true);
@@ -353,7 +353,7 @@ export function SourceControlWritingSettingsSection() {
             )}
             control={
               !hasServerTargets ? (
-                <span className="text-sm text-muted-foreground">
+                <span className="text-body text-muted-foreground">
                   <T>Connect an environment to choose its review guide model.</T>
                 </span>
               ) : (
@@ -547,13 +547,13 @@ export function SourceControlWritingSettingsSection() {
           )}
           control={
             !hasServerTargets ? (
-              <span className="text-sm text-muted-foreground">
+              <span className="text-body text-muted-foreground">
                 <T>Connect an environment to choose its source control writer model.</T>
               </span>
             ) : (
               <div className="flex flex-wrap items-center justify-end gap-2">
                 {usesDedicatedModel && !canEnableDedicatedModel ? (
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-body text-muted-foreground">
                     <T>No text generation providers available.</T>
                   </span>
                 ) : null}

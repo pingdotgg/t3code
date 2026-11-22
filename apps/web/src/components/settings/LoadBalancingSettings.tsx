@@ -6,12 +6,12 @@ import {
   useClientSettingsHydrated,
   updateClientSettings,
 } from "~/hooks/useSettings";
-import type { MessageResolver } from "~/i18n/messages";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { SettingsNote } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 
 const preferences = [
@@ -21,32 +21,12 @@ const preferences = [
   { value: 0, label: msg("Manual only") },
 ] as const;
 
-const summaryLabels = {
-  100: msg("{environment} prefer"),
-  25: msg("{environment} less often"),
-  0: msg("{environment} manual only"),
-} as const;
-
 type LoadPreference = (typeof preferences)[number]["value"];
 
 function loadPreferenceForWeight(weight: number | undefined): LoadPreference {
   if (weight === undefined || weight === 50) return 50;
   if (weight === 0) return 0;
   return weight < 50 ? 25 : 100;
-}
-
-function summarizeLoadPreferences(
-  environments: ReadonlyArray<Pick<EnvironmentPresentation, "environmentId" | "label">>,
-  weights: Readonly<Record<string, number>>,
-  resolve: MessageResolver,
-): string | null {
-  const parts = environments.flatMap((environment) => {
-    const preference = loadPreferenceForWeight(weights[environment.environmentId]);
-    return preference === 50
-      ? []
-      : [resolve(summaryLabels[preference], { environment: environment.label })];
-  });
-  return parts.length === 0 ? null : parts.join(" · ");
 }
 
 export function LoadBalancingSettings({
@@ -73,7 +53,7 @@ export function LoadBalancingSettings({
       title={title}
       summary={
         settings.loadBalancingEnabled
-          ? summarizeLoadPreferences(environments, settings.loadBalancingWeights, m)
+          ? gt("On", { $context: "load balancing is turned on" })
           : gt("Off", { $context: "load balancing is turned off" })
       }
       control={
@@ -85,12 +65,12 @@ export function LoadBalancingSettings({
         />
       }
     >
-      <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
+      <SettingsNote>
         <T>
           New threads in shared projects start on the machine with the most free CPU and memory,
           weighted by each machine's preference.
         </T>
-      </p>
+      </SettingsNote>
       {environments.map((environment) => (
         <EnvironmentRow
           key={environment.environmentId}

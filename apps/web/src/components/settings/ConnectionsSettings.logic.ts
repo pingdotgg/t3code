@@ -341,7 +341,7 @@ export function summarizeAuthorizedClients(
         )
       : null,
   ];
-  return parts.filter((part): part is string => part !== null).join(" · ");
+  return parts.filter((part): part is string => part !== null).join("\n");
 }
 
 export function sortDesktopClientSessions(sessions: ReadonlyArray<ServerClientSessionRecord>) {
@@ -533,5 +533,5 @@ export function describeConnectDeviceClient(
   const bits = [client?.label, client?.os, client?.browser, client?.ipAddress].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
-  return bits.length > 0 ? [...new Set(bits)].join(" · ") : resolve(msg("Unknown device"));
+  return bits.length > 0 ? [...new Set(bits)].join(", ") : resolve(msg("Unknown device"));
 }

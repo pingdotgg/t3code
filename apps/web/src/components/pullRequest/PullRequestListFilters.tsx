@@ -134,6 +134,7 @@ export function PullRequestSearchInput({
           }
         }}
         placeholder={placeholder}
+        placeholderTone="dim"
         aria-label={label}
       />
     </InputGroup>
@@ -218,9 +219,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
               <PullRequestFilterOptionIcon option={option} />
               <span className="min-w-0 flex-1 truncate">{option.label}</span>
               {option.unavailable ? (
-                <span className="shrink-0">
-                  · {gt("Unavailable", { $context: "filter option" })}
-                </span>
+                <span className="shrink-0">{gt("Unavailable", { $context: "filter option" })}</span>
               ) : null}
               <MenuRadioItemIndicator />
             </span>
@@ -256,7 +255,7 @@ export function PullRequestFilterRadioSubmenu<Value extends string>({
       <MenuSubTrigger>
         <PullRequestFilterOptionIcon option={current} />
         <span className="flex-1">{label}</span>
-        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+        <span className="min-w-0 max-w-32 truncate text-xs font-normal text-muted-foreground">
           {current.label}
         </span>
       </MenuSubTrigger>
@@ -342,7 +341,7 @@ function PullRequestAuthorChoices({
               <PullRequestActorAvatar actor={option.actor} />
               <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
               {option.mergedCount > 0 ? (
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
                   {option.mergedCount} {option.mergedCount === 1 ? "merge" : "merges"} loaded
                 </span>
               ) : null}
@@ -380,7 +379,7 @@ function PullRequestAuthorFilter({
         <span className="flex-1">
           <T>Author</T>
         </span>
-        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+        <span className="min-w-0 max-w-32 truncate text-xs font-normal text-muted-foreground">
           {value ?? gt("Anyone")}
         </span>
       </MenuSubTrigger>
@@ -456,7 +455,7 @@ function PullRequestLabelChoices({
               />
               <span className="min-w-0 flex-1 truncate">{option.name}</span>
               {option.count > 0 ? (
-                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                <span className="shrink-0 text-meta text-muted-foreground tabular-nums">
                   {option.count}
                 </span>
               ) : null}
@@ -487,7 +486,7 @@ function PullRequestLabelFilter({
         <span className="flex-1">
           <T>Labels</T>
         </span>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs font-normal text-muted-foreground">
           {value.length === 0
             ? gt("Any", { $context: "no label filter" })
             : gt("{count, plural, one {{count} selected} other {{count} selected}}", {
@@ -605,13 +604,13 @@ export function PullRequestFiltersMenu({
   ];
   return (
     <Menu onOpenChange={onOpenChange}>
-      <MenuTrigger render={<Button variant="outline" />}>
+      <MenuTrigger render={<Button variant="ghost-muted" />}>
         <ListFilterIcon className="size-4" />
         <span>
           <T>Filters</T>
         </span>
         {filterCount > 0 ? (
-          <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground tabular-nums">
+          <span className="rounded-full surface-selected-soft px-1.5 text-xs text-muted-foreground tabular-nums">
             {filterCount}
           </span>
         ) : null}

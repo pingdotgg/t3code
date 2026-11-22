@@ -368,7 +368,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                       </Text>
                     </View>
                     {controls.isEditing ? (
-                      <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
+                      <Text className="shrink-0 text-2xs text-primary">
                         {gt("Editing", {
                           $context: "status badge on the queued message being edited",
                         })}

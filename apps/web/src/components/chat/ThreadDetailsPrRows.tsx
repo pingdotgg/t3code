@@ -1,4 +1,3 @@
-import { pipe } from "effect/Function";
 import { ThreadDetailsMoreButton } from "./ThreadDetailsControl";
 import type {
   EnvironmentId,
@@ -109,13 +108,15 @@ function ThreadDetailsPrRows({
             },
           });
   const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
-  const rest =
-    currentLink === null
-      ? []
-      : pipe(visibleThreadPullRequests(links), resolveThreadPullRequestChains, pullRequestListLines)
-          .map((line) => line.link)
-          .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
-  if (rest.length === 0) return currentRow;
+  const visibleLinks = visibleThreadPullRequests(links);
+  if (currentLink === null || visibleLinks.length <= 1) return currentRow;
+  const restCount = visibleLinks.length - 1;
+  const currentKey = threadPullRequestKeyOf(currentLink);
+  const rest = expanded
+    ? pullRequestListLines(resolveThreadPullRequestChains(visibleLinks))
+        .map((line) => line.link)
+        .filter((link) => threadPullRequestKeyOf(link) !== currentKey)
+    : [];
 
   return (
     <>
@@ -137,7 +138,7 @@ function ThreadDetailsPrRows({
       ) : null}
       <ThreadDetailsMoreButton
         expanded={expanded}
-        remaining={rest.length}
+        remaining={restCount}
         onToggle={() => setExpanded(!expanded)}
       />
     </>

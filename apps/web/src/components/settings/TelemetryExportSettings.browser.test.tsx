@@ -117,9 +117,9 @@ describe("TelemetryExportSettings", () => {
     };
     await using screen = await render(<TelemetryExportSettings />);
 
-    await expect
-      .element(screen.getByText("Set by environment · Connected · 12 ms"))
-      .toBeInTheDocument();
+    await expect.element(screen.getByText("Set by environment")).toBeInTheDocument();
+    await expect.element(screen.getByText("Connected")).toBeInTheDocument();
+    await expect.element(screen.getByText("12 ms")).toBeInTheDocument();
     await expect
       .element(
         screen.getByText("Running: http://collector/v1/traces from OTEL_EXPORTER_OTLP_ENDPOINT"),
@@ -172,6 +172,7 @@ describe("TelemetryExportSettings", () => {
     first.resolve({ _tag: "Success", value: { _tag: "Accepted", latencyMs: 11 } });
     latest.resolve({ _tag: "Success", value: { _tag: "Accepted", latencyMs: 33 } });
 
-    await expect.element(screen.getByText("Connected · 33 ms")).toBeInTheDocument();
+    await expect.element(screen.getByText("Connected")).toBeInTheDocument();
+    await expect.element(screen.getByText("33 ms")).toBeInTheDocument();
   });
 });

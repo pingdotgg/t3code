@@ -68,7 +68,7 @@ export function IssueLinkPreviewFallback({
 }) {
   const detail = useEnvironmentQuery(issueEnvironment.detail(target)).data;
   return detail === null ? (
-    <p className="break-all text-xs text-muted-foreground">{originalUrl}</p>
+    <p className="break-all text-meta text-muted-foreground">{originalUrl}</p>
   ) : (
     <IssuePreviewCardBody detail={detail} />
   );
@@ -86,26 +86,24 @@ function IssuePreviewCardBody({ detail }: { detail: IssueDetail }) {
         : author.login;
   return (
     <div className="min-w-0">
-      <div className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-1.5 text-caption text-muted-foreground">
         <span className="min-w-0 truncate">{detail.scope}</span>
         <span className="shrink-0">{detail.displayKey}</span>
-        <span aria-hidden>·</span>
-        <span className="inline-flex shrink-0 items-center gap-1">
+        <span className="ms-1 inline-flex shrink-0 items-center gap-1">
           <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
           {state.label}
         </span>
       </div>
-      <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
-        {detail.title}
-      </p>
-      <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+      <p className="mt-1 text-label leading-snug text-foreground text-pretty">{detail.title}</p>
+      <div className="mt-2 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
         <PullRequestActorAvatar actor={author} className="size-4" />
-        <span className="min-w-0 truncate">{authorLabel}</span>
-        <span aria-hidden>·</span>
-        <span className="shrink-0">
-          <T>
-            opened <Var>{createdAt}</Var>
-          </T>
+        <span className="min-w-0">
+          <span className="block truncate">{authorLabel}</span>
+          <span className="block">
+            <T>
+              opened <Var>{createdAt}</Var>
+            </T>
+          </span>
         </span>
       </div>
     </div>

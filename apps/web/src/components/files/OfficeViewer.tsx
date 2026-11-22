@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 /* oxlint-disable react/no-array-index-key -- Spreadsheet rows and columns retain their source positions. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -168,10 +169,10 @@ function ExtendedOfficeViewer(props: {
         role="alert"
         className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center"
       >
-        <p className="text-sm font-medium">
+        <p className="text-label">
           <T>No preview for this file</T>
         </p>
-        <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+        <p className="max-w-sm text-meta leading-relaxed text-muted-foreground">
           {gt("{error} Save it or open it in another app.", { error })}
         </p>
       </div>
@@ -219,14 +220,10 @@ function ExtendedOfficeViewer(props: {
     slide: gt("Next slide"),
     chapter: gt("Next chapter"),
   }[navigation];
-  const sizeDetails =
-    fileSize !== undefined
-      ? ` · ${fileSize === 0 ? gt("0 bytes") : formatAttachmentSize(fileSize, messages)}`
-      : "";
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {count > 0 ? (
-        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-xs">
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3 text-meta">
           <FileSurfaceAction
             label={previousLabel}
             disabled={page === 0}
@@ -298,20 +295,30 @@ function ExtendedOfficeViewer(props: {
       ) : null}
       {props.kind === "ods" && sheet ? (
         <div
-          className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
+          className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-3 border-b border-border/60 px-3 py-2 text-meta text-muted-foreground tabular-nums"
           role="status"
         >
-          {gt("Sheet {page} of {count}", { page: String(page + 1), count: String(count) })} ·{" "}
-          {gt("{count, plural, one {{formatted} row} other {{formatted} rows}}", {
-            count: sheet.rowCount,
-            formatted: sheet.rowCount.toLocaleString(),
-          })}{" "}
-          ·{" "}
-          {gt("{count, plural, one {{formatted} column} other {{formatted} columns}}", {
-            count: sheet.columns,
-            formatted: sheet.columns.toLocaleString(),
-          })}
-          {sizeDetails}
+          <Tooltip>
+            <TooltipTrigger render={<span tabIndex={0} />}>
+              {gt("{count, plural, one {{formatted} row} other {{formatted} rows}}", {
+                count: sheet.rowCount,
+                formatted: sheet.rowCount.toLocaleString(),
+              })}
+            </TooltipTrigger>
+            <TooltipPopup>
+              <span className="block">
+                {gt("{count, plural, one {{formatted} column} other {{formatted} columns}}", {
+                  count: sheet.columns,
+                  formatted: sheet.columns.toLocaleString(),
+                })}
+              </span>
+              {fileSize !== undefined ? (
+                <span className="block">
+                  {fileSize === 0 ? gt("0 bytes") : formatAttachmentSize(fileSize, messages)}
+                </span>
+              ) : null}
+            </TooltipPopup>
+          </Tooltip>
         </div>
       ) : null}
       {documentPage ? (
@@ -325,7 +332,18 @@ function ExtendedOfficeViewer(props: {
             <DocumentPages
               html={documentPage.html}
               name={`${props.name}: ${pageTitle(page)}`}
-              details={`${documentDetails}${sizeDetails}`}
+              details={
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>{documentDetails}</TooltipTrigger>
+                  <TooltipPopup>
+                    {fileSize !== undefined
+                      ? fileSize === 0
+                        ? gt("0 bytes")
+                        : formatAttachmentSize(fileSize, messages)
+                      : gt("Size unavailable")}
+                  </TooltipPopup>
+                </Tooltip>
+              }
             />
           </Suspense>
         </>
@@ -343,7 +361,7 @@ function ExtendedOfficeViewer(props: {
               : gt("Cell values only. Charts, images, and formatting are not shown.")}
           </FileSurfaceNotice>
           {sheet.rowCount === 0 ? (
-            <p className="p-6 text-xs text-muted-foreground">
+            <p className="p-6 text-meta text-muted-foreground">
               <T>This sheet is empty.</T>
             </p>
           ) : (

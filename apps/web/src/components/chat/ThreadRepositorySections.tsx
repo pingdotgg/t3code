@@ -112,7 +112,7 @@ const RepositorySection = memo(function RepositorySection(props: {
         <Chevron className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} aria-hidden />
         <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
           <span className="max-w-2/3 shrink-0 truncate">{props.name}</span>
-          <span className="min-w-0 truncate font-normal text-muted-foreground">
+          <span className="min-w-0 truncate text-body text-muted-foreground">
             {summary === null
               ? (status.error ?? "")
               : !summary.isRepository
@@ -122,7 +122,7 @@ const RepositorySection = memo(function RepositorySection(props: {
           {summary?.isRepository ? (
             <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
               {summary.pullRequest ? (
-                <span className="font-sans font-normal text-muted-foreground">
+                <span className="font-sans text-body text-muted-foreground">
                   #{summary.pullRequest.number}
                 </span>
               ) : null}
@@ -304,7 +304,7 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
   return (
     <>
       {sections.visible.length === 0 && props.explainsEmpty && props.reachesTracked ? (
-        <p className="px-2.5 py-1.5 text-xs text-muted-foreground">
+        <p className="px-2.5 py-1.5 text-meta text-muted-foreground">
           {taskFolder === null
             ? gt("Repositories appear here once this thread changes them.")
             : gt("This thread has no repository worktrees yet.")}

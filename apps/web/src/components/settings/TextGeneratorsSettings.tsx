@@ -99,7 +99,7 @@ export function TextGeneratorsSettings({
         {...setting("text-generators")}
         headerAction={
           !readOnly ? (
-            <Button size="xs" variant="outline" onClick={() => setEditing("new")}>
+            <Button size="xs" variant="secondary" onClick={() => setEditing("new")}>
               <PlusIcon className="size-3" aria-hidden />
               <T>Add generator</T>
             </Button>
@@ -132,6 +132,7 @@ export function TextGeneratorsSettings({
               description={
                 // Indented past the icon so it lines up with the name.
                 <span className="block truncate ps-7.5">
+                  {/* oxlint-disable-next-line t3code/no-dot-separated-text -- main's status prefix; restyle with the settings row later */}
                   {config.enabled ? "" : gt("Off · ")}
                   {config.baseUrl.replace(/^https?:\/\//, "")}
                 </span>
@@ -227,7 +228,7 @@ export function TextGeneratorsSettings({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>
+            <AlertDialogClose render={<Button variant="secondary" />}>
               <T>Cancel</T>
             </AlertDialogClose>
             <Button
@@ -375,7 +376,7 @@ function TextGeneratorWizard({
               <fieldset disabled={checking} className="contents">
                 {existing === null ? (
                   <div className="grid gap-1.5">
-                    <span className="text-sm font-medium">
+                    <span className="text-label">
                       <T>Service</T>
                     </span>
                     <div
@@ -393,8 +394,8 @@ function TextGeneratorWizard({
                             aria-checked={selected}
                             className={
                               selected
-                                ? "flex flex-col items-center gap-2 rounded-lg border border-primary bg-primary/5 px-2 py-3 text-sm font-medium text-foreground ring-1 ring-primary ring-inset outline-none focus-visible:ring-2 focus-visible:ring-inset"
-                                : "flex flex-col items-center gap-2 rounded-lg border bg-background px-2 py-3 text-sm text-muted-foreground outline-none hover:bg-accent/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                                ? "flex flex-col items-center gap-2 rounded-lg border border-primary bg-primary/5 px-2 py-3 text-label text-foreground ring-1 ring-primary ring-inset outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                                : "flex flex-col items-center gap-2 rounded-lg border bg-background px-2 py-3 text-body text-muted-foreground outline-none hover:bg-accent/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
                             }
                             onClick={() => {
                               setPreset(candidate);
@@ -473,7 +474,7 @@ function TextGeneratorWizard({
                   />
                 </div>
                 {checkError ? (
-                  <p role="alert" className="text-sm text-destructive">
+                  <p role="alert" className="text-body text-destructive">
                     {checkError}
                   </p>
                 ) : null}
@@ -481,7 +482,7 @@ function TextGeneratorWizard({
             </form>
           ) : (
             <div className="grid gap-4">
-              <p className="text-sm text-muted-foreground">
+              <p className="text-body text-muted-foreground">
                 {gt(
                   "{count, plural, one {{name} is connected and lists {count} model. Switch any of these to it, or keep what they use now.} other {{name} is connected and lists {count} models. Switch any of these to it, or keep what they use now.}}",
                   { name, count: modelCount },
@@ -513,7 +514,7 @@ function TextGeneratorWizard({
         >
           {step === 0 ? (
             <>
-              <Button variant="outline" onClick={onClose}>
+              <Button variant="secondary" onClick={onClose}>
                 <T>Cancel</T>
               </Button>
               <Button onClick={() => void connect()} disabled={!canConnect || checking}>
@@ -579,19 +580,19 @@ function TextGenerationTaskPicker({
   return (
     <>
       <div className="grid min-w-0 gap-0.5 pe-2">
-        <span className="text-sm">{label}</span>
+        <span className="text-body">{label}</span>
         {shown?.error ? (
-          <span role="alert" className="text-xs text-destructive">
+          <span role="alert" className="text-meta text-destructive">
             {shown.error}
           </span>
         ) : shown ? (
-          <span role="status" className="text-xs text-muted-foreground">
+          <span role="status" className="text-meta text-muted-foreground">
             <T>
               <Var>{selection.model}</Var> answered. It works.
             </T>
           </span>
         ) : own === null ? (
-          <span className="text-xs text-muted-foreground">
+          <span className="text-meta text-muted-foreground">
             <T>Follows the text generation model</T>
           </span>
         ) : null}
@@ -619,7 +620,7 @@ function TextGenerationTaskPicker({
         {testable ? (
           <Button
             size="xs"
-            variant="outline"
+            variant="secondary"
             aria-busy={testing}
             disabled={testing}
             onClick={() => void test()}
@@ -675,7 +676,7 @@ function TextGeneratorModelList({
       ) : null}
       <div className="max-h-80 overflow-y-auto rounded-lg border divide-y divide-border/60">
         {shown.length === 0 ? (
-          <p className="px-3 py-2 text-sm text-muted-foreground">
+          <p className="px-3 py-2 text-body text-muted-foreground">
             <T>No models match.</T>
           </p>
         ) : (
@@ -687,7 +688,7 @@ function TextGeneratorModelList({
                   <span className="grid min-w-0 flex-1">
                     <span className="truncate">{model.name}</span>
                     {model.name !== model.id ? (
-                      <span className="truncate font-mono text-xs text-muted-foreground">
+                      <span className="truncate font-mono text-meta text-muted-foreground">
                         {model.id}
                       </span>
                     ) : null}
@@ -704,13 +705,13 @@ function TextGeneratorModelList({
                   {onSelect ? (
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-body hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                       onClick={() => onSelect(model.id)}
                     >
                       {label}
                     </button>
                   ) : (
-                    <div className="flex items-center gap-2 px-3 py-2 text-sm">{label}</div>
+                    <div className="flex items-center gap-2 px-3 py-2 text-body">{label}</div>
                   )}
                 </li>
               );
@@ -774,7 +775,7 @@ function TextGeneratorModelsDialog({
         </DialogHeader>
         <DialogPanel>
           {error ? (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-body text-destructive">
               {error}
             </p>
           ) : models === null ? (
@@ -785,7 +786,7 @@ function TextGeneratorModelsDialog({
         </DialogPanel>
         <DialogFooter variant="bare">
           <Button
-            variant="outline"
+            variant="secondary"
             aria-busy={refreshing}
             disabled={refreshing}
             onClick={() => void refresh()}

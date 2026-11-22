@@ -2,6 +2,7 @@ import { T } from "gt-react";
 import { ChevronDownIcon, PaperclipIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function WorkspaceFileDropOverlay() {
   return (
@@ -11,7 +12,7 @@ export function WorkspaceFileDropOverlay() {
     >
       <div
         role="status"
-        className="flex items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-4 py-2.5 text-sm font-medium text-foreground shadow-lg"
+        className="flex items-center gap-2 rounded-full surface-popover px-4 py-2.5 text-sm font-medium text-strong-foreground"
       >
         <PaperclipIcon className="size-4 text-primary" aria-hidden="true" />
         <T>Drop files to attach</T>
@@ -26,7 +27,7 @@ export function WorkspaceFileDropOverlay() {
  */
 export function ScrollToEndButton(props: {
   readonly bottom: number;
-  readonly summary: string | null;
+  readonly summary: ReadonlyArray<string>;
   readonly onScrollToEnd: () => void;
 }) {
   return (
@@ -34,23 +35,34 @@ export function ScrollToEndButton(props: {
       className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
       style={{ bottom: props.bottom }}
     >
-      <Button
-        data-scroll-to-end="true"
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={props.onScrollToEnd}
-        className="pointer-events-auto"
-        size="xs"
-        variant="glass"
-      >
-        <ChevronDownIcon className="size-3.5" />
-        <T>Scroll to end</T>
-        {props.summary === null ? null : (
-          <span className="text-muted-foreground">
-            <span aria-hidden>· </span>
-            {props.summary}
-          </span>
-        )}
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              data-scroll-to-end="true"
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={props.onScrollToEnd}
+              className="pointer-events-auto"
+              size="xs"
+              variant="floating"
+            />
+          }
+        >
+          <ChevronDownIcon className="size-3.5" />
+          <T>Scroll to end</T>
+        </TooltipTrigger>
+        <TooltipPopup>
+          {props.summary.length ? (
+            props.summary.map((part) => (
+              <span className="block" key={part}>
+                {part}
+              </span>
+            ))
+          ) : (
+            <T>Scroll to end</T>
+          )}
+        </TooltipPopup>
+      </Tooltip>
     </div>
   );
 }

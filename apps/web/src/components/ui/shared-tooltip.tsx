@@ -25,7 +25,7 @@ interface SharedTooltipContent {
   /** Comparable key that changes whenever `render()` output changes while open. */
   readonly contentKey?: unknown;
   readonly side?: "top" | "bottom" | "left" | "right";
-  readonly variant?: "default" | "glass" | "code";
+  readonly variant?: "default" | "popover" | "code";
 }
 
 interface SharedTooltipState extends SharedTooltipContent {

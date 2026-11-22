@@ -134,7 +134,7 @@ export function ReadOnlyThreadTimeline(props: {
         </SideThreadsOpenContext>
         {follow.showScrollToBottom ? (
           <ScrollToEndButton
-            summary={null}
+            summary={[]}
             bottom={4}
             onScrollToEnd={() => follow.scrollToEnd(true)}
           />

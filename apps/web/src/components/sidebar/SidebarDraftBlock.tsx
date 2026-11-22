@@ -58,7 +58,7 @@ export function useDraftTerminalLabels(): ReadonlyMap<string, string> {
   );
 }
 
-export function draftTerminalLabel(
+function draftTerminalLabel(
   session: DraftSessionState,
   terminalLabels: ReadonlyMap<string, string>,
 ): string | null {
@@ -148,8 +148,8 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         aria-current={accessibility.current}
         data-testid="sidebar-draft-row"
         className={cn(
-          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-          props.isActive ? "bg-sidebar-row-active" : draftSurfaceClassName,
+          "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-control active:surface-sidebar-row-active text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          props.isActive ? "surface-sidebar-row-selected" : draftSurfaceClassName,
         )}
         onClick={handleActivate}
         onContextMenu={handleContextMenu}
@@ -161,7 +161,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             {props.project ? (
               <ProjectFavicon project={props.project} className="size-4 shrink-0" />
             ) : null}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-muted-foreground">
               {props.projectDisplayName}
             </span>
             <span
@@ -190,7 +190,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
             </span>
           </div>
-          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
+          <div className="mt-0.5 truncate text-sm font-medium text-foreground">{preview}</div>
         </div>
       </div>
     </li>

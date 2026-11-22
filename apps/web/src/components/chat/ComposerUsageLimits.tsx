@@ -20,14 +20,13 @@ function accountLabel(account: UsageLimitsReport["accounts"][number]): string {
   const instance =
     account.displayName?.trim() ||
     (String(account.instanceId) !== String(account.driver) ? account.instanceId : "");
-  return instance && instance.toLowerCase() !== driver.toLowerCase()
-    ? `${driver} · ${instance}`
-    : driver;
+  return instance && instance.toLowerCase() !== driver.toLowerCase() ? String(instance) : driver;
 }
 
 function AccountSummary({ account }: { readonly account: UsageLimitsReport["accounts"][number] }) {
   const gt = useGT();
   const label = accountLabel(account);
+  const driver = providerClients.get(account.driver)?.label ?? String(account.driver);
   return (
     <>
       {label.includes("@") ? (
@@ -42,7 +41,10 @@ function AccountSummary({ account }: { readonly account: UsageLimitsReport["acco
       ) : (
         label
       )}
-      {account.plan ? ` · ${account.plan}` : null}
+      {account.instanceId && label !== driver ? <span className="block">{driver}</span> : null}
+      {account.plan ? (
+        <span className="ms-1.5 font-normal text-dim-foreground">{account.plan}</span>
+      ) : null}
     </>
   );
 }
@@ -102,20 +104,26 @@ export function modelFallbackBannerItem(
     variant: "info",
     icon: <GaugeIcon />,
     title: resolve(msg("Using {model}", { model: fallbackModelName })),
-    description: resetsAt
-      ? resolve(
-          msg("{provider} is out of usage · resets {time}", {
-            provider: defaultProviderName,
-            time: formatUpcomingTimestamp(
-              resetsAt,
-              timestampFormat,
-              Date.now(),
-              undefined,
-              resolve,
-            ),
-          }),
-        )
-      : resolve(msg("{provider} is out of usage", { provider: defaultProviderName })),
+    description: (
+      <span className="inline-flex flex-col">
+        <span>{resolve(msg("{provider} is out of usage", { provider: defaultProviderName }))}</span>
+        {resetsAt ? (
+          <span>
+            {resolve(
+              msg("Resets {time}", {
+                time: formatUpcomingTimestamp(
+                  resetsAt,
+                  timestampFormat,
+                  Date.now(),
+                  undefined,
+                  resolve,
+                ),
+              }),
+            )}
+          </span>
+        ) : null}
+      </span>
+    ),
     actions: (
       <Button size="xs" variant="ghost" onClick={onUseDefault}>
         {resolve(msg("Use {model}", { model: defaultModelName }))}
@@ -184,7 +192,7 @@ function UsageLimitsBannerBody({
           );
         })}
         {report.notices.map((notice) => (
-          <span key={notice} className="text-xs text-muted-foreground">
+          <span key={notice} className="text-meta text-muted-foreground">
             {notice}
           </span>
         ))}

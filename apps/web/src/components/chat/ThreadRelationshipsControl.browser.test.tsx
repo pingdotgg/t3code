@@ -87,6 +87,7 @@ function setup() {
     thread: {
       id: threadId,
       title: "Fork",
+      modelSelection: makeThreadProjectionFixture().thread.modelSelection,
       activeProviderThreadId: null,
       lineage: { parentThreadId: ThreadId.make("source"), relationshipToParent: "fork" },
       forkedFrom: null,
@@ -118,7 +119,7 @@ it.each([
   if (action === "merge") {
     await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
   } else {
-    await screen.getByRole("button", { name: "More thread actions" }).click();
+    await screen.getByRole("button", { name: "Lineage actions" }).click();
     await page.getByRole("menuitem", { name: "Disconnect agent session" }).click();
   }
 
@@ -126,7 +127,7 @@ it.each([
   await expect
     .element(
       screen.getByRole("button", {
-        name: action === "merge" ? "Merge back to source conversation" : "More thread actions",
+        name: action === "merge" ? "Merge back to source conversation" : "Lineage actions",
       }),
     )
     .toBeEnabled();
@@ -153,7 +154,7 @@ it.each([
     if (action === "merge") {
       await screen.getByRole("button", { name: "Merge back to source conversation" }).click();
     } else {
-      await screen.getByRole("button", { name: "More thread actions" }).click();
+      await screen.getByRole("button", { name: "Lineage actions" }).click();
       await page.getByRole("menuitem", { name: "Disconnect agent session" }).click();
     }
   };
@@ -172,7 +173,7 @@ it.each([
     );
   });
   if (action === "disconnect") {
-    await expect.element(screen.getByRole("button", { name: "More thread actions" })).toBeEnabled();
+    await expect.element(screen.getByRole("button", { name: "Lineage actions" })).toBeEnabled();
   }
 });
 
@@ -216,7 +217,7 @@ it("opens an idle child beside the thread, and in its place with the modifier", 
     />,
   );
   await screen.getByRole("button", { name: /Previous agents/ }).click();
-  const child = screen.getByRole("button", { name: /Idle child/ });
+  const child = page.getByRole("menuitem", { name: /Idle child/ });
   await expect.element(child).toBeEnabled();
   const panelRef = scopeThreadRef(environmentId, projection.thread.id);
   const panel = () =>
@@ -229,6 +230,7 @@ it("opens an idle child beside the thread, and in its place with the modifier", 
   });
   expect(screen.router?.state.location.pathname).toBe("/");
   // Idle children can be omitted from the shell; the route loads the child's own detail.
+  await screen.getByRole("button", { name: /Previous agents/ }).click();
   await child.click({ modifiers: [isMacPlatform(navigator.platform) ? "Meta" : "Control"] });
   await vi.waitFor(() =>
     expect(screen.router?.state.location.pathname).toBe("/local/omitted-child"),
@@ -274,8 +276,10 @@ it("keeps focus on the list when Show more pages reveal the last rows", async ()
     />,
   );
   await screen.getByRole("button", { name: /Previous agents/ }).click();
-  await screen.getByRole("button", { name: "Show 1 more" }).click();
-  await expect.element(screen.getByRole("list", { name: "Related threads" })).toHaveFocus();
+  await page.getByRole("menuitem", { name: "Show 1 more" }).click();
+  const list = page.getByRole("list", { name: "Related threads" });
+  await expect.element(list).toBeVisible();
+  expect(list.element().contains(document.activeElement)).toBe(true);
 });
 
 it("shows a lineage thread's full title in its tooltip", async () => {
@@ -310,6 +314,7 @@ it("shows a side chat's full title in its tooltip", async () => {
     {
       id: "side",
       title: longTitle,
+      modelSelection: makeThreadProjectionFixture().thread.modelSelection,
       lineage: {
         parentThreadId: threadId,
         relationshipToParent: "fork",
@@ -507,6 +512,7 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
   const projection = makeThreadProjectionFixture();
   state.projection = projection;
   state.relatedShells = Array.from({ length: count }, (_, index) => ({
+    ...projection.thread,
     id: ThreadId.make(`subagent-${index}`),
     title: `Subagent ${index}`,
     forkedFrom: null,

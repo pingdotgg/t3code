@@ -368,7 +368,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
         <LinkPage title={gt("This link is open")}>
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => {
               openedLinkKeys.delete(locationKey);
               setStarted(false);
@@ -396,7 +396,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
           <Button size="sm" onClick={() => void cloneRepository(state.repository)}>
             {gt("Clone {repository}", { repository: name })}
           </Button>
-          <Button size="sm" variant="outline" onClick={openWithoutProject}>
+          <Button size="sm" variant="secondary" onClick={openWithoutProject}>
             <T>Use without project</T>
           </Button>
         </LinkPage>

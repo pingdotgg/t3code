@@ -112,7 +112,7 @@ export function SimlockDeviceHostEditor(props: {
     min: number,
     max: number,
   ) => (
-    <label className="block space-y-1.5">
+    <label className="block space-y-1.5 text-label">
       <span>{label}</span>
       <Input
         type="number"
@@ -158,7 +158,7 @@ export function SimlockDeviceHostEditor(props: {
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
-            <label className="block space-y-1.5 text-sm">
+            <label className="block space-y-1.5 text-label">
               <span>
                 <T>Name</T>
               </span>
@@ -173,7 +173,7 @@ export function SimlockDeviceHostEditor(props: {
                 }}
               />
             </label>
-            <label className="block space-y-1.5 text-sm">
+            <label className="block space-y-1.5 text-label">
               <span>
                 <T>Gateway URL</T>
               </span>
@@ -198,9 +198,12 @@ export function SimlockDeviceHostEditor(props: {
                   hostId={props.isNew ? null : props.host.id}
                   gatewayUrl={checkUrl}
                   label={
-                    several
-                      ? gt("Agent token · {label}", { label: environment.label })
-                      : gt("Agent token")
+                    <span className="grid gap-1">
+                      <span>{gt("Agent token")}</span>
+                      {several ? (
+                        <span className="text-meta text-muted-foreground">{environment.label}</span>
+                      ) : null}
+                    </span>
                   }
                   token={tokens.get(environment.environmentId) ?? { kind: "cleared" }}
                   saved={savedValue(environment)}
@@ -218,7 +221,7 @@ export function SimlockDeviceHostEditor(props: {
                   }
                 />
               ))}
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 {several ? (
                   <T>
                     Leases, drives, and streams devices. Create one per environment with{" "}
@@ -238,11 +241,11 @@ export function SimlockDeviceHostEditor(props: {
                 )}
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="grid grid-cols-2 gap-3 text-body">
               {limit("maxLeases", gt("Devices at once"), 1, 20)}
               {limit("maxLeaseMinutes", gt("Lease minutes"), 5, 240)}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               {props.isNew
                 ? gt("A lease ends after the lease minutes even while in use.")
                 : gt(
@@ -250,7 +253,7 @@ export function SimlockDeviceHostEditor(props: {
                   )}
             </p>
             {problem === null || !gatewayUrl ? null : (
-              <p className="text-xs text-destructive" role="alert">
+              <p className="text-meta text-destructive-foreground" role="alert">
                 {problem}
               </p>
             )}
@@ -325,14 +328,16 @@ function SimlockTokenField(props: {
       </span>
     ) : AsyncResult.isFailure(check) ? (
       <span
-        className={props.token.kind === "cleared" ? "text-muted-foreground" : "text-destructive"}
+        className={
+          props.token.kind === "cleared" ? "text-muted-foreground" : "text-destructive-foreground"
+        }
       >
         {failureMessage(check.cause)}
       </span>
     ) : null;
   return (
-    <div className="space-y-1.5 text-sm">
-      <label htmlFor={id} className="block">
+    <div className="space-y-1.5 text-body">
+      <label htmlFor={id} className="block text-label">
         {props.label}
       </label>
       <div className="flex items-center gap-2">
@@ -391,7 +396,7 @@ function SimlockTokenField(props: {
           </Button>
         ) : null}
       </div>
-      {status ? <p className="text-xs">{status}</p> : null}
+      {status ? <p className="text-meta">{status}</p> : null}
     </div>
   );
 }

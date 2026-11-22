@@ -42,6 +42,7 @@ import { manualServerUpdateCommand } from "~/versionSkew";
 import { crossesReleaseTrack } from "@t3tools/shared/cliRelease";
 import { Button } from "./ui/button";
 import { toastManager } from "./ui/toast";
+import { StatusDot } from "./ui/status-dot";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const UPDATE_STAGE_LABELS: Record<ServerUpdateStage, string> = {
@@ -86,7 +87,7 @@ function refusedCrossing(
 
 function CrossTrackNote() {
   return (
-    <span className="text-muted-foreground text-xs">
+    <span className="text-muted-foreground text-meta">
       <T>Switch tracks in About → Update track</T>
     </span>
   );
@@ -189,7 +190,7 @@ export function useServerUpdate() {
 export function ServerUpdatesAction({
   targets,
   label,
-  variant = "outline",
+  variant = "secondary",
   size = "xs",
   className,
 }: UpdateButtonProps & {
@@ -263,7 +264,7 @@ export function ServerUpdateProgress({
   if (state.status === "failed") {
     return (
       <div className="mt-1 flex min-w-0 items-center gap-2 text-xs text-destructive" role="alert">
-        <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
+        <StatusDot tone="danger" />
         <Tooltip>
           <TooltipTrigger
             render={
@@ -277,7 +278,7 @@ export function ServerUpdateProgress({
   }
   return (
     <div className="mt-1 flex items-center gap-2 text-xs font-medium text-foreground">
-      <span className="size-1.5 shrink-0 rounded-full bg-foreground" aria-hidden="true" />
+      <StatusDot tone="foreground" />
       <span>{serverUpdateStageLabel(state.stage, messages)}</span>
     </div>
   );
@@ -293,7 +294,7 @@ export function ServerUpdateAction({
   targetVersion,
   channel,
   label,
-  variant = "outline",
+  variant = "secondary",
   size = "xs",
   className,
   appearance = "button",
@@ -382,13 +383,13 @@ export function ServerUpdateAction({
         </Button>
       </ManagedControl>
     ) : (
-      <span className="text-muted-foreground text-xs">{updatesDenial}</span>
+      <span className="text-muted-foreground text-meta">{updatesDenial}</span>
     );
   }
 
   if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
     return (
-      <span className="text-muted-foreground text-xs">
+      <span className="text-muted-foreground text-meta">
         <T>Update the desktop app on that machine to update this server.</T>
       </span>
     );
@@ -490,7 +491,7 @@ export function OutdatedServerUpdateAction({
     return <CrossTrackNote />;
   }
   return (
-    <Button size="xs" variant="outline" onClick={() => void handleUpdate()}>
+    <Button size="xs" variant="secondary" onClick={() => void handleUpdate()}>
       {label ?? gt("Update", { $context: "verb, updates the server" })}
     </Button>
   );

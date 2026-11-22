@@ -76,22 +76,22 @@ export function BackgroundWorkDetails(props: {
                 task.itemId ?? (item?.type === "command_execution" ? item.id : undefined);
               const childThreadId = task.kind === "subagent" ? task.childThreadId : undefined;
               return (
-                <section key={task.taskId} className="space-y-2 text-sm">
+                <section key={task.taskId} className="space-y-2 text-body">
                   <div className="flex items-baseline justify-between gap-3">
-                    <h3 className="font-medium">{title}</h3>
-                    <span className="shrink-0 text-xs text-muted-foreground">
+                    <h3 className="text-label">{title}</h3>
+                    <span className="shrink-0 text-meta text-muted-foreground">
                       {backgroundWorkHoldsCompletion([task])
                         ? gt("Waiting", { $context: "status of background work" })
                         : gt("Running", { $context: "status of background work" })}
                     </span>
                   </div>
                   {command ? (
-                    <div className="rounded-md border border-border bg-muted/20 p-3 font-mono text-xs whitespace-pre-wrap break-words">
+                    <div className="rounded-md border border-border bg-muted/20 p-3 font-mono text-meta whitespace-pre-wrap break-words">
                       <ShellCommandBlock command={command} />
                     </div>
                   ) : null}
                   {itemId && streamsOutput && item?.status === "running" ? (
-                    <div className="font-mono text-xs whitespace-pre-wrap break-words">
+                    <div className="font-mono text-meta whitespace-pre-wrap break-words">
                       <CommandOutputPanel
                         environmentId={props.environmentId}
                         threadId={task.sourceThreadId ?? item?.threadId ?? props.threadId}

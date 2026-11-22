@@ -1,7 +1,7 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
-import { useGT } from "gt-react";
+import { T, useGT } from "gt-react";
 import { useState, type CSSProperties } from "react";
 
 import { observeIntersection } from "../../lib/observeIntersection";
@@ -142,8 +142,10 @@ export function MediaVideoPlayer({
         >
           <span data-thread-find-ignore className="inline-flex items-center gap-1.5">
             <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-            {[gt("Video unavailable"), label, unavailableDetail].filter(Boolean).join(" · ")}
+            <T>Video unavailable</T>
           </span>
+          {label ? <span>{label}</span> : null}
+          {unavailableDetail ? <span>{unavailableDetail}</span> : null}
           <span className="flex flex-wrap items-center justify-center gap-2">
             {latestSrc !== null || onRetry ? (
               <Button

@@ -182,11 +182,15 @@ export function PullRequestStackMenu({
             }
           />
           <TooltipPopup>
-            <T>
-              View stack #<Var>{stack.number}</Var>, layer <Var>{position}</Var> of{" "}
-              <Var>{stack.layers.length}</Var>
-            </T>
-            {notice ? ` · ${notice}` : null}
+            <span className="flex flex-col gap-0.5">
+              <span>
+                <T>
+                  View stack #<Var>{stack.number}</Var>, layer <Var>{position}</Var> of{" "}
+                  <Var>{stack.layers.length}</Var>
+                </T>
+              </span>
+              {notice ? <span>{notice}</span> : null}
+            </span>
           </TooltipPopup>
         </Tooltip>
         <MenuPopup align="start">
@@ -321,7 +325,7 @@ export function PullRequestStackMenu({
               {confirmationLayers.map((layer) => (
                 <li
                   key={layer.number}
-                  className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2"
+                  className="flex items-center gap-2 rounded-row surface-selected-soft px-3 py-2"
                 >
                   <PullRequestStackLayerContent layer={layer} compact />
                 </li>
@@ -329,7 +333,7 @@ export function PullRequestStackMenu({
             </ul>
           </DialogPanel>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmation(null)}>
+            <Button variant="secondary" onClick={() => setConfirmation(null)}>
               <T>Cancel</T>
             </Button>
             <Button onClick={() => void run()}>

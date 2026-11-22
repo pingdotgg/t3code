@@ -190,7 +190,7 @@ export function ThreadReadLabel({
 }
 
 const toolCallExpandedBodyClassName =
-  "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-secondary-label text-(length:--font-size-code,var(--text-2xs)) leading-relaxed select-text";
+  "max-h-64 cursor-text overflow-auto whitespace-pre-wrap break-words font-mono text-muted-foreground text-(length:--font-size-code,var(--text-2xs)) leading-relaxed select-text";
 
 const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
@@ -363,12 +363,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         wrapLabel
         icon={
           <CircleAlertIcon
-            className={cn("size-4", warning ? "text-warning" : "text-destructive")}
+            className={cn("size-4", warning ? "text-warning-foreground" : "text-destructive")}
           />
         }
         label={
           <span
-            className={cn("text-sm font-medium", warning ? "text-warning" : "text-destructive")}
+            className={cn(
+              "text-sm font-medium",
+              warning ? "text-warning-foreground" : "text-destructive",
+            )}
           >
             {label}
           </span>
@@ -382,16 +385,16 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         }
       >
         {!warning ? (
-          <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
+          <p className="ms-7.5 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground">
             {failureItem.failure.message}
           </p>
         ) : null}
         {retryRunId !== null && onRetryWorkspacePreparation ? (
-          <div className="ms-7 pb-1">
+          <div className="ms-7.5 pb-1">
             <Button
               type="button"
               size="xs"
-              variant="outline"
+              variant="secondary"
               onClick={() => onRetryWorkspacePreparation(retryRunId)}
             >
               <RotateCcwIcon aria-hidden />
@@ -426,6 +429,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         ? gt("Thinking")
         : gt("Thought")
       : questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot, m));
+  // Re-tier only an existing action prefix; command-only labels keep their exact text.
+  const actionParts =
+    workLogEntryIsToolLike(workEntry) && !isReasoning
+      ? /^(Read|Reading|Ran|Running|Edited|Editing|Created|Creating|Deleted|Deleting|Searched|Searching|Listed|Listing|Opened|Opening|Updated|Updating|Fetched|Fetching|Called|Calling)(\s+)(.+)$/s.exec(
+          previewText,
+        )
+      : null;
+  const targetIsCode = Boolean(workEntry.command || workEntry.changedFiles?.length);
   const answerPreview =
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
@@ -509,24 +520,24 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               turnItemHasDetail(workEntry.projectedItem.item),
             ));
   const iconWrapperClass = cn(
-    "flex size-4 items-center justify-center",
+    "flex size-3.5 items-center justify-center",
     showWarningIndicator
-      ? "text-warning"
+      ? "text-warning-foreground"
       : showDestructiveRowStyle
-        ? "text-destructive"
+        ? "text-error-foreground"
         : showFailedIndicator
           ? failedToolIconClassName
           : workEntry.tone === "tool"
-            ? "text-icon-muted"
+            ? "text-muted-foreground"
             : iconConfig.className,
   );
   const headingClass = showWarningIndicator
-    ? "font-medium text-warning"
+    ? "font-medium text-warning-foreground"
     : showDestructiveRowStyle
-      ? "font-medium text-destructive"
-      : workLogEntryIsToolLike(workEntry)
-        ? "text-secondary-label"
-        : "text-foreground/80";
+      ? "font-medium text-error-foreground"
+      : targetIsCode && !actionParts && workLogEntryIsToolLike(workEntry)
+        ? "font-sans font-normal text-dim-foreground"
+        : "font-medium text-foreground";
   const threadLabel = isReasoning ? null : threadReadLabel(previewText, workEntry, threadTarget, m);
   const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
     .filter(Boolean)
@@ -565,7 +576,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           <ToolActivityIconView
             icon={entryToolIcon}
             fallbackName={entryIconName}
-            className="block size-4 shrink-0 stroke-2"
+            className="block size-3.5 shrink-0 stroke-2"
             muted
           />
         </span>
@@ -602,6 +613,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   environmentId={ctx.activeThreadEnvironmentId}
                   linked
                 />
+              ) : actionParts ? (
+                <>
+                  {actionParts[1]}
+                  {actionParts[2]}
+                  <span className="font-sans font-normal text-dim-foreground">
+                    {actionParts[3]}
+                  </span>
+                </>
               ) : (
                 previewText
               )}
@@ -673,7 +692,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
               <ChevronRightIcon
                 className={cn(
-                  "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+                  "size-3 shrink-0 text-dim-foreground transition-transform duration-200",
                   expanded && "rotate-90",
                 )}
               />
@@ -753,7 +772,7 @@ function QuestionAnswerHistory({
   }));
   const urls = useAssetUrls(activeThreadEnvironmentId, resources);
   return (
-    <div className="ms-7 mt-2 space-y-2" onClick={stopRowToggle}>
+    <div className="ms-7.5 mt-2 space-y-2" onClick={stopRowToggle}>
       {[
         ...new Set([
           ...Object.keys(answer.questionTextById ?? {}),

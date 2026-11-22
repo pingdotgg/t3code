@@ -204,7 +204,9 @@ const layerElectronMenu = Layer.succeed(ElectronMenu.ElectronMenu, {
 
 const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
   shouldUseDarkColors: Effect.succeed(false),
+  shouldUseDarkChrome: Effect.succeed(false),
   setSource: () => Effect.void,
+  setBlackChrome: () => Effect.void,
   onUpdated: () => Effect.void,
 } satisfies ElectronTheme.ElectronTheme["Service"]);
 
@@ -1357,9 +1359,9 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.syncAppearance;
       }).pipe(Effect.provide(layer));
 
-      assert.deepEqual(vi.mocked(framed.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
+      assert.deepEqual(vi.mocked(framed.window.setBackgroundColor).mock.calls, [["#e4e4e4"]]);
       assert.lengthOf(vi.mocked(framed.window.setTitleBarOverlay).mock.calls, 0);
-      assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#ffffff"]]);
+      assert.deepEqual(vi.mocked(overlay.window.setBackgroundColor).mock.calls, [["#e4e4e4"]]);
       assert.lengthOf(vi.mocked(overlay.window.setTitleBarOverlay).mock.calls, 1);
     }),
   );

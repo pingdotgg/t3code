@@ -1175,6 +1175,11 @@ export default function ChatView(props: ChatViewProps) {
   // An embedded side chat has no panel; a stale maximized flag would hide its own column.
   const rightPanelMaximized =
     !embedded && canMaximizeRightPanel && rightPanelState.maximized === true;
+  const toggleRightPanelMaximizedStable = useStableCallback(() => {
+    if (canMaximizeRightPanel && activeThreadRef) {
+      useRightPanelStore.getState().setMaximized(activeThreadRef, !rightPanelMaximized);
+    }
+  });
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);
@@ -1873,7 +1878,7 @@ export default function ChatView(props: ChatViewProps) {
     !embedded &&
     shouldShowComposerContextStrip({
       isDraftHeroState,
-      persistInActiveThreads: settings.persistComposerContextStrip,
+      persistInActiveThreads: true,
       hasActiveProject: activeProject !== null && !showProviderSubagentBar,
       isGitRepo,
       showEnvironmentIndicator: showComposerEnvironmentIndicator,
@@ -2133,13 +2138,6 @@ export default function ChatView(props: ChatViewProps) {
     visiblePullRequestCount,
     onDiffPanelOpen,
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes a pending maximize request from the right panel store once the panel can maximize
-  useEffect(() => {
-    if (!canMaximizeRightPanel) return;
-    if (useRightPanelStore.getState().consumeMaximizeRequest(routeThreadRef)) {
-      useRightPanelStore.getState().setMaximized(routeThreadRef, true);
-    }
-  }, [canMaximizeRightPanel, routeThreadRef]);
   const {
     closeSurface: closeRightPanelSurface,
     closeOtherSurfaces: closeOtherRightPanelSurfacesStable,
@@ -2499,7 +2497,6 @@ export default function ChatView(props: ChatViewProps) {
     onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,
     openFileSurfaceStable,
-    toggleRightPanelMaximizedStable,
     toggleRightPanelStable,
     toggleThreadPanelStable,
     shortcuts: rightPanelShortcuts,
@@ -2520,8 +2517,6 @@ export default function ChatView(props: ChatViewProps) {
     diffOpen,
     previewPanelOpen,
     rightPanelOpen,
-    canMaximizeRightPanel,
-    rightPanelMaximized,
     supportsPullRequests,
     pullRequestsSurfaceAvailable: linkedItemsSurfaceAvailable,
     gitCwd,
@@ -2619,6 +2614,15 @@ export default function ChatView(props: ChatViewProps) {
     pendingApprovals.length > 0 ||
     pendingUserInputs.length > 0;
   const compactDisabled = compactThreadUnavailable;
+  const compactDisabledReason = compactDisabled
+    ? !canOperateThread
+      ? gt("This connection cannot change threads.")
+      : !activeProject
+        ? gt("Choose a project before compacting")
+        : !manualCompactionProviderAvailable
+          ? gt("Compaction is unavailable for this provider")
+          : gt("Compacting is unavailable right now")
+    : null;
   const freshSessionAvailable =
     activeMessageCount > 0 && serverConfig?.environment.capabilities.freshContext === true;
   const freshSessionArmed = useFreshSessionArmed(routeThreadKey);
@@ -2945,16 +2949,9 @@ export default function ChatView(props: ChatViewProps) {
     if (embedded || backgroundThread) return;
     return window.desktopBridge?.onMenuAction((action) => {
       if (action === "rightPanel.toggle") toggleRightPanelStable();
-      else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
       else if (action === "rightPanel.close") closeActiveRightPanelSurfaceStable();
     });
-  }, [
-    embedded,
-    backgroundThread,
-    toggleRightPanelStable,
-    toggleRightPanelMaximizedStable,
-    closeActiveRightPanelSurfaceStable,
-  ]);
+  }, [embedded, backgroundThread, toggleRightPanelStable, closeActiveRightPanelSurfaceStable]);
 
   usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
   // A delegated task is a remote thread's subagent.
@@ -3291,17 +3288,14 @@ export default function ChatView(props: ChatViewProps) {
         message.inputIntent === "queued_turn" &&
         !serverProjection?.messages.some((committed) => committed.id === message.id),
     );
-  const scrollToEndSummary =
-    [
-      childInputNow?.waitingLabel ?? null,
-      queuedRunCount === 0
-        ? null
-        : gt("{count, plural, one {{count} queued} other {{count} queued}}", {
-            count: queuedRunCount,
-          }),
-    ]
-      .filter((part) => part !== null)
-      .join(" · ") || null;
+  const scrollToEndSummary = [
+    childInputNow?.waitingLabel ?? null,
+    queuedRunCount === 0
+      ? null
+      : gt("{count, plural, one {{count} queued} other {{count} queued}}", {
+          count: queuedRunCount,
+        }),
+  ].filter((part) => part !== null);
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
   const timelineFooter =
@@ -3470,13 +3464,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const threadPanelHeaderControl = <ThreadPanelHeaderControl {...panelToggleControlProps} />;
   const panelLayoutControls = (
-    <WorkspaceTitlebarControls
-      showMaximizeControl={!shouldUsePlanSidebarSheet}
-      rightPanelOpen={rightPanelOpen}
-      animationsActive={panelAnimationsActive}
-      maximized={rightPanelMaximized}
-      onToggleMaximized={toggleRightPanelMaximizedStable}
-    >
+    <WorkspaceTitlebarControls rightPanelOpen={rightPanelOpen} maximized={rightPanelMaximized}>
       {panelToggleControls}
     </WorkspaceTitlebarControls>
   );
@@ -3514,7 +3502,7 @@ export default function ChatView(props: ChatViewProps) {
             ref={threadPanelPopoverAnchorRef}
             data-chat-header
             className={cn(
-              "relative bg-background [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
+              "relative z-10 bg-background md:pl-0 [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
               isElectron
                 ? cn(
                     "drag-region flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center px-3 sm:px-5",
@@ -3712,6 +3700,7 @@ export default function ChatView(props: ChatViewProps) {
               )}
             </div>
 
+            {/* Input bar — docked at the bottom; an empty draft centers its headline above it. */}
             <div
               {...workspaceAreaProps(
                 "composer",
@@ -3726,33 +3715,33 @@ export default function ChatView(props: ChatViewProps) {
               data-chat-composer-overlay="true"
               className={
                 isDraftHeroState
-                  ? "pointer-events-none absolute inset-0 z-20 flex items-center [@media(max-height:34rem)]:items-end"
+                  ? "pointer-events-none absolute inset-0 z-20 flex flex-col justify-end pt-1.5 sm:pt-2"
                   : "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-1.5 sm:pt-2"
               }
             >
+              {isDraftHeroState ? (
+                <div className="chat-composer-lane flex min-h-0 w-full flex-1 items-center overflow-hidden py-4">
+                  <div
+                    className="pointer-events-auto mx-auto flex max-h-full min-h-0 w-full max-w-(--chat-content-max-width) flex-col"
+                    style={
+                      forceExpandedMobileComposer
+                        ? { viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME }
+                        : undefined
+                    }
+                  >
+                    <DraftHeroHeadline
+                      draftId={draftId}
+                      activeProjectRef={activeProjectRef}
+                      activeProjectTitle={activeProject?.title ?? null}
+                    />
+                  </div>
+                </div>
+              ) : null}
               <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">
                 <div
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
                 >
-                  {isDraftHeroState ? (
-                    <div className="absolute inset-x-0 bottom-full">
-                      <div
-                        className="pb-4 group-has-data-[composer-shoulder-tab]/composer-stack:pb-0"
-                        style={
-                          forceExpandedMobileComposer
-                            ? { viewTransitionName: MOBILE_DRAFT_HEADLINE_VIEW_TRANSITION_NAME }
-                            : undefined
-                        }
-                      >
-                        <DraftHeroHeadline
-                          draftId={draftId}
-                          activeProjectRef={activeProjectRef}
-                          activeProjectTitle={activeProject?.title ?? null}
-                        />
-                      </div>
-                    </div>
-                  ) : null}
                   <div
                     ref={draftHeroComposerAnchorRef}
                     className="relative z-10"
@@ -4124,6 +4113,9 @@ export default function ChatView(props: ChatViewProps) {
                   onAddProjectScript={saveProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
+                  onCompactContext={onComposerCompactContextStable}
+                  compactDisabled={compactDisabled}
+                  compactDisabledReason={compactDisabledReason}
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     model: activeUsageModel,
@@ -4164,6 +4156,7 @@ export default function ChatView(props: ChatViewProps) {
       {rightPanelPresent && activeThreadRef && !embedded ? (
         <ChatRightPanel
           sheet={shouldUsePlanSidebarSheet}
+          maximized={rightPanelMaximized}
           workspaceLayoutElement={workspaceLayoutElement}
           widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
           sheetAnimationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
@@ -4171,7 +4164,6 @@ export default function ChatView(props: ChatViewProps) {
           open={rightPanelOpen}
           keybindings={keybindings}
           getShortcutContext={getShortcutContextStable}
-          maximized={rightPanelMaximized}
           layoutControls={
             rightPanelOpen ? (
               <div className="mr-px flex items-center gap-1">

@@ -9,7 +9,7 @@ export function guestBubbleClassName(pending: boolean): string {
 export function GuestMessageName({ name }: { readonly name: string }) {
   const gt = useGT();
   return (
-    <p className="me-1 text-2xs text-guest-foreground">
+    <p className="me-1 text-caption text-guest-foreground">
       {name}
       <span className="sr-only">
         {" "}

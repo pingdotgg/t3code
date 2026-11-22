@@ -22,7 +22,7 @@ import {
   UserRoundXIcon,
 } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
-import { Children, type CSSProperties, isValidElement, type ReactNode, useState } from "react";
+import { type CSSProperties, type ReactNode, useState } from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
@@ -87,13 +87,13 @@ function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
       return {
         Icon: UserRoundXIcon,
         label: msg("Changes requested"),
-        toneClassName: "text-amber-600/90 dark:text-amber-400/80",
+        toneClassName: "text-warning-foreground",
       };
     case "review-required":
       return {
         Icon: UserRoundIcon,
         label: msg("Awaiting review"),
-        toneClassName: "text-muted-foreground/60",
+        toneClassName: "text-dim-foreground",
       };
   }
 }
@@ -222,17 +222,17 @@ const CHECK_STATUS_PRESENTATION = {
   pending: {
     label: msg("Running", { $context: "check status" }),
     Icon: Spinner,
-    toneClassName: "text-amber-500",
+    toneClassName: "text-warning-foreground",
   },
   "action-required": {
     label: msg("Awaiting action"),
     Icon: CircleDotIcon,
-    toneClassName: "text-amber-600 dark:text-amber-400/90",
+    toneClassName: "text-warning-foreground",
   },
   success: {
     label: msg("Passed", { $context: "check status" }),
     Icon: CircleCheckIcon,
-    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
+    toneClassName: "text-success-foreground",
   },
   failure: {
     label: msg("Failed", { $context: "check status" }),
@@ -242,17 +242,17 @@ const CHECK_STATUS_PRESENTATION = {
   cancelled: {
     label: msg("Cancelled", { $context: "check status" }),
     Icon: OctagonXIcon,
-    toneClassName: "text-muted-foreground/70",
+    toneClassName: "text-dim-foreground",
   },
   skipped: {
     label: msg("Skipped", { $context: "check status" }),
     Icon: CircleSlashIcon,
-    toneClassName: "text-muted-foreground/70",
+    toneClassName: "text-dim-foreground",
   },
   neutral: {
     label: msg("Neutral", { $context: "check status" }),
     Icon: CircleDashedIcon,
-    toneClassName: "text-muted-foreground/70",
+    toneClassName: "text-dim-foreground",
   },
 } as const satisfies Record<
   PullRequestCheckStatus,
@@ -300,7 +300,7 @@ const CHECKS_STATE_PRESENTATION = {
   pending: {
     label: msg("Some checks haven't completed yet"),
     Icon: CircleDotIcon,
-    toneClassName: "text-amber-600 dark:text-amber-400/90",
+    toneClassName: "text-warning-foreground",
   },
 } as const satisfies Record<
   PullRequestChecksState,
@@ -332,11 +332,10 @@ const REVIEW_OUTCOME_PRESENTATION = {
       $context: "tooltip: this approval was given before the latest commits were pushed",
     }),
     Icon: CircleCheckIcon,
-    toneClassName: "text-emerald-600 dark:text-emerald-300/90",
-    ringClassName: "ring-2 ring-emerald-500 dark:ring-emerald-400",
-    staleRingClassName:
-      "ring-2 ring-[color-mix(in_srgb,var(--color-emerald-500)_35%,var(--background))] dark:ring-[color-mix(in_srgb,var(--color-emerald-400)_35%,var(--background))]",
-    fillClassName: "fill-emerald-500 dark:fill-emerald-400",
+    toneClassName: "text-success-foreground",
+    ringClassName: "ring-2 ring-success",
+    staleRingClassName: "ring-2 ring-[color-mix(in_srgb,var(--success)_35%,var(--background))]",
+    fillClassName: "fill-success",
     badgeVariant: "success",
   },
   "changes-requested": {
@@ -358,7 +357,7 @@ const REVIEW_OUTCOME_PRESENTATION = {
       $context: "tooltip: a review of an older version, before the latest commits, was dismissed",
     }),
     Icon: CircleDashedIcon,
-    toneClassName: "text-muted-foreground/70",
+    toneClassName: "text-dim-foreground",
     ringClassName: "ring-2 ring-muted-foreground/60",
     staleRingClassName:
       "ring-2 ring-[color-mix(in_srgb,var(--contrast-muted-foreground)_30%,var(--background))]",
@@ -545,7 +544,6 @@ export function PullRequestActorLabel({
       </TooltipTrigger>
       <TooltipPopup side="top">
         {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
-        {profileUrl ? ` · ${gt("Open profile")}` : ""}
       </TooltipPopup>
     </Tooltip>
   );
@@ -566,13 +564,9 @@ export function PullRequestDiffStat({
   return (
     <span className={cn("inline-flex items-baseline gap-1 tabular-nums", className)}>
       <span className="text-diff-addition-foreground">+{formatDiffCount(additions)}</span>
-      <span className="text-diff-deletion">-{formatDiffCount(deletions)}</span>
+      <span className="text-diff-deletion-foreground">-{formatDiffCount(deletions)}</span>
     </span>
   );
-}
-
-function separatorKey(segment: ReactNode): string {
-  return `separator:${isValidElement(segment) ? String(segment.key) : String(segment)}`;
 }
 
 export function PullRequestMetaLine({
@@ -582,24 +576,8 @@ export function PullRequestMetaLine({
   children: ReactNode;
   className?: string;
 }) {
-  const segments = Children.toArray(children);
   return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
-      {segments.flatMap((segment, index) =>
-        index === 0
-          ? segment
-          : [
-              <span
-                aria-hidden
-                className="shrink-0 text-muted-foreground/50"
-                key={separatorKey(segment)}
-              >
-                ·
-              </span>,
-              segment,
-            ],
-      )}
-    </span>
+    <span className={cn("flex min-w-0 flex-col items-start gap-1", className)}>{children}</span>
   );
 }
 

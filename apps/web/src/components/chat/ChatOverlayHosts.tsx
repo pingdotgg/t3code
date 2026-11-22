@@ -163,7 +163,7 @@ export function BranchRestoreConfirmHost(props: {
           <AlertDialogTitle>
             <T>
               Switch to{" "}
-              <code className="font-medium">
+              <code>
                 <Var>{props.threadBranch}</Var>
               </code>
               ?
@@ -177,7 +177,7 @@ export function BranchRestoreConfirmHost(props: {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>
+          <AlertDialogClose render={<Button variant="secondary" />}>
             <T>Cancel</T>
           </AlertDialogClose>
           <Button
@@ -273,11 +273,11 @@ export function RevertConfirmHost(props: {
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>
+          <AlertDialogClose render={<Button variant="secondary" />}>
             <T>Cancel</T>
           </AlertDialogClose>
           <Button
-            variant="destructive-outline"
+            variant="destructive"
             disabled={fileRestore === null}
             onClick={() => confirm(true)}
           >

@@ -3,6 +3,11 @@ import { MessageSquareIcon } from "lucide-react";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
+import {
+  PAGE_ROW_CLASS,
+  PAGE_ROW_HOVER_CLASS,
+  PAGE_ROW_PRESS_CLASS,
+} from "../pullRequest/PullRequestRow";
 
 import {
   PULL_REQUEST_ROW_CLASS,
@@ -44,15 +49,20 @@ function IssueRowImpl({
   return (
     <div
       className={cn(
-        "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
-        selected ? "bg-accent" : "hover:bg-accent/60",
+        "flex items-center rounded-lg [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
+        selected ? "bg-selection-subtle" : PAGE_ROW_HOVER_CLASS,
       )}
     >
       <button
         type="button"
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(entry)}
-        className={cn(PULL_REQUEST_ROW_CLASS, "@container/issue-row-meta px-3 py-2.5")}
+        className={cn(
+          PULL_REQUEST_ROW_CLASS,
+          PAGE_ROW_CLASS,
+          PAGE_ROW_PRESS_CLASS,
+          "@container/issue-row-meta min-w-0 flex-1",
+        )}
       >
         <IssueStateGlyph state={entry.state} />
         <PullRequestRowLines

@@ -137,12 +137,12 @@ export function AddCodexAccountDialog({
         </WizardPanel>
         <WizardFooter>
           {instanceId ? (
-            <Button variant="outline" onClick={onClose}>
+            <Button variant="secondary" onClick={onClose}>
               <T>Finish later</T>
             </Button>
           ) : (
             <>
-              <Button variant="outline" disabled={pending} onClick={onClose}>
+              <Button variant="secondary" disabled={pending} onClick={onClose}>
                 <T>Cancel</T>
               </Button>
               <Button

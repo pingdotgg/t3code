@@ -94,17 +94,17 @@ function RevokeConnectDeviceDialogPopup({
             onCheckedChange={(checked) => setTurnOnApproval(checked === true)}
           />
           <span className="min-w-0">
-            <span className="block text-sm font-medium text-foreground">
+            <span className="block text-label text-foreground">
               <T>Require approval for new devices</T>
             </span>
-            <span className="block text-xs text-muted-foreground">
+            <span className="block text-meta text-muted-foreground">
               <T>The device has to be approved here before it can connect again.</T>
             </span>
           </span>
         </label>
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <AlertDialogClose disabled={busy} render={<Button variant="outline" disabled={busy} />}>
+        <AlertDialogClose disabled={busy} render={<Button variant="secondary" disabled={busy} />}>
           <T>Cancel</T>
         </AlertDialogClose>
         <Button variant="destructive" disabled={busy} onClick={() => void confirm()}>

@@ -74,15 +74,13 @@ export function ConnectDeviceApprovalSettings({
           <div key={request.id} className={ITEM_ROW_CLASSNAME}>
             <div className={ITEM_ROW_INNER_CLASSNAME}>
               <div className="min-w-0 flex-1 space-y-1">
-                <p className="text-sm font-medium text-foreground">
-                  <T>
-                    Waiting for approval ·{" "}
-                    <span className="font-mono tabular-nums">
-                      <Var>{connectRequest.verificationCode}</Var>
-                    </span>
-                  </T>
+                <p className="flex flex-wrap items-baseline gap-x-2 text-label text-foreground">
+                  <span>
+                    <T>Waiting for approval</T>
+                  </span>
+                  <span className="font-mono tabular-nums">{connectRequest.verificationCode}</span>
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-meta text-muted-foreground">
                   <T>
                     <Var>{describeConnectDeviceClient(connectRequest, resolve)}</Var>. Approve only
                     if the device in front of you shows this code.
@@ -130,16 +128,17 @@ export function ConnectDeviceApprovalSettings({
           <div key={device.proofKeyThumbprint} className={ITEM_ROW_CLASSNAME}>
             <div className={ITEM_ROW_INNER_CLASSNAME}>
               <div className="min-w-0 flex-1 space-y-1">
-                <p className="text-sm font-medium text-foreground">
+                <p className="text-label text-foreground">
                   {describeConnectDeviceClient(device, resolve)}
                 </p>
-                <p className="text-xs text-muted-foreground">
+                <p className="flex flex-wrap gap-x-2 text-meta text-muted-foreground">
                   <span className="font-mono tabular-nums">{device.verificationCode}</span>
-                  <span aria-hidden> · </span>
-                  <T>
-                    Trusted since{" "}
-                    <Var>{formatAccessTimestamp(DateTime.formatIso(device.approvedAt))}</Var>
-                  </T>
+                  <span>
+                    <T>
+                      Trusted since{" "}
+                      <Var>{formatAccessTimestamp(DateTime.formatIso(device.approvedAt))}</Var>
+                    </T>
+                  </span>
                 </p>
               </div>
               <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -172,7 +171,7 @@ export function ConnectDeviceApprovalSettings({
       })}
       {devices.length === 0 && requests.length === 0 ? (
         <div className={ITEM_ROW_CLASSNAME}>
-          <p className="text-xs text-muted-foreground/60">
+          <p className="text-meta text-muted-foreground/60">
             <T>No device has connected through T3 Connect yet.</T>
           </p>
         </div>

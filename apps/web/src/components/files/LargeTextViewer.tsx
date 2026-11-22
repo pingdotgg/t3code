@@ -8,6 +8,7 @@ import { FileSurfaceFailure, FileSurfaceLoading, FileSurfaceNotice } from "./fil
 import { PREVIEW_PAGE_ROWS, type TextPreviewResult } from "./largeTextProtocol";
 import { previewFailureText } from "./previewFailureMessages";
 import VirtualTablePreview from "./VirtualTablePreview";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 const FIRST_SCREEN_BYTES = 16 * 1024;
 
@@ -220,24 +221,41 @@ export default function LargeTextViewer(props: {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
-        className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
+        className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-meta text-muted-foreground tabular-nums"
         role="status"
       >
-        {props.delimiter
-          ? `${gt("{count, plural, one {{formatted} row} other {{formatted} rows}}", {
-              count: rowCount,
-              formatted: rowCount.toLocaleString(),
-            })} · ${gt("{count, plural, one {{formatted} column} other {{formatted} columns}}", {
-              count: columnCount,
-              formatted: columnCount.toLocaleString(),
-            })}`
-          : gt("{count, plural, one {{formatted} line} other {{formatted} lines}}", {
-              count: meta.count,
-              formatted: meta.count.toLocaleString(),
-            })}
-        {meta.complete && meta.sizeBytes !== undefined
-          ? ` · ${meta.sizeBytes === 0 ? gt("0 bytes") : formatAttachmentSize(meta.sizeBytes, messages)}`
-          : ` · ${gt("Indexing…")}`}
+        <Tooltip>
+          <TooltipTrigger render={<span tabIndex={0} />}>
+            {props.delimiter
+              ? gt("{count, plural, one {{formatted} row} other {{formatted} rows}}", {
+                  count: rowCount,
+                  formatted: rowCount.toLocaleString(),
+                })
+              : gt("{count, plural, one {{formatted} line} other {{formatted} lines}}", {
+                  count: meta.count,
+                  formatted: meta.count.toLocaleString(),
+                })}
+          </TooltipTrigger>
+          <TooltipPopup>
+            {props.delimiter ? (
+              <>
+                <span className="block">
+                  {gt("{count, plural, one {{formatted} column} other {{formatted} columns}}", {
+                    count: columnCount,
+                    formatted: columnCount.toLocaleString(),
+                  })}
+                </span>
+              </>
+            ) : null}
+            <span className="block">
+              {meta.complete && meta.sizeBytes !== undefined
+                ? meta.sizeBytes === 0
+                  ? gt("0 bytes")
+                  : formatAttachmentSize(meta.sizeBytes, messages)
+                : gt("Indexing…")}
+            </span>
+          </TooltipPopup>
+        </Tooltip>
       </div>
       {!meta.complete ? (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
@@ -269,7 +287,7 @@ export default function LargeTextViewer(props: {
           }}
         />
       ) : (
-        <div className="flex flex-1 items-center justify-center p-6 text-xs text-muted-foreground">
+        <div className="flex flex-1 items-center justify-center p-6 text-meta text-muted-foreground">
           <T>This file is empty.</T>
         </div>
       )}

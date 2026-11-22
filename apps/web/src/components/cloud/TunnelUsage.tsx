@@ -57,7 +57,7 @@ export function TunnelUsageMeter({
   const fill = full ? "bg-warning" : "bg-foreground/72";
   return (
     <div className={cn("flex max-w-sm flex-col gap-1.5", className)}>
-      <div className="flex items-baseline justify-between gap-3 text-xs">
+      <div className="flex items-baseline justify-between gap-3 text-meta">
         <span className={cn("tabular-nums", full ? "text-warning-foreground" : "text-foreground")}>
           {gt("{used} of {limit} tunnels in use", { used, limit })}
         </span>
@@ -115,7 +115,7 @@ export function TunnelLimitAlert({
         <T>Upgrade on T3 Chat</T>
       </Button>
     ) : onManageTunnels ? (
-      <Button size="sm" variant="outline" onClick={onManageTunnels}>
+      <Button size="sm" variant="secondary" onClick={onManageTunnels}>
         <T>Manage tunnels</T>
       </Button>
     ) : null;

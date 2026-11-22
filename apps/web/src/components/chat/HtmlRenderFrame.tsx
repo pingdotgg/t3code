@@ -106,7 +106,7 @@ export function HtmlRenderFrame(props: {
                   <Button
                     aria-label={gt("Open full screen")}
                     size="icon-xs"
-                    variant="glass"
+                    variant="floating"
                     onClick={async () => {
                       const url =
                         loaded !== null && loaded.expiresAt - Date.now() > MIN_URL_LIFE_MS
@@ -140,7 +140,7 @@ export function HtmlRenderFrame(props: {
           ) : null}
         </>
       ) : failed ? (
-        <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
+        <p className="flex size-full items-center justify-center text-muted-foreground text-meta">
           <T>
             Unable to load <Var>{title}</Var>
           </T>

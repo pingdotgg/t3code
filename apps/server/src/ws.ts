@@ -10,6 +10,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
+import * as NodeOS from "node:os";
 import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
 
 import * as DateTime from "effect/DateTime";
@@ -1935,6 +1936,7 @@ export const layerWsRpc = (
           newProjectsRoot: managedFolders.namedProjectsRoot,
           ...(lastEventLoopStall === undefined ? {} : { lastEventLoopStall }),
           serverTime: DateTime.formatIso(yield* DateTime.now),
+          homeDirectory: NodeOS.homedir(),
         };
       });
 

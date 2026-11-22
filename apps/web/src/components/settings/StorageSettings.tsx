@@ -49,7 +49,7 @@ import {
   useScopedSettingsMixed,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
-import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
+import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
 export function WorktreesDirectoryRow() {
   const setting = useSearchableSetting();
@@ -283,7 +283,15 @@ function lastRunSummary(
   if (entries.length === machineCount && entries.every((entry) => entry.counts === first.counts)) {
     return resolve(msg("{counts} on every machine", { counts: first.counts }));
   }
-  return entries.map((entry) => `${entry.label}: ${entry.counts}`).join(" · ");
+  return (
+    <span className="grid gap-1">
+      {entries.map((entry) => (
+        <span key={entry.label}>
+          {entry.label}: {entry.counts}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function CleanupResults({
@@ -349,18 +357,16 @@ function CleanupResults({
             control={
               (entry.outcome === "removed" ||
                 (entry.outcome === "kept" && entry.bytes !== null)) && (
-                <span className="text-xs text-muted-foreground">
-                  {[
-                    entry.kind !== "worktree" && entry.files !== null
-                      ? gt("{count, plural, one {{formatted} file} other {{formatted} files}}", {
-                          count: entry.files,
-                          formatted: entry.files.toLocaleString(),
-                        })
-                      : null,
-                    entry.bytes !== null ? formatBytes(entry.bytes) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
+                <span className="grid justify-items-end gap-1 text-meta text-muted-foreground">
+                  {entry.kind !== "worktree" && entry.files !== null ? (
+                    <span>
+                      {gt("{count, plural, one {{formatted} file} other {{formatted} files}}", {
+                        count: entry.files,
+                        formatted: entry.files.toLocaleString(),
+                      })}
+                    </span>
+                  ) : null}
+                  {entry.bytes !== null ? <span>{formatBytes(entry.bytes)}</span> : null}
                 </span>
               )
             }
@@ -368,7 +374,7 @@ function CleanupResults({
         );
       })}
       {report.omittedCount > 0 && (
-        <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
+        <p className="px-3 py-2.5 text-meta text-muted-foreground sm:px-4">
           {gt(
             "{omitted, plural, one {{environment}: {count} more results.} other {{environment}: {count} more results.}}",
             {
@@ -380,7 +386,7 @@ function CleanupResults({
         </p>
       )}
       {report.entries.length === 0 && report.omittedCount === 0 && (
-        <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
+        <p className="px-3 py-2.5 text-meta text-muted-foreground sm:px-4">
           <T>
             <Var>{environmentLabel}</Var>: Nothing needed cleanup.
           </T>
@@ -450,7 +456,8 @@ function CleanupSection() {
     return {
       environment,
       report,
-      label: settingsScopeEnvironmentLabel(environment, connectedEnvironments),
+      label: settingsScopeEnvironmentLabels(environment, connectedEnvironments).primary,
+      secondary: settingsScopeEnvironmentLabels(environment, connectedEnvironments).secondary,
       counts: report
         ? report.counts.failed > 0
           ? gt("{removed} removed, {kept} kept, {failed} failed", report.counts)
@@ -514,9 +521,14 @@ function CleanupSection() {
             <span>
               {!hasRules
                 ? gt("Turn on a cleanup rule to use this.")
-                : summaries.map(({ environment, label, description }) => (
+                : summaries.map(({ environment, label, secondary, description }) => (
                     <span key={environment.environmentId} className="block">
-                      {supported.length > 1 ? `${label}: ` : ""}
+                      {supported.length > 1 ? (
+                        <span className="block">
+                          {label}
+                          {secondary ? <span className="block">{secondary}</span> : null}
+                        </span>
+                      ) : null}
                       {description}
                     </span>
                   ))}
@@ -524,7 +536,7 @@ function CleanupSection() {
           }
           control={
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
               disabled={pending || !hasRules || !state.some((entry) => entry.allowed)}
               onClick={() => void deleteNow()}

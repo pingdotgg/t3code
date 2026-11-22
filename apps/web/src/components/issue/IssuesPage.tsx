@@ -528,7 +528,7 @@ export function IssuesPage() {
         </EmptyTitle>
       </EmptyHeader>
       <EmptyContent>
-        <Button variant="outline" onClick={() => updateSearch({ hideProjects: undefined })}>
+        <Button variant="secondary" onClick={() => updateSearch({ hideProjects: undefined })}>
           <T>Show all projects</T>
         </Button>
       </EmptyContent>
@@ -550,13 +550,13 @@ export function IssuesPage() {
   ) : (
     <div className="flex flex-col gap-6">
       {list.error ? (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-meta">
           <span>
             <T>
               <Var>{list.error}</Var> Showing the issues that loaded.
             </T>
           </span>
-          <Button size="xs" variant="outline" onClick={list.retry}>
+          <Button size="xs" variant="secondary" onClick={list.retry}>
             <T>Retry</T>
           </Button>
         </div>
@@ -566,21 +566,20 @@ export function IssuesPage() {
         const showScope = new Set(group.rows.map((row) => row.scope.toLowerCase())).size > 1;
         return (
           <section key={issueTrackerKey(group.tracker)} className="flex flex-col gap-1">
-            <h2 className="flex items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground">
+            <h2 className="flex items-center gap-2 px-3 text-meta text-muted-foreground">
               <presentation.Icon aria-hidden className="size-3.5" />
               {presentation.providerName}
               {presentation.providerName.toLowerCase() !== group.tracker.host ? (
-                <span className="font-normal">· {group.tracker.host}</span>
+                <span>{group.tracker.host}</span>
               ) : null}
-              <span className="font-normal">
-                ·{" "}
+              <span>
                 {gt("{count, plural, one {{count} project} other {{count} projects}}", {
                   count: group.tracker.projectCount,
                 })}
               </span>
             </h2>
             {!group.tracker.configured ? (
-              <p className="px-3 text-sm text-muted-foreground">
+              <p className="px-3 text-body text-muted-foreground">
                 {group.tracker.detail === null
                   ? gt("This tracker cannot be read right now.")
                   : issueTrackerDetailText(group.tracker.detail, resolve)}
@@ -589,13 +588,13 @@ export function IssuesPage() {
             {group.errors.map((error) => (
               <p
                 key={`${error.environmentId}:${error.projectTitle}`}
-                className="px-3 text-xs text-destructive"
+                className="px-3 text-meta text-destructive"
               >
                 {error.projectTitle}: {error.message}
               </p>
             ))}
             {group.tracker.configured && group.rows.length === 0 && group.errors.length === 0 ? (
-              <p className="px-3 text-sm text-muted-foreground">
+              <p className="px-3 text-body text-muted-foreground">
                 {debouncedQuery ? (
                   <T>Nothing matches that.</T>
                 ) : (
@@ -632,7 +631,7 @@ export function IssuesPage() {
               return (
                 <Fragment key={environmentId}>
                   {moreFailure === null ? null : (
-                    <p className="px-3 text-xs text-destructive">{moreFailure}</p>
+                    <p className="px-3 text-meta text-destructive">{moreFailure}</p>
                   )}
                   <Button
                     size="sm"
@@ -699,7 +698,7 @@ export function IssuesPage() {
             </div>
           </WorkspacePageHeader>
 
-          <div className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
+          <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
             <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="min-w-0 basis-full @lg/issue-list:min-w-48 @lg/issue-list:basis-0 @lg/issue-list:flex-1">
@@ -769,7 +768,7 @@ export function IssuesPage() {
                 ) : null}
                 <Button
                   size="icon"
-                  variant="outline"
+                  variant="secondary"
                   aria-label={gt("Refresh issues")}
                   onClick={list.refresh}
                   disabled={list.isPending}
@@ -911,7 +910,10 @@ function FilterMenu<Value extends string>({
   if (!current) return null;
   return (
     <Menu>
-      <MenuTrigger aria-label={`${label}: ${current.label}`} render={<Button variant="outline" />}>
+      <MenuTrigger
+        aria-label={`${label}: ${current.label}`}
+        render={<Button variant="secondary" />}
+      >
         <PullRequestFilterOptionIcon option={current} />
         <span className="truncate">{current.label}</span>
       </MenuTrigger>

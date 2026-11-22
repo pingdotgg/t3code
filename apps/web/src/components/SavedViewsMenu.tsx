@@ -145,7 +145,7 @@ export function SavedViewsMenu<Preferences extends Stored, Stored, Encoded>({
         <Tooltip>
           <TooltipTrigger
             render={
-              <MenuTrigger render={<Button variant="outline" />} aria-label={savedViewsLabel} />
+              <MenuTrigger render={<Button variant="secondary" />} aria-label={savedViewsLabel} />
             }
           >
             <BookmarkIcon aria-hidden className="size-4" />
@@ -266,14 +266,14 @@ export function SavedViewsMenu<Preferences extends Stored, Stored, Encoded>({
                   }
                 />
                 {nameError && editor?.name ? (
-                  <p id={errorId} className="text-sm text-destructive-foreground">
+                  <p id={errorId} className="text-body text-destructive-foreground">
                     {nameError}
                   </p>
                 ) : null}
               </div>
             </DialogPanel>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setEditor(null)}>
+              <Button variant="secondary" onClick={() => setEditor(null)}>
                 <T>Cancel</T>
               </Button>
               <Button type="submit" disabled={nameError !== null}>

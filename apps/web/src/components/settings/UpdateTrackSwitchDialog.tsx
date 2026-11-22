@@ -78,7 +78,7 @@ export function UpdateTrackSwitchDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>
+          <AlertDialogClose render={<Button variant="secondary" />}>
             <T>Cancel</T>
           </AlertDialogClose>
         </AlertDialogFooter>

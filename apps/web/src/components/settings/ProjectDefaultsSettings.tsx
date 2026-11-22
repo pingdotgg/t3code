@@ -177,6 +177,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               lockedProvider={null}
               instanceEntries={entries}
               modelOptionsByInstance={modelOptions}
+              triggerVariant="settings"
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
               {...(mixedModel
                 ? {
@@ -204,6 +205,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 model={selection.model}
                 modelOptions={selection.options ?? []}
                 allowPromptInjectedEffort={false}
+                triggerVariant="settings"
                 triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                 onModelOptionsChange={(options) =>
                   setModel(createModelSelection(selection.instanceId, selection.model, options))
@@ -294,6 +296,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               lockedProvider={null}
               instanceEntries={entries}
               modelOptionsByInstance={fallbackModelOptions}
+              triggerVariant="settings"
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
               triggerAriaLabel={gt("Fallback model")}
               {...(mixedFallback
@@ -342,7 +345,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             ) : null}
           </div>
         ) : (
-          <span className="text-sm text-muted-foreground">
+          <span className="text-body text-muted-foreground">
             <T>No providers available</T>
           </span>
         )

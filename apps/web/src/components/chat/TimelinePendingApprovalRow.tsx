@@ -66,7 +66,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
       label={
         <code
           aria-label={m(presentation.detailLabel)}
-          className="block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          className="block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-meta leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
           data-approval-detail="complete"
           tabIndex={0}
         >
@@ -74,7 +74,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
         </code>
       }
     >
-      <div className="ms-7.5 flex min-w-0 flex-col gap-1 pb-1 text-xs">
+      <div className="ms-7.5 flex min-w-0 flex-col gap-1 pb-1 text-meta">
         {approval.appName ? (
           <span className="text-muted-foreground wrap-anywhere">{approval.appName}</span>
         ) : null}
@@ -84,15 +84,12 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {canRespond ? (
             <>
-              <span className="inline-flex items-center gap-1 text-warning">
+              <span className="inline-flex items-center gap-1 text-warning-foreground">
                 <ShieldIcon aria-hidden className="size-3 shrink-0" />
                 <T>Waiting for approval</T>
               </span>
               {onRespondToApproval ? (
                 <>
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
-                  </span>
                   <ComposerPendingApprovalActions
                     presentation="inline"
                     requestId={approval.requestId}
@@ -106,7 +103,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
               ) : null}
             </>
           ) : (
-            <span className="text-warning">
+            <span className="text-warning-foreground">
               <T>Provider process is gone. Interrupt or restart the run to respond.</T>
             </span>
           )}
