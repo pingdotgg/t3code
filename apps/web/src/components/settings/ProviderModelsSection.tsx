@@ -362,10 +362,11 @@ export function ProviderModelsSection({
     onRemove: useStableCallback(handleRemove),
   };
 
-  // A slug whose model is gone (reset, or removed elsewhere) opens no editor and blocks nothing.
-  const editingEntry = canManageCustomModels
-    ? customModels.find((entry) => entry.slug === editingSlug)
-    : undefined;
+  // A slug with no custom row (reset, removed, now built in) opens no editor and blocks nothing.
+  const editingEntry =
+    canManageCustomModels && models.some((model) => model.isCustom && model.slug === editingSlug)
+      ? customModels.find((entry) => entry.slug === editingSlug)
+      : undefined;
   const positionInGroup: Record<ModelGroup, number> = { favorite: 0, visible: 0, hidden: 0 };
   const positions = new Map(
     visibleModels.map((model) => [model.slug, ++positionInGroup[groupOf(model)]]),
