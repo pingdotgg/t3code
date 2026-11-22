@@ -110,6 +110,7 @@ import {
   JAVASCRIPT_TRIM_WHITESPACE,
 } from "./deferredCommandMessage.ts";
 import { readableSearchText } from "./messageSearchIndex.ts";
+import { LINEAGE_PARENT_THREAD_ID, LIVE_SUBAGENT_THREAD_CONDITION } from "./subagentThreadIndex.ts";
 import {
   isFoldableWorkItem,
   isThreadHistoryUserTurn,
@@ -580,6 +581,10 @@ export interface ProjectionStoreV2Shape {
   readonly getRunCount: (threadId: ThreadId) => Effect.Effect<number, ProjectionStoreV2Error>;
   /** Child threads of the thread's app-owned tasks, in task order, without decoding the tasks. */
   readonly listAppOwnedChildThreadIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+  /** Undeleted threads whose lineage names this thread as their subagent parent, archived or not. */
+  readonly listLiveSubagentThreadIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly hasPendingDelegatedCompletion: (
@@ -6771,6 +6776,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.map((rows) => [...new Set(rows.map((row) => ThreadId.make(row.child_thread_id)))]),
         Effect.mapError(controlReadError(threadId)),
       );
+    // Served by migration 108's partial index, which spells the same expression and predicate.
+    const listLiveSubagentThreadIds: ProjectionStoreV2Shape["listLiveSubagentThreadIds"] = (
+      threadId,
+    ) =>
+      sql<{ readonly thread_id: string }>`SELECT thread_id
+        FROM orchestration_v2_projection_threads
+        WHERE ${sql.literal(LINEAGE_PARENT_THREAD_ID)} = ${threadId}
+          AND ${sql.literal(LIVE_SUBAGENT_THREAD_CONDITION)}
+        ORDER BY thread_id`.pipe(
+        Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
+        Effect.mapError(controlReadError(threadId)),
+      );
     const hasPendingDelegatedCompletion: ProjectionStoreV2Shape["hasPendingDelegatedCompletion"] =
       Effect.fn("ProjectionStore.hasPendingDelegatedCompletion")((childThreadId) =>
         sql`SELECT 1 FROM orchestration_v2_projection_subagents AS task
@@ -9885,6 +9902,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getSubagentCount: readOnReader(getSubagentCount),
       getRunCount: readOnReader(getRunCount),
       listAppOwnedChildThreadIds: readOnReader(listAppOwnedChildThreadIds),
+      listLiveSubagentThreadIds: readOnReader(listLiveSubagentThreadIds),
       hasPendingDelegatedCompletion: readOnReader(hasPendingDelegatedCompletion),
       getNextTurnItemOrdinal: readOnReader(getNextTurnItemOrdinal),
       getTurnItem: readOnReader(getTurnItem),
