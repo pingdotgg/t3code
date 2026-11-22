@@ -4,7 +4,8 @@ import {
   SourceControlProviderKind,
   type PullRequestDetailView,
 } from "@t3tools/contracts";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import "../../index.css";
@@ -86,4 +87,137 @@ it("mounts only the timeline rows near the viewport of a huge pull request", asy
   const mounted = screen.container.querySelectorAll("button").length;
   expect(mounted).toBeGreaterThan(0);
   expect(mounted).toBeLessThan(COMMITS / 10);
+});
+
+it.each(["review", "issue-comment", "resolved-reply"] as const)(
+  "reveals a linked %s below the virtual viewport",
+  async (kind) => {
+    const url = `${detail.url}#${kind === "review" ? "pullrequestreview-123" : kind === "issue-comment" ? "issuecomment-123" : "discussion_r123"}`;
+    const linkedDetail: PullRequestDetailView = {
+      ...detail,
+      comments:
+        kind === "resolved-reply"
+          ? []
+          : [
+              {
+                id: "linked",
+                kind,
+                author: detail.author,
+                body: "Linked reply",
+                createdAt: "2026-10-01T00:00:00Z",
+                url,
+                path: null,
+                reviewState: kind === "review" ? "CHANGES_REQUESTED" : null,
+              },
+            ],
+      reviewThreads:
+        kind !== "resolved-reply"
+          ? []
+          : [
+              {
+                id: "thread",
+                path: "src/test.ts",
+                line: 5,
+                side: "right",
+                isResolved: true,
+                isOutdated: false,
+                comments: [
+                  {
+                    id: "root",
+                    author: detail.author,
+                    body: "Root comment",
+                    createdAt: "2026-10-01T00:00:00Z",
+                    url: `${detail.url}#discussion_r122`,
+                  },
+                  {
+                    id: "reply",
+                    author: detail.author,
+                    body: "Linked reply",
+                    createdAt: "2026-10-01T00:01:00Z",
+                    url,
+                  },
+                ],
+              },
+            ],
+    };
+    const settled = vi.fn();
+    await using screen = await render(
+      <div style={{ height: 600 }}>
+        <PullRequestTimelineTab
+          scrollerRef={() => {}}
+          detail={linkedDetail}
+          environmentId={EnvironmentId.make("environment")}
+          reference={detail}
+          order="oldest"
+          onOpenCommit={() => {}}
+          onRefresh={() => {}}
+          revealUrl={url}
+          onRevealSettled={settled}
+        />
+      </div>,
+    );
+    await expect.element(screen.getByText("Linked reply", { exact: true })).toBeVisible();
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+    await screen.rerender(
+      <div style={{ height: 600 }}>
+        <PullRequestTimelineTab
+          scrollerRef={() => {}}
+          detail={linkedDetail}
+          environmentId={EnvironmentId.make("environment")}
+          reference={detail}
+          order="oldest"
+          onOpenCommit={() => {}}
+          onRefresh={() => {}}
+          onRevealSettled={settled}
+        />
+      </div>,
+    );
+    await expect.element(screen.getByText("Linked reply", { exact: true })).toBeVisible();
+  },
+);
+
+it("gives each comment and review a heading for screen reader navigation", async () => {
+  const commented: PullRequestDetailView = {
+    ...detail,
+    commits: [],
+    comments: [
+      {
+        id: "review",
+        kind: "review",
+        author: { login: "bob", name: null, avatarUrl: null },
+        body: "Looks good",
+        createdAt: "2026-10-01T00:00:00Z",
+        url: `${detail.url}#pullrequestreview-1`,
+        path: null,
+        reviewState: "APPROVED",
+      },
+      {
+        id: "comment",
+        kind: "issue-comment",
+        author: { login: "alice", name: null, avatarUrl: null },
+        body: "One question",
+        createdAt: "2026-10-01T00:01:00Z",
+        url: `${detail.url}#issuecomment-2`,
+        path: null,
+        reviewState: null,
+      },
+    ],
+  };
+  await using screen = await render(
+    <div style={{ height: 600 }}>
+      <PullRequestTimelineTab
+        scrollerRef={() => {}}
+        detail={commented}
+        environmentId={EnvironmentId.make("environment")}
+        reference={detail}
+        order="oldest"
+        onOpenCommit={() => {}}
+        onRefresh={() => {}}
+      />
+    </div>,
+  );
+  await expect.element(screen.getByRole("heading", { name: /bob approved/i })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: /1 comment/ }));
+  await expect.element(screen.getByText("One question", { exact: true })).toBeVisible();
+  await expect.element(screen.getByRole("heading", { name: /alice commented/ })).toBeVisible();
 });
