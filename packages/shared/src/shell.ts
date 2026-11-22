@@ -1084,8 +1084,8 @@ const resolveMacosGit = Effect.fnUntraced(function* (
         return cachedPath ?? "git";
       }
     }
-    // Registering and starting the lookup cannot be split by a yield or an interrupt, so callers
-    // find it as soon as it exists. Detached, a caller that stops waiting does not stop it.
+    // Callers join a lookup as soon as it is registered, and the uninterruptible region makes
+    // sure a registered lookup is started. Detached, a caller that stops waiting does not stop it.
     // A caller whose cached answer was replaced meanwhile checks the new one instead.
     const lookup = yield* Effect.uninterruptible(
       Effect.suspend(() => {
