@@ -86,6 +86,8 @@ interface FakeProviderScenario {
   kind?: string;
   /** False for a host that opens every change request ready for review. */
   createsDraftChangeRequests?: boolean;
+  /** The companion repository of a host with private change requests. */
+  privateRemote?: { readonly url: string; readonly repository: string };
   /** Answers to successive change request listings, whatever their head selector. */
   prListSequence?: ReadonlyArray<ReadonlyArray<FakeChangeRequest>>;
   prListByHeadSelector?: Record<string, ReadonlyArray<FakeChangeRequest>>;
@@ -124,6 +126,7 @@ type FakeProviderCall =
       readonly headSelector: string;
       readonly title: string;
       readonly draft: unknown;
+      readonly private?: boolean;
     }
   | { readonly operation: "getChangeRequest"; readonly reference: string }
   | {
@@ -483,6 +486,9 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
     service: {
       kind,
       createsDraftChangeRequests: scenario.createsDraftChangeRequests ?? true,
+      ...(scenario.privateRemote === undefined
+        ? {}
+        : { privateChangeRequestRemote: () => Effect.succeed(scenario.privateRemote!) }),
       ...headBranchProbe,
       listChangeRequests: (input) =>
         record(input.cwd, {
@@ -517,6 +523,7 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
           headSelector: input.headSelector,
           title: input.title,
           draft: "draft" in input ? input.draft : undefined,
+          ...(input.private === undefined ? {} : { private: input.private }),
         }),
       getDefaultBranch: (input) =>
         record(input.cwd, { operation: "getDefaultBranch" }).pipe(
@@ -5104,6 +5111,132 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       ).toEqual([true]);
       expect(newActions).toEqual([]);
     }),
+  );
+
+  it.effect(
+    "createPullRequest opens a private PR from the companion and never pushes to origin",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const companionDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "sec/fix"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "fix.txt"), "fix\n");
+        yield* runGit(repoDir, ["add", "fix.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Fix"]);
+        const heads = (remote: string) =>
+          runGit(repoDir, ["ls-remote", "--heads", remote]).pipe(
+            Effect.map((result) =>
+              result.stdout
+                .split("\n")
+                .flatMap((line) => (line ? [line.split("\t")[1]] : []))
+                .toSorted(),
+            ),
+          );
+        const createPrivate = (manager: GitManager.GitManager["Service"]) =>
+          manager.createPullRequest({
+            cwd: repoDir,
+            projectId: ProjectId.make("project-1"),
+            title: "Fix",
+            body: "Body",
+            private: true,
+          });
+
+        // A host without private pull requests refuses before anything is pushed.
+        const unsupported = yield* makeManager({ providerScenario: { prListSequence: [[]] } });
+        const refused = yield* Effect.flip(createPrivate(unsupported.manager));
+        expect(refused.message).toContain("has no private pull requests");
+        expect(yield* heads("origin")).toEqual(["refs/heads/main"]);
+        expect(created(unsupported.providerCalls)).toEqual([]);
+
+        const privateRemote = { url: companionDir, repository: "pingdotgg/codething-mvp.private" };
+        const open = {
+          number: 9,
+          title: "Fix",
+          url: "https://source.tanstack.com/@pingdotgg/codething-mvp/pull/9",
+          baseRefName: "main",
+          headRefName: "sec/fix",
+          headRepositoryNameWithOwner: privateRemote.repository,
+        };
+        const supported = yield* makeManager({
+          providerScenario: { privateRemote, prListSequence: [[], [open]] },
+        });
+        expect(yield* createPrivate(supported.manager)).toMatchObject({
+          status: "created",
+          number: 9,
+        });
+        expect(yield* heads(companionDir)).toEqual(["refs/heads/sec/fix"]);
+        expect(yield* heads("origin")).toEqual(["refs/heads/main"]);
+        // The branch tracks the companion, which is how status finds its pull request.
+        expect(
+          (yield* runGit(repoDir, [
+            "rev-parse",
+            "--abbrev-ref",
+            "sec/fix@{upstream}",
+          ])).stdout.trim(),
+        ).toBe("pingdotgg/sec/fix");
+        expect(
+          (yield* runGit(repoDir, ["config", "--get", "branch.sec/fix.pushRemote"])).stdout.trim(),
+        ).toBe("pingdotgg");
+        expect(
+          supported.providerCalls.flatMap((call) =>
+            call.operation === "createChangeRequest" ? [call] : [],
+          ),
+        ).toMatchObject([{ baseRefName: "main", headSelector: "sec/fix", private: true }]);
+
+        // Later commits follow the recorded push remote.
+        NodeFS.writeFileSync(NodePath.join(repoDir, "late.txt"), "late\n");
+        yield* runGit(repoDir, ["add", "late.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Late"]);
+        const again = yield* makeManager({
+          providerScenario: { privateRemote, prListSequence: [[open]] },
+        });
+        expect(yield* createPrivate(again.manager)).toMatchObject({
+          status: "opened_existing",
+          number: 9,
+        });
+        const localHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        expect(
+          (yield* runGit(repoDir, ["ls-remote", companionDir, "refs/heads/sec/fix"])).stdout,
+        ).toContain(localHead);
+        expect(yield* heads("origin")).toEqual(["refs/heads/main"]);
+        expect(created(again.providerCalls)).toEqual([]);
+
+        // A lookup answered before the create must not hide the pull request the create returns.
+        yield* runGit(repoDir, ["checkout", "-b", "sec/two", "main"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "two.txt"), "two\n");
+        yield* runGit(repoDir, ["add", "two.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Two"]);
+        const two = { ...open, number: 10, headRefName: "sec/two" };
+        const warmed = yield* makeManager({
+          providerScenario: { privateRemote, prListByHeadSelector: { "sec/two": [two] } },
+        });
+        const lookup = warmed.manager.branchPullRequest({ cwd: repoDir, branch: "sec/two" });
+        expect(yield* lookup).toBeNull();
+        expect(yield* createPrivate(warmed.manager)).toMatchObject({ status: "opened_existing" });
+        expect(yield* lookup).toMatchObject({ number: 10 });
+        yield* runGit(repoDir, ["checkout", "sec/fix"]);
+
+        // So does a create that forgets to ask for private: it never publishes the branch.
+        NodeFS.writeFileSync(NodePath.join(repoDir, "later.txt"), "later\n");
+        yield* runGit(repoDir, ["add", "later.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Later"]);
+        const forgetful = yield* makeManager({
+          providerScenario: { privateRemote, prListOtherwise: [open] },
+        });
+        yield* Effect.exit(
+          forgetful.manager.createPullRequest({
+            cwd: repoDir,
+            projectId: ProjectId.make("project-1"),
+            title: "Fix",
+            body: "Body",
+          }),
+        );
+        expect(yield* heads("origin")).toEqual(["refs/heads/main"]);
+      }),
   );
 
   it.effect("createPullRequest pushes to the push remote and never to the base branch", () =>
