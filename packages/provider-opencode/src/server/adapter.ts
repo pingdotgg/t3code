@@ -30,6 +30,7 @@ import {
   type OrchestrationV2TurnItem,
   type PlanId,
   ProviderDriverKind,
+  ProviderSetupError,
   type ProviderInstanceId,
   type ProviderRequestKind,
   type ProviderSessionId,
@@ -54,6 +55,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import { brokenVersionDetail } from "@t3tools/provider-core/server/compatibility";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -88,6 +90,7 @@ export const OPENCODE_PROVIDER = ProviderDriverKind.make("opencode");
 export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_PROVIDER);
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
+const OPENCODE_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 
 const makeOpenCodeMessageId = Effect.fnUntraced(function* (
   clock: Ref.Ref<{ readonly epochMillis: number; readonly counter: number }>,
@@ -133,6 +136,7 @@ const OpenCodeProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
@@ -735,6 +739,17 @@ export function openCodePermissionRules(
     }
   }
 
+  // The thread's other folders count as workspace; `edit` still decides whether writes ask.
+  for (const root of runtimePolicy.workspace?.extraRoots ?? []) {
+    // A glob character in the path would allow sibling folders, so such a root keeps asking.
+    if (/[*?]/.test(root)) continue;
+    rules.push({
+      permission: "external_directory",
+      pattern: `${root.replace(/\/$/, "")}/*`,
+      action: "allow",
+    });
+  }
+
   return rules;
 }
 
@@ -1035,6 +1050,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: OPENCODE_PROVIDER,
+    checksVersionAtHandshake: true,
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
       return Effect.succeed(OpenCodeProviderCapabilitiesV2);
     }),
@@ -1054,6 +1070,18 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             : {}),
           environment: options.environment,
         });
+        const broken = brokenVersionDetail({
+          name: "OpenCode",
+          version: connection.version,
+          advisory: yield* host.compatibility(OPENCODE_PROVIDER, connection.version),
+        });
+        if (broken !== undefined) {
+          return yield* new ProviderSetupError({
+            instanceId: options.instanceId,
+            operation: "runtime",
+            detail: broken,
+          });
+        }
         const client = runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,
           directory: cwd,
@@ -2636,6 +2664,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               updatedAt: now,
             },
           });
+          // The pre-compaction step would otherwise settle the turn as its newest usage.
+          turn.usage.lastStep = null;
+          if (state.providerThread.contextUsage !== null) {
+            yield* updateProviderThread(state, { contextUsage: null });
+          }
         });
 
         const handleMessageUpdated = Effect.fnUntraced(function* (
@@ -2790,7 +2823,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         // Native aborts target the whole session, so replacement admission waits for all cleanup.
         const cleanupSessionWork = Effect.fn("OpencodeAdapter.cleanupSessionWork")(function* (
           state: OpenCodeThreadState,
-          rootAbort: Effect.Effect<unknown, Effect.Error<ReturnType<typeof abortRootSession>>>,
+          rootAbort: Effect.Effect<
+            unknown,
+            | Effect.Error<ReturnType<typeof abortRootSession>>
+            | ProviderAdapter.ProviderAdapterInterruptTimeoutError
+          >,
         ) {
           const root = yield* rootAbort.pipe(Effect.result);
           const descendants = yield* abortDescendants(state.nativeSessionId).pipe(Effect.result);
@@ -3469,13 +3506,17 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           const agent =
             getModelSelectionStringOptionValue(turn.modelSelection, "agent") ??
             (turn.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
-          const variant = getModelSelectionStringOptionValue(turn.modelSelection, "variant");
+          const variant = OpenCodeRuntime.openCodeVariant(turn.modelSelection);
           return {
             ...(agent === undefined ? {} : { agent }),
             ...(variant === undefined ? {} : { variant }),
             system: [
               orchestrationSystemPrompt,
-              buildRuntimeInstructions({ harness: "OpenCode", model: turn.modelSelection.model }),
+              buildRuntimeInstructions({
+                harness: "OpenCode",
+                model: turn.modelSelection.model,
+                runtimePolicy: turn.runtimePolicy,
+              }),
             ]
               .filter(Boolean)
               .join("\n\n"),
@@ -3491,6 +3532,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             sessionID: string;
           },
           abortController: AbortController,
+          messageText: string,
         ) {
           const { variant, ...payloadWithoutVariant } = inputPayload;
           const selectedVariant = yield* OpenCodeRuntime.resolveOpenCodeVariant(
@@ -3504,12 +3546,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ...payloadWithoutVariant,
             ...(selectedVariant === undefined ? {} : { variant: selectedVariant }),
           };
-          const text = payload.parts
-            ?.filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join("\n")
-            .trim();
-          const match = text?.match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
+          const match = messageText.trim().match(/^\/(\S+)(?:\s+([\s\S]*))?$/);
           const command = match
             ? (yield* OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
                 Effect.timeout("10 seconds"),
@@ -3924,6 +3961,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   parts,
                 },
                 admissionAbortController!,
+                turnInput.message.text,
               ).pipe(
                 Effect.tapError((cause) =>
                   admissionAbortController!.signal.aborted
@@ -4069,6 +4107,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   parts,
                 },
                 admissionAbortController!,
+                steerInput.message.text,
               ).pipe(
                 Effect.tapError((error) => {
                   if (!promptAdmissionIsCurrent(state, turn, generation)) return Effect.void;
@@ -4162,7 +4201,18 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                     sdkCall("session.abort", { sessionID: sessionId }, (signal) =>
                       client.session.abort({ sessionID: sessionId }, { signal }),
                     ).pipe(
-                      Effect.timeout("10 seconds"),
+                      Effect.timeoutOrElse({
+                        duration: OPENCODE_STOP_CONFIRM_TIMEOUT_MS,
+                        orElse: () =>
+                          Effect.fail(
+                            new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+                              driver: OPENCODE_PROVIDER,
+                              providerThreadId: interruptInput.providerThread.id,
+                              providerTurnId: interruptInput.providerTurnId,
+                              timeoutMs: OPENCODE_STOP_CONFIRM_TIMEOUT_MS,
+                            }),
+                          ),
+                      }),
                       Effect.catch((cause) =>
                         turn.finalized
                           ? Effect.void
@@ -4178,14 +4228,15 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             },
             (effect, interruptInput) =>
               effect.pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterInterruptError({
-                      driver: OPENCODE_PROVIDER,
-                      providerThreadId: interruptInput.providerThread.id,
-                      providerTurnId: interruptInput.providerTurnId,
-                      cause,
-                    }),
+                Effect.mapError((cause) =>
+                  cause._tag === "ProviderAdapterInterruptTimeoutError"
+                    ? cause
+                    : new ProviderAdapter.ProviderAdapterInterruptError({
+                        driver: OPENCODE_PROVIDER,
+                        providerThreadId: interruptInput.providerThread.id,
+                        providerTurnId: interruptInput.providerTurnId,
+                        cause,
+                      }),
                 ),
               ),
           ),

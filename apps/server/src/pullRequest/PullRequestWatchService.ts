@@ -2,7 +2,9 @@ import {
   CommandId,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  type PullRequestChecksState,
   type PullRequestUnavailableError,
+  type PullRequestWatchUntil,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -35,15 +37,6 @@ export class PullRequestWatchFailedError extends Schema.TaggedError<PullRequestW
   }
 }
 
-export class PullRequestNotOpenError extends Schema.TaggedError<PullRequestNotOpenError>()(
-  "PullRequestNotOpenError",
-  { state: Schema.String },
-) {
-  override get message(): string {
-    return `The pull request is ${this.state}, so there is nothing to watch.`;
-  }
-}
-
 export class PullRequestWatchFromSubagentError extends Schema.TaggedError<PullRequestWatchFromSubagentError>()(
   "PullRequestWatchFromSubagentError",
   {},
@@ -69,10 +62,17 @@ export class PullRequestWatchService extends Context.Service<
       readonly threadId: ThreadId;
       readonly target: PullRequestTarget;
       readonly watching: boolean;
+      readonly until?: PullRequestWatchUntil | undefined;
     }) => Effect.Effect<
-      ResolvedTarget & { readonly watching: boolean; readonly wasWatching: boolean },
+      ResolvedTarget & {
+        readonly watching: boolean;
+        readonly wasWatching: boolean;
+        /** Set when the PR already ended, so no watch was registered. */
+        readonly state?: "merged" | "closed";
+        /** CI as the start read saw it. Checks that already passed never wake the watch. */
+        readonly checksState?: PullRequestChecksState;
+      },
       | PullRequestWatchFailedError
-      | PullRequestNotOpenError
       | PullRequestWatchFromSubagentError
       | PullRequestWatchThreadNotFoundError
       | PullRequestTargetError
@@ -104,6 +104,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly target: PullRequestTarget;
     readonly watching: boolean;
+    readonly until?: PullRequestWatchUntil | undefined;
   }) {
     const { watching } = input;
     const thread = yield* requireThread(input.threadId);
@@ -120,11 +121,21 @@ const make = Effect.gen(function* () {
       return yield* new PullRequestWatchFromSubagentError();
     }
     const before = watchedLink(thread);
-    if (watching && before?.snapshot?.state === "merged") {
-      return yield* new PullRequestNotOpenError({ state: "merged" });
-    }
-    if (watching && before?.watch === undefined) {
-      yield* pullRequests
+    const wasWatching = before?.watch !== undefined;
+    // A watch on an ended PR could only report that it ended, so report it now instead.
+    const alreadyEnded = (state: "merged" | "closed") => ({
+      ...target,
+      watching: false,
+      wasWatching,
+      state,
+    });
+    // A closed snapshot still gets a read below, since the PR may have reopened.
+    if (watching && before?.snapshot?.state === "merged") return alreadyEnded("merged");
+    // A pending rollup has no failure yet, so any failure the first read finds is news.
+    let checksPendingAtStart: boolean | undefined;
+    let checksStateAtStart: PullRequestChecksState | undefined;
+    if (watching && !wasWatching) {
+      const read = yield* pullRequests
         .summary(
           {
             projectId: thread.projectId,
@@ -136,16 +147,15 @@ const make = Effect.gen(function* () {
           { recoverTransientFailure: false, bypassCache: true },
         )
         .pipe(
-          Effect.flatMap((summary) =>
-            summary.state === "merged"
-              ? Effect.fail(new PullRequestNotOpenError({ state: "merged" }))
-              : Effect.void,
-          ),
           Effect.catchTags({
             // Host and transport errors can recover while the watch is active.
-            PullRequestOperationError: () => Effect.void,
+            // A failed read leaves the seed to the link's last sync.
+            PullRequestOperationError: () => Effect.undefined,
           }),
         );
+      if (read?.state === "merged" || read?.state === "closed") return alreadyEnded(read.state);
+      checksPendingAtStart = read === undefined ? undefined : read.checksState === "pending";
+      checksStateAtStart = read?.checksState ?? undefined;
     }
     const uuid = yield* random.uuidV4().pipe(Effect.orDie);
     yield* engine
@@ -158,6 +168,10 @@ const make = Effect.gen(function* () {
         number: target.number,
         watching,
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
+        ...(watching && input.until !== undefined && { until: input.until }),
+        ...(watching && checksPendingAtStart !== undefined
+          ? { checksPending: checksPendingAtStart }
+          : {}),
       })
       .pipe(
         Effect.catchCause((cause) =>
@@ -170,7 +184,8 @@ const make = Effect.gen(function* () {
     return {
       ...target,
       watching: watchedLink(after)?.watch !== undefined,
-      wasWatching: before?.watch !== undefined,
+      wasWatching,
+      ...(checksStateAtStart !== undefined && { checksState: checksStateAtStart }),
     };
   });
 

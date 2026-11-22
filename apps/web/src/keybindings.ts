@@ -110,7 +110,10 @@ export function shortcutConflictKey(
   ].join("|");
 }
 
-function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMatchContext) {
+export function shortcutForContext(
+  binding: ResolvedKeybindingRule,
+  context: Partial<ShortcutMatchContext>,
+) {
   const shortcut = binding.shortcut;
   // Resolve persisted Mod+Enter against send preference without rewriting saved shortcuts.
   if (
@@ -377,6 +380,16 @@ export function isDiffToggleShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
+}
+
+export function isSidebarToggleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  // A focused terminal owns Ctrl chords, such as tmux's Ctrl+B prefix; Cmd never reaches it.
+  if (event.ctrlKey && options?.context?.terminalFocus) return false;
+  return matchesCommandShortcut(event, keybindings, "sidebar.toggle", options);
 }
 
 export function isOpenFavoriteEditorShortcut(

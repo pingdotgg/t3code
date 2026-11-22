@@ -16,10 +16,13 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
@@ -33,6 +36,7 @@ import {
 import {
   acpProviderOptionDescriptors,
   flattenSelectChoices,
+  isAcpThoughtLevelOption,
 } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -49,6 +53,7 @@ const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
 // settle it in seconds, not milliseconds; commands arrive much sooner.
 const MODEL_ADVERTISEMENT_GRACE = "5 seconds";
 const PROBE_SESSION_DELETE_TIMEOUT = "5 seconds";
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const boundedText = (value: string, maximumLength: number): string =>
   value.trim().slice(0, maximumLength);
@@ -234,7 +239,9 @@ export function normalizeAcpRegistryLiveConfiguration(
     currentModelId === undefined
       ? null
       : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
-  const effortOption = configOptions.find((option) => option.category === "thought_level");
+  const effortOption =
+    configOptions.find((option) => option.category === "thought_level") ??
+    configOptions.find(isAcpThoughtLevelOption);
   const models = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
     const reasoningEffort = advertisedReasoningEffort(
       effortOption,
@@ -245,7 +252,7 @@ export function normalizeAcpRegistryLiveConfiguration(
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
   const modelOptionIds = new Set(
     configOptions
-      .filter((option) => option.category === "thought_level" || option.category === "model_config")
+      .filter((option) => isAcpThoughtLevelOption(option) || option.category === "model_config")
       .map((option) => option.id),
   );
   return {
@@ -385,6 +392,37 @@ export type AcpRegistryConfigurationProbe<Requirements = never> = (
   input: AcpRegistryConfigurationProbeInput,
 ) => Effect.Effect<AcpRegistryConfigurationProbeResult, AcpRegistryOperationError, Requirements>;
 
+const isolateDeepSeekProbeHistory = Effect.fn("AcpRegistryProbe.isolateDeepSeekProbeHistory")(
+  function* (commandPath: string, spawn: AcpSessionRuntime.AcpSpawnInput) {
+    const executable = (commandPath || spawn.command).split(/[\\/]/u).at(-1) ?? "";
+    if (!/^dsh(?:\.cmd|\.exe)?$/iu.test(executable)) return spawn;
+
+    const argumentSeparator = spawn.args.indexOf("--");
+    const launcherArgs =
+      argumentSeparator === -1 ? spawn.args : spawn.args.slice(0, argumentSeparator);
+    const usesAcpProfile =
+      launcherArgs[0] === "acp" ||
+      launcherArgs.includes("--profile=acp") ||
+      launcherArgs.some((arg, index) => arg === "--profile" && launcherArgs[index + 1] === "acp");
+    if (!usesAcpProfile) return spawn;
+
+    // DeepSeek persists session/new before any prompt and does not advertise session/delete.
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-dsh-acp-probe-" });
+    const patchPath = path.join(directory, "probe.json");
+    const patch = yield* encodeJson([
+      { id: "session-persistence-jsonl", config: { root: path.join(directory, "sessions") } },
+      { id: "session-projection-cache", disabled: true },
+    ]);
+    yield* fs.writeFileString(patchPath, patch);
+    return {
+      ...spawn,
+      args: [...launcherArgs, "--patch", patchPath, ...spawn.args.slice(launcherArgs.length)],
+    };
+  },
+);
+
 export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeConfiguration")(
   function* (
     input: AcpRegistryConfigurationProbeInput,
@@ -393,6 +431,8 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     AcpRegistryOperationError,
     | AcpRegistrySupport.AcpRegistryCatalog
     | ChildProcessSpawner.ChildProcessSpawner
+    | FileSystem.FileSystem
+    | Path.Path
     | SecureRandom.SecureRandom
   > {
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
@@ -410,6 +450,19 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       const resolved = yield* catalog
         .resolve(input.settings, input.cwd, input.environment)
         .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));
+      const spawn = yield* isolateDeepSeekProbeHistory(
+        input.settings.commandPath,
+        resolved.spawn,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new AcpRegistryOperationError({
+              reason: "probe_failed",
+              message: "Could not prepare temporary history for the DeepSeek Harness probe.",
+              cause,
+            }),
+        ),
+      );
       const authMethodsRef = yield* Ref.make<ReadonlyArray<AcpRegistryProbeAuthMethod>>([]);
       const authActionRef = yield* Ref.make<AcpRegistryUrlAuthAction | undefined>(undefined);
       const runtimeCoordinator = yield* Effect.serviceOption(
@@ -417,7 +470,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       );
       const runtimeContext = yield* Layer.build(
         AcpSessionRuntime.layer({
-          spawn: resolved.spawn,
+          spawn,
           cwd: input.cwd,
           clientCapabilities: {
             auth: { terminal: Option.isSome(pty) },
