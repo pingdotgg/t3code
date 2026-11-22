@@ -985,12 +985,6 @@ describe("AcpRegistrySupport", () => {
         `${cacheDir}/acp-registry/registry.json`,
         makeRegistry(makeBinaryAgent("1.2.3")),
       );
-      const installedV1 = `${cacheDir}/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent`;
-      yield* fileSystem.makeDirectory(`${cacheDir}/tools/example-agent/1.2.3/linux-x86_64/bin`, {
-        recursive: true,
-      });
-      yield* fileSystem.writeFileString(installedV1, "#!/bin/sh\necho 1.2.3\n");
-      yield* fileSystem.chmod(installedV1, 0o755);
 
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
@@ -999,49 +993,53 @@ describe("AcpRegistrySupport", () => {
       });
 
       // Cold inspection stays on disk with no network request.
-      expect(yield* resolver.inspect(settings())).toMatchObject({
-        status: "ready",
-        version: "1.2.3",
-      });
+      expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.3" });
       expect(registryRequests).toBe(0);
 
       // Refreshing a disk-loaded index fetches the latest version once, then reuses it until maxAgeMs.
-      yield* resolver.refreshIndex({ maxAgeMs: 15 * 60 * 1_000 });
+      const refreshOptions = { maxAgeMs: 15 * 60 * 1_000, failureBackoffMs: 60_000 } as const;
+      expect(yield* resolver.refreshIndex(refreshOptions)).toBe(1);
       expect(registryRequests).toBe(1);
-      expect(yield* resolver.inspect(settings())).toMatchObject({
-        status: "ready",
-        version: "1.2.4",
-      });
+      expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.4" });
 
       upstream = makeBinaryAgent("1.2.5");
       yield* TestClock.adjust("14 minutes");
-      yield* resolver.refreshIndex({ maxAgeMs: 15 * 60 * 1_000 });
+      expect(yield* resolver.refreshIndex(refreshOptions)).toBe(1);
       expect(registryRequests).toBe(1);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.4" });
 
       yield* TestClock.adjust("1 minute");
-      yield* resolver.refreshIndex({ maxAgeMs: 15 * 60 * 1_000 });
+      expect(yield* resolver.refreshIndex(refreshOptions)).toBe(2);
       expect(registryRequests).toBe(2);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.5" });
 
+      // Explicit invalidation clears the reuse window without discarding the in-memory index.
       upstream = makeBinaryAgent("1.2.6");
-      yield* resolver.refreshIndex();
+      yield* resolver.invalidateIndex();
+      expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.5" });
+      expect(yield* resolver.refreshIndex(refreshOptions)).toBe(3);
       expect(registryRequests).toBe(3);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.6" });
 
-      // An offline refresh prefers the in-memory index over a stale disk cache and retries next time.
+      // An offline refresh prefers the in-memory index over a stale disk cache and backs off background retries.
       yield* fileSystem.writeFileString(
         `${cacheDir}/acp-registry/registry.json`,
         makeRegistry(makeBinaryAgent("1.2.3")),
       );
       online = false;
-      yield* resolver.refreshIndex();
+      yield* resolver.invalidateIndex();
+      expect(yield* resolver.refreshIndex(refreshOptions)).toBe(3);
       expect(registryRequests).toBe(4);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.6" });
 
       online = true;
       upstream = makeBinaryAgent("1.2.7");
-      yield* resolver.refreshIndex({ maxAgeMs: 15 * 60 * 1_000 });
+      yield* TestClock.adjust("59 seconds");
+      expect(yield* resolver.refreshIndex(refreshOptions)).toBe(3);
+      expect(registryRequests).toBe(4);
+
+      yield* TestClock.adjust("1 second");
+      expect(yield* resolver.refreshIndex(refreshOptions)).toBe(4);
       expect(registryRequests).toBe(5);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.7" });
     }).pipe(
@@ -1807,7 +1805,6 @@ describe("AcpRegistrySupport", () => {
       version,
     });
     const agent = makeNpxAgent("1.2.3");
-    let upstreamVersion = "1.2.4";
     let requests = 0;
     let refreshGate: {
       readonly started: Deferred.Deferred<void>;
@@ -1844,7 +1841,7 @@ describe("AcpRegistrySupport", () => {
         registryUrl,
       });
       const refreshFiber = yield* resolverWhileRefreshing
-        .refreshIndex()
+        .refreshIndex({ maxAgeMs: 15 * 60 * 1_000, failureBackoffMs: 60_000 })
         .pipe(Effect.forkScoped({ startImmediately: true }));
       yield* Deferred.await(refreshGate.started);
       expect(yield* resolverWhileRefreshing.inspect(settings())).toMatchObject({
@@ -1857,10 +1854,41 @@ describe("AcpRegistrySupport", () => {
         status: "ready",
         version: "1.2.4",
       });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          const gate = refreshGate;
+          const respond = Effect.sync(() =>
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(makeNpxAgent("1.2.4")))),
+          );
+          return gate === null
+            ? respond
+            : Deferred.succeed(gate.started, undefined).pipe(
+                Effect.andThen(Deferred.await(gate.release)),
+                Effect.andThen(respond),
+              );
+        }),
+      ),
+    );
+  });
 
-      // A disk read that finishes after a concurrent refresh must not overwrite the refreshed index.
-      refreshGate = null;
-      upstreamVersion = "1.2.5";
+  it.effect("keeps a refreshed index when an overlapping disk read finishes later", () => {
+    const makeNpxAgent = (version: string) => ({
+      ...makeAgent({ npx: { package: `@example/acp@${version}` } }),
+      version,
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-disk-race-",
+      });
+      const registryDirectory = `${cacheDir}/acp-registry`;
+      const registryCachePath = `${registryDirectory}/registry.json`;
+      yield* fileSystem.makeDirectory(registryDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(registryCachePath, makeRegistry(makeNpxAgent("1.2.3")));
+
       const diskReadStarted = yield* Deferred.make<void>();
       const releaseDiskRead = yield* Deferred.make<void>();
       const delayedFileSystem: FileSystem.FileSystem = {
@@ -1873,44 +1901,37 @@ describe("AcpRegistrySupport", () => {
               )
             : fileSystem.readFileString(filePath, encoding),
       };
-      const resolverDuringDiskRead = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
       }).pipe(Effect.provideService(FileSystem.FileSystem, delayedFileSystem));
-      const diskInspectFiber = yield* resolverDuringDiskRead
+
+      const diskInspectFiber = yield* resolver
         .inspect(settings())
         .pipe(Effect.forkScoped({ startImmediately: true }));
       yield* Deferred.await(diskReadStarted);
-      yield* resolverDuringDiskRead.refreshIndex();
+      expect(
+        yield* resolver.refreshIndex({ maxAgeMs: 15 * 60 * 1_000, failureBackoffMs: 60_000 }),
+      ).toBe(1);
       yield* Deferred.succeed(releaseDiskRead, undefined);
+
       expect(yield* Fiber.join(diskInspectFiber)).toMatchObject({
         status: "ready",
-        version: "1.2.5",
+        version: "1.2.4",
       });
-      expect(yield* resolverDuringDiskRead.inspect(settings())).toMatchObject({
+      expect(yield* resolver.inspect(settings())).toMatchObject({
         status: "ready",
-        version: "1.2.5",
+        version: "1.2.4",
       });
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        layerResolver((request) => {
-          requests += 1;
-          const gate = refreshGate;
-          const respond = Effect.sync(() =>
-            HttpClientResponse.fromWeb(
-              request,
-              new Response(makeRegistry(makeNpxAgent(upstreamVersion))),
-            ),
-          );
-          return gate === null
-            ? respond
-            : Deferred.succeed(gate.started, undefined).pipe(
-                Effect.andThen(Deferred.await(gate.release)),
-                Effect.andThen(respond),
-              );
-        }),
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(makeNpxAgent("1.2.4")))),
+          ),
+        ),
       ),
     );
   });

@@ -66,7 +66,8 @@ function catalogWithInspection(
   return {
     search: () => Effect.die("unused search"),
     prepare: () => Effect.die("unused prepare"),
-    refreshIndex: () => Effect.void,
+    refreshIndex: () => Effect.succeed(0),
+    invalidateIndex: () => Effect.void,
     inspect: () => Effect.succeed(inspection),
     resolve: () => Effect.die("unused resolve"),
     uninstallManagedBinary: () => Effect.die("unused uninstall"),
@@ -1318,14 +1319,16 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         config: decodeSettings({ agentId: "test-agent" }),
       }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
 
-      const waitForEnriched = () =>
+      const waitForEnriched = (version: string) =>
         instance.snapshot.streamChanges.pipe(
-          Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+          Stream.filter(
+            (snapshot) => snapshot.version === version && snapshot.nativeSessions !== undefined,
+          ),
           Stream.runHead,
         );
 
       // Initial enrichment refreshes the disk-cached 1.0.0 index and installs 2.0.0.
-      const upgradedToV2 = yield* waitForEnriched().pipe(
+      const upgradedToV2 = yield* waitForEnriched("2.0.0").pipe(
         Effect.forkScoped({ startImmediately: true }),
       );
       yield* instance.snapshot.refresh;
@@ -1335,7 +1338,7 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
 
       // Explicit cache invalidation refreshes past the in-memory reuse window and installs 3.0.0.
       latestVersion = "3.0.0";
-      const upgradedToV3 = yield* waitForEnriched().pipe(
+      const upgradedToV3 = yield* waitForEnriched("3.0.0").pipe(
         Effect.forkScoped({ startImmediately: true }),
       );
       yield* instance.invalidateCaches ?? Effect.void;
@@ -1344,8 +1347,9 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(second.version).toBe("3.0.0");
       expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "3.0.0"))).toBe(true);
 
-      // Disabled instances must not fetch the registry on cache invalidation.
+      // Disabled instances must not invalidate the shared registry freshness or fetch on refresh.
       const disabledRequestsBefore = registryRequests;
+      latestVersion = "4.0.0";
       const disabled = yield* AcpRegistryDriver.create({
         instanceId: ProviderInstanceId.make("acpRegistry_disabled"),
         displayName: "Disabled ACP",
@@ -1354,6 +1358,8 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         config: decodeSettings({ agentId: "test-agent" }),
       }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
       yield* disabled.invalidateCaches ?? Effect.void;
+      yield* disabled.snapshot.refresh;
+      yield* catalog.refreshIndex({ maxAgeMs: 15 * 60 * 1_000, failureBackoffMs: 60_000 });
       expect(registryRequests).toBe(disabledRequestsBefore);
     }),
   );
@@ -1366,13 +1372,13 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
         const { directory, agentPath, modelsPath } =
           yield* seedInstalledBinaryAgent("acp-driver-recover-");
 
         let remoteVersion = "2.0.0";
         let remoteTarget: AcpRegistrySupport.AcpRegistryPlatformTarget = incompatibleRegistryTarget;
         let resolveAttempts = 0;
-        const restoredRefreshDone = yield* Deferred.make<void>();
         const realCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: directory,
           toolsDir: path.join(directory, "tools"),
@@ -1398,16 +1404,6 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
         );
         const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
           ...realCatalog,
-          refreshIndex: (options) =>
-            realCatalog
-              .refreshIndex(options)
-              .pipe(
-                Effect.tap(() =>
-                  remoteVersion === "3.0.0"
-                    ? Deferred.succeed(restoredRefreshDone, undefined).pipe(Effect.asVoid)
-                    : Effect.void,
-                ),
-              ),
           resolve: (settings, cwd, environment) =>
             Effect.sync(() => {
               resolveAttempts += 1;
@@ -1438,30 +1434,200 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
         const unsupported = Option.getOrThrow(yield* Fiber.join(becameUnsupported));
         expect(unsupported.status).toBe("error");
 
-        // 2. Upstream restores a compatible 3.0.0; post-TTL refresh updates the index while keeping probe suppressed.
-        const attemptsBeforeRecovery = resolveAttempts;
-        remoteVersion = "3.0.0";
-        remoteTarget = compatibleRegistryTarget;
+        // 2. Live updates on the uninstalled snapshot cannot flip it back to ready; a post-TTL refresh to another incompatible version publishes it without probing.
+        const attemptsWhileUnsupported = resolveAttempts;
+        remoteVersion = "2.1.0";
+        const unsupportedSnapshots = yield* instance.snapshot.streamChanges.pipe(
+          Stream.takeUntil((snapshot) => !snapshot.installed && snapshot.version === "2.1.0"),
+          Stream.runCollect,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "model-a",
+            availableModels: [{ modelId: "model-a", name: "model-a" }],
+          }),
+        );
         yield* TestClock.adjust("16 minutes");
         yield* instance.snapshot.refresh;
-        yield* Deferred.await(restoredRefreshDone);
-        expect(resolveAttempts).toBe(attemptsBeforeRecovery);
+        const duringUnsupported = yield* Fiber.join(unsupportedSnapshots);
+        expect(
+          duringUnsupported.every((snapshot) => !snapshot.installed && snapshot.status === "error"),
+        ).toBe(true);
+        expect(resolveAttempts).toBe(attemptsWhileUnsupported);
 
-        // 3. The next periodic refresh recovers and installs 3.0.0 without invalidateCaches.
-        const recovered = yield* instance.snapshot.streamChanges.pipe(
-          Stream.filter(
+        // 3. Upstream restores compatible 3.0.0; one post-TTL refresh clears the error before probing and installs 3.0.0.
+        remoteVersion = "3.0.0";
+        remoteTarget = compatibleRegistryTarget;
+        const recoverySnapshots = yield* instance.snapshot.streamChanges.pipe(
+          Stream.takeUntil(
             (snapshot) =>
               snapshot.installed &&
               snapshot.version === "3.0.0" &&
               snapshot.nativeSessions !== undefined,
           ),
+          Stream.runCollect,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("16 minutes");
+        yield* instance.snapshot.refresh;
+        const snapshots = yield* Fiber.join(recoverySnapshots);
+        const recheckedIndex = snapshots.findIndex(
+          (snapshot) =>
+            snapshot.installed &&
+            snapshot.version === "3.0.0" &&
+            snapshot.nativeSessions === undefined,
+        );
+        expect(recheckedIndex).toBeGreaterThanOrEqual(0);
+        const ready = snapshots[snapshots.length - 1]!;
+        expect(recheckedIndex).toBeLessThan(snapshots.length - 1);
+        expect(ready.status).toBe("ready");
+        expect(ready.version).toBe("3.0.0");
+        expect(ready.nativeSessions).toBeDefined();
+        expect(resolveAttempts).toBeGreaterThan(attemptsWhileUnsupported);
+        expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "3.0.0"))).toBe(true);
+      }),
+  );
+
+  it.effect(
+    "publishes cold and cached probes immediately without waiting for a slow registry refresh",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { directory, agentPath, modelsPath } = yield* seedInstalledBinaryAgent(
+          "acp-driver-slow-refresh-",
+        );
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+
+        let remoteVersion = "2.0.0";
+        const initialGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        let gate: {
+          readonly started: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = initialGate;
+        const realCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: directory,
+          toolsDir: path.join(directory, "tools"),
+          registryUrl,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, testHostPlatform),
+          Effect.provideService(HostProcess.Architecture, "x64"),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              const respond = Effect.sync(() =>
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    request.url === registryUrl
+                      ? makeBinaryRegistry(remoteVersion)
+                      : `#!/bin/sh\necho ${remoteVersion}\n`,
+                  ),
+                ),
+              );
+              const activeGate = request.url === registryUrl ? gate : null;
+              return activeGate === null
+                ? respond
+                : Deferred.succeed(activeGate.started, undefined).pipe(
+                    Effect.andThen(Deferred.await(activeGate.release)),
+                    Effect.andThen(respond),
+                  );
+            }),
+          ),
+        );
+        const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
+          ...realCatalog,
+          resolve: (settings, cwd, environment) =>
+            realCatalog.resolve(settings, cwd, environment).pipe(
+              Effect.map((resolved) => ({
+                ...resolved,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              })),
+            ),
+        };
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+        // On cold startup, the disk-cached 1.0.0 probe publishes before the slow 2.0.0 registry fetch finishes.
+        const coldReady = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.version === "1.0.0" && snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const upgradedToV2 = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.version === "2.0.0" && snapshot.nativeSessions !== undefined,
+          ),
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
         yield* instance.snapshot.refresh;
-        const ready = Option.getOrThrow(yield* Fiber.join(recovered));
-        expect(ready.status).toBe("ready");
-        expect(resolveAttempts).toBeGreaterThan(attemptsBeforeRecovery);
+        yield* Deferred.await(initialGate.started);
+        expect(Option.isSome(yield* Fiber.join(coldReady))).toBe(true);
+
+        yield* Deferred.succeed(initialGate.release, undefined);
+        expect(Option.isSome(yield* Fiber.join(upgradedToV2))).toBe(true);
+
+        // A live-session update at +10m extends enrichmentCache past +16m while the registry index expires.
+        yield* TestClock.adjust("10 minutes");
+        const liveUpdated = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((model) => model.slug === "model-c")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "model-a",
+            availableModels: [
+              { modelId: "model-a", name: "model-a" },
+              { modelId: "model-c", name: "model-c" },
+            ],
+          }),
+        );
+        expect(Option.isSome(yield* Fiber.join(liveUpdated))).toBe(true);
+
+        // At +16m, the registry fetch blocks, yet the cached 2.0.0 probe publishes immediately before release.
+        remoteVersion = "3.0.0";
+        const secondGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        gate = secondGate;
+        const cachedPublished = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.version === "2.0.0" && snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const upgradedToV3 = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.version === "3.0.0" && snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("6 minutes");
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(secondGate.started);
+        expect(Option.isSome(yield* Fiber.join(cachedPublished))).toBe(true);
+
+        yield* Deferred.succeed(secondGate.release, undefined);
+        expect(Option.isSome(yield* Fiber.join(upgradedToV3))).toBe(true);
         expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "3.0.0"))).toBe(true);
       }),
   );

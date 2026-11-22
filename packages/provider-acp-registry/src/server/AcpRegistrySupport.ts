@@ -525,9 +525,11 @@ export class AcpRegistryCatalog extends Context.Service<
     readonly prepare: (
       input: AcpRegistryPrepareInput,
     ) => Effect.Effect<AcpRegistryPrepareResult, AcpRegistryError>;
-    readonly refreshIndex: (options?: {
-      readonly maxAgeMs?: number;
-    }) => Effect.Effect<void, AcpRegistryError>;
+    readonly refreshIndex: (options: {
+      readonly maxAgeMs: number;
+      readonly failureBackoffMs: number;
+    }) => Effect.Effect<number, AcpRegistryError>;
+    readonly invalidateIndex: () => Effect.Effect<void>;
     readonly inspect: (
       settings: AcpRegistrySettings,
       environment?: NodeJS.ProcessEnv,
@@ -691,10 +693,24 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       ? packageInstallRoot(agent, distribution)
       : path.join(packageInstallRoot(agent, distribution), "bin");
   const packageReceiptsDirectory = path.join(registryDirectory, "package-installs");
-  const registryRef = yield* Ref.make<AcpRegistryIndex | undefined>(undefined);
-  // When the network last served registryRef; unset while it holds the disk cache.
-  const registryFetchedAtMs = yield* Ref.make<number | undefined>(undefined);
-  const registryRevision = yield* Ref.make(0);
+  interface RegistryCacheState {
+    readonly index: AcpRegistryIndex | undefined;
+    // When the network last served index; unset until fetched, on fallback, or after invalidateIndex.
+    readonly fetchedAtMs: number | undefined;
+    // When a network fetch last failed; lets background max-age refreshes back off while offline.
+    readonly failedAtMs: number | undefined;
+    // Advances when a refresh finishes with an index (fetched or fallback) so concurrent callers coalesce.
+    readonly attemptRevision: number;
+    // Advances only when a network fetch succeeds and updates index.
+    readonly indexRevision: number;
+  }
+  const registryState = yield* Ref.make<RegistryCacheState>({
+    index: undefined,
+    fetchedAtMs: undefined,
+    failedAtMs: undefined,
+    attemptRevision: 0,
+    indexRevision: 0,
+  });
   const registrySemaphore = yield* Semaphore.make(1);
   // Long installs must only block operations on the same agent.
   const installPermits = new Map<string, Semaphore.Semaphore>();
@@ -948,31 +964,54 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return registry;
   });
 
-  const refreshRegistry = Effect.fn("AcpRegistryCatalog.refreshRegistry")(function* () {
-    const observedRevision = yield* Ref.get(registryRevision);
+  const refreshRegistry = Effect.fn("AcpRegistryCatalog.refreshRegistry")(function* (
+    observedAttemptRevision?: number,
+  ) {
+    const startRevision =
+      observedAttemptRevision ?? (yield* Ref.get(registryState)).attemptRevision;
     return yield* registrySemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const currentRevision = yield* Ref.get(registryRevision);
-        const current = yield* Ref.get(registryRef);
-        if (current !== undefined && currentRevision !== observedRevision) return current;
+        const current = yield* Ref.get(registryState);
+        if (current.index !== undefined && current.attemptRevision !== startRevision) {
+          return { index: current.index, indexRevision: current.indexRevision };
+        }
 
-        const { registry, fetched } = yield* fetchRegistry().pipe(
-          Effect.map((registry) => ({ registry, fetched: true })),
+        const result = yield* fetchRegistry().pipe(
+          Effect.map((index) => ({ index, refreshed: true })),
           Effect.catch((networkError) =>
             Effect.gen(function* () {
+              const now = yield* Clock.currentTimeMillis;
+              yield* Effect.logDebug("ACP Registry index refresh failed", {
+                reason: networkError.reason,
+                detail: networkError.detail,
+              });
               // Prefer an already-loaded index over disk so a cache-write failure cannot regress it.
-              const inMemory = yield* Ref.get(registryRef);
-              if (inMemory !== undefined) return { registry: inMemory, fetched: false };
+              const inMemory = (yield* Ref.get(registryState)).index;
+              if (inMemory !== undefined) return { index: inMemory, refreshed: false };
               const cached = yield* readCachedRegistry;
-              if (Option.isSome(cached)) return { registry: cached.value, fetched: false };
+              if (Option.isSome(cached)) return { index: cached.value, refreshed: false };
+              yield* Ref.update(registryState, (state) => ({ ...state, failedAtMs: now }));
               return yield* networkError;
             }),
           ),
         );
-        yield* Ref.set(registryRef, registry);
-        yield* Ref.set(registryFetchedAtMs, fetched ? yield* Clock.currentTimeMillis : undefined);
-        yield* Ref.update(registryRevision, (revision) => revision + 1);
-        return registry;
+        const now = yield* Clock.currentTimeMillis;
+        const indexRevision = yield* Ref.modify(registryState, (state) => {
+          const nextIndexRevision = result.refreshed
+            ? state.indexRevision + 1
+            : state.indexRevision;
+          return [
+            nextIndexRevision,
+            {
+              index: result.index,
+              fetchedAtMs: result.refreshed ? now : undefined,
+              failedAtMs: result.refreshed ? undefined : now,
+              attemptRevision: state.attemptRevision + 1,
+              indexRevision: nextIndexRevision,
+            },
+          ] as const;
+        });
+        return { index: result.index, indexRevision };
       }),
     );
   });
@@ -980,37 +1019,56 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const recentRegistry = Effect.fn("AcpRegistryCatalog.recentRegistry")(function* (
     maxAgeMs = REGISTRY_SEARCH_MAX_AGE_MS,
   ) {
-    const current = yield* Ref.get(registryRef);
-    const fetchedAtMs = yield* Ref.get(registryFetchedAtMs);
+    const state = yield* Ref.get(registryState);
     const now = yield* Clock.currentTimeMillis;
     // A clock moved back makes the stamp untrustworthy, so it counts as stale.
     if (
-      current !== undefined &&
-      fetchedAtMs !== undefined &&
-      now >= fetchedAtMs &&
-      now - fetchedAtMs < maxAgeMs
+      state.index !== undefined &&
+      state.fetchedAtMs !== undefined &&
+      now >= state.fetchedAtMs &&
+      now - state.fetchedAtMs < maxAgeMs
     ) {
-      return current;
+      return { index: state.index, indexRevision: state.indexRevision };
     }
-    return yield* refreshRegistry();
+    return yield* refreshRegistry(state.attemptRevision);
   });
 
   const refreshIndex: AcpRegistryCatalog["Service"]["refreshIndex"] = Effect.fn(
     "AcpRegistryCatalog.refreshIndex",
-  )(function* (options) {
-    yield* options?.maxAgeMs === undefined ? refreshRegistry() : recentRegistry(options.maxAgeMs);
+  )(function* ({ maxAgeMs, failureBackoffMs }) {
+    const state = yield* Ref.get(registryState);
+    const now = yield* Clock.currentTimeMillis;
+    if (
+      state.failedAtMs !== undefined &&
+      now >= state.failedAtMs &&
+      now - state.failedAtMs < failureBackoffMs
+    ) {
+      return state.indexRevision;
+    }
+    return (yield* recentRegistry(maxAgeMs)).indexRevision;
+  });
+
+  const invalidateIndex: AcpRegistryCatalog["Service"]["invalidateIndex"] = Effect.fn(
+    "AcpRegistryCatalog.invalidateIndex",
+  )(function* () {
+    yield* Ref.update(registryState, (state) => ({
+      ...state,
+      fetchedAtMs: undefined,
+      failedAtMs: undefined,
+    }));
   });
 
   const loadRegistry = Effect.fn("AcpRegistryCatalog.loadRegistry")(function* () {
-    const current = yield* Ref.get(registryRef);
+    const current = (yield* Ref.get(registryState)).index;
     if (current !== undefined) return current;
 
     const cached = yield* readCachedRegistry;
-    if (Option.isNone(cached)) return yield* refreshRegistry();
+    if (Option.isNone(cached)) return (yield* refreshRegistry()).index;
     // Publish without waiting on an in-flight refresh, while letting a completed refresh win.
-    return yield* Ref.modify(registryRef, (latest) =>
-      latest !== undefined ? ([latest, latest] as const) : ([cached.value, cached.value] as const),
-    );
+    return yield* Ref.modify(registryState, (state) => {
+      const index = state.index ?? cached.value;
+      return [index, state.index !== undefined ? state : { ...state, index }] as const;
+    });
   });
 
   const runCommand = Effect.fn("AcpRegistryCatalog.runCommand")(function* (
@@ -1752,7 +1810,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const search: AcpRegistryCatalog["Service"]["search"] = Effect.fn("AcpRegistryCatalog.search")(
     function* (input) {
-      const registry = yield* recentRegistry();
+      const { index: registry } = yield* recentRegistry();
       const ranked = registry.agents.flatMap((agent) => {
         const distribution = resolveAcpRegistryDistribution({
           agent,
@@ -1799,7 +1857,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const prepare: AcpRegistryCatalog["Service"]["prepare"] = Effect.fn("AcpRegistryCatalog.prepare")(
     function* (input) {
-      const registry = yield* refreshRegistry();
+      const { index: registry } = yield* refreshRegistry();
       const agent = yield* findAgent(registry, input.agentId);
       const distribution = yield* compatibleDistribution(agent, "auto");
       if (distribution.kind === "binary") {
@@ -2060,7 +2118,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           (error) => error.reason === "download_failed",
           (error) =>
             Effect.gen(function* () {
-              const latest = yield* refreshRegistry().pipe(Effect.mapError(() => error));
+              const { index: latest } = yield* refreshRegistry().pipe(Effect.mapError(() => error));
               const agentId = settings.agentId.trim();
               const versionIn = (index: AcpRegistryIndex) =>
                 index.agents.find((agent) => agent.id === agentId)?.version;
@@ -2168,6 +2226,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     search,
     prepare,
     refreshIndex,
+    invalidateIndex,
     inspect,
     resolve,
     uninstallManagedBinary,
