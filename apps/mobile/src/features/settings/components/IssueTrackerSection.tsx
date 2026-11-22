@@ -1,4 +1,9 @@
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  boundIssueTrackerScopes,
+  issueTrackerBindingFor,
+  issueTrackerScopeOptions,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -10,7 +15,8 @@ import { AsyncResult } from "effect/reactivity";
 import { useNavigation } from "@react-navigation/native";
 import { useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
-import { Linking, Platform, View } from "react-native";
+import { Platform, View } from "react-native";
+import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import Svg, { Path } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
@@ -175,7 +181,7 @@ export function IssueTrackerCredentialForm(props: {
             label={gt("Create one")}
             tone="text"
             size="compact"
-            onPress={() => void Linking.openURL(helpUrl).catch(() => undefined)}
+            onPress={() => void tryOpenExternalUrl(helpUrl)}
           />
         ) : null}
         {tracker.connected ? (
@@ -209,6 +215,8 @@ export function IssueTrackerProjectRows(props: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly refreshing: boolean;
+  readonly refreshFailed: boolean;
   readonly disabled: boolean;
 }) {
   const gt = useGT();
@@ -217,24 +225,37 @@ export function IssueTrackerProjectRows(props: {
     label: `bind project to ${tracker.displayName}`,
   });
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const [binding, setBinding] = useState<ProjectId | null>(null);
-  const change = async (projectId: ProjectId, scope: string) => {
-    if (props.disabled || binding !== null) return;
-    setBinding(projectId);
-    await bind({
-      environmentId,
-      input: {
-        projectId,
-        binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
-      },
-    });
-    setBinding(null);
+  const [picks, setPicks] = useState<Partial<Record<ProjectId, ReadonlyArray<string>>>>({});
+  const [saving, setSaving] = useState(false);
+  const held = Object.values(picks).some((scopes) => scopes !== undefined);
+  if (held && !saving && !props.refreshing && !props.refreshFailed) setPicks({});
+  const busy = saving || (held && props.refreshing);
+  const bound = (projectId: ProjectId) =>
+    picks[projectId] ?? boundIssueTrackerScopes(tracker.tracker, props.bindings[projectId]);
+  const change = async (projectId: ProjectId, scopes: ReadonlyArray<string>) => {
+    if (props.disabled || busy) return;
+    const binding = issueTrackerBindingFor(tracker.tracker, bound(projectId), scopes);
+    const before = picks[projectId];
+    setSaving(true);
+    setPicks((current) => ({
+      ...current,
+      [projectId]: boundIssueTrackerScopes(tracker.tracker, binding ?? undefined),
+    }));
+    const result = await bind({ environmentId, input: { projectId, binding } });
+    if (result._tag !== "Success") setPicks((current) => ({ ...current, [projectId]: before }));
+    setSaving(false);
   };
   return projects.map((project) => {
-    const bound = props.bindings[project.id];
     // A project bound to another tracker keeps that binding; this row shows it unbound.
-    const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
-    const locked = props.disabled || binding !== null;
+    const value = bound(project.id);
+    const options = issueTrackerScopeOptions(tracker, value);
+    const toggle = (key: string) =>
+      key === UNBOUND
+        ? []
+        : value.includes(key)
+          ? value.filter((scope) => scope !== key)
+          : [...value, key];
+    const locked = props.disabled || busy;
     return (
       <Menu
         key={project.id}
@@ -247,26 +268,28 @@ export function IssueTrackerProjectRows(props: {
           {
             id: UNBOUND,
             title: gt("Not bound"),
-            state: value === UNBOUND ? "on" : "off",
+            state: value.length === 0 ? "on" : "off",
             attributes: { disabled: locked },
           },
-          ...tracker.scopes.map((scope) => ({
+          ...options.map((scope) => ({
             id: scope.key,
             title: `${scope.name} (${scope.key})`,
-            state: scope.key === value ? ("on" as const) : ("off" as const),
-            attributes: { disabled: locked },
+            state: value.includes(scope.key) ? ("on" as const) : ("off" as const),
+            attributes: { disabled: locked || !scope.addable },
           })),
         ]}
-        onPressAction={({ nativeEvent }) => void change(project.id, nativeEvent.event)}
+        onPressAction={({ nativeEvent }) => void change(project.id, toggle(nativeEvent.event))}
       >
         <SettingsRow
           icon="folder"
           label={project.title}
           valuePosition="trailing"
           value={
-            value === UNBOUND
+            value.length === 0
               ? gt("Not bound")
-              : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)
+              : value
+                  .map((key) => tracker.scopes.find((scope) => scope.key === key)?.name ?? key)
+                  .join(", ")
           }
           disabled={locked}
         />
