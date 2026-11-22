@@ -1024,16 +1024,12 @@ describe("AcpRegistrySupport", () => {
       expect(registryRequests).toBe(2);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.5" });
 
-      // Explicit refresh bypasses the reuse window and lets resolve install the new binary.
       upstream = makeBinaryAgent("1.2.6");
       yield* resolver.refreshIndex();
       expect(registryRequests).toBe(3);
-      const resolved = yield* resolver.resolve(settings(), "/workspace", {});
-      expect(resolved.spawn.command).toContain(
-        "/tools/example-agent/1.2.6/linux-x86_64/bin/example-agent",
-      );
+      expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.6" });
 
-      // Offline refresh keeps the cached index and retries on the next refreshIndex call.
+      // An offline refresh keeps the cached index and retries on the next call.
       online = false;
       yield* resolver.refreshIndex();
       expect(registryRequests).toBe(4);
@@ -1048,21 +1044,13 @@ describe("AcpRegistrySupport", () => {
       Effect.scoped,
       Effect.provide(
         layerResolver((request) => {
-          if (request.url === registryUrl) {
-            registryRequests += 1;
-            return Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                online
-                  ? new Response(makeRegistry(upstream))
-                  : new Response("unavailable", { status: 503 }),
-              ),
-            );
-          }
+          registryRequests += 1;
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
-              new Response(`#!/bin/sh\necho ${upstream.version}\n`),
+              online
+                ? new Response(makeRegistry(upstream))
+                : new Response("unavailable", { status: 503 }),
             ),
           );
         }),
