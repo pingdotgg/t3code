@@ -104,4 +104,38 @@ describe("parseElicitationForm", () => {
       q0__other: "SQLite",
     });
   });
+
+  it("takes a typed reply for an Antigravity question through its `_other` field", () => {
+    // agy's ask_question elicitation, as agy 1.5 sends it.
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q1: {
+            type: "string",
+            title: "Which deploy target should we use?",
+            oneOf: [
+              { const: "1", title: "staging" },
+              { const: "2", title: "production" },
+            ],
+          },
+          q1_other: {
+            type: "string",
+            title: "Other",
+            description: "Optional free-form answer to: Which deploy target should we use?",
+          },
+        },
+      },
+      "The agent has a question.",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.allowCustomAnswer]),
+      [["q1", undefined]],
+    );
+    assert.deepStrictEqual(form.content({ q1: "2" }), { q1: "2" });
+    assert.deepStrictEqual(form.content({ q1: "what's the difference?" }), {
+      q1_other: "what's the difference?",
+    });
+  });
 });
