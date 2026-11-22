@@ -1703,6 +1703,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // creation, sign-out, or full cache clear), excluding invalidateCaches which preserves
     // coordinator state.
     const liveSessionResetRevision = yield* Ref.make(initialLiveSessionResetRevision);
+    // Tracks the last definitive unauthenticated probe so signed-out readiness refreshes and the
+    // watcher both reject options-only updates until a ready probe or confirmed sign-in succeeds.
+    const lastProbeUnauthenticated = yield* Ref.make(false);
     const lastObservedLiveRevision = yield* Ref.make(0);
     const lastAppliedLiveCatalogRevision = yield* Ref.make(0);
     const lastAppliedLiveRevision = yield* Ref.make(0);
@@ -2001,21 +2004,23 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           steps.push(liveConfiguration.catalog.value);
         }
         const hasNewCatalogStep = steps.length > 0;
-        if (accepted.probeOptions !== null && !hasNewCatalogStep) {
-          for (const entry of liveConfiguration.pendingOptions) {
-            if (entry.revision > appliedRev) {
+        if (!(yield* Ref.get(lastProbeUnauthenticated))) {
+          if (accepted.probeOptions !== null && !hasNewCatalogStep) {
+            for (const entry of liveConfiguration.pendingOptions) {
+              if (entry.revision > appliedRev) {
+                steps.push(entry);
+              }
+            }
+            const latestPending = liveConfiguration.pendingOptions.at(-1);
+            if (latestPending !== undefined && steps.at(-1) !== latestPending) {
+              steps.push(latestPending);
+            }
+          } else {
+            for (const entry of liveConfiguration.pendingOptions) {
+              if (entry.revision <= liveConfiguration.clearedThroughRevision) continue;
+              if (!hasNewCatalogStep && entry.revision <= appliedRev) continue;
               steps.push(entry);
             }
-          }
-          const latestPending = liveConfiguration.pendingOptions.at(-1);
-          if (latestPending !== undefined && steps.at(-1) !== latestPending) {
-            steps.push(latestPending);
-          }
-        } else {
-          for (const entry of liveConfiguration.pendingOptions) {
-            if (entry.revision <= liveConfiguration.clearedThroughRevision) continue;
-            if (!hasNewCatalogStep && entry.revision <= appliedRev) continue;
-            steps.push(entry);
           }
         }
         for (const step of steps) {
@@ -2229,6 +2234,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       : Option.some(0)
                     : Option.none<number>();
                   if (probeSupersedesLiveCatalog && Option.isNone(clearedThrough)) return;
+                  yield* Ref.set(lastProbeUnauthenticated, false);
                   if (effectiveConfig.source === "local") {
                     yield* Ref.set(reportedLocalVersion, provider.version);
                   }
@@ -2265,11 +2271,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     });
                   }
                   const published = yield* withLiveRuntimeState(resolved);
-                  if (Option.isSome(clearedThrough)) {
-                    yield* Ref.update(lastAppliedLiveRevision, (prev) =>
-                      Math.max(prev, clearedThrough.value),
-                    );
-                  }
                   const completedAt = yield* Clock.currentTimeMillis;
                   yield* Ref.update(enrichmentCache, (latestCache) => ({
                     ...latestCache,
@@ -2299,6 +2300,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   yield* clearLearnedModels;
                   yield* clearAcceptedCatalog;
                   yield* Ref.set(liveSessionResetRevision, clearedForSignOut.value);
+                  yield* Ref.set(lastProbeUnauthenticated, true);
                   yield* resetAppliedLiveRevisions;
                 }
                 const preserveTransientFailure =
@@ -2364,7 +2366,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       const rawCurrent = yield* getSnapshot;
                       if (
                         !rawCurrent.installed ||
-                        (rawCurrent.auth.status === "unauthenticated" &&
+                        ((yield* Ref.get(lastProbeUnauthenticated)) &&
                           configuration.models.length === 0)
                       ) {
                         return;
@@ -2491,7 +2493,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           .pipe(
             Effect.andThen(
               authenticated
-                ? liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)
+                ? liveSnapshotSemaphore.withPermit(
+                    invalidateEnrichmentCache.pipe(
+                      Effect.andThen(Ref.set(lastProbeUnauthenticated, false)),
+                    ),
+                  )
                 : clearLiveState,
             ),
             Effect.andThen(snapshot.refresh),

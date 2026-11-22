@@ -409,8 +409,8 @@ const make = Effect.gen(function* () {
       );
 
   const clearLiveConfiguration: AcpRegistryRuntimeCoordinator["Service"]["clearLiveConfiguration"] =
-    (instanceId) =>
-      Ref.modify(liveConfigurations, (state) => {
+    Effect.fn("AcpRegistryRuntimeCoordinator.clearLiveConfiguration")(function* (instanceId) {
+      return yield* Ref.modify(liveConfigurations, (state) => {
         const current = state.get(instanceId);
         if (current === undefined) return [0, state] as const;
         const nextCleared = Math.max(current.clearedThroughRevision, current.revision);
@@ -436,6 +436,7 @@ const make = Effect.gen(function* () {
         });
         return [nextCleared, next] as const;
       });
+    });
 
   const clearLiveConfigurationIfRevision: AcpRegistryRuntimeCoordinator["Service"]["clearLiveConfigurationIfRevision"] =
     Effect.fn("AcpRegistryRuntimeCoordinator.clearLiveConfigurationIfRevision")(

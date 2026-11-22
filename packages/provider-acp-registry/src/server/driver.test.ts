@@ -2717,8 +2717,15 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (method === "initialize") {
     send({
       id,
-      result: { protocolVersion: 1, agentCapabilities: { providers: {} }, authMethods: [], agentInfo: { name: "fake", version: "1.5.9" } },
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: { providers: {} },
+        authMethods: [{ id: "agent-login", name: "Agent Login" }],
+        agentInfo: { name: "fake", version: "1.5.9" },
+      },
     });
+  } else if (method === "authenticate") {
+    send({ id, result: {} });
   } else if (method === "session/new") {
     const payload = JSON.parse(readFileSync(process.argv[2], "utf8"));
     if (!Array.isArray(payload) && typeof payload.provisional === "string") {
@@ -4593,15 +4600,90 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           "unauth-live-b",
         ]);
         yield* coordinator.clearLiveConfiguration(identity.instanceId);
+        // Signed-out readiness must keep the saved catalog without replaying options-only updates,
+        // and the watcher must keep ignoring options-only updates even after readiness resets auth
+        // status to "unknown".
+        yield* awaitLiveWatchUpdate(
+          coordinator.publishLiveConfiguration(identity.instanceId, {
+            models: [],
+            currentModelId: null,
+            configOptions: [
+              {
+                id: "mode",
+                label: "Mode",
+                type: "select",
+                currentValue: "plan",
+                options: [
+                  { id: "plan", label: "Plan" },
+                  { id: "code", label: "Code" },
+                ],
+              },
+            ],
+            modelOptionIds: [],
+            modelsFromModelSelect: false,
+          }),
+        );
         yield* withBlockedForegroundStartup(
           Effect.gen(function* () {
             yield* instance.snapshot.refresh;
-            expect((yield* instance.snapshot.getSnapshot).models.map((m) => m.slug)).toEqual([
+            const readinessWhileSignedOut = yield* instance.snapshot.getSnapshot;
+            expect(readinessWhileSignedOut.models.map((m) => m.slug)).toEqual([
               "unauth-live-a",
               "unauth-live-b",
             ]);
+            expect(
+              readinessWhileSignedOut.models.flatMap(
+                (m) => m.capabilities?.optionDescriptors ?? [],
+              ),
+            ).toEqual([]);
           }),
         );
+        yield* awaitLiveWatchUpdate(
+          coordinator.publishLiveConfiguration(identity.instanceId, {
+            models: [],
+            currentModelId: null,
+            configOptions: [
+              {
+                id: "mode",
+                label: "Mode",
+                type: "select",
+                currentValue: "code",
+                options: [
+                  { id: "plan", label: "Plan" },
+                  { id: "code", label: "Code" },
+                ],
+              },
+            ],
+            modelOptionIds: [],
+            modelsFromModelSelect: false,
+          }),
+        );
+        expect(
+          (yield* instance.snapshot.getSnapshot).models.flatMap(
+            (m) => m.capabilities?.optionDescriptors ?? [],
+          ),
+        ).toEqual([]);
+
+        // Confirmed sign-in (auth.onChanged(true)) clears the signed-out restriction so readiness
+        // immediately replays pending options-only updates before enrichment finishes.
+        yield* writeModels(["new-model", "old-model"]);
+        const sawAuthenticatedReadiness = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.auth.status === "authenticated" && snapshot.nativeSessions === undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.auth!.start("owner", Effect.void, "agent-login");
+        const authenticatedReadiness = Option.getOrThrow(
+          yield* Fiber.join(sawAuthenticatedReadiness),
+        );
+        expect(
+          authenticatedReadiness.models
+            .find((m) => m.slug === "unauth-live-a")
+            ?.capabilities?.optionDescriptors?.find((d) => d.id === "mode")?.currentValue,
+        ).toBe("code");
       }),
   );
 

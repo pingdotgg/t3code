@@ -1381,8 +1381,16 @@ describe("AcpRegistryRuntimeCoordinator", () => {
 
         // Case 6: Full clearLiveConfiguration and a fresh catalog publish both reset tracked
         // reasoningByModel and catalogReasoningSupersededSlugs, and clearLiveConfiguration returns
-        // the resulting cleared-through watermark.
+        // the advanced cleared-through watermark.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-x",
+          configOptions: [modeOption("ask")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
         const beforeFullClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(beforeFullClear.clearedThroughRevision).toBeLessThan(beforeFullClear.revision);
         expect(yield* coordinator.clearLiveConfiguration(instanceId)).toBe(
           beforeFullClear.revision,
         );
