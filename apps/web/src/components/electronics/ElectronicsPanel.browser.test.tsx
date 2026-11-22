@@ -349,24 +349,28 @@ describe("ElectronicsPanel", () => {
 
     // Resolving the stale first simulation AND publishing a stale session broadcast for file A
     // must NOT paint file A's result or snap the file selector back from file B to file A
-    emitMockState({
-      ...mockState,
-      sessions: [
-        {
-          threadId: ThreadId.make("thread-1"),
-          filePath: "boards/power.kicad_sch",
-          format: "kicad_sch",
-          activeTab: "simulate",
-          lastSimulation: SAMPLE_SIM,
-          openedAt: "2026-11-22T05:00:00.000Z",
-          updatedAt: "2026-11-22T05:01:00.000Z",
-        },
-      ],
-    });
-    resolveDeferredSim(Exit.succeed(SAMPLE_SIM));
-    await Promise.resolve();
-    await Promise.resolve();
-    await expect.element(screen.getByText("RC Filter Deck")).toBeVisible();
-    await expect.element(screen.getByText(/1\.59 kHz/i)).not.toBeInTheDocument();
+    try {
+      emitMockState({
+        ...mockState,
+        sessions: [
+          {
+            threadId: ThreadId.make("thread-1"),
+            filePath: "boards/power.kicad_sch",
+            format: "kicad_sch",
+            activeTab: "simulate",
+            lastSimulation: SAMPLE_SIM,
+            openedAt: "2026-11-22T05:00:00.000Z",
+            updatedAt: "2026-11-22T05:01:00.000Z",
+          },
+        ],
+      });
+      resolveDeferredSim(Exit.succeed(SAMPLE_SIM));
+      await Promise.resolve();
+      await Promise.resolve();
+      await expect.element(screen.getByText("RC Filter Deck")).toBeVisible();
+      await expect.element(screen.getByText(/1\.59 kHz/i)).not.toBeInTheDocument();
+    } finally {
+      emitMockState({ ...mockState, sessions: [] });
+    }
   });
 });

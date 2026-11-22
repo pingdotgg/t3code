@@ -421,6 +421,9 @@ export function traceCircuitPath(
       if (isGroundNetName(edge.nextNet) && !toResolved.nets.has(edge.nextNet) && !targetIsGround) {
         continue;
       }
+      if (visited.has(edge.nextKey)) {
+        continue;
+      }
       const nextHops: ElectronicsPathHop[] = [
         ...current.hops,
         {
@@ -437,15 +440,13 @@ export function traceCircuitPath(
         winningHops = nextHops;
         break;
       }
-      if (!visited.has(edge.nextKey)) {
-        visited.add(edge.nextKey);
-        queue.push({
-          key: edge.nextKey,
-          net: edge.nextNet,
-          depth: current.depth + 1,
-          hops: nextHops,
-        });
-      }
+      visited.add(edge.nextKey);
+      queue.push({
+        key: edge.nextKey,
+        net: edge.nextNet,
+        depth: current.depth + 1,
+        hops: nextHops,
+      });
     }
     if (winningHops) break;
   }

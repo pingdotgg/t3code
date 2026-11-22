@@ -895,5 +895,68 @@ ${libEntries.join("\n")}
     ).toBe(false);
     const tiedGndDc = runBuiltinMnaSimulation(tiedGndModel, { kind: "dc_op", outputNode: "MID" });
     expect(tiedGndDc.nodeVoltages.find((n) => n.node === "MID")?.voltageV).toBeCloseTo(2.5, 4);
+
+    // Self-shorted voltage source `V1 n n 5` must throw singular matrix error (not report -5 V)
+    const selfShortV = parseElectronicsFile(
+      "sim/self_v.cir",
+      "* Self V\nV1 n n 5\nR1 n 0 1k\n.end\n",
+    );
+    expect(() => runBuiltinMnaSimulation(selfShortV, { kind: "dc_op" })).toThrow(/singular/i);
+
+    // SIN(0 1 1k 1m) must remain at 0 V before the 1 ms delay expires, then reach ~1 V at 1.25 ms
+    const sinDelayModel = parseElectronicsFile(
+      "sim/sin_delay.cir",
+      "* Delayed sine\nV1 in 0 SIN(0 1 1k 1m)\nR1 in 0 1k\n.end\n",
+    );
+    const sinTran = runBuiltinMnaSimulation(sinDelayModel, {
+      kind: "transient",
+      outputNode: "in",
+      stopTimeSeconds: 2e-3,
+      stepTimeSeconds: 2.5e-5,
+    });
+    const inPts = sinTran.series.find((s) => s.label === "V(in)")!.points;
+    const beforeDelay = inPts.find((p) => Math.abs(p.x - 0.25) < 0.03);
+    const atPeak = inPts.find((p) => Math.abs(p.x - 1.25) < 0.03);
+    expect(beforeDelay?.y).toBeCloseTo(0, 4);
+    expect(atPeak?.y).toBeGreaterThan(0.95);
+
+    // KiCad PCB copper `(arc ...)` connects pads cleanly
+    const arcPcb = `(kicad_pcb
+  (footprint "R1" (layer "F.Cu") (at 0 0)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "ARC_NET"))
+  )
+  (footprint "R2" (layer "F.Cu") (at 10 0)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "ARC_NET"))
+  )
+  (arc (start 0 0) (mid 5 5) (end 10 0) (width 0.25) (layer "F.Cu") (net "ARC_NET"))
+)`;
+    const arcModel = parseElectronicsFile("pcb/arc.kicad_pcb", arcPcb);
+    expect(traceCircuitPath(arcModel, { from: "R1.1", to: "R2.1" }).connected).toBe(true);
+    expect(
+      runBuiltinCircuitValidation(arcModel).issues.some((i) => i.code === "unrouted_pcb_net"),
+    ).toBe(false);
+
+    // Split PCB net traced `SIG -> J2.1` must NOT bounce out through R1 to OTHER and back into J2.1
+    const splitBouncePcb = `(kicad_pcb
+  (footprint "J1" (layer "F.Cu") (at 0 0)
+    (property "Reference" "J1") (property "Value" "CON")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "SIG"))
+  )
+  (footprint "J2" (layer "F.Cu") (at 20 0)
+    (property "Reference" "J2") (property "Value" "CON")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "SIG"))
+  )
+  (footprint "R1" (layer "F.Cu") (at 25 0)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at -1 0) (size 0.6 0.6) (layers "F.Cu") (net "SIG"))
+    (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net "OTHER"))
+  )
+  (segment (start 20 0) (end 24 0) (width 0.25) (layer "F.Cu") (net "SIG"))
+)`;
+    const splitBounceModel = parseElectronicsFile("pcb/split_bounce.kicad_pcb", splitBouncePcb);
+    const splitTrace = traceCircuitPath(splitBounceModel, { from: "SIG", to: "J2.1" });
+    expect(splitTrace.connected).toBe(false);
   });
 });

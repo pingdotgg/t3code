@@ -1129,6 +1129,84 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     }
   }
 
+  // Parse KiCad PCB copper track arcs `(arc (start x1 y1) (mid xm ym) (end x2 y2) ...)`
+  // by tessellating each arc into chord segments along the 3-point circular arc.
+  for (const arc of findChildren(root, "arc")) {
+    const start = findChild(arc, "start");
+    const mid = findChild(arc, "mid");
+    const end = findChild(arc, "end");
+    const x1 = atomNumber(start?.[1]);
+    const y1 = atomNumber(start?.[2]);
+    const xm = atomNumber(mid?.[1]);
+    const ym = atomNumber(mid?.[2]);
+    const x2 = atomNumber(end?.[1]);
+    const y2 = atomNumber(end?.[2]);
+    if (
+      x1 === undefined ||
+      y1 === undefined ||
+      xm === undefined ||
+      ym === undefined ||
+      x2 === undefined ||
+      y2 === undefined
+    ) {
+      continue;
+    }
+    const width = atomNumber(findChild(arc, "width")?.[1]) ?? 0.25;
+    const layer = atomString(findChild(arc, "layer")?.[1]) ?? "F.Cu";
+    const net = resolvePcbNet(findChild(arc, "net"));
+
+    // Compute circle center through (x1, y1), (xm, ym), (x2, y2)
+    const d = 2 * (x1 * (ym - y2) + xm * (y2 - y1) + x2 * (y1 - ym));
+    if (!Number.isFinite(d) || Math.abs(d) < 1e-9) {
+      // Degenerate / collinear arc -> emit two chords through mid
+      wires.push(
+        { x1, y1, x2: xm, y2: ym, layer, width, ...(net !== undefined ? { net } : {}) },
+        { x1: xm, y1: ym, x2, y2, layer, width, ...(net !== undefined ? { net } : {}) },
+      );
+      continue;
+    }
+    const s1 = x1 * x1 + y1 * y1;
+    const sm = xm * xm + ym * ym;
+    const s2 = x2 * x2 + y2 * y2;
+    const cx = (s1 * (ym - y2) + sm * (y2 - y1) + s2 * (y1 - ym)) / d;
+    const cy = (s1 * (x2 - xm) + sm * (x1 - x2) + s2 * (xm - x1)) / d;
+    const radius = Math.hypot(x1 - cx, y1 - cy);
+    if (!Number.isFinite(radius) || radius > 1e5) {
+      wires.push(
+        { x1, y1, x2: xm, y2: ym, layer, width, ...(net !== undefined ? { net } : {}) },
+        { x1: xm, y1: ym, x2, y2, layer, width, ...(net !== undefined ? { net } : {}) },
+      );
+      continue;
+    }
+    const a1 = Math.atan2(y1 - cy, x1 - cx);
+    const am = Math.atan2(ym - cy, xm - cx);
+    const a2 = Math.atan2(y2 - cy, x2 - cx);
+    const normPos = (ang: number) => ((ang % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const ccwMid = normPos(am - a1);
+    const ccwEnd = normPos(a2 - a1);
+    const sweep = ccwMid <= ccwEnd ? ccwEnd : ccwEnd - 2 * Math.PI;
+    const steps = 12;
+    let prevX = x1;
+    let prevY = y1;
+    for (let s = 1; s <= steps; s += 1) {
+      const nextX =
+        s === steps ? x2 : Number((cx + radius * Math.cos(a1 + (sweep * s) / steps)).toFixed(4));
+      const nextY =
+        s === steps ? y2 : Number((cy + radius * Math.sin(a1 + (sweep * s) / steps)).toFixed(4));
+      wires.push({
+        x1: prevX,
+        y1: prevY,
+        x2: nextX,
+        y2: nextY,
+        layer,
+        width,
+        ...(net !== undefined ? { net } : {}),
+      });
+      prevX = nextX;
+      prevY = nextY;
+    }
+  }
+
   const vias: ElectronicsVia[] = [];
   for (const via of findChildren(root, "via")) {
     const at = findChild(via, "at");

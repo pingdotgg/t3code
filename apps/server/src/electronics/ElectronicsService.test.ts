@@ -189,3 +189,39 @@ it.effect("does not spawn external binary probes on read-only status or listFile
     }).pipe(Effect.scoped, Effect.provide(layer));
   }),
 );
+
+it.effect(
+  "preserves explicit openPanel selection against cross-file traces and overlapping openPanel calls",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const service = yield* ElectronicsService.ElectronicsService;
+
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-electronics-nav-" });
+      yield* fs.writeFileString(
+        path.join(dir, "a.cir"),
+        "* A\nV1 in 0 5\nR1 in out 1k\nR2 out 0 1k\n.end\n",
+      );
+      yield* fs.writeFileString(
+        path.join(dir, "b.cir"),
+        "* B\nV1 in 0 3.3\nR1 in out 2k\nR2 out 0 2k\n.end\n",
+      );
+
+      const threadId = ThreadId.make("thread-elec-nav");
+      // Overlapping openPanel(a) then openPanel(b) must settle on b.cir
+      const [openAFiber, openBFiber] = yield* Effect.all([
+        Effect.forkChild(service.openPanel({ threadId, cwd: dir, filePath: "a.cir" })),
+        Effect.forkChild(service.openPanel({ threadId, cwd: dir, filePath: "b.cir" })),
+      ]);
+      yield* Fiber.join(openAFiber);
+      yield* Fiber.join(openBFiber);
+      const afterOverlap = yield* service.getThreadSession(threadId);
+      expect(afterOverlap?.filePath).toBe("b.cir");
+
+      // Cross-file trace on a.cir while b.cir is explicitly open must NOT replace b.cir
+      yield* service.tracePath({ cwd: dir, filePath: "a.cir", from: "in", to: "out" }, threadId);
+      const afterCrossTrace = yield* service.getThreadSession(threadId);
+      expect(afterCrossTrace?.filePath).toBe("b.cir");
+    }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
+);

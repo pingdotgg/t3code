@@ -36,6 +36,8 @@ interface LinearElement {
     readonly vo: number;
     readonly va: number;
     readonly freq: number;
+    readonly td: number;
+    readonly theta: number;
   };
 }
 
@@ -86,6 +88,8 @@ function parseSourceSpec(
       vo: nums[0] ?? 0,
       va: nums[1] ?? 1,
       freq: nums[2] ?? 1000,
+      td: Math.max(0, nums[3] ?? 0),
+      theta: nums[4] ?? 0,
     };
     dc = sin.vo;
   }
@@ -345,7 +349,11 @@ function solveComplexLinear(AInput: Complex[][], bInput: Complex[]): Complex[] {
 
 function sourceValueAtTime(el: LinearElement, t: number): number {
   if (el.sin) {
-    return el.sin.vo + el.sin.va * Math.sin(2 * Math.PI * el.sin.freq * t);
+    const s = el.sin;
+    if (t <= s.td) return s.vo;
+    const elapsed = t - s.td;
+    const damping = s.theta !== 0 ? Math.exp(-s.theta * elapsed) : 1;
+    return s.vo + s.va * damping * Math.sin(2 * Math.PI * s.freq * elapsed);
   }
   if (el.pulse) {
     const p = el.pulse;
@@ -492,12 +500,12 @@ export function runBuiltinMnaSimulation(
       const i2 = isRefNode(vs.n2) ? -1 : nodeIndex.get(vs.n2)!;
       const rowArr = A[row]!;
       if (i1 >= 0) {
-        rowArr[i1] = 1;
-        A[i1]![row] = 1;
+        rowArr[i1]! += 1;
+        A[i1]![row]! += 1;
       }
       if (i2 >= 0) {
-        rowArr[i2] = -1;
-        A[i2]![row] = -1;
+        rowArr[i2]! -= 1;
+        A[i2]![row]! -= 1;
       }
       b[row] = vs.numericValue;
     }
@@ -681,12 +689,12 @@ export function runBuiltinMnaSimulation(
         const i1 = isRefNode(vs.n1) ? -1 : nodeIndex.get(vs.n1)!;
         const i2 = isRefNode(vs.n2) ? -1 : nodeIndex.get(vs.n2)!;
         if (i1 >= 0) {
-          A[row]![i1] = { re: 1, im: 0 };
-          A[i1]![row] = { re: 1, im: 0 };
+          A[row]![i1] = cAdd(A[row]![i1]!, { re: 1, im: 0 });
+          A[i1]![row] = cAdd(A[i1]![row]!, { re: 1, im: 0 });
         }
         if (i2 >= 0) {
-          A[row]![i2] = { re: -1, im: 0 };
-          A[i2]![row] = { re: -1, im: 0 };
+          A[row]![i2] = cAdd(A[row]![i2]!, { re: -1, im: 0 });
+          A[i2]![row] = cAdd(A[i2]![row]!, { re: -1, im: 0 });
         }
         const effectiveAcMag = vs.ref === fallbackAcSourceRef ? 1 : vs.acMag;
         b[row] = {
@@ -868,12 +876,12 @@ export function runBuiltinMnaSimulation(
       const i2 = isRefNode(vs.n2) ? -1 : nodeIndex.get(vs.n2)!;
       const rowArr = A[row]!;
       if (i1 >= 0) {
-        rowArr[i1] = 1;
-        A[i1]![row] = 1;
+        rowArr[i1]! += 1;
+        A[i1]![row]! += 1;
       }
       if (i2 >= 0) {
-        rowArr[i2] = -1;
-        A[i2]![row] = -1;
+        rowArr[i2]! -= 1;
+        A[i2]![row]! -= 1;
       }
       b[row] = sourceValueAtTime(vs, t);
     }

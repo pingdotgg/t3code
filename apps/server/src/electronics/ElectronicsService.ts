@@ -460,7 +460,7 @@ export const layer = Layer.effect(
 
     const updateThreadSession = Effect.fn("ElectronicsService.updateThreadSession")(function* (
       threadId: ThreadId,
-      updater: (existing: ElectronicsThreadSession | undefined) => ElectronicsThreadSession,
+      updater: (existing: ElectronicsThreadSession | undefined) => ElectronicsThreadSession | null,
       expectedCloseGen?: number,
     ) {
       const committed = yield* Effect.gen(function* () {
@@ -470,9 +470,12 @@ export const layer = Layer.effect(
         }
         let nextSession: ElectronicsThreadSession | null = null;
         yield* Ref.update(sessionsRef, (map) => {
+          const existing = map.get(threadId);
+          const updated = updater(existing);
+          if (updated === null) return map;
+          nextSession = updated;
           const next = new Map(map);
-          nextSession = updater(next.get(threadId));
-          next.set(threadId, nextSession);
+          next.set(threadId, updated);
           return next;
         });
         return nextSession;
@@ -511,27 +514,39 @@ export const layer = Layer.effect(
         const now = yield* nextMonotonicIso(threadId);
         yield* updateThreadSession(
           threadId,
-          (existing) => ({
-            threadId,
-            filePath: loaded.relativePath,
-            format: loaded.format,
-            activeTab: "trace",
-            ...(result.highlightedNets[0] !== undefined
-              ? { selectedNet: result.highlightedNets[0] }
-              : {}),
-            lastTrace: result,
-            ...(existing?.lastValidation !== undefined && existing.filePath === loaded.relativePath
-              ? { lastValidation: existing.lastValidation }
-              : {}),
-            ...(existing?.lastSimulation !== undefined && existing.filePath === loaded.relativePath
-              ? { lastSimulation: existing.lastSimulation }
-              : {}),
-            openedAt: existing?.openedAt ?? now,
-            ...(existing?.panelOpenedAt !== undefined
-              ? { panelOpenedAt: existing.panelOpenedAt }
-              : {}),
-            updatedAt: now,
-          }),
+          (existing) => {
+            // Never overwrite an explicitly opened session for a different file with a cross-file result.
+            if (
+              existing !== undefined &&
+              existing.panelOpenedAt !== undefined &&
+              existing.filePath !== loaded.relativePath
+            ) {
+              return null;
+            }
+            return {
+              threadId,
+              filePath: loaded.relativePath,
+              format: loaded.format,
+              activeTab: "trace",
+              ...(result.highlightedNets[0] !== undefined
+                ? { selectedNet: result.highlightedNets[0] }
+                : {}),
+              lastTrace: result,
+              ...(existing?.lastValidation !== undefined &&
+              existing.filePath === loaded.relativePath
+                ? { lastValidation: existing.lastValidation }
+                : {}),
+              ...(existing?.lastSimulation !== undefined &&
+              existing.filePath === loaded.relativePath
+                ? { lastSimulation: existing.lastSimulation }
+                : {}),
+              openedAt: existing?.openedAt ?? now,
+              ...(existing?.panelOpenedAt !== undefined
+                ? { panelOpenedAt: existing.panelOpenedAt }
+                : {}),
+              updatedAt: now,
+            };
+          },
           startGen,
         );
       }
@@ -594,27 +609,37 @@ export const layer = Layer.effect(
         const now = yield* nextMonotonicIso(threadId);
         yield* updateThreadSession(
           threadId,
-          (existing) => ({
-            threadId,
-            filePath: loaded.relativePath,
-            format: loaded.format,
-            activeTab: "checks",
-            ...(existing?.selectedNet !== undefined && existing.filePath === loaded.relativePath
-              ? { selectedNet: existing.selectedNet }
-              : {}),
-            ...(existing?.lastTrace !== undefined && existing.filePath === loaded.relativePath
-              ? { lastTrace: existing.lastTrace }
-              : {}),
-            lastValidation: report,
-            ...(existing?.lastSimulation !== undefined && existing.filePath === loaded.relativePath
-              ? { lastSimulation: existing.lastSimulation }
-              : {}),
-            openedAt: existing?.openedAt ?? now,
-            ...(existing?.panelOpenedAt !== undefined
-              ? { panelOpenedAt: existing.panelOpenedAt }
-              : {}),
-            updatedAt: now,
-          }),
+          (existing) => {
+            if (
+              existing !== undefined &&
+              existing.panelOpenedAt !== undefined &&
+              existing.filePath !== loaded.relativePath
+            ) {
+              return null;
+            }
+            return {
+              threadId,
+              filePath: loaded.relativePath,
+              format: loaded.format,
+              activeTab: "checks",
+              ...(existing?.selectedNet !== undefined && existing.filePath === loaded.relativePath
+                ? { selectedNet: existing.selectedNet }
+                : {}),
+              ...(existing?.lastTrace !== undefined && existing.filePath === loaded.relativePath
+                ? { lastTrace: existing.lastTrace }
+                : {}),
+              lastValidation: report,
+              ...(existing?.lastSimulation !== undefined &&
+              existing.filePath === loaded.relativePath
+                ? { lastSimulation: existing.lastSimulation }
+                : {}),
+              openedAt: existing?.openedAt ?? now,
+              ...(existing?.panelOpenedAt !== undefined
+                ? { panelOpenedAt: existing.panelOpenedAt }
+                : {}),
+              updatedAt: now,
+            };
+          },
           startGen,
         );
       }
@@ -749,27 +774,37 @@ export const layer = Layer.effect(
         const now = yield* nextMonotonicIso(threadId);
         yield* updateThreadSession(
           threadId,
-          (existing) => ({
-            threadId,
-            filePath: loaded.relativePath,
-            format: loaded.format,
-            activeTab: "simulate",
-            ...(existing?.selectedNet !== undefined && existing.filePath === loaded.relativePath
-              ? { selectedNet: existing.selectedNet }
-              : {}),
-            ...(existing?.lastTrace !== undefined && existing.filePath === loaded.relativePath
-              ? { lastTrace: existing.lastTrace }
-              : {}),
-            ...(existing?.lastValidation !== undefined && existing.filePath === loaded.relativePath
-              ? { lastValidation: existing.lastValidation }
-              : {}),
-            lastSimulation: result,
-            openedAt: existing?.openedAt ?? now,
-            ...(existing?.panelOpenedAt !== undefined
-              ? { panelOpenedAt: existing.panelOpenedAt }
-              : {}),
-            updatedAt: now,
-          }),
+          (existing) => {
+            if (
+              existing !== undefined &&
+              existing.panelOpenedAt !== undefined &&
+              existing.filePath !== loaded.relativePath
+            ) {
+              return null;
+            }
+            return {
+              threadId,
+              filePath: loaded.relativePath,
+              format: loaded.format,
+              activeTab: "simulate",
+              ...(existing?.selectedNet !== undefined && existing.filePath === loaded.relativePath
+                ? { selectedNet: existing.selectedNet }
+                : {}),
+              ...(existing?.lastTrace !== undefined && existing.filePath === loaded.relativePath
+                ? { lastTrace: existing.lastTrace }
+                : {}),
+              ...(existing?.lastValidation !== undefined &&
+              existing.filePath === loaded.relativePath
+                ? { lastValidation: existing.lastValidation }
+                : {}),
+              lastSimulation: result,
+              openedAt: existing?.openedAt ?? now,
+              ...(existing?.panelOpenedAt !== undefined
+                ? { panelOpenedAt: existing.panelOpenedAt }
+                : {}),
+              updatedAt: now,
+            };
+          },
           startGen,
         );
       }
@@ -785,7 +820,14 @@ export const layer = Layer.effect(
       readonly selectedNet?: string | undefined;
     }) {
       yield* ensureEnabled;
-      const startGen = yield* currentCloseGeneration(input.threadId);
+      // Atomically reserve a navigation generation at entry so overlapping openPanel(A) + openPanel(B)
+      // always settles on the newest request regardless of load order, while closePanel still cancels both.
+      const myGen = yield* Ref.modify(closeGenRef, (map) => {
+        const nextGen = (map.get(input.threadId) ?? 0) + 1;
+        const next = new Map(map);
+        next.set(input.threadId, nextGen);
+        return [nextGen, next] as const;
+      });
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const now = yield* nextMonotonicIso(input.threadId);
       const nextSession = (
@@ -813,17 +855,7 @@ export const layer = Layer.effect(
         panelOpenedAt: now,
         updatedAt: now,
       });
-      const currentGen = yield* currentCloseGeneration(input.threadId);
-      if (currentGen !== startGen) {
-        return nextSession(undefined);
-      }
-      // Advance generation so older in-flight trace/validate/simulate runs cannot overwrite this explicit openPanel.
-      yield* Ref.update(closeGenRef, (map) => {
-        const next = new Map(map);
-        next.set(input.threadId, currentGen + 1);
-        return next;
-      });
-      const committed = yield* updateThreadSession(input.threadId, nextSession, currentGen + 1);
+      const committed = yield* updateThreadSession(input.threadId, nextSession, myGen);
       return committed ?? nextSession(undefined);
     });
 
