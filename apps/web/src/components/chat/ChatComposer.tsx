@@ -1491,9 +1491,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     removedQueuedAttachments: removedEditingQueuedAttachments,
     onRestoreQueuedAttachment: (attachment) => {
       if (isQueuedImageAttachment(attachment)) {
-        const boundary = retainedContextPayloads.queuedImageHistory.get(attachment.id) ?? {};
-        boundary.pendingPaste = true;
-        retainedContextPayloads.queuedImageHistory.set(attachment.id, boundary);
+        const entry = retainedContextPayloads.queuedImageHistory.get(attachment.id) ?? {
+          statesByDepth: new Map<number, "attached" | "removed">(),
+        };
+        entry.pendingPaste = true;
+        retainedContextPayloads.queuedImageHistory.set(attachment.id, entry);
       }
       onRestoreEditingQueuedAttachment?.(attachment);
     },

@@ -172,6 +172,7 @@ export interface ComposerPromptEditorHandle {
 
 export interface ComposerPromptHistoryChange {
   readonly depth: number;
+  readonly previousDepth: number;
   readonly direction: "undo" | "redo" | null;
 }
 
@@ -1148,7 +1149,7 @@ function ComposerPromptEditorTiptapInner(
       suppressTrigger,
       contextIds,
       textChanged,
-      { depth: nextHistoryDepth, direction: historyDirection },
+      { depth: nextHistoryDepth, previousDepth: previousHistoryDepth, direction: historyDirection },
     );
   };
 

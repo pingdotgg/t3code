@@ -24,16 +24,30 @@ export interface QueuedAttachmentContextBinding {
   readonly contextIds: ReadonlyArray<ComposerContextId>;
 }
 
-export interface QueuedImageHistoryBoundary {
-  pastedAtDepth?: number | undefined;
-  rowRemovedAtDepth?: number | undefined;
+export interface QueuedImageHistoryEntry {
+  readonly statesByDepth: Map<number, "attached" | "removed">;
   pendingPaste?: true | undefined;
 }
 
 export interface RetainedAttachmentContextPayloads {
   files: Map<string, ComposerFileAttachment>;
   previewAnnotations: Map<string, RetainedPreviewAnnotation>;
-  queuedImageHistory: Map<string, QueuedImageHistoryBoundary>;
+  queuedImageHistory: Map<string, QueuedImageHistoryEntry>;
+}
+
+function queuedImageStateAtDepth(
+  statesByDepth: ReadonlyMap<number, "attached" | "removed">,
+  depth: number,
+): "attached" | "removed" {
+  let latestDepth = -1;
+  let state: "attached" | "removed" = "attached";
+  for (const [entryDepth, entryState] of statesByDepth) {
+    if (entryDepth <= depth && entryDepth >= latestDepth) {
+      latestDepth = entryDepth;
+      state = entryState;
+    }
+  }
+  return state;
 }
 
 export interface RetainedContextPayloads extends RetainedAttachmentContextPayloads {
@@ -112,16 +126,18 @@ export function reconcileAttachmentContextReferences(input: {
   const history = input.history;
   if (history && history.direction === null && input.textChanged) {
     // Any non-history edit drops ProseMirror's redo branch while keeping earlier undo steps.
-    for (const [imageId, boundary] of input.retained.queuedImageHistory) {
-      boundary.rowRemovedAtDepth = undefined;
-      if (boundary.pendingPaste) {
-        boundary.pastedAtDepth = history.depth;
-        boundary.pendingPaste = undefined;
+    for (const [imageId, entry] of input.retained.queuedImageHistory) {
+      for (const entryDepth of entry.statesByDepth.keys()) {
+        if (entryDepth > history.previousDepth) entry.statesByDepth.delete(entryDepth);
       }
-      if (boundary.pastedAtDepth !== undefined && boundary.pastedAtDepth > history.depth) {
-        boundary.pastedAtDepth = undefined;
+      if (entry.pendingPaste) {
+        if (queuedImageStateAtDepth(entry.statesByDepth, history.previousDepth) !== "removed") {
+          entry.statesByDepth.set(history.previousDepth, "removed");
+        }
+        entry.statesByDepth.set(history.depth, "attached");
+        entry.pendingPaste = undefined;
       }
-      if (boundary.pastedAtDepth === undefined && boundary.rowRemovedAtDepth === undefined) {
+      if (entry.statesByDepth.size === 0) {
         input.retained.queuedImageHistory.delete(imageId);
       }
     }
@@ -138,14 +154,10 @@ export function reconcileAttachmentContextReferences(input: {
     if (isQueuedFileAttachment(entry.attachment)) {
       queuedAttachmentIdsToRemove.push(entry.attachment.id);
     } else if (isQueuedImageAttachment(entry.attachment) && history?.direction) {
-      const boundary = input.retained.queuedImageHistory.get(entry.attachment.id);
+      const historyEntry = input.retained.queuedImageHistory.get(entry.attachment.id);
       if (
-        (history.direction === "undo" &&
-          boundary?.pastedAtDepth !== undefined &&
-          history.depth < boundary.pastedAtDepth) ||
-        (history.direction === "redo" &&
-          boundary?.rowRemovedAtDepth !== undefined &&
-          history.depth >= boundary.rowRemovedAtDepth)
+        historyEntry &&
+        queuedImageStateAtDepth(historyEntry.statesByDepth, history.depth) === "removed"
       ) {
         queuedAttachmentIdsToRemove.push(entry.attachment.id);
       }
@@ -164,13 +176,14 @@ export function reconcileAttachmentContextReferences(input: {
     if (!entry.contextIds.some((contextId) => input.referencedContextIds.has(contextId))) continue;
     restoredQueuedAttachmentIds.add(entry.attachment.id);
     if (isQueuedImageAttachment(entry.attachment) && history?.direction) {
-      const boundary = input.retained.queuedImageHistory.get(entry.attachment.id) ?? {};
+      const historyEntry = input.retained.queuedImageHistory.get(entry.attachment.id) ?? {
+        statesByDepth: new Map<number, "attached" | "removed">(),
+      };
       if (history.direction === "undo") {
-        boundary.rowRemovedAtDepth = history.depth + 1;
-      } else {
-        boundary.pastedAtDepth = history.depth;
+        historyEntry.statesByDepth.set(history.previousDepth, "removed");
       }
-      input.retained.queuedImageHistory.set(entry.attachment.id, boundary);
+      historyEntry.statesByDepth.set(history.depth, "attached");
+      input.retained.queuedImageHistory.set(entry.attachment.id, historyEntry);
     }
     queuedAttachmentsToRestore.push(entry.attachment);
   }
