@@ -5643,10 +5643,10 @@ it.effect(
         }
 
         yield* TestClock.adjust("1 second");
-        assert.sameMembers((yield* Ref.get(state)).unloadedNativeThreadIds, [
-          "native-round-1",
-          "native-round-2",
-        ]);
+        assert.sameMembers(
+          [...(yield* Ref.get(state)).unloadedNativeThreadIds],
+          ["native-round-1", "native-round-2"],
+        );
       });
 
       yield* effect.pipe(
