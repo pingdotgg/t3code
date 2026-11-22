@@ -427,6 +427,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
           value={selectedFile}
           onChange={(e) => {
             const next = e.target.value;
+            if (next === selectedFile) return;
             setSelectedFile(next);
             setModel(null);
             setLoadingModel(next.length > 0);
