@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthDiagnosticsReadScope,
+  resolveEnvironmentMachineKind,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
+  type EnvironmentMachineKind,
   type UsageBucket,
   type UsageSummary,
   type UsageProviderKind,
@@ -24,6 +26,7 @@ import { m } from "../i18n/messages";
 export interface EnvironmentUsageStatus {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  readonly machine: EnvironmentMachineKind;
   readonly isPending: boolean;
   readonly canReadDiagnostics: boolean;
   readonly isConnected: boolean;
@@ -39,6 +42,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     const statuses: EnvironmentUsageStatus[] = [];
     for (const [environmentId, presentation] of presentations) {
       const isConnected = presentation.connection.phase === "connected";
+      const machine = resolveEnvironmentMachineKind(presentation.serverConfig);
       const sessionResult = get(environmentSession.sessionStateAtom(environmentId));
       const access = resolveUsageAccess({
         connectionPhase: presentation.connection.phase,
@@ -49,6 +53,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
         statuses.push({
           environmentId,
           label: presentation.entry.target.label,
+          machine,
           isConnected,
           ...access,
           summary: null,
@@ -68,6 +73,7 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
       statuses.push({
         environmentId,
         label: presentation.entry.target.label,
+        machine,
         isPending: result.waiting,
         canReadDiagnostics: true,
         isConnected,

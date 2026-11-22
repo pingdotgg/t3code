@@ -9,7 +9,7 @@ import {
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
+import { CircleAlertIcon, ChevronDownIcon, InfoIcon, TagIcon } from "lucide-react";
 import { T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -55,19 +55,14 @@ import {
 } from "@t3tools/shared/usageFormat";
 import { formatUsageContractMismatch, usageSourceMessages } from "@t3tools/shared/usageFormatCopy";
 import { Button, InlineButton } from "../ui/button";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuTrigger,
-} from "../ui/menu";
+import { Menu, MenuCheckboxItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
 import { Skeleton } from "../ui/skeleton";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
@@ -369,6 +364,25 @@ export function UsagePage() {
         });
   const windowOptionLabel = WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label;
   const metricOptionLabel = METRIC_OPTIONS.find((option) => option.value === metric)?.label;
+  const modelPricesButton = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            onClick={() => setPriceDialog({})}
+            aria-label={gt("Model prices")}
+            size="icon-sm"
+            variant="ghost"
+          />
+        }
+      >
+        <TagIcon aria-hidden />
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        <T>Model prices</T>
+      </TooltipPopup>
+    </Tooltip>
+  );
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
       <WorkspaceBreadcrumb ariaLabel={gt("Usage breadcrumb")} className="min-w-0">
@@ -389,7 +403,6 @@ export function UsagePage() {
             isPartial={isPartial}
             duplicateSources={merged.duplicateSources}
             contractMismatches={merged.contractMismatches}
-            onOpenModelPrices={() => setPriceDialog({})}
           />
         </WorkspaceBreadcrumbItem>
         <WorkspaceBreadcrumbSeparator />
@@ -440,6 +453,7 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
+        {modelPricesButton}
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? gt("Refresh limits") : gt("Refresh usage")}
@@ -497,6 +511,7 @@ export function UsagePage() {
             ))}
           </SelectPopup>
         </Select>
+        {modelPricesButton}
         <Button
           onClick={refreshWindow}
           aria-label={showingLimits ? gt("Refresh limits") : gt("Refresh usage")}
@@ -1188,7 +1203,6 @@ function UsageEnvironmentFilter({
   isPartial,
   duplicateSources,
   contractMismatches,
-  onOpenModelPrices,
 }: {
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
@@ -1199,7 +1213,6 @@ function UsageEnvironmentFilter({
   readonly isPartial: boolean;
   readonly duplicateSources: readonly string[];
   readonly contractMismatches: MergedUsage["contractMismatches"];
-  readonly onOpenModelPrices: () => void;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -1217,7 +1230,17 @@ function UsageEnvironmentFilter({
 
   return (
     <Menu>
-      <MenuTrigger render={<InlineButton />} className="group/usage-environment min-w-0 max-w-full">
+      <MenuTrigger
+        render={<InlineButton tone="picker" />}
+        className="group/usage-environment min-w-0 max-w-full"
+      >
+        {selectedEnvironments.length === 1 && !allSelected && (
+          <EnvironmentMachineIcon
+            kind={selectedEnvironments[0]!.machine}
+            className="size-3.5 shrink-0"
+            aria-hidden
+          />
+        )}
         <WorkspaceBreadcrumbText>{label}</WorkspaceBreadcrumbText>
         <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
           {showUsageStatus && hasIssue ? (
@@ -1310,11 +1333,6 @@ function UsageEnvironmentFilter({
             contractMismatches={contractMismatches}
           />
         ) : null}
-        <MenuSeparator />
-        <MenuItem onClick={onOpenModelPrices}>
-          <SlidersHorizontalIcon aria-hidden />
-          <T>Model prices</T>
-        </MenuItem>
       </MenuPopup>
     </Menu>
   );
