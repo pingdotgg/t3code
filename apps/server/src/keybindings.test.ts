@@ -601,7 +601,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const keybindings = yield* Keybindings.Keybindings;
       yield* writeKeybindingsConfig(
         keybindingsConfigPath,
-        Array.from({ length: 210 }, (_, index) => ({
+        Array.from({ length: 206 }, (_, index) => ({
           key: "mod+alt+f1",
           command: `script.filler-${index}.run` as const,
         })),
@@ -634,7 +634,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const keybindings = yield* Keybindings.Keybindings;
         yield* writeKeybindingsConfig(
           keybindingsConfigPath,
-          Array.from({ length: 209 }, (_, index) => ({
+          Array.from({ length: 205 }, (_, index) => ({
             key: "mod+alt+f1",
             command: `script.filler-${index}.run` as const,
           })),
