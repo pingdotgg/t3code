@@ -13,6 +13,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { toCustomModelSetting } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -23,6 +24,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
@@ -1333,5 +1335,170 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* disabled.invalidateCaches ?? Effect.void;
       expect(registryRequests).toBe(disabledRequestsBefore);
     }),
+  );
+});
+
+it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
+  it.effect(
+    "recovers when a refreshed index moves from compatible to incompatible and back without cache invalidation",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "acp-driver-recover-",
+        });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        const registryUrl = "https://registry.test/registry.json";
+        const makeRegistry = (version: string, target: "linux-x86_64" | "darwin-aarch64") =>
+          JSON.stringify({
+            version: "1.0.0",
+            agents: [
+              {
+                id: "test-agent",
+                name: "Test Agent",
+                version,
+                description: "Test binary agent",
+                distribution: {
+                  binary: {
+                    [target]: {
+                      archive: `https://registry.test/test-agent-${version}.bin`,
+                      cmd: "./bin/test-agent",
+                    },
+                  },
+                },
+              },
+            ],
+          });
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-a", "model-b"]));
+        yield* fileSystem.makeDirectory(path.join(directory, "acp-registry"), { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(directory, "acp-registry", "registry.json"),
+          makeRegistry("1.0.0", "linux-x86_64"),
+        );
+        const installedV1 = path.join(
+          directory,
+          "tools",
+          "test-agent",
+          "1.0.0",
+          "linux-x86_64",
+          "bin",
+          "test-agent",
+        );
+        yield* fileSystem.makeDirectory(path.dirname(installedV1), { recursive: true });
+        yield* fileSystem.writeFileString(installedV1, "#!/bin/sh\necho 1.0.0\n");
+        yield* fileSystem.chmod(installedV1, 0o755);
+
+        let remoteVersion = "2.0.0";
+        let remoteTarget: "linux-x86_64" | "darwin-aarch64" = "darwin-aarch64";
+        let resolvedProbes = 0;
+        const restoredRefreshDone = yield* Deferred.make<void>();
+        const realCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: directory,
+          toolsDir: path.join(directory, "tools"),
+          registryUrl,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Architecture, "x64"),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    request.url === registryUrl
+                      ? makeRegistry(remoteVersion, remoteTarget)
+                      : `#!/bin/sh\necho ${remoteVersion}\n`,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
+          ...realCatalog,
+          refreshIndex: (options) =>
+            realCatalog
+              .refreshIndex(options)
+              .pipe(
+                Effect.tap(() =>
+                  remoteVersion === "3.0.0"
+                    ? Deferred.succeed(restoredRefreshDone, undefined).pipe(Effect.asVoid)
+                    : Effect.void,
+                ),
+              ),
+          resolve: (settings, cwd, environment) =>
+            realCatalog.resolve(settings, cwd, environment).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  resolvedProbes += 1;
+                }),
+              ),
+              Effect.map((resolved) => ({
+                ...resolved,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              })),
+            ),
+        };
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+        // 1. Compatible 1.0.0 transitions to incompatible 2.0.0.
+        const becameUnsupported = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => !snapshot.installed && snapshot.version === "2.0.0"),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const unsupported = Option.getOrThrow(yield* Fiber.join(becameUnsupported));
+        expect(unsupported.status).toBe("error");
+
+        // 2. Upstream restores a compatible 3.0.0; post-TTL refresh updates the index while keeping probe suppressed.
+        const resolvedBeforeRecovery = resolvedProbes;
+        remoteVersion = "3.0.0";
+        remoteTarget = "linux-x86_64";
+        yield* TestClock.adjust("16 minutes");
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(restoredRefreshDone);
+        expect(resolvedProbes).toBe(resolvedBeforeRecovery);
+
+        // 3. The next periodic refresh recovers and installs 3.0.0 without invalidateCaches.
+        const recovered = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.installed &&
+              snapshot.version === "3.0.0" &&
+              snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const ready = Option.getOrThrow(yield* Fiber.join(recovered));
+        expect(ready.status).toBe("ready");
+        expect(resolvedProbes).toBeGreaterThan(resolvedBeforeRecovery);
+        expect(
+          yield* fileSystem.exists(
+            path.join(
+              directory,
+              "tools",
+              "test-agent",
+              "3.0.0",
+              "linux-x86_64",
+              "bin",
+              "test-agent",
+            ),
+          ),
+        ).toBe(true);
+      }),
   );
 });

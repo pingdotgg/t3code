@@ -1007,8 +1007,15 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
     const cached = yield* readCachedRegistry;
     if (Option.isNone(cached)) return yield* refreshRegistry();
-    yield* Ref.set(registryRef, cached.value);
-    return cached.value;
+    return yield* registrySemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        // A refresh that completed during the disk read owns the stored index.
+        const latest = yield* Ref.get(registryRef);
+        if (latest !== undefined) return latest;
+        yield* Ref.set(registryRef, cached.value);
+        return cached.value;
+      }),
+    );
   });
 
   const runCommand = Effect.fn("AcpRegistryCatalog.runCommand")(function* (

@@ -832,7 +832,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         getSnapshot,
         publishSnapshot,
       }) {
-        if (!snapshot.installed) return Effect.void;
+        if (!snapshot.installed) {
+          return effectiveConfig.enabled &&
+            effectiveConfig.source !== "local" &&
+            effectiveConfig.agentId.length > 0
+            ? catalog.refreshIndex({ maxAgeMs: PROBE_SUCCESS_TTL_MS }).pipe(Effect.ignore)
+            : Effect.void;
+        }
         const publishEnrichment = (
           Option.isSome(runtimeCoordinator)
             ? runtimeCoordinator.value.runBackgroundProbe(
@@ -1013,7 +1019,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         Effect.andThen(clearLearnedModels),
         Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
         Effect.andThen(
-          effectiveConfig.enabled && effectiveConfig.source !== "local"
+          effectiveConfig.enabled &&
+            effectiveConfig.source !== "local" &&
+            effectiveConfig.agentId.length > 0
             ? catalog.refreshIndex().pipe(Effect.ignore)
             : Effect.void,
         ),
