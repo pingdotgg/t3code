@@ -88,22 +88,21 @@ export function deriveThreadCacheMetrics(
     })
     .sort((left, right) => left.turn.ordinal - right.turn.ordinal || left.index - right.index);
 
-  const reportsCache = eligible.some(
-    ({ turn }) =>
-      turn.turnTokenUsage?.cachedInputTokens !== undefined ||
-      turn.turnTokenUsage?.cacheCreationTokens !== undefined,
-  );
+  const cacheEligible = eligible.filter(({ turn }) => {
+    const cached = turn.turnTokenUsage?.cachedInputTokens;
+    return typeof cached === "number" && Number.isFinite(cached);
+  });
 
-  if (reportsCache && eligible.length > 0) {
+  if (cacheEligible.length > 0) {
     let totalInputTokens = 0;
     let cachedInputTokens = 0;
     let lastTurnInputTokens = 0;
     let lastTurnCachedInputTokens = 0;
 
-    for (const { turn } of eligible) {
+    for (const { turn } of cacheEligible) {
       const usage = turn.turnTokenUsage!;
       const inputTokens = usage.inputTokens!;
-      const cached = clampCachedTokens(usage.cachedInputTokens ?? 0, inputTokens);
+      const cached = clampCachedTokens(usage.cachedInputTokens!, inputTokens);
       totalInputTokens += inputTokens;
       cachedInputTokens += cached;
       lastTurnInputTokens = inputTokens;
@@ -119,38 +118,50 @@ export function deriveThreadCacheMetrics(
         uncachedInputTokens: Math.max(0, totalInputTokens - cachedInputTokens),
         lastTurnInputTokens,
         lastTurnCachedInputTokens,
-        turnCount: eligible.length,
+        turnCount: cacheEligible.length,
       };
     }
   }
 
-  const fallbackInput = liveUsage?.inputTokens ?? providerThread?.contextUsage?.inputTokens;
-  const fallbackCached =
-    liveUsage?.cachedInputTokens ?? providerThread?.contextUsage?.cachedInputTokens;
-  if (
-    typeof fallbackInput === "number" &&
-    Number.isFinite(fallbackInput) &&
-    fallbackInput > 0 &&
-    typeof fallbackCached === "number" &&
-    Number.isFinite(fallbackCached)
-  ) {
-    const cached = clampCachedTokens(fallbackCached, fallbackInput);
-    const lastInput = providerThread?.contextUsage?.lastInputTokens;
-    const lastCached = providerThread?.contextUsage?.lastCachedInputTokens;
+  const livePair =
+    typeof liveUsage?.inputTokens === "number" &&
+    Number.isFinite(liveUsage.inputTokens) &&
+    liveUsage.inputTokens > 0 &&
+    typeof liveUsage.cachedInputTokens === "number" &&
+    Number.isFinite(liveUsage.cachedInputTokens)
+      ? { inputTokens: liveUsage.inputTokens, cachedInputTokens: liveUsage.cachedInputTokens }
+      : null;
+  const snapshotPair =
+    typeof providerThread?.contextUsage?.inputTokens === "number" &&
+    Number.isFinite(providerThread.contextUsage.inputTokens) &&
+    providerThread.contextUsage.inputTokens > 0 &&
+    typeof providerThread.contextUsage.cachedInputTokens === "number" &&
+    Number.isFinite(providerThread.contextUsage.cachedInputTokens)
+      ? {
+          inputTokens: providerThread.contextUsage.inputTokens,
+          cachedInputTokens: providerThread.contextUsage.cachedInputTokens,
+        }
+      : null;
+  const fallbackPair = livePair ?? snapshotPair;
+  if (fallbackPair !== null) {
+    const cached = clampCachedTokens(fallbackPair.cachedInputTokens, fallbackPair.inputTokens);
+    const lastInput = livePair === null ? providerThread?.contextUsage?.lastInputTokens : undefined;
+    const lastCached =
+      livePair === null ? providerThread?.contextUsage?.lastCachedInputTokens : undefined;
     const hasLast =
       typeof lastInput === "number" &&
       Number.isFinite(lastInput) &&
       lastInput > 0 &&
       typeof lastCached === "number" &&
       Number.isFinite(lastCached);
-    const lastTurnInputTokens = hasLast ? lastInput : fallbackInput;
+    const lastTurnInputTokens = hasLast ? lastInput : fallbackPair.inputTokens;
     const lastTurnCachedInputTokens = hasLast ? clampCachedTokens(lastCached, lastInput) : cached;
     return {
-      threadHitRate: cached / fallbackInput,
+      threadHitRate: cached / fallbackPair.inputTokens,
       lastTurnHitRate: lastTurnCachedInputTokens / lastTurnInputTokens,
-      totalInputTokens: fallbackInput,
+      totalInputTokens: fallbackPair.inputTokens,
       cachedInputTokens: cached,
-      uncachedInputTokens: Math.max(0, fallbackInput - cached),
+      uncachedInputTokens: Math.max(0, fallbackPair.inputTokens - cached),
       lastTurnInputTokens,
       lastTurnCachedInputTokens,
       turnCount: 1,

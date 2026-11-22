@@ -1937,7 +1937,12 @@ function ThreadDetailBody(
                         contextWindow={props.contextWindow ?? null}
                         cacheMetrics={props.cacheMetrics ?? null}
                         onCompactContext={() => {
-                          void props.onSendCommand("/compact");
+                          void props.onSendCommand("/compact").catch((error) => {
+                            Dialog.alert(
+                              gt("Compact context"),
+                              error instanceof Error ? error.message : gt("Try again."),
+                            );
+                          });
                         }}
                         hasCompactableConversation={
                           hasCompactableConversation && !props.isCompacting

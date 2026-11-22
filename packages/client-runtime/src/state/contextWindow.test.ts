@@ -399,6 +399,76 @@ describe("deriveThreadCacheMetrics", () => {
     ).toBeNull();
   });
 
+  it("excludes turns that omit cachedInputTokens while keeping explicit zeros as misses", () => {
+    expect(
+      deriveThreadCacheMetrics(
+        [
+          {
+            providerThreadId: activeThreadId,
+            ordinal: 1,
+            turnTokenUsage: {
+              usageScope: "main_agent",
+              usageStatus: "complete",
+              hasSubagents: false,
+              inputTokens: 100_000,
+              outputTokens: 1_000,
+              cachedInputTokens: 90_000,
+            },
+          },
+          {
+            providerThreadId: activeThreadId,
+            ordinal: 2,
+            turnTokenUsage: {
+              usageScope: "main_agent",
+              usageStatus: "complete",
+              hasSubagents: false,
+              inputTokens: 100_000,
+              outputTokens: 1_000,
+            },
+          },
+        ],
+        { id: activeThreadId, contextUsage: null },
+      ),
+    ).toEqual({
+      threadHitRate: 0.9,
+      lastTurnHitRate: 0.9,
+      totalInputTokens: 100_000,
+      cachedInputTokens: 90_000,
+      uncachedInputTokens: 10_000,
+      lastTurnInputTokens: 100_000,
+      lastTurnCachedInputTokens: 90_000,
+      turnCount: 1,
+    });
+  });
+
+  it("selects live or snapshot fallback counters as a matched pair", () => {
+    expect(
+      deriveThreadCacheMetrics(
+        [],
+        {
+          id: activeThreadId,
+          contextUsage: {
+            usedTokens: 120_000,
+            inputTokens: 200_000,
+            cachedInputTokens: 160_000,
+            lastInputTokens: 100_000,
+            lastCachedInputTokens: 90_000,
+          },
+        },
+        { inputTokens: 100_000 },
+      ),
+    ).toEqual({
+      threadHitRate: 0.8,
+      lastTurnHitRate: 0.9,
+      totalInputTokens: 200_000,
+      cachedInputTokens: 160_000,
+      uncachedInputTokens: 40_000,
+      lastTurnInputTokens: 100_000,
+      lastTurnCachedInputTokens: 90_000,
+      turnCount: 1,
+    });
+  });
+
   it("falls back to thread contextUsage cache counters when turnTokenUsage omits them", () => {
     expect(
       deriveThreadCacheMetrics([], {
