@@ -621,6 +621,25 @@ describe("buildThreadFeed", () => {
       });
       expect(before[1]).not.toHaveProperty("message.checkpointSummary");
       expect(getReviewSectionIdForCheckpoint(summary)).toBe("turn:2");
+      // A plain folder's own checkpoint is missing every turn; its repositories still changed.
+      const inRepository = {
+        ...summary,
+        status: "missing" as const,
+        files: [],
+        repositories: [
+          {
+            scopeId: CheckpointScopeId.make("scope-api"),
+            name: "api",
+            repositoryPath: "/work/api",
+            cwd: "/work/api",
+            files: summary.files,
+            baselineMissing: false,
+          },
+        ],
+      };
+      expect(buildThreadFeed(rows, { checkpointSummaries: [inRepository] })[1]).toMatchObject({
+        message: { checkpointSummary: inRepository },
+      });
       const fallback = deriveThreadFeedPresentation(
         [after.at(-1)!],
         null,
@@ -738,6 +757,37 @@ describe("buildThreadFeed", () => {
     )[0]!;
     expect(workEntryRowLabel(activity.workEntry)).toBe("src/a.ts +2 more");
     expect(summarizeToolGroup([activity.workEntry]).summary).toBe("Changed 3 files");
+  });
+
+  it("labels a running command without command text by its status", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...base("commandless", "2026-06-20T00:00:02.000Z", 1),
+      type: "command_execution",
+      title: "Ran command",
+      status: "running",
+      completedAt: null,
+      runId: null,
+      input: "",
+    };
+    const feed = buildThreadFeed([
+      projected({ ...userMessage(), runId: null }, 0),
+      projected(item, 1),
+    ]);
+    const activity = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0]!;
+    expect(workEntryRowLabel(activity.workEntry)).toBe("Running command");
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set(),
+      new Set(),
+      "2026-06-20T00:00:01.000Z",
+      true,
+    );
+    expect(presented.find((entry) => entry.type === "activity-group")).toMatchObject({
+      activities: [{ live: true, groupStandIn: { label: "Running command" } }],
+    });
   });
 
   it("anchors feedback before later committed turns", () => {
@@ -2069,6 +2119,13 @@ describe("streamed feed updates", () => {
     completedAt: null,
   };
   const settled = { ...running, status: "completed" as const, completedAt: at(50) };
+  // A follow-up the server accepted waits under the running turn until a run picks it up.
+  const queuedBehindRun: OrchestrationV2TurnItem[] = [
+    ...history,
+    reply("a3", 22, runs[2], "Working", true),
+    shell("s4", 23, runs[2]),
+    { ...user("queued", 30, runs[2]), runId: null },
+  ];
   // Each step is what one streamed event leaves behind, including the edits
   // that reach back into earlier runs.
   const steps: ReadonlyArray<{
@@ -2155,6 +2212,8 @@ describe("streamed feed updates", () => {
       ],
       latestRun: running,
     },
+    { items: queuedBehindRun, latestRun: running },
+    { items: queuedBehindRun, latestRun: running },
   ];
   // Like the projection reducer, an unchanged item at an unchanged position keeps its row.
   const rowsByItem = new Map<

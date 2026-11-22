@@ -1,5 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  boundIssueTrackerScopes,
+  issueTrackerBindingFor,
+  issueTrackerScopeOptions,
+  issueTrackerSummary,
+  hasIssueTrackerTeams,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
@@ -19,6 +25,7 @@ import { LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
+import { CheckboxMark } from "../ui/checkbox";
 import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -34,11 +41,9 @@ const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
   linear: LinearIcon,
 };
 
-const UNBOUND = "";
-
 /**
  * Standalone issue trackers for one environment: connect each with a credential, and bind the
- * environment's projects to one of the tracker's scopes so their issues list beside the git
+ * environment's projects to the tracker's scopes so their issues list beside the git
  * host's. Generic over the trackers the server reports; nothing here names Linear but its icon.
  */
 export function IssueTrackerSettings({ environmentId }: { readonly environmentId: EnvironmentId }) {
@@ -84,6 +89,8 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
           environmentId={environmentId}
           tracker={tracker}
           bindings={query.data?.bindings ?? {}}
+          refreshing={query.isPending}
+          refreshFailed={query.error !== null}
         />
       ))}
     </SettingsSection>
@@ -94,10 +101,14 @@ function TrackerRow({
   environmentId,
   tracker,
   bindings,
+  refreshing,
+  refreshFailed,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly refreshing: boolean;
+  readonly refreshFailed: boolean;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -166,7 +177,8 @@ function TrackerRow({
         </Button>
       </div>
       <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-        <CollapsibleContent>
+        {/* Kept mounted so a pick awaiting its refresh stays locked when the panel is reopened. */}
+        <CollapsibleContent keepMounted>
           {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
           <fieldset disabled={!canEdit || busy} className="contents">
             <div className="px-3 pb-4 pt-1 sm:px-4">
@@ -226,6 +238,8 @@ function TrackerRow({
                   environmentId={environmentId}
                   tracker={tracker}
                   bindings={bindings}
+                  refreshing={refreshing}
+                  refreshFailed={refreshFailed}
                 />
               ) : null}
             </div>
@@ -241,29 +255,41 @@ function ProjectBindings({
   environmentId,
   tracker,
   bindings,
+  refreshing,
+  refreshFailed,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly refreshing: boolean;
+  readonly refreshFailed: boolean;
 }) {
   const gt = useGT();
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const bind = useAtomCommand(issueTrackerEnvironment.bindProject, {
     label: `bind project to ${tracker.displayName}`,
   });
-  const [pending, setPending] = useState<ProjectId | null>(null);
-  if (projects.length === 0 || tracker.scopes.length === 0) return null;
+  const [picks, setPicks] = useState<Partial<Record<ProjectId, ReadonlyArray<string>>>>({});
+  const [saving, setSaving] = useState(false);
+  const held = Object.values(picks).some((scopes) => scopes !== undefined);
+  if (held && !saving && !refreshing && !refreshFailed) setPicks({});
+  const busy = saving || (held && refreshing);
+  const bound = (projectId: ProjectId) =>
+    picks[projectId] ?? boundIssueTrackerScopes(tracker.tracker, bindings[projectId]);
+  if (projects.length === 0 || !hasIssueTrackerTeams(tracker, bindings)) return null;
 
-  const change = async (projectId: ProjectId, scope: string) => {
-    setPending(projectId);
-    await bind({
-      environmentId,
-      input: {
-        projectId,
-        binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
-      },
-    });
-    setPending(null);
+  const change = async (projectId: ProjectId, scopes: ReadonlyArray<string>) => {
+    if (busy) return;
+    const binding = issueTrackerBindingFor(tracker.tracker, bound(projectId), scopes);
+    const before = picks[projectId];
+    setSaving(true);
+    setPicks((current) => ({
+      ...current,
+      [projectId]: boundIssueTrackerScopes(tracker.tracker, binding ?? undefined),
+    }));
+    const result = await bind({ environmentId, input: { projectId, binding } });
+    if (result._tag !== "Success") setPicks((current) => ({ ...current, [projectId]: before }));
+    setSaving(false);
   };
 
   return (
@@ -271,25 +297,24 @@ function ProjectBindings({
       <SettingsRow
         title={gt("Projects")}
         description={gt(
-          "Pick the {tracker} {scope} whose issues each project lists beside its repository's own.",
+          "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one unless asked for another.",
           { tracker: tracker.displayName, scope: tracker.scopeNoun },
         )}
       />
       {projects.map((project) => {
-        const bound = bindings[project.id];
         // A project bound to another tracker keeps that binding; this picker shows it unbound.
-        const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
+        const value = bound(project.id);
+        const options = issueTrackerScopeOptions(tracker, value);
         return (
           <SettingsRow
             key={project.id}
             title={project.title}
             control={
               <Select
-                value={value}
-                disabled={pending === project.id}
-                onValueChange={(next) => {
-                  if (next !== null) void change(project.id, next);
-                }}
+                multiple
+                value={[...value]}
+                disabled={busy}
+                onValueChange={(next) => void change(project.id, next)}
               >
                 <SelectTrigger
                   aria-label={gt("{tracker} {scope} for {project}", {
@@ -301,18 +326,28 @@ function ProjectBindings({
                   size="sm"
                 >
                   <SelectValue>
-                    {value === UNBOUND
+                    {value.length === 0
                       ? gt("Not bound")
-                      : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)}
+                      : value
+                          .map(
+                            (key) => tracker.scopes.find((scope) => scope.key === key)?.name ?? key,
+                          )
+                          .join(", ")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
-                  <SelectItem value={UNBOUND}>
-                    <T>Not bound</T>
-                  </SelectItem>
-                  {tracker.scopes.map((scope) => (
-                    <SelectItem key={scope.key} value={scope.key}>
-                      {scope.name} ({scope.key})
+                  {options.map((scope) => (
+                    <SelectItem
+                      key={scope.key}
+                      value={scope.key}
+                      disabled={!scope.addable}
+                      // The checkbox marks each pick; Base UI's shading of selected rows reads as a cursor.
+                      data-selected={undefined}
+                    >
+                      <span className="flex items-center gap-2">
+                        <CheckboxMark checked={value.includes(scope.key)} />
+                        {scope.name} ({scope.key})
+                      </span>
                     </SelectItem>
                   ))}
                 </SelectPopup>
