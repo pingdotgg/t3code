@@ -12,6 +12,13 @@ export interface PreviewStreamConfiguration {
   readonly tabId: string;
   readonly interactive: boolean;
   readonly background: string;
+  /** Translated in React Native: the WebView cannot load the catalogs. */
+  readonly labels: {
+    readonly page: string;
+    readonly pageInput: string;
+    readonly pictureInPictureNotReady: string;
+    readonly pictureInPictureUnavailable: string;
+  };
 }
 
 export type PreviewStreamMessage =
@@ -25,6 +32,8 @@ export type PreviewStreamMessage =
   | { readonly type: "gone" }
   | ({ readonly type: "hostSetup" } & PreviewStreamHostSetup)
   | { readonly type: "viewport"; readonly width: number; readonly height: number }
+  /** The direction a drag scrolls the page, sent every few dozen pixels of it. */
+  | { readonly type: "scroll"; readonly direction: "up" | "down" }
   | { readonly type: "clipboard"; readonly text: string }
   | ({ readonly type: "download" } & PreviewStreamDownload)
   | { readonly type: "fileChooser"; readonly chooser: PreviewStreamFileChooser | null }
@@ -35,10 +44,16 @@ export type PreviewStreamMessage =
       readonly detail?: string;
     };
 
-export function previewStreamDocument(configuration: string, script: string) {
+export function previewStreamDocument(
+  configuration: string,
+  script: string,
+  stoppedDetail: string,
+) {
   const safeConfiguration = configuration.replace(/</g, "\\u003c");
   const safeScript = script.replace(/<\/script/gi, "<\\/script");
-  const failure = `window.ReactNativeWebView.postMessage(JSON.stringify({type:"status",status:"error",detail:"Browser viewer stopped unexpectedly."}));`;
+  const safeStoppedDetail = JSON.stringify(stoppedDetail).replace(/</g, "\\u003c");
+  const failure = `window.ReactNativeWebView.postMessage(JSON.stringify({type:"status",status:"error",detail:${safeStoppedDetail}}));`;
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- WebView document markup
   return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <style>
   html, body { height: 100%; overflow: hidden; }
