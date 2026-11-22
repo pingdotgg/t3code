@@ -49,7 +49,7 @@ export default function NotebookPreview(props: {
     if (!root || !outputCount) return;
     const inView = new Set<Element>();
     const nearby = new Set<Element>();
-    let active: Element[] | undefined;
+    let active: Element[] = [];
     const outputKey = (node: Element) => node.getAttribute("data-notebook-output")!;
     const track = (candidates: Set<Element>) => (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
@@ -58,8 +58,8 @@ export default function NotebookPreview(props: {
       }
       // Give visible outputs the limited iframe slots before preloading offscreen outputs.
       const next = [...new Set([...inView, ...nearby])].slice(0, 16);
-      if (active?.length === next.length && active.every((node) => next.includes(node))) return;
-      const measured = (active ?? [])
+      if (active.length === next.length && active.every((node) => next.includes(node))) return;
+      const measured = active
         .filter((node) => !next.includes(node))
         .map((node) => [outputKey(node), node.getBoundingClientRect().height] as const);
       active = next;
