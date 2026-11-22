@@ -3852,6 +3852,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const clone = path.join(nestedCwd, "clone");
         yield* fileSystem.makeDirectory(clone);
         yield* initRepoWithCommit(clone);
+        yield* writeTextFile(clone, "README.md", "# dirty nested clone\n");
         const projectDirectories = [nestedCwd];
         if (symlinksSupported) {
           const alias = path.join(directory, "alias");
@@ -4184,15 +4185,203 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.include(diff, "+# tracked change");
         assert.include(diff, "+untracked contents");
         assert.notInclude(diff, "scaffold");
-        assert.include(diff, "diff --git a/committed b/committed");
+        assert.notInclude(diff, "Subproject commit");
 
         const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
         assert.deepStrictEqual(status.branchChanges, {
           baseRef: null,
-          insertions: 3,
+          insertions: 2,
           deletions: 1,
         });
       }),
+    );
+
+    it.effect(
+      "expands uncommitted files across tracked gitlinks, nested repos, and worktrees",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const fs = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          // Tracked nested repo whose HEAD advances cleanly (should not emit Subproject commit).
+          const movedClean = pathService.join(cwd, "moved-clean");
+          yield* fs.makeDirectory(movedClean);
+          yield* initRepoWithCommit(movedClean);
+
+          // Tracked nested repo with uncommitted edits, staged changes, and untracked files.
+          const trackedDirty = pathService.join(cwd, "repos", "app");
+          yield* fs.makeDirectory(trackedDirty, { recursive: true });
+          yield* initRepoWithCommit(trackedDirty);
+          yield* writeTextFile(trackedDirty, "delete-me.txt", "bye\n");
+          yield* git(trackedDirty, ["add", "delete-me.txt"]);
+          yield* git(trackedDirty, ["commit", "-m", "add delete-me"]);
+
+          // Record both as tracked gitlinks and configure diff.ignoresubmodules=dirty like Projects.
+          yield* git(cwd, ["add", "moved-clean", "repos/app"]);
+          yield* git(cwd, ["commit", "-m", "track nested repos"]);
+          yield* git(cwd, ["config", "diff.ignoresubmodules", "dirty"]);
+
+          // Advance moved-clean HEAD with a clean working tree.
+          yield* writeTextFile(movedClean, "README.md", "# committed move\n");
+          yield* git(movedClean, ["add", "README.md"]);
+          yield* git(movedClean, ["commit", "-m", "advance head cleanly"]);
+
+          // Dirty trackedDirty with tracked edit, deletion, and untracked file.
+          yield* writeTextFile(trackedDirty, "README.md", "# edited in nested repo\n");
+          yield* fs.remove(pathService.join(trackedDirty, "delete-me.txt"));
+          yield* writeTextFile(trackedDirty, "notes.txt", "untracked nested\n");
+
+          // Untracked linked worktree inside a plain container folder (like *.worktrees/1).
+          const dirtyWorktree = pathService.join(cwd, "repos", "app.worktrees", "1");
+          yield* fs.makeDirectory(pathService.dirname(dirtyWorktree), { recursive: true });
+          yield* git(trackedDirty, ["worktree", "add", "--detach", dirtyWorktree, "HEAD"]);
+          yield* writeTextFile(dirtyWorktree, "worktree.txt", "dirty worktree file\n");
+
+          // Untracked clean worktree (should emit nothing).
+          const cleanWorktree = pathService.join(cwd, "repos", "app.worktrees", "2");
+          yield* git(trackedDirty, ["worktree", "add", "--detach", cleanWorktree, "HEAD"]);
+
+          // Untracked unborn nested repository with an uncommitted file.
+          const unborn = pathService.join(cwd, "unborn");
+          yield* fs.makeDirectory(unborn);
+          yield* git(unborn, ["init"]);
+          yield* writeTextFile(unborn, "draft.txt", "unborn draft\n");
+
+          // Plain outer file change alongside nested repos.
+          yield* writeTextFile(cwd, "README.md", "# outer edit\n");
+
+          const fullPreview = yield* driver.getReviewDiffPreview({ cwd, ignoreWhitespace: false });
+          for (const kind of ["working-tree", "branch-range"] as const) {
+            const source = fullPreview.sources.find((entry) => entry.kind === kind)!;
+            assert.deepStrictEqual(
+              source.files?.map((file) => ({
+                path: file.path,
+                changeType: file.changeType,
+                additions: file.additions,
+                deletions: file.deletions,
+              })),
+              [
+                { path: "README.md", changeType: "change", additions: 1, deletions: 1 },
+                {
+                  path: "repos/app.worktrees/1/worktree.txt",
+                  changeType: "new",
+                  additions: 1,
+                  deletions: 0,
+                },
+                {
+                  path: "repos/app/delete-me.txt",
+                  changeType: "deleted",
+                  additions: 0,
+                  deletions: 1,
+                },
+                { path: "repos/app/notes.txt", changeType: "new", additions: 1, deletions: 0 },
+                { path: "repos/app/README.md", changeType: "change", additions: 1, deletions: 1 },
+                { path: "unborn/draft.txt", changeType: "new", additions: 1, deletions: 0 },
+              ],
+            );
+            assert.notInclude(source.diff, "Subproject commit");
+            assert.notInclude(source.diff, "moved-clean");
+            assert.notInclude(source.diff, "app.worktrees/2");
+            assert.include(source.diff, "diff --git a/README.md b/README.md");
+            assert.include(source.diff, "diff --git a/repos/app/README.md b/repos/app/README.md");
+            assert.include(
+              source.diff,
+              "diff --git a/repos/app.worktrees/1/worktree.txt b/repos/app.worktrees/1/worktree.txt",
+            );
+            assert.include(source.diff, "diff --git a/unborn/draft.txt b/unborn/draft.txt");
+          }
+
+          // Deferred metadata-only query (used by web/desktop) + lazy single-file fetch.
+          const metadataPreview = yield* driver.getReviewDiffPreview({
+            cwd,
+            metadataOnly: true,
+            sourceKind: "branch-range",
+          });
+          const metadataSource = metadataPreview.sources[0]!;
+          assert.strictEqual(metadataSource.patchesDeferred, true);
+          assert.strictEqual(metadataSource.diff, "");
+          assert.strictEqual(metadataSource.files?.length, 6);
+
+          const singleNestedFile = yield* driver.getReviewDiffPreview({
+            cwd,
+            file: {
+              path: "repos/app/README.md",
+              previousPath: null,
+              sourceKind: "branch-range",
+            },
+          });
+          const singleSource = singleNestedFile.sources.find(
+            (entry) => entry.kind === "branch-range",
+          )!;
+          assert.deepStrictEqual(singleSource.files, [
+            {
+              path: "repos/app/README.md",
+              previousPath: null,
+              changeType: "change",
+              additions: 1,
+              deletions: 1,
+            },
+          ]);
+          assert.include(
+            singleSource.diff,
+            "diff --git a/repos/app/README.md b/repos/app/README.md",
+          );
+          assert.include(singleSource.diff, "+# edited in nested repo");
+
+          // Expanding file contents works for modified, new, and deleted nested files.
+          const modifiedContents = yield* driver.getReviewDiffFileContents({
+            cwd,
+            sourceKind: "branch-range",
+            baseRef: null,
+            headRef: null,
+            oldPath: "repos/app/README.md",
+            newPath: "repos/app/README.md",
+            changeType: "change",
+          });
+          assert.deepStrictEqual(modifiedContents, {
+            oldContents: "# test\n",
+            newContents: "# edited in nested repo\n",
+          });
+
+          const newContents = yield* driver.getReviewDiffFileContents({
+            cwd,
+            sourceKind: "working-tree",
+            baseRef: "HEAD",
+            headRef: null,
+            oldPath: "repos/app.worktrees/1/worktree.txt",
+            newPath: "repos/app.worktrees/1/worktree.txt",
+            changeType: "new",
+          });
+          assert.deepStrictEqual(newContents, {
+            oldContents: "",
+            newContents: "dirty worktree file\n",
+          });
+
+          const deletedContents = yield* driver.getReviewDiffFileContents({
+            cwd,
+            sourceKind: "branch-range",
+            baseRef: null,
+            headRef: null,
+            oldPath: "repos/app/delete-me.txt",
+            newPath: "repos/app/delete-me.txt",
+            changeType: "deleted",
+          });
+          assert.deepStrictEqual(deletedContents, {
+            oldContents: "bye\n",
+            newContents: "",
+          });
+
+          // Status branchChanges totals match the expanded uncommitted diffs.
+          const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+          assert.deepStrictEqual(status.branchChanges, {
+            baseRef: null,
+            insertions: 5,
+            deletions: 3,
+          });
+        }),
     );
 
     it.effect("keeps untracked filenames with pathspec magic in the review", () =>
