@@ -611,7 +611,6 @@ interface ActiveFallbackState {
 interface FailedUpgradeTargetState {
   readonly targetLaunchIdentity: string | null;
   readonly status: ServerProvider["status"];
-  readonly auth: ServerProvider["auth"];
   readonly message: string | undefined;
 }
 
@@ -1153,10 +1152,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     checkedAt: withLocalVersion.checkedAt,
                     installed: true,
                     status: withLocalVersion.enabled ? failedUpgrade.status : ("disabled" as const),
-                    auth:
-                      failedUpgrade.auth.status === "unauthenticated"
-                        ? failedUpgrade.auth
-                        : lastProviderWithoutMessage.auth,
                     ...(failedUpgrade.message !== undefined
                       ? { message: failedUpgrade.message }
                       : {}),
@@ -1546,7 +1541,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 yield* Ref.update(retiredRuntimeIdentities, (retired) => {
                   if (!retired.has(incomingIdentity)) return retired;
                   const next = new Map(retired);
-                  next.set(incomingIdentity, stampRevision);
+                  next.set(
+                    incomingIdentity,
+                    Math.max(retired.get(incomingIdentity) ?? 0, stampRevision),
+                  );
                   return next;
                 });
               }
@@ -1561,7 +1559,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 yield* maybeReconcileUnmatchedRuntime(incomingIdentity);
               }
             }).pipe(
-              Effect.onInterrupt(() =>
+              Effect.onError(() =>
                 Ref.update(reconcilingState, (state) => {
                   if (!state.has(incomingIdentity)) return state;
                   const next = new Map(state);
@@ -1569,6 +1567,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   return next;
                 }),
               ),
+              Effect.withSpan("AcpRegistryDriver.reconcileUnmatchedRuntime"),
               Effect.forkIn(driverScope),
             );
           });
@@ -1676,7 +1675,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             checkedAt: provider.checkedAt,
                             status: provider.status,
                             auth:
-                              provider.auth.status === "unauthenticated"
+                              !isUpgradeFailure && provider.auth.status === "unauthenticated"
                                 ? provider.auth
                                 : base.auth,
                             ...(provider.message !== undefined
@@ -1708,7 +1707,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               yield* Ref.set(failedUpgradeTarget, {
                                 targetLaunchIdentity: failedTargetLaunchIdentity,
                                 status: provider.status,
-                                auth: provider.auth,
                                 message: provider.message,
                               });
                             }
@@ -1727,8 +1725,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           };
                         }
                         // No accepted snapshot exists for previousIdentity; publish the failure
-                        // snapshot directly without attaching previousIdentity's live state.
+                        // snapshot directly without attaching previousIdentity's live state and
+                        // align watcher identities so previousIdentity updates cannot land on it.
                         const published = yield* tryPublishSnapshot(provider);
+                        if (published) {
+                          const failedIdentity = runtimeIdentityFor(
+                            provider,
+                            failedTargetLaunchIdentity ?? launchIdentity,
+                          );
+                          if (failedIdentity !== null && failedIdentity !== previousIdentity) {
+                            yield* clearLiveState({ preserveRuntimeIdentity: failedIdentity });
+                          }
+                          yield* Ref.set(expectedRuntimeIdentity, failedIdentity);
+                        }
                         return {
                           published,
                           readiness: published

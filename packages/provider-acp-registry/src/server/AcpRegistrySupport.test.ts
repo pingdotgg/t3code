@@ -1932,6 +1932,7 @@ describe("AcpRegistrySupport", () => {
       } | null = null;
       return Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-cold-backoff-",
         });
@@ -2007,7 +2008,7 @@ describe("AcpRegistrySupport", () => {
         const coldInspectDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-cold-inspect-coalesce-",
         });
-        const coldCachePath = `${coldInspectDir}/acp-registry/registry.json`;
+        const coldCachePath = path.join(coldInspectDir, "acp-registry", "registry.json");
         const missingColdCacheError = yield* fileSystem
           .readFileString(coldCachePath)
           .pipe(Effect.flip);
@@ -2021,7 +2022,7 @@ describe("AcpRegistrySupport", () => {
         };
         const coldInspectResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: coldInspectDir,
-          toolsDir: `${coldInspectDir}/tools`,
+          toolsDir: path.join(coldInspectDir, "tools"),
           registryUrl,
         }).pipe(Effect.provideService(FileSystem.FileSystem, coldInspectFs));
         const coldInspectGate = {
@@ -2124,11 +2125,12 @@ describe("AcpRegistrySupport", () => {
       } | null = null;
       return Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-invalidate-race-",
         });
-        const registryDirectory = `${cacheDir}/acp-registry`;
-        const registryCachePath = `${registryDirectory}/registry.json`;
+        const registryDirectory = path.join(cacheDir, "acp-registry");
+        const registryCachePath = path.join(registryDirectory, "registry.json");
         yield* fileSystem.makeDirectory(registryDirectory, { recursive: true });
         yield* fileSystem.writeFileString(registryCachePath, makeRegistry(makeNpxAgent("1.2.3")));
 
@@ -2233,7 +2235,7 @@ describe("AcpRegistrySupport", () => {
         const coldAcceptedDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-cold-accept-",
         });
-        const coldAcceptedCachePath = `${coldAcceptedDir}/acp-registry/registry.json`;
+        const coldAcceptedCachePath = path.join(coldAcceptedDir, "acp-registry", "registry.json");
         const missingAcceptedCacheError = yield* fileSystem
           .readFileString(coldAcceptedCachePath)
           .pipe(Effect.flip);
@@ -2246,7 +2248,7 @@ describe("AcpRegistrySupport", () => {
         };
         const coldAcceptedResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: coldAcceptedDir,
-          toolsDir: `${coldAcceptedDir}/tools`,
+          toolsDir: path.join(coldAcceptedDir, "tools"),
           registryUrl,
         }).pipe(Effect.provideService(FileSystem.FileSystem, coldAcceptedFs));
         const coldFetchGate = {
@@ -3373,11 +3375,12 @@ describe("AcpRegistrySupport", () => {
     });
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-disk-race-",
       });
-      const registryDirectory = `${cacheDir}/acp-registry`;
-      const registryCachePath = `${registryDirectory}/registry.json`;
+      const registryDirectory = path.join(cacheDir, "acp-registry");
+      const registryCachePath = path.join(registryDirectory, "registry.json");
       yield* fileSystem.makeDirectory(registryDirectory, { recursive: true });
       yield* fileSystem.writeFileString(registryCachePath, makeRegistry(makeNpxAgent("1.2.3")));
 
@@ -3962,10 +3965,18 @@ describe("AcpRegistrySupport", () => {
         const ioDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-baseline-io-",
         });
-        const ioRegistryDir = `${ioDir}/acp-registry`;
-        const ioRegistryPath = `${ioRegistryDir}/registry.json`;
-        const ioBaselinesPath = `${ioRegistryDir}/legacy-baselines.json`;
-        const ioLegacyExe = `${ioDir}/tools/example-agent/1.0.0/linux-x86_64/bin/example-agent`;
+        const ioRegistryDir = path.join(ioDir, "acp-registry");
+        const ioRegistryPath = path.join(ioRegistryDir, "registry.json");
+        const ioBaselinesPath = path.join(ioRegistryDir, "legacy-baselines.json");
+        const ioLegacyExe = path.join(
+          ioDir,
+          "tools",
+          "example-agent",
+          "1.0.0",
+          "linux-x86_64",
+          "bin",
+          "example-agent",
+        );
         yield* fileSystem.makeDirectory(path.dirname(ioLegacyExe), { recursive: true });
         yield* fileSystem.writeFileString(ioLegacyExe, "#!/bin/sh\necho legacy-a\n");
         yield* fileSystem.chmod(ioLegacyExe, 0o755);
@@ -3986,7 +3997,7 @@ describe("AcpRegistrySupport", () => {
         upstream = binaryAgent("1.0.0", archiveBUrl);
         const ioResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: ioDir,
-          toolsDir: `${ioDir}/tools`,
+          toolsDir: path.join(ioDir, "tools"),
           registryUrl,
         }).pipe(Effect.provideService(FileSystem.FileSystem, flakyBaselinesFs));
         yield* ioResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
@@ -4004,7 +4015,7 @@ describe("AcpRegistrySupport", () => {
         // Restarting against the recovered disk files must install B instead of reusing legacy A.
         const restartedIoResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: ioDir,
-          toolsDir: `${ioDir}/tools`,
+          toolsDir: path.join(ioDir, "tools"),
           registryUrl,
         });
         const resolvedAfterIoRecovery = yield* restartedIoResolver.resolve(
@@ -4015,38 +4026,61 @@ describe("AcpRegistrySupport", () => {
           "#!/bin/sh\necho archive-b\n",
         );
 
-        // 2b. Non-directory files in the shared tools/ directory (e.g., tools/codex/active.json,
-        // tools/.DS_Store) must not break legacy baseline scanning or freeze disk registry.json.
+        // 2b. Non-directory files and unreadable unrelated tool directories in shared tools/
+        // (e.g., tools/codex/active.json, tools/.DS_Store, tools/chrome-headless-shell, or a
+        // non-directory file at a candidate platform slot) must not break legacy baseline scanning.
         const sharedToolsDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-shared-tools-",
         });
-        const sharedRegistryDir = `${sharedToolsDir}/acp-registry`;
-        const sharedRegistryPath = `${sharedRegistryDir}/registry.json`;
-        const sharedBaselinesPath = `${sharedRegistryDir}/legacy-baselines.json`;
-        const sharedLegacyExe = `${sharedToolsDir}/tools/example-agent/1.0.0/linux-x86_64/bin/example-agent`;
+        const sharedRegistryDir = path.join(sharedToolsDir, "acp-registry");
+        const sharedRegistryPath = path.join(sharedRegistryDir, "registry.json");
+        const sharedBaselinesPath = path.join(sharedRegistryDir, "legacy-baselines.json");
+        const sharedToolsRoot = path.join(sharedToolsDir, "tools");
+        const sharedLegacyExe = path.join(
+          sharedToolsRoot,
+          "example-agent",
+          "1.0.0",
+          "linux-x86_64",
+          "bin",
+          "example-agent",
+        );
         yield* fileSystem.makeDirectory(path.dirname(sharedLegacyExe), { recursive: true });
         yield* fileSystem.writeFileString(sharedLegacyExe, "#!/bin/sh\necho legacy-a\n");
         yield* fileSystem.chmod(sharedLegacyExe, 0o755);
-        yield* fileSystem.makeDirectory(`${sharedToolsDir}/tools/codex`, { recursive: true });
+        // Place a regular file at a candidate installRoot slot to exercise the directory check.
+        const nonDirSlotDir = path.join(sharedToolsRoot, "example-agent", "0.9.0");
+        yield* fileSystem.makeDirectory(nonDirSlotDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(nonDirSlotDir, "linux-x86_64"), "not-a-dir");
+        yield* fileSystem.makeDirectory(path.join(sharedToolsRoot, "codex"), { recursive: true });
         yield* fileSystem.writeFileString(
-          `${sharedToolsDir}/tools/codex/active.json`,
+          path.join(sharedToolsRoot, "codex", "active.json"),
           '{"version":"1.0.0"}',
         );
-        yield* fileSystem.writeFileString(`${sharedToolsDir}/tools/.DS_Store`, "finder");
+        yield* fileSystem.writeFileString(path.join(sharedToolsRoot, ".DS_Store"), "finder");
+        const unreadableOtherTool = path.join(sharedToolsRoot, "chrome-headless-shell");
+        yield* fileSystem.makeDirectory(unreadableOtherTool, { recursive: true });
         yield* fileSystem.makeDirectory(sharedRegistryDir, { recursive: true });
         yield* fileSystem.writeFileString(
           sharedRegistryPath,
           makeRegistry(binaryAgent("1.0.0", archiveAUrl)),
         );
+        const sharedToolsFs: FileSystem.FileSystem = {
+          ...fileSystem,
+          readDirectory: (dirPath, options) =>
+            dirPath === unreadableOtherTool
+              ? fileSystem.readDirectory(sharedLegacyExe, options)
+              : fileSystem.readDirectory(dirPath, options),
+        };
         upstream = binaryAgent("1.0.0", archiveBUrl);
         const sharedToolsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: sharedToolsDir,
-          toolsDir: `${sharedToolsDir}/tools`,
+          toolsDir: sharedToolsRoot,
           registryUrl,
-        });
+        }).pipe(Effect.provideService(FileSystem.FileSystem, sharedToolsFs));
         yield* sharedToolsResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         expect(yield* fileSystem.readFileString(sharedRegistryPath)).toContain(archiveBUrl);
         expect(yield* fileSystem.readFileString(sharedBaselinesPath)).toContain(archiveAUrl);
+        expect(yield* fileSystem.readFileString(sharedBaselinesPath)).not.toContain("0.9.0");
         const resolvedWithSharedTools = yield* sharedToolsResolver.resolve(
           settings(),
           "/workspace",
@@ -4057,15 +4091,22 @@ describe("AcpRegistrySupport", () => {
 
         // 2c. An incomplete tools-directory scan during A -> B keeps disk registry.json on A AND
         // blocks live resolution from launching legacy A as B even before the scan recovers; once
-        // readable again, the next refresh compares against disk A and records A.
+        // readable again, recovery persists A and clears the incomplete flag for eligible slots.
         const scanDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-scan-error-",
         });
-        const scanRegistryDir = `${scanDir}/acp-registry`;
-        const scanRegistryPath = `${scanRegistryDir}/registry.json`;
-        const scanBaselinesPath = `${scanRegistryDir}/legacy-baselines.json`;
-        const scanToolsDir = `${scanDir}/tools`;
-        const scanLegacyExe = `${scanToolsDir}/example-agent/1.0.0/linux-x86_64/bin/example-agent`;
+        const scanRegistryDir = path.join(scanDir, "acp-registry");
+        const scanRegistryPath = path.join(scanRegistryDir, "registry.json");
+        const scanBaselinesPath = path.join(scanRegistryDir, "legacy-baselines.json");
+        const scanToolsDir = path.join(scanDir, "tools");
+        const scanAgentDir = path.join(scanToolsDir, "example-agent");
+        const scanLegacyExe = path.join(
+          scanAgentDir,
+          "1.0.0",
+          "linux-x86_64",
+          "bin",
+          "example-agent",
+        );
         yield* fileSystem.makeDirectory(path.dirname(scanLegacyExe), { recursive: true });
         yield* fileSystem.writeFileString(scanLegacyExe, "#!/bin/sh\necho legacy-a\n");
         yield* fileSystem.chmod(scanLegacyExe, 0o755);
@@ -4078,7 +4119,7 @@ describe("AcpRegistrySupport", () => {
         const flakyScanFs: FileSystem.FileSystem = {
           ...fileSystem,
           readDirectory: (dirPath, options) =>
-            failToolsScan && dirPath === scanToolsDir
+            failToolsScan && dirPath === scanAgentDir
               ? fileSystem.readDirectory(scanLegacyExe, options)
               : fileSystem.readDirectory(dirPath, options),
         };
@@ -4098,14 +4139,80 @@ describe("AcpRegistrySupport", () => {
           "#!/bin/sh\necho archive-b\n",
         );
 
+        // A failed scan after restart must NOT overwrite a durable legacy baseline with registry.json:
+        // with legacy A on disk, durable baseline A, and registry.json at B, failing a scan on
+        // B -> C and rolling back to B while still failing must install B, not run legacy A as B.
+        const durableScanDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-durable-scan-",
+        });
+        const durableRegistryDir = path.join(durableScanDir, "acp-registry");
+        const durableRegistryPath = path.join(durableRegistryDir, "registry.json");
+        const durableBaselinesPath = path.join(durableRegistryDir, "legacy-baselines.json");
+        const durableToolsDir = path.join(durableScanDir, "tools");
+        const durableAgentDir = path.join(durableToolsDir, "example-agent");
+        const durableLegacyExe = path.join(
+          durableAgentDir,
+          "1.0.0",
+          "linux-x86_64",
+          "bin",
+          "example-agent",
+        );
+        yield* fileSystem.makeDirectory(path.dirname(durableLegacyExe), { recursive: true });
+        yield* fileSystem.writeFileString(durableLegacyExe, "#!/bin/sh\necho legacy-a\n");
+        yield* fileSystem.chmod(durableLegacyExe, 0o755);
+        yield* fileSystem.makeDirectory(durableRegistryDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          durableRegistryPath,
+          makeRegistry(binaryAgent("1.0.0", archiveBUrl)),
+        );
+        yield* fileSystem.writeFileString(
+          durableBaselinesPath,
+          JSON.stringify({
+            "example-agent\u00001.0.0\u0000linux-x86_64": JSON.stringify({
+              archive: archiveAUrl,
+              cmd: "./bin/example-agent",
+              sha256: null,
+            }),
+          }),
+        );
+        const failDurableScanFs: FileSystem.FileSystem = {
+          ...fileSystem,
+          readDirectory: (dirPath, options) =>
+            dirPath === durableAgentDir
+              ? fileSystem.readDirectory(durableLegacyExe, options)
+              : fileSystem.readDirectory(dirPath, options),
+        };
+        const durableScanResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: durableScanDir,
+          toolsDir: durableToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, failDurableScanFs));
+        upstream = binaryAgent("1.0.0", archiveCUrl);
+        yield* durableScanResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        upstream = binaryAgent("1.0.0", archiveBUrl);
+        yield* durableScanResolver.invalidateIndex();
+        yield* durableScanResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const resolvedAgainstDurable = yield* durableScanResolver.resolve(settings(), "/workspace");
+        expect(yield* fileSystem.readFileString(resolvedAgainstDurable.spawn.command)).toBe(
+          "#!/bin/sh\necho archive-b\n",
+        );
+
         // A transient I/O error reading registry.json during baseline discovery must also keep
         // disk registry.json untouched rather than treating it as missing.
         const regIoDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-reg-io-",
         });
-        const regIoRegistryDir = `${regIoDir}/acp-registry`;
-        const regIoRegistryPath = `${regIoRegistryDir}/registry.json`;
-        const regIoLegacyExe = `${regIoDir}/tools/example-agent/1.0.0/linux-x86_64/bin/example-agent`;
+        const regIoRegistryDir = path.join(regIoDir, "acp-registry");
+        const regIoRegistryPath = path.join(regIoRegistryDir, "registry.json");
+        const regIoLegacyExe = path.join(
+          regIoDir,
+          "tools",
+          "example-agent",
+          "1.0.0",
+          "linux-x86_64",
+          "bin",
+          "example-agent",
+        );
         yield* fileSystem.makeDirectory(path.dirname(regIoLegacyExe), { recursive: true });
         yield* fileSystem.writeFileString(regIoLegacyExe, "#!/bin/sh\necho legacy-a\n");
         yield* fileSystem.chmod(regIoLegacyExe, 0o755);
@@ -4123,7 +4230,7 @@ describe("AcpRegistrySupport", () => {
         };
         const regIoResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: regIoDir,
-          toolsDir: `${regIoDir}/tools`,
+          toolsDir: path.join(regIoDir, "tools"),
           registryUrl,
         }).pipe(Effect.provideService(FileSystem.FileSystem, failRegistryReadFs));
         yield* regIoResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
@@ -4140,11 +4247,32 @@ describe("AcpRegistrySupport", () => {
         yield* scanResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         expect(yield* fileSystem.readFileString(scanRegistryPath)).toContain(archiveBUrl);
         expect(yield* fileSystem.readFileString(scanBaselinesPath)).toContain(archiveAUrl);
+        // Once the scan recovers and baselines persist, legacyBaselineDiscoveryIncomplete is reset
+        // so an eligible unreceipted legacy slot at a matching version can be reused cleanly.
+        const scanLegacyV2Exe = path.join(
+          scanAgentDir,
+          "2.0.0",
+          "linux-x86_64",
+          "bin",
+          "example-agent",
+        );
+        yield* fileSystem.makeDirectory(path.dirname(scanLegacyV2Exe), { recursive: true });
+        yield* fileSystem.writeFileString(scanLegacyV2Exe, "#!/bin/sh\necho legacy-v2\n");
+        yield* fileSystem.chmod(scanLegacyV2Exe, 0o755);
+        upstream = binaryAgent("2.0.0", archiveCUrl);
+        yield* scanResolver.invalidateIndex();
+        yield* scanResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const reusedAfterRecovery = yield* scanResolver.resolve(settings(), "/workspace");
+        expect(yield* fileSystem.readFileString(reusedAfterRecovery.spawn.command)).toBe(
+          "#!/bin/sh\necho legacy-v2\n",
+        );
+        upstream = binaryAgent("1.0.0", archiveBUrl);
         const restartedScanResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: scanDir,
           toolsDir: scanToolsDir,
           registryUrl,
         });
+        yield* restartedScanResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         const resolvedAfterScanRecovery = yield* restartedScanResolver.resolve(
           settings(),
           "/workspace",
@@ -4240,9 +4368,46 @@ describe("AcpRegistrySupport", () => {
           "#!/bin/sh\necho archive-b\n",
         );
 
-        // Add another agent's baseline entry, uninstall example-agent, and verify only example-agent is pruned.
+        // Add another agent's baseline and launch-options sidecar entries, uninstall example-agent,
+        // and verify only example-agent is pruned from both stores.
         rebuiltBaselines[otherSlotKey] = "other-baseline";
         yield* fileSystem.writeFileString(corruptBaselinesPath, JSON.stringify(rebuiltBaselines));
+        const corruptSidecarPath = path.join(corruptRegistryDir, "binary-launch-options.json");
+        const exampleSlotRoot = path.join(
+          corruptDir,
+          "tools",
+          "example-agent",
+          "1.0.0",
+          "linux-x86_64",
+        );
+        const otherSlotRoot = path.join(
+          corruptDir,
+          "tools",
+          "other-agent",
+          "1.0.0",
+          "linux-x86_64",
+        );
+        yield* fileSystem.writeFileString(
+          corruptSidecarPath,
+          JSON.stringify({
+            [exampleSlotRoot]: {
+              version: "1.0.0",
+              archive: archiveBUrl,
+              cmd: "./bin/example-agent",
+              sha256: null,
+              args: ["--old"],
+              launchOptionsRevision: 1,
+            },
+            [otherSlotRoot]: {
+              version: "1.0.0",
+              archive: archiveAUrl,
+              cmd: "./bin/other-agent",
+              sha256: null,
+              args: ["--keep"],
+              launchOptionsRevision: 1,
+            },
+          }),
+        );
         expect(yield* corruptResolver.uninstallManagedBinary({ agentId: "example-agent" })).toEqual(
           {
             agentId: "example-agent",
@@ -4254,6 +4419,11 @@ describe("AcpRegistrySupport", () => {
         ) as Record<string, string>;
         expect(prunedBaselines[exampleSlotKey]).toBeUndefined();
         expect(prunedBaselines[otherSlotKey]).toBe("other-baseline");
+        const prunedSidecar = JSON.parse(
+          yield* fileSystem.readFileString(corruptSidecarPath),
+        ) as Record<string, unknown>;
+        expect(prunedSidecar[exampleSlotRoot]).toBeUndefined();
+        expect(prunedSidecar[otherSlotRoot]).toBeDefined();
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -4627,6 +4797,9 @@ describe("AcpRegistrySupport", () => {
         // Model POSIX mode bits in memory so Linux mode assertions work identically on Windows.
         const modeOverrides = new Map<string, number>();
         let failReceiptTempWrite = false;
+        let failSidecarWrite = false;
+        let failSidecarRead = false;
+        let receiptRenameCount = 0;
         let onStatPath: {
           readonly matchPath: string;
           readonly onHit: () => void;
@@ -4653,10 +4826,23 @@ describe("AcpRegistrySupport", () => {
                   : { ...info, mode: (info.mode & ~0o777) | override };
               }),
             ),
+          readFileString: (filePath, encoding) =>
+            failSidecarRead && path.basename(filePath) === "binary-launch-options.json"
+              ? fileSystem.readFileString(path.dirname(filePath), encoding)
+              : fileSystem.readFileString(filePath, encoding),
           writeFileString: (filePath, data, options) =>
-            failReceiptTempWrite && path.basename(filePath).startsWith(".t3-artifact.json.")
+            (failReceiptTempWrite && path.basename(filePath).startsWith(".t3-artifact.json.")) ||
+            (failSidecarWrite &&
+              path.basename(filePath).startsWith("binary-launch-options.json.") &&
+              filePath.endsWith(".tmp"))
               ? fileSystem.readFileString(path.dirname(filePath)).pipe(Effect.asVoid)
               : fileSystem.writeFileString(filePath, data, options),
+          rename: (oldPath, newPath) =>
+            Effect.sync(() => {
+              if (path.basename(newPath) === ".t3-artifact.json") {
+                receiptRenameCount += 1;
+              }
+            }).pipe(Effect.andThen(fileSystem.rename(oldPath, newPath))),
         };
 
         // 1. A raw binary declaring .t3-artifact.json as its command fails with archive_invalid
@@ -4674,11 +4860,37 @@ describe("AcpRegistrySupport", () => {
           .pipe(Effect.flip);
         expect(reservedError.reason).toBe("archive_invalid");
 
-        // 2. Updating args/env syncs the receipt; if writing into tools/ fails, updated launch
-        // options persist in registry cache storage so fallback still restores them across restarts.
+        // 2. Unchanged no-env binaries skip receipt rewrites; updating args/env syncs the receipt;
+        // failed receipt writes persist in binary-launch-options.json across restarts without
+        // letting stale sidecar entries shadow newer receipts or dropping other slots on read errors.
+        const noEnvDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-no-env-skip-",
+        });
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--v1"],
+        });
+        const noEnvResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: noEnvDir,
+          toolsDir: path.join(noEnvDir, "tools"),
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        yield* noEnvResolver.resolve(settings(), "/workspace");
+        receiptRenameCount = 0;
+        yield* noEnvResolver.resolve(settings(), "/workspace");
+        yield* noEnvResolver.resolve(settings(), "/workspace");
+        expect(receiptRenameCount).toBe(0);
+
         const supersededDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-superseded-inspect-",
         });
+        const supersededToolsDir = path.join(supersededDir, "tools");
+        const supersededSidecarPath = path.join(
+          supersededDir,
+          "acp-registry",
+          "binary-launch-options.json",
+        );
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
           cmd: "./bin/example-agent",
@@ -4687,7 +4899,7 @@ describe("AcpRegistrySupport", () => {
         });
         const supersededResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: supersededDir,
-          toolsDir: `${supersededDir}/tools`,
+          toolsDir: supersededToolsDir,
           registryUrl,
         }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
         const installedA = yield* supersededResolver.resolve(settings(), "/workspace");
@@ -4707,7 +4919,8 @@ describe("AcpRegistrySupport", () => {
         expect(syncedA.spawn.args).toEqual(["--v1", "--updated"]);
         expect(syncedA.spawn.env?.STAGE).toBe("updated");
 
-        // Simulate a failed receipt write on a second args/env update, then restart and fail 2.0.0.
+        // Failed receipt write persists --sidecar; reverting back to the receipt's --updated in the
+        // SAME process must update/clear the sidecar so fallback does not resurrect --sidecar.
         failReceiptTempWrite = true;
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
@@ -4720,7 +4933,84 @@ describe("AcpRegistrySupport", () => {
         const sidecarSyncedA = yield* supersededResolver.resolve(settings(), "/workspace");
         expect(sidecarSyncedA.spawn.args).toEqual(["--v1", "--sidecar"]);
         expect(sidecarSyncedA.spawn.env?.STAGE).toBe("sidecar");
+
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--v1", "--updated"],
+          env: { STAGE: "updated" },
+        });
+        yield* supersededResolver.invalidateIndex();
+        yield* supersededResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* supersededResolver.resolve(settings(), "/workspace");
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* supersededResolver.invalidateIndex();
+        yield* supersededResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const sameProcessRevertFallback = yield* supersededResolver.resolve(
+          settings(),
+          "/workspace",
+        );
+        expect(sameProcessRevertFallback.fallback).toBe(true);
+        expect(sameProcessRevertFallback.spawn.args).toEqual(["--v1", "--updated"]);
+        expect(sameProcessRevertFallback.spawn.env?.STAGE).toBe("updated");
+
+        // Write --sidecar to the sidecar again, restart, and verify fallback restores --sidecar.
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--v1", "--sidecar"],
+          env: { STAGE: "sidecar" },
+        });
+        yield* supersededResolver.invalidateIndex();
+        yield* supersededResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* supersededResolver.resolve(settings(), "/workspace");
         failReceiptTempWrite = false;
+
+        // A transient read failure on binary-launch-options.json must leave existing sidecar
+        // entries intact instead of replacing the file with an empty/partial map.
+        const preserveSlotKey = path.join(
+          supersededToolsDir,
+          "other-agent",
+          "1.0.0",
+          "linux-x86_64",
+        );
+        const sidecarBeforeIo = JSON.parse(
+          yield* fileSystem.readFileString(supersededSidecarPath),
+        ) as Record<string, unknown>;
+        yield* fileSystem.writeFileString(
+          supersededSidecarPath,
+          JSON.stringify({
+            ...sidecarBeforeIo,
+            [preserveSlotKey]: {
+              version: "1.0.0",
+              archive: archiveBUrl,
+              cmd: "./bin/other-agent",
+              sha256: null,
+              args: ["--preserve"],
+              launchOptionsRevision: 1,
+            },
+          }),
+        );
+        failReceiptTempWrite = true;
+        failSidecarRead = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--v1", "--sidecar-io"],
+          env: { STAGE: "sidecar-io" },
+        });
+        yield* supersededResolver.invalidateIndex();
+        yield* supersededResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* supersededResolver.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        failSidecarRead = false;
+        const sidecarAfterIo = JSON.parse(
+          yield* fileSystem.readFileString(supersededSidecarPath),
+        ) as Record<string, unknown>;
+        expect(sidecarAfterIo[preserveSlotKey]).toBeDefined();
 
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
@@ -4728,7 +5018,7 @@ describe("AcpRegistrySupport", () => {
         });
         const restartedSuperseded = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: supersededDir,
-          toolsDir: `${supersededDir}/tools`,
+          toolsDir: supersededToolsDir,
           registryUrl,
         }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
         yield* restartedSuperseded.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
@@ -4738,8 +5028,9 @@ describe("AcpRegistrySupport", () => {
         expect(fallbackA.spawn.args).toEqual(["--v1", "--sidecar"]);
         expect(fallbackA.spawn.env?.STAGE).toBe("sidecar");
 
-        // Reverting upstream back to the receipt's earlier args/env after restart must prune/update
-        // the stale sidecar so a subsequent fallback does not resurrect the older sidecar options.
+        // Reverting upstream back to the receipt's earlier args/env after restart prunes the
+        // sidecar and persists the new generation; verify with ANOTHER fresh catalog instance.
+        const exampleSlotRootSuperseded = path.dirname(path.dirname(installedA.spawn.command));
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
           cmd: "./bin/example-agent",
@@ -4751,32 +5042,110 @@ describe("AcpRegistrySupport", () => {
         const revertedA = yield* restartedSuperseded.resolve(settings(), "/workspace");
         expect(revertedA.spawn.args).toEqual(["--v1", "--updated"]);
         expect(revertedA.spawn.env?.STAGE).toBe("updated");
+        const sidecarAfterRevert = JSON.parse(
+          yield* fileSystem.readFileString(supersededSidecarPath),
+        ) as Record<string, unknown>;
+        expect(sidecarAfterRevert[exampleSlotRootSuperseded]).toBeUndefined();
+        expect(sidecarAfterRevert[preserveSlotKey]).toBeDefined();
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
           cmd: "./bin/example-agent",
         });
-        yield* restartedSuperseded.invalidateIndex();
-        yield* restartedSuperseded.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const fallbackAfterRevert = yield* restartedSuperseded.resolve(settings(), "/workspace");
+        const afterRevertCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: supersededDir,
+          toolsDir: supersededToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        yield* afterRevertCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const fallbackAfterRevert = yield* afterRevertCatalog.resolve(settings(), "/workspace");
         expect(fallbackAfterRevert.fallback).toBe(true);
         expect(fallbackAfterRevert.spawn.args).toEqual(["--v1", "--updated"]);
         expect(fallbackAfterRevert.spawn.env?.STAGE).toBe("updated");
 
+        // A newer receipt write followed by a failed sidecar prune must still win over the older
+        // unpruned sidecar entry after restart.
+        failReceiptTempWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--v1", "--stale-sidecar"],
+          env: { STAGE: "stale-sidecar" },
+        });
+        yield* afterRevertCatalog.invalidateIndex();
+        yield* afterRevertCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* afterRevertCatalog.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        failSidecarWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--v1", "--newer-receipt"],
+          env: { STAGE: "newer-receipt" },
+        });
+        yield* afterRevertCatalog.invalidateIndex();
+        yield* afterRevertCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* afterRevertCatalog.resolve(settings(), "/workspace");
+        failSidecarWrite = false;
+        // Confirm the stale sidecar entry is still present on disk while the receipt has higher rev.
+        const unprunedSidecar = JSON.parse(
+          yield* fileSystem.readFileString(supersededSidecarPath),
+        ) as Record<string, { readonly args?: ReadonlyArray<string> }>;
+        expect(unprunedSidecar[exampleSlotRootSuperseded]?.args).toEqual([
+          "--v1",
+          "--stale-sidecar",
+        ]);
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        const newerReceiptCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: supersededDir,
+          toolsDir: supersededToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        yield* newerReceiptCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const fallbackNewerReceipt = yield* newerReceiptCatalog.resolve(settings(), "/workspace");
+        expect(fallbackNewerReceipt.fallback).toBe(true);
+        expect(fallbackNewerReceipt.spawn.args).toEqual(["--v1", "--newer-receipt"]);
+        expect(fallbackNewerReceipt.spawn.env?.STAGE).toBe("newer-receipt");
+
+        // Uninstalling clears in-memory launch options too so reinstalling uses the new receipt.
+        expect(
+          yield* afterRevertCatalog.uninstallManagedBinary({ agentId: "example-agent" }),
+        ).toEqual({ agentId: "example-agent", removed: true });
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--fresh-after-uninstall"],
+        });
+        yield* afterRevertCatalog.invalidateIndex();
+        yield* afterRevertCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const reinstalledA = yield* afterRevertCatalog.resolve(settings(), "/workspace");
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* afterRevertCatalog.invalidateIndex();
+        yield* afterRevertCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const fallbackAfterReinstall = yield* afterRevertCatalog.resolve(settings(), "/workspace");
+        expect(fallbackAfterReinstall.fallback).toBe(true);
+        expect(fallbackAfterReinstall.spawn.args).toEqual(["--fresh-after-uninstall"]);
+
         // 3. A superseded primary executable that lost execute permission must not fail inspect()
         // when the registry selects a different same-version artifact.
-        yield* posixModeFs.chmod(installedA.spawn.command, 0o644);
+        yield* posixModeFs.chmod(reinstalledA.spawn.command, 0o644);
         upstream = makeBinary("1.0.0", {
           archive: archiveBUrl,
           cmd: "./bin/example-agent",
         });
-        yield* restartedSuperseded.invalidateIndex();
-        yield* restartedSuperseded.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        expect(yield* restartedSuperseded.inspect(settings())).toMatchObject({
+        yield* afterRevertCatalog.invalidateIndex();
+        yield* afterRevertCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect(yield* afterRevertCatalog.inspect(settings())).toMatchObject({
           status: "ready",
           version: "1.0.0",
         });
-        const installedB = yield* restartedSuperseded.resolve(settings(), "/workspace");
-        expect(installedB.spawn.command).not.toBe(installedA.spawn.command);
+        const installedB = yield* afterRevertCatalog.resolve(settings(), "/workspace");
+        expect(installedB.spawn.command).not.toBe(reinstalledA.spawn.command);
         expect(yield* fileSystem.readFileString(installedB.spawn.command)).toBe(
           "#!/bin/sh\necho receipt-b\n",
         );
@@ -4785,13 +5154,13 @@ describe("AcpRegistrySupport", () => {
         const lockDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-lock-interrupt-",
         });
-        const versionDir = `${lockDir}/tools/example-agent/1.0.0`;
+        const versionDir = path.join(lockDir, "tools", "example-agent", "1.0.0");
         yield* fileSystem.makeDirectory(versionDir, { recursive: true });
-        const lockFile = `${versionDir}/linux-x86_64.lock`;
+        const lockFile = path.join(versionDir, "linux-x86_64.lock");
         yield* fileSystem.writeFileString(lockFile, "other-holder-token");
         const lockResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: lockDir,
-          toolsDir: `${lockDir}/tools`,
+          toolsDir: path.join(lockDir, "tools"),
           registryUrl,
         }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
         const lockFirstStat = yield* Deferred.make<void>();
@@ -4820,16 +5189,26 @@ describe("AcpRegistrySupport", () => {
         // Interrupting while waiting must leave the other holder's lock intact.
         expect(yield* fileSystem.readFileString(lockFile)).toBe("other-holder-token");
 
-        // 5. A stale legacy-baselines lock holder neither overwrites a newer holder's baselines
-        // nor deletes the newer holder's lock file on release.
+        // 5. A stale lock holder neither overwrites a newer holder's baselines or launch-options
+        // sidecar nor deletes the newer holder's lock file on release (for both refresh & uninstall).
         const fenceDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-baseline-fence-",
         });
-        const fenceRegistryDir = `${fenceDir}/acp-registry`;
-        const fenceRegistryPath = `${fenceRegistryDir}/registry.json`;
-        const fenceBaselinesPath = `${fenceRegistryDir}/legacy-baselines.json`;
+        const fenceRegistryDir = path.join(fenceDir, "acp-registry");
+        const fenceRegistryPath = path.join(fenceRegistryDir, "registry.json");
+        const fenceBaselinesPath = path.join(fenceRegistryDir, "legacy-baselines.json");
         const fenceLockPath = `${fenceBaselinesPath}.lock`;
-        const fenceLegacyExe = `${fenceDir}/tools/example-agent/1.0.0/linux-x86_64/bin/example-agent`;
+        const fenceSidecarPath = path.join(fenceRegistryDir, "binary-launch-options.json");
+        const fenceSidecarLockPath = `${fenceSidecarPath}.lock`;
+        const fenceToolsDir = path.join(fenceDir, "tools");
+        const fenceLegacyExe = path.join(
+          fenceToolsDir,
+          "example-agent",
+          "1.0.0",
+          "linux-x86_64",
+          "bin",
+          "example-agent",
+        );
         yield* fileSystem.makeDirectory(path.dirname(fenceLegacyExe), { recursive: true });
         yield* fileSystem.writeFileString(fenceLegacyExe, "#!/bin/sh\necho legacy-a\n");
         yield* posixModeFs.chmod(fenceLegacyExe, 0o755);
@@ -4842,6 +5221,14 @@ describe("AcpRegistrySupport", () => {
         const releaseHolder1 = yield* Deferred.make<void>();
         let gatedHolder1 = true;
         let baselinesReadCount = 0;
+        let sidecarFenceGate: {
+          readonly entered: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
+        let uninstallFenceGate: {
+          readonly entered: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
         const fencedFs: FileSystem.FileSystem = {
           ...posixModeFs,
           readFileString: (filePath, encoding) => {
@@ -4855,13 +5242,29 @@ describe("AcpRegistrySupport", () => {
                 );
               }
             }
+            if (uninstallFenceGate !== null && filePath === fenceBaselinesPath) {
+              const gate = uninstallFenceGate;
+              uninstallFenceGate = null;
+              return Deferred.succeed(gate.entered, undefined).pipe(
+                Effect.andThen(Deferred.await(gate.release)),
+                Effect.andThen(posixModeFs.readFileString(filePath, encoding)),
+              );
+            }
+            if (sidecarFenceGate !== null && filePath === fenceSidecarPath) {
+              const gate = sidecarFenceGate;
+              sidecarFenceGate = null;
+              return Deferred.succeed(gate.entered, undefined).pipe(
+                Effect.andThen(Deferred.await(gate.release)),
+                Effect.andThen(posixModeFs.readFileString(filePath, encoding)),
+              );
+            }
             return posixModeFs.readFileString(filePath, encoding);
           },
         };
         upstream = makeBinary("1.0.0", { archive: archiveBUrl, cmd: "./bin/example-agent" });
         const holder1 = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: fenceDir,
-          toolsDir: `${fenceDir}/tools`,
+          toolsDir: fenceToolsDir,
           registryUrl,
         }).pipe(Effect.provideService(FileSystem.FileSystem, fencedFs));
         const holder1Refresh = yield* holder1
@@ -4878,6 +5281,78 @@ describe("AcpRegistrySupport", () => {
         yield* Fiber.join(holder1Refresh);
         expect(yield* fileSystem.readFileString(fenceLockPath)).toBe("holder-2-token");
         expect(JSON.parse(yield* fileSystem.readFileString(fenceBaselinesPath))).toEqual({
+          "keep-agent\u00001.0.0\u0000linux-x86_64": "holder-2-value",
+        });
+
+        // Sidecar lock-ownership fence: losing the sidecar lock before writing leaves holder-2 intact.
+        yield* fileSystem.remove(fenceLockPath, { force: true });
+        yield* holder1.resolve(settings(), "/workspace");
+        failReceiptTempWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveBUrl,
+          cmd: "./bin/example-agent",
+          args: ["--fenced-sidecar"],
+        });
+        yield* holder1.invalidateIndex();
+        yield* holder1.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const sidecarHolder1Entered = yield* Deferred.make<void>();
+        const releaseSidecarHolder1 = yield* Deferred.make<void>();
+        sidecarFenceGate = { entered: sidecarHolder1Entered, release: releaseSidecarHolder1 };
+        const fencedSidecarResolve = yield* holder1
+          .resolve(settings(), "/workspace")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(sidecarHolder1Entered);
+        yield* fileSystem.writeFileString(fenceSidecarLockPath, "sidecar-holder-2");
+        yield* fileSystem.writeFileString(
+          fenceSidecarPath,
+          JSON.stringify({
+            "keep-slot": {
+              version: "1.0.0",
+              archive: archiveAUrl,
+              cmd: "./bin/keep",
+              sha256: null,
+              args: ["--holder-2"],
+              launchOptionsRevision: 1,
+            },
+          }),
+        );
+        yield* Deferred.succeed(releaseSidecarHolder1, undefined);
+        yield* Fiber.join(fencedSidecarResolve);
+        failReceiptTempWrite = false;
+        expect(yield* fileSystem.readFileString(fenceSidecarLockPath)).toBe("sidecar-holder-2");
+        expect(
+          Object.keys(JSON.parse(yield* fileSystem.readFileString(fenceSidecarPath)) as object),
+        ).toEqual(["keep-slot"]);
+
+        // Uninstall baselines prune lock-ownership fence: losing the lock leaves holder-2 intact.
+        yield* fileSystem.remove(fenceSidecarLockPath, { force: true });
+        yield* fileSystem.writeFileString(
+          fenceBaselinesPath,
+          JSON.stringify({
+            "example-agent\u00001.0.0\u0000linux-x86_64": "stale-value",
+            "keep-agent\u00001.0.0\u0000linux-x86_64": "holder-2-value",
+          }),
+        );
+        const uninstallEntered = yield* Deferred.make<void>();
+        const releaseUninstall = yield* Deferred.make<void>();
+        uninstallFenceGate = { entered: uninstallEntered, release: releaseUninstall };
+        const fencedUninstall = yield* holder1
+          .uninstallManagedBinary({ agentId: "example-agent" })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(uninstallEntered);
+        yield* fileSystem.writeFileString(fenceLockPath, "uninstall-holder-2");
+        yield* fileSystem.writeFileString(
+          fenceBaselinesPath,
+          JSON.stringify({
+            "example-agent\u00001.0.0\u0000linux-x86_64": "holder-2-new-value",
+            "keep-agent\u00001.0.0\u0000linux-x86_64": "holder-2-value",
+          }),
+        );
+        yield* Deferred.succeed(releaseUninstall, undefined);
+        yield* Fiber.join(fencedUninstall);
+        expect(yield* fileSystem.readFileString(fenceLockPath)).toBe("uninstall-holder-2");
+        expect(JSON.parse(yield* fileSystem.readFileString(fenceBaselinesPath))).toEqual({
+          "example-agent\u00001.0.0\u0000linux-x86_64": "holder-2-new-value",
           "keep-agent\u00001.0.0\u0000linux-x86_64": "holder-2-value",
         });
       }).pipe(

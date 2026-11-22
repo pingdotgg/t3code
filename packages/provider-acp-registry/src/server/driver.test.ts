@@ -3584,12 +3584,42 @@ describe("AcpRegistryDriver registry recovery", () => {
         const { directory, agentPath, modelsPath } = yield* seedInstalledBinaryAgent(
           "acp-driver-reconcile-edge-",
         );
+        const authFailAgentPath = path.join(directory, "auth-fail-agent.mjs");
+        yield* fileSystem.writeFileString(
+          authFailAgentPath,
+          `
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    send({
+      id,
+      result: {
+        protocolVersion: 1,
+        agentCapabilities: {},
+        authMethods: [{ id: "api-key", name: "API key", type: "env_var", vars: [{ name: "API_KEY" }] }],
+        agentInfo: { name: "fake", version: "2.0.0" },
+      },
+    });
+  } else if (method === "session/new") {
+    send({ id, error: { code: -32000, message: "Authentication required" } });
+  } else {
+    send({ id, result: {} });
+  }
+});
+`,
+        );
 
         let remoteVersion = "1.0.0";
         let remoteExtraAgentVersion: string | undefined = undefined;
         let failArchiveVersions = new Set<string>();
         let failProbeSpawn = false;
+        let failProbeAuth = false;
+        let defectNextInspect = false;
         let inspectCalls = 0;
+        let recordedInspectRevisions: Array<number | undefined> | null = null;
         let resolveGate: {
           readonly matchVersion: string;
           readonly started: Deferred.Deferred<void>;
@@ -3603,19 +3633,28 @@ describe("AcpRegistryDriver registry recovery", () => {
           readonly matchName: string;
           readonly done: Deferred.Deferred<void>;
         } | null = null;
-        let onInspectCallback: (() => Effect.Effect<void>) | null = null;
         let onEnrichmentEnd: (() => void) | null = null;
+        let onReconcileEnd: ((exit: Exit.Exit<unknown, unknown>) => void) | null = null;
         const enrichmentTracer: Tracer.Tracer = {
           span(options) {
             const inner = Tracer.nativeTracer.span(options);
-            if (options.name !== "AcpRegistryDriver.publishEnrichment") return inner;
+            if (
+              options.name !== "AcpRegistryDriver.publishEnrichment" &&
+              options.name !== "AcpRegistryDriver.reconcileUnmatchedRuntime"
+            ) {
+              return inner;
+            }
             const origEnd = inner.end.bind(inner);
             inner.end = (endTime, exit) => {
               origEnd(endTime, exit);
-              if (Exit.isSuccess(exit)) {
+              if (options.name === "AcpRegistryDriver.publishEnrichment" && Exit.isSuccess(exit)) {
                 const cb = onEnrichmentEnd;
                 onEnrichmentEnd = null;
                 cb?.();
+              } else if (options.name === "AcpRegistryDriver.reconcileUnmatchedRuntime") {
+                const cb = onReconcileEnd;
+                onReconcileEnd = null;
+                cb?.(exit);
               }
             };
             return inner;
@@ -3686,15 +3725,21 @@ describe("AcpRegistryDriver registry recovery", () => {
           inspect: (settings, environment) =>
             Effect.gen(function* () {
               inspectCalls += 1;
+              if (defectNextInspect) {
+                defectNextInspect = false;
+                return yield* Effect.die("simulated reconcile inspect defect");
+              }
               const result = yield* realCatalog.inspect(settings, environment);
+              if (recordedInspectRevisions !== null) {
+                recordedInspectRevisions.push(
+                  "indexRevision" in result ? result.indexRevision : undefined,
+                );
+              }
               if (inspectGate !== null) {
                 const gate = inspectGate;
                 inspectGate = null;
                 yield* Deferred.succeed(gate.started, undefined);
                 yield* Deferred.await(gate.release);
-              }
-              if (onInspectCallback !== null) {
-                yield* onInspectCallback();
               }
               return result;
             }),
@@ -3719,14 +3764,22 @@ describe("AcpRegistryDriver registry recovery", () => {
               }
               return {
                 ...resolved,
-                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+                spawn: {
+                  command: process.execPath,
+                  args:
+                    environment?.MISE_OFFLINE === "1" && failProbeAuth
+                      ? [authFailAgentPath]
+                      : [agentPath, modelsPath],
+                },
               };
             }),
         };
 
-        // 1. Foreground startup skips initial 1.0.0 probe while live 1.0.0 session publishes models
-        // and commands; when 2.0.0 later fails to probe, snapshot must stay on 1.0.0 (not 2.0.0).
-        const fgInstanceId = ProviderInstanceId.make("acpRegistry_fg_only_v1");
+        // 1. Foreground startup skips initial 1.0.0 probe while live 1.0.0 sessions publish config
+        // only OR commands only; when 2.0.0 later fails (including authentication_failed), each
+        // snapshot retains 1.0.0 without copying 2.0.0's unauthenticated state onto 1.0.0.
+        const fgConfigOnlyId = ProviderInstanceId.make("acpRegistry_fg_config_only_v1");
+        const fgCmdOnlyId = ProviderInstanceId.make("acpRegistry_fg_cmd_only_v1");
         const fgStarted = yield* Deferred.make<void>();
         const releaseFg = yield* Deferred.make<void>();
         const fgFiber = yield* coordinator
@@ -3737,9 +3790,22 @@ describe("AcpRegistryDriver registry recovery", () => {
           .pipe(Effect.forkScoped({ startImmediately: true }));
         yield* Deferred.await(fgStarted);
 
-        const fgInstance = yield* AcpRegistryDriver.create({
-          instanceId: fgInstanceId,
-          displayName: "FG Only",
+        const fgConfigInstance = yield* AcpRegistryDriver.create({
+          instanceId: fgConfigOnlyId,
+          displayName: "FG Config Only",
+          enabled: true,
+          environment: [{ name: "MISE_OFFLINE", value: "0", sensitive: false }],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+        );
+        const fgCmdInstance = yield* AcpRegistryDriver.create({
+          instanceId: fgCmdOnlyId,
+          displayName: "FG Cmd Only",
           enabled: true,
           environment: [{ name: "MISE_OFFLINE", value: "0", sensitive: false }],
           config: decodeSettings({ agentId: "test-agent" }),
@@ -3753,19 +3819,28 @@ describe("AcpRegistryDriver registry recovery", () => {
         const v1Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
         expect(v1Inspection.status).toBe("ready");
         const v1Identity = v1Inspection.status === "ready" ? v1Inspection.launchIdentity! : "";
-        const fgLiveReady = yield* fgInstance.snapshot.streamChanges.pipe(
+        const fgConfigLiveReady = yield* fgConfigInstance.snapshot.streamChanges.pipe(
           Stream.filter(
             (snapshot) =>
               snapshot.version === "1.0.0" &&
-              snapshot.models.some((model) => model.slug === "fg-v1-a") &&
+              snapshot.models.some((model) => model.slug === "fg-v1-a"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const fgCmdLiveReady = yield* fgCmdInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "1.0.0" &&
               snapshot.slashCommands.some((cmd) => cmd.name === "fg-v1-cmd"),
           ),
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
-        yield* fgInstance.snapshot.refresh;
+        yield* fgConfigInstance.snapshot.refresh;
+        yield* fgCmdInstance.snapshot.refresh;
         yield* coordinator.publishLiveConfiguration(
-          fgInstanceId,
+          fgConfigOnlyId,
           normalizeAcpRegistryLiveConfiguration([], undefined, {
             currentModelId: "fg-v1-a",
             availableModels: [
@@ -3776,33 +3851,89 @@ describe("AcpRegistryDriver registry recovery", () => {
           v1Identity,
         );
         yield* coordinator.publishAvailableCommands(
-          fgInstanceId,
+          fgCmdOnlyId,
           { slashCommands: [{ name: "fg-v1-cmd" }], skills: [] },
           v1Identity,
         );
-        expect(Option.isSome(yield* Fiber.join(fgLiveReady))).toBe(true);
+        expect(Option.isSome(yield* Fiber.join(fgConfigLiveReady))).toBe(true);
+        expect(Option.isSome(yield* Fiber.join(fgCmdLiveReady))).toBe(true);
 
-        // End foreground startup, move index to failing 2.0.0, and verify 1.0.0 is preserved cleanly.
+        // End foreground startup, move index to 2.0.0 failing with authentication_failed, and
+        // verify both 1.0.0 snapshots stay on 1.0.0 without copying 2.0.0's unauthenticated auth.
         yield* Deferred.succeed(releaseFg, undefined);
         yield* Fiber.join(fgFiber);
         remoteVersion = "2.0.0";
-        failProbeSpawn = true;
+        failProbeAuth = true;
         yield* realCatalog.invalidateIndex();
         yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const fgWarning = yield* fgInstance.snapshot.streamChanges.pipe(
+        const fgConfigWarning = yield* fgConfigInstance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) => snapshot.status === "warning"),
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
-        yield* fgInstance.snapshot.refresh;
-        const fgWarningSnapshot = Option.getOrThrow(yield* Fiber.join(fgWarning));
-        expect(fgWarningSnapshot.version).toBe("1.0.0");
-        expect(fgWarningSnapshot.message).toContain("2.0.0");
-        expect(fgWarningSnapshot.models.map((model) => model.slug)).toEqual(["fg-v1-a", "fg-v1-b"]);
-        expect(fgWarningSnapshot.slashCommands).toEqual([{ name: "fg-v1-cmd" }]);
+        const fgCmdWarning = yield* fgCmdInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.status === "warning"),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* fgConfigInstance.snapshot.refresh;
+        yield* fgCmdInstance.snapshot.refresh;
+        const fgConfigWarningSnapshot = Option.getOrThrow(yield* Fiber.join(fgConfigWarning));
+        expect(fgConfigWarningSnapshot.version).toBe("1.0.0");
+        expect(fgConfigWarningSnapshot.auth.status).toBe("unknown");
+        expect(fgConfigWarningSnapshot.message).toContain("API key");
+        expect(fgConfigWarningSnapshot.models.map((model) => model.slug)).toEqual([
+          "fg-v1-a",
+          "fg-v1-b",
+        ]);
+        const fgCmdWarningSnapshot = Option.getOrThrow(yield* Fiber.join(fgCmdWarning));
+        expect(fgCmdWarningSnapshot.version).toBe("1.0.0");
+        expect(fgCmdWarningSnapshot.auth.status).toBe("unknown");
+        expect(fgCmdWarningSnapshot.slashCommands).toEqual([{ name: "fg-v1-cmd" }]);
+
+        // A live config update while retaining 1.0.0 under an upgrade failure must not bake the
+        // transient upgrade warning message into lastSuccessfulRuntime: when 1.0.0 is rolled back
+        // to and probed again, the old 2.0.0 warning message is gone.
+        const fgConfigUpdatedDuringWarn = yield* fgConfigInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((model) => model.slug === "fg-v1-c")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          fgConfigOnlyId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "fg-v1-c",
+            availableModels: [
+              { modelId: "fg-v1-a", name: "fg-v1-a" },
+              { modelId: "fg-v1-c", name: "fg-v1-c" },
+            ],
+          }),
+          v1Identity,
+        );
+        const warnedWithC = Option.getOrThrow(yield* Fiber.join(fgConfigUpdatedDuringWarn));
+        expect(warnedWithC.message).toContain("API key");
+        // Another refresh while 2.0.0 still fails must keep 1.0.0's auth non-unauthenticated.
+        const secondAuthRefresh = yield* fgConfigInstance.snapshot.refresh;
+        expect(secondAuthRefresh.version).toBe("1.0.0");
+        expect(secondAuthRefresh.auth.status).toBe("unknown");
+        // Now make 2.0.0 fail with a different install_failed message and verify the earlier
+        // auth warning message did not leak into lastSuccessfulRuntime.
+        failProbeAuth = false;
+        failProbeSpawn = true;
+        const fgSwitchedWarning = yield* fgConfigInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => Boolean(snapshot.message?.includes("2.0.0"))),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* fgConfigInstance.snapshot.refresh;
+        const fgSwitchedSnapshot = Option.getOrThrow(yield* Fiber.join(fgSwitchedWarning));
+        expect(fgSwitchedSnapshot.version).toBe("1.0.0");
+        expect(fgSwitchedSnapshot.message).not.toContain("API key");
+        expect(fgSwitchedSnapshot.models.map((model) => model.slug)).toContain("fg-v1-c");
 
         // 2. When no snapshot was ever accepted for 1.0.0 (neither probe nor live session), a failed
-        // 2.0.0 probe publishes 2.0.0's failure snapshot directly without attaching 1.0.0 live state.
+        // 2.0.0 probe publishes 2.0.0's failure snapshot without attaching 1.0.0 live state AND
+        // aligns watcher identities to 2.0.0 so subsequent 1.0.0 updates cannot land on it.
         remoteVersion = "1.0.0";
         failProbeSpawn = false;
         yield* realCatalog.invalidateIndex();
@@ -3844,16 +3975,66 @@ describe("AcpRegistryDriver registry recovery", () => {
         failProbeSpawn = true;
         yield* realCatalog.invalidateIndex();
         yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const noAcceptV2Gate = {
+          matchVersion: "2.0.0",
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        resolveGate = noAcceptV2Gate;
         const noAcceptWarning = yield* noAcceptInstance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) => snapshot.status === "warning"),
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
-        yield* noAcceptInstance.snapshot.refresh;
+        const noAcceptFailDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(noAcceptFailDone, Exit.void);
+        yield* noAcceptInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(noAcceptV2Gate.started);
+        // Seed 1.0.0 commands into coordinator while 2.0.0's probe is in flight (rejected by the
+        // watcher, so lastSuccessfulRuntime stays null) to prove the failed 2.0.0 publish never
+        // attaches 1.0.0 live state onto 2.0.0's failure snapshot.
+        const v1DuringV2Handled = yield* Deferred.make<void>();
+        onCommandHandled = { matchName: "v1-during-v2-fail", done: v1DuringV2Handled };
+        yield* coordinator.publishAvailableCommands(
+          noAcceptId,
+          { slashCommands: [{ name: "v1-during-v2-fail" }], skills: [] },
+          v1Identity,
+        );
+        yield* Deferred.await(v1DuringV2Handled);
+        yield* Deferred.succeed(noAcceptV2Gate.release, undefined);
         const noAcceptSnapshot = Option.getOrThrow(yield* Fiber.join(noAcceptWarning));
+        yield* Deferred.await(noAcceptFailDone);
         expect(noAcceptSnapshot.version).toBe("2.0.0");
         expect(noAcceptSnapshot.message).toContain("2.0.0");
         expect(noAcceptSnapshot.slashCommands).toEqual([]);
+        // A subsequent 1.0.0 update must NOT land on 2.0.0's failure snapshot.
+        const lateV1AfterFailHandled = yield* Deferred.make<void>();
+        onCommandHandled = { matchName: "v1-after-v2-fail", done: lateV1AfterFailHandled };
+        yield* coordinator.publishAvailableCommands(
+          noAcceptId,
+          { slashCommands: [{ name: "v1-after-v2-fail" }], skills: [] },
+          v1Identity,
+        );
+        yield* Deferred.await(lateV1AfterFailHandled);
+        const noAcceptAfterLateV1 = yield* noAcceptInstance.snapshot.getSnapshot;
+        expect(noAcceptAfterLateV1.version).toBe("2.0.0");
+        expect(noAcceptAfterLateV1.slashCommands).toEqual([]);
+        // Once 2.0.0 succeeds, noAcceptInstance adopts 2.0.0 cleanly.
+        failProbeSpawn = false;
+        const noAcceptV2Adopted = yield* noAcceptInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "2.0.0" &&
+              snapshot.status === "ready" &&
+              snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* noAcceptInstance.snapshot.refresh;
+        expect(Option.isSome(yield* Fiber.join(noAcceptV2Adopted))).toBe(true);
 
         // 3. Fallback retirement stamps failedTarget's revision (v3), not a concurrently restored
         // v4 revision, so a new v4 session reconciles immediately even if v4 restored mid-probe.
@@ -4015,24 +4196,26 @@ describe("AcpRegistryDriver registry recovery", () => {
         expect(Option.isSome(yield* Fiber.join(v2DrainedReconciled))).toBe(true);
         yield* Deferred.await(v2RestoredEnrichmentDone);
 
-        // Verify re-stamping on an unrelated revision bump suppresses repeated inspects for retired v4.
+        // Verify re-stamping on an unrelated revision bump suppresses repeated inspects for retired v4,
+        // waiting for the full reconciliation span (including retirement stamping and claim release)
+        // before sending the second same-revision event and before advancing to the next revision.
         remoteExtraAgentVersion = "10.0.0";
         yield* realCatalog.invalidateIndex();
-        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const firstRestampDone = yield* Deferred.make<void>();
-        onInspectCallback = () => Deferred.succeed(firstRestampDone, undefined).pipe(Effect.asVoid);
+        const r7 = yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        recordedInspectRevisions = [];
+        const firstRestampSpanDone = yield* Deferred.make<void>();
+        onReconcileEnd = () => Deferred.doneUnsafe(firstRestampSpanDone, Exit.void);
         const inspectsBeforeRestamp = inspectCalls;
         yield* coordinator.publishAvailableCommands(
           fallbackRetireId,
           { slashCommands: [{ name: "v4-late-1" }], skills: [] },
           v4Identity,
         );
-        yield* Deferred.await(firstRestampDone);
-        onInspectCallback = null;
+        yield* Deferred.await(firstRestampSpanDone);
         expect(inspectCalls).toBe(inspectsBeforeRestamp + 1);
+        expect(recordedInspectRevisions).toEqual([r7]);
 
-        // A second late v4 event at the same revision must NOT call catalog.inspect again,
-        // while a subsequent unrelated revision bump inspects once more (total +2, not +3).
+        // A second late v4 event at the same revision R7 must NOT trigger another reconcile inspect.
         const secondLateHandled = yield* Deferred.make<void>();
         onCommandHandled = { matchName: "v4-late-2", done: secondLateHandled };
         yield* coordinator.publishAvailableCommands(
@@ -4042,21 +4225,58 @@ describe("AcpRegistryDriver registry recovery", () => {
         );
         yield* Deferred.await(secondLateHandled);
         expect(inspectCalls).toBe(inspectsBeforeRestamp + 1);
+        expect(recordedInspectRevisions).toEqual([r7]);
 
+        // Advancing to a new unrelated revision R8 triggers exactly one more inspect (total [r7, r8]).
         remoteExtraAgentVersion = "10.0.1";
         yield* realCatalog.invalidateIndex();
-        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const secondRestampDone = yield* Deferred.make<void>();
-        onInspectCallback = () =>
-          Deferred.succeed(secondRestampDone, undefined).pipe(Effect.asVoid);
+        const r8 = yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const secondRestampSpanDone = yield* Deferred.make<void>();
+        onReconcileEnd = () => Deferred.doneUnsafe(secondRestampSpanDone, Exit.void);
         yield* coordinator.publishAvailableCommands(
           fallbackRetireId,
           { slashCommands: [{ name: "v4-late-3" }], skills: [] },
           v4Identity,
         );
-        yield* Deferred.await(secondRestampDone);
-        onInspectCallback = null;
+        yield* Deferred.await(secondRestampSpanDone);
         expect(inspectCalls).toBe(inspectsBeforeRestamp + 2);
+        expect(recordedInspectRevisions).toEqual([r7, r8]);
+        recordedInspectRevisions = null;
+
+        // A defect inside reconciliation must still release the reconcilingState claim (Effect.onError)
+        // so a subsequent event for the same identity reconciles cleanly once the catalog recovers.
+        remoteExtraAgentVersion = "10.0.2";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        defectNextInspect = true;
+        const defectSpanDone = yield* Deferred.make<void>();
+        onReconcileEnd = () => Deferred.doneUnsafe(defectSpanDone, Exit.void);
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v4-defect-probe" }], skills: [] },
+          v4Identity,
+        );
+        yield* Deferred.await(defectSpanDone);
+
+        remoteVersion = "4.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const v4RecoveredAfterDefect = yield* fallbackRetireInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "4.0.0" &&
+              snapshot.nativeSessions !== undefined &&
+              snapshot.slashCommands.some((cmd) => cmd.name === "v4-after-defect"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v4-after-defect" }], skills: [] },
+          v4Identity,
+        );
+        expect(Option.isSome(yield* Fiber.join(v4RecoveredAfterDefect))).toBe(true);
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 });
