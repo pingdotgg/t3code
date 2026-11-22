@@ -119,8 +119,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --glass-blur: 12px;
   --glass-opacity: 80%;
   --glass-saturation: 1.14;
-  /* Set to none when glass is fully opaque, so no backdrop is composited. */
+  /* Both set to none when glass is fully opaque, so no backdrop is composited. */
   --glass-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  --dialog-backdrop-filter: blur(4px);
   --desktop-window-right-resize-inset: 0px;
   --workspace-topbar-height: 52px;
   --workspace-controls-top: 0px;
@@ -451,8 +452,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 
 @utility dialog-backdrop {
   background: color-mix(in srgb, var(--background) 60%, transparent);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: var(--dialog-backdrop-filter);
+  backdrop-filter: var(--dialog-backdrop-filter);
 
   @variant dark {
     background: color-mix(in srgb, var(--background) 64%, transparent);
