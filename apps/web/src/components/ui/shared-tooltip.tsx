@@ -63,6 +63,7 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
   const popupId = useId();
   const [state, setState] = useState<SharedTooltipState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<SharedTooltipState | null>(null);
   const lastClosedAt = useRef(0);
   const current = useRef<SharedTooltipState | null>(null);
 
@@ -73,6 +74,7 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
   const clearTimer = () => {
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
+    pending.current = null;
   };
   const [api] = useState<SharedTooltipApi>(() => ({
     show(anchor, content, immediate) {
@@ -83,9 +85,17 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
         commit({ ...content, anchor, open: true });
         return;
       }
-      timer.current = setTimeout(() => commit({ ...content, anchor, open: true }), OPEN_DELAY_MS);
+      pending.current = { ...content, anchor, open: true };
+      timer.current = setTimeout(() => {
+        const next = pending.current;
+        pending.current = null;
+        if (next) commit(next);
+      }, OPEN_DELAY_MS);
     },
     refresh(anchor, content) {
+      if (pending.current?.anchor === anchor) {
+        pending.current = { ...pending.current, ...content };
+      }
       const active = current.current;
       if (!active || active.anchor !== anchor) return;
       if (

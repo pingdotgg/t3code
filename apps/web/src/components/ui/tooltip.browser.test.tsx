@@ -93,3 +93,24 @@ it("refreshes an open shared tooltip's label and links aria-describedby on focus
   await userEvent.keyboard("{Tab}");
   await vi.waitFor(() => expect(trigger.element().getAttribute("aria-describedby")).toBeNull());
 });
+
+it("refreshes a pending shared tooltip if its label changes during the open delay", async () => {
+  await using screen = await render(
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger label="Copied" render={<button type="button" />}>
+        Copy
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>,
+  );
+  const trigger = screen.getByRole("button", { name: "Copy" });
+  await userEvent.hover(trigger);
+  await screen.rerender(
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger label="Copy code" render={<button type="button" />}>
+        Copy
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>,
+  );
+  await expect.element(page.getByText("Copy code")).toBeVisible();
+  expect(page.getByText("Copied").query()).toBeNull();
+});
