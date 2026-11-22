@@ -236,6 +236,54 @@ it("opens an idle child beside the thread, and in its place with the modifier", 
   expect(panel().surfaces).toHaveLength(1);
 });
 
+it("collapses settled forks and labels them as settled", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const settledAt = DateTime.makeUnsafe("2026-01-02T00:00:00.000Z");
+  state.projection = projection;
+  state.relatedShells = [
+    {
+      id: ThreadId.make("active-fork"),
+      title: "Active fork",
+      activityRunStatus: "running",
+      status: "running",
+      forkedFrom: { type: "run", threadId: projection.thread.id, runId: "active-run" },
+      lineage: {
+        parentThreadId: projection.thread.id,
+        relationshipToParent: "fork",
+      },
+    },
+    {
+      id: ThreadId.make("settled-fork"),
+      title: "Settled fork",
+      status: "completed",
+      settledOverride: "settled",
+      settledAt,
+      forkedFrom: { type: "run", threadId: projection.thread.id, runId: "settled-run" },
+      lineage: {
+        parentThreadId: projection.thread.id,
+        relationshipToParent: "fork",
+      },
+    },
+  ];
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats={false}
+    />,
+  );
+
+  await expect.element(screen.getByText("Active fork", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Settled fork", { exact: true })).not.toBeInTheDocument();
+
+  await screen.getByRole("button", { name: /Settled forks/ }).click();
+
+  await expect.element(screen.getByText("Settled fork", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Settled", { exact: true })).toBeVisible();
+});
+
 it("shows a lineage thread's full title in its tooltip", async () => {
   setup();
   const longTitle = "Compare the lineage tooltip against a title that the row truncates";
