@@ -1931,7 +1931,10 @@ function getItemType(item: MessagesTimelineRow) {
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   const wakeUpsRail = use(TimelineWakeUpsRailCtx).get(row.id);
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
-  const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
+  const isWorkLogEvent =
+    row.kind === "event" &&
+    (row.projectedItem.item.type === "subagent" ||
+      row.projectedItem.item.type === "run_interrupt_result");
   const command = row.kind === "message" && row.command?.standalone ? row.command : null;
   const isWorkLogRow =
     command !== null ||
@@ -1947,7 +1950,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     <div
       className={cn(
         row.superseded && "ms-6",
-        isWorkLogRow || isSubagentGroup
+        isWorkLogRow || isWorkLogEvent
           ? undefined
           : row.kind === "background-activity" && row.precedesPrompt
             ? "pb-4"

@@ -3927,6 +3927,48 @@ describe("v2 run and attempt history", () => {
     const mainRows = deriveMessagesTimelineRows({ ...input, turnWorkFold: false });
     expect(mainRows.some((row) => row.kind === "turn-fold")).toBe(false);
     expect(mainRows.at(-1)?.id).toBe("interrupt-result");
+    // The interrupt result is a row of its turn: close under the turn, a turn gap before the next prompt.
+    expect(mainRows.find((row) => row.id === "work-entry")).toMatchObject({
+      continuesWorkLog: true,
+    });
+    const tailRows = deriveMessagesTimelineRows({
+      ...input,
+      turnWorkFold: false,
+      timelineEntries: [
+        {
+          id: "reply",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:02Z",
+          message: {
+            id: MessageId.make("reply"),
+            role: "assistant",
+            text: "Partial reply",
+            runId,
+            streaming: false,
+            createdAt: "2026-01-01T00:00:02Z",
+            updatedAt: "2026-01-01T00:00:02Z",
+          },
+        },
+        input.timelineEntries[2]!,
+        {
+          id: "next-prompt",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:04Z",
+          message: {
+            id: MessageId.make("next-prompt"),
+            role: "user",
+            text: "Keep going",
+            runId: null,
+            streaming: false,
+            createdAt: "2026-01-01T00:00:04Z",
+            updatedAt: "2026-01-01T00:00:04Z",
+          },
+        },
+      ],
+    });
+    const resultIndex = tailRows.findIndex((row) => row.id === "interrupt-result");
+    expect(tailRows[resultIndex]).toMatchObject({ precedesPrompt: true });
+    expect(tailRows[resultIndex - 1]).toMatchObject({ turnTailBelow: true });
     const stoppedRows = deriveMessagesTimelineRows({
       timelineEntries: [
         {

@@ -97,6 +97,7 @@ export function V2LifecycleRow(props: {
         detail={item.message}
         icon={CircleStopIcon}
         wrapDetail
+        placement="turn"
       />
     );
   }
