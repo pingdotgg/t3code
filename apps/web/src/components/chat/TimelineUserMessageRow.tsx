@@ -344,7 +344,10 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           <div
             ref={revealRef}
             hidden={!expanded}
-            className={cn("px-3 pb-3", !ctx.findActive && "max-h-96 overflow-auto")}
+            className={cn(
+              "px-3 pb-3",
+              !ctx.findActive && "max-h-96 overflow-auto [--timeline-composer-inset:0px]",
+            )}
             data-thread-find-text="true"
           >
             <UserMessageBody text={text} skills={ctx.skills} markdownCwd={ctx.markdownCwd} />
@@ -978,7 +981,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             dir={markdownProseDirection(resolvedContext.text)}
             className={cn(
               folded && "px-3 pb-3",
-              folded && !ctx.findActive && "max-h-96 overflow-auto",
+              folded && !ctx.findActive && "max-h-96 overflow-auto [--timeline-composer-inset:0px]",
             )}
           >
             {!mediaAboveText && mediaBlock}
@@ -1234,7 +1237,10 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
       {hasVisibleBody ? (
         <div
           ref={revealRef}
-          className={cn("relative", isCollapsed && "max-h-44 overflow-hidden")}
+          className={cn(
+            "relative",
+            isCollapsed && "max-h-44 overflow-hidden [--timeline-composer-inset:0px]",
+          )}
           data-user-message-body="true"
           data-thread-find-text="true"
           data-thread-find-fold={isCollapsed ? "" : undefined}

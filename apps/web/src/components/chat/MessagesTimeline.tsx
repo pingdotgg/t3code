@@ -45,6 +45,7 @@ import {
   useEffectEvent,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -1446,6 +1447,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
             ref={attachTimelineViewportElement}
             className="relative h-full min-h-0"
             data-assistant-citation-viewport="true"
+            style={
+              {
+                "--timeline-composer-inset": `${contentInsetEndAdjustment}px`,
+              } as CSSProperties
+            }
           >
             {onCiteAssistantText && citationThreadRef ? (
               <AssistantSelectionToolbar

@@ -201,7 +201,10 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="mt-4">
         <div
           ref={revealRef}
-          className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}
+          className={cn(
+            "relative",
+            isCollapsed && "max-h-104 overflow-hidden [--timeline-composer-inset:0px]",
+          )}
           data-thread-find-text="true"
           data-thread-find-fold={isCollapsed ? "" : undefined}
         >

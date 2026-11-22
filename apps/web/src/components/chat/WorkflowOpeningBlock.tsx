@@ -220,7 +220,10 @@ function WorkflowScript(props: { readonly script: string }) {
     <div>
       <div
         ref={revealRef}
-        className={cn("relative", folded && "max-h-44 overflow-hidden")}
+        className={cn(
+          "relative",
+          folded && "max-h-44 overflow-hidden [--timeline-composer-inset:0px]",
+        )}
         data-thread-find-text="true"
         data-thread-find-fold={folded ? "" : undefined}
         style={
