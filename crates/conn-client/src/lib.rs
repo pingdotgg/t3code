@@ -147,6 +147,7 @@ pub struct Connection {
     http_base_url: url::Url,
     bearer: Arc<RwLock<Option<String>>>,
     http: reqwest::Client,
+    rt: tokio::runtime::Handle,
 }
 
 impl std::fmt::Debug for Connection {
@@ -187,12 +188,36 @@ impl Connection {
             http_base_url,
             bearer,
             http,
+            rt: rt.clone(),
         };
         (conn, events_rx)
     }
 
+    /// Runs a Tokio-dependent future (such as `reqwest` I/O) directly when the caller is already
+    /// inside a Tokio runtime, or dispatches it onto the connection's dedicated Tokio runtime when
+    /// awaited from a non-Tokio executor (such as GPUI's main thread).
+    pub(crate) async fn run_on_tokio<F, T>(
+        &self,
+        fut: F,
+        task_label: &str,
+    ) -> Result<T, ClientError>
+    where
+        F: std::future::Future<Output = Result<T, ClientError>> + Send + 'static,
+        T: Send + 'static,
+    {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            fut.await
+        } else {
+            self.rt.spawn(fut).await.map_err(|err| {
+                ClientError::Connection(format!("{task_label} task failed: {err}"))
+            })?
+        }
+    }
+
     /// Mints a short-lived media ticket (`POST /api/auth/websocket-ticket/media`) for accessing
     /// the device hub proxy (`/api/device-hub/vendor/...`) over HTTP, SSE, and WebSockets.
+    ///
+    /// Safe to await from any async executor (including GPUI's main executor).
     ///
     /// # Errors
     ///
@@ -212,12 +237,22 @@ impl Connection {
             .ok_or_else(|| {
                 ClientError::Auth("no bearer token available for device hub access yet".to_owned())
             })?;
-        mint_device_hub_access(
-            &self.http,
-            &self.http_base_url,
-            &token,
-            hub_base_path,
-            host_id,
+        let http = self.http.clone();
+        let http_base_url = self.http_base_url.clone();
+        let hub_base_path = hub_base_path.to_owned();
+        let host_id = host_id.map(str::to_owned);
+        self.run_on_tokio(
+            async move {
+                mint_device_hub_access(
+                    &http,
+                    &http_base_url,
+                    &token,
+                    &hub_base_path,
+                    host_id.as_deref(),
+                )
+                .await
+            },
+            "device hub access",
         )
         .await
     }
@@ -231,6 +266,8 @@ impl Connection {
     /// Allocates a signed upload URL via `attachments.createUploadUrl`, uploads `bytes` via HTTP
     /// POST, and returns the ready [`ChatAttachment`] descriptor for `message.dispatch` or
     /// `orchestration.launchThread`.
+    ///
+    /// Safe to await from any async executor (including GPUI's main executor).
     ///
     /// # Errors
     ///
@@ -277,26 +314,35 @@ impl Connection {
             .await?;
 
         let upload_url = self.http_base_url.join(&prepared.relative_url)?;
+        let http = self.http.clone();
+        let bearer = self.bearer.read().ok().and_then(|g| g.clone());
+        let upload_mime = mime_type.clone();
 
-        let mut req = self
-            .http
-            .post(upload_url)
-            .header(reqwest::header::CONTENT_TYPE, mime_type.as_str())
-            .body(bytes);
-        if let Some(token) = self.bearer.read().ok().and_then(|g| g.clone()) {
-            req = req.bearer_auth(token);
-        }
-        let resp = req
-            .send()
-            .await
-            .map_err(|err| ClientError::Connection(err.to_string()))?;
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(ClientError::Connection(format!(
-                "attachment upload failed ({status}): {body}"
-            )));
-        }
+        self.run_on_tokio(
+            async move {
+                let mut req = http
+                    .post(upload_url)
+                    .header(reqwest::header::CONTENT_TYPE, upload_mime.as_str())
+                    .body(bytes);
+                if let Some(token) = bearer {
+                    req = req.bearer_auth(token);
+                }
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|err| ClientError::Connection(err.to_string()))?;
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    return Err(ClientError::Connection(format!(
+                        "attachment upload failed ({status}): {body}"
+                    )));
+                }
+                Ok(())
+            },
+            "attachment upload",
+        )
+        .await?;
 
         if image_mime.is_some() {
             Ok(ChatAttachment::Image(ChatImageAttachment {
@@ -802,6 +848,177 @@ mod tests {
 
         conn.close();
         let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+        Ok(())
+    }
+
+    #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test uses assert! while propagating setup errors with ?"
+    )]
+    fn upload_chat_attachment_succeeds_from_non_tokio_executor()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        // Mirrors GPUI: Connection runs on a dedicated Tokio runtime while the caller awaits
+        // `upload_chat_attachment` from a thread with no Tokio runtime entered.
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+
+        let (addr, upload_rx, server_handle) = rt.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let addr = listener.local_addr()?;
+            let (upload_tx, upload_rx) = oneshot::channel::<(String, Vec<u8>)>();
+            let handle = tokio::spawn(async move {
+                let mut upload_tx = Some(upload_tx);
+                for _ in 0..4 {
+                    let Ok((mut tcp, _)) = listener.accept().await else {
+                        break;
+                    };
+                    let mut peek = [0u8; 64];
+                    let Ok(n) = tcp.peek(&mut peek).await else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&peek[..n]);
+                    if head.starts_with("POST /api/attachments/upload/tok-img ") {
+                        let mut raw = Vec::new();
+                        let mut buf = [0u8; 4096];
+                        let header_end = loop {
+                            let Ok(read) = tcp.read(&mut buf).await else {
+                                return;
+                            };
+                            if read == 0 {
+                                return;
+                            }
+                            raw.extend_from_slice(&buf[..read]);
+                            if let Some(pos) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                                break pos + 4;
+                            }
+                        };
+                        let headers = String::from_utf8_lossy(&raw[..header_end]).into_owned();
+                        let content_len: usize = headers
+                            .lines()
+                            .find_map(|line| {
+                                let (k, v) = line.split_once(':')?;
+                                k.eq_ignore_ascii_case("content-length")
+                                    .then(|| v.trim().parse().ok())
+                                    .flatten()
+                            })
+                            .unwrap_or(0);
+                        while raw.len() < header_end + content_len {
+                            let Ok(read) = tcp.read(&mut buf).await else {
+                                break;
+                            };
+                            if read == 0 {
+                                break;
+                            }
+                            raw.extend_from_slice(&buf[..read]);
+                        }
+                        let body = raw[header_end..header_end + content_len].to_vec();
+                        if let Some(tx) = upload_tx.take() {
+                            let _ = tx.send((headers, body));
+                        }
+                        let _ = tcp
+                            .write_all(
+                                b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}",
+                            )
+                            .await;
+                        break;
+                    }
+                    // WebSocket upgrade for RPC (`attachments.createUploadUrl`).
+                    tokio::spawn(async move {
+                        let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
+                            return;
+                        };
+                        while let Some(Ok(Message::Text(text))) = ws.next().await {
+                            let Ok(frames) = conn_wire::decode_client_message(&text) else {
+                                continue;
+                            };
+                            for frame in frames {
+                                if let FromClient::Request(req) = frame
+                                    && req.tag == "attachments.createUploadUrl"
+                                {
+                                    let reply = FromServer::Exit {
+                                        request_id: req.id,
+                                        exit: Exit::success(json!({
+                                            "attachmentId": "att-img-1",
+                                            "relativeUrl": "/api/attachments/upload/tok-img",
+                                            "expiresAt": 1_900_000_000_000_i64
+                                        })),
+                                    };
+                                    let _ = ws
+                                        .send(Message::Text(encode_server_frame(&reply).into()))
+                                        .await;
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+            Ok::<_, std::io::Error>((addr, upload_rx, handle))
+        })?;
+
+        let config = ServerConfig {
+            http_base_url: url::Url::parse(&format!("http://{addr}"))?,
+            credential: Credential::Bearer("test-bearer".to_owned()),
+        };
+        let (conn, mut events) = Connection::start(config, rt.handle());
+
+        rt.block_on(async {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            while tokio::time::Instant::now() < deadline {
+                if let Ok(Some(ClientEvent::Status(ConnectionStatus::Connected))) =
+                    tokio::time::timeout(Duration::from_secs(1), events.recv()).await
+                {
+                    return Ok(());
+                }
+            }
+            Err("client did not reach Connected status")
+        })?;
+
+        // Poll on a non-Tokio executor (no Tokio reactor entered on this thread!).
+        assert!(
+            tokio::runtime::Handle::try_current().is_err(),
+            "test thread must not have an entered Tokio runtime"
+        );
+        let png_bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        let attachment = futures::executor::block_on(conn.upload_chat_attachment(
+            "screenshot.png".to_owned(),
+            "image/png".to_owned(),
+            png_bytes.clone(),
+        ))?;
+
+        match attachment {
+            ChatAttachment::Image(img) => {
+                assert_eq!(img.id, "att-img-1");
+                assert_eq!(img.name, "screenshot.png");
+                assert_eq!(img.mime_type, "image/png");
+                assert_eq!(img.size_bytes, i64::try_from(png_bytes.len())?);
+            }
+            other => panic!("expected ChatAttachment::Image, got {other:?}"),
+        }
+
+        let (headers, body) = rt.block_on(async {
+            Ok::<_, Box<dyn std::error::Error>>(
+                tokio::time::timeout(Duration::from_secs(5), upload_rx).await??,
+            )
+        })?;
+        assert_eq!(body, png_bytes, "uploaded image bytes must match");
+        let lower_headers = headers.to_ascii_lowercase();
+        assert!(
+            lower_headers.contains("content-type: image/png"),
+            "upload must send image/png Content-Type:\n{headers}"
+        );
+        assert!(
+            lower_headers.contains("authorization: bearer test-bearer"),
+            "upload must send bearer authorization:\n{headers}"
+        );
+
+        conn.close();
+        let _ = rt
+            .block_on(async { tokio::time::timeout(Duration::from_secs(2), server_handle).await });
         Ok(())
     }
 }

@@ -48,6 +48,8 @@ impl Connection {
     /// Fetches one older page of timeline items for `thread_id` starting at `cursor` via
     /// `GET {base_url}/api/orchestration/threads/{thread_id}/history?cursor={urlencoded_cursor}`.
     ///
+    /// Safe to await from any async executor (including GPUI's main executor).
+    ///
     /// # Errors
     ///
     /// Returns [`ClientError::Auth`] if the server rejects credentials (`401`/`403`),
@@ -60,48 +62,54 @@ impl Connection {
         cursor: &str,
     ) -> Result<OrchestrationV2ThreadHistoryPage, ClientError> {
         let url = build_thread_history_url(&self.http_base_url, thread_id, cursor)?;
-        let mut req = self
-            .http
-            .get(url)
-            .timeout(HISTORY_REQUEST_TIMEOUT)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .header(
-                ORCHESTRATION_PROTOCOL_HEADER,
-                ORCHESTRATION_PROTOCOL_VERSION.to_string(),
-            );
-        if let Some(token) = self.bearer.read().ok().and_then(|g| g.clone()) {
-            req = req.bearer_auth(token);
-        }
+        let http = self.http.clone();
+        let bearer = self.bearer.read().ok().and_then(|g| g.clone());
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|err| ClientError::Connection(format!("thread history request: {err}")))?;
-        let status = resp.status();
-        if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-            let body = resp.text().await.unwrap_or_default();
-            let detail = if body.is_empty() {
-                format!("thread history unauthorized ({status})")
-            } else {
-                format!("thread history unauthorized ({status}): {body}")
-            };
-            return Err(ClientError::Auth(detail));
-        }
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            let detail = if body.is_empty() {
-                format!("thread history request failed ({status})")
-            } else {
-                format!("thread history request failed ({status}): {body}")
-            };
-            return Err(ClientError::Connection(detail));
-        }
+        self.run_on_tokio(
+            async move {
+                let mut req = http
+                    .get(url)
+                    .timeout(HISTORY_REQUEST_TIMEOUT)
+                    .header(reqwest::header::ACCEPT, "application/json")
+                    .header(
+                        ORCHESTRATION_PROTOCOL_HEADER,
+                        ORCHESTRATION_PROTOCOL_VERSION.to_string(),
+                    );
+                if let Some(token) = bearer {
+                    req = req.bearer_auth(token);
+                }
 
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|err| ClientError::Connection(format!("thread history body: {err}")))?;
-        Ok(serde_json::from_slice(&bytes)?)
+                let resp = req.send().await.map_err(|err| {
+                    ClientError::Connection(format!("thread history request: {err}"))
+                })?;
+                let status = resp.status();
+                if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+                    let body = resp.text().await.unwrap_or_default();
+                    let detail = if body.is_empty() {
+                        format!("thread history unauthorized ({status})")
+                    } else {
+                        format!("thread history unauthorized ({status}): {body}")
+                    };
+                    return Err(ClientError::Auth(detail));
+                }
+                if !status.is_success() {
+                    let body = resp.text().await.unwrap_or_default();
+                    let detail = if body.is_empty() {
+                        format!("thread history request failed ({status})")
+                    } else {
+                        format!("thread history request failed ({status}): {body}")
+                    };
+                    return Err(ClientError::Connection(detail));
+                }
+
+                let bytes = resp.bytes().await.map_err(|err| {
+                    ClientError::Connection(format!("thread history body: {err}"))
+                })?;
+                Ok(serde_json::from_slice(&bytes)?)
+            },
+            "thread history",
+        )
+        .await
     }
 
     /// Fetches a single turn item (e.g., to hydrate a deferred or compacted item body) via
