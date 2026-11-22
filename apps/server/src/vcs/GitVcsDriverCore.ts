@@ -2149,7 +2149,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   // Only the destination remote's prefix is dropped; `alice/fix` pushed to origin keeps its full name.
   const resolvePublishBranchName = (branchName: string, remoteName: string) =>
-    branchName.startsWith(`${remoteName}/`) ? branchName.slice(remoteName.length + 1) : branchName;
+    parseRemoteRefWithRemoteNames(branchName, [remoteName])?.branchName ?? branchName;
 
   const hasAnyRemote = (cwd: string) =>
     resolveRepositoryPaths(cwd).pipe(
