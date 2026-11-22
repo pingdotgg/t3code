@@ -725,8 +725,6 @@ export interface ClaudeAgentSdkQueryOpenInput {
 }
 
 export interface ClaudeAgentSdkQuerySession {
-  // The CLI starts the resumed turn itself, so a resume prompt would run as a second turn.
-  readonly rerunsInterruptedTurn?: true;
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (
     message: SDKUserMessage,
@@ -1377,9 +1375,8 @@ const decodeClaudeHistoryMessages = Schema.decodeUnknownEffect(
   ),
 );
 
-// With CLAUDE_CODE_RESUME_INTERRUPTED_TURN the CLI re-runs a turn whose saved history ends on the
-// placeholder reply it records for a failed request.
-export function claudeRerunsInterruptedTurn(
+// The placeholder reply the CLI records for a failed request.
+export function claudeHistoryEndsOnFailedRequest(
   messages: ReadonlyArray<{
     readonly type: string;
     readonly message: { readonly content: unknown; readonly model?: unknown };
@@ -1583,7 +1580,7 @@ export const layerQueryRunner: Layer.Layer<
       const { mcpServers, ...sdkOptions } = input.options;
       // Jobs the agent starts inherit the thread, so port discovery can attribute their servers.
       let resumeSessionAt = sdkOptions.resumeSessionAt;
-      let rerunsInterruptedTurn = false;
+      let endsOnFailedRequest = false;
       if (input.resume && sdkOptions.resume !== undefined) {
         const messages = yield* runClaudeWorker({
           method: "getSessionMessages",
@@ -1601,7 +1598,7 @@ export const layerQueryRunner: Layer.Layer<
             ? messages.length
             : messages.findIndex((message) => message.uuid === resumeSessionAt) + 1;
         const history = messages.slice(0, boundary);
-        rerunsInterruptedTurn = claudeRerunsInterruptedTurn(history);
+        endsOnFailedRequest = claudeHistoryEndsOnFailedRequest(history);
         resumeSessionAt = claudeResumeSessionAt(history) ?? resumeSessionAt;
       }
       const queryOptions = {
@@ -1609,7 +1606,8 @@ export const layerQueryRunner: Layer.Layer<
         ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
         env: {
           ...(sdkOptions.env ?? hostEnvironment),
-          ...(input.resume
+          // The CLI would re-run a failed request by itself, then run the resume prompt as a second turn.
+          ...(input.resume && !endsOnFailedRequest
             ? {
                 CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1",
                 CLAUDE_CODE_RESUME_REASON: "user_resume",
@@ -1803,7 +1801,6 @@ export const layerQueryRunner: Layer.Layer<
       );
 
       return {
-        ...(rerunsInterruptedTurn ? { rerunsInterruptedTurn: true as const } : {}),
         messages: Stream.fromAsyncIterable(
           claudeQueryMessages(queryRuntime),
           (cause) => cause,
@@ -13889,17 +13886,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const offerUserMessage =
               userMessage === null
                 ? Effect.void
-                : querySession.query.rerunsInterruptedTurn
-                  ? startUserTurnForWakeReports(nativeThreadId)
-                  : startUserTurnForWakeReports(nativeThreadId).pipe(
-                      Effect.andThen(
-                        Effect.uninterruptibleMask((restore) =>
-                          restore(querySession.query.offer(userMessage, commitOffer)).pipe(
-                            Effect.tap(() => Effect.sync(commitOffer)),
-                          ),
+                : startUserTurnForWakeReports(nativeThreadId).pipe(
+                    Effect.andThen(
+                      Effect.uninterruptibleMask((restore) =>
+                        restore(querySession.query.offer(userMessage, commitOffer)).pipe(
+                          Effect.tap(() => Effect.sync(commitOffer)),
                         ),
                       ),
-                    );
+                    ),
+                  );
             if (userMessage !== null && !turnInput.resume) {
               yield* attachTurn;
               yield* offerUserMessage;

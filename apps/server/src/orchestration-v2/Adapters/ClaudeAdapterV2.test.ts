@@ -347,21 +347,24 @@ describe("ClaudeAdapterV2 native resume history", () => {
     assert.equal(ClaudeAdapterV2.claudeResumeSessionAt(messages), head);
   });
 
-  it("expects the CLI to re-run only a turn that ended on a failed request", () => {
+  it("recognizes history that ends on a failed request", () => {
     const failed = {
       uuid: "failed",
       type: "assistant",
       message: { content: "API Error: Request rejected (429)", model: "<synthetic>" },
     };
-    assert.isTrue(ClaudeAdapterV2.claudeRerunsInterruptedTurn([prompt, failed]));
+    assert.isTrue(ClaudeAdapterV2.claudeHistoryEndsOnFailedRequest([prompt, failed]));
     assert.isFalse(
-      ClaudeAdapterV2.claudeRerunsInterruptedTurn([
+      ClaudeAdapterV2.claudeHistoryEndsOnFailedRequest([
         prompt,
         entry("stop", "user", "[Request interrupted by user]"),
       ]),
     );
     assert.isFalse(
-      ClaudeAdapterV2.claudeRerunsInterruptedTurn([prompt, entry("reply", "assistant", "Done")]),
+      ClaudeAdapterV2.claudeHistoryEndsOnFailedRequest([
+        prompt,
+        entry("reply", "assistant", "Done"),
+      ]),
     );
   });
 });
@@ -3843,7 +3846,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly settings?: ClaudeSettings;
     readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
     readonly freshQueueOnReopen?: boolean;
-    readonly rerunsInterruptedTurn?: true;
     readonly forkSession?: ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerShape["forkSession"];
     readonly allocateSessionId?: Effect.Effect<string>;
     readonly offer?: (message: SDKUserMessage) => Effect.Effect<void>;
@@ -3954,9 +3956,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               if (options?.freshQueueOnReopen === true && processQueues.length > 0) {
                 processQueues.push(processMessages);
                 return {
-                  ...(input.resume && options?.rerunsInterruptedTurn
-                    ? { rerunsInterruptedTurn: true as const }
-                    : {}),
                   messages,
                   offer: (message: SDKUserMessage) =>
                     Effect.sync(() => {
@@ -4463,61 +4462,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
-  );
-
-  // With CLAUDE_CODE_RESUME_INTERRUPTED_TURN the CLI starts its own resume turn when the
-  // transcript ends on a failed request; a resume prompt offered too would run as a second turn.
-  it.effect("a native resume the CLI starts itself sends no second prompt", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarnessWithOptions({
-        freshQueueOnReopen: true,
-        rerunsInterruptedTurn: true,
-        close: (queue) => Queue.shutdown(queue),
-      });
-      const input = makeClaudeTestTurnInput({
-        threadId: harness.threadId,
-        providerThread: harness.providerThread,
-        now: DateTime.makeUnsafe(0),
-        attemptId: RunAttemptId.make("native-auto-resume"),
-        text: "Initial task",
-        attachments: [],
-        providerTurnOrdinal: 1,
-      });
-      const limitedResult = (uuid: string) =>
-        makeResultFrame({
-          uuid,
-          result: "API Error: Request rejected (429) · usage limit reached",
-          isError: true,
-          apiErrorStatus: 429,
-          terminalReason: "api_error",
-        });
-      yield* harness.runtime.startTurn(input);
-      yield* harness.offerAndWait(limitedResult("00000000-0000-4000-8000-000000041091"));
-      yield* Queue.take(harness.terminalReceipts);
-      const offeredBeforeResume = harness.offeredMessages.length;
-      const { message, ...turn } = input;
-      yield* harness.runtime.resumeTurn!({
-        ...turn,
-        providerTurnOrdinal: 2,
-        messageId: message.messageId,
-      });
-      assert.equal(harness.offeredMessages.length, offeredBeforeResume);
-      yield* harness.offerAndWait(wakeTurnInit);
-      yield* harness.offerAndWait(limitedResult("00000000-0000-4000-8000-000000041092"));
-      yield* Queue.take(harness.terminalReceipts);
-      assert.equal(harness.continuationRequests.length, 0);
-      assert.isFalse(yield* harness.hasPendingBackgroundWork);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-        ),
-      ),
-    ),
   );
 
   it.effect("reports the session cwd on each process's first init, not on repeated inits", () =>
