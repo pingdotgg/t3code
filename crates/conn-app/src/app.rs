@@ -112,6 +112,10 @@ pub(crate) struct ConnApp {
     _activation_task: Option<gpui_kit::Task<()>>,
     /// Thread id currently subscribed via `orchestration.subscribeThread` on `self.connection`.
     subscribed_thread_id: Option<String>,
+    /// Thread opened at this instant, for `CONN_GPUI_PERF_LOG` stage timings.
+    perf_open: Option<(String, std::time::Instant)>,
+    /// `perf_open` not yet handed to the chat view (which logs the first paint).
+    perf_open_pending_chat: bool,
     /// Project id currently subscribed to `annotations.subscribe` on `self.connection`.
     subscribed_annotation_project: Option<String>,
     /// Live annotations queue for `subscribed_annotation_project`.
@@ -328,6 +332,8 @@ impl ConnApp {
             _control_server: None,
             _activation_task: None,
             subscribed_thread_id: None,
+            perf_open: None,
+            perf_open_pending_chat: false,
             subscribed_annotation_project: None,
             annotations: Vec::new(),
             annotation_watching_threads: HashSet::new(),
@@ -617,10 +623,15 @@ impl ConnApp {
 
     /// Tells the right panel whether its surfaces are on screen, so the native browser view
     /// hides while the panel is closed or a GPUI overlay covers it.
-    fn sync_browser_visibility(&self, cx: &mut Context<'_, Self>) {
-        let visible = self.layout.right_panel_open
+    /// The right panel is open and no GPUI overlay covers it.
+    fn right_panel_surface_visible(&self) -> bool {
+        self.layout.right_panel_open
             && self.command_palette.is_none()
-            && self.settings_modal.is_none();
+            && self.settings_modal.is_none()
+    }
+
+    fn sync_browser_visibility(&self, cx: &mut Context<'_, Self>) {
+        let visible = self.right_panel_surface_visible();
         self.right_panel
             .update(cx, |panel, cx| panel.set_surface_visible(visible, cx));
     }
@@ -681,10 +692,12 @@ impl ConnApp {
             .or_else(|| self.draft.as_ref().map(|d| d.project_id.clone()));
         let thread_id = selected.map(str::to_owned);
         let surface = self.right_panel_surface();
+        let surface_visible = self.right_panel_surface_visible();
         let panel_root = root.clone();
         self.right_panel.update(cx, |panel, cx| {
-            panel.set_context(project_id.clone(), panel_root, thread_id, cx);
+            panel.set_context(project_id.clone(), panel_root, thread_id, shell_thread, cx);
             panel.set_surface(&surface, cx);
+            panel.set_surface_visible(surface_visible, cx);
         });
         let (
             model_instance,
@@ -737,7 +750,16 @@ impl ConnApp {
         };
         let has_projects = self.shell.projects.iter().any(|p| p.archived_at.is_none());
         let connected = self.connection.is_some();
+        let perf_open = if self.perf_open_pending_chat {
+            self.perf_open_pending_chat = false;
+            self.perf_open.clone()
+        } else {
+            None
+        };
         self.chat.update(cx, |chat, cx| {
+            if let Some((perf_thread, opened_at)) = perf_open {
+                chat.set_perf_open(perf_thread, opened_at);
+            }
             chat.set_shell_availability(has_projects, connected, cx);
             chat.set_draft(draft_view, cx);
             chat.set_workspace_root(root, cx);
@@ -865,10 +887,27 @@ impl ConnApp {
                 }
             }
             ClientEvent::Thread { thread_id, item } => {
-                self.threads
+                let perf_kind = self
+                    .perf_open
+                    .as_ref()
+                    .filter(|(id, _)| *id == thread_id)
+                    .map(|(_, opened_at)| (thread_stream_item_kind(&item), *opened_at));
+                let apply_start = std::time::Instant::now();
+                let state = self
+                    .threads
                     .entry(thread_id.clone())
-                    .or_insert_with(|| ThreadState::new(thread_id))
-                    .apply(item);
+                    .or_insert_with(|| ThreadState::new(thread_id.clone()));
+                state.apply(item);
+                if let Some((kind, opened_at)) = perf_kind
+                    && kind != "event"
+                {
+                    conn_client::perf_log!(
+                        "app.applied thread={thread_id} kind={kind} entries={} apply_ms={:.1} +{:.1}ms",
+                        state.entries.len(),
+                        conn_client::perf::ms_since(apply_start),
+                        conn_client::perf::ms_since(opened_at),
+                    );
+                }
             }
             ClientEvent::PanelRequest(request) => {
                 self.dispatch_agent_panel_request(request, cx);
@@ -913,6 +952,14 @@ impl ConnApp {
     /// Selects `thread_id` and subscribes to its timeline once.
     fn open_thread(&mut self, thread_id: String) {
         self.draft = None;
+        if conn_client::perf::enabled()
+            && self.layout.selected_thread_id.as_deref() != Some(thread_id.as_str())
+        {
+            let cached = self.threads.get(&thread_id).map(|t| t.entries.len());
+            conn_client::perf_log!("app.open_thread thread={thread_id} cached_entries={cached:?}");
+            self.perf_open = Some((thread_id.clone(), std::time::Instant::now()));
+            self.perf_open_pending_chat = true;
+        }
         if let Some(connection) = &self.connection
             && self.subscribed_thread_id.as_deref() != Some(thread_id.as_str())
         {
@@ -3898,4 +3945,13 @@ impl Render for ConnApp {
 
 fn default_device_name() -> String {
     std::env::var("USER").unwrap_or_else(|_| "Mac".to_owned())
+}
+
+/// Short label of a thread stream item for `CONN_GPUI_PERF_LOG` lines.
+fn thread_stream_item_kind(item: &conn_state::ThreadStreamItem) -> &'static str {
+    match item {
+        conn_state::ThreadStreamItem::Snapshot(_) => "snapshot",
+        conn_state::ThreadStreamItem::Synchronized(_) => "synchronized",
+        conn_state::ThreadStreamItem::Event(_) | conn_state::ThreadStreamItem::Event2(_) => "event",
+    }
 }

@@ -367,6 +367,7 @@ impl RightPanel {
         project_id: Option<String>,
         workspace_root: Option<String>,
         thread_id: Option<String>,
+        thread_shell: Option<&conn_state::ThreadShell>,
         cx: &mut Context<'_, Self>,
     ) {
         if self.project_id != project_id || self.workspace_root != workspace_root {
@@ -390,7 +391,7 @@ impl RightPanel {
                 .update(cx, |p, cx| p.set_thread(thread_id.clone(), cx));
         }
         let root = self.workspace_root.clone();
-        for_each_thread_panel(self, root, thread_id, cx);
+        for_each_thread_panel(self, root, thread_id, thread_shell, cx);
         cx.notify();
     }
 
@@ -408,12 +409,26 @@ impl RightPanel {
     }
 
     fn sync_surface_visibility(&mut self, cx: &mut Context<'_, Self>) {
-        let show_browser = self.surface_visible && self.tab == RightPanelTab::Browser;
+        let shows = |tab: RightPanelTab| self.surface_visible && self.tab == tab;
+        let (show_browser, show_device) =
+            (shows(RightPanelTab::Browser), shows(RightPanelTab::Device));
+        let (show_diff, show_pr, show_linked) = (
+            shows(RightPanelTab::Diff),
+            shows(RightPanelTab::PullRequest),
+            shows(RightPanelTab::LinkedItems),
+        );
         self.browser
             .update(cx, |b, cx| b.set_visible(show_browser, cx));
-        let show_device = self.surface_visible && self.tab == RightPanelTab::Device;
         self.device
             .update(cx, |d, cx| d.set_visible(show_device, cx));
+        // Diff, Pull request and Linked items load only while shown, as in Conn. Before, every
+        // thread switch fired their git, GitHub and three full `getThreadProjection` calls
+        // whether or not the right panel was open, competing with the thread snapshot.
+        self.diff.update(cx, |p, cx| p.set_active(show_diff, cx));
+        self.pull_request
+            .update(cx, |p, cx| p.set_active(show_pr, cx));
+        self.linked_items
+            .update(cx, |p, cx| p.set_active(show_linked, cx));
     }
 
     /// Switches the active right-panel tab (opening it if not yet in `open_tabs`),
@@ -679,13 +694,16 @@ fn for_each_thread_panel(
     panel: &RightPanel,
     workspace_root: Option<String>,
     thread_id: Option<String>,
+    thread_shell: Option<&conn_state::ThreadShell>,
     cx: &mut Context<'_, RightPanel>,
 ) {
+    let pr_fields = thread_shell.map(pull_request::PrThreadFields::from);
     panel.pull_request.update(cx, |p, cx| {
-        p.set_thread(workspace_root.clone(), thread_id.clone(), cx);
+        p.set_thread(workspace_root.clone(), thread_id.clone(), pr_fields, cx);
     });
+    let linked_shell = thread_shell.map(conn_contract::to_json);
     panel.linked_items.update(cx, |p, cx| {
-        p.set_thread(workspace_root.clone(), thread_id.clone(), cx);
+        p.set_thread(workspace_root.clone(), thread_id.clone(), linked_shell, cx);
     });
     panel.device.update(cx, |p, cx| {
         p.set_thread(workspace_root, thread_id, cx);

@@ -135,6 +135,43 @@ pub(crate) fn extract_thread_sequence(item: &OrchestrationV2ThreadStreamItem) ->
     }
 }
 
+/// The `kind` and sequence fields of a thread stream item, read without building the body.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadItemHead<'a> {
+    #[serde(borrow)]
+    kind: std::borrow::Cow<'a, str>,
+}
+
+/// Decodes one `orchestration.subscribeThread` item straight from its JSON text.
+///
+/// `OrchestrationV2ThreadStreamItem` is a `tagged_union!`: its `Deserialize` first buffers the
+/// whole item into a `serde_json::Value` DOM and then decodes the variant from that DOM, which
+/// deep-copies every nested tagged union again. For a multi-megabyte snapshot that is the
+/// dominant decode cost. This peeks `kind` (a scan that allocates nothing for the body) and
+/// decodes the variant struct directly from the text, so only the small per-turn-item unions
+/// still go through a DOM.
+pub(crate) fn decode_thread_stream_item(
+    raw: &str,
+) -> Result<OrchestrationV2ThreadStreamItem, serde_json::Error> {
+    use conn_contract::{
+        OrchestrationV2ThreadStreamItemEvent as Event,
+        OrchestrationV2ThreadStreamItemSnapshot as Snapshot,
+    };
+    let head: ThreadItemHead<'_> = serde_json::from_str(raw)?;
+    match head.kind.as_ref() {
+        "snapshot" => {
+            serde_json::from_str::<Snapshot>(raw).map(OrchestrationV2ThreadStreamItem::Snapshot)
+        }
+        "event" => match serde_json::from_str::<Event>(raw) {
+            Ok(event) => Ok(OrchestrationV2ThreadStreamItem::Event(event)),
+            // Unknown domain event types fall back to the untyped `Event2` member.
+            Err(_) => serde_json::from_str(raw),
+        },
+        _ => serde_json::from_str(raw),
+    }
+}
+
 /// Exponential reconnect backoff starting at 250ms and capped at 10s.
 #[derive(Debug, Clone)]
 pub(crate) struct Backoff {
@@ -278,6 +315,79 @@ mod tests {
             vec![chunk],
             "reassembled frame must decode back to original Chunk"
         );
+        Ok(())
+    }
+
+    #[test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test uses assert! for diffs while propagating setup errors with ?"
+    )]
+    fn direct_thread_item_decode_matches_tagged_union_decode()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use conn_state::testkit::{SyntheticThread, synthetic_thread_snapshot_json};
+        let snapshot = synthetic_thread_snapshot_json(SyntheticThread::sized(64 * 1024));
+        let event = r#"{"kind":"event","sequence":9,"event":{"id":"e","occurredAt":"2026-11-13T13:37:10.370Z","type":"some.future-event","payload":{"x":1}}}"#;
+        for raw in [snapshot.as_str(), r#"{"kind":"synchronized"}"#, event] {
+            let via_union: OrchestrationV2ThreadStreamItem = serde_json::from_str(raw)?;
+            let direct = decode_thread_stream_item(raw)?;
+            assert_eq!(
+                direct, via_union,
+                "direct decode must equal tagged_union decode"
+            );
+        }
+        assert!(
+            matches!(
+                decode_thread_stream_item(event)?,
+                OrchestrationV2ThreadStreamItem::Event2(_)
+            ),
+            "unknown domain events must fall back to Event2"
+        );
+        Ok(())
+    }
+
+    /// `cargo test -p conn-client --release -- --ignored --nocapture bench_thread_snapshot_decode`
+    #[test]
+    #[ignore = "latency benchmark; run explicitly in release mode"]
+    fn bench_thread_snapshot_decode() -> Result<(), Box<dyn std::error::Error>> {
+        use conn_state::ThreadState;
+        use conn_state::testkit::{SyntheticThread, synthetic_thread_snapshot_json};
+        use std::time::Instant;
+        for mib in [1usize, 5, 20] {
+            let raw = synthetic_thread_snapshot_json(SyntheticThread::sized(mib * 1024 * 1024));
+            let reps = 3;
+            let mut union_ms = f64::MAX;
+            let mut direct_ms = f64::MAX;
+            let mut apply_ms = f64::MAX;
+            let mut entries = 0;
+            for _ in 0..reps {
+                let t = Instant::now();
+                let item: OrchestrationV2ThreadStreamItem = serde_json::from_str(&raw)?;
+                union_ms = union_ms.min(t.elapsed().as_secs_f64() * 1e3);
+                drop(item);
+                let t = Instant::now();
+                let item = decode_thread_stream_item(&raw)?;
+                direct_ms = direct_ms.min(t.elapsed().as_secs_f64() * 1e3);
+                let t = Instant::now();
+                let mut state = ThreadState::new("bench");
+                state.apply(item);
+                apply_ms = apply_ms.min(t.elapsed().as_secs_f64() * 1e3);
+                entries = state.entries.len();
+            }
+            // What one `orchestration.getThreadProjection` reply costs the driver task: the
+            // Exit frame decodes into a `Value` DOM before `call` re-decodes it.
+            let exit = format!(
+                r#"{{"_tag":"Exit","requestId":7,"exit":{{"_tag":"Success","value":{raw}}}}}"#
+            );
+            let t = Instant::now();
+            let frames = decode_server_message_raw(&exit)?;
+            let exit_ms = t.elapsed().as_secs_f64() * 1e3;
+            drop(frames);
+            println!(
+                "snapshot {:.1} MiB ({entries} entries): tagged_union decode {union_ms:.1} ms, direct decode {direct_ms:.1} ms, ThreadState::apply {apply_ms:.1} ms, unary Exit DOM decode {exit_ms:.1} ms",
+                raw.len() as f64 / (1024.0 * 1024.0)
+            );
+        }
         Ok(())
     }
 

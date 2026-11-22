@@ -21,6 +21,7 @@ tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
+conn-state = { workspace = true, features = ["testkit"] }
 tempfile.workspace = true
 
 [lints]

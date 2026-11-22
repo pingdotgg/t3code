@@ -17,6 +17,7 @@
 mod auth;
 pub mod device_hub;
 mod driver;
+pub mod perf;
 mod wire;
 
 use std::sync::atomic::{AtomicU64, Ordering};

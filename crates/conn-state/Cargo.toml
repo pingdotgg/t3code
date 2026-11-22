@@ -12,5 +12,9 @@ conn-contract.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[features]
+# Synthetic thread snapshots for latency benchmarks (`conn_state::testkit`).
+testkit = []
+
 [lints]
 workspace = true

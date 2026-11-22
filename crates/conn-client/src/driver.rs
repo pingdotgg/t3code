@@ -22,8 +22,8 @@ use tracing::{debug, warn};
 use crate::auth::{TokenExchangeError, exchange_pairing_code};
 use crate::wire::{
     Backoff, IncomingServerFrame, MAX_JOINED_MESSAGE_BYTES, build_ws_url,
-    decode_server_message_raw, encode_client_frame, extract_shell_sequence,
-    extract_thread_sequence,
+    decode_server_message_raw, decode_thread_stream_item, encode_client_frame,
+    extract_shell_sequence, extract_thread_sequence,
 };
 use crate::{ClientError, ClientEvent, ConnectionStatus, Credential, ServerConfig, StreamId};
 
@@ -60,6 +60,8 @@ pub(crate) enum Command {
 struct ThreadSubState {
     after_sequence: Option<i64>,
     request_id: Option<RequestId>,
+    /// When the current `subscribeThread` request went out (for `CONN_GPUI_PERF_LOG`).
+    subscribed_at: Option<std::time::Instant>,
 }
 
 enum ActiveStream {
@@ -178,6 +180,7 @@ impl DriverState {
                 self.thread_subs.entry(thread_id).or_insert(ThreadSubState {
                     after_sequence: None,
                     request_id: None,
+                    subscribed_at: None,
                 });
             }
             Command::UnsubscribeThread(thread_id) => {
@@ -287,7 +290,10 @@ pub(crate) async fn run(
             .max_message_size(Some(MAX_JOINED_MESSAGE_BYTES))
             .max_frame_size(Some(MAX_JOINED_MESSAGE_BYTES));
 
-        match tokio_tungstenite::connect_async_with_config(ws_request, Some(ws_config), false).await
+        // `disable_nagle = true` (TCP_NODELAY): every client frame is a small Ack or Request. With
+        // Nagle on, a `subscribeThread` sent right after an Ack waits for the server's delayed
+        // TCP ACK (up to ~200 ms on macOS) before it leaves the socket.
+        match tokio_tungstenite::connect_async_with_config(ws_request, Some(ws_config), true).await
         {
             Ok((ws_stream, _response)) => {
                 state.backoff.reset();
@@ -437,6 +443,8 @@ async fn run_session(
 ) -> SessionOutcome {
     let (mut ws_write, mut ws_read) = ws_stream.split();
     let mut joiner = frame_parts::Joiner::new(MAX_JOINED_MESSAGE_BYTES);
+    // When the first part of the message being joined arrived (`CONN_GPUI_PERF_LOG`).
+    let mut message_started_at: Option<std::time::Instant> = None;
 
     // Resubscribe desired shell and thread streams and flush any queued calls/streams.
     if let Err(err) = restore_subscriptions_and_pending(state, &mut ws_write).await {
@@ -452,8 +460,13 @@ async fn run_session(
             maybe_msg = ws_read.next() => {
                 match maybe_msg {
                     Some(Ok(Message::Text(text))) => {
+                        let part_at = std::time::Instant::now();
+                        let started_at = *message_started_at.get_or_insert(part_at);
                         let whole = match joiner.push(&text) {
-                            Ok(Some(whole)) => whole,
+                            Ok(Some(whole)) => {
+                                message_started_at = None;
+                                whole
+                            }
                             Ok(None) => continue,
                             Err(frame_parts::TooLarge) => {
                                 eprintln!(
@@ -463,6 +476,10 @@ async fn run_session(
                                     "reassembled frame exceeded max size".to_owned(),
                                 );
                             }
+                        };
+                        let timing = MessageTiming {
+                            started_at,
+                            bytes: whole.len(),
                         };
                         let frames = match decode_server_message_raw(&whole) {
                             Ok(frames) => frames,
@@ -479,6 +496,7 @@ async fn run_session(
                                 &mut ws_write,
                                 events_tx,
                                 &mut missed_pongs,
+                                timing,
                             ).await {
                                 return outcome;
                             }
@@ -596,6 +614,7 @@ where
                         ThreadSubState {
                             after_sequence: None,
                             request_id: None,
+                            subscribed_at: None,
                         },
                     );
                     true
@@ -709,7 +728,12 @@ where
     let input = OrchestrationV2SubscribeThreadInput {
         thread_id: thread_id.to_owned(),
         after_sequence,
-        request_completion_marker: None,
+        // T3 always asks for `synchronized`: it ends "Loading thread…" for threads whose
+        // snapshot has no rows, and marks the end of an `afterSequence` replay.
+        request_completion_marker: Some(true),
+        // `acceptDeferredWork` and `acceptCompactIds` stay off: `conn-server` ignores both
+        // today, and this client neither fetches deferred bodies nor decodes an `idTable`, so
+        // a server that starts honouring them must not see this client opt in.
         accept_bounded_snapshot: None,
         accept_deferred_work: None,
         accept_compact_turn_items: Some(true),
@@ -721,12 +745,15 @@ where
     let request_id = state.alloc_request_id();
     if let Some(sub) = state.thread_subs.get_mut(thread_id) {
         sub.request_id = Some(request_id.clone());
+        sub.subscribed_at = Some(std::time::Instant::now());
     }
     state.in_flight_streams.insert(
         request_id.clone(),
         ActiveStream::Thread(thread_id.to_owned()),
     );
-    send_request(ws_write, request_id, TAG_SUBSCRIBE_THREAD, payload).await
+    let result = send_request(ws_write, request_id, TAG_SUBSCRIBE_THREAD, payload).await;
+    crate::perf_log!("client.subscribe_sent thread={thread_id} after_sequence={after_sequence:?}");
+    result
 }
 
 async fn send_panel_requests_subscribe<S>(
@@ -843,19 +870,27 @@ where
         .map_err(|err| format!("ws send failed: {err}"))
 }
 
+/// When a whole server message started arriving and how big it was (`CONN_GPUI_PERF_LOG`).
+#[derive(Clone, Copy)]
+struct MessageTiming {
+    started_at: std::time::Instant,
+    bytes: usize,
+}
+
 async fn handle_incoming_frame<S>(
     state: &mut DriverState,
     frame: IncomingServerFrame,
     ws_write: &mut S,
     events_tx: &mpsc::Sender<ClientEvent>,
     missed_pongs: &mut u8,
+    timing: MessageTiming,
 ) -> Result<(), SessionOutcome>
 where
     S: futures::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
     match frame {
         IncomingServerFrame::Chunk { request_id, values } => {
-            handle_chunk_raw(state, request_id, values, ws_write, events_tx).await?;
+            handle_chunk_raw(state, request_id, values, ws_write, events_tx, timing).await?;
         }
         IncomingServerFrame::Other(FromServer::Pong) => {
             *missed_pongs = 0;
@@ -869,7 +904,7 @@ where
                         .and_then(|s| RawValue::from_string(s).ok())
                 })
                 .collect();
-            handle_chunk_raw(state, request_id, raw_values, ws_write, events_tx).await?;
+            handle_chunk_raw(state, request_id, raw_values, ws_write, events_tx, timing).await?;
         }
         IncomingServerFrame::Other(FromServer::Exit { request_id, exit }) => {
             handle_exit(state, request_id, exit, events_tx).await?;
@@ -906,6 +941,7 @@ async fn handle_chunk_raw<S>(
     values: Vec<Box<RawValue>>,
     ws_write: &mut S,
     events_tx: &mpsc::Sender<ClientEvent>,
+    timing: MessageTiming,
 ) -> Result<(), SessionOutcome>
 where
     S: futures::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
@@ -946,16 +982,11 @@ where
         Some(ActiveStream::Thread(thread_id)) => {
             let thread_id = thread_id.clone();
             for raw in values {
-                let raw_len = raw.get().len();
-                let t0 = Instant::now();
-                match serde_json::from_str::<OrchestrationV2ThreadStreamItem>(raw.get()) {
+                let decode_start = std::time::Instant::now();
+                match decode_thread_stream_item(raw.get()) {
                     Ok(item) => {
-                        if raw_len >= 512 * 1024 {
-                            eprintln!(
-                                "conn-client: decoded thread item ({thread_id}, {:.2} MiB) in {:.1} ms",
-                                (raw_len as f64) / (1024.0 * 1024.0),
-                                t0.elapsed().as_secs_f64() * 1000.0
-                            );
+                        if crate::perf::enabled() {
+                            log_thread_item_decoded(state, &thread_id, &item, timing, decode_start);
                         }
                         if let Some(seq) = extract_thread_sequence(&item)
                             && let Some(sub) = state.thread_subs.get_mut(&thread_id)
@@ -1045,6 +1076,33 @@ where
     }
 
     Ok(())
+}
+
+fn log_thread_item_decoded(
+    state: &DriverState,
+    thread_id: &str,
+    item: &OrchestrationV2ThreadStreamItem,
+    timing: MessageTiming,
+    decode_start: std::time::Instant,
+) {
+    let kind = match item {
+        OrchestrationV2ThreadStreamItem::Snapshot(_) => "snapshot",
+        OrchestrationV2ThreadStreamItem::Synchronized(_) => "synchronized",
+        OrchestrationV2ThreadStreamItem::Event(_) | OrchestrationV2ThreadStreamItem::Event2(_) => {
+            "event"
+        }
+    };
+    let since_subscribe = state
+        .thread_subs
+        .get(thread_id)
+        .and_then(|sub| sub.subscribed_at)
+        .map_or(f64::NAN, crate::perf::ms_since);
+    crate::perf_log!(
+        "client.decoded thread={thread_id} kind={kind} message_bytes={} receive_ms={:.1} decode_ms={:.1} +{since_subscribe:.1}ms",
+        timing.bytes,
+        decode_start.duration_since(timing.started_at).as_secs_f64() * 1000.0,
+        crate::perf::ms_since(decode_start),
+    );
 }
 
 async fn handle_exit(

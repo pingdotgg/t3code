@@ -47,6 +47,7 @@ use self::header::{
     ConfirmableAction, HeaderCallbacks, HeaderPickerState, render_condensed_header_row,
     render_detail_ghost, render_header_body, render_title_header, render_unavailable_state,
 };
+pub(crate) use self::logic::PrThreadFields;
 use self::logic::{
     CommentFilter, ComposerMode, DetailTab, ResolvedPullRequestTarget, ReviewOutcome,
     TimelineOrder, available_review_verdicts, build_fix_findings_prompt,
@@ -100,6 +101,12 @@ pub(crate) struct PullRequestPanel {
     connection: Option<Connection>,
     workspace_root: Option<String>,
     thread_id: Option<String>,
+    /// The thread's PR fields from its shell row, when the shell lists the thread.
+    thread_fields: Option<PrThreadFields>,
+    /// True while this surface is the visible right-panel tab. Hidden, it loads nothing.
+    active: bool,
+    /// The thread changed while hidden; resolve when shown.
+    stale: bool,
     state: PanelState,
     generation: u64,
     refresh_stream_id: Option<StreamId>,
@@ -293,6 +300,9 @@ impl PullRequestPanel {
             connection,
             workspace_root: None,
             thread_id: None,
+            thread_fields: None,
+            active: false,
+            stale: false,
             state: initial_state,
             generation: 0,
             refresh_stream_id: None,
@@ -395,8 +405,10 @@ impl PullRequestPanel {
         &mut self,
         workspace_root: Option<String>,
         thread_id: Option<String>,
+        thread_fields: Option<PrThreadFields>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.thread_fields = thread_fields;
         if self.workspace_root == workspace_root && self.thread_id == thread_id {
             return;
         }
@@ -408,6 +420,18 @@ impl PullRequestPanel {
 
     /// Shows one pull request, opened from Linked items or Tasks, until the thread changes
     /// (Conn opens a `pull-request` surface for that reference).
+    /// Shows or hides this surface. A thread change while hidden resolves on show, as Conn
+    /// mounts the panel (and runs its queries) only while its tab is visible.
+    pub(crate) fn set_active(&mut self, active: bool, cx: &mut Context<'_, Self>) {
+        if self.active == active {
+            return;
+        }
+        self.active = active;
+        if active && self.stale {
+            self.resolve_and_load(cx);
+        }
+    }
+
     pub(crate) fn open_pull_request(
         &mut self,
         project_id: String,
@@ -417,6 +441,8 @@ impl PullRequestPanel {
         url: Option<String>,
         cx: &mut Context<'_, Self>,
     ) {
+        // An explicitly opened pull request replaces the thread's own resolution.
+        self.stale = false;
         self.reset_transient_ui();
         let target = ResolvedPullRequestTarget {
             reference: PullRequestRef {
@@ -541,6 +567,12 @@ impl PullRequestPanel {
     fn resolve_and_load(&mut self, cx: &mut Context<'_, Self>) {
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
+        if !self.active {
+            self.stale = true;
+            self.state = PanelState::Resolving;
+            return;
+        }
+        self.stale = false;
 
         let Some(conn) = self.connection.clone() else {
             self.state = PanelState::NoConnection;
@@ -553,12 +585,14 @@ impl PullRequestPanel {
             return;
         };
         let workspace_root = self.workspace_root.clone();
+        let thread_fields = self.thread_fields.clone();
         self.state = PanelState::Resolving;
         cx.notify();
 
         cx.spawn(async move |this, cx| {
             let resolved =
-                resolve_pr_for_thread(&conn, &thread_id, workspace_root.as_deref()).await;
+                resolve_pr_for_thread(&conn, &thread_id, thread_fields, workspace_root.as_deref())
+                    .await;
             let _ = this.update(cx, |panel, cx| {
                 if panel.generation != generation {
                     return;
@@ -687,6 +721,10 @@ impl PullRequestPanel {
     }
 
     fn refresh_quietly(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.active {
+            self.stale = true;
+            return;
+        }
         if let Some(target) = self.active_target() {
             self.load_pull_request(target, true, cx);
         } else if matches!(self.state, PanelState::NoPullRequest) && self.thread_id.is_some() {
@@ -1735,25 +1773,32 @@ impl PullRequestPanel {
 }
 
 /// Resolves the PR reference for a thread using:
-/// 1. `orchestration.getThreadProjection` (`pull_requests`, `linked_pull_request`, `branch_pull_request`)
+/// 1. the thread's `pull_requests`, `linked_pull_request`, `branch_pull_request` (from its shell
+///    row; `orchestration.getThreadProjection` only when the shell does not list the thread)
 /// 2. `git.resolvePullRequest` for the thread's branch
 /// 3. `pullRequests.list` for the thread's project matching the thread's branch
 async fn resolve_pr_for_thread(
     conn: &Connection,
     thread_id: &str,
+    known: Option<PrThreadFields>,
     workspace_root: Option<&str>,
 ) -> Result<Option<ResolvedPullRequestTarget>, (Option<String>, String)> {
-    let projection: OrchestrationV2ThreadProjection = conn
-        .call::<get_thread_projection::Payload, get_thread_projection::Success>(
-            "orchestration.getThreadProjection",
-            &conn_contract::OrchestrationV2GetThreadProjectionInput {
-                thread_id: thread_id.to_owned(),
-            },
-        )
-        .await
-        .map_err(|err| describe_rpc_error(&err))?;
-
-    let thread = &projection.thread;
+    let thread = match known {
+        Some(fields) => fields,
+        None => {
+            let projection: OrchestrationV2ThreadProjection = conn
+                .call::<get_thread_projection::Payload, get_thread_projection::Success>(
+                    "orchestration.getThreadProjection",
+                    &conn_contract::OrchestrationV2GetThreadProjectionInput {
+                        thread_id: thread_id.to_owned(),
+                    },
+                )
+                .await
+                .map_err(|err| describe_rpc_error(&err))?;
+            PrThreadFields::from(&projection.thread)
+        }
+    };
+    let thread = &thread;
     if let Some(target) = resolve_thread_pr_target(thread) {
         return Ok(Some(target));
     }

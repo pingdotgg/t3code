@@ -120,6 +120,10 @@ pub(crate) struct DiffPanel {
     file_list_width: f32,
     split_drag: Option<(f32, f32)>,
     generation: u64,
+    /// True while this surface is the visible right-panel tab. Hidden, it loads nothing.
+    active: bool,
+    /// A reload was skipped while hidden; reload when shown.
+    stale: bool,
 }
 
 impl fmt::Debug for DiffPanel {
@@ -158,6 +162,8 @@ impl DiffPanel {
             file_list_width: FILE_LIST_WIDTH_PX,
             split_drag: None,
             generation: 0,
+            active: false,
+            stale: false,
         }
     }
 
@@ -265,9 +271,26 @@ impl DiffPanel {
         .detach();
     }
 
+    /// Shows or hides this surface. A reload skipped while hidden runs on show, as Conn mounts
+    /// the diff panel (and runs its git and checkpoint queries) only while its tab is visible.
+    pub(crate) fn set_active(&mut self, active: bool, cx: &mut Context<'_, Self>) {
+        if self.active == active {
+            return;
+        }
+        self.active = active;
+        if active && self.stale {
+            self.reload(cx);
+        }
+    }
+
     pub(crate) fn reload(&mut self, cx: &mut Context<'_, Self>) {
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
+        if !self.active {
+            self.stale = true;
+            return;
+        }
+        self.stale = false;
 
         let Some(conn) = self.connection.clone() else {
             self.state = DiffLoadState::Error("Not connected to server.".to_owned());

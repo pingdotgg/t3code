@@ -47,6 +47,9 @@ objc2-core-graphics = { version = "=0.3.2", default-features = false, features =
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[dev-dependencies]
+conn-state = { workspace = true, features = ["testkit"] }
+
 [features]
 # Scripted UI automation and screenshot capture hook for visual verification in nick-vm
 # (modeled on .refs/threadbear/desktop/gpui/src/automation.rs). Never enabled in release builds.

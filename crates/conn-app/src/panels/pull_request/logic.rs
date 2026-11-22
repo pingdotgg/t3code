@@ -6,13 +6,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use conn_contract::{
-    OrchestrationV2AppThread, PullRequestAction, PullRequestActionInputUpdateMethod,
-    PullRequestActor, PullRequestCheck, PullRequestCheckStatus, PullRequestComment,
-    PullRequestCommentKind, PullRequestCommit, PullRequestDetail, PullRequestDetailAutoMergeMethod,
-    PullRequestDetailBaseComparison, PullRequestLabelCandidate, PullRequestMergeability,
-    PullRequestReaction, PullRequestReactionContent, PullRequestRef, PullRequestReviewThread,
-    PullRequestReviewVerdict, PullRequestReviewerCandidate, PullRequestState,
-    ThreadPullRequestLink, ThreadPullRequestLinkSource,
+    OrchestrationV2AppThread, OrchestrationV2ThreadShell, PullRequestAction,
+    PullRequestActionInputUpdateMethod, PullRequestActor, PullRequestCheck, PullRequestCheckStatus,
+    PullRequestComment, PullRequestCommentKind, PullRequestCommit, PullRequestDetail,
+    PullRequestDetailAutoMergeMethod, PullRequestDetailBaseComparison, PullRequestLabelCandidate,
+    PullRequestMergeability, PullRequestReaction, PullRequestReactionContent, PullRequestRef,
+    PullRequestReviewThread, PullRequestReviewVerdict, PullRequestReviewerCandidate,
+    PullRequestState, ThreadLinkedPullRequest, ThreadPullRequestLink, ThreadPullRequestLinkSource,
 };
 use conn_desktop::orbit::insights::parse_date_ms;
 use conn_theme::{Appearance, Rgba, Tokens, color_mix_srgb, parse_color};
@@ -93,11 +93,49 @@ pub(super) struct ResolvedPullRequestTarget {
     pub(super) url: Option<String>,
 }
 
+/// The thread fields that decide its pull request. Conn reads them from the thread's shell row;
+/// a full `orchestration.getThreadProjection` is only the fallback for threads the shell lacks.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PrThreadFields {
+    pub(crate) project_id: String,
+    pub(crate) branch: Option<String>,
+    pub(crate) worktree_path: Option<String>,
+    pub(crate) pull_requests: Option<Vec<ThreadPullRequestLink>>,
+    pub(crate) linked_pull_request: Option<Option<ThreadLinkedPullRequest>>,
+    pub(crate) branch_pull_request: Option<Option<ThreadLinkedPullRequest>>,
+}
+
+impl From<&OrchestrationV2AppThread> for PrThreadFields {
+    fn from(thread: &OrchestrationV2AppThread) -> Self {
+        Self {
+            project_id: thread.project_id.clone(),
+            branch: thread.branch.clone(),
+            worktree_path: thread.worktree_path.clone(),
+            pull_requests: thread.pull_requests.clone(),
+            linked_pull_request: thread.linked_pull_request.clone(),
+            branch_pull_request: thread.branch_pull_request.clone(),
+        }
+    }
+}
+
+impl From<&OrchestrationV2ThreadShell> for PrThreadFields {
+    fn from(thread: &OrchestrationV2ThreadShell) -> Self {
+        Self {
+            project_id: thread.project_id.clone(),
+            branch: thread.branch.clone(),
+            worktree_path: thread.worktree_path.clone(),
+            pull_requests: thread.pull_requests.clone(),
+            linked_pull_request: thread.linked_pull_request.clone(),
+            branch_pull_request: thread.branch_pull_request.clone(),
+        }
+    }
+}
+
 /// Resolves the pull request target attached to a thread, mirroring
 /// `threadPullRequestPanelTarget` in `pullRequestDetail.logic.ts`.
 #[must_use]
 pub(super) fn resolve_thread_pr_target(
-    thread: &OrchestrationV2AppThread,
+    thread: &PrThreadFields,
 ) -> Option<ResolvedPullRequestTarget> {
     if let Some(links) = &thread.pull_requests
         && let Some(current) = select_current_thread_pr_link(links)

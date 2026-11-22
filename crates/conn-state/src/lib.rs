@@ -15,6 +15,8 @@ mod annotations;
 mod layout;
 mod scheduled;
 mod shell;
+#[cfg(feature = "testkit")]
+pub mod testkit;
 mod thread;
 
 pub use conn_contract::{

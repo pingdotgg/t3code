@@ -357,7 +357,16 @@ impl RowCache {
 
         self.rows.reserve(entries.len());
         for entry in entries {
-            let prev = previous.remove(entry.id());
+            // An unchanged row (the common case on every streaming update) keeps its entry and
+            // parsed Markdown as they are: comparing is far cheaper than cloning the bodies.
+            let prev = match previous.remove(entry.id()) {
+                Some(old) if old.entry == *entry => {
+                    reused += 1;
+                    self.rows.push(old);
+                    continue;
+                }
+                other => other,
+            };
             let blocks = match entry {
                 TimelineEntry::Assistant { markdown, .. } => {
                     let unchanged = prev.as_ref().is_some_and(|old| match &old.entry {
@@ -625,6 +634,50 @@ mod tests {
 
     fn empty_checkpoints() -> HashMap<String, TurnCheckpointSummary> {
         HashMap::new()
+    }
+
+    /// Main-thread cost of opening a large thread, at the dev profile's opt-level.
+    ///
+    /// `cargo test -p conn-app --bin conn-app -- --ignored --nocapture bench_row_cache_sync`
+    #[test]
+    #[ignore = "latency benchmark; run explicitly"]
+    fn bench_row_cache_sync() {
+        use conn_state::testkit::{SyntheticThread, synthetic_thread_snapshot_json};
+        use conn_state::{ThreadState, ThreadStreamItem};
+        use std::time::Instant;
+        for mib in [1usize, 5, 20] {
+            let raw = synthetic_thread_snapshot_json(SyntheticThread::sized(mib * 1024 * 1024));
+            let Ok(item) = serde_json::from_str::<ThreadStreamItem>(&raw) else {
+                panic!("synthetic snapshot must decode");
+            };
+            let mut thread = ThreadState::new("bench");
+            thread.apply(item);
+            let mut cache = RowCache::default();
+            let t = Instant::now();
+            let first = cache.sync(
+                &thread.entries,
+                &thread.entry_timings,
+                &thread.turn_checkpoints,
+                false,
+            );
+            let first_ms = t.elapsed().as_secs_f64() * 1e3;
+            let t = Instant::now();
+            let again = cache.sync(
+                &thread.entries,
+                &thread.entry_timings,
+                &thread.turn_checkpoints,
+                false,
+            );
+            let again_ms = t.elapsed().as_secs_f64() * 1e3;
+            let t = Instant::now();
+            let timings = thread.entry_timings.clone();
+            let clone_ms = t.elapsed().as_secs_f64() * 1e3;
+            drop(timings);
+            println!(
+                "{} entries / {} items: first sync {first_ms:.1} ms, unchanged re-sync {again_ms:.1} ms (reused {}), entry_timings clone {clone_ms:.1} ms",
+                first.total, first.new_item_count, again.reused
+            );
+        }
     }
 
     #[test]

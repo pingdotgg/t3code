@@ -91,6 +91,12 @@ pub(crate) struct LinkedItemsPanel {
     connection: Option<Connection>,
     workspace_root: Option<String>,
     thread_id: Option<String>,
+    /// The selected thread's shell row as JSON, when the shell lists it.
+    thread_shell: Option<Value>,
+    /// True while this surface is the visible right-panel tab. Hidden, it loads nothing.
+    active: bool,
+    /// A reload was skipped while hidden; reload when shown.
+    stale: bool,
     server_available: bool,
     capabilities: ServerCapabilities,
     projects: HashMap<String, ProjectRepoInfo>,
@@ -162,6 +168,9 @@ impl LinkedItemsPanel {
             connection,
             workspace_root: None,
             thread_id: None,
+            thread_shell: None,
+            active: false,
+            stale: false,
             server_available,
             capabilities: ServerCapabilities::default(),
             projects: HashMap::new(),
@@ -215,8 +224,10 @@ impl LinkedItemsPanel {
         &mut self,
         workspace_root: Option<String>,
         thread_id: Option<String>,
+        thread_shell: Option<Value>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.thread_shell = thread_shell;
         if self.workspace_root == workspace_root && self.thread_id == thread_id {
             return;
         }
@@ -374,9 +385,26 @@ impl LinkedItemsPanel {
         }
     }
 
+    /// Shows or hides this surface. A reload skipped while hidden runs on show, as Conn mounts
+    /// the panel (and runs its queries) only while its tab is visible.
+    pub(crate) fn set_active(&mut self, active: bool, cx: &mut Context<'_, Self>) {
+        if self.active == active {
+            return;
+        }
+        self.active = active;
+        if active && self.stale {
+            self.reload(false, cx);
+        }
+    }
+
     fn reload(&mut self, quiet: bool, cx: &mut Context<'_, Self>) {
         self.load_generation = self.load_generation.wrapping_add(1);
         let generation = self.load_generation;
+        if !self.active {
+            self.stale = true;
+            return;
+        }
+        self.stale = false;
 
         let Some(thread_id) = self.thread_id.clone() else {
             self.load_state = LoadState::Idle;
@@ -389,6 +417,21 @@ impl LinkedItemsPanel {
             cx.notify();
             return;
         };
+
+        // Conn reads linked pull requests and issues from the thread's shell row. A quiet
+        // reload (a host refresh or a link change) re-reads the server, as the shell row may
+        // not carry that change yet.
+        if !quiet
+            && let Some(shell) = self.thread_shell.as_ref()
+            && shell.get("id").and_then(Value::as_str) == Some(thread_id.as_str())
+        {
+            let data = parse_thread_linked_data(shell);
+            self.server_available = true;
+            self.now_ms = now_epoch_ms();
+            self.apply_loaded_data(data, cx);
+            cx.notify();
+            return;
+        }
 
         if !quiet {
             self.load_state = LoadState::Loading;

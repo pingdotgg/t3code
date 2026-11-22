@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use conn_contract::{
     OrchestrationV2Actor as Actor, OrchestrationV2Checkpoint as Checkpoint,
@@ -35,6 +36,13 @@ use conn_contract::{
 };
 
 const WORKSPACE_PREPARATION_INPUT: &str = "Preparing workspace";
+
+/// Source of [`ThreadState::revision`] values, unique across every thread state in the process.
+static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
+
+fn next_revision() -> u64 {
+    NEXT_REVISION.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Status of a tool call or work item row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -145,6 +153,9 @@ pub struct ThreadState {
     pub run_timings: HashMap<String, RunTiming>,
     /// Ready filesystem checkpoints with changed files, keyed by `run_id`.
     pub turn_checkpoints: HashMap<String, TurnCheckpointSummary>,
+    /// Changes whenever [`Self::apply`] or [`Self::apply_projection`] runs, and is unique across
+    /// all thread states, so views can skip re-syncing a timeline that did not change.
+    pub revision: u64,
 }
 
 impl ThreadState {
@@ -153,6 +164,7 @@ impl ThreadState {
     pub fn new(thread_id: impl Into<String>) -> Self {
         Self {
             thread_id: thread_id.into(),
+            revision: next_revision(),
             ..Self::default()
         }
     }
@@ -223,6 +235,7 @@ impl ThreadState {
         projection: conn_contract::OrchestrationV2ThreadProjection,
         sequence: Option<i64>,
     ) {
+        self.revision = next_revision();
         self.thread_id = projection.thread.id;
         if let Some(seq) = sequence {
             self.advance_sequence(seq);
@@ -301,6 +314,7 @@ impl ThreadState {
     ///
     /// Returns `true` when timeline entries or the `working` state changed.
     pub fn apply(&mut self, item: ThreadStreamItem) -> bool {
+        self.revision = next_revision();
         match item {
             ThreadStreamItem::Synchronized(_) => {
                 self.synchronized = true;

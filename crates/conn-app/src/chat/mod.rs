@@ -121,6 +121,11 @@ pub(crate) struct ChatView {
     working_started_at_ms: Option<i64>,
     _working_tick: Option<gpui_kit::Task<()>>,
     cache: RowCache,
+    /// [`ThreadState::revision`] last synced into `cache`; `set_thread` skips re-syncing an
+    /// unchanged timeline (the shell calls it after every event batch, for any stream).
+    synced_revision: Option<u64>,
+    /// Thread opened at this instant and not painted yet (`CONN_GPUI_PERF_LOG`).
+    perf_open: Option<(String, std::time::Instant)>,
     entry_timings: HashMap<String, EntryTiming>,
     run_timings: HashMap<String, RunTiming>,
     turn_checkpoints: HashMap<String, TurnCheckpointSummary>,
@@ -240,6 +245,8 @@ impl ChatView {
             working_started_at_ms: None,
             _working_tick: None,
             cache: RowCache::default(),
+            synced_revision: None,
+            perf_open: None,
             entry_timings: HashMap::new(),
             run_timings: HashMap::new(),
             turn_checkpoints: HashMap::new(),
@@ -362,9 +369,11 @@ impl ChatView {
         title: Option<String>,
         cx: &mut Context<'_, Self>,
     ) {
+        let title_changed = self.thread_title != title;
         self.thread_title = title;
 
         let Some(thread) = thread else {
+            self.synced_revision = None;
             self.has_thread = false;
             self.thread_id = None;
             self.synchronized = true;
@@ -396,7 +405,13 @@ impl ChatView {
             self.toc_hovered_slot = None;
             self.toc_pinned_slot = None;
             self.working_started_at_ms = None;
+        } else if self.has_thread && self.synced_revision == Some(thread.revision) {
+            if title_changed {
+                cx.notify();
+            }
+            return;
         }
+        self.synced_revision = Some(thread.revision);
 
         self.has_thread = true;
         self.synchronized = thread.synchronized;
@@ -405,12 +420,25 @@ impl ChatView {
         self.run_timings = thread.run_timings.clone();
         self.turn_checkpoints = thread.turn_checkpoints.clone();
         self.sync_working_timer(cx);
+        let sync_start = std::time::Instant::now();
         let stats = self.cache.sync(
             &thread.entries,
             &self.entry_timings,
             &self.turn_checkpoints,
             self.working,
         );
+        if let Some((perf_thread, opened_at)) = &self.perf_open
+            && perf_thread == &thread.thread_id
+        {
+            conn_client::perf_log!(
+                "app.chat_synced thread={perf_thread} entries={} items={} synchronized={} row_cache_ms={:.1} +{:.1}ms",
+                stats.total,
+                stats.new_item_count,
+                thread.synchronized,
+                conn_client::perf::ms_since(sync_start),
+                conn_client::perf::ms_since(*opened_at),
+            );
+        }
 
         if switched_thread || stats.old_item_count == 0 {
             self.list_state.reset(stats.new_item_count);
@@ -428,6 +456,33 @@ impl ChatView {
         cx.notify();
         let working = self.working;
         self.composer.update(cx, |c, cx| c.set_working(working, cx));
+    }
+
+    /// Starts timing the open of `thread_id` for `CONN_GPUI_PERF_LOG` (logs its first paint).
+    pub(crate) fn set_perf_open(&mut self, thread_id: String, opened_at: std::time::Instant) {
+        if conn_client::perf::enabled() {
+            self.perf_open = Some((thread_id, opened_at));
+        }
+    }
+
+    /// Logs the first paint of a thread opened with [`Self::set_perf_open`] once it has rows
+    /// (or is synchronized and empty).
+    fn log_first_paint(&mut self) {
+        let Some((perf_thread, opened_at)) = &self.perf_open else {
+            return;
+        };
+        if self.thread_id.as_deref() != Some(perf_thread.as_str()) {
+            return;
+        }
+        let items = self.cache.items().len();
+        if items == 0 && !self.synchronized {
+            return;
+        }
+        conn_client::perf_log!(
+            "app.first_paint thread={perf_thread} items={items} +{:.1}ms",
+            conn_client::perf::ms_since(*opened_at)
+        );
+        self.perf_open = None;
     }
 
     /// Sets the model display label shown in the composer footer.
@@ -2322,6 +2377,7 @@ impl ChatView {
 
 impl Render for ChatView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        self.log_first_paint();
         if !self.has_thread && self.draft.is_none() {
             return div()
                 .flex()
