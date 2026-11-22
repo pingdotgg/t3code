@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -40,13 +42,24 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   avdOutput: ProcessRunner.ProcessRunOutput = processOutput(0),
+  previousDaemon?: typeof LocalDeviceHost.__testing.AgentDeviceDaemonFile.Type,
+  environment?: NodeJS.ProcessEnv,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-agent-start-" });
-  const hub = { running: true, spawnFails: false };
+  const hub = {
+    running: true,
+    spawnFails: false,
+    cleanup: Effect.void,
+    cameraHelp: "",
+    cameraProbes: 0,
+    spawnedEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
+  };
+  const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
+  const runs: Array<ProcessRunner.ProcessRunInput> = [];
   for (const [name, version, entry] of [
     ["expo-device-hub", DEVICE_HUB_VERSION, "dist/server/cli.mjs"],
     ["agent-device", AGENT_DEVICE_VERSION, "bin/agent-device.mjs"],
@@ -57,14 +70,18 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     yield* fs.writeFileString(entryPath, "");
     yield* fs.writeFileString(path.join(installDir, ".install-complete"), version!);
   }
+  if (previousDaemon) {
+    yield* fs.makeDirectory(stateDir, { recursive: true });
+    yield* fs.writeFileString(path.join(stateDir, "daemon.json"), JSON.stringify(previousDaemon));
+  }
   const host = yield* LocalDeviceHost.make().pipe(
     Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
-    Effect.provideService(HostProcess.Environment, { HOME: baseDir, PATH: "" }),
+    Effect.provideService(HostProcess.Environment, environment ?? { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, "darwin"),
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() =>
+      ChildProcessSpawner.make((command) =>
         hub.spawnFails
           ? Effect.fail(
               PlatformError.systemError({
@@ -74,28 +91,51 @@ const agentFixture = Effect.fn("agentFixture")(function* (
                 description: "Hub entry missing",
               }),
             )
-          : Effect.succeed(
-              ChildProcessSpawner.makeHandle({
-                pid: ChildProcessSpawner.ProcessId(123),
-                stdout: Stream.empty,
-                stderr: Stream.empty,
-                all: Stream.empty,
-                exitCode: Effect.never,
-                isRunning: Effect.sync(() => hub.running),
-                kill: () => Effect.void,
-                stdin: Sink.drain,
-                getInputFd: () => Sink.drain,
-                getOutputFd: () => Stream.empty,
-                unref: Effect.succeed(Effect.void),
-              }),
+          : Effect.addFinalizer(() => hub.cleanup).pipe(
+              Effect.tap(() =>
+                Effect.sync(() =>
+                  hub.spawnedEnvironments.push(
+                    (
+                      command as unknown as {
+                        readonly options: { readonly env?: NodeJS.ProcessEnv };
+                      }
+                    ).options.env,
+                  ),
+                ),
+              ),
+              Effect.as(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(123),
+                  stdout: Stream.empty,
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  exitCode: Effect.never,
+                  isRunning: Effect.sync(() => hub.running),
+                  kill: () => Effect.void,
+                  stdin: Sink.drain,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                  unref: Effect.succeed(Effect.void),
+                }),
+              ),
             ),
       ),
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
-      run: (input) =>
-        input.args.includes("devices")
+      run: (input) => {
+        runs.push(input);
+        return input.args.includes("devices")
           ? startup(stateDir)
-          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0)),
+          : input.args.includes("daemon")
+            ? Deferred.succeed(daemonStopRequested, input.args).pipe(Effect.as(processOutput(0)))
+            : Effect.succeed(
+                input.args.includes("-list-avds")
+                  ? avdOutput
+                  : input.args[0]?.startsWith("-help-camera-")
+                    ? (hub.cameraProbes++, processOutput(0, hub.cameraHelp))
+                    : processOutput(0),
+              );
+      },
     }),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -114,7 +154,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir, hub, daemonHealthy };
+  return { host, fs, baseDir, stateDir, hub, daemonHealthy, daemonStopRequested, runs };
 });
 
 describe("AgentDevice startup", () => {
@@ -148,6 +188,95 @@ describe("AgentDevice startup", () => {
         token: "token-2",
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("uses the SDK a later shell environment selects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-sdk-" });
+      const standard = `${home}/Library/Android/sdk`;
+      const profile = `${home}/profile-sdk`;
+      for (const root of [standard, profile]) {
+        for (const tool of ["platform-tools/adb", "emulator/emulator"]) {
+          yield* fs.makeDirectory(`${root}/${tool.split("/")[0]}`, { recursive: true });
+          yield* fs.writeFileString(`${root}/${tool}`, "");
+        }
+      }
+      const environment: NodeJS.ProcessEnv = { HOME: home, PATH: "" };
+      const { host, hub, runs } = yield* agentFixture(
+        (stateDir) =>
+          fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({ httpPort: 12345, token: "token" }),
+            )
+            .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        processOutput(0),
+        undefined,
+        environment,
+      );
+      // The desktop shell snapshot updates the server's environment after the host exists.
+      environment.ANDROID_HOME = profile;
+      hub.running = false;
+      runs.length = 0;
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      yield* ready.run("emulator", ["-list-avds"]);
+
+      const emulator = `${profile}/emulator/emulator`;
+      const sdkRuns = runs.filter(
+        (run) => run.command === emulator || run.args.includes("devices"),
+      );
+      // Two hub camera probes, the agent-device launch, and the emulator command.
+      expect(sdkRuns.map((run) => run.args[0])).toEqual([
+        "-help-camera-front",
+        "-help-camera-back",
+        expect.stringContaining("agent-device"),
+        "-list-avds",
+      ]);
+      for (const run of sdkRuns) {
+        expect(run.env?.ANDROID_HOME).toBe(profile);
+        expect(run.env?.PATH?.split(":")[0]).toBe(`${profile}/platform-tools`);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "drops emulated camera overrides once a running hub's emulator supports image files",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const sdk = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-camera-sdk-" });
+        for (const tool of ["platform-tools/adb", "emulator/emulator"]) {
+          yield* fs.makeDirectory(`${sdk}/${tool.split("/")[0]}`, { recursive: true });
+          yield* fs.writeFileString(`${sdk}/${tool}`, "");
+        }
+        const environment: NodeJS.ProcessEnv = { HOME: sdk, PATH: "", ANDROID_HOME: sdk };
+        const { host, hub } = yield* agentFixture(
+          () => Effect.succeed(processOutput(0)),
+          processOutput(0),
+          undefined,
+          environment,
+        );
+        // ensureReady is the hub's first start; the probe ran with the fixture's empty help.
+        hub.cameraHelp = "emulated none";
+        hub.running = false;
+        yield* host.ensureReady(() => Effect.void);
+        hub.running = true;
+        expect(hub.spawnedEnvironments.at(-1)?.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe(
+          "-camera-front emulated -camera-back emulated",
+        );
+
+        // A live hub with an unchanged emulator answers without probing it.
+        const probes = hub.cameraProbes;
+        yield* host.ensureReady(() => Effect.void);
+        expect(hub.cameraProbes).toBe(probes);
+
+        // The SDK's emulator is updated to one that renders image files while the hub keeps running.
+        yield* fs.writeFileString(`${sdk}/emulator/emulator`, "updated");
+        hub.cameraHelp = "emulated imagefile:<filename> none";
+        yield* host.ensureReady(() => Effect.void);
+        expect(hub.spawnedEnvironments.at(-1)?.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports an incompatible lock immediately and retains it for manual repair", () =>
@@ -276,6 +405,102 @@ describe("AgentDevice startup", () => {
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("stops a previous server's daemon with the agent-device version it recorded", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { host, fs, baseDir, runs } = yield* agentFixture(
+        () => Effect.die("A session that never readies agent tools must not start the daemon"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
+      );
+      const olderInstall = path.join(baseDir, "tools", "agent-device", "0.0.1");
+      const olderEntry = path.join(
+        olderInstall,
+        "node_modules",
+        "agent-device",
+        "bin",
+        "agent-device.mjs",
+      );
+      yield* fs.makeDirectory(path.dirname(olderEntry), { recursive: true });
+      yield* fs.writeFileString(olderEntry, "");
+      yield* fs.writeFileString(path.join(olderInstall, ".install-complete"), "0.0.1");
+      yield* host.stop;
+      expect(runs.find((run) => run.args.includes("daemon"))?.args[0]).toBe(olderEntry);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // regression: #33552 a daemon left by a previous server survived every later graceful quit
+  it.effect("stops a previous server's daemon with the current pin when its version is gone", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { host, baseDir, stateDir, runs } = yield* agentFixture(
+        () => Effect.die("A session that never readies agent tools must not start the daemon"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
+      );
+      yield* host.stop;
+      expect(runs.find((run) => run.args.includes("daemon"))?.args).toEqual([
+        path.join(
+          baseDir,
+          "tools",
+          "agent-device",
+          AGENT_DEVICE_VERSION,
+          "node_modules",
+          "agent-device",
+          "bin",
+          "agent-device.mjs",
+        ),
+        "daemon",
+        "stop",
+        "--state-dir",
+        stateDir,
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("drops a dead daemon's record without running agent-device when the host stops", () =>
+    Effect.gen(function* () {
+      // Above the Linux and macOS PID limits, so never a live process.
+      const deadPid = 4_194_305;
+      const path = yield* Path.Path;
+      const { host, fs, stateDir, runs } = yield* agentFixture(
+        () => Effect.die("A session that never readies agent tools must not start the daemon"),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: deadPid, version: AGENT_DEVICE_VERSION },
+      );
+      yield* host.stop;
+      expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
+      expect(yield* fs.exists(path.join(stateDir, "daemon.json"))).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops the agent daemon while the hub is still shutting down", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { host, hub, stateDir, daemonStopRequested } = yield* agentFixture((stateDir) =>
+        fs
+          .writeFileString(
+            `${stateDir}/daemon.json`,
+            JSON.stringify({ httpPort: 12345, token: "test-token" }),
+          )
+          .pipe(Effect.orDie, Effect.as(processOutput(0))),
+      );
+      yield* host.ensureAgentReady(() => Effect.void);
+      const hubExited = yield* Deferred.make<void>();
+      hub.cleanup = Deferred.await(hubExited);
+      const stopping = yield* Effect.forkChild(host.stop);
+      expect((yield* Deferred.await(daemonStopRequested)).slice(1)).toEqual([
+        "daemon",
+        "stop",
+        "--state-dir",
+        stateDir,
+      ]);
+      yield* Deferred.succeed(hubExited, undefined);
+      yield* Fiber.join(stopping);
+      expect(yield* fs.exists(`${stateDir}/hub.json`)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
 
 const diagnose = (
@@ -384,6 +609,23 @@ describe("Android SDK availability", () => {
         { ANDROID_HOME: "/sdk" },
       );
       expect(reason).toBeNull();
+    }),
+  );
+
+  // regression: #38268 an ANDROID_HOME that is not an SDK must not stop detection
+  it.effect("falls back past an ANDROID_HOME that is not an SDK", () =>
+    Effect.gen(function* () {
+      const complete = [
+        "/parent/sdk/platform-tools/adb",
+        "/parent/sdk/emulator/emulator",
+        "/parent/sdk/cmdline-tools/latest/bin/avdmanager",
+      ];
+      for (const environment of [
+        { ANDROID_HOME: "/parent", ANDROID_SDK_ROOT: "/parent/sdk" },
+        { ANDROID_HOME: "/parent", PATH: "/parent/sdk/platform-tools" },
+      ]) {
+        expect(yield* diagnose(complete, environment)).toBeNull();
+      }
     }),
   );
 

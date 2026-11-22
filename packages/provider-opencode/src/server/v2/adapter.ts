@@ -1,3 +1,5 @@
+import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as NodeURL from "node:url";
 
 import {
@@ -13,27 +15,30 @@ import {
   Skill,
   type OpenCodeEvent,
 } from "@opencode/client/effect";
+import * as Shell from "@opencode/schema/shell";
 import { Mcp } from "@opencode/schema/mcp";
-import { Shell } from "@opencode/schema/shell";
 import {
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   isOrchestrationV2WorkActive,
+  parseGoalCommand,
   type ChatAttachment,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
-  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
+  type OrchestrationV2PlanStep,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
   type MessageId,
   type ModelSelection,
+  type PlanId,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type RunId,
@@ -43,10 +48,11 @@ import type * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
+import * as P from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
@@ -64,8 +70,11 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
 import {
@@ -90,7 +99,31 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
-import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
+import {
+  openCodeCodeModeHtmlRenders,
+  openCodeCommandFailed,
+  openCodeToolTurnItem,
+} from "../toolItems.ts";
+
+const NativeGoal = Schema.NullOr(
+  Schema.Struct({
+    objective: Schema.NonEmptyString,
+    status: Schema.Literals(["active", "paused", "complete"]),
+    rounds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    reason: Schema.optional(Schema.String),
+  }),
+);
+const decodeGoal = Schema.decodeUnknownEffect(NativeGoal);
+
+const NativeTodoList = Schema.Struct({
+  todos: Schema.Array(
+    Schema.Struct({
+      content: Schema.String,
+      status: Schema.Literals(["pending", "in_progress", "completed", "cancelled"]),
+    }),
+  ),
+});
+const isNativeTodoList = Schema.is(NativeTodoList);
 
 const OpenCode2ProviderCapabilities = {
   sessions: {
@@ -114,6 +147,7 @@ const OpenCode2ProviderCapabilities = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
@@ -133,6 +167,7 @@ const OpenCode2ProviderCapabilities = {
     emitsToolOutput: true,
     supportsMcpTools: false,
     supportsDynamicToolCallbacks: false,
+    supportsBackgroundWait: true,
   },
   approvals: {
     supportsCommandApproval: true,
@@ -144,8 +179,8 @@ const OpenCode2ProviderCapabilities = {
     approvalsCanOriginateFromSubagents: true,
   },
   planning: {
-    emitsPlanUpdated: false,
-    emitsTodoList: false,
+    emitsPlanUpdated: true,
+    emitsTodoList: true,
     emitsProposedPlan: false,
     supportsStructuredQuestions: true,
     planDeltasHaveItemIds: false,
@@ -201,6 +236,10 @@ interface ActiveTurn {
   readonly input: TurnOwner;
   providerTurn: OrchestrationV2ProviderTurn;
   readonly texts: Map<string, OpenBlock>;
+  /** The last assistant text this turn completed. */
+  answer: string | undefined;
+  /** The completed text no tool has followed yet, which ends the turn unless a steer lands. */
+  closingText: OpenBlock | undefined;
   readonly tools: Map<string, { readonly name: string; input: Record<string, unknown> }>;
   readonly startedAt: Map<string, DateTime.Utc>;
   readonly ordinals: Map<string, number>;
@@ -222,6 +261,7 @@ interface ActiveTurn {
   before: string | null | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
+  todoPlanId: PlanId | undefined;
   retry:
     | {
         readonly retry: OrchestrationV2ProviderRetry;
@@ -233,6 +273,8 @@ interface ActiveTurn {
   unsent: boolean;
   readonly steers: Set<string>;
   readonly settledInbox: Set<string>;
+  // Reconnects replay finished tools, so each nested html_render takes a page only once.
+  readonly takenPages: Set<string>;
   heldEnd: TurnTerminal | undefined;
   awaitingStart: boolean;
   /** Scope child tool IDs because model-generated IDs can repeat parent IDs. */
@@ -252,7 +294,10 @@ interface SubagentCall {
   agent: string | undefined;
   model: string | null;
   background: boolean;
-  joined: SubagentCall | undefined;
+  /** The child's turn this call prompted or steered; unset until that turn starts. */
+  run: number | undefined;
+  /** That turn's last text once it ended, which OpenCode sends as the run's report. */
+  answer: string | undefined;
   child: ThreadState | undefined;
   status: OrchestrationV2Subagent["status"];
   result: string | null;
@@ -269,6 +314,12 @@ interface Wake {
   readonly after: string | undefined;
   readonly first: string | undefined;
   readonly children: Set<string>;
+  readonly awaited: Set<string>;
+  /** Held shell launches whose end report arrived first; the report already cleared their status. */
+  readonly ended: Map<
+    string,
+    { readonly status: "completed" | "failed" | "interrupted"; readonly exit?: number }
+  >;
 }
 
 interface OpenBlock {
@@ -282,6 +333,22 @@ interface ThreadState {
   readonly sessionId: string;
   providerThread: OrchestrationV2ProviderThread;
   publishedBackgroundWork?: boolean;
+  sessionScopedBackground?: boolean;
+  readonly imageJobs: Map<
+    string,
+    {
+      readonly turn: ActiveTurn;
+      readonly toolId: string;
+      readonly tool: { readonly name: string; input: Record<string, unknown> };
+      previewed: boolean;
+      readonly path: string;
+      readonly model: string;
+      status: "running" | "completed" | "error" | "cancelled";
+    }
+  >;
+  goalRevision: number;
+  goalFresh: boolean;
+  goalRefreshing: boolean;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   model: ModelRef | undefined;
@@ -289,6 +356,8 @@ interface ThreadState {
   unsettled: boolean;
   /** A late first start belongs to the failed prompt; only a subsequent start proves a lost end. */
   unsettledStarted: boolean;
+  /** Execution starts seen; lets a check that awaited OpenCode notice a run that began meanwhile. */
+  starts: number;
   directory: string;
   agent: string;
   title: string | undefined;
@@ -310,19 +379,15 @@ interface ThreadState {
     string,
     {
       readonly inboxId: string;
-      /** The child session or background shell that reported. */
-      readonly sourceId: string;
+      readonly childId: string;
       readonly report: BackgroundWorkReport;
       readonly text: string;
     }
   >;
-  /** Running background shells by id; a shell stays at its launch directory when the session moves. */
-  readonly shells: Map<string, { readonly directory: string; command: string | undefined }>;
-  /** Shells whose end arrived before their launch result; OpenCode does not wait for the launch to return. */
-  readonly endedShells: Set<string>;
-  /** Child sessions and shells the user stopped; a wake their reports alone cause runs nothing. */
-  readonly stopped: Set<string>;
+  readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
+  /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
+  readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
@@ -336,7 +401,7 @@ type TurnTerminal =
 type Rule = Permission.Rule;
 type RulesPolicy = Pick<
   ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-  "runtimeMode" | "interactionMode"
+  "runtimeMode" | "interactionMode" | "workspace"
 >;
 type NativeForm = EventOf<"form.created">["data"]["form"];
 
@@ -393,6 +458,15 @@ const sessionRules = (
         rule("shell", "ask"),
         rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
         rule("external_directory", "ask"),
+        // The thread's other folders count as workspace; `edit` still decides whether writes ask.
+        // A glob character in the path would allow sibling folders, so such a root keeps asking.
+        ...(policy.workspace?.extraRoots ?? [])
+          .filter((root) => !/[*?]/.test(root))
+          .map((root): Rule => ({
+            action: "external_directory",
+            resource: `${root.replace(/\/$/, "")}/*`,
+            effect: "allow",
+          })),
       ]),
   ...grants,
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
@@ -412,6 +486,7 @@ const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<R
 
 // Rejection without a message stops the whole execution, meaning Cancel.
 const DECLINED = "The user declined this request.";
+const DISMISSED = "The user dismissed this question. Continue without an answer.";
 
 // Steer before decline; otherwise the model sees only Unable to execute command and retries.
 const declinedNote = (action: string, resources: ReadonlyArray<string>) =>
@@ -510,8 +585,11 @@ const sessionIdOf = (providerThread: OrchestrationV2ProviderThread) => {
 const textOf = (content: ReadonlyArray<{ readonly type: string; readonly text?: string }>) =>
   content.flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join("\n");
 
-const stringField = (record: Readonly<Record<string, unknown>> | undefined, key: string) => {
-  const value = record?.[key];
+const stringField = (record: unknown, key: string) => {
+  const value =
+    typeof record === "object" && record !== null && key in record
+      ? Reflect.get(record, key)
+      : undefined;
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 };
 
@@ -523,16 +601,6 @@ const reportOutcome = (state: string | undefined) =>
       : state === "cancelled"
         ? ("cancelled" as const)
         : ("unknown" as const);
-
-const shellCommandOf = (input: Readonly<Record<string, unknown>> | undefined) =>
-  stringField(input, "command")?.trim();
-
-const isShellId = Schema.is(Shell.ID);
-// Any tool can report a shellID; only one OpenCode accepts back can be checked or removed.
-const launchedShell = (metadata: Readonly<Record<string, unknown>> | undefined) => {
-  const shellId = metadata?.["status"] === "running" ? metadata["shellID"] : undefined;
-  return isShellId(shellId) ? shellId : undefined;
-};
 
 const subagentOutput = (text: string) =>
   /^<subagent\b[^>]*>\n?([\s\S]*?)\n?<\/subagent>$/.exec(text.trim())?.[1] ?? text;
@@ -550,16 +618,78 @@ const claudeUsageLimit = (message: string | undefined) =>
     ? { resetAt: /\bResets at (\d{4}-\d\d-\d\dT[\d:.]+Z)\.?\s*$/.exec(message)?.[1] ?? null }
     : undefined;
 
-const INTERRUPT_TIMEOUT = "10 seconds";
-const FOREGROUND_STOP_DELAY = "3 seconds";
+// OpenCode types an empty balance as provider.quota too, but it answers
+// that with HTTP 402 and it never resets. Usage windows and budgets are 429.
+const isUsageLimit = (error: {
+  readonly type: string;
+  readonly status?: number | undefined;
+  readonly message: string;
+}) =>
+  (error.type === "provider.quota" && error.status !== 402) ||
+  error.type === "provider.rate-limit" ||
+  claudeUsageLimit(error.message) !== undefined;
+
+const INTERRUPT_TIMEOUT = 10_000;
 const INSTRUCTIONS_KEY = "t3-code";
 const RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY = "2 seconds";
 const RECONCILE_TIMEOUT = "15 seconds";
 const RECONNECT_WAIT = "30 seconds";
+const OWNED_RECONNECT_SCHEDULE = Schedule.exponential(RECONNECT_DELAY).pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+  ),
+);
+const TRANSIENT_HTTP_STATUSES: ReadonlySet<number> = new Set([408, 425, 429]);
+// A live owned server is retried until it answers; these failures repeat however long it waits.
+const isPermanentRecoveryError = (error: unknown) => {
+  if (Schema.isSchemaError(error)) return true;
+  if (
+    P.isTagged(error, "UnauthorizedError") ||
+    P.isTagged(error, "InvalidRequestError") ||
+    P.isTagged(error, "InvalidCursorError")
+  ) {
+    return true;
+  }
+  const http = OpenCode2Server.httpFailureOf(error);
+  if (http !== undefined) {
+    const status = http.response?.status;
+    return (
+      status !== undefined && status >= 400 && status < 500 && !TRANSIENT_HTTP_STATUSES.has(status)
+    );
+  }
+  // ClientError also wraps an SSE retry request, which clears.
+  return (
+    P.isTagged(error, "ClientError") &&
+    P.hasProperty(error, "cause") &&
+    Schema.isSchemaError(error.cause)
+  );
+};
+const OWNED_RECOVERY_RETRY = {
+  schedule: OWNED_RECONNECT_SCHEDULE,
+  while: (error: unknown) => !isPermanentRecoveryError(error),
+};
+// Retries an owned server's request until it answers or the process exits.
+const whileAlive = <A, E, R>(
+  processExit: Effect.Effect<unknown> | undefined,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  processExit === undefined
+    ? effect
+    : effect.pipe(
+        Effect.retry(OWNED_RECOVERY_RETRY),
+        Effect.raceFirst(
+          processExit.pipe(Effect.andThen(Effect.fail(new OpenCode2ServerExitedError()))),
+        ),
+      );
+class OpenCode2ServerExitedError extends Schema.TaggedError<OpenCode2ServerExitedError>()(
+  "OpenCode2ServerExitedError",
+  {},
+) {}
 const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
+const MCP_TOOL_RELOAD_SETTLE = "250 millis";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
 // Other failures may still have admitted the prompt.
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
@@ -590,6 +720,7 @@ const turnPromptId = (sessionId: string, attemptId: string) =>
   SessionMessage.ID.make(`msg_t3_turn_${sessionId}:${attemptId}`);
 const steerPromptId = (sessionId: string, messageId: string) =>
   SessionMessage.ID.make(`msg_t3_steer_${sessionId}:${messageId}`);
+const isOwnPrompt = (inboxId: string) => inboxId.startsWith("msg_t3_");
 
 const promptOf = (turn: OrchestrationV2ProviderTurn) => {
   const nativeId = turn.nativeTurnRef?.nativeId;
@@ -626,10 +757,18 @@ const boundaryAfter = (
 
 const isProviderAdapterError = Schema.is(ProviderAdapter.ProviderAdapterV2Error);
 
-const modelRef = (selection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"]) => {
+// A saved or inherited variant the catalog model does not list makes OpenCode reject the turn.
+const modelRef = (
+  selection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"],
+  listedVariants: ReadonlySet<string> | undefined,
+) => {
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(selection.model);
   if (parsed === null) return undefined;
-  const variant = getModelSelectionStringOptionValue(selection, "variant");
+  const selected = OpenCodeRuntime.openCodeVariant(selection);
+  const variant =
+    selected === undefined || listedVariants === undefined || listedVariants.has(selected)
+      ? selected
+      : undefined;
   return Model.Ref.make({
     providerID: Provider.ID.make(parsed.providerID),
     id: Model.ID.make(parsed.modelID),
@@ -638,6 +777,7 @@ const modelRef = (selection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSe
 };
 const malformedModel = (model: string) =>
   `OpenCode model '${model}' must use provider/model format`;
+// OpenCode 2 reports a session created without a variant as variant "default".
 const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   left.providerID === right?.providerID &&
   left.id === right?.id &&
@@ -690,9 +830,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const fileSystem = yield* FileSystem.FileSystem;
+  const paths = yield* Path.Path;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const crypto = yield* Digest.Digest;
   const driver = OPENCODE_PROVIDER;
+  let nativeGoalSupport: boolean | undefined;
   const mcpServerNameFor = (threadId: string) =>
     t3McpServerName(threadId).pipe(Effect.provideService(Digest.Digest, crypto));
 
@@ -720,13 +862,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     },
   ) {
     let connection = initial.connection;
+    const supportsNativeGoals = () => compareSemverVersions(connection.version, "2.2.5") >= 0;
+    nativeGoalSupport = supportsNativeGoals();
+    const goalHoldsTurn = (state: ThreadState) =>
+      supportsNativeGoals() &&
+      (state.goalRefreshing || (state.goalFresh && state.providerThread.goal?.status === "active"));
     let client = connection.client;
     const sessionScope = yield* Effect.scope;
     // Project config changes model limits; key by directory because this runtime serves all instance threads.
     const contextWindows = new Map<string, Map<string, number>>();
+    const modelVariants = new Map<string, Map<string, ReadonlySet<string>>>();
     const directoryOf = (cwd: string | null | undefined) => cwd ?? host.paths.cwd;
     const windowOf = (cwd: string | null | undefined, model: string) =>
       contextWindows.get(directoryOf(cwd))?.get(model);
+    const listedModelRef = (selection: ModelSelection, cwd: string | null | undefined) =>
+      modelRef(selection, modelVariants.get(directoryOf(cwd))?.get(selection.model));
     const now = yield* DateTime.now;
     let session: OrchestrationV2ProviderSession = {
       id: input.providerSessionId,
@@ -735,7 +885,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       status: "ready",
       cwd: input.runtimePolicy.cwd ?? host.paths.cwd,
       model: input.modelSelection.model,
-      capabilities: OpenCode2ProviderCapabilities,
+      capabilities: {
+        ...OpenCode2ProviderCapabilities,
+        turns: {
+          ...OpenCode2ProviderCapabilities.turns,
+          supportsNativeGoals: supportsNativeGoals(),
+        },
+      },
       createdAt: now,
       updatedAt: now,
       lastError: null,
@@ -744,13 +900,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const threads = new Map<string, ThreadState>();
     const childOwners = new Map<string, ThreadState>();
     const announced = new Map<string, EventOf<"session.created">["data"]>();
-    /** Held events whose session had no state yet, so their shells were not counted on arrival. */
-    const untracked = new WeakSet<OpenCode2Client.OpenCode2StreamEvent>();
     const strays = new Map<string, ThreadState>();
-    /** Sessions of discarded wakes by the caller that tracks their shells, kept after their interrupt. */
-    const adopted = new Map<string, ThreadState>();
     const busy = new Set<string>();
-    const idleWaiters = new Map<string, Deferred.Deferred<void>>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
     const lock = yield* Semaphore.make(1);
     const clearing = new Map<string, Deferred.Deferred<void>>();
@@ -766,20 +917,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
       Queue.offer(events, event).pipe(Effect.asVoid);
     const ownerOf = (sessionId: string) => childOwners.get(sessionId) ?? threads.get(sessionId);
-    const markIdle = Effect.fnUntraced(function* (sessionId: string) {
-      busy.delete(sessionId);
-      const waiter = idleWaiters.get(sessionId);
-      idleWaiters.delete(sessionId);
-      if (waiter !== undefined) yield* Deferred.succeed(waiter, undefined);
-    });
-    // An execution's events precede its end, so once it ends everything it launched has been seen.
-    const awaitIdle = Effect.fnUntraced(function* (sessionId: string) {
-      if (!busy.has(sessionId)) return;
-      const waiter = idleWaiters.get(sessionId) ?? (yield* Deferred.make<void>());
-      if (!busy.has(sessionId)) return;
-      idleWaiters.set(sessionId, waiter);
-      yield* Deferred.await(waiter).pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore);
-    });
     const markUnsettled = (state: ThreadState) => {
       state.unsettled = true;
       state.unsettledStarted = busy.has(state.sessionId);
@@ -793,11 +930,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ): ThreadState => ({
       sessionId,
       providerThread,
+      imageJobs: new Map(),
+      goalRevision: 0,
+      goalFresh: false,
+      goalRefreshing: false,
       providerTurns: new Map(),
       active: undefined,
       model: undefined,
       unsettled: false,
       unsettledStarted: false,
+      starts: 0,
       directory,
       agent: "build",
       title: undefined,
@@ -808,10 +950,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       subagent,
       wakes: [],
       reports: new Map(),
-      shells: new Map(),
-      endedShells: new Set(),
-      stopped: new Set(),
+      stoppedChildren: new Set(),
       strandedSteers: new Set(),
+      externalPrompts: new Map(),
       mcp: undefined,
       instructions: undefined,
     });
@@ -867,10 +1008,63 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return state.active === undefined ? undefined : { state, turn: state.active };
     };
 
+    const shellInfo = new Map<string, Shell.Info>();
+    const shells = new Map<
+      string,
+      {
+        state: ThreadState;
+        turn?: ActiveTurn;
+        toolId?: string;
+        tool?: { name: string; input: Record<string, unknown> };
+        command: string;
+        running: boolean;
+        awaited?: boolean;
+        stopping?: boolean;
+        output: string;
+        cursor: number;
+        startedAt?: DateTime.Utc;
+        recoveredRunId?: RunId | null;
+        published?: boolean;
+      }
+    >();
+
+    // A held wake routes its shell launches only when T3 starts its run, so marks wait on the wake.
+    const heldLaunch = (state: ThreadState, taskId: string) =>
+      sessionsOf(state)
+        .flatMap((session) => session.wakes)
+        .find((wake) =>
+          wake.events.some(
+            (event) =>
+              event.type === "session.tool.success" &&
+              stringField(event.data.metadata, "shellID") === taskId &&
+              event.data.metadata?.["exit"] === undefined &&
+              event.data.metadata?.["signal"] === undefined &&
+              event.data.metadata?.["timeout"] !== true,
+          ),
+        );
+    const wakeLaunchingShell = (state: ThreadState, taskId: string) => {
+      const wake = heldLaunch(state, taskId);
+      return wake === undefined ||
+        wake.ended.has(taskId) ||
+        (shellInfo.get(taskId)?.status ?? "running") !== "running" ||
+        // An end report held with the launch replays after it.
+        wake.events.some(
+          (event) =>
+            event.type === "session.inbox.enqueued" &&
+            event.data.item.type === "synthetic" &&
+            stringField(event.data.item.payload.metadata, "source") === "shell" &&
+            stringField(event.data.item.payload.metadata, "shellID") === taskId,
+        )
+        ? undefined
+        : wake;
+    };
+    let replaying: Wake | undefined;
+
     const owesWork = (state: ThreadState) =>
+      [...shells.values()].some((shell) => shell.state === state && shell.running) ||
+      [...state.imageJobs.values()].some((job) => job.status === "running") ||
       state.wakes.length > 0 ||
-      [...state.reports.values()].some((entry) => !state.stopped.has(entry.sourceId)) ||
-      state.shells.size > 0 ||
+      state.reports.size > 0 ||
       (state.subagent !== undefined && busy.has(state.sessionId)) ||
       [...state.calls.values()].some((call) => call.background);
 
@@ -884,7 +1078,50 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         driver,
         providerThread: state.providerThread,
         pendingBackgroundWork,
+        ...(state.sessionScopedBackground === true ? { sessionScoped: true } : {}),
       });
+    });
+
+    // Goal changes share the event stream, so do not create a span per notification.
+    const updateGoal = Effect.fnUntraced(function* (
+      state: ThreadState,
+      goal: typeof NativeGoal.Type,
+    ) {
+      state.goalRevision += 1;
+      state.goalFresh = true;
+      state.goalRefreshing = false;
+      state.providerThread = {
+        ...state.providerThread,
+        goal:
+          goal === null
+            ? null
+            : {
+                objective: goal.objective,
+                status: goal.status,
+                checks: goal.rounds,
+                ...(goal.reason === undefined ? {} : { lastCheck: goal.reason }),
+              },
+        updatedAt: yield* DateTime.now,
+      };
+      yield* emitProviderThread(state);
+    });
+
+    const readGoal = Effect.fn("OpenCode2Adapter.readGoal")(function* (state: ThreadState) {
+      const revision = state.goalRevision;
+      const result = yield* client.rpc.call({
+        rpcID: "opencode.goal",
+        method: "get",
+        location: { directory: state.directory },
+        input: { sessionID: state.sessionId },
+      });
+      const goal = yield* decodeGoal(result.output);
+      return yield* lock.withPermit(
+        Effect.gen(function* () {
+          if (state.goalRevision !== revision) return false;
+          yield* updateGoal(state, goal);
+          return true;
+        }),
+      );
     });
 
     const setSessionStatus =
@@ -975,6 +1212,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       kind: "text" | "reasoning",
       update: (current: string) => string,
       completed = "text" in data,
+      phase?: "final_answer",
     ) {
       const nativeId = `${data.assistantMessageID}:${kind}:${data.ordinal}`;
       const updatedAt = yield* DateTime.now;
@@ -988,6 +1226,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (completed) turn.texts.delete(nativeId);
       else turn.texts.set(nativeId, entry);
       if (entry.text.length === 0) return;
+      if (completed && kind === "text") {
+        turn.answer = entry.text;
+        turn.closingText = entry;
+      }
       const status = completed ? "completed" : "running";
       const completedAt = completed ? updatedAt : null;
       const nodeKind = kind === "text" ? "assistant_message" : "reasoning";
@@ -1029,6 +1271,145 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           messageId,
           text: entry.text,
           streaming: !completed,
+          ...(phase === undefined ? {} : { phase }),
+        },
+      });
+    });
+
+    // Background reports delivered into a running turn never reach a wake, so show them here.
+    const emitDeliveredReport = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      inboxId: string,
+      report: BackgroundWorkReport,
+    ) {
+      // A report can land right after the answer; the reply to it must not fold the answer away.
+      const answer = turn.closingText;
+      if (answer !== undefined) {
+        const nativeId = `${answer.block.assistantMessageID}:text:${answer.block.ordinal}`;
+        turn.texts.set(nativeId, answer);
+        yield* emitText(state, turn, answer.block, "text", (text) => text, true, "final_answer");
+        turn.closingText = undefined;
+      }
+      const now = yield* DateTime.now;
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...itemBase(state, turn, inboxId, "completed", now, now, now),
+          nodeId: turn.input.rootNodeId,
+          type: "notification",
+          ...backgroundWorkNotification([report]),
+        },
+      });
+    });
+
+    // T3's own prompts are sent while their turn is active, so only other clients reach here.
+    const emitExternalPrompt = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      inboxId: string,
+      text: string,
+    ) {
+      const now = yield* DateTime.now;
+      const base = {
+        ...itemBase(state, turn, inboxId, "completed", now, now, now),
+        nodeId: turn.input.rootNodeId,
+      };
+      // History derives the same ID from the message ID, so a later snapshot does not duplicate it.
+      const messageId = idAllocator.derive.messageFromProviderItem({
+        driver,
+        nativeItemId: inboxId,
+      });
+      yield* emit({
+        type: "message.updated",
+        driver,
+        message: {
+          createdBy: "user",
+          creationSource: "provider",
+          id: messageId,
+          threadId: turn.input.threadId,
+          runId: turn.input.runId,
+          nodeId: base.nodeId,
+          role: "user",
+          text,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...base,
+          createdBy: "user",
+          creationSource: "provider",
+          type: "user_message",
+          messageId,
+          inputIntent: "turn_start",
+          text,
+          attachments: [],
+        },
+      });
+    });
+
+    // Todo updates share the provider event span.
+    const emitTodo = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      todos: typeof NativeTodoList.Type.todos,
+    ) {
+      turn.todoPlanId ??= yield* idAllocator.allocate.plan({
+        threadId: turn.input.threadId,
+        ...(turn.input.runId === null ? {} : { runId: turn.input.runId }),
+        driver,
+      });
+      const nativeId = `${state.sessionId}:todo:${turn.providerTurn.id}`;
+      const now = yield* DateTime.now;
+      const startedAt = turn.startedAt.get(nativeId) ?? now;
+      turn.startedAt.set(nativeId, startedAt);
+      const steps: Array<OrchestrationV2PlanStep> = todos.flatMap((todo, index) =>
+        todo.status === "cancelled"
+          ? []
+          : [
+              {
+                id: `${nativeId}:${index + 1}`,
+                text: todo.content.trim() || `Todo ${index + 1}`,
+                status:
+                  todo.status === "completed"
+                    ? "completed"
+                    : todo.status === "in_progress"
+                      ? "running"
+                      : "pending",
+              },
+            ],
+      );
+      const base = itemBase(state, turn, nativeId, "completed", startedAt, now, now);
+      yield* emitNode(state, turn, nativeId, "todo_list", "completed", startedAt, now);
+      yield* emit({
+        type: "plan.updated",
+        driver,
+        plan: {
+          id: turn.todoPlanId,
+          threadId: turn.input.threadId,
+          runId: turn.input.runId,
+          nodeId: base.nodeId,
+          kind: "todo_list",
+          status: steps.every((step) => step.status === "completed") ? "completed" : "active",
+          steps,
+        },
+      });
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...base,
+          type: "todo_list",
+          title: "Todo list",
+          planId: turn.todoPlanId,
+          steps,
         },
       });
     });
@@ -1040,12 +1421,53 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       status: "running" | "completed" | "failed" | "interrupted",
       result?: {
         readonly output: string | undefined;
+        readonly nativeTaskId?: string;
         readonly metadata: unknown;
         readonly files?: ReadonlyArray<{ readonly uri: string; readonly mime: string }>;
       },
     ) {
       const tool = turn.tools.get(id);
       if (tool === undefined) return;
+      if (tool.name === "todowrite") {
+        if (status === "running") return;
+        if (status === "completed" && isNativeTodoList(result?.metadata)) {
+          const projected = yield* emitTodo(state, turn, result.metadata.todos).pipe(
+            Effect.as(true),
+            Effect.catchTags({
+              IdAllocatorV2AllocationError: (error) =>
+                Effect.logWarning("Could not allocate an OpenCode todo list.", error).pipe(
+                  Effect.as(false),
+                ),
+            }),
+          );
+          if (projected) return;
+        }
+      }
+      if (tool.name === "experimental_image_generate" && status === "completed") {
+        const jobID = stringField(result?.metadata, "jobID");
+        const path = stringField(result?.metadata, "path");
+        const model = stringField(result?.metadata, "model");
+        if (jobID !== undefined && path !== undefined && model !== undefined) {
+          // Tool success acknowledges launch, not the background image's outcome.
+          if (
+            state.imageJobs.get(jobID)?.status !== undefined &&
+            state.imageJobs.get(jobID)?.status !== "running"
+          )
+            return;
+          if (!state.imageJobs.has(jobID))
+            state.imageJobs.set(jobID, {
+              turn,
+              toolId: id,
+              tool,
+              previewed: false,
+              path,
+              model,
+              status: "running",
+            });
+          status = "running";
+          yield* syncRosterAncestors(state);
+        }
+      }
       const updatedAt = yield* DateTime.now;
       const startedAt = turn.startedAt.get(id) ?? updatedAt;
       const completedAt = status === "running" ? null : updatedAt;
@@ -1055,20 +1477,52 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ? "failed"
           : status;
       yield* emitNode(state, turn, nativeId, "tool_call", settled, startedAt, completedAt);
-      yield* emit({
-        type: "turn_item.updated",
-        driver,
-        turnItem: openCodeToolTurnItem(
-          itemBase(state, turn, nativeId, settled, startedAt, completedAt, updatedAt),
-          {
-            name: tool.name,
-            input: tool.input,
-            output: result?.output,
-            files: result?.files,
-            completedMetadata: status === "completed" ? result?.metadata : undefined,
+      const turnItem = openCodeToolTurnItem(
+        {
+          ...itemBase(state, turn, nativeId, settled, startedAt, completedAt, updatedAt),
+          ...(result?.nativeTaskId === undefined
+            ? {}
+            : { nativeItemRef: ref(result.nativeTaskId) }),
+        },
+        {
+          name: tool.name,
+          input: tool.input,
+          output: result?.output,
+          files: result?.files,
+          completedMetadata:
+            status === "completed" || result?.nativeTaskId !== undefined
+              ? result?.metadata
+              : undefined,
+        },
+      );
+      yield* emit({ type: "turn_item.updated", driver, turnItem });
+      if (status === "running") return;
+      // A script that returns the reference already renders through its own item.
+      const returnedPage =
+        turnItem.type === "dynamic_tool" ? htmlRenderFromToolItem(turnItem) : undefined;
+      const pages = openCodeCodeModeHtmlRenders(
+        result?.metadata,
+        yield* mcpServerNameFor(turn.input.threadId),
+      );
+      for (const { index, input } of pages) {
+        const pageId = `${nativeId}:${HTML_RENDER_TOOL_NAME}:${index}`;
+        if (turn.takenPages.has(pageId)) continue;
+        turn.takenPages.add(pageId);
+        const page = yield* mcpSessions.takeHtmlRender(turn.input.threadId, input);
+        if (page === undefined || page.attachmentId === returnedPage?.attachmentId) continue;
+        yield* emitNode(state, turn, pageId, "tool_call", "completed", startedAt, updatedAt);
+        yield* emit({
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            ...itemBase(state, turn, pageId, "completed", startedAt, updatedAt, updatedAt),
+            type: "dynamic_tool",
+            toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`,
+            input: { title: page.title, height: page.height },
+            output: { htmlRender: page },
           },
-        ),
-      });
+        });
+      }
     });
 
     const emitCompaction = Effect.fnUntraced(function* (
@@ -1108,6 +1562,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ...(summary === undefined || summary.length === 0 ? {} : { summary }),
         },
       });
+      // The pre-compaction step would otherwise settle the turn as its newest usage.
+      if (status === "completed") turn.lastStep = undefined;
+      if (status === "completed" && state.providerThread.contextUsage !== null) {
+        state.providerThread = {
+          ...state.providerThread,
+          contextUsage: null,
+          updatedAt,
+        };
+        yield* emitProviderThread(state);
+      }
       if (status !== "running") turn.compaction = undefined;
     });
 
@@ -1155,13 +1619,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         failure: makeProviderFailure({
           message: readableProviderErrorMessage(error.message, error.status, error.response?.body),
           code: error.type,
-          class: "provider_error",
+          class: isUsageLimit(error) ? "usage_limit" : "provider_error",
           retryable: true,
         }),
         startedAt: turn.retry?.startedAt ?? (yield* DateTime.now),
       };
       yield* emitRetry(state, turn, "running");
     });
+
+    // A background child's question outlives its parent's turn; keep the ingestor from dismissing it.
+    const retainedRequestsOf = (turn: ActiveTurn) => {
+      const ids = [...pending.values()].flatMap((entry) =>
+        entry.turn === turn ? [entry.request.id] : [],
+      );
+      return ids.length === 0 ? {} : { retainedRuntimeRequestIds: ids };
+    };
 
     const emitProviderTurn = (
       state: ThreadState,
@@ -1174,6 +1646,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         driver,
         threadId: turn.input.threadId,
         providerTurn,
+        ...(providerTurn.completedAt === null ? {} : retainedRequestsOf(turn)),
       });
     };
 
@@ -1185,6 +1658,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       input: owner,
       providerTurn,
       texts: new Map(),
+      answer: undefined,
+      closingText: undefined,
       tools: new Map(),
       startedAt: new Map(),
       ordinals: new Map(),
@@ -1198,11 +1673,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       before: undefined,
       compaction: undefined,
       compactions: 0,
+      todoPlanId: undefined,
       retry: undefined,
       interrupted: false,
       unsent: false,
       steers: new Set(),
       settledInbox: new Set(),
+      takenPages: new Set(),
       heldEnd: undefined,
       awaitingStart: options.awaitingStart,
       scope: options.scope,
@@ -1299,52 +1776,62 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const syncRoster = Effect.fnUntraced(function* (state: ThreadState) {
-      const background = runningCalls(state).filter((call) => call.background);
-      const subagents = background.map((call) => ({
-        taskId: call.nativeId,
-        kind: "subagent" as const,
-        ...(call.title?.trim() ? { description: call.title.trim() } : {}),
-        ...(call.child?.subagent === undefined
-          ? {}
-          : { childThreadId: call.child.subagent.appThread.id }),
-      }));
-      // Restart recovery reads a subagent before the shells naming it as their parent.
-      const shells = sessionsOf(state).flatMap((session) =>
-        [...session.shells].map(([taskId, shell]) => ({
-          taskId,
-          kind: "command" as const,
-          ...(shell.command === undefined
-            ? {}
-            : { command: shell.command, description: shell.command }),
-          ...(session.subagent !== undefined && background.includes(session.subagent.call)
-            ? { parentTaskId: session.subagent.call.nativeId }
-            : {}),
-        })),
+      const roster: Array<import("@t3tools/contracts").OrchestrationV2PendingBackgroundTask> =
+        runningCalls(state)
+          .filter((call) => call.background)
+          .map((call) => ({
+            taskId: call.nativeId,
+            kind: "subagent" as const,
+            ...(call.title?.trim() ? { description: call.title.trim() } : {}),
+            ...(call.child?.subagent === undefined
+              ? {}
+              : { childThreadId: call.child.subagent.appThread.id }),
+          }));
+      for (const [taskId, shell] of shells) {
+        if (shell.running && sessionsOf(state).includes(shell.state)) {
+          roster.push({
+            taskId,
+            kind: "command",
+            description: shell.command,
+            ...(shell.awaited === true ? { awaited: true } : {}),
+            ...(shell.state.subagent === undefined
+              ? {}
+              : { parentTaskId: shell.state.subagent.call.nativeId }),
+          });
+        }
+      }
+      const imageTasks = sessionsOf(state).flatMap((session) =>
+        [...session.imageJobs.entries()].flatMap(([taskId, job]) =>
+          job.status === "running"
+            ? [
+                {
+                  taskId,
+                  kind: "background_task" as const,
+                  description: `Image generation (${job.model})`,
+                },
+              ]
+            : [],
+        ),
       );
-      const roster: ReadonlyArray<OrchestrationV2PendingBackgroundTask> = [...subagents, ...shells];
-      const childThreadOf = (task: OrchestrationV2PendingBackgroundTask) =>
-        task.kind === "subagent" ? task.childThreadId : undefined;
+      const allTasks = roster.concat(imageTasks);
       const current = state.providerThread.pendingBackgroundTasks ?? [];
       if (
         state.publishedBackgroundWork === hasBackground(state) &&
-        current.length === roster.length &&
-        current.every((task, index) => {
-          const next = roster[index];
-          return (
-            next !== undefined &&
-            task.kind === next.kind &&
-            task.taskId === next.taskId &&
-            task.description === next.description &&
-            task.parentTaskId === next.parentTaskId &&
-            childThreadOf(task) === childThreadOf(next)
-          );
-        })
+        current.length === allTasks.length &&
+        current.every(
+          (task, index) =>
+            task.taskId === allTasks[index]?.taskId &&
+            task.description === allTasks[index]?.description &&
+            task.awaited === allTasks[index]?.awaited &&
+            (task.kind === "subagent" ? task.childThreadId : undefined) ===
+              (allTasks[index]?.kind === "subagent" ? allTasks[index]?.childThreadId : undefined),
+        )
       ) {
         return;
       }
       state.providerThread = {
         ...state.providerThread,
-        pendingBackgroundTasks: roster,
+        pendingBackgroundTasks: allTasks,
         updatedAt: yield* DateTime.now,
       };
       yield* emitProviderThread(state);
@@ -1357,6 +1844,246 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         current = current.subagent?.call.state;
       }
     });
+
+    const fetchShellOutput = Effect.fn("OpenCode2Adapter.fetchShellOutput")(function* (
+      id: string,
+      snapshot: { directory: string; cursor: number; output: string },
+      settled = false,
+    ) {
+      let { cursor, output } = snapshot;
+      // Bound each read and retained UI text; the native byte cursor must never use JS string lengths.
+      for (let page = 0; page < (settled ? 5 : 4); page++) {
+        const { data } = yield* client.shell.output({
+          id: Shell.ID.make(id),
+          location: { directory: snapshot.directory },
+          cursor,
+          limit: 65536,
+        });
+        output = (output + data.output).slice(-262144);
+        const previous = cursor;
+        cursor = data.cursor;
+        if (data.cursor >= data.size || data.cursor <= previous) break;
+        if (settled && data.size - data.cursor > 262144) {
+          cursor = data.size - 262144;
+          output = "";
+        }
+      }
+      return { cursor, output };
+    }, Effect.timeout(INVENTORY_TIMEOUT));
+
+    const readShellOutput = Effect.fn("OpenCode2Adapter.readShellOutput")(function* (
+      id: string,
+      settled = false,
+    ) {
+      const shell = shells.get(id);
+      if (shell === undefined) return;
+      const output = yield* fetchShellOutput(
+        id,
+        {
+          directory: shell.state.directory,
+          cursor: shell.cursor,
+          output: shell.output,
+        },
+        settled,
+      );
+      Object.assign(shell, output);
+    });
+
+    const emitShell = Effect.fnUntraced(function* (
+      id: string,
+      status: "running" | "completed" | "failed" | "interrupted",
+      exit?: number,
+    ) {
+      const shell = shells.get(id);
+      if (shell === undefined) return;
+      if (shell.turn === undefined || shell.toolId === undefined || shell.tool === undefined) {
+        const updatedAt = yield* DateTime.now;
+        yield* emit({
+          type: "turn_item.updated",
+          driver,
+          sessionScoped: true,
+          turnItem: {
+            id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId: id }),
+            threadId: shell.state.providerThread.appThreadId ?? input.threadId,
+            runId: shell.recoveredRunId ?? null,
+            nodeId: null,
+            providerThreadId: shell.state.providerThread.id,
+            providerTurnId: null,
+            nativeItemRef: ref(id),
+            parentItemId: null,
+            ordinal: 0,
+            status,
+            title: null,
+            startedAt: shell.startedAt ?? updatedAt,
+            completedAt: status === "running" ? null : updatedAt,
+            updatedAt,
+            type: "command_execution",
+            input: shell.command,
+            output: shell.output,
+            ...(exit === undefined ? {} : { exitCode: exit }),
+          },
+        });
+        shell.published = true;
+        return;
+      }
+      shell.turn.tools.set(shell.toolId, shell.tool);
+      yield* emitTool(shell.state, shell.turn, shell.toolId, status, {
+        output: shell.output,
+        nativeTaskId: id,
+        metadata: { shellID: id, exit },
+      });
+      shell.turn.tools.delete(shell.toolId);
+      shell.published = true;
+    });
+
+    const stopShell = Effect.fn("OpenCode2Adapter.stopShell")(function* (id: string) {
+      const shell = shells.get(id);
+      if (shell === undefined || !shell.running) return;
+      yield* readShellOutput(id, true).pipe(Effect.ignore({ log: true }));
+      shell.stopping = true;
+      yield* client.shell
+        .remove({
+          id: Shell.ID.make(id),
+          location: { directory: shell.state.directory },
+        })
+        .pipe(
+          Effect.timeout(INVENTORY_TIMEOUT),
+          Effect.onError(() =>
+            Effect.sync(() => {
+              shell.stopping = false;
+            }),
+          ),
+        );
+      shell.stopping = false;
+      shell.running = false;
+      shell.state.stoppedChildren.add(id);
+      yield* emitShell(id, "interrupted");
+      shells.delete(id);
+      shellInfo.delete(id);
+      yield* syncRosterAncestors(shell.state);
+    });
+
+    const recoverShells = Effect.fn("OpenCode2Adapter.recoverShells")(
+      function* (state: ThreadState) {
+        if (compareSemverVersions(connection.version, "2.2.1") < 0) return;
+        const jobs =
+          compareSemverVersions(connection.version, "2.2.6") >= 0 &&
+          connection.shellJobs !== undefined
+            ? yield* connection.shellJobs(state.sessionId).pipe(Effect.option)
+            : undefined;
+        const data =
+          jobs?._tag === "Some"
+            ? jobs.value.data.map((job) => ({
+                id: Shell.ID.make(job.shellID),
+                command: job.command,
+                metadata: { sessionID: job.sessionID },
+              }))
+            : (yield* client.shell.list({ location: { directory: state.directory } })).data;
+        for (const info of data) {
+          const sessionId = stringField(info.metadata, "sessionID");
+          const owner =
+            sessionId === undefined
+              ? undefined
+              : (threads.get(sessionId) ??
+                ownerOf(sessionId) ??
+                (jobs?._tag === "Some" ? state : undefined));
+          if (owner === undefined || !sessionsOf(state).includes(owner)) continue;
+          if (!shells.has(info.id)) {
+            if (state.active === undefined && !hasBackground(state)) {
+              state.sessionScopedBackground = true;
+              delete state.publishedBackgroundWork;
+            }
+            const target = requestTurn(owner.sessionId);
+            shells.set(info.id, {
+              state: owner,
+              ...(target === undefined
+                ? {
+                    recoveredRunId:
+                      owner.providerThread.lastRunOrdinal === null
+                        ? null
+                        : idAllocator.derive.run({
+                            threadId: owner.providerThread.appThreadId ?? input.threadId,
+                            ordinal: owner.providerThread.lastRunOrdinal,
+                          }),
+                  }
+                : {
+                    turn: target.turn,
+                    toolId: info.id,
+                    tool: { name: "shell", input: { command: info.command } },
+                  }),
+              command: info.command,
+              awaited:
+                state.providerThread.pendingBackgroundTasks?.some(
+                  (task) => task.taskId === info.id && task.awaited === true,
+                ) === true || wakeLaunchingShell(state, info.id)?.awaited.has(info.id) === true,
+              running: true,
+              output: "",
+              cursor: 0,
+            });
+          }
+        }
+        for (const [id, shell] of shells) {
+          if (!shell.running || !sessionsOf(state).includes(shell.state)) continue;
+          yield* Effect.gen(function* () {
+            const found = yield* client.shell
+              .get({ id: Shell.ID.make(id), location: { directory: shell.state.directory } })
+              .pipe(
+                Effect.timeout(INVENTORY_TIMEOUT),
+                Effect.catchTags({ ShellNotFoundError: () => Effect.undefined }),
+              );
+            if (found === undefined) {
+              shell.running = false;
+              yield* emitShell(id, "interrupted");
+              shells.delete(id);
+              return;
+            }
+            const info = found.data;
+            shell.startedAt = DateTime.makeUnsafe(info.time.started);
+            yield* readShellOutput(id, info.status !== "running").pipe(
+              Effect.ignore({ log: true }),
+            );
+            shell.running = info.status === "running";
+            yield* emitShell(
+              id,
+              shell.running
+                ? "running"
+                : info.status === "killed"
+                  ? "interrupted"
+                  : info.exit === 0
+                    ? "completed"
+                    : "failed",
+              info.exit,
+            );
+            if (!shell.running) shells.delete(id);
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not recover an OpenCode shell.", cause).pipe(
+                Effect.andThen(emitShell(id, "running")),
+              ),
+            ),
+          );
+        }
+      },
+      (effect, state) =>
+        lock.withPermit(
+          effect.pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
+            Effect.ensuring(
+              Effect.gen(function* () {
+                for (const [id, shell] of shells) {
+                  if (
+                    shell.running &&
+                    shell.published !== true &&
+                    sessionsOf(state).includes(shell.state)
+                  )
+                    yield* emitShell(id, "running");
+                }
+                yield* syncRosterAncestors(state);
+              }),
+            ),
+          ),
+        ),
+    );
 
     const withReportedModel = (
       providerThread: OrchestrationV2ProviderThread,
@@ -1388,7 +2115,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         driver,
         nativeItemId: call.nativeId,
       });
-      const childThreadId = idAllocator.derive.threadFromProviderThread({
+      const childThreadId = idAllocator.derive.subagentThread({
         driver,
         nativeThreadId: childId,
         providerInstanceId: instanceId,
@@ -1439,13 +2166,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         updatedAt: now,
       };
       const previous = threads.get(childId);
-      // Repeated subagent calls steer the same run; OpenCode reports it once for every joined call.
-      if (previous?.active !== undefined) {
-        call.joined = [...call.state.calls.values()].findLast(
-          (candidate) =>
-            candidate !== call && candidate.child === previous && candidate.joined === undefined,
-        );
-      }
+      // A call to a running child steers that run; OpenCode reports it once for all its calls.
+      if (previous?.active !== undefined) call.run = previous.subagent?.turns;
       const subagent = {
         call,
         appThread,
@@ -1456,6 +2178,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const child =
         previous ?? newThreadState(childId, providerThread, call.state.directory, subagent);
       child.subagent = subagent;
+      child.sessionScopedBackground = false;
       child.model = info?.model ?? child.model;
       child.providerThread = withReportedModel(providerThread, child.model);
       child.directory = call.state.directory;
@@ -1495,6 +2218,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (child.active !== undefined && status !== "completed") {
           yield* finishTurn(child, { status: "interrupted" });
         }
+        child.sessionScopedBackground = false;
         child.providerThread = {
           ...child.providerThread,
           status: "idle",
@@ -1509,6 +2233,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const subagent = child.subagent;
       if (subagent === undefined || child.active !== undefined) return;
       subagent.turns += 1;
+      for (const call of callsAttachedTo(child)) call.run ??= subagent.turns;
       const startedAt = yield* DateTime.now;
       const nativeTurnId = `${child.sessionId}:turn:${subagent.turns}`;
       const rootNodeId = idAllocator.derive.nodeFromProviderItem({
@@ -1542,6 +2267,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn.before = subagent.queued;
       subagent.queued = undefined;
       child.active = turn;
+      child.sessionScopedBackground = false;
       yield* emit({
         type: "node.updated",
         driver,
@@ -1629,6 +2355,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* emitText(state, turn, open.block, open.kind, (text) => text, true);
       }
       for (const id of turn.tools.keys()) {
+        if ([...state.imageJobs.values()].some((job) => job.turn === turn && job.toolId === id))
+          continue;
         yield* emitTool(
           state,
           turn,
@@ -1696,6 +2424,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Subagent turns are runless; their calls own settlement.
       if (state.subagent !== undefined) {
         const call = state.subagent.call;
+        for (const attached of callsAttachedTo(state)) {
+          if (attached.run === state.subagent.turns) attached.answer = turn.answer;
+        }
         if (!call.background && terminal.status !== "completed") {
           yield* settleCall(call, terminal.status);
         }
@@ -1727,6 +2458,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         providerTurnId: turn.providerTurn.id,
         runOrdinal: turn.input.runOrdinal,
         threadDisposition,
+        ...retainedRequestsOf(turn),
       };
       yield* emit(
         terminal.status === "failed"
@@ -2055,9 +2787,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const sessionOfEvent = (event: OpenCode2Client.OpenCode2StreamEvent) =>
       event.type === "unreadable.execution.ended" || event.type === "unreadable.execution.started"
         ? event.sessionID
-        : "sessionID" in event.data && typeof event.data.sessionID === "string"
-          ? event.data.sessionID
-          : undefined;
+        : event.type === "form.created"
+          ? event.data.form.sessionID
+          : "sessionID" in event.data && typeof event.data.sessionID === "string"
+            ? event.data.sessionID
+            : undefined;
 
     const executionEnd = (type: string) =>
       type === "session.execution.succeeded" ||
@@ -2082,7 +2816,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         agent: undefined,
         model: null,
         background: false,
-        joined: undefined,
+        run: undefined,
+        answer: undefined,
         child: undefined,
         status: "running",
         result: null,
@@ -2122,6 +2857,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         }
         case "session.tool.input.started":
+          turn.closingText = undefined;
           if (event.data.name === "question") return;
           if (event.data.name === "subagent") return yield* startCall(state, turn, event.data.id);
           turn.tools.set(event.data.id, { name: event.data.name, input: {} });
@@ -2161,17 +2897,61 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             }
             return yield* settleCall(call, "completed", subagentOutput(textOf(event.data.content)));
           }
+          const shellId = stringField(event.data.metadata, "shellID");
+          const tool = turn.tools.get(event.data.id);
+          if (
+            shellId !== undefined &&
+            tool?.name === "shell" &&
+            event.data.metadata?.["exit"] === undefined &&
+            event.data.metadata?.["signal"] === undefined &&
+            event.data.metadata?.["timeout"] !== true
+          ) {
+            shells.set(shellId, {
+              state,
+              turn,
+              toolId: event.data.id,
+              tool,
+              command: stringField(tool.input, "command") ?? "Shell command",
+              ...(replaying?.awaited.has(shellId) === true ? { awaited: true } : {}),
+              running: true,
+              output: "",
+              cursor: 0,
+            });
+            const known = shellInfo.get(shellId);
+            const ended = replaying?.ended.get(shellId);
+            const tracked = shells.get(shellId)!;
+            tracked.running =
+              ended === undefined && (known === undefined || known.status === "running");
+            yield* readShellOutput(shellId, !tracked.running).pipe(Effect.ignore({ log: true }));
+            yield* emitShell(
+              shellId,
+              tracked.running
+                ? "running"
+                : (ended?.status ??
+                    (known?.status === "killed"
+                      ? "interrupted"
+                      : known?.exit === 0
+                        ? "completed"
+                        : "failed")),
+              ended?.exit ?? known?.exit,
+            );
+            if (ended !== undefined) shells.delete(shellId);
+            yield* syncRosterAncestors(state);
+            return;
+          }
+          if (shellId !== undefined) shellInfo.delete(shellId);
           const output = textOf(event.data.content);
-          // A launch held with its wake arrived before its turn could name it.
-          const shell = state.shells.get(stringField(event.data.metadata, "shellID") ?? "");
-          if (shell !== undefined)
-            shell.command ??= shellCommandOf(turn.tools.get(event.data.id)?.input);
           yield* emitTool(state, turn, event.data.id, "completed", {
             output,
             files: event.data.content.flatMap((part) => (part.type === "file" ? [part] : [])),
             metadata: event.data.metadata,
           });
-          turn.tools.delete(event.data.id);
+          if (
+            ![...state.imageJobs.values()].some(
+              (job) => job.turn === turn && job.toolId === event.data.id,
+            )
+          )
+            turn.tools.delete(event.data.id);
           return;
         }
         case "session.tool.failed": {
@@ -2231,20 +3011,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
           const { type, message, status, response } = event.data.error;
-          // OpenCode types an empty balance as provider.quota too, but it answers
-          // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
-          const claudeLimit = claudeUsageLimit(message);
-          const usageLimit =
-            (type === "provider.quota" && status !== 402) ||
-            type === "provider.rate-limit" ||
-            claudeLimit !== undefined;
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
               message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
-              class: usageLimit ? "usage_limit" : "provider_error",
-              resetAt: claudeLimit?.resetAt ?? null,
+              class: isUsageLimit(event.data.error) ? "usage_limit" : "provider_error",
+              resetAt: claudeUsageLimit(message)?.resetAt ?? null,
             }),
           });
         }
@@ -2257,8 +3030,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const delivered = [...state.reports.values()];
       state.reports.clear();
       const stopped =
-        delivered.length > 0 && delivered.every((entry) => state.stopped.has(entry.sourceId));
-      for (const entry of delivered) state.stopped.delete(entry.sourceId);
+        delivered.length > 0 &&
+        delivered.every((entry) => state.stoppedChildren.has(entry.childId));
+      for (const entry of delivered) state.stoppedChildren.delete(entry.childId);
       if (stopped) {
         markUnsettled(state);
         yield* client.session
@@ -2272,6 +3046,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const { delivered, stopped } = yield* takeReports(state);
       if (stopped) return;
       const route = state.providerThread.appThreadId;
+      // History begins at whichever OpenCode queued first: a report or another client's prompt.
+      // A prompt leads only this wake, so one dropped undelivered cannot move a later boundary.
+      const leading = [...state.externalPrompts].find(([, prompt]) => prompt.leads)?.[0];
+      for (const prompt of state.externalPrompts.values()) prompt.leads = false;
       const wake: Wake = {
         messageId:
           route === null
@@ -2283,8 +3061,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         detail: delivered.length === 0 ? null : delivered.map((entry) => entry.text).join("\n\n"),
         dropped: false,
         after: delivered.at(-1)?.inboxId,
-        first: delivered[0]?.inboxId,
+        first: leading ?? delivered[0]?.inboxId,
         children: new Set(),
+        awaited: new Set(),
+        ended: new Map(),
       };
       state.wakes.push(wake);
       yield* Effect.logInfo("OpenCode started a turn on its own; asking for a continuation.", {
@@ -2293,27 +3073,181 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* offerWake(state, wake);
     });
 
-    const onReport = Effect.fnUntraced(function* (
+    const imageReport = Effect.fn("OpenCode2Adapter.imageReport")(function* (
       state: ThreadState,
-      inboxId: string,
       payload: {
         readonly text: string;
         readonly metadata?: Readonly<Record<string, unknown>> | undefined;
       },
     ) {
+      const jobID = stringField(payload.metadata, "jobID");
+      const job = jobID === undefined ? undefined : state.imageJobs.get(jobID);
+      const outcome = stringField(payload.metadata, "state");
+      if (
+        job === undefined ||
+        (outcome !== "completed" && outcome !== "error" && outcome !== "cancelled")
+      )
+        return;
+      // Native job inventory exposes the stem, while a completion notice names the saved file.
+      const saved = /Saved image: (.+) \([^\n]+\)\./.exec(payload.text)?.[1];
+      const previewPath =
+        saved !== undefined && saved.startsWith(job.path + ".") ? saved : undefined;
+      if (
+        job.status !== "running" &&
+        !(
+          job.status === "completed" &&
+          outcome === "completed" &&
+          !job.previewed &&
+          previewPath !== undefined
+        )
+      )
+        return;
+      const files: Array<{ uri: string; mime: string }> = [];
+      yield* Effect.gen(function* () {
+        if (outcome !== "completed" || previewPath === undefined) return;
+        const image = yield* (
+          connection.external
+            ? connection.readImage(previewPath, state.directory)
+            : Effect.gen(function* () {
+                const mime = OpenCode2Client.imagePreviewMime(paths.extname(previewPath));
+                const info = yield* fileSystem.stat(previewPath);
+                if (mime === undefined || info.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)
+                  return yield* new OpenCode2Client.OpenCode2ImageError({
+                    cause: "Unsupported image preview",
+                  });
+                const bytes = yield* fileSystem.readFile(previewPath);
+                if (bytes.byteLength > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)
+                  return yield* new OpenCode2Client.OpenCode2ImageError({
+                    cause: "Image exceeds preview limit",
+                  });
+                return {
+                  uri: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+                  mime,
+                };
+              })
+        ).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.option);
+        if (Option.isSome(image)) files.push(image.value);
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            // A known outcome must still settle its tool if preview I/O is interrupted.
+            job.status = outcome;
+            job.previewed ||= files.length > 0;
+            job.turn.tools.set(job.toolId, job.tool);
+            yield* emitTool(
+              state,
+              job.turn,
+              job.toolId,
+              outcome === "completed"
+                ? "completed"
+                : outcome === "error"
+                  ? "failed"
+                  : "interrupted",
+              { output: payload.text, metadata: undefined, files },
+            );
+            job.turn.tools.delete(job.toolId);
+            yield* syncRosterAncestors(state);
+          }),
+        ),
+      );
+    });
+
+    const onReport = Effect.fnUntraced(function* (
+      state: ThreadState,
+      inboxId: string,
+      payload: {
+        readonly text: string;
+        readonly description?: string | undefined;
+        readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+      },
+    ) {
+      if (stringField(payload.metadata, "source") === "shell") {
+        const id = stringField(payload.metadata, "shellID");
+        const shell = id === undefined ? undefined : shells.get(id);
+        if (shell !== undefined && shell.state !== state) return;
+        state.reports.set(inboxId, {
+          inboxId,
+          childId: id ?? inboxId,
+          text: payload.text,
+          report: {
+            kind: "command",
+            label: shell?.command ?? payload.description,
+            outcome: reportOutcome(stringField(payload.metadata, "state")),
+          },
+        });
+        if (id !== undefined && shell === undefined) {
+          const outcome = reportOutcome(stringField(payload.metadata, "state"));
+          const known = shellInfo.get(id);
+          const exit = known?.exit;
+          // A known exit outranks the report, which says "completed" for a timeout.
+          heldLaunch(state, id)?.ended.set(id, {
+            status:
+              known !== undefined && known.status !== "running"
+                ? known.status === "killed"
+                  ? "interrupted"
+                  : exit === 0
+                    ? "completed"
+                    : "failed"
+                : outcome === "failed"
+                  ? "failed"
+                  : outcome === "cancelled"
+                    ? "interrupted"
+                    : "completed",
+            ...(exit === undefined ? {} : { exit }),
+          });
+        }
+        if (id !== undefined && shell?.stopping !== true) {
+          if (shell?.running === true && shell.state === state) {
+            yield* readShellOutput(id, true).pipe(Effect.ignore({ log: true }));
+            shell.running = false;
+            const outcome = reportOutcome(stringField(payload.metadata, "state"));
+            yield* emitShell(
+              id,
+              outcome === "failed"
+                ? "failed"
+                : outcome === "cancelled"
+                  ? "interrupted"
+                  : "completed",
+            );
+          }
+          shells.delete(id);
+          shellInfo.delete(id);
+        }
+        return;
+      }
+      if (stringField(payload.metadata, "source") === "experimental_image_generate") {
+        return yield* imageReport(state, payload);
+      }
       const childId = stringField(payload.metadata, "childID");
       if (stringField(payload.metadata, "source") !== "subagent" || childId === undefined) return;
       strays.delete(childId);
-      const call = [...state.calls.values()].find(
+      const open = [...state.calls.values()].filter(
         (candidate) => candidate.child?.sessionId === childId,
       );
-      const calls = [...state.calls.values()].filter(
-        (candidate) => candidate === call || (call !== undefined && candidate.joined === call),
+      const output = subagentOutput(payload.text);
+      const started = open
+        .flatMap((candidate) =>
+          candidate.run === undefined ? [] : [{ call: candidate, run: candidate.run }],
+        )
+        .sort((a, b) => a.run - b.run);
+      // The report names only the child, and reports arrive in order. So it belongs to the oldest
+      // open run, unless that run ended with a different text: then its own report is lost.
+      const next = started.find(
+        (candidate) => candidate.call.answer === undefined || candidate.call.answer === output,
+      );
+      const written = next?.call.answer === output ? next.run : undefined;
+      const call = written === undefined ? open[0] : next?.call;
+      const calls =
+        call?.run === undefined
+          ? open.slice(0, 1)
+          : open.filter((candidate) => candidate.run === call.run);
+      const lost = started.flatMap((candidate) =>
+        written !== undefined && candidate.run < written ? [candidate.call] : [],
       );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
-        sourceId: childId,
+        childId,
         text: payload.text,
         report: {
           kind: "subagent",
@@ -2322,22 +3256,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           outcome,
         },
       });
-      const status = state.stopped.has(childId)
+      const status = state.stoppedChildren.has(childId)
         ? "interrupted"
         : outcome === "failed"
           ? "failed"
           : outcome === "cancelled"
             ? "cancelled"
             : "completed";
-      for (const each of calls) yield* settleCall(each, status, subagentOutput(payload.text));
+      for (const each of lost) yield* settleCall(each, "completed", each.answer);
+      for (const each of calls) yield* settleCall(each, status, output);
     });
 
     const holderOf = (sessionId: string) => {
       const own = threads.get(sessionId);
       if (own !== undefined) return own.wakes.at(-1)?.running === true ? own : undefined;
-      // A held subagent's own subagents have no state either; the nearest ancestor with state holds.
-      let parent = announced.get(sessionId)?.parentID;
-      while (parent !== undefined && !threads.has(parent)) parent = announced.get(parent)?.parentID;
+      const parent = announced.get(sessionId)?.parentID;
       const holder = parent === undefined ? undefined : threads.get(parent);
       return holder !== undefined && holder.active === undefined && holder.wakes.length > 0
         ? holder
@@ -2350,102 +3283,84 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn: ActiveTurn,
       end: TurnTerminal,
     ) {
-      if (end.status === "completed" && turn.steers.size > 0) {
+      if (end.status === "completed" && (turn.steers.size > 0 || goalHoldsTurn(state))) {
         turn.heldEnd = end;
+        // OpenCode can pause a goal without telling this server, such as another process's
+        // restart sweep, so confirm the goal is still active before waiting on it.
+        if (goalHoldsTurn(state) && !state.goalRefreshing) yield* refreshGoal(state);
         return;
       }
       yield* finishTurn(state, end);
     });
 
     const endIfSettled = (state: ThreadState, turn: ActiveTurn) =>
-      turn.heldEnd !== undefined && turn.steers.size === 0
+      turn.heldEnd !== undefined && turn.steers.size === 0 && !goalHoldsTurn(state)
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
 
-    const trackShellLaunch = (
-      state: ThreadState,
-      metadata: Readonly<Record<string, unknown>> | undefined,
-      input: Readonly<Record<string, unknown>> | undefined,
-    ) => {
-      const shellId = launchedShell(metadata);
-      if (shellId === undefined) return false;
-      if (state.endedShells.delete(shellId) || state.shells.has(shellId)) return false;
-      state.shells.set(shellId, { directory: state.directory, command: shellCommandOf(input) });
-      return true;
-    };
-
-    const trackShellEnd = (
-      state: ThreadState,
-      inboxId: string,
-      payload: {
-        readonly text: string;
-        readonly metadata?: Readonly<Record<string, unknown>> | undefined;
-      },
-    ) => {
-      const shellId = stringField(payload.metadata, "shellID");
-      if (stringField(payload.metadata, "source") !== "shell" || shellId === undefined)
-        return false;
-      const shell = state.shells.get(shellId);
-      const ended = state.shells.delete(shellId);
-      if (!ended) state.endedShells.add(shellId);
-      // Removing a shell reports it to its session too, which wakes that session.
-      state.reports.set(inboxId, {
-        inboxId,
-        sourceId: shellId,
-        text: payload.text,
-        report: {
-          kind: "command",
-          label: shell?.command,
-          outcome: state.stopped.has(shellId)
-            ? "cancelled"
-            : reportOutcome(stringField(payload.metadata, "state")),
-        },
-      });
-      return ended;
-    };
-
-    // Counted on arrival, so Stop sees what a held wake started and a replay counts nothing twice.
-    const trackShells = (state: ThreadState, event: OpenCode2Client.OpenCode2StreamEvent) => {
-      if (event.type === "session.tool.success") {
-        const input = state.active?.tools.get(event.data.id)?.input;
-        return trackShellLaunch(state, event.data.metadata, input);
-      }
-      if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
-        return trackShellEnd(state, event.data.inboxID, event.data.item.payload);
-      }
-      if (event.type === "session.inbox.delivered" || event.type === "session.inbox.cancelled") {
-        state.reports.delete(event.data.inboxID);
-      }
-      return false;
-    };
-
-    // A discarded wake's sessions stay owned by its caller, which tracks the shells they launch.
-    const trackAdoptedShells = Effect.fnUntraced(function* (
-      event: OpenCode2Client.OpenCode2StreamEvent,
-    ) {
-      const caller = adopted.get(sessionOfEvent(event) ?? "");
-      if (event.type === "session.tool.success") {
-        if (caller !== undefined && trackShellLaunch(caller, event.data.metadata, undefined)) {
-          yield* syncRosterAncestors(caller);
-        }
-        return;
-      }
-      if (event.type !== "session.inbox.enqueued" || event.data.item.type !== "synthetic") return;
-      const { metadata } = event.data.item.payload;
-      if (stringField(metadata, "source") !== "shell") return;
-      const shellId = stringField(metadata, "shellID") ?? "";
-      let released = false;
-      for (const state of threads.values()) {
-        if (!state.shells.delete(shellId)) continue;
-        released = true;
-        // The report wakes that session; Stop's stray pass ends what a removal started.
-        if (state.stopped.has(shellId)) strays.set(event.data.sessionID, state);
-        yield* syncRosterAncestors(state);
-      }
-      if (!released) caller?.endedShells.add(shellId);
+    // Holds a goal turn until OpenCode's goal is read again; a failed read releases it.
+    const refreshGoal = Effect.fnUntraced(function* (state: ThreadState) {
+      state.goalFresh = false;
+      state.goalRefreshing = true;
+      state.goalRevision += 1;
+      const revision = state.goalRevision;
+      yield* Effect.forkIn(
+        readGoal(state).pipe(
+          Effect.timeout(INVENTORY_TIMEOUT),
+          Effect.catch(() =>
+            Effect.logWarning("Could not refresh OpenCode goal state.").pipe(Effect.as(false)),
+          ),
+          Effect.flatMap((applied) =>
+            lock.withPermit(
+              Effect.gen(function* () {
+                if (state.goalRevision === revision) state.goalRefreshing = false;
+                // A newer goal event or a reconnect's read owns settlement now.
+                else if (!applied) return;
+                if (state.active !== undefined) yield* endIfSettled(state, state.active);
+              }),
+            ),
+          ),
+        ),
+        sessionScope,
+      );
     });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
+      if (event.type === "shell.created") {
+        const sessionId = stringField(event.data.info.metadata, "sessionID");
+        if (sessionId !== undefined && ownerOf(sessionId) !== undefined) {
+          shellInfo.set(event.data.info.id, event.data.info);
+          if (shellInfo.size > 128) shellInfo.delete(shellInfo.keys().next().value!);
+        }
+        return;
+      }
+      if (event.type === "shell.exited" || event.type === "shell.deleted") {
+        const known = shellInfo.get(event.data.id);
+        if (known !== undefined)
+          shellInfo.set(event.data.id, {
+            ...known,
+            status: event.type === "shell.deleted" ? "killed" : event.data.status,
+            exit: "exit" in event.data ? event.data.exit : undefined,
+          });
+        const shell = shells.get(event.data.id);
+        if (shell === undefined || !shell.running || shell.stopping === true) return;
+        if (event.type === "shell.exited")
+          yield* readShellOutput(event.data.id, true).pipe(Effect.ignore({ log: true }));
+        shell.running = false;
+        yield* emitShell(
+          event.data.id,
+          event.type === "shell.deleted" || event.data.status === "killed"
+            ? "interrupted"
+            : event.data.exit === 0
+              ? "completed"
+              : "failed",
+          "exit" in event.data ? event.data.exit : undefined,
+        );
+        shells.delete(event.data.id);
+        shellInfo.delete(event.data.id);
+        yield* syncRosterAncestors(shell.state);
+        return;
+      }
       const sessionId = sessionOfEvent(event);
       const cleared = sessionId === undefined ? undefined : clearing.get(sessionId);
       if (cleared !== undefined) {
@@ -2466,22 +3381,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ) {
           // Executions are serial: a second start proves the unsettled run lost its end.
           const state = threads.get(sessionId);
+          if (state !== undefined) state.starts += 1;
           if (state?.unsettled === true) {
             if (state.unsettledStarted) state.unsettled = false;
             else state.unsettledStarted = true;
           }
           busy.add(sessionId);
         } else if (event.type === "unreadable.execution.ended" || executionEnd(event.type)) {
-          yield* markIdle(sessionId);
+          busy.delete(sessionId);
         }
       }
-      const tracked = threads.get(sessionId ?? "");
-      const shellsChanged = tracked !== undefined && trackShells(tracked, event);
       if (event.type === "session.created" && event.data.parentID !== undefined) {
         const strayCaller = strays.get(event.data.parentID);
         if (strayCaller !== undefined) {
           strays.set(event.data.sessionID, strayCaller);
-          adopted.set(event.data.sessionID, strayCaller);
           return;
         }
         const owner = ownerOf(event.data.parentID);
@@ -2496,18 +3409,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const held = holder?.wakes.at(-1);
       if (holder !== undefined && held !== undefined) {
         held.events.push(event);
-        if (tracked === undefined) untracked.add(event);
         if (
           sessionId === holder.sessionId &&
           (event.type === "unreadable.execution.ended" || executionEnd(event.type))
         ) {
           held.running = false;
         }
-      } else {
-        if (tracked === undefined) yield* trackAdoptedShells(event);
-        yield* route(event, sessionId);
+        return;
       }
-      if (shellsChanged) yield* syncRosterAncestors(tracked);
+      return yield* route(event, sessionId);
     });
 
     const route = Effect.fnUntraced(function* (
@@ -2572,6 +3482,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (sessionId === undefined) return;
       const state = threads.get(sessionId);
       if (state === undefined) return;
+      if (event.type === "rpc.opencode.goal.changed") {
+        if (!supportsNativeGoals()) return;
+        const goal = yield* decodeGoal(event.data["goal"]).pipe(Effect.result);
+        if (goal._tag === "Failure") {
+          yield* Effect.logWarning(
+            "Could not decode an OpenCode goal update; refreshing its state.",
+          );
+          return yield* refreshGoal(state);
+        }
+        yield* updateGoal(state, goal.success);
+        if (state.active !== undefined) yield* endIfSettled(state, state.active);
+        return;
+      }
       if (event.type === "session.model.selected" || event.type === "session.step.started") {
         if (event.type === "session.model.selected") state.model = event.data.model;
         const providerThread = withReportedModel(state.providerThread, event.data.model);
@@ -2591,22 +3514,44 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return yield* onReport(state, event.data.inboxID, event.data.item.payload);
       }
       if (event.type === "session.inbox.cancelled" || event.type === "session.inbox.delivered") {
+        const report = state.reports.get(event.data.inboxID);
         state.reports.delete(event.data.inboxID);
+        const external = state.externalPrompts.get(event.data.inboxID);
+        state.externalPrompts.delete(event.data.inboxID);
         const turn = state.active;
         if (turn !== undefined && turn.steers.delete(event.data.inboxID)) {
           turn.settledInbox.add(event.data.inboxID);
           if (event.type === "session.inbox.cancelled") yield* endIfSettled(state, turn);
+        } else if (
+          event.type === "session.inbox.delivered" &&
+          external !== undefined &&
+          turn !== undefined
+        ) {
+          yield* emitExternalPrompt(state, turn, event.data.inboxID, external.text);
+        } else if (
+          event.type === "session.inbox.delivered" &&
+          report !== undefined &&
+          turn !== undefined
+        ) {
+          yield* emitDeliveredReport(state, turn, event.data.inboxID, report.report);
         }
         return;
       }
+      // No T3 turn existed while a wake held these, so its user items came from another client.
       if (
         event.type === "session.inbox.enqueued" &&
         event.data.item.type === "user" &&
-        state.subagent !== undefined &&
-        state.subagent.prompt === undefined &&
-        state.active === undefined
+        (state.active === undefined || (held && state.subagent === undefined))
       ) {
-        state.subagent.prompt = event.data.item.payload.text;
+        const text = event.data.item.payload.text;
+        if (state.subagent !== undefined) state.subagent.prompt ??= text;
+        // T3's own prompts can be admitted after a failed submit ended their turn.
+        else if (!isOwnPrompt(event.data.inboxID)) {
+          state.externalPrompts.set(event.data.inboxID, {
+            text,
+            leads: !held && state.reports.size === 0,
+          });
+        }
         return;
       }
       const started =
@@ -2642,12 +3587,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       for (const state of threads.values()) {
         for (const call of runningCalls(state)) yield* settleCall(call, "failed");
+        for (const [jobID, job] of state.imageJobs) {
+          if (job.status !== "running") continue;
+          yield* imageReport(state, { text: message, metadata: { jobID, state: "error" } });
+        }
         for (const wake of state.wakes.splice(0)) wake.dropped = true;
         state.reports.clear();
-        state.shells.clear();
-        state.endedShells.clear();
+        yield* syncRosterAncestors(state);
       }
-      for (const state of threads.values()) yield* syncRoster(state);
       yield* setSessionStatus("error", message);
       yield* Queue.end(events);
     });
@@ -2664,86 +3611,133 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ).pipe(
         Stream.takeUntil((message) => message.id === start),
         Stream.runCollect,
+        Effect.catchTags({ SessionNotFoundError: () => Effect.succeed(null) }),
       );
-      // Without this turn's start in history, all retrieved turns are older.
-      const found = start === null || read.at(-1)?.id === start;
-      if (!found) return undefined;
-      const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
-      const idle = recent.find((message) => message.type === "idle");
-      const assistant = recent.find((message) => message.type === "assistant");
-      if (assistant?.retry !== undefined) {
-        // Snapshots omit when the retry was scheduled, so only its remaining delay is known.
-        yield* updateRetry(
-          state,
-          turn,
-          assistant.retry,
-          DateTime.toEpochMillis(assistant.retry.at) - DateTime.toEpochMillis(yield* DateTime.now),
-        );
-      } else if (
-        turn.retry !== undefined &&
-        assistant !== undefined &&
-        assistant.error === undefined &&
-        assistant.content.length > 0
-      ) {
-        yield* emitRetry(state, turn, "completed");
-        turn.retry = undefined;
-      }
-      for (const message of recent.toReversed()) {
-        if (message.type !== "assistant" || state.active !== turn) continue;
-        const ordinals = { text: 0, reasoning: 0 };
-        for (const [index, part] of message.content.entries()) {
-          if (part.type === "text" || part.type === "reasoning") {
-            const block = { assistantMessageID: message.id, ordinal: ordinals[part.type]++ };
-            // OpenCode saves a block's text only when the block ends, so the last block of a
-            // response still streaming stays open and keeps the text that already arrived.
-            const open =
-              message.time.streamed === undefined && index === message.content.length - 1;
-            yield* emitText(
+      return yield* lock.withPermit(
+        Effect.gen(function* () {
+          if (state.active !== turn) return undefined;
+          if (read === null) return { outcome: "missing" as const };
+          // Without this turn's start in history, all retrieved turns are older.
+          const found = start === null || read.at(-1)?.id === start;
+          if (!found) return undefined;
+          const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
+          for (const message of recent) {
+            if (message.type === "user" && turn.steers.delete(message.id)) {
+              turn.settledInbox.add(message.id);
+            }
+          }
+          const idle = recent.find((message) => message.type === "idle");
+          const assistant = recent.find((message) => message.type === "assistant");
+          if (assistant?.retry !== undefined) {
+            // Snapshots omit when the retry was scheduled, so only its remaining delay is known.
+            yield* updateRetry(
               state,
               turn,
-              block,
-              part.type,
-              (text) => (open && !part.text.startsWith(text) ? text : part.text),
-              !open,
+              assistant.retry,
+              DateTime.toEpochMillis(assistant.retry.at) -
+                DateTime.toEpochMillis(yield* DateTime.now),
             );
-            continue;
+          } else if (
+            turn.retry !== undefined &&
+            assistant !== undefined &&
+            assistant.error === undefined &&
+            assistant.content.length > 0
+          ) {
+            yield* emitRetry(state, turn, "completed");
+            turn.retry = undefined;
           }
-          if (part.type !== "tool") continue;
-          if (!turn.tools.has(part.id)) {
-            turn.tools.set(part.id, { name: part.name, input: {} });
-            turn.startedAt.set(part.id, yield* DateTime.now);
+          for (const message of recent.toReversed()) {
+            if (message.type !== "assistant" || state.active !== turn) continue;
+            const ordinals = { text: 0, reasoning: 0 };
+            for (const [index, part] of message.content.entries()) {
+              if (part.type === "text" || part.type === "reasoning") {
+                const block = { assistantMessageID: message.id, ordinal: ordinals[part.type]++ };
+                // OpenCode saves a block's text only when the block ends, so the last block of a
+                // response still streaming stays open and keeps the text that already arrived.
+                const open =
+                  message.time.streamed === undefined && index === message.content.length - 1;
+                yield* emitText(
+                  state,
+                  turn,
+                  block,
+                  part.type,
+                  (text) => (open && !part.text.startsWith(text) ? text : part.text),
+                  !open,
+                );
+                continue;
+              }
+              if (part.type !== "tool") continue;
+              turn.closingText = undefined;
+              if (!turn.tools.has(part.id)) {
+                turn.tools.set(part.id, { name: part.name, input: {} });
+                turn.startedAt.set(part.id, yield* DateTime.now);
+              }
+              const tool = turn.tools.get(part.id)!;
+              if (typeof part.state.input === "object" && part.state.input !== null) {
+                tool.input = part.state.input as Record<string, unknown>;
+              }
+              if (part.state.status === "completed") {
+                yield* emitTool(state, turn, part.id, "completed", {
+                  output: textOf(part.state.content),
+                  files: part.state.content.flatMap((content) =>
+                    content.type === "file" ? [content] : [],
+                  ),
+                  metadata: part.state.metadata,
+                });
+                if (
+                  ![...state.imageJobs.values()].some(
+                    (job) => job.turn === turn && job.toolId === part.id,
+                  )
+                )
+                  turn.tools.delete(part.id);
+              } else if (part.state.status === "error") {
+                yield* emitTool(state, turn, part.id, "failed", {
+                  output: part.state.error.message,
+                  metadata: part.state.metadata,
+                });
+                turn.tools.delete(part.id);
+              } else {
+                yield* emitTool(state, turn, part.id, "running");
+              }
+            }
           }
-          const tool = turn.tools.get(part.id)!;
-          if (typeof part.state.input === "object" && part.state.input !== null) {
-            tool.input = part.state.input as Record<string, unknown>;
-          }
-          if (part.state.status === "completed") {
-            // A launch lost with the stream still runs; reconcile verifies tracked shells after this.
-            trackShellLaunch(state, part.state.metadata, tool.input);
-            yield* emitTool(state, turn, part.id, "completed", {
-              output: textOf(part.state.content),
-              files: part.state.content.flatMap((content) =>
-                content.type === "file" ? [content] : [],
-              ),
-              metadata: part.state.metadata,
-            });
-            turn.tools.delete(part.id);
-          } else if (part.state.status === "error") {
-            yield* emitTool(state, turn, part.id, "failed", {
-              output: part.state.error.message,
-              metadata: part.state.metadata,
-            });
-            turn.tools.delete(part.id);
-          } else {
-            yield* emitTool(state, turn, part.id, "running");
-          }
-        }
-      }
-      return idle === undefined ? undefined : { outcome: idle.outcome };
+          return idle === undefined ? undefined : { outcome: idle.outcome };
+        }),
+      );
     });
 
     // Restarts retain the previous session.outcome; without an idle item, the lost execution was interrupted.
-    const reconcile = Effect.gen(function* () {
+    const recoverImages = Effect.fn("OpenCode2Adapter.recoverImages")(function* (
+      state: ThreadState,
+    ) {
+      if (![...state.imageJobs.values()].some((job) => job.status === "running")) return;
+      yield* OpenCode2Client.paginate(
+        { sessionID: Session.ID.make(state.sessionId), type: "synthetic" as const, limit: 100 },
+        client.message.list,
+      ).pipe(
+        Stream.runForEach((message) =>
+          message.type === "synthetic" &&
+          stringField(message.metadata, "source") === "experimental_image_generate"
+            ? imageReport(state, message)
+            : Effect.void,
+        ),
+      );
+      if (
+        ![...state.imageJobs.values()].some((job) => job.status === "running") ||
+        compareSemverVersions(connection.version, "2.2.6") < 0
+      )
+        return;
+      const jobs = yield* connection.imageJobs(state.sessionId);
+      for (const job of jobs) {
+        if (job.status === "running") continue;
+        yield* imageReport(state, {
+          text: `Image generation ${job.status}. Output path: ${job.path} (${job.model}).`,
+          metadata: { source: "experimental_image_generate", jobID: job.id, state: job.status },
+        });
+      }
+    });
+
+    const reconcile = Effect.fn("OpenCode2Adapter.reconcile")(function* () {
       // Read deepest sessions first; subagent turns end before their waiting parents.
       const running = [...threads]
         .filter(([, state]) => state.active !== undefined)
@@ -2761,8 +3755,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ) {
         return;
       }
-      const active = yield* client.session.active();
-      for (const sessionId of busy) if (!(sessionId in active)) yield* markIdle(sessionId);
+      const active = { ...(yield* client.session.active()) };
+      for (const sessionId of busy) if (!(sessionId in active)) busy.delete(sessionId);
       for (const state of threads.values()) {
         if (state.unsettled && !(state.sessionId in active)) state.unsettledStarted = true;
       }
@@ -2772,91 +3766,101 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (turn === undefined) continue;
         turn.missedEvents = true;
         const ended = yield* backfill(sessionId, state);
-        if (sessionId in active || state.active !== turn) continue;
-        yield* finishTurn(
-          state,
-          ended?.outcome === "succeeded"
-            ? { status: turn.interrupted ? "interrupted" : "completed" }
-            : ended?.outcome === "failed"
-              ? {
-                  status: "failed",
-                  failure: makeProviderFailure({
-                    message:
-                      "OpenCode ended the turn with an error while T3 Code was reconnecting.",
-                    class: "provider_error",
-                  }),
-                }
-              : { status: "interrupted" },
+        if (ended?.outcome === "missing") {
+          delete active[Session.ID.make(sessionId)];
+          busy.delete(sessionId);
+        }
+        yield* lock.withPermit(
+          Effect.gen(function* () {
+            if (state.active !== turn) return;
+            if (sessionId in active) {
+              turn.heldEnd = undefined;
+              return;
+            }
+            if (ended?.outcome === "missing") {
+              return yield* finishTurn(state, { status: "interrupted" }, "broken");
+            }
+            const terminal: TurnTerminal =
+              ended?.outcome === "succeeded"
+                ? { status: turn.interrupted ? "interrupted" : "completed" }
+                : ended?.outcome === "failed"
+                  ? {
+                      status: "failed",
+                      failure: makeProviderFailure({
+                        message:
+                          "OpenCode ended the turn with an error while T3 Code was reconnecting.",
+                        class: "provider_error",
+                      }),
+                    }
+                  : { status: "interrupted" };
+            yield* endExecution(state, turn, terminal);
+          }),
         );
       }
-      for (const state of background) {
-        for (const call of runningCalls(state)) {
-          const child = call.child?.sessionId;
-          if (child === undefined || !(child in active)) {
-            yield* settleCall(call, "interrupted", LOST_BACKGROUND);
+      for (const state of threads.values()) {
+        yield* lock
+          .withPermit(recoverImages(state).pipe(Effect.timeout(INVENTORY_TIMEOUT)))
+          .pipe(Effect.ignore({ log: true }));
+      }
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          for (const state of background) {
+            for (const call of runningCalls(state)) {
+              const child = call.child?.sessionId;
+              if (child === undefined || !(child in active)) {
+                yield* settleCall(call, "interrupted", LOST_BACKGROUND);
+              }
+            }
+            const sessions = sessionsOf(state);
+            for (const session of sessions) {
+              discardWakes(session, session.wakes.splice(0));
+              session.reports.clear();
+            }
+            for (const session of sessions.toReversed()) yield* syncRoster(session);
           }
-        }
-        const sessions = sessionsOf(state);
-        for (const session of sessions) {
-          discardWakes(session, session.wakes.splice(0));
-          session.reports.clear();
-        }
-        for (const session of sessions.toReversed()) yield* syncRoster(session);
-      }
-      // A shell's end may have been lost with the stream, and backfill may re-add an ended one.
-      const tracked = [...threads.values()].filter((state) => state.shells.size > 0);
-      // Concurrent, so stalled checks cost one timeout, not one each, within RECONCILE_TIMEOUT.
-      yield* Effect.forEach(
-        tracked.flatMap((state) => [...state.shells].map(([id, shell]) => ({ state, id, shell }))),
-        ({ state, id, shell }) =>
-          client.shell
-            .get({ id: Shell.ID.make(id), location: { directory: shell.directory } })
-            .pipe(
-              Effect.map(({ data }) => data.status === "running"),
-              Effect.catchTags({
-                ShellNotFoundError: () => Effect.succeed(false),
-                LocationNotFoundError: () => Effect.succeed(false),
-              }),
-              Effect.timeout(ACTIVE_CHECK_TIMEOUT),
-              // Only prunes stale shells, so a failed check keeps the shell rather than the stream.
-              Effect.catch((cause) =>
-                Effect.logWarning("Could not check an OpenCode background shell.", { cause }).pipe(
-                  Effect.as(true),
-                ),
-              ),
-              Effect.map((running) => {
-                if (!running) state.shells.delete(id);
-              }),
-            ),
-        { concurrency: "unbounded", discard: true },
+          // Stopped off the lock this reconcile holds; one still running waits for a Stop.
+          for (const thread of new Set([...strays.values()].map(rootOf))) {
+            yield* Effect.forkIn(stopStrays(thread), sessionScope);
+          }
+        }),
       );
-      for (const state of tracked) yield* syncRosterAncestors(state);
-      // Stopped off the lock this reconcile holds; one still running waits for a Stop.
-      for (const thread of new Set([...strays.values()].map(rootOf))) {
-        yield* Effect.forkIn(stopStrays(thread), sessionScope);
-      }
       const listed = new Map<string, Set<string>>();
       for (const sessionId of Object.keys(active)) {
-        if (ownerOf(sessionId) === undefined) continue;
+        const owner = ownerOf(sessionId);
+        if (owner === undefined) continue;
+        const turn = requestTurn(sessionId)?.turn;
+        // Replies may settle during these reads; an older snapshot must not ask again.
+        const known = new Set([...pending.values()].map((entry) => entry.native.id));
         const sessionID = Session.ID.make(sessionId);
         const [permissions, forms] = yield* Effect.all([
           client.permission.list({ sessionID }),
           client.session.form.list({ sessionID }),
         ]);
-        listed.set(sessionId, new Set([...permissions, ...forms].map((request) => request.id)));
-        const shown = new Set([...pending.values()].map((entry) => entry.native.id));
-        for (const request of permissions) {
-          if (!shown.has(request.id)) yield* onAsked({ type: "permission", request });
-        }
-        for (const form of forms) {
-          if (!shown.has(form.id)) yield* onAsked({ type: "form", form });
-        }
+        yield* lock.withPermit(
+          Effect.gen(function* () {
+            if (ownerOf(sessionId) !== owner || requestTurn(sessionId)?.turn !== turn) return;
+            listed.set(sessionId, new Set([...permissions, ...forms].map((request) => request.id)));
+            const shown = new Set([...pending.values()].map((entry) => entry.native.id));
+            for (const request of permissions) {
+              if (!shown.has(request.id) && !known.has(request.id))
+                yield* onAsked({ type: "permission", request });
+            }
+            for (const form of forms) {
+              if (!shown.has(form.id) && !known.has(form.id))
+                yield* onAsked({ type: "form", form });
+            }
+          }),
+        );
       }
-      for (const entry of Array.from(pending.values())) {
-        if (listed.get(entry.sessionId)?.has(entry.native.id) !== true) {
-          yield* settleRequest(entry, "cancelled");
-        }
-      }
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          for (const entry of Array.from(pending.values())) {
+            if (listed.get(entry.sessionId)?.has(entry.native.id) !== true) {
+              yield* settleRequest(entry, "cancelled");
+            }
+          }
+        }),
+      );
     });
 
     const reconnect = Effect.gen(function* () {
@@ -2864,19 +3868,56 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const scope = yield* Scope.make();
       const { next, stream } = yield* Effect.gen(function* () {
         const next = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
-        return { next, stream: yield* next.events };
+        const events = next.events.pipe(Effect.provideService(Scope.Scope, scope));
+        return { next, stream: yield* whileAlive(next.processExit, events) };
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       const previous = currentScope;
       connection = next;
       client = next.client;
+      nativeGoalSupport = supportsNativeGoals();
+      session = {
+        ...session,
+        capabilities: {
+          ...session.capabilities,
+          turns: { ...session.capabilities.turns, supportsNativeGoals: supportsNativeGoals() },
+        },
+      };
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
-      for (const state of threads.values()) state.mcp = undefined;
-      yield* lock.withPermit(reconcile).pipe(Effect.timeout(RECONCILE_TIMEOUT));
+      // The gap may have started a pending prompt unseen, so none may set a later wake's boundary.
+      for (const state of threads.values()) {
+        state.mcp = undefined;
+        state.goalFresh = false;
+        state.goalRefreshing = false;
+        state.goalRevision += 1;
+        for (const prompt of state.externalPrompts.values()) prompt.leads = false;
+      }
+      if (supportsNativeGoals()) {
+        yield* Effect.forEach(
+          [...threads.values()],
+          (state) => readGoal(state).pipe(Effect.ignore({ log: true })),
+          { concurrency: 4, discard: true },
+        ).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore({ log: true }));
+      }
+      for (const state of threads.values()) {
+        yield* recoverShells(state).pipe(Effect.ignore({ log: true }));
+      }
+      // An owned process's exit, rather than a read deadline, bounds recovery; the bounded retry
+      // below then borrows a restarted server. HTTP waits stay outside the event lock so Stop can still settle.
+      yield* next.processExit === undefined
+        ? reconcile().pipe(Effect.timeout(RECONCILE_TIMEOUT))
+        : whileAlive(next.processExit, reconcile());
       return stream;
     }).pipe(
-      Effect.retry({ times: RECONNECT_ATTEMPTS - 1, schedule: Schedule.spaced(RECONNECT_DELAY) }),
+      // Borrows and process exits stay bounded; only a live owned process is waited on above.
+      Effect.retry({
+        times: RECONNECT_ATTEMPTS - 1,
+        schedule: Schedule.spaced(RECONNECT_DELAY),
+        ...(connection.processExit === undefined
+          ? {}
+          : { while: (error: unknown) => !isPermanentRecoveryError(error) }),
+      }),
     );
 
     let currentScope = initial.scope;
@@ -2921,7 +3962,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               Effect.option,
             );
             if (next._tag === "None") {
-              return yield* failAll("The OpenCode event stream was lost and could not reconnect.");
+              return yield* lock.withPermit(
+                failAll("The OpenCode event stream was lost and could not reconnect."),
+              );
             }
             streamFailure = undefined;
             const done = reconnected;
@@ -2932,7 +3975,50 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ),
       );
     // Subscribed before any session or prompt call, so no event of theirs is missed.
-    yield* follow(yield* connection.events).pipe(Effect.forkScoped);
+    yield* follow(
+      yield* connection.events.pipe(Effect.provideService(Scope.Scope, currentScope)),
+    ).pipe(Effect.forkScoped);
+
+    yield* Effect.gen(function* () {
+      const snapshots = yield* lock.withPermit(
+        Effect.sync(() =>
+          [...shells]
+            .filter(([, shell]) => shell.running)
+            .map(([id, shell]) => ({
+              id,
+              shell,
+              cursor: shell.cursor,
+              output: shell.output,
+              directory: shell.state.directory,
+            })),
+        ),
+      );
+      yield* Effect.forEach(
+        snapshots,
+        (snapshot) =>
+          fetchShellOutput(snapshot.id, snapshot).pipe(
+            Effect.flatMap((next) =>
+              lock.withPermit(
+                Effect.gen(function* () {
+                  const shell = shells.get(snapshot.id);
+                  // An exit, Stop, or recovery may have consumed this cursor while the request was in flight.
+                  if (
+                    shell !== snapshot.shell ||
+                    !shell.running ||
+                    shell.cursor !== snapshot.cursor
+                  )
+                    return;
+                  if (next.cursor <= shell.cursor) return;
+                  Object.assign(shell, next);
+                  yield* emitShell(snapshot.id, "running");
+                }),
+              ),
+            ),
+            Effect.ignore({ log: true }),
+          ),
+        { concurrency: 4, discard: true },
+      );
+    }).pipe(Effect.repeat(Schedule.spaced("2 seconds")), Effect.forkScoped);
 
     // External servers outlive T3; stop their turns before losing observation.
     if (connection.external) {
@@ -2952,15 +4038,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       Effect.suspend(() => {
         const windows = contextWindows.get(directory) ?? new Map<string, number>();
         contextWindows.set(directory, windows);
+        const variants = modelVariants.get(directory) ?? new Map<string, ReadonlySet<string>>();
+        modelVariants.set(directory, variants);
         return client.model.list({ location: { directory } }).pipe(
           Effect.timeout("5 seconds"),
           Effect.tap((models) =>
             Effect.sync(() => {
               for (const model of models.data) {
-                windows.set(
-                  `${model.providerID}/${model.id}`,
-                  model.limit.input ?? model.limit.context,
-                );
+                const slug = `${model.providerID}/${model.id}`;
+                windows.set(slug, model.limit.input ?? model.limit.context);
+                variants.set(slug, new Set(model.variants.map((variant) => variant.id)));
               }
             }),
           ),
@@ -3083,21 +4170,37 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       verb: "roll back" | "fork",
     ) {
       const state = threads.get(sessionId);
+      // A stopped turn whose end was lost with the stream stays active here,
+      // so OpenCode's own list decides whether it still runs.
+      const stopped = state?.active?.interrupted === true ? state.active : undefined;
+      const starts = state?.starts;
+      const stillWorking = new ProviderAdapter.ProviderAdapterProtocolError({
+        driver: OPENCODE_PROVIDER,
+        detail: `Cannot ${verb} OpenCode session ${sessionId} while it is still working`,
+      });
       const busyHere =
         state !== undefined &&
-        (state.active !== undefined ||
-          busy.has(sessionId) ||
+        ((stopped === undefined && (state.active !== undefined || busy.has(sessionId))) ||
           (verb === "roll back" && hasBackground(state)));
       const busyThere =
         !busyHere &&
-        (state === undefined || state.unsettled) &&
+        (state === undefined || state.unsettled || stopped !== undefined) &&
         sessionId in (yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT)));
-      if (busyHere || busyThere) {
-        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-          driver: OPENCODE_PROVIDER,
-          detail: `Cannot ${verb} OpenCode session ${sessionId} while it is still working`,
-        });
-      }
+      if (busyHere || busyThere) return yield* stillWorking;
+      if (state === undefined || stopped === undefined) return;
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          // A run that started during the check may postdate OpenCode's answer.
+          if (state.starts !== starts) return yield* stillWorking;
+          if (state.active !== stopped) return;
+          // Its end may still arrive late; unsettled swallows it and makes the next turn await its start.
+          // OpenCode reported it idle, so any later start is a new run.
+          state.unsettled = true;
+          state.unsettledStarted = true;
+          busy.delete(sessionId);
+          yield* finishTurn(state, { status: "interrupted" });
+        }),
+      );
     });
 
     const cancelStrandedSteers = Effect.fnUntraced(function* (state: ThreadState) {
@@ -3298,6 +4401,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
       if (wanted !== undefined) {
+        const fresh = state.mcp === undefined;
         mcpAvailable = yield* client.mcp
           .add({
             server: name,
@@ -3319,10 +4423,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           );
         if (mcpAvailable) state.mcp = wanted;
+        // Before 2.2.6, OpenCode loads a new server's tools 100 ms after it connects, and a prompt sent sooner lacks them.
+        if (mcpAvailable && fresh && compareSemverVersions(connection.version, "2.2.6") < 0) {
+          yield* Effect.sleep(MCP_TOOL_RELOAD_SETTLE);
+        }
       }
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        buildRuntimeInstructions({
+          harness: "OpenCode",
+          model: turnInput.modelSelection.model,
+          runtimePolicy: turnInput.runtimePolicy,
+        }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
+        mcpAvailable
+          ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."
+          : undefined,
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
@@ -3374,6 +4489,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         });
       }
       state.active = turn;
+      state.sessionScopedBackground = false;
       yield* emitProviderTurn(state, turn, providerTurn);
       state.providerThread = {
         ...state.providerThread,
@@ -3389,45 +4505,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const replay = Effect.fnUntraced(function* (wake: Wake) {
       wake.dropped = true;
-      for (const event of wake.events) {
-        const sessionId = sessionOfEvent(event);
-        // A subagent's state exists only once its held call is replayed.
-        const state = untracked.has(event) ? threads.get(sessionId ?? "") : undefined;
-        if (state !== undefined) trackShells(state, event);
-        yield* route(event, sessionId, true);
-      }
+      replaying = wake;
+      yield* Effect.forEach(wake.events, (event) => route(event, sessionOfEvent(event), true), {
+        discard: true,
+      }).pipe(Effect.ensuring(Effect.sync(() => (replaying = undefined))));
     });
 
-    // Shells a held wake started in sessions it had not named yet; replay would count them.
-    const heldShells = (wakes: ReadonlyArray<Wake>) => {
-      const inputs = new Map<string, Readonly<Record<string, unknown>>>();
-      const running = new Map<string, string | undefined>();
-      // As in endedShells, an end can arrive before its launch result.
-      const ended = new Set<string>();
-      for (const event of wakes.flatMap((wake) => wake.events)) {
-        if (!untracked.has(event)) continue;
-        if (event.type === "session.tool.called") inputs.set(event.data.id, event.data.input);
-        if (event.type === "session.tool.success") {
-          const shellId = launchedShell(event.data.metadata);
-          if (shellId !== undefined && !ended.delete(shellId))
-            running.set(shellId, shellCommandOf(inputs.get(event.data.id)));
-        }
-        if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
-          const { metadata } = event.data.item.payload;
-          const shellId = stringField(metadata, "shellID") ?? "";
-          if (stringField(metadata, "source") === "shell" && !running.delete(shellId)) {
-            ended.add(shellId);
-          }
-        }
-      }
-      return running;
-    };
-
-    // Shells a dropped wake started keep running, so its caller tracks them until they end or are removed.
     const discardWakes = (caller: ThreadState, wakes: ReadonlyArray<Wake>) => {
-      for (const [id, command] of heldShells(wakes)) {
-        if (!caller.shells.has(id)) caller.shells.set(id, { directory: caller.directory, command });
-      }
       const retired = new Set<string>();
       const retire = (childId: string) => {
         const info = announced.get(childId);
@@ -3435,9 +4519,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         announced.delete(childId);
         childOwners.delete(childId);
         strays.set(childId, caller);
-        adopted.set(childId, caller);
         retired.add(childId);
-        threads.get(info.parentID ?? "")?.stopped.add(childId);
+        threads.get(info.parentID ?? "")?.stoppedChildren.add(childId);
       };
       for (const wake of wakes) {
         wake.dropped = true;
@@ -3495,7 +4578,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const wake = state.wakes.shift()!;
           const turn = state.active;
           if (turn !== undefined && wake.after !== undefined) turn.before = wake.after;
-          // Its first report is where its history begins, so fork and rollback cut there.
+          // Fork and rollback cut where its history begins.
           if (turn !== undefined && wake.first !== undefined) {
             turn.providerTurn = { ...turn.providerTurn, nativeTurnRef: ref(wake.first, "weak") };
           }
@@ -3507,13 +4590,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    // The foreground stop runs before the final drain and succeeds with whether it interrupted a run,
-    // which can launch more work until it ends.
-    const stopBackground = Effect.fnUntraced(function* <E>(
-      state: ThreadState,
-      stopForeground: Effect.Effect<boolean, E>,
-    ) {
-      const backgroundCalls = () => runningCalls(state).filter((call) => call.background);
+    const stopBackground = Effect.fnUntraced(function* (state: ThreadState) {
+      for (const [id, shell] of shells) {
+        if (shell.running && sessionsOf(state).includes(shell.state))
+          yield* lock.withPermit(stopShell(id)).pipe(Effect.ignore({ log: true }));
+      }
+      const calls = runningCalls(state).filter((call) => call.background);
+      const callers = sessionsOf(state);
+      // Ended subagent calls can run again to answer their own background reports.
+      const followUps = callers.filter(
+        (caller) =>
+          caller.subagent !== undefined &&
+          busy.has(caller.sessionId) &&
+          !isOrchestrationV2WorkActive(caller.subagent.call.status),
+      );
       // Child sessions are announced before call progress names them; use announcements to stop unnamed children.
       const announcedTo = (caller: ThreadState) =>
         [...announced.values()].flatMap((info) =>
@@ -3521,153 +4611,57 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         );
       const childrenOf = (call: SubagentCall) =>
         call.child === undefined ? announcedTo(call.state) : [call.child.sessionId];
-      // Keyed by session, or by wake since each wake is its own execution of the thread's session.
-      const interrupted = new Set<string | Wake>();
-      const unstopped = (wakes: boolean) =>
-        [
-          ...backgroundCalls().flatMap((call) =>
-            childrenOf(call).map((sessionId) => ({
-              key: sessionId,
-              sessionId,
-              caller: call.state,
-            })),
-          ),
-          // Ended subagent calls can run again to answer their own background reports.
-          ...sessionsOf(state)
-            .filter(
-              (caller) =>
-                caller.subagent !== undefined &&
-                busy.has(caller.sessionId) &&
-                !isOrchestrationV2WorkActive(caller.subagent.call.status),
-            )
-            .map((caller) => ({
-              key: caller.sessionId,
-              sessionId: caller.sessionId,
-              caller: undefined,
-            })),
-          ...(wakes ? state.wakes : [])
-            .filter((wake) => wake.running)
-            .map((wake) => ({ key: wake, sessionId: state.sessionId, caller: undefined })),
-          // Subagents a held wake started have no call yet; their wake holds what they launch until they end.
-          ...(wakes ? state.wakes : []).flatMap((wake) =>
-            [...wake.children].map((sessionId) => ({
-              key: sessionId,
-              sessionId,
-              caller: undefined,
-            })),
-          ),
-        ].filter(({ key }) => !interrupted.has(key));
+      const children = new Map(
+        calls.flatMap((call) => childrenOf(call).map((childId) => [childId, call.state] as const)),
+      );
       const unreached = new Set<string>();
-      // Succeeds with the sessions it interrupted.
-      const stopSessions = Effect.fnUntraced(function* (wakes: boolean) {
-        const stopped = new Set<string>();
-        for (let sessions = unstopped(wakes); sessions.length > 0; sessions = unstopped(wakes)) {
-          for (const { key, sessionId, caller } of sessions) {
-            if (interrupted.has(key)) continue;
-            interrupted.add(key);
-            stopped.add(sessionId);
-            caller?.stopped.add(sessionId);
-            const reached = yield* client.session
-              .interrupt({ sessionID: Session.ID.make(sessionId) })
-              .pipe(
-                Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
-                Effect.timeout(INTERRUPT_TIMEOUT),
-                Effect.tapCause((cause) =>
-                  Effect.logWarning("Could not stop an OpenCode session.", cause),
-                ),
-                Effect.exit,
-                Effect.map(Exit.isSuccess),
-              );
-            if (!reached && caller !== undefined) unreached.add(sessionId);
-          }
-        }
-        return stopped;
-      });
-      // An interrupted execution can launch work until it ends; its end means all of it has been seen.
-      const awaitEnds = (sessionIds: Iterable<string>) =>
-        Effect.forEach(sessionIds, awaitIdle, { concurrency: "unbounded", discard: true });
-      const attempted = new Set<string>();
-      const unremoved = () =>
-        sessionsOf(state)
-          .flatMap((caller) => [
-            ...[...caller.shells].map(([id, shell]) => ({
-              caller,
-              id,
-              directory: shell.directory,
-            })),
-            ...[...heldShells(caller.wakes).keys()].map((id) => ({
-              caller,
-              id,
-              directory: caller.directory,
-            })),
-          ])
-          .filter(({ id }) => !attempted.has(id));
-      const removed: Array<{ readonly caller: ThreadState; readonly id: string }> = [];
-      // Sessions still running can launch shells while a remove waits.
-      const removeShells = Effect.fnUntraced(function* () {
-        for (let shells = unremoved(); shells.length > 0; shells = unremoved()) {
-          // OpenCode reports and wakes the shell's session before the remove returns.
-          for (const { caller, id } of shells) {
-            attempted.add(id);
-            caller.stopped.add(id);
-          }
-          const reached = yield* Effect.filter(
-            shells,
-            ({ id, directory }) =>
-              client.shell.remove({ id: Shell.ID.make(id), location: { directory } }).pipe(
-                // OpenCode declares no not-found error for remove; only the directory can be gone.
-                Effect.catchTags({ LocationNotFoundError: () => Effect.void }),
-                Effect.timeout(INTERRUPT_TIMEOUT),
-                Effect.tapCause((cause) =>
-                  Effect.logWarning("Could not stop an OpenCode background shell.", cause),
-                ),
-                Effect.exit,
-                Effect.map(Exit.isSuccess),
-              ),
-            { concurrency: "unbounded" },
+      for (const [childId, caller] of children) {
+        caller.stoppedChildren.add(childId);
+        const reached = yield* client.session
+          .interrupt({ sessionID: Session.ID.make(childId) })
+          .pipe(
+            Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
+            Effect.timeout(INTERRUPT_TIMEOUT),
+            Effect.tapCause((cause) =>
+              Effect.logWarning("Could not stop an OpenCode subagent.", cause),
+            ),
+            Effect.exit,
+            Effect.map(Exit.isSuccess),
           );
-          removed.push(...reached);
-        }
-      });
-      // Wakes wait for the foreground stop, which may end the same execution of the thread's session.
-      const cleanup = yield* Effect.forkChild(Effect.andThen(removeShells(), stopSessions(false)));
-      // Cleanup normally goes first, but a stalled request must not hold the foreground stop past
-      // the caller's 15-second deadline.
-      yield* Fiber.await(cleanup).pipe(Effect.timeout(FOREGROUND_STOP_DELAY), Effect.ignore);
-      const foreground = yield* Effect.exit(stopForeground);
-      const stopped = yield* Fiber.join(cleanup);
-      if (Exit.isSuccess(foreground) && foreground.value) stopped.add(state.sessionId);
-      yield* awaitEnds(stopped);
-      // Checked under the lock, so no shell launched before Stop settles outlives it. A pass that does
-      // not settle found a shell or execution it had not stopped yet; both sets only grow, and stopped
-      // executions launch nothing after the end awaited here, so the loop ends.
-      for (let settled = false; !settled;) {
-        yield* removeShells();
-        yield* awaitEnds(yield* stopSessions(true));
-        settled = yield* lock.withPermit(
-          Effect.gen(function* () {
-            if (unremoved().length > 0 || unstopped(true).length > 0) return false;
-            for (const call of backgroundCalls()) {
-              if (childrenOf(call).some((childId) => unreached.has(childId))) continue;
-              yield* settleCall(call, "interrupted");
-            }
-            for (const caller of sessionsOf(state)) {
-              for (const report of caller.reports.values()) caller.stopped.add(report.sourceId);
-            }
-            // Interrupted above but not yet ended: its end must not finish the thread's next turn.
-            if (state.wakes.some((wake) => wake.running)) markUnsettled(state);
-            // Hands held shells to the thread first, so one whose remove failed stays tracked.
-            discardWakes(state, state.wakes.splice(0));
-            for (const { caller, id } of removed) caller.shells.delete(id);
-            for (const caller of new Set([state, ...removed.map(({ caller }) => caller)])) {
-              yield* syncRosterAncestors(caller);
-            }
-            return true;
-          }),
-        );
+        if (!reached) unreached.add(childId);
       }
+      for (const followUp of followUps) {
+        yield* client.session
+          .interrupt({ sessionID: Session.ID.make(followUp.sessionId) })
+          .pipe(
+            Effect.catchTags({ SessionNotFoundError: () => Effect.void }),
+            Effect.timeout(INTERRUPT_TIMEOUT),
+            Effect.ignore({ log: true }),
+          );
+      }
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          for (const call of calls) {
+            if (childrenOf(call).some((childId) => unreached.has(childId))) continue;
+            yield* settleCall(call, "interrupted");
+          }
+          for (const caller of callers) {
+            for (const report of caller.reports.values()) {
+              caller.stoppedChildren.add(report.childId);
+            }
+          }
+          const running = state.wakes.some((wake) => wake.running);
+          discardWakes(state, state.wakes.splice(0));
+          yield* syncRosterAncestors(state);
+          if (running) {
+            markUnsettled(state);
+            yield* client.session
+              .interrupt({ sessionID: Session.ID.make(state.sessionId) })
+              .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
+          }
+        }),
+      );
       yield* stopStrays(state);
-      yield* foreground;
     });
 
     const listSkills = (location: { readonly directory: string }) =>
@@ -3703,9 +4697,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         turn.unsent = false;
         return true;
       };
+      const finishControl = lock.withPermit(
+        Effect.suspend(() =>
+          state.active === turn ? finishTurn(state, { status: "completed" }) : Effect.void,
+        ),
+      );
       const text = turnInput.message.text.trim();
       const bare = turnInput.message.attachments.length === 0;
       const id = turnPromptId(sessionId, turnInput.attemptId);
+      const goalCommand = supportsNativeGoals() ? parseGoalCommand(turnInput.message) : null;
+      if (goalCommand?.type === "show") {
+        if (!sending()) return;
+        yield* readGoal(state);
+        return yield* finishControl;
+      }
       if (bare && text === "/compact") {
         if (!sending()) return;
         return yield* client.session.compact({ sessionID, id }).pipe(Effect.asVoid);
@@ -3723,13 +4728,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           yield* markBefore(sessionId, newest.data[0]?.id ?? null);
           if (!sending()) return;
-          return yield* client.session.command({ sessionID, ...command });
+          if (goalCommand?.type === "pause" || goalCommand?.type === "clear") {
+            // OpenCode rejects pausing or clearing a missing goal; Codex treats that as a no-op.
+            yield* client.session.command({ sessionID, ...command }).pipe(
+              Effect.catchIf(
+                (error) =>
+                  error._tag === "CommandExecutionError" && error.message === "No goal is set.",
+                () => Effect.void,
+              ),
+            );
+            return yield* finishControl;
+          }
+          return yield* client.session.command({ sessionID, ...command }).pipe(Effect.asVoid);
         }
       }
       const mentions = skillMentions(text);
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
-      const messageText = yield* promptText(turnInput);
+      const messageText = turnInput.resume ? "" : yield* promptText(turnInput);
       if (!sending()) return;
       return yield* client.session
         .prompt({
@@ -3775,7 +4791,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             });
           }
           yield* readModelsOnce(threadInput.runtimePolicy.cwd);
-          const model = modelRef(threadInput.modelSelection);
+          const model = listedModelRef(threadInput.modelSelection, threadInput.runtimePolicy.cwd);
           if (model === undefined) {
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
               driver: OPENCODE_PROVIDER,
@@ -3861,6 +4877,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const loaded = threads.has(sessionId);
           const state = register(providerThread, native, cwd ?? native.location.directory);
           if (!loaded) yield* stopLeftoverRequests(state);
+          if (!loaded && supportsNativeGoals()) {
+            yield* readGoal(state).pipe(
+              Effect.timeout(INVENTORY_TIMEOUT),
+              Effect.ignore({ log: true }),
+            );
+          }
+          if (!loaded) yield* recoverShells(state).pipe(Effect.ignore({ log: true }));
           yield* writeRules(state, threadInput.runtimePolicy ?? state.policy);
           if (cwd != null && native.location.directory !== cwd) {
             yield* client.session.move({
@@ -3886,6 +4909,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
       compactThread: (turnInput) =>
         runtime.startTurn({ ...turnInput, message: { ...turnInput.message, text: "/compact" } }),
+      resumeTurn: (input) => runtime.startTurn(ProviderAdapter.resumeTurnInput(input)),
       startTurn: Effect.fn("OpenCode2Adapter.startTurn")(
         function* (turnInput) {
           // Waited out before the session's gate, so a rollback or fork is not
@@ -3945,7 +4969,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   }),
                 });
               }
-              const model = modelRef(turnInput.modelSelection);
+              const model = listedModelRef(turnInput.modelSelection, turnInput.runtimePolicy.cwd);
               if (model === undefined) {
                 yield* begin;
                 return yield* finishTurn(state, {
@@ -4138,50 +5162,58 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const state = threads.get(sessionId);
           if (state === undefined) return;
           const turn = state.active;
-          const stopTurn = Effect.gen(function* () {
-            if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) {
-              return false;
-            }
-            turn.interrupted = true;
-            const reply = yield* client.session
-              .interrupt({ sessionID: Session.ID.make(sessionId) })
-              .pipe(
-                Effect.timeoutOption(INTERRUPT_TIMEOUT),
-                Effect.tapError(() =>
-                  Effect.sync(() => {
-                    turn.interrupted = false;
-                  }),
-                ),
-              );
-            if (reply._tag === "None") {
-              markUnsettled(state);
-              yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
-              return false;
-            }
-            // Stop between steer executions retracts pending steers and skips any run they already started.
-            if (!reply.value.interrupted && state.active === turn && turn.heldEnd !== undefined) {
-              markUnsettled(state);
-              yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
-              yield* cancelStrandedSteers(state);
-              return false;
-            }
-            if (!reply.value.interrupted && state.active === turn && turn.unsent) {
-              yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
-              return false;
-            }
-            if (!reply.value.interrupted && state.active === turn) {
-              turn.interrupted = false;
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver: OPENCODE_PROVIDER,
-                detail: `OpenCode session ${sessionId} had nothing running to stop`,
-              });
-            }
-            return reply.value.interrupted;
-          });
           // User Stop must end background children and their report execution; steering leaves them running.
-          return yield* interruptInput.requestRuntimeRestart === true
-            ? stopBackground(state, stopTurn)
-            : Effect.asVoid(stopTurn);
+          if (interruptInput.requestRuntimeRestart === true) yield* stopBackground(state);
+          if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) {
+            return;
+          }
+          turn.interrupted = true;
+          const reply = yield* client.session
+            .interrupt({ sessionID: Session.ID.make(sessionId) })
+            .pipe(
+              Effect.timeoutOption(INTERRUPT_TIMEOUT),
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  turn.interrupted = false;
+                }),
+              ),
+            );
+          if (reply._tag === "None") {
+            if (state.active !== turn) return;
+            // The turn stays open: its tools may still run, and the user decides whether to Force stop.
+            return yield* new ProviderAdapter.ProviderAdapterInterruptTimeoutError({
+              driver: OPENCODE_PROVIDER,
+              providerThreadId: interruptInput.providerThread.id,
+              providerTurnId: interruptInput.providerTurnId,
+              timeoutMs: INTERRUPT_TIMEOUT,
+            });
+          }
+          // Recovery may hold the terminal event behind a blocked history read.
+          if (reply.value.interrupted && streamFailure !== undefined) {
+            return yield* lock.withPermit(
+              Effect.gen(function* () {
+                if (state.active !== turn) return;
+                markUnsettled(state);
+                yield* finishTurn(state, { status: "interrupted" });
+              }),
+            );
+          }
+          // Stop between steer executions retracts pending steers and skips any run they already started.
+          if (!reply.value.interrupted && state.active === turn && turn.heldEnd !== undefined) {
+            markUnsettled(state);
+            yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+            return yield* cancelStrandedSteers(state);
+          }
+          if (!reply.value.interrupted && state.active === turn && turn.unsent) {
+            return yield* lock.withPermit(finishTurn(state, { status: "interrupted" }));
+          }
+          if (!reply.value.interrupted && state.active === turn) {
+            turn.interrupted = false;
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: `OpenCode session ${sessionId} had nothing running to stop`,
+            });
+          }
         },
         (effect, interruptInput) =>
           effect.pipe(
@@ -4197,6 +5229,53 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           ),
       ),
+      awaitBackgroundTasks: Effect.fn("OpenCode2Adapter.awaitBackgroundTasks")(
+        function* ({ providerThread, taskIds, awaited }) {
+          const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+          const state = nativeThreadId == null ? undefined : threads.get(nativeThreadId);
+          if (state === undefined) return { matched: [] };
+          const sessions = sessionsOf(state);
+          const matched = [...new Set(taskIds)].filter((taskId) => {
+            const shell = shells.get(taskId);
+            return shell === undefined
+              ? wakeLaunchingShell(state, taskId) !== undefined
+              : shell.running && sessions.includes(shell.state);
+          });
+          if (matched.length === 0) return { matched };
+          for (const taskId of matched) {
+            const shell = shells.get(taskId);
+            if (shell === undefined) {
+              const held = wakeLaunchingShell(state, taskId)!.awaited;
+              if (awaited) held.add(taskId);
+              else held.delete(taskId);
+              continue;
+            }
+            shell.awaited = awaited;
+            yield* syncRosterAncestors(shell.state);
+          }
+          return { matched };
+        },
+        (effect) => effect.pipe(lock.withPermit),
+      ),
+      stopTask: Effect.fn("OpenCode2Adapter.stopTask")(function* ({ providerThread, taskId }) {
+        const shell = shells.get(taskId);
+        const state =
+          providerThread.nativeThreadRef == null
+            ? undefined
+            : threads.get(providerThread.nativeThreadRef.nativeId ?? "");
+        if (state === undefined || shell === undefined || !sessionsOf(state).includes(shell.state))
+          return;
+        yield* lock.withPermit(stopShell(taskId)).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterProtocolError({
+                driver,
+                detail: "Could not stop the OpenCode shell.",
+                cause,
+              }),
+          ),
+        );
+      }),
       unloadThread: Effect.fn("OpenCode2Adapter.unloadThread")(function* ({ providerThread }) {
         const nativeId = providerThread.nativeThreadRef?.nativeId;
         const state = nativeId == null ? undefined : threads.get(nativeId);
@@ -4214,7 +5293,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           childOwners.delete(child);
           threads.delete(child);
         }
-        for (const [child, caller] of adopted) if (rootOf(caller) === state) adopted.delete(child);
         if (state.mcp !== undefined) yield* removeMcp(state.mcp);
       }),
       respondToRuntimeRequest: Effect.fn("OpenCode2Adapter.respondToRuntimeRequest")(
@@ -4280,6 +5358,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   ? client.session.form.cancel({
                       sessionID: entry.sessionId,
                       formID: Form.ID.make(native.id),
+                      // Without a message OpenCode aborts the step, and a background subagent never reports.
+                      ...(asker.subagent === undefined ? {} : { message: DISMISSED }),
                     })
                   : client.session.form.reply({
                       sessionID: entry.sessionId,
@@ -4458,7 +5538,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     instanceId,
     driver,
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
-      return Effect.succeed(OpenCode2ProviderCapabilities);
+      return Effect.succeed({
+        ...OpenCode2ProviderCapabilities,
+        turns: {
+          ...OpenCode2ProviderCapabilities.turns,
+          ...(nativeGoalSupport === undefined ? {} : { supportsNativeGoals: nativeGoalSupport }),
+        },
+      });
     }),
     planSelectionTransition: Effect.fn("OpencodeAdapter.planSelectionTransition")(function () {
       return Effect.succeed(turnScopedSelectionTransition());

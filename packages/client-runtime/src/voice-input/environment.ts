@@ -6,6 +6,7 @@ import { CloudSpeechError, SPEECH_STREAM_PATH } from "@t3tools/contracts";
 import type {
   CloudSpeechModelId,
   CloudSpeechProvider,
+  EnvironmentSpeechModelDownload,
   SettingsSecretValue,
   SpeechAcceleration,
   SpeechModelUnloadTimeout,
@@ -213,6 +214,25 @@ export const selectEnvironmentSpeechModel = (prepared: PreparedConnection, model
     run: ({ client, headers }) => client.selectModel({ headers, payload: { modelId } }),
   });
 
+export function getSpeechModelDownloadOutcome(
+  download: EnvironmentSpeechModelDownload,
+  modelId: string,
+) {
+  if (download.cancelled) return "incomplete";
+  const model = download.models.find(({ id }) => id === modelId);
+  if (model?.state !== "installed") return "incomplete";
+  return model.active ? "already-selected" : "needs-selection";
+}
+
+/** Downloads a model and makes it the environment's transcription model on completion. */
+export const installEnvironmentSpeechModel = Effect.fn(
+  "clientRuntime.voiceInput.installEnvironmentSpeechModel",
+)(function* (prepared: PreparedConnection, modelId: string) {
+  const downloaded = yield* downloadEnvironmentSpeechModel(prepared, modelId);
+  if (getSpeechModelDownloadOutcome(downloaded, modelId) !== "needs-selection") return downloaded;
+  return yield* selectEnvironmentSpeechModel(prepared, modelId);
+});
+
 export const cancelEnvironmentSpeechModelDownload = (
   prepared: PreparedConnection,
   modelId: string,
@@ -290,6 +310,17 @@ export const updateEnvironmentSpeechModelUnloadTimeout = (
     path: (urls) => urls.updateModelUnloadTimeout(),
     run: ({ client, headers }) =>
       client.updateModelUnloadTimeout({ headers, payload: { timeout } }),
+  });
+
+export const linkEnvironmentSpeechModels = (prepared: PreparedConnection, path: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.linkModels(),
+    // Hashing several multi-gigabyte files takes longer than an ordinary request.
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.linkModels({ headers, payload: { path } }),
   });
 
 export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>

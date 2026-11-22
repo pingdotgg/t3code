@@ -14,6 +14,7 @@ import {
   tag,
   tint,
 } from "@expo/ui/swift-ui/modifiers";
+import { useGT } from "gt-react-native";
 import { useState } from "react";
 
 import { NativeThemeHost } from "./NativeThemeHost";
@@ -21,6 +22,7 @@ import { useControlTheme } from "./useControlTheme";
 import type { NumberFieldProps } from "./NumberField.types";
 
 export function NumberField(props: NumberFieldProps) {
+  const gt = useGT();
   const { colors, fontSize } = useControlTheme();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(props.value);
@@ -76,7 +78,7 @@ export function NumberField(props: NumberFieldProps) {
             </Picker>
             <HStack>
               <Button
-                label="Cancel"
+                label={gt("Cancel")}
                 systemImage="xmark"
                 onPress={() => setOpen(false)}
                 modifiers={[
@@ -88,7 +90,7 @@ export function NumberField(props: NumberFieldProps) {
               />
               <Spacer />
               <Button
-                label="Done"
+                label={gt("Done")}
                 systemImage="checkmark"
                 onPress={() => {
                   setOpen(false);

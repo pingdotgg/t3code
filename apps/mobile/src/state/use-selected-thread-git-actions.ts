@@ -1,4 +1,5 @@
 import { useAtomMount } from "@effect/atom-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
@@ -19,6 +20,8 @@ import {
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import { AsyncResult } from "effect/reactivity";
 
 import { useBranches } from "./queries";
@@ -32,13 +35,14 @@ import {
   setPendingConnectionError,
 } from "./use-remote-environment-registry";
 import { useAtomCommand } from "./use-atom-command";
-import { showGitActionResult } from "./use-vcs-action-state";
+import type { GitRepositoryTarget } from "./thread-git-target";
+import { noteRepositoryGitAction, showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
 function refreshFailureMessage(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
-  return error instanceof Error ? error.message : "Failed to refresh git status.";
+  return errorDisplayMessage(error, m) ?? m(msg("Failed to refresh git status."));
 }
 
 // Selecting a thread or reconnecting its environment refreshes the checkout's
@@ -52,7 +56,11 @@ const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
     ),
 });
 
-export function useSelectedThreadGitActions() {
+/**
+ * Git actions for the selected thread's own folder, or for `repository` when given. A repository
+ * keeps the thread as the owner of the work but never writes its branch back onto the thread.
+ */
+export function useSelectedThreadGitActions(repository?: GitRepositoryTarget) {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -72,7 +80,14 @@ export function useSelectedThreadGitActions() {
     AuthOrchestrationOperateScope,
   );
   const canChangeThreadBranch = canWriteSourceControl && canOperateThread;
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  // Only the thread's own folder has a branch the thread records, which takes operating the thread.
+  const followsThreadBranch = repository === undefined;
+  const canCreateFeatureBranch = followsThreadBranch
+    ? canChangeThreadBranch
+    : canWriteSourceControl;
+  const threadWorktree = useSelectedThreadWorktree();
+  const { selectedThreadWorktreePath } = threadWorktree;
+  const selectedThreadCwd = repository?.cwd ?? threadWorktree.selectedThreadCwd;
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
       environmentId: selectedThread?.environmentId ?? null,
@@ -81,7 +96,7 @@ export function useSelectedThreadGitActions() {
     { reportFailure: false },
   );
 
-  const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
+  const selectedThreadGitRootCwd = repository?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
   const branchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadGitRootCwd,
@@ -100,7 +115,7 @@ export function useSelectedThreadGitActions() {
         Cause.fail(
           new EnvironmentAuthorizationError({
             requiredScope: AuthOrchestrationOperateScope,
-            message: "This connection cannot update the thread's branch.",
+            message: m(msg("This connection cannot update the thread's branch.")),
           }),
         ),
       );
@@ -141,7 +156,7 @@ export function useSelectedThreadGitActions() {
           target,
           {
             operation: "refresh_status",
-            label: "Refreshing source control status",
+            label: m(msg("Refreshing source control status")),
           },
           execute,
         );
@@ -177,6 +192,7 @@ export function useSelectedThreadGitActions() {
       !selectedThreadCwd ||
       !readEnvironmentScope(selectedThread.environmentId, AuthSourceControlWriteScope) ||
       (options?.changesThreadBranch === true &&
+        followsThreadBranch &&
         !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope))
     ) {
       return null;
@@ -187,6 +203,12 @@ export function useSelectedThreadGitActions() {
       cwd: selectedThreadCwd,
     };
     setPendingConnectionError(null);
+    if (repository !== undefined) {
+      noteRepositoryGitAction({
+        threadRef: { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
+        cwd: selectedThreadCwd,
+      });
+    }
     const run = () =>
       execute({
         thread: selectedThread,
@@ -199,9 +221,13 @@ export function useSelectedThreadGitActions() {
         : await vcsActionManager.track(appAtomRegistry, target, { operation, label }, run);
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      const message = error instanceof Error ? error.message : "Git action failed.";
+      const message = errorDisplayMessage(error, m) ?? m(msg("Git action failed."));
       setPendingConnectionError(message);
-      showGitActionResult({ type: "error", title: "Git action failed", description: message });
+      showGitActionResult({
+        type: "error",
+        title: m(msg("Git action failed")),
+        description: message,
+      });
       return null;
     }
     return result.value;
@@ -215,9 +241,13 @@ export function useSelectedThreadGitActions() {
     });
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
-      const message = error instanceof Error ? error.message : "Failed to refresh branches.";
+      const message = errorDisplayMessage(error, m) ?? m(msg("Failed to refresh branches."));
       setPendingConnectionError(message);
-      showGitActionResult({ type: "error", title: "Git action failed", description: message });
+      showGitActionResult({
+        type: "error",
+        title: m(msg("Git action failed")),
+        description: message,
+      });
       return null;
     }
     setPendingConnectionError(null);
@@ -235,9 +265,10 @@ export function useSelectedThreadGitActions() {
     };
   }): Promise<AtomCommandResult<void, unknown>> => {
     // Git already changed; refresh even if metadata updates fail so the sheet shows the current branch.
-    const updateResult = input.nextThreadState
-      ? await updateThreadGitContext(input.thread, input.nextThreadState)
-      : AsyncResult.success(undefined);
+    const updateResult =
+      input.nextThreadState && followsThreadBranch
+        ? await updateThreadGitContext(input.thread, input.nextThreadState)
+        : AsyncResult.success(undefined);
     branchState.refresh();
     await refreshSelectedThreadGitStatus({ quiet: true, cwd: input.cwd });
     return AsyncResult.isFailure(updateResult)
@@ -248,7 +279,7 @@ export function useSelectedThreadGitActions() {
   const onCheckoutSelectedThreadBranch = async (branch: string) => {
     return runSelectedThreadGitMutation(
       "switch_ref",
-      "Switching branch",
+      m(msg("Switching branch")),
       async ({ thread, cwd }) => {
         const result = await switchRef({
           environmentId: thread.environmentId,
@@ -274,7 +305,7 @@ export function useSelectedThreadGitActions() {
   const onCreateSelectedThreadBranch = async (branch: string) => {
     return runSelectedThreadGitMutation(
       "create_ref",
-      "Creating branch",
+      m(msg("Creating branch")),
       async ({ thread, cwd }) => {
         const result = await createRef({
           environmentId: thread.environmentId,
@@ -301,9 +332,11 @@ export function useSelectedThreadGitActions() {
     readonly baseBranch: string;
     readonly newBranch: string;
   }) => {
+    // A worktree moves the thread, which a repository beside it never does.
+    if (!followsThreadBranch) return null;
     return runSelectedThreadGitMutation(
       "create_worktree",
-      "Creating worktree",
+      m(msg("Creating worktree")),
       async ({ thread, project }) => {
         const result = await createWorktree({
           environmentId: thread.environmentId,
@@ -334,7 +367,7 @@ export function useSelectedThreadGitActions() {
   const onPullSelectedThreadBranch = async () => {
     await runSelectedThreadGitMutation(
       "pull",
-      "Pulling latest changes",
+      m(msg("Pulling latest changes")),
       async ({ thread, cwd }) => {
         const result = await pull({
           environmentId: thread.environmentId,
@@ -348,8 +381,8 @@ export function useSelectedThreadGitActions() {
           type: "success",
           title:
             result.value.status === "skipped_up_to_date"
-              ? "Already up to date"
-              : `Pulled latest on ${result.value.refName}`,
+              ? m(msg("Already up to date"))
+              : m(msg("Pulled latest on {branch}", { branch: result.value.refName })),
         });
         return result;
       },
@@ -362,7 +395,7 @@ export function useSelectedThreadGitActions() {
     const actionId = uuidv4();
     return await runSelectedThreadGitMutation(
       "run_change_request",
-      "Running source control action",
+      m(msg("Running source control action")),
       async ({ thread, cwd }) => {
         const result = await runStackedAction({
           actionId,
@@ -406,6 +439,7 @@ export function useSelectedThreadGitActions() {
   return {
     canWriteSourceControl,
     canChangeThreadBranch,
+    canCreateFeatureBranch,
     refreshSelectedThreadGitStatus,
     refreshSelectedThreadBranches,
     onCheckoutSelectedThreadBranch,

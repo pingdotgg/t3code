@@ -58,26 +58,7 @@ export const parseArgs = (
   Effect.gen(function*() {
     const { tokens, trailingOperands: afterEndOfOptions } = lexResult
     const newCommandPath = [...commandPath, command.name]
-
-    const commandImpl = toImpl(command)
-    const singles = commandImpl.config.flags.flatMap(Param.extractSingleParams)
-    const flagParams = singles.filter(Param.isFlagParam)
-    const flagRegistry = createFlagRegistry(flagParams)
-
-    const inheritedSingles = commandImpl.contextConfig.flags.flatMap(Param.extractSingleParams)
-    const inheritedFlagParams = inheritedSingles.filter(Param.isFlagParam)
-    const inheritedFlagRegistry = createFlagRegistry(inheritedFlagParams)
-    const inheritedNames = new Set(inheritedFlagParams.map((param) => param.name))
-
-    const context: CommandContext = {
-      command,
-      commandPath: newCommandPath,
-      flagRegistry,
-      inheritedFlagRegistry,
-      localFlagNames: flagParams.filter((param) => !inheritedNames.has(param.name)).map((param) => param.name)
-    }
-
-    const result = scanCommandLevel(tokens, context)
+    const result = scanCommandLevel(tokens, makeCommandContext(command, newCommandPath))
 
     if (result._tag === "Leaf") {
       return {
@@ -103,6 +84,20 @@ export const parseArgs = (
       ...(allErrors.length > 0 && { errors: allErrors })
     }
   })
+
+/**
+ * Returns the subset of `tokens` left for the selected command once its
+ * ancestors have consumed subcommand names and inherited flags.
+ *
+ * @internal
+ */
+export const getSelectedCommandTokens = (
+  tokens: ReadonlyArray<Token>,
+  command: Command.Any
+): ReadonlyArray<Token> => {
+  const result = scanCommandLevel(tokens, makeCommandContext(command, []))
+  return result._tag === "Leaf" ? tokens : getSelectedCommandTokens(result.childTokens, result.sub)
+}
 
 /* ========================================================================== */
 /* Types                                                                      */
@@ -944,6 +939,19 @@ const processValue = (
 /* ========================================================================== */
 /* Command Level Scanning                                                     */
 /* ========================================================================== */
+
+const makeCommandContext = (command: Command.Any, commandPath: ReadonlyArray<string>): CommandContext => {
+  const flagParams = extractFlagParams(command)
+  const inheritedFlagParams = extractContextFlagParams(command)
+  const inheritedNames = new Set(inheritedFlagParams.map((param) => param.name))
+  return {
+    command,
+    commandPath,
+    flagRegistry: createFlagRegistry(flagParams),
+    inheritedFlagRegistry: createFlagRegistry(inheritedFlagParams),
+    localFlagNames: flagParams.filter((param) => !inheritedNames.has(param.name)).map((param) => param.name)
+  }
+}
 
 /**
  * Scans a single command level, processing all tokens.

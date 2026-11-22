@@ -149,19 +149,39 @@ const collect = <E>(stream: Stream.Stream<Uint8Array, E>) =>
       (a, b) => a + b,
     ),
   );
+/** Gradle needs the SDK location; fall back to Android Studio's default install like the device host does. */
+export const androidSdk = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const candidates = [
+    environment.ANDROID_HOME?.trim(),
+    environment.ANDROID_SDK_ROOT?.trim(),
+    path.join(home, "Library", "Android", "sdk"),
+    path.join(home, "Android", "Sdk"),
+    path.join(environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "Android", "Sdk"),
+  ];
+  for (const sdk of candidates) {
+    if (!sdk) continue;
+    const platformTools = path.join(sdk, "platform-tools");
+    if (yield* fs.exists(platformTools).pipe(Effect.orElseSucceed(() => false))) return sdk;
+  }
+  return undefined;
+});
+
 export const resolveAdb = Effect.gen(function* () {
   if (yield* isCommandAvailable("adb")) return "adb";
-  const environment = yield* HostProcess.Environment;
   const path = yield* Path.Path;
   const executable = (yield* HostProcess.Platform) === "win32" ? "adb.exe" : "adb";
-  for (const sdk of [environment.ANDROID_SDK_ROOT, environment.ANDROID_HOME]) {
-    if (!sdk) continue;
+  const sdk = yield* androidSdk;
+  if (sdk) {
     const candidate = path.join(sdk, "platform-tools", executable);
     if (yield* isCommandAvailable(candidate)) return candidate;
   }
   return yield* new NativeClientError({
     message:
-      "adb was not found on PATH or in ANDROID_SDK_ROOT/ANDROID_HOME. Install Android SDK platform-tools.",
+      "adb was not found on PATH, in ANDROID_HOME/ANDROID_SDK_ROOT, or in Android Studio's default SDK location. Install Android SDK platform-tools.",
   });
 });
 
@@ -175,17 +195,24 @@ const command = Effect.fn("nativeClient.command")(function* (
   args: string[],
   inherit = false,
   cwd?: string,
+  withoutEnvironment: ReadonlyArray<string> = [],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const environment = yield* HostProcess.Environment;
+  const environment = Object.fromEntries(
+    Object.entries(yield* HostProcess.Environment).filter(
+      ([name]) => !withoutEnvironment.includes(name),
+    ),
+  );
   const log = inherit ? yield* BuildLog : null;
   const spawn = yield* resolveSpawnCommand(program === "adb" ? yield* resolveAdb : program, args);
+  const sdk = yield* androidSdk;
   const child = yield* spawner.spawn(
     ChildProcess.make(spawn.command, spawn.args, {
       shell: spawn.shell,
       cwd: cwd ?? (yield* roots).mobile,
       env: {
         ...environment,
+        ...(sdk ? { ANDROID_HOME: sdk } : {}),
         APP_VARIANT: "development",
         MOBILE_VERSION_POLICY: "appVersion",
         T3CODE_IOS_PERSONAL_TEAM: "0",
@@ -1098,6 +1125,7 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   session: string,
   abi: string,
   metro: string | undefined,
+  config: string | undefined,
 ) {
   const started = yield* Clock.currentTimeMillis;
   const path = yield* Path.Path;
@@ -1108,6 +1136,13 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   );
   // agent-device scopes session ownership to the workspace (working directory) it runs in.
   const workspace = yield* HostProcess.WorkingDirectory;
+  // A session behind a gateway (a device pool) is reachable only with the config that opened it.
+  const target = ["--session", session, ...(config ? ["--config", config] : [])];
+  // Daemon variables in the shell (a device-pool login) override the config and authenticate
+  // as someone who does not hold this lease; T3 Code's own launcher drops them the same way.
+  const agentDeviceEnvironment = config
+    ? ["AGENT_DEVICE_DAEMON_BASE_URL", "AGENT_DEVICE_DAEMON_AUTH_TOKEN", "AGENT_DEVICE_CONFIG"]
+    : [];
   const deviceAbi = platform === "android" ? abi : null;
   const task = deviceAbi ? `native-client:android-${deviceAbi}` : `native-client:${platform}`;
   const current = yield* fingerprint(platform);
@@ -1118,17 +1153,10 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
   const downloadOnDevice = source
     ? command(
         node,
-        [
-          agentDevice,
-          "install-from-source",
-          source.url,
-          "--header",
-          source.header,
-          "--session",
-          session,
-        ],
+        [agentDevice, "install-from-source", source.url, "--header", source.header, ...target],
         true,
         workspace,
+        agentDeviceEnvironment,
       ).pipe(
         Effect.as(true),
         Effect.catch((error) =>
@@ -1150,9 +1178,10 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
         yield* Console.error(`Installing into agent-device session ${session}...`);
         yield* command(
           node,
-          [agentDevice, "install", bundleId, local.file, "--session", session],
+          [agentDevice, "install", bundleId, local.file, ...target],
           true,
           workspace,
+          agentDeviceEnvironment,
         );
         return local;
       });
@@ -1165,11 +1194,11 @@ const installIntoSession = Effect.fn("nativeClient.installIntoSession")(function
         "open",
         bundleId,
         `t3code-dev://expo-development-client/?url=${url}&disableOnboarding=1&disableFab=1&disableAutoLaunch=1`,
-        "--session",
-        session,
+        ...target,
       ],
       true,
       workspace,
+      agentDeviceEnvironment,
     );
   }
   yield* reportTelemetry(
@@ -1213,6 +1242,12 @@ const main = Command.make(
       Flag.withDescription("With --session, open the dev client against this Metro URL."),
       Flag.optional,
     ),
+    config: Flag.String("config").pipe(
+      Flag.withDescription(
+        "With --session, the agent-device config the session was opened with (T3 Code's device_open returns it in targetArgs). Needed for a device pool behind a gateway.",
+      ),
+      Flag.optional,
+    ),
     prepare: Flag.Boolean("prepare").pipe(
       Flag.withDescription(
         "Fetch or build the client for this checkout without a device (Android: for --abi). Run it before leasing a device: a build can outlast the lease.",
@@ -1233,6 +1268,7 @@ const main = Command.make(
     session,
     abi: sessionAbi,
     metro,
+    config,
     prepare,
     expectFingerprint,
   }) {
@@ -1280,6 +1316,7 @@ const main = Command.make(
         session.value,
         sessionAbi,
         Option.getOrUndefined(metro),
+        Option.getOrUndefined(config),
       );
     }
     const target = yield* resolveDevice(platform, Option.getOrUndefined(requested));
