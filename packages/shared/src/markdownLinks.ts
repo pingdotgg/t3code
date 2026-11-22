@@ -519,22 +519,24 @@ function markdownLinkDestinationScanner(markdown: string) {
       }
     }
     const hrefEnd = bareMarkdownLinkDestinationEnd(markdown, hrefStart);
-    if (hrefEnd === null || hrefEnd === hrefStart) return null;
+    if (hrefEnd === null) return null;
     const end = bareTail(hrefEnd);
     return end === null ? null : { hrefStart, hrefEnd, end };
   };
 }
 
 // Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
-// (`[\[id\].tsx](...)`), so `\[` and `\]` never count.
+// (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
-  const bracket = /[[\]\\]/g;
+  const bracket = /[[\]\\]|\n[ \t\r]*\n/g;
   let openBrackets = 0;
   for (let match = bracket.exec(markdown); match; match = bracket.exec(markdown)) {
     if (match[0] === "\\") {
       bracket.lastIndex = match.index + 2;
+    } else if (match[0].startsWith("\n")) {
+      openBrackets = 0;
     } else if (match[0] === "[") {
       openBrackets += 1;
     } else if (openBrackets > 0) {
