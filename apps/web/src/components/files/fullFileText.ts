@@ -13,9 +13,42 @@ function countNewlines(text: string): number {
   return lines;
 }
 
+// The range starts this far before the preview's end, so the overlap shows it is the same file.
+const OVERLAP_BYTES = 4096;
+const UTF8_BOM = [0xef, 0xbb, 0xbf];
+
+type ByteReader = ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>;
+
+/** Reads until at least `count` bytes arrived or the body ended. */
+async function readAtLeast(reader: ByteReader, count: number): Promise<Uint8Array> {
+  const parts: Uint8Array[] = [];
+  let length = 0;
+  while (length < count) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    parts.push(value);
+    length += value.byteLength;
+  }
+  const bytes = new Uint8Array(length);
+  let at = 0;
+  for (const part of parts) {
+    bytes.set(part, at);
+    at += part.byteLength;
+  }
+  return bytes;
+}
+
+function startsWithAt(bytes: Uint8Array, expected: Uint8Array, at: number): boolean {
+  if (bytes.byteLength < at + expected.byteLength) return false;
+  for (let index = 0; index < expected.byteLength; index += 1) {
+    if (bytes[at + index] !== expected[index]) return false;
+  }
+  return true;
+}
+
 /**
  * Streams the rest of the file after the bytes already read, handing over the text so far at
- * most once per interval. Resolves the whole text, or "too-large" past the line cap.
+ * most once per interval. Resolves the whole text, or "too-large" past the line or byte cap.
  */
 export async function downloadRest(input: {
   readonly src: string;
@@ -24,41 +57,53 @@ export async function downloadRest(input: {
   readonly signal: AbortSignal;
   readonly onProgress: (text: string) => void;
 }): Promise<string | "too-large"> {
-  // The server decodes the first megabyte strictly and drops a character the cut split, so the
-  // preview's UTF-8 length is exactly where the rest begins.
-  const offset = new TextEncoder().encode(input.preview).length;
+  // The server decodes the first megabyte strictly, drops a character the cut split and strips a
+  // leading BOM, so the preview's UTF-8 length is where the rest begins, give or take that BOM.
+  const previewBytes = new TextEncoder().encode(input.preview);
+  const overlap = previewBytes.subarray(Math.max(0, previewBytes.byteLength - OVERLAP_BYTES));
+  const rangeStart = previewBytes.byteLength - overlap.byteLength;
   let response = await fetch(input.src, {
     cache: "no-store",
     signal: input.signal,
-    headers: { Range: `bytes=${offset}-` },
+    headers: { Range: `bytes=${rangeStart}-` },
   });
+  if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+  let reader: ByteReader = response.body.getReader();
   let text = input.preview;
+  let pending: Uint8Array = new Uint8Array();
   const total = Number(response.headers.get("content-range")?.split("/")[1]);
-  if (response.status !== 206 || total !== input.sizeBytes) {
+  let resumed = false;
+  if (response.status === 206 && total === input.sizeBytes) {
+    const head = await readAtLeast(reader, overlap.byteLength + UTF8_BOM.length);
+    // Shifted by three bytes when the file starts with a BOM the preview read dropped.
+    for (const shift of [0, UTF8_BOM.length]) {
+      if (!startsWithAt(head, overlap, shift)) continue;
+      pending = head.subarray(shift + overlap.byteLength);
+      resumed = true;
+      break;
+    }
+  }
+  if (!resumed) {
     // No range support, or the file changed since the preview was read: start over.
-    await response.body?.cancel();
+    await reader.cancel();
     response = await fetch(input.src, { cache: "no-store", signal: input.signal });
+    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+    reader = response.body.getReader();
     text = "";
   }
-  if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
   // A file that grew since the preview was read must still stay within the main-thread ceiling.
-  let bytes = text === "" ? 0 : offset;
-  const reader = response.body
-    .pipeThrough(
-      new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
-        transform(chunk, controller) {
-          bytes += chunk.byteLength;
-          controller.enqueue(chunk);
-        },
-      }),
-    )
-    .pipeThrough(new TextDecoderStream())
-    .getReader();
+  let bytes = resumed ? previewBytes.byteLength : 0;
+  const decoder = new TextDecoder();
   let lines = countNewlines(text) + 1;
   let lastSwap = performance.now();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return text;
+  for (let chunk: Uint8Array | null = pending; ; chunk = null) {
+    if (chunk === null) {
+      const { done, value } = await reader.read();
+      if (done) return text + decoder.decode();
+      chunk = value;
+    }
+    bytes += chunk.byteLength;
+    const value = decoder.decode(chunk, { stream: true });
     text += value;
     lines += countNewlines(value);
     if (lines > RENDERED_MAX_LINES || bytes > FULL_TEXT_MAX_BYTES) {
