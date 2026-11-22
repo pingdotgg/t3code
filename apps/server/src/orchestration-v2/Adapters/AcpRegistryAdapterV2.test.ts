@@ -2928,6 +2928,104 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("recovers an ID-only approval for a Devin subagent's root-session tool call", () =>
+    Effect.gen(function* () {
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            status: "in_progress",
+            _meta: { "cognition.ai/subagent_started": { agentId: "child-1", task: "Run it" } },
+          }),
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call",
+            toolCallId: "child-shell",
+            title: "printf hi",
+            kind: "execute",
+            status: "pending",
+            rawInput: { command: "printf hi" },
+            _meta: { "cognition.ai/subagent_context": { parentAgentId: "child-1" } },
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "request",
+              method: "session/request_permission",
+              params: {
+                sessionId: CLAUDE_ROOT_SESSION,
+                toolCall: {
+                  toolCallId: "child-shell",
+                  _meta: { "cognition.ai/subagent_context": { parentAgentId: "child-1" } },
+                },
+                options: [
+                  { optionId: "allow_once", name: "Allow", kind: "allow_once" },
+                  { optionId: "reject_once", name: "Reject", kind: "reject_once" },
+                ],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "response",
+              method: "session/request_permission",
+              result: { outcome: { outcome: "selected", optionId: "<any>" } },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
+      const seen = yield* session.until(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+      );
+      const request = seen.find(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      if (request?.type !== "runtime_request.updated") throw new Error("Missing request");
+      const card = seen.find(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "approval_request",
+      );
+      if (card?.type !== "turn_item.updated" || card.turnItem.type !== "approval_request")
+        throw new Error("Missing approval card");
+      assert.equal(card.turnItem.prompt, "printf hi");
+      yield* session.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        decision: "accept",
+      });
+      assert.equal((yield* session.terminal).status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("counts per-turn usage for a local glm command", () =>
     Effect.gen(function* () {
       const session = yield* openClaudeReplaySession(
