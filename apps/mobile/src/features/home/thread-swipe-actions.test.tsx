@@ -14,7 +14,8 @@ vi.mock("react-native", () => {
   };
 });
 vi.mock("gt-react-native", () => ({
-  msg: (text: string) => text,
+  msg: (text: string, vars: Record<string, string> = {}) =>
+    text.replace(/\{(\w+)\}/g, (_, key: string) => vars[key] ?? ""),
   useMessages: () => (text: string) => text,
 }));
 vi.mock("react-native-reanimated", async () => {

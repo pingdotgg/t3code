@@ -466,7 +466,20 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
                 : [
                     {
                       name: `swipe:${id}`,
-                      label: `${menu.title ?? secondary.label} ${title}${subtitle ? `, ${subtitle}` : ""}`,
+                      label: m(
+                        subtitle
+                          ? msg("{action}: {option}, {detail}", {
+                              $context: "screen-reader action, e.g. Snooze until: Tomorrow, 9 AM",
+                              action: menu.title ?? secondary.label,
+                              option: title,
+                              detail: subtitle,
+                            })
+                          : msg("{action}: {option}", {
+                              $context: "screen-reader action, e.g. Snooze until: Tomorrow",
+                              action: menu.title ?? secondary.label,
+                              option: title,
+                            }),
+                      ),
                       run: () => menu.onPressAction({ nativeEvent: { event: id } }),
                     },
                   ],
