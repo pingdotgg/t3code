@@ -129,7 +129,15 @@ describe("composer attachment files", () => {
     expect(shouldHandleComposerAttachmentPaste({ ...input, bypassAutoAttachment: false })).toBe(
       false,
     );
-    // Finder puts a copied file's name on the clipboard as text; the image still attaches.
+    // Firefox's Copy Image adds the image URL as text and only an <img> as HTML; the image attaches.
+    expect(
+      shouldHandleComposerAttachmentPaste({
+        files: [image],
+        plainText: "https://example.com/image.png",
+        htmlIsOnlyImage: true,
+      }),
+    ).toBe(true);
+    // Finder adds a copied file's name as text.
     expect(shouldHandleComposerAttachmentPaste({ files: [image], plainText: "image.png" })).toBe(
       true,
     );

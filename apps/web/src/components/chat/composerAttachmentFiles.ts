@@ -247,10 +247,18 @@ function isOnlyFileNames(text: string, files: ReadonlyArray<File>): boolean {
     .every((line) => names.has(line));
 }
 
+/** A browser's Copy Image puts only an <img> in text/html; rich text sources put the text there. */
+export function isImageOnlyClipboardHtml(html: string): boolean {
+  if (html.length === 0) return false;
+  const body = new DOMParser().parseFromString(html, "text/html").body;
+  return body.querySelector("img") !== null && (body.textContent ?? "").trim().length === 0;
+}
+
 export function shouldHandleComposerAttachmentPaste(input: {
   readonly files: ReadonlyArray<File>;
   readonly plainText: string;
   readonly bypassAutoAttachment?: boolean;
+  readonly htmlIsOnlyImage?: boolean;
 }): boolean {
   // Paste as Text keeps the text even when the source also put an image of it on the clipboard.
   if (input.bypassAutoAttachment && input.plainText.length > 0) return false;
@@ -268,6 +276,9 @@ export function shouldHandleComposerAttachmentPaste(input: {
   if (input.plainText.length === 0) {
     return hasImage || input.files.some((file) => classifyComposerAttachmentFile(file) === "file");
   }
-  // Rich text sources (Word, Pages) add a picture of the text; a Finder copy's text is only file names.
-  return hasImage && isOnlyFileNames(input.plainText, input.files);
+  // Rich text sources (Word, Pages) add a picture of the text. Copy Image adds the image URL as
+  // text beside an <img>, and a Finder copy adds the file names.
+  return (
+    hasImage && (input.htmlIsOnlyImage === true || isOnlyFileNames(input.plainText, input.files))
+  );
 }
