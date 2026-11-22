@@ -1,4 +1,5 @@
 import {
+  GitCommandError,
   type ProjectId,
   type ProjectTrackedFolder,
   TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
@@ -223,6 +224,8 @@ export const layoutAnchor = (
   }
   return { anchor, unreachable };
 };
+
+const isGitCommandError = Schema.is(GitCommandError);
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -942,6 +945,15 @@ const make = Effect.gen(function* () {
           ? [taskPlan.projectRoot]
           : []),
       ];
+      // Git refused the branch: another creation made it first, and its rollback is not ours.
+      const keepBranchIfRefused = (cwd: string) => (error: unknown) =>
+        Effect.sync(() => {
+          if (
+            isGitCommandError(error) &&
+            error.operation === "GitVcsDriver.createWorktree.createBranch"
+          )
+            branchMadeIn = branchMadeIn.filter((madeIn) => madeIn !== cwd);
+        });
       return yield* Effect.gen(function* () {
         yield* fileSystem.makeDirectory(root, { recursive: true });
         // Recorded before any checkout, so an interrupted creation is still found and removed.
@@ -1010,16 +1022,18 @@ const make = Effect.gen(function* () {
         }
         if (taskPlan.projectIsRepository) {
           yield* fileSystem.makeDirectory(path.dirname(empty.projectPath), { recursive: true });
-          yield* git.createWorktree(
-            {
-              cwd: taskPlan.projectRoot,
-              refName: input.projectStart.refName,
-              newRefName: branch,
-              baseRefName: input.projectStart.baseRefName,
-              path: empty.projectPath,
-            },
-            input.projectProgress === undefined ? {} : { progress: input.projectProgress },
-          );
+          yield* git
+            .createWorktree(
+              {
+                cwd: taskPlan.projectRoot,
+                refName: input.projectStart.refName,
+                newRefName: branch,
+                baseRefName: input.projectStart.baseRefName,
+                path: empty.projectPath,
+              },
+              input.projectProgress === undefined ? {} : { progress: input.projectProgress },
+            )
+            .pipe(Effect.tapError(keepBranchIfRefused(taskPlan.projectRoot)));
         } else {
           yield* linkFolder(taskPlan.projectRoot, empty.projectPath, taskPlan.trackedRepositories);
         }
@@ -1049,7 +1063,7 @@ const make = Effect.gen(function* () {
                     branch,
                     input.startFromOrigin,
                     input.baseBranch,
-                  )
+                  ).pipe(Effect.tapError(keepBranchIfRefused(repository.path)))
               ).pipe(
                 Effect.tap((worktree) =>
                   Effect.suspend(() => {
