@@ -113,7 +113,10 @@ describe("provider usage reporting", () => {
           Layer.mergeAll(
             Layer.mock(AnalyticsService.AnalyticsService)({
               record: (event, properties) =>
-                Effect.sync(() => void recorded.push([event, properties])),
+                Effect.sync(() => {
+                  recorded.push([event, properties]);
+                  return true;
+                }),
             }),
             Layer.mock(ProviderRegistry.ProviderRegistry)({
               getProviders: Effect.succeed(providers),

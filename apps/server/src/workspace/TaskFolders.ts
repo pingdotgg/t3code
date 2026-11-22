@@ -1,4 +1,5 @@
 import {
+  GitCommandError,
   type ProjectId,
   type ProjectTrackedFolder,
   TASK_FOLDER_DEFAULT_REPOSITORIES_MAX,
@@ -15,6 +16,7 @@ import { flattenTemporaryWorktreeBranchName, isTemporaryWorktreeBranch } from "@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
@@ -223,6 +225,8 @@ export const layoutAnchor = (
   }
   return { anchor, unreachable };
 };
+
+const isGitCommandError = Schema.is(GitCommandError);
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -863,6 +867,7 @@ const make = Effect.gen(function* () {
     branch: string,
     startFromOrigin: boolean,
     baseBranch: string | undefined,
+    recordBranch: <A, E>(exit: Exit.Exit<A, E>) => Effect.Effect<void>,
   ) {
     const worktreePath = mapped(taskFolder, repository.path);
     // The project's own checkout (a post-checkout hook, say) already provided this repository.
@@ -874,13 +879,15 @@ const make = Effect.gen(function* () {
       return null;
     yield* fileSystem.makeDirectory(path.dirname(worktreePath), { recursive: true });
     const start = yield* repositoryStart(repository.path, startFromOrigin, baseBranch);
-    yield* git.createWorktree({
-      cwd: repository.path,
-      refName: start.refName,
-      newRefName: branch,
-      baseRefName: start.baseRefName,
-      path: worktreePath,
-    });
+    yield* git
+      .createWorktree({
+        cwd: repository.path,
+        refName: start.refName,
+        newRefName: branch,
+        baseRefName: start.baseRefName,
+        path: worktreePath,
+      })
+      .pipe(Effect.onExit(recordBranch));
     return {
       repository: {
         repositoryPath: repository.path,
@@ -933,15 +940,32 @@ const make = Effect.gen(function* () {
       // A layout command may check out a branch that was already there; a rollback leaves it.
       const hadBranch = new Set<string>();
       let layoutStarted = false;
-      // Where this attempt makes the branch: a checkout that fails halfway leaves it behind.
-      let branchMadeIn = [
+      // Where this attempt may make the branch: none of them had it when listed.
+      const branchMissingIn = new Set([
         ...taskPlan.repositories
           .filter((_, index) => !names[index]!.includes(branch))
           .map((repository) => repository.path),
         ...(taskPlan.projectIsRepository && !projectNames.includes(branch)
           ? [taskPlan.projectRoot]
           : []),
-      ];
+      ]);
+      // Where this attempt made the branch: a checkout that fails halfway leaves it behind. Only
+      // a checkout it ran counts, and not one Git refused because another creation made it first.
+      let branchMadeIn: string[] = [];
+      const recordBranch =
+        (cwd: string) =>
+        <A, E>(exit: Exit.Exit<A, E>) =>
+          Effect.sync(() => {
+            const refused =
+              Exit.isFailure(exit) &&
+              exit.cause.reasons.some(
+                (reason) =>
+                  Cause.isFailReason(reason) &&
+                  isGitCommandError(reason.error) &&
+                  reason.error.operation === "GitVcsDriver.createWorktree.createBranch",
+              );
+            if (branchMissingIn.has(cwd) && !refused) branchMadeIn.push(cwd);
+          });
       return yield* Effect.gen(function* () {
         yield* fileSystem.makeDirectory(root, { recursive: true });
         // Recorded before any checkout, so an interrupted creation is still found and removed.
@@ -1010,16 +1034,18 @@ const make = Effect.gen(function* () {
         }
         if (taskPlan.projectIsRepository) {
           yield* fileSystem.makeDirectory(path.dirname(empty.projectPath), { recursive: true });
-          yield* git.createWorktree(
-            {
-              cwd: taskPlan.projectRoot,
-              refName: input.projectStart.refName,
-              newRefName: branch,
-              baseRefName: input.projectStart.baseRefName,
-              path: empty.projectPath,
-            },
-            input.projectProgress === undefined ? {} : { progress: input.projectProgress },
-          );
+          yield* git
+            .createWorktree(
+              {
+                cwd: taskPlan.projectRoot,
+                refName: input.projectStart.refName,
+                newRefName: branch,
+                baseRefName: input.projectStart.baseRefName,
+                path: empty.projectPath,
+              },
+              input.projectProgress === undefined ? {} : { progress: input.projectProgress },
+            )
+            .pipe(Effect.onExit(recordBranch(taskPlan.projectRoot)));
         } else {
           yield* linkFolder(taskPlan.projectRoot, empty.projectPath, taskPlan.trackedRepositories);
         }
@@ -1049,6 +1075,7 @@ const make = Effect.gen(function* () {
                     branch,
                     input.startFromOrigin,
                     input.baseBranch,
+                    recordBranch(repository.path),
                   )
               ).pipe(
                 Effect.tap((worktree) =>

@@ -160,7 +160,9 @@ Alternatively, open **Settings → Source control & issues**, expand **TanStack 
 from `https://source.tanstack.com/settings/tokens`. A saved token is used before `SRC_TOKEN`, which is
 used before the `src` login. With several `src` logins, pick the account there too.
 
-Pull requests show the runs of TanStack Source CI with their logs, and update live while open. Issues
+Pull requests show the runs of TanStack Source CI with their logs, and update live while open. An
+agent can open a private pull request on a public repository when you ask for one: its branch goes
+to the repository's private companion and never to the repository itself. Issues
 can be listed, filed, edited, commented on and closed. Reactions and picking reviewers or assignees
 from a list are not available yet.
 

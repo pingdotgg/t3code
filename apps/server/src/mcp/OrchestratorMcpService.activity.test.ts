@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  MessageId,
   NodeId,
   type OrchestratorMcpThreadReadResult,
   type OrchestrationV2ThreadProjection,
@@ -428,6 +429,134 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
     });
     expect(first.items).toHaveLength(10);
     expect(first).toMatchObject({ nextPosition: 9, hasMore: true });
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("readThread does not attribute the /compact T3 Code sends before a stale send to the user", async () => {
+  const compactRunId = RunId.make("run-mcp-compact-on-return");
+  const sendRunId = RunId.make("run-mcp-held-send");
+  const compactMessageId = MessageId.make("message-mcp-compact-on-return");
+  const sendMessageId = MessageId.make("message-mcp-held-send");
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [
+      makeRun({ id: compactRunId, ordinal: 1, status: "completed" }),
+      makeRun({ id: sendRunId, ordinal: 2, status: "completed" }),
+    ],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [
+      {
+        id: compactMessageId,
+        threadId: parentThreadId,
+        runId: compactRunId,
+        role: "user",
+        text: "/compact",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        idleCompaction: "onReturn",
+      },
+      {
+        id: sendMessageId,
+        threadId: parentThreadId,
+        runId: sendRunId,
+        role: "user",
+        text: "use webgpu",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+    ],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const userRow = (position: number, runId: RunId, messageId: MessageId, text: string) => ({
+    position,
+    visibility: "visible",
+    sourceThreadId: parentThreadId,
+    sourceItemId: TurnItemId.make(`turn-item-mcp-user-${position}`),
+    item: {
+      type: "user_message",
+      runId,
+      messageId,
+      status: "completed",
+      title: null,
+      text,
+      attachments: [],
+      updatedAt: now,
+    },
+  });
+  const rows = [
+    userRow(0, compactRunId, compactMessageId, "/compact"),
+    {
+      position: 1,
+      visibility: "visible",
+      sourceThreadId: parentThreadId,
+      sourceItemId: TurnItemId.make("turn-item-mcp-compaction"),
+      item: {
+        type: "compaction",
+        runId: compactRunId,
+        status: "completed",
+        title: null,
+        summary: "Context compacted",
+        updatedAt: now,
+      },
+    },
+    userRow(2, sendRunId, sendMessageId, "use webgpu"),
+  ];
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: () =>
+            Effect.succeed({
+              items: rows as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: false,
+              hasEarlier: false,
+            }),
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    for (const view of ["activity", "messages"] as const) {
+      const result = yield* service.readThread(makeScope(), { threadId: parentThreadId, view });
+      const fromUser = result.items.filter(
+        (item) => item.type === "user_message" && item.createdBy === "user",
+      );
+      expect(fromUser.map((item) => item.text)).toEqual(["use webgpu"]);
+    }
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 

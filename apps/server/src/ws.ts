@@ -132,6 +132,7 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as DocumentText from "./provider/DocumentText.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as FeedbackStore from "./feedback/FeedbackStore.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import {
   bufferShellLiveStream,
@@ -201,6 +202,7 @@ import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts";
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
+import { withSocketHeartbeat } from "./socketHeartbeat.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -224,6 +226,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import { assertCheckoutIdle } from "./git/sharedCheckoutGuard.ts";
 import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -1497,6 +1500,7 @@ export const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
+      const feedbackStore = yield* FeedbackStore.FeedbackStore;
       const guestShares = yield* GuestShareService.GuestShareService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const issues = yield* IssueService.IssueService;
@@ -2391,6 +2395,7 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),
           ),
+        [WS_METHODS.agentFeedbackAnswerRequest]: (input) => feedbackStore.answer(input),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.listWebhookDeliveries(input)),
@@ -2399,7 +2404,8 @@ export const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
-        [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
+        [WS_METHODS.serverProbe]: (_input) =>
+          Effect.map(DateTime.now, (now) => ({ serverTime: DateTime.formatIso(now) })),
         [WS_METHODS.serverGetConfig]: (_input) =>
           loadServerConfig({
             usageLimitsCommand: false,
@@ -2737,8 +2743,7 @@ export const layerWsRpc = (
         [WS_METHODS.peerLinksNames]: (_input) =>
           peerLinks.names.pipe(Effect.map((links) => ({ links }))),
         [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
-        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) =>
-          peerLinks.unlink(environmentId).pipe(Effect.map((removed) => ({ removed }))),
+        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) => peerLinks.unlink(environmentId),
         [WS_METHODS.peerLinksSubscribeThread]: (input) => peerThreadRelay.subscribe(input),
         [WS_METHODS.peerLinksThreadHistoryPage]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
@@ -3269,9 +3274,13 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.gitResolvePullRequest]: (input) => gitWorkflow.resolvePullRequest(input),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
-          gitWorkflow
-            .preparePullRequestThread(input)
-            .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+          (input.mode === "local"
+            ? assertCheckoutIdle("GitWorkflowService.preparePullRequestThread", input.cwd)
+            : Effect.void
+          ).pipe(
+            Effect.andThen(gitWorkflow.preparePullRequestThread(input)),
+            Effect.tap(() => refreshGitStatus(input.cwd)),
+          ),
         [WS_METHODS.vcsListRefs]: (input) => gitWorkflow.listRefs(input),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           // A project that tracks repositories gets a task folder, as its new worktree threads do.
@@ -3316,19 +3325,22 @@ export const layerWsRpc = (
             ),
           ),
         [WS_METHODS.vcsCreateRef]: (input) =>
-          gitWorkflow
-            .createRef(input)
-            .pipe(
-              Effect.tap(() =>
-                input.switchRef
-                  ? vcsStatusBroadcaster.refreshAfterCheckout(input.cwd)
-                  : refreshGitStatus(input.cwd),
-              ),
+          (input.switchRef
+            ? assertCheckoutIdle("GitWorkflowService.createRef", input.cwd)
+            : Effect.void
+          ).pipe(
+            Effect.andThen(gitWorkflow.createRef(input)),
+            Effect.tap(() =>
+              input.switchRef
+                ? vcsStatusBroadcaster.refreshAfterCheckout(input.cwd)
+                : refreshGitStatus(input.cwd),
             ),
+          ),
         [WS_METHODS.vcsSwitchRef]: (input) =>
-          gitWorkflow
-            .switchRef(input)
-            .pipe(Effect.tap(() => vcsStatusBroadcaster.refreshAfterCheckout(input.cwd))),
+          assertCheckoutIdle("GitWorkflowService.switchRef", input.cwd).pipe(
+            Effect.andThen(gitWorkflow.switchRef(input)),
+            Effect.tap(() => vcsStatusBroadcaster.refreshAfterCheckout(input.cwd)),
+          ),
         [WS_METHODS.vcsInit]: (input) =>
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),
@@ -3823,20 +3835,21 @@ export const layer = Layer.unwrap(
             ),
           ),
         );
-        const framedRpcWebSocketHttpEffect = url.value.searchParams.has(
-          SOCKET_FRAME_PARTS_QUERY_PARAM,
-        )
-          ? rpcWebSocketHttpEffect.pipe(
-              Effect.provideService(
-                HttpServerRequest.HttpServerRequest,
-                // The RPC server upgrades the request itself, so its socket is
-                // wrapped through the request it reads.
-                Object.create(request, {
-                  upgrade: { value: Effect.map(request.upgrade, splitLargeSocketFrames) },
-                }),
-              ),
-            )
-          : rpcWebSocketHttpEffect;
+        const splitFrames = url.value.searchParams.has(SOCKET_FRAME_PARTS_QUERY_PARAM);
+        const framedRpcWebSocketHttpEffect = rpcWebSocketHttpEffect.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            // The RPC server upgrades the request itself, so its socket is
+            // wrapped through the request it reads.
+            Object.create(request, {
+              upgrade: {
+                value: Effect.map(request.upgrade, (socket) =>
+                  withSocketHeartbeat(splitFrames ? splitLargeSocketFrames(socket) : socket),
+                ),
+              },
+            }),
+          ),
+        );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () =>

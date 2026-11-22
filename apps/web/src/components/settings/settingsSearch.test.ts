@@ -170,6 +170,7 @@ describe("searchSettings", () => {
       "linked-environments",
       "storage-worktrees-location",
       "new-projects-directory",
+      "agent-feedback",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
