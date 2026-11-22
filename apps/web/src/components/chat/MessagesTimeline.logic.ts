@@ -90,7 +90,7 @@ import {
   turnActivityEqual,
   type TurnActivitySummary,
   type TurnDiffStat,
-} from "./turnActivitySummary.logic";
+} from "@t3tools/client-runtime/work-log/turn-activity-summary";
 
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {

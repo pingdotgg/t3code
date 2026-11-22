@@ -21,6 +21,8 @@ export function homeListFilterEnvironments(environments: ReadonlyArray<Workspace
         environmentId: environment.environmentId,
         label: environment.environmentLabel,
         connectionState: environment.connectionState,
+        isRelayManaged: environment.isRelayManaged,
+        displayUrl: environment.displayUrl,
       })),
     Order.mapInput(Order.String, (environment: { readonly label: string }) => environment.label),
   );

@@ -1,7 +1,13 @@
-import { toolGroupAction } from "@t3tools/client-runtime/work-log/presentation";
-import { msg } from "gt-react";
-import { type MessageResolver } from "../../i18n/messages";
-import { workLogEntryIsToolLike, type WorkLogEntry } from "../../session-logic";
+import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import { msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
+import { toolGroupAction, type WorkLogPresentationEntry } from "./presentation.ts";
+
+/** A work entry with the projected item it came from, as web and mobile both hold them. */
+export type TurnActivityEntry = WorkLogPresentationEntry & {
+  readonly projectedItem?: Pick<OrchestrationV2ProjectedTurnItem, "item"> | undefined;
+};
 
 export interface TurnActivitySummary {
   readonly read: number;
@@ -26,7 +32,17 @@ const EMPTY_SUMMARY: TurnActivitySummary = {
   other: 0,
 };
 
-function entryItem(entry: WorkLogEntry) {
+function entryIsToolLike(entry: TurnActivityEntry): boolean {
+  return (
+    entry.tone === "tool" ||
+    entry.tone === "thinking" ||
+    entry.tone === "error" ||
+    entry.command !== undefined ||
+    entry.requestKind !== undefined
+  );
+}
+
+function entryItem(entry: TurnActivityEntry) {
   return entry.structuredPayload ?? entry.projectedItem?.item;
 }
 
@@ -35,7 +51,7 @@ function entryItem(entry: WorkLogEntry) {
  * of the turn's work (deferred on the wire), since partial counts would mislead.
  */
 export function summarizeTurnActivity(
-  entries: ReadonlyArray<WorkLogEntry>,
+  entries: ReadonlyArray<TurnActivityEntry>,
 ): TurnActivitySummary | null {
   const counts = { ...EMPTY_SUMMARY };
   const editedFiles = new Set<string>();
@@ -49,7 +65,7 @@ export function summarizeTurnActivity(
       entry.itemType === "approval_request" ||
       entry.itemType === "user_input_request" ||
       entry.toolLifecycleStatus === "declined" ||
-      !workLogEntryIsToolLike(entry)
+      !entryIsToolLike(entry)
     ) {
       continue;
     }
@@ -84,7 +100,9 @@ export function summarizeTurnActivity(
 }
 
 /** Sums the line counts file changes report; null when none reported any. */
-export function sumTurnItemDiffStat(entries: ReadonlyArray<WorkLogEntry>): TurnDiffStat | null {
+export function sumTurnItemDiffStat(
+  entries: ReadonlyArray<TurnActivityEntry>,
+): TurnDiffStat | null {
   let additions = 0;
   let deletions = 0;
   let reported = false;
@@ -102,7 +120,7 @@ export function sumTurnItemDiffStat(entries: ReadonlyArray<WorkLogEntry>): TurnD
 /** One clause per kind, in a fixed order, reusing the tool-group summary strings. */
 export function turnActivityClauses(
   summary: TurnActivitySummary,
-  resolve: MessageResolver,
+  resolve: MFunctionType,
 ): string[] {
   const clauses: string[] = [];
   const { read, edit, command, codeSearch, webSearch, other } = summary;

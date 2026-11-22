@@ -43,7 +43,7 @@ import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
-import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Menu } from "../../components/ui/Menu";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -99,61 +99,54 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 
 interface StatusLabel {
-  // Null when the icon and timer carry the status on their own.
+  // Null when the timer carries the status on its own.
   readonly label: string | null;
-  readonly icon: AppSymbolName;
+  /** Text color of the row's status; `dotClassName` is the same token as a fill. */
   readonly className: string;
-  readonly iconTintClassName: string;
+  readonly dotClassName: string;
 }
+const NEEDS_YOU_TONE = {
+  className: "text-warning-foreground",
+  dotClassName: "bg-warning-foreground",
+};
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
   approval: {
     label: msg("Approval", { $context: "thread status, waiting for approval" }),
-    icon: "exclamationmark.shield",
-    className: "text-warning-foreground",
-    iconTintClassName: "accent-warning-foreground",
+    ...NEEDS_YOU_TONE,
   },
   input: {
     label: msg("Input", { $context: "thread status, waiting for user input" }),
-    icon: "questionmark.bubble",
-    className: "text-adaptive-indigo-600-300",
-    iconTintClassName: "accent-adaptive-indigo-600-300",
+    ...NEEDS_YOU_TONE,
   },
   request: {
     label: msg("Request", { $context: "thread status, a guest request is waiting" }),
-    icon: "person.crop.circle",
-    className: "text-adaptive-fuchsia-600-300",
-    iconTintClassName: "accent-adaptive-fuchsia-600-300",
+    ...NEEDS_YOU_TONE,
   },
   working: {
     label: null,
-    icon: "circle.dashed",
-    className: "text-adaptive-sky-600-400",
-    iconTintClassName: "accent-adaptive-sky-600-400",
+    className: "text-update-foreground",
+    dotClassName: "bg-update-foreground",
   },
   waiting: {
     label: null,
-    icon: "circle.dashed.inset.filled",
     className: "text-foreground-muted",
-    iconTintClassName: "accent-foreground-muted",
+    dotClassName: "bg-foreground-tertiary",
   },
   failed: {
     label: msg("Failed", { $context: "thread status" }),
-    icon: "exclamationmark.circle",
     className: "text-danger-foreground",
-    iconTintClassName: "accent-danger-foreground",
+    dotClassName: "bg-danger-foreground",
   },
   limited: {
     label: msg("Limited", { $context: "thread status, usage limit reached" }),
-    icon: "exclamationmark.circle",
-    className: "text-warning-foreground",
-    iconTintClassName: "accent-warning-foreground",
+    ...NEEDS_YOU_TONE,
   },
 };
+// The palettes have no success role; this is the list's existing finished green.
 const DONE_STATUS_LABEL: StatusLabel = {
   label: msg("Done", { $context: "thread status, turn finished" }),
-  icon: "checkmark.circle",
   className: "text-adaptive-emerald-700-300",
-  iconTintClassName: "accent-adaptive-emerald-700-300",
+  dotClassName: "bg-adaptive-emerald-700-300",
 };
 
 // DM Sans has no tabular figures, so a ticking timer in it reflows the row every second.
@@ -801,9 +794,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 }) {
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
-  const metadataTypography = useScaledTextRole("label");
   const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
-  const machineIconSize = metadataTypography.fontSize * fontScale;
   // Android's nonlinear system text scaling can differ from the fontScale estimate.
   const [androidTitleLineHeight, setTitleLineHeight] = useState(
     titleTypography.lineHeight * fontScale,
@@ -1364,22 +1355,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
 
-  const titleTextInset = props.project ? projectIconSize + 8 : 0;
+  const statusDotSize = 8;
+  const titleTextInset = statusDotSize + 10;
+  const showsError =
+    (rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError;
+  const metaPrefix = [props.project?.title, props.environmentLabel].filter(Boolean).join(" · ");
+  const metaForegroundClassName = selected
+    ? selectedThreadRowColors.mutedForegroundClassName
+    : rowAppearance.tertiaryForegroundClassName;
   const cardContent = (
     <>
-      <View className="flex-row items-start gap-2">
-        {props.project ? (
-          <View className="justify-center" style={{ height: titleLineHeight }}>
-            <ProjectFavicon
-              environmentId={thread.environmentId}
-              faviconPath={props.project.faviconPath}
-              projectIcon={props.project.projectIcon}
-              size={projectIconSize}
-              projectTitle={props.project.title}
-              workspaceRoot={props.project.workspaceRoot}
-            />
-          </View>
-        ) : null}
+      <View className="flex-row items-center gap-2.5">
+        <View
+          className={cn("rounded-full", statusLabel?.dotClassName ?? "bg-foreground-tertiary")}
+          style={{ width: statusDotSize, height: statusDotSize }}
+        />
         <Text
           className={cn(
             "flex-1 text-base",
@@ -1389,7 +1379,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               : rowAppearance.foregroundClassName,
             isRegeneratingTitle && "opacity-55",
           )}
-          numberOfLines={2}
+          numberOfLines={1}
           onTextLayout={
             Platform.OS === "android"
               ? ({ nativeEvent }) => {
@@ -1442,53 +1432,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 {gt("Woke", { $context: "thread came back from snooze" })}
               </Text>
             </Pressable>
-          ) : statusLabel ? (
-            <View className="flex-row items-center gap-1">
-              <SymbolView
-                name={statusLabel.icon}
-                size={13}
-                tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.iconTintClassName
-                    : statusLabel.iconTintClassName
-                }
-                type="monochrome"
-                weight="semibold"
-              />
-              <Text
-                className={cn(
-                  "text-xs font-t3-bold",
-                  selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
-                )}
-              >
-                {statusLabel.label}
-                {status === "working" ? (
-                  <ThreadListV2Duration
-                    environmentId={thread.environmentId}
-                    startedAt={resolveThreadWorkingStartedAt(thread)}
-                    leadingSpace={statusLabel.label !== null}
-                  />
-                ) : status === "waiting" ? (
-                  <ThreadListV2Duration
-                    environmentId={thread.environmentId}
-                    startedAt={thread.latestRun?.completedAt ?? null}
-                    leadingSpace={statusLabel.label !== null}
-                  />
-                ) : null}
-              </Text>
-            </View>
-          ) : (
-            <Text
-              className={cn(
-                "text-xs tabular-nums",
-                selected
-                  ? selectedThreadRowColors.foregroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
-              )}
-            >
-              {timeLabel}
-            </Text>
-          )}
+          ) : timeLabel ? (
+            <Text className={cn("text-xs tabular-nums", metaForegroundClassName)}>{timeLabel}</Text>
+          ) : null}
         </View>
       </View>
       {props.searchMatch ? (
@@ -1501,49 +1447,49 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           />
         </View>
       ) : null}
-      <View className="mt-1 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
-        {(rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
-          <Text
-            className={cn(
-              "flex-1 text-xs",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : status === "limited"
-                  ? "text-warning-foreground"
-                  : "text-danger-foreground",
-            )}
-            numberOfLines={1}
-          >
-            {thread.runtime.lastError}
-          </Text>
-        ) : props.environmentLabel ? (
-          <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            {props.environmentMachine ? (
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={machineIconSize}
-                tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.mutedIconTintClassName
-                    : rowAppearance.tertiaryIconTintClassName
-                }
-              />
-            ) : null}
+      <View className="mt-0.5 flex-row items-center gap-2" style={{ paddingLeft: titleTextInset }}>
+        <Text className={cn("min-w-0 flex-1 text-xs", metaForegroundClassName)} numberOfLines={1}>
+          {metaPrefix}
+          {showsError || statusLabel ? (metaPrefix ? " · " : "") : null}
+          {showsError ? (
             <Text
-              className={cn(
-                "shrink text-xs",
+              className={
                 selected
                   ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.tertiaryForegroundClassName,
-              )}
-              numberOfLines={1}
+                  : status === "limited"
+                    ? "text-warning-foreground"
+                    : "text-danger-foreground"
+              }
             >
-              {props.environmentLabel}
+              {thread.runtime?.lastError}
             </Text>
-          </View>
-        ) : (
-          <View className="flex-1" />
-        )}
+          ) : statusLabel ? (
+            <Text
+              className={cn(
+                "font-t3-medium",
+                selected ? selectedThreadRowColors.mutedForegroundClassName : statusLabel.className,
+              )}
+            >
+              {statusLabel.label ??
+                (status === "waiting"
+                  ? gt("Waiting", { $context: "thread status" })
+                  : gt("Working", { $context: "thread status" }))}
+              {status === "working" ? (
+                <ThreadListV2Duration
+                  environmentId={thread.environmentId}
+                  startedAt={resolveThreadWorkingStartedAt(thread)}
+                  leadingSpace
+                />
+              ) : status === "waiting" ? (
+                <ThreadListV2Duration
+                  environmentId={thread.environmentId}
+                  startedAt={thread.latestRun?.completedAt ?? null}
+                  leadingSpace
+                />
+              ) : null}
+            </Text>
+          ) : null}
+        </Text>
         {pr ? (
           <Pressable
             // Padding cancelled by negative margin grows the touch target into
@@ -1607,12 +1553,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
             {providerNameLabel ? (
               <Text
-                className={cn(
-                  "ml-1.5 text-xs",
-                  selected
-                    ? selectedThreadRowColors.mutedForegroundClassName
-                    : rowAppearance.tertiaryForegroundClassName,
-                )}
+                className={cn("ml-1.5 text-xs", metaForegroundClassName)}
                 ellipsizeMode="middle"
                 numberOfLines={1}
                 style={{ maxWidth: 140 }}

@@ -2,6 +2,11 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import {
+  resolveThreadNeedsYouReason,
+  selectNeedsYouThreads,
+  type NeedsYouReason,
+} from "@t3tools/client-runtime/state/thread-needs-you";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -926,16 +931,8 @@ type SidebarThreadStatusInput = Pick<
 >;
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
-  if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
-    return "approval";
-  }
-  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
-    return "input";
-  }
-  // A guest is waiting on the owner; the agent's own requests come first.
-  if ((thread.pendingGuestMessageCount ?? 0) > 0) {
-    return "request";
-  }
+  const needsYou = resolveThreadNeedsYouReason(thread);
+  if (needsYou !== null) return needsYou;
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
   }
@@ -972,41 +969,13 @@ export interface SidebarEnvironmentWork {
   readonly working: number;
 }
 
-export type SidebarNeedsYouReason = "approval" | "input" | "request";
-
-const NEEDS_YOU_PRIORITY: Record<SidebarNeedsYouReason, number> = {
-  approval: 0,
-  input: 1,
-  request: 2,
-};
+export type SidebarNeedsYouReason = NeedsYouReason;
 
 function isSidebarNeedsYouStatus(status: SidebarThreadStatus): status is SidebarNeedsYouReason {
   return status === "approval" || status === "input" || status === "request";
 }
 
-/**
- * Threads blocked on the user across every project and environment, ignoring the sidebar's
- * filters, snooze and settle: a hidden approval would stall its agent. Delegated children
- * are left out because their parent already carries their request.
- */
-export function selectSidebarNeedsYouThreads<
-  T extends SidebarThreadStatusInput &
-    Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
-      projectId: string;
-    },
->(
-  threads: readonly T[],
-  delegatedUnderParent: ReadonlySet<string>,
-): Array<{ readonly thread: T; readonly reason: SidebarNeedsYouReason }> {
-  const entries: Array<{ readonly thread: T; readonly reason: SidebarNeedsYouReason }> = [];
-  for (const thread of filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent)) {
-    const status = resolveSidebarThreadStatus(thread);
-    if (isSidebarNeedsYouStatus(status)) entries.push({ thread, reason: status });
-  }
-  return entries.toSorted(
-    (left, right) => NEEDS_YOU_PRIORITY[left.reason] - NEEDS_YOU_PRIORITY[right.reason],
-  );
-}
+export { selectNeedsYouThreads as selectSidebarNeedsYouThreads };
 
 /** The status dot's fill: running is info, waiting on the user warning, failed error, an unseen finish success. */
 export function sidebarStatusDotClassName(status: SidebarThreadStatus, isUnread: boolean): string {

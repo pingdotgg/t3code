@@ -1,4 +1,5 @@
 import {
+  APPROVAL_EFFECT,
   FULL_ACCESS_OVERRIDE_QUESTION,
   fullAccessOverrideExplanation,
 } from "@t3tools/client-runtime/state/thread-requests";
@@ -38,14 +39,6 @@ const APPROVAL_PRESENTATION = {
   PendingApproval["requestKind"],
   { icon: WorkEntryIconName; label: string; detailLabel: string }
 >;
-
-const APPROVAL_EFFECT = {
-  command: msg("Runs a command in the workspace"),
-  "file-change": msg("Changes files in the workspace"),
-  "file-read": msg("Reads a file in the workspace"),
-  permission: msg("Changes what the agent may do"),
-  "mcp-elicitation": msg("Gives an app access"),
-} satisfies Record<PendingApproval["requestKind"], string>;
 
 const SHOWS_WORKSPACE = new Set<PendingApproval["requestKind"]>([
   "command",

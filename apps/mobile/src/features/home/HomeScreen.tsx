@@ -103,6 +103,9 @@ import { useFabScroll } from "./FabScrollContext";
 import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+import { HomeEnvironmentChip, HomeNeedsYouSection } from "./HomeNeedsYouSection";
+import { selectNeedsYouThreads } from "@t3tools/client-runtime/state/thread-needs-you";
+import { useDelegatedUnderParent } from "../../state/entities";
 import { deriveHomeEmptyState } from "./home-empty-state";
 
 interface HomeScreenProps {
@@ -114,7 +117,8 @@ interface HomeScreenProps {
   readonly catalogState: WorkspaceState;
   readonly savedConnectionsById: Readonly<Record<string, SavedRemoteConnection>>;
   readonly environments: ReadonlyArray<
-    HomeListFilterMenuEnvironment & Pick<WorkspaceEnvironment, "connectionState">
+    HomeListFilterMenuEnvironment &
+      Pick<WorkspaceEnvironment, "connectionState" | "isRelayManaged" | "displayUrl">
   >;
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
@@ -126,6 +130,7 @@ interface HomeScreenProps {
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onAddConnection: () => void;
   readonly onOpenSettings: () => void;
+  readonly onOpenEnvironments: () => void;
   readonly onStartNewTask: () => void;
   readonly onSelectThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
@@ -456,6 +461,11 @@ export function HomeScreen(props: HomeScreenProps) {
     onSelectThread(thread);
   };
   useThreadJumpShortcuts(threadListV2Items, selectThread);
+  const delegatedUnderParent = useDelegatedUnderParent();
+  // Search lists its own matches; the section would only repeat them.
+  const needsYouThreads = hasSearchQuery
+    ? []
+    : selectNeedsYouThreads(props.threads, delegatedUnderParent);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
@@ -683,6 +693,11 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
+      <HomeEnvironmentChip
+        environments={props.environments}
+        selectedEnvironmentId={props.selectedEnvironmentId}
+        onPress={props.onOpenEnvironments}
+      />
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           gutter={sidebarSurface ? 8 : 0}
@@ -704,6 +719,12 @@ export function HomeScreen(props: HomeScreenProps) {
           onProjectChange={props.onProjectChange}
         />
       ) : null}
+      <HomeNeedsYouSection
+        entries={needsYouThreads}
+        projectByKey={projectByKey}
+        selectedThreadKey={selectedThreadKey}
+        onSelectThread={selectThread}
+      />
     </>
   );
 
@@ -748,7 +769,7 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
 
-  if (Platform.OS === "android" && threadListV2Items.length === 0) {
+  if (Platform.OS === "android" && threadListV2Items.length === 0 && needsYouThreads.length === 0) {
     return (
       <ScreenContent surface="screen">
         <View

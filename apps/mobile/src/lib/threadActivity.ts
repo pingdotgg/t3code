@@ -37,6 +37,12 @@ import {
   type WorkLogToolLifecycleStatus,
   workEntryHiddenByToolCallVisibility,
 } from "@t3tools/client-runtime/work-log/presentation";
+import {
+  sumTurnItemDiffStat,
+  summarizeTurnActivity,
+  turnActivityClauses,
+  type TurnDiffStat,
+} from "@t3tools/client-runtime/work-log/turn-activity-summary";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import {
   resolveT3McpToolDefinition,
@@ -259,6 +265,8 @@ type ThreadFeedEntryContent =
       readonly createdAt: string;
       readonly runId: RunId;
       readonly label: string;
+      readonly activitySummary?: string;
+      readonly diffStat?: TurnDiffStat;
       readonly expanded: boolean;
     }
   | {
@@ -1112,6 +1120,9 @@ interface ThreadFeedRunFold {
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
   readonly label: string;
+  /** "Read 9 files · Ran 2 commands"; absent when the segment's work is only partly loaded. */
+  readonly activitySummary?: string;
+  readonly diffStat?: TurnDiffStat;
 }
 
 export function failedFeedRunIds(
@@ -1392,8 +1403,22 @@ function deriveThreadFeedRunFolds(
             )
           : [],
       );
+      // Partial counts would mislead, so a segment with unloaded work keeps the bare label.
+      const workEntries =
+        deferredWorkItemIds.length > 0
+          ? []
+          : segment.entries.flatMap((entry) =>
+              entry.type === "activity-group" && hiddenEntryIds.has(entry.id)
+                ? entry.activities.map((activity) => activity.workEntry)
+                : [],
+            );
+      const activity = workEntries.length > 0 ? summarizeTurnActivity(workEntries) : null;
+      const activitySummary = activity ? turnActivityClauses(activity, resolve).join(" · ") : "";
+      const diffStat = activity ? sumTurnItemDiffStat(workEntries) : null;
       foldsByAnchorId.set(firstHiddenEntry.id, {
         ...(deferredWorkItemIds.length > 0 ? { deferredWorkItemIds } : {}),
+        ...(activitySummary ? { activitySummary } : {}),
+        ...(diffStat ? { diffStat } : {}),
         runId: segment.runId,
         createdAt: firstHiddenEntry.createdAt,
         hiddenEntryIds: new Set(
@@ -1874,6 +1899,9 @@ export function deriveThreadFeedPresentation(
         row.runId !== fold.runId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
+        row.activitySummary !== fold.activitySummary ||
+        row.diffStat?.additions !== fold.diffStat?.additions ||
+        row.diffStat?.deletions !== fold.diffStat?.deletions ||
         row.expanded !== expanded ||
         row.deferredWorkItemIds?.join("|") !== fold.deferredWorkItemIds?.join("|")
       ) {
@@ -1884,6 +1912,8 @@ export function deriveThreadFeedPresentation(
           createdAt: fold.createdAt,
           runId: fold.runId,
           label: fold.label,
+          ...(fold.activitySummary ? { activitySummary: fold.activitySummary } : {}),
+          ...(fold.diffStat ? { diffStat: fold.diffStat } : {}),
           expanded,
         };
         runFoldRowsCache.set(entry, row);

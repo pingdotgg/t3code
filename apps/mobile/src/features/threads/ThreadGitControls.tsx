@@ -259,12 +259,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     }
   };
 
-  const openReview = () => {
-    navigation.navigate("ThreadReview", {
-      environmentId: EnvironmentId.make(String(environmentId)),
-      threadId: ThreadId.make(String(threadId)),
-    });
-  };
+  const openReview = useOpenThreadReview(environmentId, threadId);
 
   const openGitInspector = () => {
     if (props.onOpenGitInspector) {
@@ -345,6 +340,19 @@ export function threadTerminalMenu(
         onPress: props.onOpenNewTerminal,
       },
     ],
+  };
+}
+
+export function useOpenThreadReview(
+  environmentId: EnvironmentId | string,
+  threadId: ThreadId | string,
+) {
+  const navigation = useNavigation();
+  return () => {
+    navigation.navigate("ThreadReview", {
+      environmentId: EnvironmentId.make(String(environmentId)),
+      threadId: ThreadId.make(String(threadId)),
+    });
   };
 }
 

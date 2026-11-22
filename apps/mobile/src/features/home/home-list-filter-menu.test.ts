@@ -28,7 +28,7 @@ it("offers only switched-on environments, sorted by label", () => {
       environment("env-laptop", "Laptop", false),
       environment("env-desk", "Desk", true),
     ]),
-  ).toEqual([
+  ).toMatchObject([
     { environmentId: "env-desk", label: "Desk", connectionState: "connected" },
     { environmentId: "env-studio", label: "Studio", connectionState: "connected" },
   ]);
