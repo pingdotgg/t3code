@@ -1,3 +1,4 @@
+import type { ConnectionRouteKind } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, type PeerLinkSummary } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
@@ -814,11 +815,16 @@ describe("layoutFleetGraph", () => {
   });
 
   it("names the access of links between environments on their own lane, clear of everything", () => {
+    // Several routes each, so route names reach into the gaps between the cards.
+    const routes = (kinds: ReadonlyArray<ConnectionRouteKind>) => ({
+      routes: kinds.map((kind, index) => ({ id: `${kind}-${index}`, kind })),
+      activeRouteId: `${kinds[0]}-0`,
+    });
     const graph = build([
-      environment("a", [link("b"), link("c"), link("x")]),
+      environment("a", [link("b"), link("c"), link("x")], routes(["lan", "lan", "lan", "tailnet"])),
       // At another access than the links back, so each of the four is its own line.
-      environment("b", [link("a", { access: "auto" }), link("x")]),
-      environment("c", [link("a", { access: "auto" })]),
+      environment("b", [link("a", { access: "auto" }), link("x")], routes(["loopback", "tailnet"])),
+      environment("c", [link("a", { access: "auto" })], routes(["public", "lan"])),
     ]);
     const layout = layoutFleetGraph(graph);
     const geometry = (from: string, to: string) =>
@@ -856,6 +862,44 @@ describe("layoutFleetGraph", () => {
         }
       }
     }
+    // Shown at rest, a name also keeps off the route wires and leaves room around route names,
+    // here and where an inner lane blocks the first gap for a two-way link past a third machine.
+    const twoWayPast = layoutFleetGraph(
+      build([
+        environment(
+          "a",
+          [link("b", { access: "full-access" }), link("air", { access: "read-only" }), link("x")],
+          routes(["loopback", "loopback"]),
+        ),
+        environment("air", [], routes(["loopback"])),
+        environment("b", [link("a", { access: "full-access" })], routes(["loopback"])),
+      ]),
+      [],
+      // A settings column wide.
+      560,
+    );
+    for (const drawn of [layout, twoWayPast]) {
+      const wires = [...drawn.routes.values()].flatMap(({ d }) => samplePath(d));
+      for (const { badge } of drawn.links.values()) {
+        if (badge === null || badge.onDemand) continue;
+        const crossing = wires.filter(
+          (point) =>
+            point.x > badge.x &&
+            point.x < badge.x + badge.width &&
+            point.y > badge.y &&
+            point.y < badge.y + badge.height,
+        );
+        expect(crossing).toEqual([]);
+        const room = {
+          x: badge.x - 4,
+          y: badge.y - 4,
+          width: badge.width + 8,
+          height: badge.height + 8,
+        };
+        for (const { pill } of drawn.routes.values()) expect(overlaps(room, pill)).toBe(false);
+      }
+    }
+    expect(twoWayPast.links.get(`link:${node("a")}>${node("b")}`)?.badge?.onDemand).toBe(false);
   });
 
   it("runs links between environments left of them and links to other machines right", () => {

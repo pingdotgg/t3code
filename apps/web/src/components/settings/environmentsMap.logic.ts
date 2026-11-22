@@ -1665,12 +1665,14 @@ function layoutFleetGraphAt(
     const clearOfRoutes = (badge: FleetLinkBadge) =>
       !pillColumns.some(
         (pill) =>
-          pill.x < badge.x + badge.width &&
-          badge.x < pill.x + pill.width &&
-          pill.y < badge.y + badge.height &&
-          badge.y < pill.y + pill.height,
+          pill.x < badge.x + badge.width + BADGE.gap &&
+          badge.x < pill.x + pill.width + BADGE.gap &&
+          pill.y < badge.y + badge.height + BADGE.gap &&
+          badge.y < pill.y + pill.height + BADGE.gap,
       );
-    const options = gaps.flatMap((at) => [place(at, 1), place(at, -1)]);
+    // Growing toward the cards crosses only the gap between them, so every gap is tried that
+    // way before any name grows back over the routes.
+    const options = [...gaps.map((at) => place(at, 1)), ...gaps.map((at) => place(at, -1))];
     const clear = options.find(
       (option) => clearOfNames(option) && clearOfLanes(option) && clearOfRoutes(option),
     );
