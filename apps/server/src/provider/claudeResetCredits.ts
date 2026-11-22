@@ -35,15 +35,21 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
+  use_requires_limit: Schema.optional(Schema.Boolean),
   clears: Schema.optional(Schema.Array(Schema.Unknown)),
+  blocking: Schema.optional(Schema.Array(Schema.Unknown)),
   type: Schema.optional(Schema.Unknown),
   gives_back_weekly: Schema.optional(Schema.Boolean),
+  unavailable_reason: Schema.optional(Schema.Unknown),
 });
 const decodeGrant = Schema.decodeUnknownOption(Grant);
 const CedarEmber = Schema.Struct({
   eligible: Schema.Boolean,
   grants: Schema.optional(Schema.Array(Schema.Unknown)),
   next_grant_id: Schema.optional(Schema.NullOr(Schema.String)),
+  at_limit: Schema.optional(Schema.Unknown),
+  exhausted: Schema.optional(Schema.Unknown),
+  cooldown_until: Schema.optional(Schema.Unknown),
 });
 const UsageResponse = Schema.Struct({
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
@@ -127,53 +133,120 @@ const grantKind = (grant: typeof Grant.Type): ResetKind => {
   return session && !other ? "session" : other && !session ? "weekly" : "full";
 };
 
+const WAITING_REASONS = {
+  cooldown: "Try again in a minute",
+  blocked_five_hour: "Can't be used while you're at your 5-hour limit",
+  blocked_seven_day: "Can't be used while you're at your weekly limit",
+  blocked_opus: "Can't be used while you're at your weekly Opus limit",
+  blocked_sonnet: "Can't be used while you're at your weekly Sonnet limit",
+  blocked_other: "Can't be used while you're at a limit it doesn't refill",
+  cannot_clear: "Doesn't refill the limit you've reached",
+  needs_limit: "Usable once you reach a limit it refills",
+  unavailable: "Can't be used right now",
+} as const;
+const BLOCKING_REASONS: Record<string, keyof typeof WAITING_REASONS> = {
+  five_hour: "blocked_five_hour",
+  seven_day: "blocked_seven_day",
+  seven_day_opus: "blocked_opus",
+  seven_day_sonnet: "blocked_sonnet",
+};
+
+type WaitingReason = keyof typeof WAITING_REASONS;
+
+// Claude Code's own order: the server's stated reason, else a cooldown, what blocks the grant,
+// a limit it can't clear, and last whether it needs a limit at all.
+const waitingReasonKey = (
+  grant: typeof Grant.Type,
+  status: typeof CedarEmber.Type,
+  nowMs: number,
+): WaitingReason => {
+  const stated = grant.unavailable_reason;
+  if (typeof stated === "string" && Object.hasOwn(WAITING_REASONS, stated)) {
+    return stated as WaitingReason;
+  }
+  const cooldown = status.cooldown_until;
+  if (typeof cooldown === "string" && isFutureTimestamp(cooldown, nowMs)) return "cooldown";
+  const blocking = grant.blocking ?? [];
+  for (const limit of blocking) {
+    const reason =
+      typeof limit === "string" && Object.hasOwn(BLOCKING_REASONS, limit)
+        ? BLOCKING_REASONS[limit]
+        : undefined;
+    if (reason) return reason;
+  }
+  if (blocking.length > 0) return "blocked_other";
+  const exhausted = Array.isArray(status.exhausted) ? status.exhausted : [];
+  const clears = (limit: unknown) =>
+    (grant.clears ?? []).includes(limit) || (limit === "seven_day" && grant.gives_back_weekly);
+  if (status.at_limit === true && !exhausted.some(clears)) return "cannot_clear";
+  return grant.use_requires_limit === false ? "unavailable" : "needs_limit";
+};
+
+const waitingReason = (grant: typeof Grant.Type, status: typeof CedarEmber.Type, nowMs: number) => {
+  const reason = waitingReasonKey(grant, status, nowMs);
+  return reason === "blocked_seven_day" && grant.gives_back_weekly
+    ? "No Fable usage this week to give back"
+    : WAITING_REASONS[reason];
+};
+
+/**
+ * The legacy fields keep their usable-only meaning so older clients never offer Use on a waiting
+ * reset; `bankedOptions` lists every banked reset, and one Claude won't take right now says why.
+ */
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
 ): ServerProviderResetCredits | undefined {
   const parsed = decodeCedarEmber(block);
   if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
-  const live = (parsed.value.grants ?? [])
+  const status = parsed.value;
+  const banked = (status.grants ?? [])
     .flatMap((raw) => Option.toArray(decodeGrant(raw)))
     .filter(
       (grant) =>
-        !grant.paused &&
-        grant.usable_now &&
-        (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
+        !grant.paused && (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
-  const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
+  const live = banked.filter((grant) => grant.usable_now);
+  const next = live.find((grant) => grant.id === status.next_grant_id);
   const expiresAt = (grant: typeof Grant.Type | undefined) => {
     const at = grant?.ends_at ? DateTime.make(grant.ends_at) : Option.none();
     return Option.isSome(at) ? DateTime.formatIso(at.value) : undefined;
   };
-  const byKind = new Map<ResetKind, Array<typeof Grant.Type>>();
-  for (const grant of live) {
-    if (grant.resets_left === 0) continue;
-    const kind = grantKind(grant);
-    byKind.set(kind, [...(byKind.get(kind) ?? []), grant]);
-  }
-  const options = (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap(
-    (kind): Array<ServerProviderResetCreditOption> => {
-      const grants = byKind.get(kind);
-      const target = grants?.[0];
-      if (!grants || !target) return [];
-      const optionExpiresAt = expiresAt(target);
-      return [
-        {
-          creditId: target.id,
-          ...RESET_KINDS[kind],
-          availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
-          ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
-        },
-      ];
-    },
-  );
+  const kindOptions = (grants: ReadonlyArray<typeof Grant.Type>) => {
+    const byKind = new Map<ResetKind, Array<typeof Grant.Type>>();
+    for (const grant of grants) {
+      if (grant.resets_left === 0) continue;
+      const kind = grantKind(grant);
+      byKind.set(kind, [...(byKind.get(kind) ?? []), grant]);
+    }
+    return (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap(
+      (kind): Array<ServerProviderResetCreditOption> => {
+        const ofKind = byKind.get(kind);
+        const target = ofKind?.find((grant) => grant.usable_now) ?? ofKind?.[0];
+        if (!ofKind || !target) return [];
+        const optionExpiresAt = expiresAt(target);
+        return [
+          {
+            creditId: target.id,
+            ...RESET_KINDS[kind],
+            availableCount: ofKind.reduce((sum, grant) => sum + grant.resets_left, 0),
+            ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
+            ...(target.usable_now
+              ? {}
+              : { unavailableReason: waitingReason(target, status, nowMs) }),
+          },
+        ];
+      },
+    );
+  };
+  const bankedOptions = kindOptions(banked);
   const nextExpiresAt = expiresAt(next);
   return {
     availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
     ...(next ? { nextCreditId: next.id } : {}),
-    ...(next ? { options } : {}),
+    ...(next ? { options: kindOptions(live) } : {}),
+    ...(bankedOptions.length > 0 ? { bankedOptions } : {}),
   };
 }
 
@@ -248,6 +321,22 @@ export const claudeAccountConfigPath = Effect.fn("claudeAccountConfigPath")(func
     ? path.join(configDir, ".claude.json")
     : path.join(yield* HostProcess.HomeDirectory, ".claude.json");
 });
+
+/** The grant a redeem request names, or the answer when no claim should be sent for it. */
+export const claudeRedeemTarget = (
+  credits: ServerProviderResetCredits | undefined,
+  creditId: string | undefined,
+): { readonly grantId: string } | { readonly outcome: "noCredit" | "nothingToReset" } => {
+  if (creditId === undefined) {
+    return credits?.nextCreditId ? { grantId: credits.nextCreditId } : { outcome: "noCredit" };
+  }
+  const option = (credits?.bankedOptions ?? credits?.options)?.find(
+    (candidate) => candidate.creditId === creditId,
+  );
+  if (!option) return { outcome: "noCredit" };
+  // A client reading an older snapshot can still ask for a reset that is now waiting.
+  return option.unavailableReason ? { outcome: "nothingToReset" } : { grantId: creditId };
+};
 
 const CLAIM_OUTCOMES = {
   reset: "reset",

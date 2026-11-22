@@ -12,6 +12,7 @@ import {
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import {
+  bankedResetCreditCount,
   type ResetCreditChoice,
   paceOf,
   paceRemainingPercent,
@@ -237,8 +238,7 @@ export function AccountLimits(props: {
   );
 }
 
-const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: msg("Reset applied. Your windows have cleared."),
+const OUTCOME_TEXT: Record<Exclude<ProviderConsumeResetCreditOutcome, "reset">, string> = {
   nothingToReset: msg("Nothing to reset right now."),
   noCredit: msg("No reset credit left."),
   alreadyRedeemed: msg("That credit was already redeemed."),
@@ -260,7 +260,7 @@ export function ResetCredits(props: {
   const [status, setStatus] = useState<string | null>(null);
   const gt = useGT();
   const m = useMessages();
-  if (dense && credits.availableCount === 0 && status === null) return null;
+  if (dense && bankedResetCreditCount(credits) === 0 && status === null) return null;
 
   const redeem = async (choice: ResetCreditChoice) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
@@ -269,7 +269,13 @@ export function ResetCredits(props: {
     const result = await consume({ environmentId, input: choice.input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(result.value.warning ?? resolveNow(OUTCOME_TEXT[result.value.outcome]));
+      setStatus(
+        result.value.warning ??
+          (result.value.outcome === "reset"
+            ? choice.appliedText
+            : resolveNow(OUTCOME_TEXT[result.value.outcome])),
+      );
+
       return;
     }
     setStatus(
@@ -292,7 +298,9 @@ export function ResetCredits(props: {
       {resetCreditChoices(credits, input, now, false, m).map((choice) => (
         <View key={choice.key} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
           <Text className="text-xs tabular-nums text-foreground-tertiary">{choice.summary}</Text>
-          {choice.availableCount > 0 ? (
+          {choice.unavailableReason ? (
+            <Text className="text-xs text-foreground-tertiary">{choice.unavailableReason}</Text>
+          ) : choice.availableCount > 0 ? (
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: busy || !canManageProviders }}

@@ -1,4 +1,5 @@
 import {
+  bankedResetCreditCount,
   CHATGPT_USAGE_URL,
   collectLimitAccounts,
   collectLimitPools,
@@ -158,7 +159,10 @@ function SegmentPopover({
       ? account.environments.map((environment) => environment.label).join(", ")
       : account.sourceLabel;
   const choices =
-    redeem && account.redeem && account.limits.resetCredits?.availableCount
+    redeem &&
+    account.redeem &&
+    account.limits.resetCredits &&
+    bankedResetCreditCount(account.limits.resetCredits)
       ? resetCreditChoices(account.limits.resetCredits, account.redeem.input, now, true, m)
       : [];
   return (
@@ -216,9 +220,11 @@ function SegmentPopover({
       {choices.length > 0 && redeem ? (
         <div className="flex flex-col gap-1.5 border-t border-border/60 pt-2.5 text-muted-foreground">
           {choices.map((choice) => (
-            <span key={choice.key} className="flex items-center gap-3">
+            <span key={choice.key} className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
               <span className="tabular-nums">{choice.summary}</span>
-              {choice.availableCount > 0 ? (
+              {choice.unavailableReason ? (
+                <span>{choice.unavailableReason}</span>
+              ) : choice.availableCount > 0 ? (
                 <Button
                   size="xs"
                   variant="outline"
@@ -372,7 +378,7 @@ function SegmentTriggers({
   const m = useMessages();
   const resetsIn = formatResetsIn(window, now, m);
   const refillIn = formatResetsIn(window, now, m, "refill");
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const credits = bankedResetCreditCount(account.limits.resetCredits);
   const gt = useGT();
   const segmentLabel = [
     gt("{name}: {remaining}% left", {
@@ -496,7 +502,7 @@ function LegendRow({
   const remaining = remainingPercent(window);
   const m = useMessages();
   const resetsIn = formatResetsIn(window, now, m, "refill");
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const credits = bankedResetCreditCount(account.limits.resetCredits);
   const gt = useGT();
   return (
     <PopoverTrigger

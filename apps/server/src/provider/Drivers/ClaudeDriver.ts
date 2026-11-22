@@ -358,14 +358,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     )(
       function* (creditId) {
         const current = yield* snapshot.getSnapshot;
-        const credits = current.usageLimits?.resetCredits;
-        const grantId =
-          creditId === undefined
-            ? credits?.nextCreditId
-            : credits?.options?.some((option) => option.creditId === creditId)
-              ? creditId
-              : undefined;
-        if (!grantId || !current.version) return "noCredit" as const;
+        const target = ClaudeResetCredits.claudeRedeemTarget(
+          current.usageLimits?.resetCredits,
+          creditId,
+        );
+        if ("outcome" in target) return target.outcome;
+        if (!current.version) return "noCredit" as const;
+        const { grantId } = target;
         const version = current.version;
         return yield* resetCreditCoordinator.redeem(
           configDir,
