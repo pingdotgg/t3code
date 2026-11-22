@@ -107,14 +107,17 @@ const tabViewAtom = Atom.family((key: string) => {
   const view = peerLinkEnvironment.threadView(
     targetOf({ viaEnvironmentId, environmentId, threadId }),
   );
-  return Atom.make((get) => {
-    const live = get(view);
-    const title = AsyncResult.getOrElse(live, () => null)?.thread.projection?.thread.title;
-    if (title && panelRef !== null) {
-      useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surfaceId, title);
-    }
-    return live;
-  }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`linked-thread-tab-view:${key}`));
+  return Atom.readable(
+    (get) => {
+      const live = get(view);
+      const title = AsyncResult.getOrElse(live, () => null)?.thread.projection?.thread.title;
+      if (title && panelRef !== null) {
+        useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surfaceId, title);
+      }
+      return live;
+    },
+    (refresh) => refresh(view),
+  ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`linked-thread-tab-view:${key}`));
 });
 
 /**
