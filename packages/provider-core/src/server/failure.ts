@@ -146,6 +146,8 @@ function curatedCauseMessages(cause: unknown): {
         case "ClaudeConversationNotFoundError":
         case "CursorModelUnavailableError":
         case "CodexGoalObjectiveTooLongError":
+        case "CodexAppServerUnresponsiveError":
+        case "CodexAppServerRetiredError":
         case "ProviderSetupError":
         case "ProviderAdapterThreadInUseError":
         case "ProviderCompactionUnsupportedError":

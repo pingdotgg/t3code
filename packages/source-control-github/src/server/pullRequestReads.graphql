@@ -45,7 +45,10 @@ fragment CheckContext on StatusCheckRollupContext {
     checkSuite {
       workflowRun {
         runAttempt
+        event
+        runNumber
         workflow {
+          id
           name
         }
       }

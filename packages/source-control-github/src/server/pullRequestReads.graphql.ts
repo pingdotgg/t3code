@@ -23,6 +23,8 @@ export interface StatusContext extends Schema.Struct.Type<typeof StatusContext.f
 
 /** A workflow contains meta information about an Actions workflow file. */
 export const Workflow = Schema.Struct({
+  /** The Node ID of the Workflow object */
+  id: Shared.ID,
   /** The name of the workflow. */
   name: Schema.String
 })
@@ -32,6 +34,10 @@ export interface Workflow extends Schema.Struct.Type<typeof Workflow.fields> {}
 export const WorkflowRun = Schema.Struct({
   /** The attempt number of this workflow run. */
   runAttempt: Shared.Int,
+  /** The event that triggered the workflow run */
+  event: Schema.String,
+  /** A number that uniquely identifies this workflow run in its parent workflow. */
+  runNumber: Shared.Int,
   /** The workflow executed in this workflow run. */
   workflow: Workflow
 })
@@ -571,7 +577,7 @@ export const PullRequestCore = GraphQL.query("PullRequestCore", {
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed viewerPermission pullRequest(number:$", "number", "){number title url body state isDraft mergeable mergeStateStatus reviewDecision additions deletions changedFiles createdAt updatedAt mergedAt mergeCommit{oid}mergedBy{__typename login avatarUrl...on User{name}}closedAt headRefName baseRefName headRefOid isCrossRepository maintainerCanModify headRepositoryOwner{__typename login}headRepository{nameWithOwner viewerPermission}headRef{id}author{__typename login avatarUrl...on User{id name}}autoMergeRequest{mergeMethod}mergeQueueRemovals:timelineItems(last:1 itemTypes:[REMOVED_FROM_MERGE_QUEUE_EVENT])@include(if:$", "mergeQueue", "){nodes{__typename...on RemovedFromMergeQueueEvent{id createdAt reason}}}viewerCanUpdate viewerDidAuthor viewerCanUpdateBranch baseRef{compare(headRef:$", "headRef", "){behindBy}}reviewRequests(first:$", "requestedReviewers", "){nodes{requestedReviewer{__typename...on User{login name}...on Bot{login}...on Team{slug combinedSlug teamName:name teamAvatarUrl:avatarUrl}}}}labels(first:100){nodes{name color description}}commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}}}}"] }
     ],
     fragments: [
-      { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{databaseId title name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{runAttempt workflow{name}}}}}"] }
+      { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{databaseId title name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{runAttempt event runNumber workflow{id name}}}}}"] }
     ]
   },
   variables: {
@@ -631,7 +637,7 @@ export const PullRequestCheckContexts = GraphQL.query("PullRequestCheckContexts"
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){state isCrossRepository headRefName headRepositoryOwner{__typename login}headRefOid commits(last:1){nodes{commit{statusCheckRollup{contexts(first:100 after:$", "after", "){nodes{__typename...", "CheckContext", "}pageInfo{hasNextPage endCursor}}}}}}}}"] }
     ],
     fragments: [
-      { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{databaseId title name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{runAttempt workflow{name}}}}}"] }
+      { name: "CheckContext", body: ["on StatusCheckRollupContext{__typename...on StatusContext{context state targetUrl createdAt description isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")}...on CheckRun{databaseId title name status conclusion startedAt completedAt detailsUrl isRequired(pullRequestNumber:$", "number", ")@include(if:$", "required", ")checkSuite{workflowRun{runAttempt event runNumber workflow{id name}}}}}"] }
     ]
   },
   variables: {

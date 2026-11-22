@@ -945,6 +945,7 @@ describe("source control tools", () => {
     body: "Adds tools.",
     state: "open",
     isDraft: false,
+    visibility: "private",
     author: null,
     headBranch: "tools",
     baseBranch: "main",
@@ -1000,6 +1001,7 @@ describe("source control tools", () => {
       });
       const compact = yield* harness.call("pull_request_read", {});
       expect(compact).toMatchObject({
+        visibility: "private",
         headSha: "abc123",
         checks: { passed: 2, pending: 1, failed: ["Lint", "E2E"], incomplete: true },
         unresolvedThreads: 1,
@@ -1286,7 +1288,11 @@ describe("source control tools", () => {
 
   it.effect("opens a PR from the thread's worktree and links it even if dismissed", () =>
     Effect.gen(function* () {
-      const opened: Array<{ readonly cwd: string; readonly draft: boolean | undefined }> = [];
+      const opened: Array<{
+        readonly cwd: string;
+        readonly draft: boolean | undefined;
+        readonly private: boolean | undefined;
+      }> = [];
       const harness = yield* makeHarness({
         thread: {
           ...makeThread([makeLink(43, { source: "stack-dismissed" })]),
@@ -1294,7 +1300,9 @@ describe("source control tools", () => {
         },
         git: {
           createPullRequest: (input) =>
-            Effect.sync(() => opened.push({ cwd: input.cwd, draft: input.draft })).pipe(
+            Effect.sync(() =>
+              opened.push({ cwd: input.cwd, draft: input.draft, private: input.private }),
+            ).pipe(
               Effect.as({
                 status: "created" as const,
                 url: "https://github.com/t3tools/t3code/pull/43",
@@ -1310,9 +1318,10 @@ describe("source control tools", () => {
         title: "Add tools",
         body: "Adds tools.",
         draft: true,
+        private: true,
       });
       expect(result).toMatchObject({ number: 43, created: true });
-      expect(opened).toEqual([{ cwd: "/workspace/worktree", draft: true }]);
+      expect(opened).toEqual([{ cwd: "/workspace/worktree", draft: true, private: true }]);
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.link", number: 43, source: "created" },
       ]);

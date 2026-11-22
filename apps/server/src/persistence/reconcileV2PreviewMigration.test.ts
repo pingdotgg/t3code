@@ -5,6 +5,8 @@ import * as Exit from "effect/Exit";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { DEFERRED_COMMAND_MESSAGE_CONDITION } from "../orchestration-v2/deferredCommandMessage.ts";
+
 import { migrationManifest, runMigrations, skippedV2Migrations } from "./Migrations.ts";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import RemoveRedundantProjectionIndexes from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
@@ -52,6 +54,8 @@ const upstreamHistory = [
     "IssueTrackerAdditionalScopes",
     "ProjectionProjectsTrackedFolders",
     "TaskFolders",
+    "WorktreePathKeyIndex",
+    "DeferredSlashCommandIndex",
   ].map((name, index) => ({ id: 68 + index, name })),
 ];
 
@@ -153,6 +157,8 @@ describe("V2 preview upgrade", () => {
         [126, "IssueTrackerAdditionalScopes"],
         [127, "ProjectionProjectsTrackedFolders"],
         [128, "TaskFolders"],
+        [129, "WorktreePathKeyIndex"],
+        [130, "DeferredSlashCommandIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -304,18 +310,26 @@ describe("V2 preview upgrade", () => {
         [126, "IssueTrackerAdditionalScopes"],
         [127, "ProjectionProjectsTrackedFolders"],
         [128, "TaskFolders"],
+        [129, "WorktreePathKeyIndex"],
+        [130, "DeferredSlashCommandIndex"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect.each([false, true])(
-    "reconciles an upstream history only when contiguous (gap: %s)",
-    (gap) =>
+  it.effect.each(["valid", "gap", "wrong name"] as const)(
+    "reconciles only a contiguous, recognized upstream history (%s)",
+    (historyKind) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        for (const through of [102, 103, 104, 105]) {
-          const history = upstreamHistory.filter(({ id }) => id <= through && (!gap || id !== 70));
-          assert.strictEqual(skippedV2Migrations(history).length > 0, gap);
+        for (const through of [102, 103, 104, 105, 106, 107]) {
+          const history = upstreamHistory
+            .filter(({ id }) => id <= through && (historyKind !== "gap" || id !== 70))
+            .map((row) =>
+              historyKind === "wrong name" && row.id === through
+                ? { ...row, name: "UnknownFork" }
+                : row,
+            );
+          assert.strictEqual(skippedV2Migrations(history).length > 0, historyKind !== "valid");
         }
         yield* runMigrations({ toMigrationInclusive: 67 });
         yield* Migrator.make({})({
@@ -325,8 +339,12 @@ describe("V2 preview upgrade", () => {
         UPDATE effect_sql_migrations SET created_at = '2026-11-19 00:00:00'
         WHERE migration_id = 68
       `;
-        if (gap) {
-          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (70, 'PeerLinks')`;
+        if (historyKind !== "valid") {
+          if (historyKind === "gap") {
+            yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (70, 'PeerLinks')`;
+          } else {
+            yield* sql`UPDATE effect_sql_migrations SET name = 'UnknownFork' WHERE migration_id = 68`;
+          }
           const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
           assert.ok(Exit.isFailure(yield* Effect.exit(runMigrations())));
           assert.deepStrictEqual(
@@ -344,25 +362,52 @@ describe("V2 preview upgrade", () => {
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("appends the new upstream migrations to an existing fork database", () =>
-    Effect.gen(function* () {
-      const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 121 });
-      const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
-      assert.deepStrictEqual(yield* runMigrations(), [
-        [122, "BackgroundRecoveryIndexes"],
-        [123, "TurnStartReadIndexes"],
-        [124, "DelegatedTaskReadIndexes"],
-        [125, "ThreadItemCounts"],
-        [126, "IssueTrackerAdditionalScopes"],
-        [127, "ProjectionProjectsTrackedFolders"],
-        [128, "TaskFolders"],
-      ]);
-      assert.deepStrictEqual(
-        yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 121 ORDER BY migration_id`,
-        history,
-      );
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  it.effect.each([121, 128])(
+    "appends the new upstream migrations to an existing fork database at %s",
+    (through) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: through });
+        const history = yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`;
+        if (through === 128) {
+          yield* sql`DROP INDEX orchestration_v2_projection_messages_deferred_command_idx`;
+          yield* sql`
+            CREATE INDEX orchestration_v2_projection_messages_deferred_command_idx
+            ON orchestration_v2_projection_messages(thread_id, created_at, message_id)
+            WHERE role = 'user' AND json_extract(payload_json, '$.text') = '/compact'
+          `;
+        }
+        for (const text of ["/compact", "/help", "ordinary prompt"]) {
+          yield* sql`
+            INSERT INTO orchestration_v2_projection_messages
+              (message_id, thread_id, role, streaming, created_at, updated_at, payload_json)
+            VALUES (${text}, 'thread-1', 'user', 0, '2026-11-22', '2026-11-22',
+              ${JSON.stringify({ text })})
+          `;
+        }
+        assert.deepStrictEqual(
+          yield* runMigrations(),
+          migrationManifest.filter(([id]) => id > through),
+        );
+        assert.deepStrictEqual(
+          yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= ${through} ORDER BY migration_id`,
+          history,
+        );
+        assert.deepStrictEqual(
+          yield* sql.unsafe(`
+            SELECT message_id FROM orchestration_v2_projection_messages
+            INDEXED BY orchestration_v2_projection_messages_deferred_command_idx
+            WHERE ${DEFERRED_COMMAND_MESSAGE_CONDITION} ORDER BY message_id
+          `),
+          [{ message_id: "/compact" }, { message_id: "/help" }],
+        );
+        assert.lengthOf(
+          yield* sql`SELECT name FROM sqlite_master
+            WHERE name = 'orchestration_v2_projection_threads_worktree_path_key_idx'`,
+          1,
+        );
+        assert.deepStrictEqual(yield* runMigrations(), []);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("refuses unexpected later migrations without modifying their history", () =>

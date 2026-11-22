@@ -122,7 +122,7 @@ import {
   modelFavoriteKey,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
-  visibleModelsForCatalog,
+  visibleCatalogModels,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 import type { MessageResolver } from "../../i18n/messages";
@@ -907,14 +907,13 @@ function buildThreadSettingsCatalogItems(
     }
     const driver =
       group.models[0]?.providerDriver ?? group.updateRequired?.driver ?? group.providerKey;
-    const visibleModels = visibleModelsForCatalog({
+    const visibleModels = visibleCatalogModels({
       models: group.models,
       providerLabel: group.providerLabel,
       query: session.searchQuery,
-      manageHidden: session.manageHidden,
-      showLegacy: session.showLegacy,
-      favoritesOnly: session.providerFilter === FAVORITES_PROVIDER_FILTER,
       favoriteKeys: session.favoriteKeys,
+      favoritesOnly: session.providerFilter === FAVORITES_PROVIDER_FILTER,
+      showLegacy: session.manageHidden || session.showLegacy,
       isDisplayed: session.isDisplayed,
     });
     const updateRequiredNotice =

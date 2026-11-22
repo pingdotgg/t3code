@@ -24,6 +24,7 @@ import {
   PullRequestStatusInput,
   PullRequestStatusReport,
   PullRequestUnavailableError,
+  PullRequestVisibility,
   PullRequestWatchUntil,
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
@@ -275,12 +276,16 @@ export const WatchPullRequestResult = Schema.Struct({
       description: "The PR already ended, so nothing was watched.",
     }),
   ),
+  checksState: Schema.optional(PullRequestChecksState),
   next: Schema.optional(Schema.String),
 });
 export type WatchPullRequestResult = typeof WatchPullRequestResult.Type;
 
 export const alreadyEndedWatchNext = (state: "merged" | "closed") =>
   `This PR is already ${state}, so there is nothing to watch. Report that and end your turn.`;
+
+export const CHECKS_ALREADY_PASSED_WATCH_NEXT =
+  "Checks already pass on this head, so no wake will come for them. Act on that now; the watch still wakes you on later changes.";
 
 export const ThreadPullRequestEntry = Schema.Struct({
   ...PullRequestIdentity,
@@ -408,7 +413,7 @@ const WatchPullRequestInput = Schema.Struct({
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Handle existing comments, then call to link if needed and watch an open PR. End your turn. Wakes on failed checks, passed required checks, new comments/reviews or conflicts, and once on merge/close unless you did it via CLI. The watch persists across wakes; don't rearm. Check readiness before merging.",
+    "Handle comments, then link/watch an open PR and end your turn. Wakes on failed checks, passed required checks, new comments/reviews or conflicts; once on merge/close unless you used CLI. Persists; don't rearm. Check readiness before merging.",
   parameters: WatchPullRequestInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
@@ -502,7 +507,7 @@ const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
 
 const PullRequestStatusTool = Tool.make("pull_request_status", {
   description:
-    "Cached PR head, failing/waiting check names, review decision and mergeability. Use for status instead of gh pr view, gh pr checks or gh run view. Quote final report line. Read once per decision; parents use watch_pull_request, subagents report.",
+    "Cached PR head, failing/waiting check names, review decision and mergeability. Replaces gh pr view/checks and gh run view. Quote final report line; read once per decision. Parents use watch_pull_request; subagents report.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...PullRequestStatusInput.fields,
@@ -519,7 +524,7 @@ const PullRequestStatusTool = Tool.make("pull_request_status", {
 
 const PullRequestFailuresTool = Tool.make("pull_request_failures", {
   description:
-    "Failed steps, annotations and bounded error log excerpts for one PR. Call per PR. Replaces gh run view --log-failed and job logs API.",
+    "One PR's failed steps, annotations and bounded error log excerpts. Replaces gh run view --log-failed and job logs API.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...PullRequestFailuresInput.fields,
@@ -578,6 +583,9 @@ export const ReadPullRequestResult = Schema.Struct({
   title: Schema.String,
   state: PullRequestState,
   isDraft: Schema.Boolean,
+  visibility: Schema.optional(PullRequestVisibility).annotate({
+    description: "Only on a host with private PRs.",
+  }),
   author: Schema.NullOr(Schema.String),
   headBranch: Schema.String,
   baseBranch: Schema.String,
@@ -736,6 +744,9 @@ const CreatePullRequestTool = Tool.make("pull_request_create", {
     body: Schema.String,
     base: Schema.optional(TrimmedNonEmptyString),
     draft: Schema.optional(Schema.Boolean),
+    private: Schema.optional(Schema.Boolean).annotate({
+      description: "Visible to writers only; branch stays off origin. Unsupported hosts fail.",
+    }),
   }),
   success: CreatePullRequestResult,
   failure: PullRequestToolError,

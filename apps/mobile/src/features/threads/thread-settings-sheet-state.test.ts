@@ -14,7 +14,7 @@ import {
 import {
   canCommitPendingModel,
   pendingModelAfterPress,
-  visibleModelsForCatalog,
+  visibleCatalogModels,
 } from "./thread-settings-sheet-state";
 
 function modelOption(
@@ -77,11 +77,10 @@ describe("thread settings sheet state", () => {
     const legacyModel = { ...modelOption("gpt-5.4"), isLegacy: true };
 
     expect(
-      visibleModelsForCatalog({
+      visibleCatalogModels({
         models: [legacyModel],
         providerLabel: "Codex",
         query: "gpt-5.4",
-        manageHidden: false,
         showLegacy: false,
         favoritesOnly: false,
         favoriteKeys: new Set(),
@@ -178,5 +177,24 @@ describe("thread settings sheet state", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it("finds legacy models by search without enabling Show legacy models", () => {
+    const current = modelOption("gpt-next");
+    const legacy = { ...modelOption("claude-opus-4-8"), label: "Claude Opus 4.8", isLegacy: true };
+    const visible = (query: string) =>
+      visibleCatalogModels({
+        models: [current, legacy],
+        providerLabel: "Codex",
+        query,
+        favoriteKeys: new Set(),
+        favoritesOnly: false,
+        showLegacy: false,
+        isDisplayed: () => false,
+      }).map((model) => model.label);
+
+    expect(visible("")).toEqual(["gpt-next"]);
+    expect(visible("   ")).toEqual(["gpt-next"]);
+    expect(visible("Claude Opus 4.8")).toEqual(["Claude Opus 4.8"]);
   });
 });

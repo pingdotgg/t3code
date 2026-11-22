@@ -123,3 +123,27 @@ it("draws an agent's reasoning as bars and keeps its mode out of the levels", as
     .toBeInTheDocument();
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
 });
+
+it("focuses a reasoning level by its first letter without selecting it", async () => {
+  await using screen = await render(<Column />, { router: false }); // no routes involved
+  await userEvent.tab();
+  await expect.element(screen.getByRole("radio", { name: "Medium" })).toHaveFocus();
+  await userEvent.keyboard("l");
+  await expect.element(screen.getByRole("radio", { name: "Low" })).toHaveFocus();
+  await expect
+    .element(screen.getByRole("radio", { name: "Medium" }))
+    .toHaveAttribute("aria-checked", "true");
+  for (const key of ["{Control>}h{/Control}", "{Meta>}h{/Meta}", "{Alt>}h{/Alt}", "{Delete}"]) {
+    await userEvent.keyboard(key);
+    await expect.element(screen.getByRole("radio", { name: "Low" })).toHaveFocus();
+  }
+  await userEvent.keyboard("H");
+  await expect.element(screen.getByRole("radio", { name: "High" })).toHaveFocus();
+  // Wraps past the last level back to the first match.
+  await userEvent.keyboard("m");
+  await expect.element(screen.getByRole("radio", { name: "Medium" })).toHaveFocus();
+  await userEvent.keyboard("h{Enter}");
+  await expect
+    .element(screen.getByRole("radio", { name: "High" }))
+    .toHaveAttribute("aria-checked", "true");
+});

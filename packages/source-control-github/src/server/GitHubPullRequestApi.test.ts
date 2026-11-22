@@ -4046,7 +4046,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
                                 status: "COMPLETED",
                                 conclusion: "SUCCESS",
                                 checkSuite: {
-                                  workflowRun: { runAttempt: 1, workflow: { name: "linux" } },
+                                  workflowRun: {
+                                    runAttempt: 1,
+                                    event: "push",
+                                    runNumber: 1,
+                                    workflow: { id: "W_linux", name: "linux" },
+                                  },
                                 },
                               }),
                               checkRun({
@@ -4055,7 +4060,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
                                 status: "COMPLETED",
                                 conclusion: "FAILURE",
                                 checkSuite: {
-                                  workflowRun: { runAttempt: 1, workflow: { name: "windows" } },
+                                  workflowRun: {
+                                    runAttempt: 1,
+                                    event: "push",
+                                    runNumber: 1,
+                                    workflow: { id: "W_windows", name: "windows" },
+                                  },
                                 },
                               }),
                             ],
