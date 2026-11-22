@@ -1597,6 +1597,13 @@ describe("CodexAdapterV2 session initialize", () => {
         Option.isSome(retired) && Exit.isFailure(retired.value),
         "session events did not fail after thread/start passed its deadline",
       );
+      const refused = yield* Effect.exit(session.ensureThread("thread-start-after-retire"));
+      const refusal = Exit.isFailure(refused) ? Cause.squash(refused.cause) : undefined;
+      assert.isTrue(
+        Predicate.hasProperty(refusal, "cause") &&
+          Predicate.isTagged(refusal.cause, "CodexAppServerRetiredError"),
+        "a retired app-server accepted a new thread",
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
