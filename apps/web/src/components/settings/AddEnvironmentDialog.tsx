@@ -134,7 +134,9 @@ export function AddEnvironmentDialog({
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
-  const [pendingAction, setPendingAction] = useState<"remote" | "ssh" | "relay" | null>(null);
+  const [pendingAction, setPendingAction] = useState<
+    { readonly kind: "remote" | "ssh"; readonly host: string } | { readonly kind: "relay" } | null
+  >(null);
   const isAddingSavedBackend = pendingAction !== null;
   const savedBackendSessionRef = useRef(0);
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
@@ -180,7 +182,7 @@ export function AddEnvironmentDialog({
   };
   const connectSavedBackendSshTarget = async (target: DesktopSshEnvironmentTarget) => {
     const session = savedBackendSessionRef.current;
-    setPendingAction("ssh");
+    setPendingAction({ kind: "ssh", host: target.alias });
     onErrorChange(null);
     const result = await connectSshEnvironment({
       target,
@@ -227,7 +229,7 @@ export function AddEnvironmentDialog({
       return;
     }
 
-    setPendingAction("remote");
+    setPendingAction({ kind: "remote", host: savedBackendHost.trim() });
     onErrorChange(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
     try {
@@ -308,7 +310,7 @@ export function AddEnvironmentDialog({
     if (isAddingSavedBackend || !desktopBridge) return;
 
     const session = savedBackendSessionRef.current;
-    setPendingAction("ssh");
+    setPendingAction({ kind: "ssh", host: target.alias });
     onErrorChange(null);
     setSavedBackendSshHost(target.alias);
     let resolved: DesktopSshEnvironmentTarget;
@@ -465,7 +467,7 @@ export function AddEnvironmentDialog({
       : null;
   const addRelayRoute = async () => {
     if (relayRouteOffer === null || routeTarget === null) return;
-    setPendingAction("relay");
+    setPendingAction({ kind: "relay" });
     const result = await registerEnvironment(
       new RelayConnectionRegistration({
         target: new RelayConnectionTarget({
@@ -499,10 +501,20 @@ export function AddEnvironmentDialog({
   const renderSubmit = (input: {
     readonly canSubmit: boolean;
     readonly errorMessage: string | null;
-    readonly pendingLabel: string;
-    readonly pendingDetail: string | null;
   }) => {
-    const isSubmitting = pendingAction === savedBackendMode;
+    // Shown whichever mode is selected: a dismissed attempt keeps running after the form resets.
+    const progress =
+      pendingAction?.kind === "ssh"
+        ? {
+            label: gt("Connecting to {host}…", { host: pendingAction.host }),
+            detail: gt(
+              "Starting T3 Code on {host} and opening an SSH tunnel. This can take a minute.",
+              { host: pendingAction.host },
+            ),
+          }
+        : pendingAction?.kind === "remote"
+          ? { label: gt("Pairing with {host}…", { host: pendingAction.host }), detail: null }
+          : null;
     return (
       <div className="space-y-3">
         {input.errorMessage ? (
@@ -515,12 +527,12 @@ export function AddEnvironmentDialog({
           disabled={isAddingSavedBackend || !input.canSubmit}
           onClick={() => void handleAddSavedBackend()}
         >
-          {isSubmitting ? <Spinner /> : <PlusIcon className="size-3.5" />}
-          {isSubmitting ? input.pendingLabel : routeTarget ? gt("Add route") : gt("Connect & add")}
+          {progress ? <Spinner /> : <PlusIcon className="size-3.5" />}
+          {progress ? progress.label : routeTarget ? gt("Add route") : gt("Connect & add")}
         </Button>
-        {isSubmitting && input.pendingDetail ? (
+        {progress?.detail ? (
           <p aria-live="polite" className="text-center text-xs text-muted-foreground">
-            {input.pendingDetail}
+            {progress.detail}
           </p>
         ) : null}
       </div>
@@ -549,8 +561,6 @@ export function AddEnvironmentDialog({
           parsePairingUrlFields(savedBackendHost) !== null ||
           (savedBackendHost.trim().length > 0 && savedBackendPairingCode.trim().length > 0),
         errorMessage: error,
-        pendingLabel: gt("Pairing with {host}…", { host: savedBackendHost.trim() }),
-        pendingDetail: null,
       })}
     </div>
   );
@@ -672,11 +682,6 @@ export function AddEnvironmentDialog({
         {renderSubmit({
           canSubmit: savedBackendSshHost.trim().length > 0,
           errorMessage: error ?? discoveredSshHostsError,
-          pendingLabel: gt("Connecting to {host}…", { host: savedBackendSshHost.trim() }),
-          pendingDetail: gt(
-            "Starting T3 Code on {host} and opening an SSH tunnel. This can take a minute.",
-            { host: savedBackendSshHost.trim() },
-          ),
         })}
       </div>
     </div>

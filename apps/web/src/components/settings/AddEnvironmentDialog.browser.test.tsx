@@ -142,6 +142,10 @@ describe("AddEnvironmentDialog", () => {
     await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Connect & add" }));
     await userEvent.keyboard("{Escape}");
     await expectDefaultModeAfterReopen();
+    await expect
+      .element(page.getByRole("dialog").getByRole("button", { name: "Connecting to devbox…" }))
+      .toBeDisabled();
+    await expect.element(page.getByText(/opening an SSH tunnel/)).toBeInTheDocument();
     finishConnection(AsyncResult.failure(Cause.fail(new Error("dismissed SSH attempt"))));
     await userEvent.fill(page.getByPlaceholder("backend.example.com"), "devbox.example.com");
     await userEvent.fill(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
