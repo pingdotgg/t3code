@@ -3670,10 +3670,14 @@ function claudeBypassAvailability(
 }
 
 function requiresClaudeApproval(context: ActiveClaudeTurnContext): boolean {
-  // CLI-forwarded requests need a person's decision even under bypass (ask rules,
-  // safety checks, or settings fallback). Do not wait for queued init/status updates.
+  // CLI-forwarded requests need a person's decision even under auto or bypass (ask rules,
+  // hooks, safety checks, or classifier fallback). Do not wait for queued init/status updates.
   const policy = context.queryPolicy;
-  return policy.installPermissionCallback || policy.permissionMode === "bypassPermissions";
+  return (
+    policy.installPermissionCallback ||
+    policy.permissionMode === "auto" ||
+    policy.permissionMode === "bypassPermissions"
+  );
 }
 
 function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
