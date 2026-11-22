@@ -70,7 +70,7 @@ export function ChatCanvas({
     const probe = widthProbeRef.current;
     if (!element || !probe) return;
     const findBar =
-      detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-thread-find-bar]") : null;
+      detailsCardTopInset > 0 ? element.querySelector<HTMLElement>("[data-find-bar]") : null;
     let disposed = false;
     // Seeking forces layout, so it runs once when a transition starts, not every frame.
     let transitionWidths: ReturnType<typeof measureTransitionWidths> = null;

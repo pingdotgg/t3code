@@ -85,6 +85,7 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
+import { getMarkdownFindTarget, requestMarkdownFindOpen } from "./files/markdownFindActionBus";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
 import {
@@ -377,6 +378,7 @@ function CommandPaletteDialog(props: {
 }) {
   const gt = useGT();
   const composerHandleRef = useComposerHandleContext();
+  const pendingFileFind = useRef<HTMLElement | null>(null);
 
   return (
     <CommandDialogPopup
@@ -392,6 +394,9 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
+        const findTarget = pendingFileFind.current;
+        pendingFileFind.current = null;
+        if (findTarget?.isConnected && requestMarkdownFindOpen(findTarget)) return false;
         if (restoreWorkspaceFocusFromPalette()) return false;
         const returnFocus = getCommandPaletteReturnFocus();
         if (returnFocus === false) return false;
@@ -412,6 +417,9 @@ function CommandPaletteDialog(props: {
       ) : (
         <OpenCommandPaletteDialog
           key={props.session}
+          onFindInFile={(target) => {
+            pendingFileFind.current = target;
+          }}
           openIntent={props.openIntent}
           setOpen={props.setOpen}
           openChildSearch={props.openChildSearch}
@@ -423,6 +431,7 @@ function CommandPaletteDialog(props: {
 }
 
 function OpenCommandPaletteDialog(props: {
+  readonly onFindInFile: (target: HTMLElement) => void;
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
   readonly openChildSearch: (
@@ -1402,6 +1411,21 @@ function OpenCommandPaletteDialog(props: {
       description: gt("An agent investigates a T3 Code problem and helps file an issue"),
       icon: <BugIcon className={ITEM_ICON_CLASS} />,
       run: () => startTriage(triageEnvironmentId),
+    });
+  }
+
+  const markdownFindTarget = getMarkdownFindTarget(null, true);
+  if (markdownFindTarget) {
+    actionItems.push({
+      kind: "action",
+      value: "action:find-in-file",
+      title: gt("Find in rendered file"),
+      searchTerms: ["search", "markdown", "file", "preview"],
+      icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "file.find",
+      run: async () => {
+        props.onFindInFile(markdownFindTarget);
+      },
     });
   }
 

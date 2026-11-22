@@ -1,17 +1,13 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { T, useGT } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
-import { Button } from "../ui/button";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
+import { Button } from "./ui/button";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "./ui/input-group";
 import { cn } from "~/lib/utils";
-import {
-  formatThreadFindCount,
-  nextThreadFindAnnouncement,
-  type ThreadFindAnnouncement,
-} from "./threadFind";
-import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
+import { nextFindAnnouncement, type FindAnnouncement } from "./FindBar.logic";
 
-interface ThreadFindBarProps {
+interface FindBarProps {
+  readonly label: string;
   readonly open: boolean;
   readonly query: string;
   readonly matchCount: number;
@@ -30,9 +26,13 @@ interface ThreadFindBarProps {
   readonly onClose: () => void;
 }
 
-export const THREAD_FIND_BAR_RESERVED_HEIGHT = 36 + THREAD_DETAILS_CARD_GAP;
+function formatFindCount(index: number, total: number): string {
+  if (total <= 0) return "0/0";
+  const active = Number.isFinite(index) && index >= 0 ? Math.min(Math.trunc(index), total - 1) : 0;
+  return `${active + 1}/${total}`;
+}
 
-export function ThreadFindBar(props: ThreadFindBarProps) {
+export function FindBar(props: FindBarProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const gt = useGT();
 
@@ -51,12 +51,12 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   const noResults = hasQuery && !props.status && props.matchCount === 0;
   let label = "";
   if (hasQuery) {
-    label = props.counting ? "1/…" : formatThreadFindCount(props.activeIndex, props.matchCount);
+    label = props.counting ? "1/…" : formatFindCount(props.activeIndex, props.matchCount);
   }
   if (props.status === "loading") label = gt("Searching…");
   if (props.status === "error") label = gt("Search failed");
-  const [storedAnnouncement, setAnnouncement] = useState<ThreadFindAnnouncement | null>(null);
-  const announcement = nextThreadFindAnnouncement(storedAnnouncement, {
+  const [storedAnnouncement, setAnnouncement] = useState<FindAnnouncement | null>(null);
+  const announcement = nextFindAnnouncement(storedAnnouncement, {
     navigationId: props.navigationId,
     text: label,
     settled: props.settled || props.status === "loading",
@@ -80,7 +80,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
 
   return (
     <div
-      data-thread-find-bar
+      data-find-bar
       className="absolute top-3 right-3 z-40 w-[min(var(--thread-details-panel-width),calc(100%-1.5rem))] transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none"
     >
       <InputGroup
@@ -88,7 +88,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
         size="lg"
         onContextMenu={(event) => event.stopPropagation()}
         role="search"
-        aria-label={gt("Find in thread")}
+        aria-label={props.label}
         aria-busy={props.status === "loading" || props.counting === true}
         className="w-full"
       >
@@ -97,8 +97,8 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
           type="search"
           size="sm"
           value={props.query}
-          aria-label={gt("Find in thread")}
-          placeholder={gt("Find in thread")}
+          aria-label={props.label}
+          placeholder={props.label}
           maxLength={200}
           spellCheck={false}
           autoComplete="off"

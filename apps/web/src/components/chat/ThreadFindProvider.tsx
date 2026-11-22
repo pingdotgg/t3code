@@ -1,6 +1,7 @@
+import { useGT } from "gt-react";
 import { createContext, use, type ReactNode, type ComponentProps } from "react";
 import { useThreadFind } from "./useThreadFind";
-import { ThreadFindBar } from "./ThreadFindBar";
+import { FindBar } from "../FindBar";
 import { ChatCanvas } from "./ChatCanvas";
 
 type Find = ReturnType<typeof useThreadFind>;
@@ -34,10 +35,12 @@ function ThreadFindProvider({
 }
 
 export function ThreadFind({ onClose }: { onClose: () => void }) {
+  const gt = useGT();
   const bar = use(ThreadFindBarContext);
   if (!bar) return null;
   return (
-    <ThreadFindBar
+    <FindBar
+      label={gt("Find in thread")}
       {...bar}
       onClose={() => {
         bar.onClose();
