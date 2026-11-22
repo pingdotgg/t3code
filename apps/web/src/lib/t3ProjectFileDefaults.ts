@@ -8,15 +8,23 @@ import {
 } from "~/components/files/projectFilesQueryState";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
+const T3_PROJECT_FILE_STALE_MS = 30_000;
+
 export async function readT3ProjectFile(
   environmentId: EnvironmentId,
   workspaceRoot: string,
 ): Promise<T3ProjectFile | null> {
-  const result = await executeAtomQuery(
-    appAtomRegistry,
-    getProjectFileQueryAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME),
-    { reportDefect: false, reportFailure: false },
-  );
+  const query = getProjectFileQueryAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME);
+  const current = appAtomRegistry.get(query);
+  const needsRefresh =
+    !current.waiting &&
+    (current._tag === "Failure" ||
+      (current._tag === "Success" && Date.now() - current.timestamp >= T3_PROJECT_FILE_STALE_MS));
+  const result = await executeAtomQuery(appAtomRegistry, query, {
+    refresh: needsRefresh,
+    reportDefect: false,
+    reportFailure: false,
+  });
   const data = resolveProjectFileQueryData(
     environmentId,
     workspaceRoot,

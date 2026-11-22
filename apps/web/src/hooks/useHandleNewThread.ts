@@ -3,7 +3,13 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  T3_PROJECT_FILE_NAME,
+  type ScopedProjectRef,
+  type T3ProjectFile,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
 import {
   composerDraftHasUserContent,
@@ -40,6 +46,11 @@ import {
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
+import {
+  getOptimisticProjectFileQueryData,
+  getProjectFileQueryAtom,
+} from "../components/files/projectFilesQueryState";
+import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
@@ -63,6 +74,51 @@ export function readLastUsedProjectKey(): string | null {
     return getLocalStorageItem(LAST_USED_PROJECT_STORAGE_KEY, lastUsedProjectKeySchema);
   } catch {
     return null;
+  }
+}
+
+function canReadProjectFile(project: EnvironmentProject): boolean {
+  // Environment queries wait for a connection.
+  return appAtomRegistry
+    .get(environmentSummaries.connectedEnvironmentIdsAtom)
+    .includes(project.environmentId);
+}
+
+function readCachedProjectFile(project: EnvironmentProject): T3ProjectFile | null | undefined {
+  const { environmentId, workspaceRoot } = project;
+  const optimistic = getOptimisticProjectFileQueryData(
+    environmentId,
+    workspaceRoot,
+    T3_PROJECT_FILE_NAME,
+  );
+  if (optimistic != null) {
+    return optimistic.exists === false || optimistic.truncated
+      ? null
+      : parseT3ProjectFile(optimistic.contents);
+  }
+  const query = getProjectFileQueryAtom(environmentId, workspaceRoot, T3_PROJECT_FILE_NAME);
+  const cached = appAtomRegistry.get(query);
+  // Only use a fresh, settled read synchronously; stale or in-flight refreshes must await the authoritative result.
+  if (cached._tag !== "Success" || cached.waiting || Date.now() - cached.timestamp >= 30_000) {
+    return undefined;
+  }
+  return cached.value.exists === false || cached.value.truncated
+    ? null
+    : parseT3ProjectFile(cached.value.contents);
+}
+
+export function mountNewThreadProjectFile(projectRef: ScopedProjectRef): (() => void) | undefined {
+  const project = readProject(projectRef);
+  if (project === null || !canReadProjectFile(project)) return;
+  const settings =
+    appAtomRegistry.get(environmentServerConfigsAtom).get(project.environmentId)?.settings ??
+    DEFAULT_SERVER_SETTINGS;
+  if (
+    resolveProjectSettings(settings, project.id, project).settings.defaultThreadEnvMode === null
+  ) {
+    return appAtomRegistry.mount(
+      getProjectFileQueryAtom(project.environmentId, project.workspaceRoot, T3_PROJECT_FILE_NAME),
+    );
   }
 }
 
@@ -199,19 +255,8 @@ export function createNewThreadHandler(router: AnyRouter) {
           currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
         destinationDraftId,
       });
-    const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
-      // Environment queries wait for a connection, so reading the project file on an
-      // offline machine would never settle and the draft would never open.
-      const consultProjectFile =
-        project !== undefined &&
-        projectSettings.settings.defaultThreadEnvMode === null &&
-        appAtomRegistry
-          .get(environmentSummaries.connectedEnvironmentIdsAtom)
-          .includes(project.environmentId);
-      const projectFile = consultProjectFile
-        ? await readT3ProjectFile(project.environmentId, project.workspaceRoot)
-        : null;
-      return resolveNewThreadEnvMode({
+    const envModeWithProjectFile = (projectFile: T3ProjectFile | null) =>
+      resolveNewThreadEnvMode({
         projectSettings: resolveProjectSettings(
           targetServerSettings,
           project?.id ?? null,
@@ -231,6 +276,20 @@ export function createNewThreadHandler(router: AnyRouter) {
             [],
           ) > 0,
       });
+    const resolveDefaultEnvMode = (): DraftThreadEnvMode | Promise<DraftThreadEnvMode> => {
+      if (
+        project === undefined ||
+        projectSettings.settings.defaultThreadEnvMode !== null ||
+        !canReadProjectFile(project)
+      ) {
+        return envModeWithProjectFile(null);
+      }
+      const cachedFile = readCachedProjectFile(project);
+      return cachedFile === undefined
+        ? readT3ProjectFile(project.environmentId, project.workspaceRoot).then(
+            envModeWithProjectFile,
+          )
+        : envModeWithProjectFile(cachedFile);
     };
     const logicalProjectKey = project
       ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
@@ -289,7 +348,8 @@ export function createNewThreadHandler(router: AnyRouter) {
         if (hasExplicitWorkspaceOption) {
           workspaceContext = pickExplicitWorkspaceOptions(options);
         } else if (!isDraftAlreadyOpen) {
-          const defaultEnvMode = await resolveDefaultEnvMode();
+          const resolution = resolveDefaultEnvMode();
+          const defaultEnvMode = typeof resolution === "string" ? resolution : await resolution;
           if (abandonedSinceRequest()) {
             return resultIfAbandoned();
           }
@@ -405,7 +465,8 @@ export function createNewThreadHandler(router: AnyRouter) {
     const threadId = newThreadId();
     const createdAt = new Date().toISOString();
     return (async () => {
-      const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
+      const resolution = options?.envMode ?? resolveDefaultEnvMode();
+      const initialEnvMode = typeof resolution === "string" ? resolution : await resolution;
       if (abandonedSinceRequest()) {
         return resultIfAbandoned();
       }

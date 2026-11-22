@@ -15,6 +15,7 @@ export function installSidebarTree(root: HTMLElement) {
   let focusedIndex = -1;
   let ownsFocus = false;
   let contextMenuRow: HTMLElement | undefined;
+  let rowSnapshot: { rows: HTMLElement[]; indices: Map<HTMLElement, number> } | undefined;
 
   const isVisibleRow = (row: HTMLElement) => {
     const hidden = row.closest('[hidden], [inert], [aria-hidden="true"]');
@@ -24,6 +25,16 @@ export function installSidebarTree(root: HTMLElement) {
   };
   const visibleRows = () =>
     Array.from(root.querySelectorAll<HTMLElement>(ROW)).filter(isVisibleRow);
+
+  const getRowSnapshot = () => {
+    if (!rowSnapshot) {
+      const rows = visibleRows();
+      const indices = new Map<HTMLElement, number>();
+      rows.forEach((row, index) => indices.set(row, index));
+      rowSnapshot = { rows, indices };
+    }
+    return rowSnapshot;
+  };
 
   const ownerRow = (element: HTMLElement) => {
     const row = element.closest<HTMLElement>(ROW);
@@ -41,8 +52,8 @@ export function installSidebarTree(root: HTMLElement) {
   };
 
   // A row that moves shelves remounts and drops focus to the body; follow it.
-  const restoreFocus = () => {
-    if (!ownsFocus || focusedId === undefined) return;
+  const restoreFocus = (): boolean => {
+    if (!ownsFocus || focusedId === undefined) return false;
     const active = document.activeElement;
     const lost =
       active === document.body ||
@@ -50,14 +61,15 @@ export function installSidebarTree(root: HTMLElement) {
         root.contains(active) &&
         active.matches(ROW) &&
         !isVisibleRow(active));
-    if (!lost) return;
-    const rows = visibleRows();
+    if (!lost) return false;
+    const { rows } = getRowSnapshot();
     const target =
       rows.find((row) => row.dataset.sidebarRow === focusedId) ??
       rows.find((row) => row.dataset.sidebarRow === focusedParent) ??
       rows[Math.min(Math.max(focusedIndex, 0), rows.length - 1)];
     // A settled row moves to the bottom shelf; scrolling after it fights the route reveal.
     target?.focus({ preventScroll: true });
+    return true;
   };
 
   // Clicking non-focusable content, including empty list space, drops focus to the body
@@ -69,14 +81,36 @@ export function installSidebarTree(root: HTMLElement) {
         : null;
     ownsFocus = focusable !== null && root.contains(focusable);
   };
+  const containsRow = (node: Node): boolean =>
+    node instanceof Element && (node.matches(ROW) || node.querySelector(ROW) !== null);
+
+  const affectsRowStructure = (record: MutationRecord): boolean => {
+    if (record.type === "attributes") {
+      if (!(record.target instanceof Element)) return false;
+      if (record.target.matches(ROW)) return true;
+      if (record.target.closest(ROW) !== null) return false;
+      return record.target.querySelector(ROW) !== null;
+    }
+    for (const node of record.addedNodes) {
+      if (containsRow(node)) return true;
+    }
+    for (const node of record.removedNodes) {
+      if (containsRow(node)) return true;
+    }
+    return false;
+  };
+
   const onFocus = (event: FocusEvent) => {
     ownsFocus = root.contains(event.target as Node);
     if (!ownsFocus || !(event.target instanceof HTMLElement)) return;
     const row = ownerRow(event.target);
     if (!row) return;
+    // Focus can move synchronously after a DOM edit, before observer delivery.
+    // The new focus supersedes any restoration for those edits.
+    if (observer.takeRecords().some(affectsRowStructure)) rowSnapshot = undefined;
     focusedId = row.dataset.sidebarRow;
     focusedParent = row.dataset.sidebarParent;
-    focusedIndex = visibleRows().indexOf(row);
+    focusedIndex = getRowSnapshot().indices.get(row) ?? -1;
   };
   const onKeyDown = (event: KeyboardEvent) => {
     const row = event.target;
@@ -166,12 +200,20 @@ export function installSidebarTree(root: HTMLElement) {
       }),
     );
   };
-  const observer = new MutationObserver(restoreFocus);
+  const observer = new MutationObserver((records) => {
+    const structureChanged = records.some(affectsRowStructure);
+    if (structureChanged) rowSnapshot = undefined;
+    if (!restoreFocus() && structureChanged && ownsFocus && focusedId !== undefined) {
+      const { rows } = getRowSnapshot();
+      const index = rows.findIndex((row) => row.dataset.sidebarRow === focusedId);
+      if (index >= 0) focusedIndex = index;
+    }
+  });
   observer.observe(root, {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["hidden", "inert", "aria-hidden"],
+    attributeFilter: ["hidden", "inert", "aria-hidden", "disabled", "data-sidebar-row"],
   });
   document.addEventListener("focusin", onFocus);
   document.addEventListener("pointerdown", onPointerDown, true);

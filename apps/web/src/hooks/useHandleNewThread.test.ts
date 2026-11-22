@@ -1,9 +1,28 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { EnvironmentId, ProjectId, RuntimeMode } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  ProjectReadFileResult,
+  RuntimeMode,
+  T3ProjectFile,
+} from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 
 const testState = vi.hoisted(() => {
-  let completeProjectFileRead: (value: null) => void = () => undefined;
-  let projectFileRead = Promise.resolve<null>(null);
+  let completeProjectFileRead: (value: T3ProjectFile | null) => void = () => undefined;
+  let projectFileRead = Promise.resolve<T3ProjectFile | null>(null);
+  const readT3ProjectFile = vi.fn(() => projectFileRead);
+  const refreshQuery = vi.fn();
+  const projectFile = {
+    relativePath: "t3.json",
+    contents: '{"defaultThreadEnvMode":"worktree"}',
+    byteLength: 35,
+    truncated: false,
+  };
+  let cachedProjectFile: ProjectReadFileResult | null = null;
+  let optimisticProjectFile: ProjectReadFileResult | null = null;
+  let cachedFileTimestamp = 0;
+  let cachedFileWaiting = false;
   let projectRemoved = false;
   let connectedEnvironmentIds = ["environment-primary", "environment-ssh"];
   let targetSettings = {
@@ -56,10 +75,33 @@ const testState = vi.hoisted(() => {
   };
 
   return {
-    completeProjectFileRead: (value: null) => completeProjectFileRead(value),
+    completeProjectFileRead: (value: T3ProjectFile | null) => completeProjectFileRead(value),
     draftStore,
-    get projectFileRead() {
-      return projectFileRead;
+    readT3ProjectFile,
+    refreshQuery,
+    get cachedProjectFile() {
+      return cachedProjectFile;
+    },
+    get cachedFileTimestamp() {
+      return cachedFileTimestamp;
+    },
+    get cachedFileWaiting() {
+      return cachedFileWaiting;
+    },
+    cacheProjectFile(
+      timestamp: number,
+      overrides?: Partial<ProjectReadFileResult>,
+      waiting = false,
+    ) {
+      cachedProjectFile = { ...projectFile, ...overrides };
+      cachedFileTimestamp = timestamp;
+      cachedFileWaiting = waiting;
+    },
+    get optimisticProjectFile() {
+      return optimisticProjectFile;
+    },
+    editProjectFile(contents: string) {
+      optimisticProjectFile = { ...projectFile, contents, byteLength: contents.length };
     },
     get projectRemoved() {
       return projectRemoved;
@@ -110,10 +152,15 @@ const testState = vi.hoisted(() => {
       };
       router.state.location.href = "/";
       router.navigate.mockClear();
+      readT3ProjectFile.mockClear();
+      refreshQuery.mockClear();
+      cachedProjectFile = null;
+      cachedFileWaiting = false;
+      optimisticProjectFile = null;
       draftStore.setDraftThreadContext.mockClear();
       draftStore.setLogicalProjectDraftThreadId.mockClear();
       draftStore.setPrompt.mockClear();
-      projectFileRead = new Promise<null>((resolve) => {
+      projectFileRead = new Promise<T3ProjectFile | null>((resolve) => {
         completeProjectFileRead = resolve;
       });
     },
@@ -137,10 +184,18 @@ const testServerConfigs = () =>
 
 vi.mock("../rpc/atomRegistry", () => ({
   appAtomRegistry: {
-    get: (atom: unknown) =>
-      atom === "connected-environment-ids"
-        ? testState.connectedEnvironmentIds
-        : testServerConfigs(),
+    get: (atom: unknown) => {
+      if (atom === "connected-environment-ids") return testState.connectedEnvironmentIds;
+      if (atom === "project-file-query") {
+        return testState.cachedProjectFile
+          ? AsyncResult.success(testState.cachedProjectFile, {
+              timestamp: testState.cachedFileTimestamp,
+              waiting: testState.cachedFileWaiting,
+            })
+          : AsyncResult.initial(true);
+      }
+      return testServerConfigs();
+    },
   },
 }));
 
@@ -156,10 +211,14 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
-vi.mock("@t3tools/contracts", () => ({
-  DEFAULT_RUNTIME_MODE: "default",
-  DEFAULT_SERVER_SETTINGS: {},
-}));
+vi.mock(import("@t3tools/contracts"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    DEFAULT_RUNTIME_MODE: "default" as typeof actual.DEFAULT_RUNTIME_MODE,
+    DEFAULT_SERVER_SETTINGS: {} as typeof actual.DEFAULT_SERVER_SETTINGS,
+  };
+});
 vi.mock("@t3tools/shared/projectSettings", () => ({
   resolveProjectSettings: (
     settings: Record<string, unknown>,
@@ -211,7 +270,14 @@ vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
 }));
 vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
-  readT3ProjectFile: () => testState.projectFileRead,
+  readT3ProjectFile: testState.readT3ProjectFile,
+}));
+vi.mock("../components/files/projectFilesQueryState", () => ({
+  getProjectFileQueryAtom: () => "project-file-query",
+  getOptimisticProjectFileQueryData: () => testState.optimisticProjectFile,
+}));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  executeAtomQuery: testState.refreshQuery,
 }));
 vi.mock("../lib/utils", () => ({
   newDraftId: () => "draft-delayed",
@@ -272,7 +338,7 @@ describe.each([
   ],
 ])("useNewThreadHandler with a %s draft", (_, draft) => {
   it("abandons a delayed draft open when the user navigates elsewhere", async () => {
-    testState.reset(draft);
+    testState.reset(draft, { envMode: null, startFromOrigin: false });
     const openThread = useNewThreadHandler();
     const pendingOpen = openThread(
       { environmentId: "environment-ssh", projectId: "project-remote" } as never,
@@ -289,7 +355,7 @@ describe.each([
   });
 
   it("resolves to the draft another opener showed for the same project meanwhile", async () => {
-    testState.reset(draft);
+    testState.reset(draft, { envMode: null, startFromOrigin: false });
     const pendingOpen = useNewThreadHandler()(
       { environmentId: "environment-ssh", projectId: "project-remote" } as never,
       { replace: true },
@@ -333,7 +399,7 @@ describe.each([
   });
 
   it("abandons a delayed draft open when the project is removed meanwhile", async () => {
-    testState.reset(draft);
+    testState.reset(draft, { envMode: null, startFromOrigin: false });
     const pendingOpen = useNewThreadHandler()(
       { environmentId: "environment-ssh", projectId: "project-remote" } as never,
       { replace: true },
@@ -349,6 +415,128 @@ describe.each([
 });
 
 describe("useNewThreadHandler", () => {
+  it("opens synchronously from a fresh, settled cached file", async () => {
+    testState.reset(null, { envMode: null, startFromOrigin: true });
+    const now = Date.parse("2026-01-02T00:00:00.000Z");
+    using _clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    testState.cacheProjectFile(now);
+
+    const pendingOpen = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+
+    expect(testState.router.navigate).toHaveBeenCalledOnce();
+    expect(testState.readT3ProjectFile).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      expect.anything(),
+      "draft-delayed",
+      expect.objectContaining({ envMode: "worktree", startFromOrigin: true }),
+    );
+    await pendingOpen;
+  });
+
+  it.each([
+    { label: "stale cache", ageMs: 60_000, waiting: false },
+    { label: "in-flight refresh", ageMs: 0, waiting: true },
+  ])(
+    "waits for the authoritative file read on $label when the workspace mode changes",
+    async ({ ageMs, waiting }) => {
+      testState.reset(null, { envMode: null, startFromOrigin: true });
+      const now = Date.parse("2026-01-02T00:00:00.000Z");
+      using _clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      testState.cacheProjectFile(
+        now - ageMs,
+        { contents: '{"defaultThreadEnvMode":"local"}', byteLength: 32 },
+        waiting,
+      );
+
+      const pendingOpen = useNewThreadHandler()({
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as never);
+
+      expect(testState.readT3ProjectFile).toHaveBeenCalledWith(
+        "environment-ssh",
+        "/remote/project",
+      );
+      expect(testState.router.navigate).not.toHaveBeenCalled();
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+
+      testState.completeProjectFileRead({ defaultThreadEnvMode: "worktree" });
+      await pendingOpen;
+
+      expect(testState.router.navigate).toHaveBeenCalledOnce();
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        expect.anything(),
+        "draft-delayed",
+        expect.objectContaining({ envMode: "worktree", startFromOrigin: true }),
+      );
+    },
+  );
+
+  it.each([{ exists: false }, { truncated: true }])(
+    "uses the fallback synchronously for a missing or truncated cached file (%j)",
+    async (file) => {
+      testState.reset(null, { envMode: null, startFromOrigin: false });
+      const now = Date.parse("2026-01-02T00:00:00.000Z");
+      using _clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      testState.cacheProjectFile(now, file);
+      const pendingOpen = useNewThreadHandler()({
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+      } as never);
+      expect(testState.router.navigate).toHaveBeenCalledOnce();
+      expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+        "remote-project",
+        expect.anything(),
+        "draft-delayed",
+        expect.objectContaining({ envMode: "local" }),
+      );
+      await pendingOpen;
+    },
+  );
+
+  it("opens synchronously from an optimistic edit while the base read is pending", async () => {
+    testState.reset(null, { envMode: null, startFromOrigin: true });
+    testState.editProjectFile('{"defaultThreadEnvMode":"worktree"}');
+    const pendingOpen = useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+    expect(testState.router.navigate).toHaveBeenCalledOnce();
+    expect(testState.readT3ProjectFile).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      expect.anything(),
+      "draft-delayed",
+      expect.objectContaining({ envMode: "worktree", startFromOrigin: true }),
+    );
+    await pendingOpen;
+  });
+
+  it("waits for the file default when a fresh draft supplies only a branch", async () => {
+    testState.reset(null, { envMode: null, startFromOrigin: true });
+
+    const pendingOpen = useNewThreadHandler()(
+      { environmentId: "environment-ssh", projectId: "project-remote" } as never,
+      { branch: "topic" },
+    );
+
+    expect(testState.readT3ProjectFile).toHaveBeenCalledWith("environment-ssh", "/remote/project");
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    testState.completeProjectFileRead({ defaultThreadEnvMode: "worktree" });
+    await pendingOpen;
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      expect.anything(),
+      "draft-delayed",
+      expect.objectContaining({ branch: "topic", envMode: "worktree", startFromOrigin: true }),
+    );
+  });
+
   it("keeps the text of a draft that gained some while it waited", async () => {
     testState.reset(null);
     const raced = {
