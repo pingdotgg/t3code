@@ -118,6 +118,7 @@ describe("matchComposerEnvironmentItems", () => {
     const labels = (query: string) =>
       matchComposerEnvironmentItems({
         environments,
+        linkedEnvironments: new Map(),
         environmentId: EnvironmentId.make("env-here"),
         query,
       }).map((item) => item.label);
@@ -220,6 +221,16 @@ describe("rankComposerMentionItems", () => {
       "ner",
       [thread("Partner sync"), thread("ner plan"), file("planner.md"), file("ner-notes.md")],
       ["ner plan", "ner-notes.md", "Partner sync", "planner.md"],
+    ],
+    [
+      "sonnet",
+      [
+        thread("Sonnet pricing"),
+        model("Sonnet 5.5"),
+        model("Claude Sonnet 4"),
+        file("sonnet-notes.md"),
+      ],
+      ["Sonnet pricing", "Sonnet 5.5", "Claude Sonnet 4", "sonnet-notes.md"],
     ],
     [
       "model",
