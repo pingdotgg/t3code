@@ -123,6 +123,8 @@ import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   type QueuedAttachmentContextBinding,
   reconcileAttachmentContextReferences,
+  recordChiplessQueuedImageRemoval,
+  recordQueuedImageHistoryRevision,
   useRetainedContextPayloads,
 } from "./composerContextUndo";
 import { ComposerBanner } from "./ComposerBanner";
@@ -1464,6 +1466,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const copyComposerSnapshotStable = useStableCallback(copyComposerSnapshot);
   const buildContextClipboardFragmentStable = useStableCallback(buildContextClipboardFragment);
+  const retainedContextPayloads = useRetainedContextPayloads(composerDraftTargetKey);
   const {
     loadThreadTranscript,
     countReservedAttachments,
@@ -1491,14 +1494,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     removedQueuedAttachments: removedEditingQueuedAttachments,
     onRestoreQueuedAttachment: (attachment) => {
       if (isQueuedImageAttachment(attachment)) {
-        const entry = retainedContextPayloads.queuedImageHistory.get(attachment.id) ?? {
-          statesByDepth: new Map<number, "attached" | "removed">(),
-        };
-        entry.pendingPaste = true;
-        retainedContextPayloads.queuedImageHistory.set(attachment.id, entry);
+        retainedContextPayloads.queuedImageHistory.pendingRestoredIds.add(attachment.id);
       }
       onRestoreEditingQueuedAttachment?.(attachment);
     },
+  });
+
+  const onControlledHistoryChangeStable = useStableCallback(
+    (history: ComposerPromptHistoryChange) => {
+      recordQueuedImageHistoryRevision(
+        retainedContextPayloads.queuedImageHistory,
+        history,
+        removedEditingQueuedAttachments ?? [],
+      );
+    },
+  );
+
+  const onRemoveEditingQueuedAttachmentStable = useStableCallback((attachmentId: string) => {
+    const entry = editingQueuedAttachments?.find((item) => item.attachment.id === attachmentId);
+    if (
+      entry &&
+      isQueuedImageAttachment(entry.attachment) &&
+      entry.contextIds &&
+      entry.contextIds.length > 0
+    ) {
+      const referenced = new Set(collectInlineContextIds(promptRef.current));
+      if (!entry.contextIds.some((contextId) => referenced.has(contextId))) {
+        recordChiplessQueuedImageRemoval(retainedContextPayloads.queuedImageHistory, attachmentId);
+      }
+    }
+    onRemoveEditingQueuedAttachment(attachmentId);
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared prompt ref in step with the committed draft prompt for imperative handlers
@@ -1694,8 +1719,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     getComposerDraft,
     syncComposerDraftPersistedAttachments,
   ]);
-
-  const retainedContextPayloads = useRetainedContextPayloads(composerDraftTargetKey);
 
   const onPromptChange = (
     nextPrompt: string,
@@ -3885,7 +3908,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 editingQueuedAttachments.length > 0 && (
                   <ComposerQueuedAttachmentRow
                     attachments={editingQueuedAttachments}
-                    onRemove={onRemoveEditingQueuedAttachment}
+                    onRemove={onRemoveEditingQueuedAttachmentStable}
                   />
                 )}
 
@@ -3936,6 +3959,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     skills={selectedProviderSkills}
                     className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
+                    onControlledHistoryChange={onControlledHistoryChangeStable}
                     onCommandKeyDown={onComposerCommandKeyStable}
                     onPageScrollKeyDown={onPageScrollKeyDown}
                     onPageScrollKeyUp={onPageScrollKeyUp}

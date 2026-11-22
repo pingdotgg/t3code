@@ -7,11 +7,11 @@ import type {
 } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
+import type { ComposerHistoryRevision } from "../../composer-undo-grouping";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import { fileContextReference, previewAnnotationContextId } from "../../lib/composerContextRecords";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
-import type { ComposerPromptHistoryChange } from "../ComposerPromptEditorTiptap";
 import { isQueuedFileAttachment, isQueuedImageAttachment } from "./queuedMessageEdit";
 
 interface RetainedPreviewAnnotation {
@@ -24,30 +24,56 @@ export interface QueuedAttachmentContextBinding {
   readonly contextIds: ReadonlyArray<ComposerContextId>;
 }
 
-export interface QueuedImageHistoryEntry {
-  readonly statesByDepth: Map<number, "attached" | "removed">;
-  pendingPaste?: true | undefined;
+export interface QueuedImageHistoryState {
+  currentRevision: number;
+  readonly removedIdsByRevision: Map<number, ReadonlySet<string>>;
+  readonly pendingRestoredIds: Set<string>;
 }
 
 export interface RetainedAttachmentContextPayloads {
   files: Map<string, ComposerFileAttachment>;
   previewAnnotations: Map<string, RetainedPreviewAnnotation>;
-  queuedImageHistory: Map<string, QueuedImageHistoryEntry>;
+  queuedImageHistory: QueuedImageHistoryState;
 }
 
-function queuedImageStateAtDepth(
-  statesByDepth: ReadonlyMap<number, "attached" | "removed">,
-  depth: number,
-): "attached" | "removed" {
-  let latestDepth = -1;
-  let state: "attached" | "removed" = "attached";
-  for (const [entryDepth, entryState] of statesByDepth) {
-    if (entryDepth <= depth && entryDepth >= latestDepth) {
-      latestDepth = entryDepth;
-      state = entryState;
+export function createQueuedImageHistoryState(): QueuedImageHistoryState {
+  return {
+    currentRevision: 0,
+    removedIdsByRevision: new Map(),
+    pendingRestoredIds: new Set(),
+  };
+}
+
+export function recordQueuedImageHistoryRevision(
+  state: QueuedImageHistoryState,
+  history: ComposerHistoryRevision,
+  removedQueuedAttachments: ReadonlyArray<QueuedAttachmentContextBinding>,
+): void {
+  const active = new Set(history.activeRevisions);
+  for (const revision of state.removedIdsByRevision.keys()) {
+    if (!active.has(revision)) state.removedIdsByRevision.delete(revision);
+  }
+  const removedImageIds = new Set<string>();
+  for (const entry of removedQueuedAttachments) {
+    if (isQueuedImageAttachment(entry.attachment)) {
+      removedImageIds.add(entry.attachment.id);
     }
   }
-  return state;
+  for (const restoredId of state.pendingRestoredIds) {
+    removedImageIds.delete(restoredId);
+  }
+  state.pendingRestoredIds.clear();
+  state.currentRevision = history.revision;
+  state.removedIdsByRevision.set(history.revision, removedImageIds);
+}
+
+export function recordChiplessQueuedImageRemoval(
+  state: QueuedImageHistoryState,
+  attachmentId: string,
+): void {
+  const next = new Set(state.removedIdsByRevision.get(state.currentRevision));
+  next.add(attachmentId);
+  state.removedIdsByRevision.set(state.currentRevision, next);
 }
 
 export interface RetainedContextPayloads extends RetainedAttachmentContextPayloads {
@@ -65,7 +91,7 @@ function createRetainedContextPayloads(): RetainedContextPayloads {
     environments: new Map(),
     files: new Map(),
     previewAnnotations: new Map(),
-    queuedImageHistory: new Map(),
+    queuedImageHistory: createQueuedImageHistoryState(),
   };
 }
 
@@ -82,7 +108,14 @@ export function useRetainedContextPayloads(draftTargetKey: string): RetainedCont
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the retained payload maps when the draft target changes or the composer unmounts
   useEffect(
     () => () => {
-      for (const payloads of Object.values(retained)) payloads.clear();
+      retained.terminals.clear();
+      retained.reviewComments.clear();
+      retained.threads.clear();
+      retained.environments.clear();
+      retained.files.clear();
+      retained.previewAnnotations.clear();
+      retained.queuedImageHistory.removedIdsByRevision.clear();
+      retained.queuedImageHistory.pendingRestoredIds.clear();
     },
     [retained],
   );
@@ -94,7 +127,7 @@ export function reconcileAttachmentContextReferences(input: {
   files: ReadonlyArray<ComposerFileAttachment>;
   queuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding>;
   removedQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding>;
-  history?: ComposerPromptHistoryChange | undefined;
+  history?: ComposerHistoryRevision | undefined;
   textChanged?: boolean;
   images: ReadonlyArray<ComposerImageAttachment>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
@@ -124,24 +157,23 @@ export function reconcileAttachmentContextReferences(input: {
   });
 
   const history = input.history;
-  if (history && history.direction === null && input.textChanged) {
-    // Any non-history edit drops ProseMirror's redo branch while keeping earlier undo steps.
-    for (const [imageId, entry] of input.retained.queuedImageHistory) {
-      for (const entryDepth of entry.statesByDepth.keys()) {
-        if (entryDepth > history.previousDepth) entry.statesByDepth.delete(entryDepth);
-      }
-      if (entry.pendingPaste) {
-        if (queuedImageStateAtDepth(entry.statesByDepth, history.previousDepth) !== "removed") {
-          entry.statesByDepth.set(history.previousDepth, "removed");
-        }
-        entry.statesByDepth.set(history.depth, "attached");
-        entry.pendingPaste = undefined;
-      }
-      if (entry.statesByDepth.size === 0) {
-        input.retained.queuedImageHistory.delete(imageId);
-      }
+  const removedQueuedAttachments = input.removedQueuedAttachments ?? [];
+  if (history) {
+    if (history.direction === null && input.textChanged) {
+      recordQueuedImageHistoryRevision(
+        input.retained.queuedImageHistory,
+        history,
+        removedQueuedAttachments,
+      );
+    } else if (history.direction !== null) {
+      input.retained.queuedImageHistory.currentRevision = history.revision;
     }
   }
+
+  const removedAtRevision =
+    history?.direction != null
+      ? input.retained.queuedImageHistory.removedIdsByRevision.get(history.revision)
+      : undefined;
 
   const liveQueuedAttachments = input.queuedAttachments ?? [];
   const liveQueuedAttachmentIds = new Set<string>(
@@ -153,19 +185,16 @@ export function reconcileAttachmentContextReferences(input: {
     if (entry.contextIds.some((contextId) => input.referencedContextIds.has(contextId))) continue;
     if (isQueuedFileAttachment(entry.attachment)) {
       queuedAttachmentIdsToRemove.push(entry.attachment.id);
-    } else if (isQueuedImageAttachment(entry.attachment) && history?.direction) {
-      const historyEntry = input.retained.queuedImageHistory.get(entry.attachment.id);
-      if (
-        historyEntry &&
-        queuedImageStateAtDepth(historyEntry.statesByDepth, history.depth) === "removed"
-      ) {
-        queuedAttachmentIdsToRemove.push(entry.attachment.id);
-      }
+    } else if (
+      isQueuedImageAttachment(entry.attachment) &&
+      removedAtRevision?.has(entry.attachment.id)
+    ) {
+      queuedAttachmentIdsToRemove.push(entry.attachment.id);
     }
   }
   const restoredQueuedAttachmentIds = new Set<string>();
   const queuedAttachmentsToRestore: ChatAttachment[] = [];
-  for (const entry of input.removedQueuedAttachments ?? []) {
+  for (const entry of removedQueuedAttachments) {
     if (
       entry.contextIds.length === 0 ||
       liveQueuedAttachmentIds.has(entry.attachment.id) ||
@@ -175,16 +204,6 @@ export function reconcileAttachmentContextReferences(input: {
     }
     if (!entry.contextIds.some((contextId) => input.referencedContextIds.has(contextId))) continue;
     restoredQueuedAttachmentIds.add(entry.attachment.id);
-    if (isQueuedImageAttachment(entry.attachment) && history?.direction) {
-      const historyEntry = input.retained.queuedImageHistory.get(entry.attachment.id) ?? {
-        statesByDepth: new Map<number, "attached" | "removed">(),
-      };
-      if (history.direction === "undo") {
-        historyEntry.statesByDepth.set(history.previousDepth, "removed");
-      }
-      historyEntry.statesByDepth.set(history.depth, "attached");
-      input.retained.queuedImageHistory.set(entry.attachment.id, historyEntry);
-    }
     queuedAttachmentsToRestore.push(entry.attachment);
   }
 

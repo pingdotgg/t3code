@@ -18,7 +18,7 @@ import { Paragraph } from "@tiptap/extension-paragraph";
 import StarterKit from "@tiptap/starter-kit";
 import { useGT } from "gt-react";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
-import { isHistoryTransaction, undoDepth } from "@tiptap/pm/history";
+import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
   type EditorState,
   NodeSelection,
@@ -112,6 +112,9 @@ import {
 import {
   COMPOSER_UNDO_GROUP_DELAY,
   type ComposerChangeKind,
+  type ComposerHistoryRevision,
+  composerHistoryRevisionOf,
+  createComposerHistoryRevisionPlugin,
   groupUndoByChangeKind,
   markAsClipboardEdit,
   markAsCompositionReplace,
@@ -170,11 +173,7 @@ export interface ComposerPromptEditorHandle {
   isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
 }
 
-export interface ComposerPromptHistoryChange {
-  readonly depth: number;
-  readonly previousDepth: number;
-  readonly direction: "undo" | "redo" | null;
-}
+export type ComposerPromptHistoryChange = ComposerHistoryRevision;
 
 export interface ComposerPromptEditorProps {
   draftKey?: string;
@@ -209,9 +208,11 @@ export interface ComposerPromptEditorProps {
     contextIds: string[],
     /** False when only the caret or selection moved. */
     textChanged: boolean,
-    /** ProseMirror history depth and direction for this change. */
+    /** ProseMirror history revision and direction for this change. */
     history?: ComposerPromptHistoryChange,
   ) => void;
+  /** Fired after editor mount or controlled document rewrites that bypass onChange. */
+  onControlledHistoryChange?: ((history: ComposerPromptHistoryChange) => void) | undefined;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
@@ -857,6 +858,9 @@ const ComposerUndoGroupingExtension = Extension.create<
   addStorage() {
     return { previous: null };
   },
+  addProseMirrorPlugins() {
+    return [createComposerHistoryRevisionPlugin()];
+  },
   dispatchTransaction({ transaction, next }) {
     this.storage.previous = groupUndoByChangeKind(transaction, this.storage.previous);
     next(transaction);
@@ -1002,6 +1006,7 @@ function ComposerPromptEditorTiptapInner(
     placeholderClassName,
     placeholderSuffix,
     onChange,
+    onControlledHistoryChange,
     onVisibleSelectionChange,
     onCommandKeyDown,
     onPageScrollKeyDown,
@@ -1028,6 +1033,7 @@ function ComposerPromptEditorTiptapInner(
   // The editor config is built once, so its handlers reach the current callbacks through here.
   const readCallbacks = useStableCallback(() => ({
     onChange,
+    onControlledHistoryChange,
     onVisibleSelectionChange,
     onCommandKeyDown,
     isPathQueryActive,
@@ -1052,7 +1058,6 @@ function ComposerPromptEditorTiptapInner(
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
-  const historyDepthRef = useRef(0);
   const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
@@ -1130,18 +1135,6 @@ function ComposerPromptEditorTiptapInner(
         (node) => node?.isInline && node.isAtom && !node.isText && node.type.name !== "hardBreak",
       );
     const textChanged = previousSnapshot.value !== nextValue;
-    const nextHistoryDepth = Number(undoDepth(updated.state));
-    const previousHistoryDepth = historyDepthRef.current;
-    const historyDirection: ComposerPromptHistoryChange["direction"] = isHistoryTransaction(
-      transaction,
-    )
-      ? nextHistoryDepth < previousHistoryDepth
-        ? "undo"
-        : nextHistoryDepth > previousHistoryDepth
-          ? "redo"
-          : null
-      : null;
-    if (textChanged) historyDepthRef.current = nextHistoryDepth;
     readCallbacks().onChange(
       nextValue,
       nextCursor,
@@ -1149,7 +1142,7 @@ function ComposerPromptEditorTiptapInner(
       suppressTrigger,
       contextIds,
       textChanged,
-      { depth: nextHistoryDepth, previousDepth: previousHistoryDepth, direction: historyDirection },
+      composerHistoryRevisionOf(updated.state),
     );
   };
 
@@ -1727,7 +1720,9 @@ function ComposerPromptEditorTiptapInner(
           emitUpdate: false,
         },
       );
-      historyDepthRef.current = Number(undoDepth(editor.state));
+      readCallbacks().onControlledHistoryChange?.(composerHistoryRevisionOf(editor.state));
+    } else if (initialSelection) {
+      readCallbacks().onControlledHistoryChange?.(composerHistoryRevisionOf(editor.state));
     }
     selectMarkdownOffset(editor, value, normalizedExpandedCursor);
     const map = serializeEditorDoc(editor.state.doc);
@@ -1768,6 +1763,7 @@ function ComposerPromptEditorTiptapInner(
     expandEditorCursor,
     initialExpandedCursor,
     literalText,
+    readCallbacks,
     richText,
     skillLabelFor,
     isKnownModel,
