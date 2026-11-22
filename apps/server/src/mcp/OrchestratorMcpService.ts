@@ -3720,7 +3720,10 @@ const make = Effect.gen(function* () {
         status: result.run.status,
         delivery: result.delivery,
         ...(result.run.status === "queued" && result.run.queueHeld === true
-          ? { held: true as const }
+          ? {
+              held: true as const,
+              next: "Held: it will not start on its own. If the thread's worktree setup stopped or failed, t3_queue action retry_setup retries it and releases the message.",
+            }
           : {}),
       } satisfies OrchestratorMcpThreadSendResult;
     }),

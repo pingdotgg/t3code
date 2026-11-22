@@ -579,12 +579,8 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   taskId: Schema.optional(NodeId),
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
-  held: Schema.optional(
-    Schema.Literal(true).annotate({
-      description:
-        "Queued but held: it will not start on its own. After a stopped or failed worktree setup, t3_queue retry_setup releases it.",
-    }),
-  ),
+  held: Schema.optional(Schema.Literal(true)),
+  next: Schema.optional(OrchestratorMcpRunningTaskNext),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 
