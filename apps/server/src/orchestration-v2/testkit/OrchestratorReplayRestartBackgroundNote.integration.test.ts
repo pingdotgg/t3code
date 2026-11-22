@@ -301,7 +301,7 @@ describe("restart-cancelled background work", () => {
       Effect.gen(function* () {
         const slashCommand = "/review the diff";
         const projection = yield* runRestart({
-          resumedPrompts: [slashCommand, `${NOTE}\n\nUser message:\n${SECOND_AFTER_RESTART}`],
+          resumedPrompts: [slashCommand, `${NOTE}\n\nCurrent message:\n${SECOND_AFTER_RESTART}`],
           userMessagesAfterRestart: [slashCommand, SECOND_AFTER_RESTART],
           continueThreadsAfterServerUpdate: false,
         });

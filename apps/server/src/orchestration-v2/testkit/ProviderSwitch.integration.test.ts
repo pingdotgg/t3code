@@ -3331,7 +3331,7 @@ describe("orchestration v2 provider switching", () => {
             assert.equal(slashTurn.driver, GROK_DRIVER);
             if (!verbatim) {
               assert.include(slashTurn.text, originalPrompt);
-              assert.include(slashTurn.text, `User message:\n${firstMessage}`);
+              assert.include(slashTurn.text, `Current message:\n${firstMessage}`);
               return;
             }
             assert.equal(
@@ -3345,7 +3345,7 @@ describe("orchestration v2 provider switching", () => {
             const next = (yield* Ref.get(capturedTurns)).at(-1)!;
             assert.include(next.text, originalPrompt);
             assert.include(next.text, codexResponse);
-            assert.include(next.text, "User message:\nContinue");
+            assert.include(next.text, "Current message:\nContinue");
           }).pipe(
             Effect.provide(
               ProviderReplayHarness.layerWithRegistry(
