@@ -886,6 +886,81 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       expect((yield* republished)?.usageLimits).toEqual(failed);
     }),
   );
+
+  it.effect(
+    "re-reads limits when a session starts over retained limits, unless signed out concurrently",
+    () =>
+      Effect.gen(function* () {
+        const oldLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:00:00.000Z",
+          windows: [
+            { id: "gemini-weekly", kind: "weekly", label: "Gemini · Weekly", usedPercent: 20 },
+          ],
+        };
+        const updatedLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:02:00.000Z",
+          windows: [
+            { id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 5 },
+            { id: "gemini-weekly", kind: "weekly", label: "Gemini · Weekly", usedPercent: 2 },
+          ],
+        };
+        const reads = yield* Ref.make(0);
+        const usage = yield* Ref.make(oldLimits);
+        const harness = yield* makeHarness({
+          probeUsage: Ref.update(reads, (count) => count + 1).pipe(Effect.andThen(Ref.get(usage))),
+        });
+        const initialPublished = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+        yield* harness.initialize;
+        expect((yield* initialPublished)?.usageLimits).toEqual(oldLimits);
+
+        // Simulate an expired CLI token probe failing while the previous limits remain published.
+        const checks = yield* Ref.make(0);
+        const failedReadApplied = yield* Deferred.make<void>();
+        yield* Ref.set(
+          harness.probe,
+          Ref.updateAndGet(checks, (count) => count + 1).pipe(
+            Effect.tap((count) =>
+              count === 2 ? Deferred.succeed(failedReadApplied, undefined) : Effect.void,
+            ),
+            Effect.as(initializeResult),
+          ),
+        );
+        yield* Ref.set(usage, {
+          checkedAt: "2026-10-09T12:01:00.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        });
+        yield* harness.provider.snapshot.refresh;
+        yield* Deferred.await(failedReadApplied);
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(oldLimits);
+
+        // Starting a session renews the CLI token and should re-read limits despite retained data.
+        yield* Ref.set(usage, updatedLimits);
+        const refreshed = yield* harness.nextPublish(
+          (snapshot) => snapshot.usageLimits?.checkedAt === updatedLimits.checkedAt,
+        );
+        yield* harness.provider.onSessionStarted(started);
+        expect((yield* refreshed)?.usageLimits).toEqual(updatedLimits);
+        expect(yield* Ref.get(reads)).toBe(3);
+
+        // A concurrent sign-out while onSessionStarted awaits helper checks must not start a read.
+        const safetyEntered = yield* Deferred.make<void>();
+        const releaseSafety = yield* Deferred.make<boolean>();
+        yield* Ref.set(
+          harness.safety,
+          Deferred.succeed(safetyEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseSafety)),
+          ),
+        );
+        const startFiber = yield* harness.provider.onSessionStarted(started).pipe(Effect.forkChild);
+        yield* Deferred.await(safetyEntered);
+        yield* harness.provider.onSignedOut;
+        yield* Deferred.succeed(releaseSafety, true);
+        yield* Fiber.join(startFiber);
+        expect(yield* Ref.get(reads)).toBe(3);
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+      }),
+  );
 });
 
 it.layer(makeLayerTest(true))("Antigravity periodic health checks", (it) => {

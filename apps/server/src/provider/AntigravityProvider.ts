@@ -266,31 +266,46 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const usageRead = yield* FiberHandle.make();
   const republish = yield* Deferred.make<Effect.Effect<ServerProvider>>();
   const scope = yield* Effect.scope;
-  const refreshUsage = Effect.fn("AntigravityProvider.refreshUsage")(function* () {
+  const refreshUsage = Effect.fn("AntigravityProvider.refreshUsage")(function* (
+    expectedAuthRevision?: number,
+  ) {
     if (!options.probeUsage || (yield* PublishingUsage)) return;
+    const current = yield* SubscriptionRef.get(metadata);
+    const startRevision = expectedAuthRevision ?? current.authRevision;
+    const signedOutAfterStart = (state: AntigravityProviderState) =>
+      state.authRevision !== startRevision && state.draft.auth.status === "unauthenticated";
+    if (signedOutAfterStart(current)) return;
     yield* FiberHandle.run(
       usageRead,
       options.probeUsage.pipe(
         Effect.flatMap((probed) =>
-          SubscriptionRef.update(metadata, (state) => ({
-            ...state,
-            draft: {
-              ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
-            },
-          })),
+          SubscriptionRef.modify(metadata, (state) => {
+            if (signedOutAfterStart(state)) return [false, state] as const;
+            return [
+              true,
+              {
+                ...state,
+                draft: {
+                  ...state.draft,
+                  usageLimits: resolveUsageLimitsAfterProbe({
+                    published: state.draft.usageLimits,
+                    probed,
+                  }),
+                },
+              },
+            ] as const;
+          }),
         ),
         // Enrichment cannot change published limits; a health check publishes them.
-        Effect.andThen(
-          Deferred.await(republish).pipe(
-            Effect.flatten,
-            Effect.provideService(PublishingUsage, true),
-            Effect.ignoreCause({ log: true }),
-            Effect.forkIn(scope),
-          ),
+        Effect.flatMap((published) =>
+          published
+            ? Deferred.await(republish).pipe(
+                Effect.flatten,
+                Effect.provideService(PublishingUsage, true),
+                Effect.ignoreCause({ log: true }),
+                Effect.forkIn(scope),
+              )
+            : Effect.void,
         ),
       ),
       // Store the fiber before it runs, so a sign-out during the read can interrupt it.
@@ -412,18 +427,19 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const supportsTextGeneration = yield* options.supportsTextGeneration;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const supportedRuntimeModes = antigravityRuntimeModes(started.sessionSetupResult);
-    const previousModes = yield* SubscriptionRef.modify(metadata, (state) => {
+    const updated = yield* SubscriptionRef.modify(metadata, (state) => {
       if (
         state.authRevision !== before.authRevision &&
         state.draft.auth.status === "unauthenticated"
       ) {
-        return [supportedRuntimeModes, state] as const;
+        return [undefined, state] as const;
       }
+      const nextAuthRevision = state.authRevision + 1;
       const { message: _previousMessage, ...draft } = state.draft;
       const workspaces = draft.workspaceSnapshots ?? [];
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
       const next = {
-        authRevision: state.authRevision + 1,
+        authRevision: nextAuthRevision,
         draft: {
           ...draft,
           installed: true,
@@ -453,10 +469,14 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             : {}),
         },
       } satisfies AntigravityProviderState;
-      return [draft.supportedRuntimeModes, next] as const;
+      return [
+        { previousModes: draft.supportedRuntimeModes, authRevision: nextAuthRevision },
+        next,
+      ] as const;
     });
-    yield* rememberRuntimeModes(previousModes, supportedRuntimeModes);
-    if (!before.draft.usageLimits || before.draft.usageLimits.unavailable) yield* refreshUsage();
+    if (updated === undefined) return;
+    yield* rememberRuntimeModes(updated.previousModes, supportedRuntimeModes);
+    yield* refreshUsage(updated.authRevision);
   });
 
   const onConfigOptionsUpdated = Effect.fn("AntigravityProvider.onConfigOptionsUpdated")(function* (
