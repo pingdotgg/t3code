@@ -677,6 +677,18 @@ it("reopens a long draft scrolled to its caret without taking focus", async () =
   expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom - 48 + 1);
 });
 
+it("does not outline the line under a click made with the node-select modifier held", async () => {
+  await using screen = await mountEditor("ship it");
+  const { editor } = screen;
+  const paragraph = editor.view.dom.querySelector("p")!;
+  const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+  await userEvent.keyboard(`{${mod}>}`);
+  await userEvent.click(paragraph);
+  await userEvent.keyboard(`{/${mod}}`);
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  expect(getComputedStyle(paragraph).outlineStyle).toBe("none");
+});
+
 describe("Markdown markers around styled text", () => {
   it.each([
     { keys: "{Backspace}", expected: "**** after" },
@@ -951,7 +963,7 @@ const file = {
 } satisfies ComposerFileAttachment;
 
 describe("composer context undo lifetime", () => {
-  async function mountComposer(destinationValue = "") {
+  async function mountComposer(destinationValue = "", disabled = false) {
     const initialValue = `Draft A ${formatInlineContextReference(fileContextReference(file))}`;
     const editorRef = createRef<ComposerPromptEditorHandle>();
     let current: { value: string; files: ComposerFileAttachment[] };
@@ -982,7 +994,7 @@ describe("composer context undo lifetime", () => {
           ]),
         ),
         skills: [],
-        disabled: false,
+        disabled,
         placeholder: "",
         onChange: (value, _cursor, _expandedCursor, _adjacent, contextIds) => {
           const changes = reconcileAttachmentContextReferences({
@@ -1052,6 +1064,19 @@ describe("composer context undo lifetime", () => {
     await composer.unmount();
     expect(retained.files.size).toBe(0);
   });
+
+  it.each(["Backspace", "Delete"])(
+    "removes a focused chip with %s while dictation makes the composer read-only",
+    async (key) => {
+      await using composer = await mountComposer("", true);
+      composer
+        .getByRole("button", { name: /notes\.txt/ })
+        .element()
+        .focus();
+      await userEvent.keyboard(`{${key}}`);
+      expect(composer.draft()).toEqual({ value: "Draft A ", files: [] });
+    },
+  );
 
   it.each(["", "Draft B"])(
     "releases deleted payloads and prevents undo into the previous draft when switching to %j",

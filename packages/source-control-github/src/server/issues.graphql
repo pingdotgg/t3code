@@ -270,6 +270,16 @@ query IssueComments($owner: String!, $name: String!, $number: Int!, $cursor: Str
   }
 }
 
+query IssueLinkMetadata($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      number
+      title
+      url
+    }
+  }
+}
+
 query IssueNodeId($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
