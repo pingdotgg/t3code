@@ -21,7 +21,7 @@ const KINDS = [
       `^bg-(?:card|popover|background|muted|accent|secondary|sidebar|input)${OPACITY}$`,
       "u",
     ),
-    hint: "A block is surface-card (nested: surface-card-fill), a panel surface-panel, an inset field surface-well, an overlay surface-popover or surface-floating.",
+    hint: "A block is surface-card (a part inside a panel: surface-card-fill), a panel surface-panel, an inset field surface-well, an overlay surface-popover or surface-floating.",
   },
   {
     pattern: /^bg-(?:warning|destructive|error|info|success|foreground|primary)\/[\w.[\]()-]+$/u,
@@ -97,9 +97,9 @@ export default defineRule({
         const found = exceedsCeiling(node.value.cooked ?? "", node.loc.start.line);
         if (found) context.report({ node, message: message(found) });
       },
-      "Program:exit"(node) {
+      "Program:exit"() {
         const mismatch = ceilingMismatch(allowedCount, occurrenceCount);
-        if (mismatch) context.report({ node, message: mismatch });
+        if (mismatch) context.report(mismatch);
       },
     };
   },

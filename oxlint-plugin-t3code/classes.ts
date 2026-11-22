@@ -112,15 +112,20 @@ export const readMaxOccurrences = (options: ReadonlyArray<unknown>): number => {
 };
 
 /**
- * Ceilings are exact, so headroom can't hide new occurrences. scripts/lint-ceilings.ts reads
- * "file has N" from this message; keep the wording.
+ * Ceilings are exact, so headroom can't hide new occurrences. Reported at the top of the file, as
+ * a whole-file span would print the file. scripts/lint-ceilings.ts reads "file has N".
  */
-export function ceilingMismatch(ceiling: number, count: number): string | undefined {
+export function ceilingMismatch(ceiling: number, count: number) {
+  const at = (message: string) => ({ loc: { line: 1, column: 0 }, message });
   if (count === ceiling) return undefined;
   if (count < ceiling) {
-    return `Debt ceiling ${ceiling}, file has ${count}: lower it to ${count} with \`${CEILINGS_COMMAND}\`.`;
+    return at(
+      `Debt ceiling ${ceiling}, file has ${count}: lower it to ${count} with \`${CEILINGS_COMMAND}\`.`,
+    );
   }
-  return `Debt ceiling ${ceiling}, file has ${count}: fix the ${count - ceiling} new occurrences reported in this file. Ceilings never go up, and a new file starts at 0.`;
+  return at(
+    `Debt ceiling ${ceiling}, file has ${count}: fix the ${count - ceiling} new occurrences reported in this file. Ceilings never go up, and a new file starts at 0.`,
+  );
 }
 
 interface CommentSource {

@@ -63,9 +63,9 @@ export default defineRule({
         const found = exceedsCeiling(node.value.cooked ?? "", node.loc.start.line);
         if (found) context.report({ node, message: message(found) });
       },
-      "Program:exit"(node) {
+      "Program:exit"() {
         const mismatch = ceilingMismatch(allowedCount, occurrenceCount);
-        if (mismatch) context.report({ node, message: mismatch });
+        if (mismatch) context.report(mismatch);
       },
     };
   },

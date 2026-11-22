@@ -112,7 +112,7 @@ export default defineRule({
               : undefined,
         });
       },
-      "Program:exit"(node) {
+      "Program:exit"() {
         let occurrenceCount = 0;
         const suppressed = suppressedLines(context.sourceCode, "t3code/no-styled-raw-controls");
         const appearanceOf = (classes: ReturnType<typeof classAttribute>) =>
@@ -145,7 +145,7 @@ export default defineRule({
           });
         }
         const mismatch = ceilingMismatch(allowedCount, occurrenceCount);
-        if (mismatch) context.report({ node, message: mismatch });
+        if (mismatch) context.report(mismatch);
       },
     };
   },
