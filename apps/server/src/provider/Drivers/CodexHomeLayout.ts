@@ -348,54 +348,21 @@ const ensureShadowAuthIsPrivate = Effect.fn("CodexHomeLayout.ensureShadowAuthIsP
     readonly effectiveHomePath: string;
   }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
     const path = yield* Path.Path;
-    const shadowEntryNames = yield* input.fileSystem.readDirectory(input.effectiveHomePath).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          new CodexShadowHomeFileSystemError({
-            sharedHomePath: input.sharedHomePath,
-            effectiveHomePath: input.effectiveHomePath,
-            operation: "readDirectory",
-            path: input.effectiveHomePath,
-            cause,
-          }),
-      }),
-    );
-    yield* Effect.forEach(
-      shadowEntryNames.filter((entryName) => AUTH_LIKE_ENTRY_NAME.test(entryName)),
-      Effect.fnUntraced(function* (entryName) {
-        const authPath = path.join(input.effectiveHomePath, entryName);
-        const state = yield* readLinkState({
-          ...input,
-          entryName,
-          linkPath: authPath,
-        });
-        if (state._tag !== "Symlink") return;
-        // Older versions linked auth-like backups into shadow homes. A link holds no data,
-        // so drop it; only a linked auth.json means the shadow home has no credentials of its own.
-        if (entryName !== "auth.json") {
-          return yield* input.fileSystem.remove(authPath).pipe(
-            Effect.catchTags({
-              PlatformError: (cause) =>
-                new CodexShadowHomeFileSystemError({
-                  sharedHomePath: input.sharedHomePath,
-                  effectiveHomePath: input.effectiveHomePath,
-                  operation: "remove",
-                  path: authPath,
-                  entryName,
-                  cause,
-                }),
-            }),
-          );
-        }
-        return yield* new CodexShadowHomePrivateEntrySymlinkError({
-          sharedHomePath: input.sharedHomePath,
-          effectiveHomePath: input.effectiveHomePath,
-          entryName,
-          path: authPath,
-        });
-      }),
-      { discard: true },
-    );
+    const entryName = "auth.json";
+    const authPath = path.join(input.effectiveHomePath, entryName);
+    const state = yield* readLinkState({
+      ...input,
+      entryName,
+      linkPath: authPath,
+    });
+    if (state._tag === "Symlink") {
+      return yield* new CodexShadowHomePrivateEntrySymlinkError({
+        sharedHomePath: input.sharedHomePath,
+        effectiveHomePath: input.effectiveHomePath,
+        entryName,
+        path: authPath,
+      });
+    }
   },
 );
 
@@ -463,17 +430,33 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
     }
   }
 
+  const shadowEntryNames = yield* fileSystem.readDirectory(effectiveHomePath).pipe(
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        new CodexShadowHomeFileSystemError({
+          sharedHomePath: layout.sharedHomePath,
+          effectiveHomePath,
+          operation: "readDirectory",
+          path: effectiveHomePath,
+          cause,
+        }),
+    }),
+  );
+  // Older versions linked auth-like backups into shadow homes; a link holds no data, so drop it.
+  // A linked auth.json (any case, for case-insensitive filesystems) fails closed below instead.
+  const privateSymlinkNames = new Set([
+    ...PRIVATE_ENTRY_NAMES,
+    ...shadowEntryNames.filter((entryName) => AUTH_LIKE_ENTRY_NAME.test(entryName)),
+  ]);
   yield* Effect.forEach(
-    PRIVATE_ENTRY_NAMES,
+    [...privateSymlinkNames].filter((entryName) => entryName.toLowerCase() !== "auth.json"),
     (entryName) =>
-      entryName === "auth.json"
-        ? Effect.void
-        : removePrivateSymlink({
-            fileSystem,
-            sharedHomePath: layout.sharedHomePath,
-            effectiveHomePath,
-            entryName,
-          }),
+      removePrivateSymlink({
+        fileSystem,
+        sharedHomePath: layout.sharedHomePath,
+        effectiveHomePath,
+        entryName,
+      }),
     { discard: true },
   );
 

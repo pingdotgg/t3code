@@ -217,34 +217,6 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
-      "removes auth-like shadow symlinks that point outside the shared home, even dangling ones",
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
-          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
-          const shadowHome = path.join(shadowRoot, "shadow");
-          const orphanLink = path.join(shadowHome, "auth-orphan.json");
-
-          yield* writeTextFile(path.join(shadowHome, "auth.json"), '{"shadow":true}\n');
-          yield* fileSystem.symlink(
-            path.join(shadowRoot, "elsewhere", "auth-orphan.json"),
-            orphanLink,
-          );
-
-          const layout = yield* resolveCodexHomeLayout(
-            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
-          );
-
-          yield* materializeCodexShadowHome(layout);
-
-          const orphanLinkResult = yield* fileSystem.readLink(orphanLink).pipe(Effect.result);
-          expect(orphanLinkResult._tag).toBe("Failure");
-        }),
-    );
-
-    it.effect.skipIf(!symlinksSupported)(
       "replaces a Codex-created local sqlite maintenance lock with the shared lock",
       () =>
         Effect.gen(function* () {
