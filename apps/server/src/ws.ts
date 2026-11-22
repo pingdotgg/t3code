@@ -201,6 +201,7 @@ import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts";
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
+import { withSocketHeartbeat } from "./socketHeartbeat.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -2733,8 +2734,7 @@ export const layerWsRpc = (
         [WS_METHODS.peerLinksNames]: (_input) =>
           peerLinks.names.pipe(Effect.map((links) => ({ links }))),
         [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
-        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) =>
-          peerLinks.unlink(environmentId).pipe(Effect.map((removed) => ({ removed }))),
+        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) => peerLinks.unlink(environmentId),
         [WS_METHODS.peerLinksSubscribeThread]: (input) => peerThreadRelay.subscribe(input),
         [WS_METHODS.peerLinksThreadHistoryPage]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
@@ -3826,20 +3826,21 @@ export const layer = Layer.unwrap(
             ),
           ),
         );
-        const framedRpcWebSocketHttpEffect = url.value.searchParams.has(
-          SOCKET_FRAME_PARTS_QUERY_PARAM,
-        )
-          ? rpcWebSocketHttpEffect.pipe(
-              Effect.provideService(
-                HttpServerRequest.HttpServerRequest,
-                // The RPC server upgrades the request itself, so its socket is
-                // wrapped through the request it reads.
-                Object.create(request, {
-                  upgrade: { value: Effect.map(request.upgrade, splitLargeSocketFrames) },
-                }),
-              ),
-            )
-          : rpcWebSocketHttpEffect;
+        const splitFrames = url.value.searchParams.has(SOCKET_FRAME_PARTS_QUERY_PARAM);
+        const framedRpcWebSocketHttpEffect = rpcWebSocketHttpEffect.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            // The RPC server upgrades the request itself, so its socket is
+            // wrapped through the request it reads.
+            Object.create(request, {
+              upgrade: {
+                value: Effect.map(request.upgrade, (socket) =>
+                  withSocketHeartbeat(splitFrames ? splitLargeSocketFrames(socket) : socket),
+                ),
+              },
+            }),
+          ),
+        );
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () =>

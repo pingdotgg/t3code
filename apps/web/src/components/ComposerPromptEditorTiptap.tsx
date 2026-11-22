@@ -203,6 +203,8 @@ export interface ComposerPromptEditorProps {
     contextIds: string[],
     /** False when only the caret or selection moved. */
     textChanged: boolean,
+    /** True when the change came from undo or redo. */
+    fromHistory?: boolean,
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
@@ -1127,6 +1129,7 @@ function ComposerPromptEditorTiptapInner(
       suppressTrigger,
       contextIds,
       previousSnapshot.value !== nextValue,
+      isHistoryTransaction(transaction),
     );
   };
 
@@ -1975,7 +1978,7 @@ function ComposerPromptEditorTiptapInner(
             {isEmpty && contextRecords.size === 0 && placeholder ? (
               <div
                 className={cn(
-                  "pointer-events-none col-start-1 row-start-1 leading-relaxed text-placeholder",
+                  "pointer-events-none relative col-start-1 row-start-1 leading-relaxed text-placeholder",
                   placeholderClassName,
                 )}
               >

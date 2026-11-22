@@ -106,10 +106,9 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   getUserQueuedThreadRuns,
-  threadSteersDuringCompaction,
+  threadCanSteer,
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
-import { compactionBlocksSteering } from "@t3tools/client-runtime/state/composer-dispatch";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
@@ -1086,6 +1085,11 @@ export default function ChatView(props: ChatViewProps) {
     recovery: activeThreadShell?.limitRecovery,
     snoozedUntil: activeThreadShell?.snoozedUntil,
   });
+  // The run whose limit rows client-runtime hides (deriveUsageLimitNoticeRows).
+  const usageLimitRunId =
+    serverRuntime?.status === "failed" && serverRuntime.lastErrorClass === "usage_limit"
+      ? (serverLatestRun?.runId ?? null)
+      : null;
   const timelineThreadError =
     limitRecoveryRun !== null && visibleThreadError === serverRuntime?.lastError
       ? null
@@ -1545,12 +1549,10 @@ export default function ChatView(props: ChatViewProps) {
   const isCompacting =
     (isSendBusy || phase === "connecting" || phase === "running") &&
     (compactionRunning || compactCommandIsActive);
-  const compactionBlocksSteer = compactionBlocksSteering({
+  const canSteer = threadCanSteer(serverProjection, {
     compactCommandIsActive,
     compactionRunning,
-    steersDuringCompaction: threadSteersDuringCompaction(serverProjection),
-    run: serverProjection?.runs.find((run) => run.id === activeRuntime?.activeRunId),
-    messages: serverProjection?.messages,
+    activeRunId: activeRuntime?.activeRunId,
   });
   const isWorking = deriveTimelineWorking({
     phase,
@@ -3647,6 +3649,7 @@ export default function ChatView(props: ChatViewProps) {
                   listRef={legendListRef}
                   runs={serverProjection?.runs ?? []}
                   latestRun={activeActivityRun}
+                  usageLimitRunId={usageLimitRunId}
                   announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
                   detailBehindShell={isDetailBehindShell(
                     activeLatestRun,
@@ -3822,7 +3825,7 @@ export default function ChatView(props: ChatViewProps) {
                                   isLocalDraftThread && activeProject === null
                                 }
                                 phase={phase}
-                                canSteer={!compactionBlocksSteer}
+                                canSteer={canSteer}
                                 canInterrupt={canInterruptRunningThread}
                                 isSendBusy={
                                   (isSendBusy && !sendQueuesBehindSetup) ||
@@ -3943,8 +3946,14 @@ export default function ChatView(props: ChatViewProps) {
                                 onExpandImage={onExpandTimelineImageStable}
                                 onFileOpen={openFileAttachmentStable}
                                 editingQueuedAttachments={queuedRunEdit.editingAttachments}
+                                removedEditingQueuedAttachments={
+                                  queuedRunEdit.removedEditingAttachments
+                                }
                                 onRemoveEditingQueuedAttachment={
                                   queuedRunEdit.removeEditingAttachment
+                                }
+                                onRestoreEditingQueuedAttachment={
+                                  queuedRunEdit.restoreEditingAttachment
                                 }
                               />
                             )}
