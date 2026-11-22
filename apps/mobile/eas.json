@@ -87,7 +87,7 @@
     },
     "production": {
       "ios": {
-        "ascAppId": "6787819824"
+        "ascAppId": "6837682828"
       },
       "android": {
         "track": "internal"
