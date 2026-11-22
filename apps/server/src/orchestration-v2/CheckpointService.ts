@@ -220,7 +220,11 @@ export interface CheckpointServiceV2Shape {
     readonly capturedAt: DateTime.Utc;
     readonly forceMissing?: boolean;
     readonly excludePaths?: ReadonlyArray<string>;
+    /** `capturesSoFar` from before an earlier wait on the folder's lock, when there was one. */
+    readonly capturesBeforeLock?: number;
   }) => Effect.Effect<OrchestrationV2Checkpoint, CheckpointServiceV2Error>;
+  /** How many captures have finished in a folder, for a caller that waits on it before `capture`. */
+  readonly capturesSoFar: (cwd: string) => Effect.Effect<number>;
   /**
    * A tracked repository's checkpoint for a run, with the baseline before it unless that is
    * already recorded. None when the run left the repository as it found it, which costs one
@@ -388,19 +392,43 @@ export const layer: Layer.Layer<
       capacity: 128,
       lookup: () => Effect.succeed(0),
     });
+    // Unlike the streak, a success never rewinds the count, so a waiter can order outcomes. A
+    // baseline running out of its short budget is not a post-turn capture timing out.
+    const lastCaptures = new Map<string, { readonly count: number; readonly timedOut: boolean }>();
+    const noteCapture = (cwd: string, timedOut: boolean) =>
+      Effect.sync(() => {
+        lastCaptures.set(cwd, { count: (lastCaptures.get(cwd)?.count ?? 0) + 1, timedOut });
+      });
+    const capturesSoFar = (cwd: string) => lastCaptures.get(cwd)?.count ?? 0;
+    const withCaptureLock = Effect.fn("CheckpointService.withCaptureLock")(function* <A, E, R>(
+      cwd: string,
+      capturesBeforeLock: number | undefined,
+      effect: (capturesBeforeLock: number) => Effect.Effect<A, E, R>,
+    ) {
+      return yield* withWorkspaceLock(cwd, effect(capturesBeforeLock ?? capturesSoFar(cwd)));
+    });
     // Both callers hold the workspace lock; post-turn captures always probe for recovery.
     const captureWorkspaceCheckpoint = Effect.fn("CheckpointService.captureWorkspaceCheckpoint")(
       function* (input: CheckpointStore.CaptureCheckpointInput, baseline = false) {
         const capture = checkpointStore.captureCheckpoint(input);
         yield* (baseline ? capture.pipe(Effect.timeout(BASELINE_CAPTURE_BUDGET)) : capture).pipe(
-          Effect.tap(() => Cache.invalidate(captureTimeouts, input.cwd)),
+          Effect.tap(() =>
+            Effect.andThen(
+              Cache.invalidate(captureTimeouts, input.cwd),
+              noteCapture(input.cwd, false),
+            ),
+          ),
           Effect.tapError((error) =>
             error._tag === "VcsProcessTimeoutError" || error._tag === "TimeoutError"
               ? Effect.gen(function* () {
                   const previous = yield* Cache.get(captureTimeouts, input.cwd);
                   yield* Cache.set(captureTimeouts, input.cwd, previous + 1);
+                  yield* noteCapture(input.cwd, !baseline);
                 })
-              : Cache.invalidate(captureTimeouts, input.cwd),
+              : Effect.andThen(
+                  Cache.invalidate(captureTimeouts, input.cwd),
+                  noteCapture(input.cwd, false),
+                ),
           ),
         );
       },
@@ -590,8 +618,7 @@ export const layer: Layer.Layer<
         readonly cleanHead?: string;
       },
     ) =>
-      withWorkspaceLock(
-        input.scope.cwd,
+      withCaptureLock(input.scope.cwd, input.capturesBeforeLock, (capturesBeforeLock) =>
         Effect.gen(function* () {
           const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {
             scopeId: input.scope.id,
@@ -634,32 +661,47 @@ export const layer: Layer.Layer<
             };
           }
 
-          const captureStatus = yield* (
-            input.cleanHead === undefined
-              ? captureWorkspaceCheckpoint({
-                  cwd: input.scope.cwd,
-                  checkpointRef,
-                  ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),
-                  ...(input.excludePaths === undefined ? {} : { excludePaths: input.excludePaths }),
-                })
-              : checkpointStore.captureHeadCheckpoint({
-                  cwd: input.scope.cwd,
-                  checkpointRef,
-                  head: input.cleanHead,
-                })
-          ).pipe(
-            Effect.as("ready" as const),
-            Effect.catchTags({
-              VcsUnsupportedOperationError: () => Effect.succeed("missing" as const),
-            }),
-            Effect.catch((cause) =>
-              Effect.logWarning("orchestration V2 checkpoint capture failed", {
-                scopeId: input.scope.id,
-                checkpointRef,
-                cause: String(cause),
-              }).pipe(Effect.as("error" as const)),
-            ),
-          );
+          // Threads sharing a folder queue on its lock. One that waited out another's timeout
+          // would only time out again while its own queued messages wait behind it.
+          const lastCapture = lastCaptures.get(input.scope.cwd);
+          const timedOutWhileWaiting =
+            input.cleanHead === undefined &&
+            lastCapture !== undefined &&
+            lastCapture.timedOut &&
+            lastCapture.count > capturesBeforeLock;
+          const captureStatus = timedOutWhileWaiting
+            ? yield* Effect.logWarning(
+                "orchestration V2 checkpoint capture skipped after a capture timed out in its folder",
+                { scopeId: input.scope.id, checkpointRef },
+              ).pipe(Effect.as("error" as const))
+            : yield* (
+                input.cleanHead === undefined
+                  ? captureWorkspaceCheckpoint({
+                      cwd: input.scope.cwd,
+                      checkpointRef,
+                      ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),
+                      ...(input.excludePaths === undefined
+                        ? {}
+                        : { excludePaths: input.excludePaths }),
+                    })
+                  : checkpointStore.captureHeadCheckpoint({
+                      cwd: input.scope.cwd,
+                      checkpointRef,
+                      head: input.cleanHead,
+                    })
+              ).pipe(
+                Effect.as("ready" as const),
+                Effect.catchTags({
+                  VcsUnsupportedOperationError: () => Effect.succeed("missing" as const),
+                }),
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration V2 checkpoint capture failed", {
+                    scopeId: input.scope.id,
+                    checkpointRef,
+                    cause: String(cause),
+                  }).pipe(Effect.as("error" as const)),
+                ),
+              );
 
           if (captureStatus !== "ready") {
             return {
@@ -882,10 +924,11 @@ export const layer: Layer.Layer<
     const repositoryScopesIfReadable: CheckpointServiceV2Shape["repositoryScopesIfReadable"] =
       Effect.fn("CheckpointService.repositoryScopes")(
         function* (input) {
-          const [workspace, submodules] = yield* Effect.all([
-            workspaceFolders.forThread(input),
-            workspaceFolders.submodules(input),
-          ]);
+          const workspace = yield* workspaceFolders.forThread(input);
+          const submodules = yield* workspaceFolders.submodules({
+            ...input,
+            folders: workspace.folders,
+          });
           return yield* Effect.forEach(
             [...workspace.folders.filter((folder) => folder.isGitRepository), ...submodules],
             (folder) =>
@@ -966,6 +1009,7 @@ export const layer: Layer.Layer<
     )(function* (input) {
       const { cwd, id } = input.scope;
       const baselineOrdinal = input.ordinalWithinScope - 1;
+      const capturesBeforeLock = capturesSoFar(cwd);
       const start = yield* withWorkspaceLock(
         cwd,
         Effect.gen(function* () {
@@ -1023,6 +1067,7 @@ export const layer: Layer.Layer<
         ordinalWithinScope: input.ordinalWithinScope,
         appRunOrdinal: null,
         capturedAt: input.capturedAt,
+        capturesBeforeLock,
         ...(input.excludePaths === undefined ? {} : { excludePaths: input.excludePaths }),
         ...(start.cleanHead === null ? {} : { cleanHead: start.cleanHead }),
       });
@@ -1135,6 +1180,7 @@ export const layer: Layer.Layer<
       captureBaseline,
       materializeBaselineCheckpoint,
       capture,
+      capturesSoFar: (cwd: string) => Effect.sync(() => capturesSoFar(cwd)),
       captureRepository,
       restore,
       deleteStaleRefs,
