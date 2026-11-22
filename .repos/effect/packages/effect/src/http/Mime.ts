@@ -5,6 +5,7 @@
  * @since 4.0.0
  */
 import * as Option from "../Option.ts"
+import * as MediaType from "./internal/mediaType.ts"
 import standardTypes from "./internal/mimeTypes.ts"
 
 interface Tables {
@@ -79,7 +80,7 @@ export const getExtension = (type: string): Option.Option<string> => {
   if (typeof type !== "string") {
     return Option.none()
   }
-  return Option.fromUndefinedOr(getTables().typeToExtension.get(type.split(";")[0].trim().toLowerCase()))
+  return Option.fromUndefinedOr(getTables().typeToExtension.get(MediaType.normalize(type)))
 }
 
 /**
@@ -93,5 +94,5 @@ export const getAllExtensions = (type: string): Option.Option<ReadonlySet<string
   if (typeof type !== "string") {
     return Option.none()
   }
-  return Option.fromUndefinedOr(getTables().typeToExtensions.get(type.split(";")[0].trim().toLowerCase()))
+  return Option.fromUndefinedOr(getTables().typeToExtensions.get(MediaType.normalize(type)))
 }
