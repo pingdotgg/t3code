@@ -9,11 +9,12 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { requireNativeModule } from "expo";
 import type {
   AttachmentPreviewFile,
-  downloadAndShareAttachment,
   downloadAttachmentForPreview,
 } from "../../lib/attachmentDownload";
+import type { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import type { useMediaActions } from "../../state/mediaActions";
 
 const harness = vi.hoisted(() => ({
@@ -22,7 +23,7 @@ const harness = vi.hoisted(() => ({
   alert: vi.fn(),
   share: vi.fn<typeof downloadAndShareAttachment>(),
   download: vi.fn<typeof downloadAttachmentForPreview>(),
-  saveImageToLibrary: vi.fn<(uri: string, mimeType: string, name: string) => Promise<void>>(),
+  showSaveImage: false,
   previews: [] as unknown[],
   mounts: 0,
   presentationFinished: false,
@@ -49,21 +50,25 @@ vi.mock("../PdfPreview", () => ({ PdfPreview: () => null }));
 vi.mock("../MediaPreviewHeader", () => ({
   MediaPreviewHeader: ({ media }: { media: ReturnType<typeof useMediaActions> }) => {
     const share = media.actions.find(({ id }) => id === "save");
-    const saveImage = media.actions.find(({ id }) => id === "save-image");
-    return (
-      <>
-        {share ? (
-          <button data-action="share" disabled={share.disabled} onClick={share.run}>
-            {share.title}
+    if (harness.showSaveImage) {
+      return media.actions
+        .filter(({ id }) => id === "save" || id === "save-image")
+        .map(({ id, disabled, run, title }) => (
+          <button
+            key={id}
+            data-action={id === "save" ? "share" : id}
+            disabled={disabled}
+            onClick={run}
+          >
+            {title}
           </button>
-        ) : null}
-        {saveImage ? (
-          <button data-action="save-image" disabled={saveImage.disabled} onClick={saveImage.run}>
-            {saveImage.title}
-          </button>
-        ) : null}
-      </>
-    );
+        ));
+    }
+    return share ? (
+      <button data-action="share" disabled={share.disabled} onClick={share.run}>
+        {share.title}
+      </button>
+    ) : null;
   },
 }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: vi.fn() }) }));
@@ -77,14 +82,9 @@ vi.mock("../../state/query", () => ({
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: { get: () => AsyncResult.success(grant) },
 }));
-vi.mock("expo", () => ({
-  requireNativeModule: () => ({ saveImageToLibrary: harness.saveImageToLibrary }),
-}));
+vi.mock("expo", () => ({ requireNativeModule: vi.fn() }));
 vi.mock("expo-clipboard", () => ({ setStringAsync: vi.fn() }));
-vi.mock("expo-haptics", () => ({
-  NotificationFeedbackType: { Success: "success" },
-  notificationAsync: vi.fn(async () => {}),
-}));
+vi.mock("expo-haptics", () => ({ notificationAsync: vi.fn() }));
 vi.mock("react-native", () => ({
   Modal: () => null,
   Platform: { OS: "android", Version: 35 },
@@ -141,11 +141,13 @@ async function openGallery(
   selected: FilePreviewItem,
   gallery: readonly FilePreviewItem[],
   progressiveGallery: boolean,
+  showSaveImage = false,
 ) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   harness.previews.length = 0;
   harness.mounts = 0;
   harness.alert.mockClear();
+  harness.showSaveImage = showSaveImage;
   const container = document.createElement("div");
   const root = createRoot(container);
   const onRequestClose = vi.fn();
@@ -226,7 +228,7 @@ it.each(["completes", "fails"] as const)(
   },
 );
 
-it("finishes saving the previous Android gallery image after a swipe", async () => {
+it("hands the previous Android gallery image to the photo library after a swipe", async () => {
   const remoteImage = (name: string): FilePreviewItem => {
     const uri = `https://assets.test/${name}`;
     return { ...image(uri), name, actionsSource: { uri, name, mimeType: "image/png" } };
@@ -236,8 +238,9 @@ it("finishes saving the previous Android gallery image after a swipe", async () 
   harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => resource.url);
   const pending = Promise.withResolvers<AttachmentPreviewFile>();
   harness.download.mockReset().mockReturnValueOnce(pending.promise);
-  harness.saveImageToLibrary.mockReset().mockResolvedValue(undefined);
-  await using preview = await openGallery(first, [first, second], false);
+  const saveImageToLibrary = vi.fn().mockRejectedValue(new Error("Library full"));
+  vi.mocked(requireNativeModule).mockReturnValueOnce({ saveImageToLibrary });
+  await using preview = await openGallery(first, [first, second], false, true);
 
   await act(async () =>
     preview.container.querySelector<HTMLButtonElement>("[data-action=save-image]")!.click(),
@@ -254,8 +257,8 @@ it("finishes saving the previous Android gallery image after a swipe", async () 
   const uri = "file:///cache/first.png";
   await act(async () => pending.resolve({ uri, share: vi.fn(), dispose: vi.fn() }));
 
-  expect(harness.saveImageToLibrary).toHaveBeenCalledWith(uri, "image/png", "first.png");
-  expect(harness.alert).not.toHaveBeenCalled();
+  expect(saveImageToLibrary).toHaveBeenCalledWith(uri, "image/png", "first.png");
+  expect(harness.alert).toHaveBeenCalledWith("Could not save image", "Library full");
 });
 
 it.each([true, false])(
