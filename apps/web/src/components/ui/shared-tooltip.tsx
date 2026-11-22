@@ -2,6 +2,8 @@ import {
   cloneElement,
   createContext,
   use,
+  useEffect,
+  useId,
   useRef,
   useState,
   type FocusEvent,
@@ -20,6 +22,8 @@ const CLOSE_GRACE_MS = 100;
 
 interface SharedTooltipContent {
   readonly render: () => ReactNode;
+  /** Comparable key that changes whenever `render()` output changes while open. */
+  readonly contentKey?: unknown;
   readonly side?: "top" | "bottom" | "left" | "right";
   readonly variant?: "default" | "glass" | "code";
 }
@@ -31,10 +35,22 @@ interface SharedTooltipState extends SharedTooltipContent {
 
 interface SharedTooltipApi {
   show(anchor: HTMLElement, content: SharedTooltipContent, immediate: boolean): void;
+  refresh(anchor: HTMLElement, content: SharedTooltipContent): void;
   hide(anchor: HTMLElement): void;
   /** A press closes it at once, as Base UI's closeOnClick does. */
   dismiss(anchor: HTMLElement): void;
   holdOpen(): void;
+}
+
+function setAriaDescribedBy(element: HTMLElement, id: string, present: boolean) {
+  const tokens = (element.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean);
+  const next = present
+    ? tokens.includes(id)
+      ? tokens
+      : [...tokens, id]
+    : tokens.filter((token) => token !== id);
+  if (next.length > 0) element.setAttribute("aria-describedby", next.join(" "));
+  else element.removeAttribute("aria-describedby");
 }
 
 const SharedTooltipContext = createContext<SharedTooltipApi | null>(null);
@@ -44,6 +60,7 @@ const SharedTooltipContext = createContext<SharedTooltipApi | null>(null);
  * link and file chip, and almost none of them are ever hovered.
  */
 export function SharedTooltipProvider({ children }: { children: ReactNode }) {
+  const popupId = useId();
   const [state, setState] = useState<SharedTooltipState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastClosedAt = useRef(0);
@@ -68,6 +85,18 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
       }
       timer.current = setTimeout(() => commit({ ...content, anchor, open: true }), OPEN_DELAY_MS);
     },
+    refresh(anchor, content) {
+      const active = current.current;
+      if (!active || active.anchor !== anchor) return;
+      if (
+        active.contentKey === content.contentKey &&
+        active.side === content.side &&
+        active.variant === content.variant
+      ) {
+        return;
+      }
+      commit({ ...active, ...content });
+    },
     hide(anchor) {
       if (current.current && current.current.anchor !== anchor) {
         clearTimer();
@@ -90,6 +119,14 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
     },
   }));
 
+  const activeAnchor = state?.open ? state.anchor : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- links the active trigger DOM element to the shared tooltip popup via aria-describedby
+  useEffect(() => {
+    if (!activeAnchor) return;
+    setAriaDescribedBy(activeAnchor, popupId, true);
+    return () => setAriaDescribedBy(activeAnchor, popupId, false);
+  }, [activeAnchor, popupId]);
+
   return (
     <SharedTooltipContext value={api}>
       {children}
@@ -101,9 +138,11 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
           }}
         >
           <TooltipPopup
+            id={popupId}
             anchor={state.anchor}
             side={state.side ?? "top"}
             variant={state.variant ?? "default"}
+            className="pointer-events-auto"
             onMouseEnter={() => api.holdOpen()}
             onMouseLeave={() => api.hide(state.anchor)}
           >
@@ -127,12 +166,18 @@ export interface SharedTooltipTriggerProps {
 export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTriggerProps | null {
   const api = use(SharedTooltipContext);
   const scrollTracker = useTooltipScrollTracker();
+  const anchorRef = useRef<HTMLElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes an open shared tooltip when its trigger's label changes
+  useEffect(() => {
+    if (api && anchorRef.current) api.refresh(anchorRef.current, content);
+  }, [api, content]);
   if (!api) return null;
   return {
     // Touch never opens it, as Base UI's mouseOnly trigger; taps also send compatibility mouse events.
     onPointerEnter: (event) => {
       if (event.pointerType === "touch") return;
       const trigger = event.currentTarget;
+      anchorRef.current = trigger;
       api.show(trigger, content, false);
       // Scrolling the timeline closes it, as it does a TooltipTrigger's.
       scrollTracker?.hover(trigger, api, () => api.dismiss(trigger));
@@ -140,8 +185,10 @@ export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTr
     onPointerLeave: (event) => api.hide(event.currentTarget),
     // Keyboard focus shows it at once, as Base UI does.
     onFocus: (event) => {
-      if (event.currentTarget.matches(":focus-visible"))
+      if (event.currentTarget.matches(":focus-visible")) {
+        anchorRef.current = event.currentTarget;
         api.show(event.currentTarget, content, true);
+      }
     },
     onBlur: (event) => api.hide(event.currentTarget),
     onPointerDown: (event) => api.dismiss(event.currentTarget),
@@ -187,7 +234,12 @@ export function SharedTooltipTrigger({
   side?: SharedTooltipContent["side"];
   variant?: SharedTooltipContent["variant"];
 }) {
-  const tooltip = useSharedTooltip({ render: () => label, side, ...(variant ? { variant } : {}) });
+  const tooltip = useSharedTooltip({
+    render: () => label,
+    contentKey: label,
+    side,
+    ...(variant ? { variant } : {}),
+  });
   if (tooltip) return withSharedTooltip(render, tooltip, children);
   return (
     <Tooltip>

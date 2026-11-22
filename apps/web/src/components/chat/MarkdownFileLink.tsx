@@ -336,7 +336,11 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   const tooltipContent = (
     <WorkspaceEntryTooltip path={iconPath} label={targetPath} environmentId={environmentId} />
   );
-  const sharedTooltip = useSharedTooltip({ render: () => tooltipContent, variant: "code" });
+  const sharedTooltip = useSharedTooltip({
+    render: () => tooltipContent,
+    contentKey: `${iconPath}\u0000${targetPath}`,
+    variant: "code",
+  });
   const chip = hasPrimaryAction ? (
     <ContextChip
       {...nativeDrag}

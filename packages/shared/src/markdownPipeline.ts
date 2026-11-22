@@ -25,7 +25,7 @@ import {
   remarkKeepLeadingWhitespace,
 } from "./markdownLeadingWhitespace.ts";
 import { remarkCodexDirectives } from "./codexMarkdownDirectives.ts";
-import { absoluteFilePathMatches, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
+import { absoluteFilePathMatches } from "./markdownLinks.ts";
 import { isWindowsAbsolutePath } from "./path.ts";
 import {
   CHAT_MARKDOWN_SANITIZE_SCHEMA,

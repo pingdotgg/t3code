@@ -63,3 +63,33 @@ it.each([
     else await expect.element(page.getByText("Description")).not.toBeInTheDocument();
   },
 );
+
+it("refreshes an open shared tooltip's label and links aria-describedby on focus", async () => {
+  await using screen = await render(
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger label="Copy code" render={<button type="button" />}>
+        Copy
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>,
+  );
+  const trigger = screen.getByRole("button", { name: "Copy" });
+  await userEvent.keyboard("{Tab}");
+  await expect.element(trigger).toHaveFocus();
+  const popup = page.getByText("Copy code");
+  await expect.element(popup).toBeVisible();
+  const popupId = trigger.element().getAttribute("aria-describedby");
+  expect(popupId).toBeTruthy();
+  expect(document.getElementById(popupId!)?.textContent).toBe("Copy code");
+
+  await screen.rerender(
+    <SharedTooltipProvider>
+      <SharedTooltipTrigger label="Copied" render={<button type="button" />}>
+        Copy
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>,
+  );
+  await expect.element(page.getByText("Copied")).toBeVisible();
+
+  await userEvent.keyboard("{Tab}");
+  await vi.waitFor(() => expect(trigger.element().getAttribute("aria-describedby")).toBeNull());
+});
