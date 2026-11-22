@@ -9943,7 +9943,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     ...publishedPendingBackgroundTasks(nativeThreadId, roster, awaitedTaskIds),
                     ...owedWakeTasks,
                   ],
-                  status: input.status === "completed" ? "active" : "idle",
+                  // "error" also makes the session manager forget the load, so turn start resumes here.
+                  status:
+                    threadDisposition === "broken"
+                      ? "error"
+                      : input.status === "completed"
+                        ? "active"
+                        : "idle",
                   updatedAt: input.completedAt,
                 };
                 yield* rememberProviderThread(providerThread);
@@ -11023,6 +11029,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               // Background tasks from earlier turns keep streaming while the root request hangs.
               // Only the root starts depth-1 tasks, so such a start (a forked skill) is this turn's.
               Reflect.get(message, "parent_tool_use_id") == null &&
+              !isClaudeBackgroundTasksChangedMessage(message) &&
               !(
                 message.type === "system" &&
                 message.subtype.startsWith("task_") &&

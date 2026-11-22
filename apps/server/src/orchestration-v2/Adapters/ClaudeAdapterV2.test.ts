@@ -12907,6 +12907,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
+        // Background roster updates are not progress of the stuck compaction.
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: `00000000-0000-4000-8000-0000000249${String(index).padStart(2, "0")}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
         yield* TestClock.adjust("30 seconds");
       }
       const terminal = yield* Queue.take(harness.terminalReceipts);
@@ -12914,6 +12924,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.equal(terminal.failure.code, "claude_request_unanswered");
       assert.equal(terminal.threadDisposition, "broken");
+      assert.equal(
+        harness.events.findLast((event) => event.type === "provider_thread.updated")?.providerThread
+          .status,
+        "error",
+      );
       const resumed = yield* Effect.exit(
         harness.runtime.resumeThread({
           providerThread: { ...harness.providerThread, status: "error" },
