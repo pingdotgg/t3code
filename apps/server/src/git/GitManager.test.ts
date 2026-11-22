@@ -5205,6 +5205,21 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(yield* heads("origin")).toEqual(["refs/heads/main"]);
         expect(created(again.providerCalls)).toEqual([]);
 
+        // A lookup answered before the create must not hide the pull request the create returns.
+        yield* runGit(repoDir, ["checkout", "-b", "sec/two", "main"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "two.txt"), "two\n");
+        yield* runGit(repoDir, ["add", "two.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Two"]);
+        const two = { ...open, number: 10, headRefName: "sec/two" };
+        const warmed = yield* makeManager({
+          providerScenario: { privateRemote, prListByHeadSelector: { "sec/two": [two] } },
+        });
+        const lookup = warmed.manager.branchPullRequest({ cwd: repoDir, branch: "sec/two" });
+        expect(yield* lookup).toBeNull();
+        expect(yield* createPrivate(warmed.manager)).toMatchObject({ status: "opened_existing" });
+        expect(yield* lookup).toMatchObject({ number: 10 });
+        yield* runGit(repoDir, ["checkout", "sec/fix"]);
+
         // So does a create that forgets to ask for private: it never publishes the branch.
         NodeFS.writeFileSync(NodePath.join(repoDir, "later.txt"), "later\n");
         yield* runGit(repoDir, ["add", "later.txt"]);
