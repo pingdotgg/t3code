@@ -1,6 +1,13 @@
 import { defineRule } from "@oxlint/plugins";
 
-import { baseClass, classTokens, maxOccurrencesSchema, readMaxOccurrences } from "../classes.ts";
+import {
+  baseClass,
+  ceilingMismatch,
+  classTokens,
+  maxOccurrencesSchema,
+  readMaxOccurrences,
+  suppressedLines,
+} from "../classes.ts";
 
 // Tailwind's size scale, the old 2xs/3xs steps and arbitrary sizes such as
 // text-[13px]. A role (text-label, text-meta …) carries its own size and weight.
@@ -34,9 +41,12 @@ export default defineRule({
 
     // Every string, not only className attributes: type also hides in class
     // constants, cva variants and cn() arguments.
-    const exceedsCeiling = (value: string): ReadonlyArray<string> | null => {
+    let suppressed: ReadonlySet<number> | undefined;
+    const exceedsCeiling = (value: string, line: number): ReadonlyArray<string> | null => {
       const found = rawTypeClasses(value);
       if (found.length === 0) return null;
+      suppressed ??= suppressedLines(context.sourceCode, "t3code/no-raw-type-classes");
+      if (suppressed.has(line)) return found;
       occurrenceCount++;
       return occurrenceCount > allowedCount ? found : null;
     };
@@ -46,12 +56,16 @@ export default defineRule({
     return {
       Literal(node) {
         if (typeof node.value !== "string") return;
-        const found = exceedsCeiling(node.value);
+        const found = exceedsCeiling(node.value, node.loc.start.line);
         if (found) context.report({ node, message: message(found) });
       },
       TemplateElement(node) {
-        const found = exceedsCeiling(node.value.cooked ?? "");
+        const found = exceedsCeiling(node.value.cooked ?? "", node.loc.start.line);
         if (found) context.report({ node, message: message(found) });
+      },
+      "Program:exit"(node) {
+        const mismatch = ceilingMismatch(allowedCount, occurrenceCount);
+        if (mismatch) context.report({ node, message: mismatch });
       },
     };
   },

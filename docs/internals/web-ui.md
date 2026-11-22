@@ -72,3 +72,16 @@ that calls no hook. Lint misses some bailouts, notably `try` with `finally` and
 compiles every file and fails on any skip. Async handlers rarely need `try`: an
 atom command settles into a result, so cleanup can follow the `await`. `useStableCallback` still
 marks handlers that leave a large component, as described above.
+
+## Lint ceilings
+
+`t3code/no-raw-type-classes`, `t3code/no-styled-raw-controls` and `t3code/no-raw-surface` freeze
+existing debt per file in [`lint-ceilings.json`](../../lint-ceilings.json). A file's count must
+equal its ceiling, so headroom can't hide a new occurrence. After you remove occurrences, merge
+main, or cherry-pick, run `vp run lint:ceilings`: it lowers each entry to the file's count and
+deletes it at zero. It never raises an entry or adds a file, so a file over its ceiling, or one
+missing from the table, has to be fixed. Don't edit the table by hand.
+
+`vp run check:changed` runs `vp run lint:ceilings --check`, which compares the table with the last
+pushed one (the parents of the commits no remote has) and fails on a raise or a new entry. CI's
+shallow checkout can't make that comparison, so there only review catches a raise.

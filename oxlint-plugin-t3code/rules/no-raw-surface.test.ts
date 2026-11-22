@@ -70,4 +70,10 @@ describe("t3code/no-raw-surface maxOccurrences", () => {
       assert.match(output, /Hand-built surface \(rounded-md\)/);
     },
   );
+
+  ceiling.invalid(
+    "reports a ceiling above the file's count",
+    `const a = "surface-card rounded-card";`,
+    (output) => assert.match(output, /Debt ceiling 1, file has 0: lower it to 0/),
+  );
 });

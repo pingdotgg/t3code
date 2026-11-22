@@ -84,6 +84,8 @@ export function classStrings(
   return out;
 }
 
+export const CEILINGS_COMMAND = "vp run lint:ceilings";
+
 export const maxOccurrencesSchema = [
   {
     type: "object" as const,
@@ -92,7 +94,7 @@ export const maxOccurrencesSchema = [
         type: "integer" as const,
         minimum: 0,
         description:
-          "Legacy debt ceiling for this file: occurrences beyond this count are reported.",
+          "Legacy debt ceiling for this file, generated into lint-ceilings.json. The file's count must equal it.",
       },
     },
     additionalProperties: false,
@@ -108,3 +110,40 @@ export const readMaxOccurrences = (options: ReadonlyArray<unknown>): number => {
     ? first.maxOccurrences
     : 0;
 };
+
+/**
+ * Ceilings are exact, so headroom can't hide new occurrences. scripts/lint-ceilings.ts reads
+ * "file has N" from this message; keep the wording.
+ */
+export function ceilingMismatch(ceiling: number, count: number): string | undefined {
+  if (count === ceiling) return undefined;
+  if (count < ceiling) {
+    return `Debt ceiling ${ceiling}, file has ${count}: lower it to ${count} with \`${CEILINGS_COMMAND}\`.`;
+  }
+  return `Debt ceiling ${ceiling}, file has ${count}: fix the ${count - ceiling} new occurrences reported in this file. Ceilings never go up, and a new file starts at 0.`;
+}
+
+interface CommentSource {
+  getAllComments(): ReadonlyArray<{
+    value: string;
+    loc: { start: { line: number }; end: { line: number } };
+  }>;
+}
+
+/**
+ * Lines where a disable comment names this rule. Occurrences there are still reported, so the
+ * comment stays in use, but they don't count toward the file's ceiling.
+ */
+export function suppressedLines(source: CommentSource, rule: string): ReadonlySet<number> {
+  const lines = new Set<number>();
+  for (const comment of source.getAllComments()) {
+    const match = /^\s*(?:oxlint|eslint)-disable-(next-line|line)\b(.*?)(?:\s--|$)/su.exec(
+      comment.value,
+    );
+    if (!match) continue;
+    const rules = (match[2] ?? "").split(",").map((name) => name.trim());
+    if (rules.some(Boolean) && !rules.includes(rule)) continue;
+    lines.add(match[1] === "line" ? comment.loc.start.line : comment.loc.end.line + 1);
+  }
+  return lines;
+}

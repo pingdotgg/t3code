@@ -2,10 +2,12 @@ import { defineRule } from "@oxlint/plugins";
 
 import {
   baseClass,
+  ceilingMismatch,
   classStrings,
   classTokens,
   maxOccurrencesSchema,
   readMaxOccurrences,
+  suppressedLines,
   type ResolveConstant,
 } from "../classes.ts";
 
@@ -73,6 +75,7 @@ export default defineRule({
     const classNames: Array<{
       element: string;
       value: unknown;
+      line: number;
       report: (message: string) => void;
     }> = [];
 
@@ -88,18 +91,20 @@ export default defineRule({
           classNames.push({
             element,
             value: attribute.value,
+            line: attribute.loc.start.line,
             report: (message) => context.report({ node: attribute, message }),
           });
         }
       },
-      "Program:exit"() {
+      "Program:exit"(node) {
         let occurrenceCount = 0;
-        for (const { element, value, report } of classNames) {
+        const suppressed = suppressedLines(context.sourceCode, "t3code/no-styled-raw-controls");
+        for (const { element, value, line, report } of classNames) {
           const found = classStrings(value, resolveConstant).flatMap(appearanceClasses);
           if (found.length === 0) continue;
 
-          occurrenceCount++;
-          if (occurrenceCount <= allowedCount) continue;
+          if (!suppressed.has(line)) occurrenceCount++;
+          if (!suppressed.has(line) && occurrenceCount <= allowedCount) continue;
 
           const replacement =
             element === "a"
@@ -111,6 +116,8 @@ export default defineRule({
             `<${element}> is styled by hand (${found.slice(0, 4).join(" ")}). Render ${replacement} from components/ui; only layout classes belong on a raw control.`,
           );
         }
+        const mismatch = ceilingMismatch(allowedCount, occurrenceCount);
+        if (mismatch) context.report({ node, message: mismatch });
       },
     };
   },
