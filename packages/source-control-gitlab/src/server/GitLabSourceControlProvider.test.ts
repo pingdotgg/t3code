@@ -4,6 +4,7 @@ import { refineUnknownRemoteProvider } from "@t3tools/source-control-core/server
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
@@ -199,6 +200,21 @@ selfhosted
   );
 });
 
+it.effect(
+  "looks up a branch's merge requests a full page at a time, past forks' same-named branches",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({});
+      assert.deepStrictEqual(
+        provider.headBranchProbe?.({
+          headSelectors: ["octocat:feature", "feature"],
+          state: "open",
+        }),
+        { headSelectors: ["feature"], limit: 100 },
+      );
+    }),
+);
+
 it.effect.each(["merge_requests", "issues"])(
   "resolves %s subjects on the linked host without using the checkout",
   (kind) =>
@@ -318,14 +334,23 @@ it.effect.each([
             "--raw-field",
             "title=Fix remote flow",
             "--field",
-            "description=@/tmp/body.md",
+            "description=@-",
           ]);
+          assert.strictEqual(input.stdin, "Body");
           return Effect.succeed(processOutput("{}"));
         },
       },
     });
     const provider = yield* GitLabSourceControlProvider.make.pipe(
-      Effect.provide(Layer.merge(host, GitLabCli.layer.pipe(Layer.provide(host)))),
+      Effect.provide(
+        Layer.merge(
+          host,
+          GitLabCli.layer.pipe(
+            Layer.provide(host),
+            Layer.provide(FileSystem.layerNoop({ readFileString: () => Effect.succeed("Body") })),
+          ),
+        ),
+      ),
     );
     yield* provider.createChangeRequest({
       cwd: "/repo",
