@@ -113,6 +113,7 @@ import {
 } from "../../provider/ClaudeCodeModelRoutes.ts";
 import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { AGENT_FEEDBACK_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -912,8 +913,12 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
   });
 });
 
-describe("ClaudeAdapterV2 device instructions", () => {
-  const options = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+describe("ClaudeAdapterV2 T3 tool instructions", () => {
+  const options = (input: {
+    readonly mcp: boolean;
+    readonly deviceToolsAvailable: boolean;
+    readonly agentFeedback?: "off" | "on-request" | "auto";
+  }) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -926,9 +931,10 @@ describe("ClaudeAdapterV2 device instructions", () => {
         ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
         : {}),
       deviceToolsAvailable: input.deviceToolsAvailable,
+      agentFeedback: input.agentFeedback ?? "off",
       environment: {},
     });
-  const append = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+  const append = (input: Parameters<typeof options>[0]) =>
     (options(input).systemPrompt as { readonly append?: string }).append ?? "";
 
   it("gives a session with device access the device block and the ToolSearch line to load it", () => {
@@ -942,12 +948,20 @@ describe("ClaudeAdapterV2 device instructions", () => {
     assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## T3 Code devices");
   });
 
+  it("gives the agent feedback line only to a session with T3 tools", () => {
+    const feedback = (mcp: boolean, agentFeedback: "off" | "auto") =>
+      append({ mcp, deviceToolsAvailable: false, agentFeedback }).includes("t3_feedback");
+    assert.include(
+      append({ mcp: true, deviceToolsAvailable: false, agentFeedback: "auto" }),
+      AGENT_FEEDBACK_INSTRUCTIONS.auto,
+    );
+    assert.isFalse(feedback(true, "off"));
+    assert.isFalse(feedback(false, "auto"));
+  });
+
   it("gives native subagents the device block only in a session with device access", async () => {
     // Subagents start from their task prompt, not the parent's system prompt.
-    const subagentContext = (input: {
-      readonly mcp: boolean;
-      readonly deviceToolsAvailable: boolean;
-    }) =>
+    const subagentContext = (input: Parameters<typeof options>[0]) =>
       Promise.all(
         (options(input).hooks?.SubagentStart ?? []).flatMap((matcher) =>
           matcher.hooks.map((hook) =>
@@ -976,6 +990,17 @@ describe("ClaudeAdapterV2 device instructions", () => {
     ]);
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
+    // A custom subagent can lack T3 tools even when this session has them.
+    assert.notInclude(
+      JSON.stringify(
+        await subagentContext({
+          mcp: true,
+          deviceToolsAvailable: true,
+          agentFeedback: "auto",
+        }),
+      ),
+      "t3_feedback",
+    );
   });
 });
 

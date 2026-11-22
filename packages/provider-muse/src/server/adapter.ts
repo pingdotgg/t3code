@@ -357,6 +357,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let registeredMcpAuthorization: string | undefined;
       let nativeSessionId: string | undefined;
       let thread: OrchestrationV2ProviderThread | undefined;
+      let hasT3Mcp = false;
       let active: ActiveTurn | undefined;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
       let latestSubscriptionUsage: MuseSubscriptionUsage | undefined;
@@ -1933,7 +1934,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         if (
           thread !== undefined &&
-          registeredMcpAuthorization === mcpSession?.authorizationHeader
+          (mcpSession === undefined ||
+            registeredMcpAuthorization === mcpSession.authorizationHeader)
         ) {
           return thread;
         }
@@ -2023,6 +2025,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 createdAt,
                 updatedAt: createdAt,
               };
+          hasT3Mcp = mcpSession !== undefined;
           session = {
             ...session,
             model: result.session.modelId ?? args.modelSelection.model,
@@ -2104,7 +2107,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           turnInput.message.creationSource === "provider";
         if (!continuation) {
           const currentMcp = yield* mcpSessions.read(turnInput.threadId);
-          if (currentMcp?.authorizationHeader !== registeredMcpAuthorization) {
+          if (
+            currentMcp !== undefined &&
+            currentMcp.authorizationHeader !== registeredMcpAuthorization
+          ) {
             yield* register({
               threadId: turnInput.threadId,
               modelSelection: turnInput.modelSelection,
@@ -2212,6 +2218,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   {
                     type: "text",
                     text: buildRuntimeInstructions({
+                      agentFeedback: hasT3Mcp ? (turnInput.agentFeedback ?? "off") : "off",
                       harness: "Muse Code",
                       model: session.model ?? undefined,
                       reasoningEffort: effort,
