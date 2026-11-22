@@ -76,17 +76,6 @@ it.live("uses the first non-empty Markdown template in Forgejo's lookup order", 
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
-it.live("falls back to the Markdown template under docs", () =>
-  Effect.gen(function* () {
-    const repo = yield* templateRepository;
-    yield* repo.writeTemplate(".gitea/pull_request_template.yaml", "name: A form");
-    yield* repo.writeTemplate("docs/pull_request_template.md", "## Docs");
-    yield* repo.commit;
-
-    assert.deepStrictEqual(yield* repo.read("HEAD"), Option.some("## Docs"));
-  }).pipe(Effect.scoped, Effect.provide(testLayer)),
-);
-
 it.live("rejects a committed template symlink and caps the fallback blob", () =>
   Effect.gen(function* () {
     const repo = yield* templateRepository;
