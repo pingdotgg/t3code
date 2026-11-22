@@ -57,6 +57,7 @@ import {
   addPreparingComposerImages,
   getPreparingComposerImages,
   isPreparingComposerImage,
+  joinPreparedImagesToDraft,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
 
@@ -338,26 +339,28 @@ export function useComposerAttachmentIntake(input: {
         previewUrl: URL.createObjectURL(file),
         file,
       }));
-    const storedImageIds = new Set(
-      nextImages.length === 1 && nextImages[0]
-        ? addComposerImage(nextImages[0])
-        : nextImages.length > 1
-          ? addComposerImagesToDraft(nextImages)
-          : [],
-    );
-    const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
-    // The draft may be gone by now; revoking a URL the store already revoked is harmless.
-    for (const image of nextImages) {
-      if (!storedImageIds.has(image.id)) URL.revokeObjectURL(image.previewUrl);
-    }
-    if (storedImages.length > 0 && imageAttachmentsGetChips) {
-      insertedAny =
-        insertAttachmentReferences(
-          storedImages.map(imageContextReference),
-          undefined,
-          pendingInsertion,
-        ) || insertedAny;
-    }
+    joinPreparedImagesToDraft(() => {
+      const storedImageIds = new Set(
+        nextImages.length === 1 && nextImages[0]
+          ? addComposerImage(nextImages[0])
+          : nextImages.length > 1
+            ? addComposerImagesToDraft(nextImages)
+            : [],
+      );
+      const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
+      // The draft may be gone by now; revoking a URL the store already revoked is harmless.
+      for (const image of nextImages) {
+        if (!storedImageIds.has(image.id)) URL.revokeObjectURL(image.previewUrl);
+      }
+      if (storedImages.length > 0 && imageAttachmentsGetChips) {
+        insertedAny =
+          insertAttachmentReferences(
+            storedImages.map(imageContextReference),
+            undefined,
+            pendingInsertion,
+          ) || insertedAny;
+      }
+    });
     // Only failures are reported here. Success must not pass `null`: by
     // now other work (a failed send, an overlapping paste) may have set a
     // thread error this call knows nothing about, and clearing it would

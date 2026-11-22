@@ -1,11 +1,17 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { createStore, type StoreApi, useStore } from "zustand";
 
 import { act, render } from "../../../test/render";
+import { composerTargetKey, useComposerDraftStore } from "../../composerDraftStore";
 import {
   addPreparingComposerImages,
+  cancelHeldComposerSend,
   cancelPreparingComposerImages,
+  holdComposerSend,
+  joinPreparedImagesToDraft,
   removePreparingComposerImages,
   useSubmitAfterPreparingImages,
 } from "./preparingComposerImages";
@@ -147,6 +153,43 @@ it("drops a waiting send when the composer moves to another draft or discards it
   expect(queueSubmit?.(submit)).toBe(true);
   await act(() => cancelPreparingComposerImages(target));
   expect(submit).not.toHaveBeenCalled();
+});
+
+it("holds a message send until its images join the draft, and cancels on edit, cancel, or new paste", async () => {
+  const draftTarget = scopeThreadRef(EnvironmentId.make("environment-held"), ThreadId.make("held"));
+  const target = composerTargetKey(draftTarget);
+  const drafts = useComposerDraftStore.getState();
+  using _store = {
+    [Symbol.dispose]: () => {
+      cancelPreparingComposerImages(target);
+      drafts.clearComposerContent(draftTarget);
+    },
+  };
+  drafts.setPrompt(draftTarget, "check");
+  expect(holdComposerSend(draftTarget, null)).toBeNull();
+
+  // Two pastes compress separately; the first joining the draft is not an edit.
+  addPreparingComposerImages(target, [preparingImage("first")]);
+  addPreparingComposerImages(target, [preparingImage("second")]);
+  const held = holdComposerSend(draftTarget, null);
+  await expect(holdComposerSend(draftTarget, null)).resolves.toEqual({ status: "cancelled" });
+  removePreparingComposerImages(target, new Set(["first"]));
+  joinPreparedImagesToDraft(() => drafts.setPrompt(draftTarget, "check first"));
+  removePreparingComposerImages(target, new Set(["second"]));
+  await expect(held).resolves.toEqual({ status: "ready" });
+
+  for (const cancel of [
+    () => drafts.setPrompt(draftTarget, "check again"),
+    () => cancelHeldComposerSend(target),
+    () => addPreparingComposerImages(target, [preparingImage("added-mid-wait")]),
+    () => removePreparingComposerImages(target, new Set(["later"]), { cancelSubmission: true }),
+  ]) {
+    addPreparingComposerImages(target, [preparingImage("later")]);
+    const cancelled = holdComposerSend(draftTarget, null);
+    cancel();
+    await expect(cancelled).resolves.toEqual({ status: "cancelled" });
+    cancelPreparingComposerImages(target);
+  }
 });
 
 it("keeps the draft unsent when image preparation fails", async () => {

@@ -76,6 +76,7 @@ import {
   restoreFailedDraftThread,
   checkoutPullRequestUrlToLink,
   composerDraftHasUserContent,
+  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -118,6 +119,7 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { countPreparingComposerImages, holdComposerSend } from "./preparingComposerImages";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
@@ -419,12 +421,13 @@ export function useComposerSend(input: ComposerSendInput) {
     e?.preventDefault();
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
-    const promptAtSend = promptRef.current;
+    let promptAtSend = promptRef.current;
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
       !directAnnotation &&
       !draftHasNonPromptContent(composerDraftTarget) &&
+      countPreparingComposerImages(composerTargetKey(composerDraftTarget)) === 0 &&
       isUsageLimitsCommand(promptRef.current)
     ) {
       if (openUsageLimits()) {
@@ -435,7 +438,9 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
 
-    const sendCtx = composerRef.current?.getSendContext();
+    // Read before any wait; the composer on screen may belong to another thread after it.
+    let sendCtx = composerRef.current?.getSendContext();
+    const onSendScreen = () => currentRouteThreadKeyRef.current === routeThreadKey;
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
       sendCtx && !directAnnotation && !queuedRunEdit.isEditing
@@ -530,6 +535,72 @@ export function useComposerSend(input: ComposerSendInput) {
         }),
       );
       return;
+    }
+    if (!directAnnotation) {
+      const capabilitiesBeforeHold = liveAttachmentCapabilities(
+        environmentId,
+        sendCtx?.files ?? [],
+      );
+      if (capabilitiesBeforeHold.fileBlockReason !== null) {
+        setThreadError(activeThread.id, capabilitiesBeforeHold.fileBlockReason);
+        return;
+      }
+      const heldForAttachments = holdComposerSend(
+        composerDraftTarget,
+        capabilitiesBeforeHold.supportsAttachmentUploads ? environmentId : null,
+      );
+      if (heldForAttachments) {
+        const heldResult = await heldForAttachments;
+        if (heldResult.status === "cancelled") return;
+        if (heldResult.status === "upload-failed") {
+          setThreadError(activeThread.id, heldResult.reason);
+          if (!onSendScreen()) {
+            const targetThreadRef = scopeThreadRef(environmentId, activeThread.id);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: m(msg("Message not sent")),
+                description: heldResult.reason,
+                actionProps: draftId
+                  ? {
+                      children: m(msg("Open draft")),
+                      onClick: () => {
+                        void navigate({ to: "/draft/$draftId", params: { draftId } });
+                      },
+                    }
+                  : {
+                      children: m(msg("Open thread")),
+                      onClick: () => {
+                        void navigate({
+                          to: "/$environmentId/$threadId",
+                          params: buildThreadRouteParams(targetThreadRef),
+                        });
+                      },
+                    },
+              }),
+            );
+          }
+          return;
+        }
+        const draftAfterHold = useComposerDraftStore
+          .getState()
+          .getComposerDraft(composerDraftTarget);
+        if (!draftAfterHold) return;
+        promptAtSend = draftAfterHold.prompt;
+        if (sendCtx) {
+          sendCtx = {
+            ...sendCtx,
+            prompt: draftAfterHold.prompt,
+            images: draftAfterHold.images,
+            files: draftAfterHold.files,
+            terminalContexts: draftAfterHold.terminalContexts,
+            previewAnnotations: draftAfterHold.previewAnnotations,
+            reviewComments: draftAfterHold.reviewComments,
+            threadContexts: draftAfterHold.threadContexts,
+            environmentContexts: draftAfterHold.environmentContexts,
+          };
+        }
+      }
     }
     const startDraftAttachmentUploads = (
       attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
@@ -781,7 +852,7 @@ export function useComposerSend(input: ComposerSendInput) {
       ? ensureInlineContextReferences(promptRef.current, [
           previewAnnotationContextReference(directAnnotation.annotation),
         ])
-      : promptRef.current;
+      : promptAtSend;
     const replyTo =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
     const promptForSend = withReplyReference(draftPrompt, replyTo);
@@ -1017,7 +1088,10 @@ export function useComposerSend(input: ComposerSendInput) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
-    if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
+    if (
+      onSendScreen() &&
+      composerRef.current?.validateProviderInput(outgoingMessageText) === false
+    ) {
       return;
     }
 
@@ -1034,7 +1108,9 @@ export function useComposerSend(input: ComposerSendInput) {
         setThreadError(threadIdForSend, resolved.error);
         return;
       }
-      if (composerRef.current?.validateProviderInput(resolved.text) === false) return;
+      if (onSendScreen() && composerRef.current?.validateProviderInput(resolved.text) === false) {
+        return;
+      }
       multipleTargets.push(resolved);
     }
 
@@ -1042,7 +1118,7 @@ export function useComposerSend(input: ComposerSendInput) {
       .getState()
       .getComposerDraft(composerDraftTarget);
     const draftChangedDuringPreparation = () => {
-      if (composerRef.current?.hasPendingAttachments() === true) return true;
+      if (onSendScreen() && composerRef.current?.hasPendingAttachments() === true) return true;
       const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       return composerDraftContentChanged(draftBeforePreparation, draft);
     };
@@ -1062,6 +1138,7 @@ export function useComposerSend(input: ComposerSendInput) {
     if (turnUsesAttachmentUploads) startDraftAttachmentUploads(composerAttachmentsSnapshot);
 
     if (
+      onSendScreen() &&
       multipleModelSelections === null &&
       shouldDockDraftHeroForSubmission({ isDraftHeroState, activeThreadKey, submissionIntent }) &&
       activeThreadKey
@@ -1272,7 +1349,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (sendQueuesBehindSetup) {
       setSetupQueueSendThreadKey(activeThreadKey);
-    } else {
+    } else if (onSendScreen()) {
       beginLocalDispatch({
         preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
         submissionIntent:
@@ -1687,7 +1764,7 @@ export function useComposerSend(input: ComposerSendInput) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
-      if (!sendQueuesBehindSetup) resetLocalDispatch();
+      if (!sendQueuesBehindSetup && onSendScreen()) resetLocalDispatch();
     }
   };
 

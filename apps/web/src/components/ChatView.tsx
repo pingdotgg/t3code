@@ -54,7 +54,9 @@ import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { freshSessionBannerItem } from "./chat/ComposerFreshSession";
+import { heldComposerSendBannerItem } from "./chat/ComposerHeldSendBanner";
 import { armFreshSession, disarmFreshSession, useFreshSessionArmed } from "./chat/freshSessionArms";
+import { cancelHeldComposerSend, useComposerSendHeld } from "./chat/preparingComposerImages";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
 import { useChatShortcuts } from "./chat/useChatShortcuts";
@@ -247,6 +249,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  composerTargetKey,
   useComposerDraftStore,
   DraftId,
 } from "../composerDraftStore";
@@ -2578,6 +2581,12 @@ export default function ChatView(props: ChatViewProps) {
   const freshSessionCommandAvailable =
     freshSessionAvailable && activePendingApproval === null && pendingUserInputs.length === 0;
   const freshSessionArmed = useFreshSessionArmed(routeThreadKey);
+  const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
+  const composerSendHeld = useComposerSendHeld(composerDraftTargetKey);
+  const cancelHeldSendStable = useStableCallback(() => {
+    cancelHeldComposerSend(composerDraftTargetKey);
+    focusComposerStable();
+  });
   const toggleKeepFullHistory = () => setKeepFullHistory(routeThreadKey, !keepFullHistory);
   const toggleKeepFullHistoryStable = useStableCallback(toggleKeepFullHistory);
   const armFreshSessionStable = useStableCallback(() => armFreshSession(routeThreadKey));
@@ -2690,6 +2699,18 @@ export default function ChatView(props: ChatViewProps) {
       freshSessionAvailable && freshSessionArmed && activePendingApproval === null
         ? [freshSessionBannerItem(() => disarmFreshSession(routeThreadKey), messages)]
         : [];
+    const heldSendItems = composerSendHeld
+      ? [
+          heldComposerSendBannerItem(
+            {
+              environmentId,
+              draftTarget: composerDraftTarget,
+              onCancel: cancelHeldSendStable,
+            },
+            messages,
+          ),
+        ]
+      : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
@@ -2699,6 +2720,7 @@ export default function ChatView(props: ChatViewProps) {
         ...usageLimitsItems,
         ...projectCloneItems,
         ...freshSessionItems,
+        ...heldSendItems,
         ...systemComposerBannerItems,
       ];
     }
@@ -2710,6 +2732,7 @@ export default function ChatView(props: ChatViewProps) {
       ...usageLimitsItems,
       ...projectCloneItems,
       ...freshSessionItems,
+      ...heldSendItems,
       ...systemComposerBannerItems,
       branchMismatchBannerItem(
         {
