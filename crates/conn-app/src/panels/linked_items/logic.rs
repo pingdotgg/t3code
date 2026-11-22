@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 
 use conn_contract::{
-    OrchestrationProjectShell, PullRequestActor, PullRequestMergeability, PullRequestState,
+    IssueActor, OrchestrationProjectShell, PullRequestMergeability, PullRequestState,
     PullRequestSummaryChecksState, PullRequestSummaryReviewDecision, ThreadLinkedPullRequest,
     ThreadPullRequestLink, ThreadPullRequestLinkSource, ThreadPullRequestSnapshot,
 };
@@ -66,7 +66,7 @@ pub(super) struct IssueDetailSummary {
     pub(super) title: String,
     pub(super) state: IssueState,
     #[serde(default)]
-    pub(super) author: Option<PullRequestActor>,
+    pub(super) author: Option<IssueActor>,
     #[serde(default)]
     pub(super) comment_count: u64,
     #[serde(default)]
@@ -1053,6 +1053,7 @@ mod tests {
                 review_decision: None,
                 checks_state: None,
                 mergeability: None,
+                rebase_required: None,
             }),
             stack: None,
             watch: None,

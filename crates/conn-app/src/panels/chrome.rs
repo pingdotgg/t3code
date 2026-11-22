@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use conn_contract::PullRequestActor;
+use conn_contract::IssueActor;
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::h_flex;
 use gpui_kit::prelude::*;
@@ -134,9 +134,9 @@ pub(crate) trait ConnTooltipExt: StatefulInteractiveElement + Sized {
 
 impl<E: StatefulInteractiveElement + Sized> ConnTooltipExt for E {}
 
-/// Formats an actor's tooltip label matching Conn's `PullRequestActorLabel`:
+/// Formats an actor's tooltip label matching Conn's `IssueActorLabel`:
 /// `"Full Name (@login)"` when a distinct display name exists, otherwise `"login"` or `"ghost"`.
-pub(crate) fn actor_tooltip_label(actor: Option<&PullRequestActor>) -> SharedString {
+pub(crate) fn actor_tooltip_label(actor: Option<&IssueActor>) -> SharedString {
     match actor {
         Some(actor) => match actor
             .name
@@ -152,15 +152,15 @@ pub(crate) fn actor_tooltip_label(actor: Option<&PullRequestActor>) -> SharedStr
 }
 
 /// First uppercase letter of an actor's login, falling back to `"G"` (`"ghost"`), matching
-/// Conn's `PullRequestActorAvatar`.
-pub(crate) fn actor_initial(actor: Option<&PullRequestActor>) -> String {
+/// Conn's `IssueActorAvatar`.
+pub(crate) fn actor_initial(actor: Option<&IssueActor>) -> String {
     actor
         .and_then(|a| a.login.trim().chars().next())
         .map_or_else(|| "G".to_owned(), |c| c.to_uppercase().to_string())
 }
 
 /// Returns a trimmed HTTP(S) URI for an actor's remote avatar, if valid.
-fn remote_avatar_uri(actor: Option<&PullRequestActor>) -> Option<SharedUri> {
+fn remote_avatar_uri(actor: Option<&IssueActor>) -> Option<SharedUri> {
     let raw = actor?.avatar_url.as_deref()?.trim();
     if raw.starts_with("https://") || raw.starts_with("http://") {
         Some(SharedUri::from(raw.to_owned()))
@@ -169,7 +169,7 @@ fn remote_avatar_uri(actor: Option<&PullRequestActor>) -> Option<SharedUri> {
     }
 }
 
-/// Renders Conn's `PullRequestActorAvatar` (`pullRequestPresentation.tsx`): circular avatar
+/// Renders Conn's `IssueActorAvatar` (`pullRequestPresentation.tsx`): circular avatar
 /// loaded remotely via GPUI's `img()` (`ObjectFit::Cover`, `bg-muted`) with fallback to the
 /// uppercase login initial while loading, on error, or when no `avatar_url` is present.
 ///
@@ -177,7 +177,7 @@ fn remote_avatar_uri(actor: Option<&PullRequestActor>) -> Option<SharedUri> {
 /// `grayscale` desaturates muted/collapsed timeline avatars (`grayscale`).
 pub(crate) fn actor_avatar(
     tokens: &Tokens,
-    actor: Option<&PullRequestActor>,
+    actor: Option<&IssueActor>,
     size_px: f32,
     ring_color: Option<Hsla>,
     grayscale: bool,
@@ -624,12 +624,12 @@ pub(crate) fn alpha(color: conn_theme::Rgba, a: f32) -> Hsla {
 
 #[cfg(test)]
 mod tests {
-    use conn_contract::PullRequestActor;
+    use conn_contract::IssueActor;
 
     use super::{actor_initial, actor_tooltip_label, remote_avatar_uri};
 
-    fn sample_actor(login: &str, name: Option<&str>, avatar_url: Option<&str>) -> PullRequestActor {
-        PullRequestActor {
+    fn sample_actor(login: &str, name: Option<&str>, avatar_url: Option<&str>) -> IssueActor {
+        IssueActor {
             is_bot: None,
             login: login.to_owned(),
             name: name.map(ToOwned::to_owned),

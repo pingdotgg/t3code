@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use conn_contract::{
-    PullRequestAction, PullRequestCheckStatus, PullRequestComment, PullRequestCommit,
-    PullRequestDetail, PullRequestFileViewedState, PullRequestReaction, PullRequestReactionContent,
+    IssueReaction, IssueReactionContent, PullRequestAction, PullRequestCheckStatus,
+    PullRequestComment, PullRequestCommit, PullRequestDetail, PullRequestFileViewedState,
     PullRequestReviewThread, PullRequestReviewVerdict, PullRequestState,
 };
 use conn_theme::{Appearance, Tokens, color_mix_srgb};
@@ -97,15 +97,7 @@ pub(super) struct TabCallbacks {
     pub(super) on_submit_review: Rc<dyn Fn(&mut Window, &mut App)>,
     pub(super) on_toggle_reaction_picker: Rc<dyn Fn(String, &mut Window, &mut App)>,
     pub(super) on_toggle_reaction: Rc<
-        dyn Fn(
-            String,
-            Option<String>,
-            PullRequestReactionContent,
-            bool,
-            String,
-            &mut Window,
-            &mut App,
-        ),
+        dyn Fn(String, Option<String>, IssueReactionContent, bool, String, &mut Window, &mut App),
     >,
     pub(super) on_send_prompt: Rc<dyn Fn(String, &mut Window, &mut App)>,
     pub(super) on_arm_confirm: Rc<dyn Fn(Option<ConfirmableAction>, &mut Window, &mut App)>,
@@ -115,7 +107,7 @@ pub(super) struct TabCallbacks {
 pub(super) struct ReactionState<'a> {
     pub(super) can_react: bool,
     pub(super) open_picker: Option<&'a str>,
-    pub(super) pending: &'a HashMap<String, (String, HashMap<PullRequestReactionContent, bool>)>,
+    pub(super) pending: &'a HashMap<String, (String, HashMap<IssueReactionContent, bool>)>,
 }
 
 /// Renders Conn's `PullRequestDetailTabBar` (`h-12.25 border-y px-4.5 gap-5`) with the active
@@ -602,7 +594,7 @@ pub(super) fn render_code_tab_trailing(
 pub(super) fn render_description_tab(
     tokens: &Tokens,
     detail: &PullRequestDetail,
-    pr_reactions: &[PullRequestReaction],
+    pr_reactions: &[IssueReaction],
     reaction_state: &ReactionState<'_>,
     editing_body: bool,
     body_input: &Entity<TextareaState>,

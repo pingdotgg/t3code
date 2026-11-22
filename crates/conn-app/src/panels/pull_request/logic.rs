@@ -6,13 +6,14 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use conn_contract::{
-    OrchestrationV2AppThread, OrchestrationV2ThreadShell, PullRequestAction,
-    PullRequestActionInputUpdateMethod, PullRequestActor, PullRequestCheck, PullRequestCheckStatus,
-    PullRequestComment, PullRequestCommentKind, PullRequestCommit, PullRequestDetail,
-    PullRequestDetailAutoMergeMethod, PullRequestDetailBaseComparison, PullRequestLabelCandidate,
-    PullRequestMergeability, PullRequestReaction, PullRequestReactionContent, PullRequestRef,
-    PullRequestReviewThread, PullRequestReviewVerdict, PullRequestReviewerCandidate,
-    PullRequestState, ThreadLinkedPullRequest, ThreadPullRequestLink, ThreadPullRequestLinkSource,
+    IssueActor, IssueReaction, IssueReactionContent, OrchestrationV2AppThread,
+    OrchestrationV2ThreadShell, PullRequestAction, PullRequestActionInputUpdateMethod,
+    PullRequestCheck, PullRequestCheckStatus, PullRequestComment, PullRequestCommentKind,
+    PullRequestCommit, PullRequestDetail, PullRequestDetailAutoMergeMethod,
+    PullRequestDetailBaseComparison, PullRequestLabelCandidate, PullRequestMergeability,
+    PullRequestRef, PullRequestReviewThread, PullRequestReviewVerdict,
+    PullRequestReviewerCandidate, PullRequestState, ThreadLinkedPullRequest, ThreadPullRequestLink,
+    ThreadPullRequestLinkSource,
 };
 use conn_desktop::orbit::insights::parse_date_ms;
 use conn_theme::{Appearance, Rgba, Tokens, color_mix_srgb, parse_color};
@@ -721,7 +722,7 @@ pub(super) fn is_verdict_stale(at: &str, newest_commit: Option<&str>) -> bool {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ReviewOutcomeEntry {
     pub(super) key: String,
-    pub(super) actor: Option<PullRequestActor>,
+    pub(super) actor: Option<IssueActor>,
     pub(super) outcome: ReviewOutcome,
     pub(super) at: String,
     pub(super) stale: bool,
@@ -771,14 +772,14 @@ pub(super) fn latest_review_outcomes(
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ReviewerEntry {
     pub(super) key: String,
-    pub(super) actor: Option<PullRequestActor>,
+    pub(super) actor: Option<IssueActor>,
     pub(super) outcome: Option<ReviewOutcome>,
     pub(super) stale: bool,
 }
 
 #[must_use]
 pub(super) fn build_reviewer_entries(
-    reviewers: &[PullRequestActor],
+    reviewers: &[IssueActor],
     comments: &[PullRequestComment],
     commits: &[PullRequestCommit],
 ) -> Vec<ReviewerEntry> {
@@ -878,13 +879,13 @@ pub(super) struct TimelineEvent {
     pub(super) body: Option<String>,
     pub(super) markdown: bool,
     pub(super) url: Option<String>,
-    pub(super) actor: Option<PullRequestActor>,
+    pub(super) actor: Option<IssueActor>,
     pub(super) additions: Option<i64>,
     pub(super) deletions: Option<i64>,
     pub(super) path: Option<String>,
     pub(super) review_state: Option<String>,
     pub(super) is_comment_event: bool,
-    pub(super) reactions: Vec<PullRequestReaction>,
+    pub(super) reactions: Vec<IssueReaction>,
     pub(super) thread: Option<TimelineThread>,
 }
 
@@ -1656,48 +1657,48 @@ pub(super) fn review_placeholder(
 }
 
 /// Display order of emoji reactions (`PULL_REQUEST_REACTION_ORDER`).
-pub(super) const REACTION_ORDER: [PullRequestReactionContent; 8] = [
-    PullRequestReactionContent::ThumbsUp,
-    PullRequestReactionContent::ThumbsDown,
-    PullRequestReactionContent::Laugh,
-    PullRequestReactionContent::Hooray,
-    PullRequestReactionContent::Confused,
-    PullRequestReactionContent::Heart,
-    PullRequestReactionContent::Rocket,
-    PullRequestReactionContent::Eyes,
+pub(super) const REACTION_ORDER: [IssueReactionContent; 8] = [
+    IssueReactionContent::ThumbsUp,
+    IssueReactionContent::ThumbsDown,
+    IssueReactionContent::Laugh,
+    IssueReactionContent::Hooray,
+    IssueReactionContent::Confused,
+    IssueReactionContent::Heart,
+    IssueReactionContent::Rocket,
+    IssueReactionContent::Eyes,
 ];
 
 #[must_use]
-pub(super) const fn reaction_emoji(content: PullRequestReactionContent) -> &'static str {
+pub(super) const fn reaction_emoji(content: IssueReactionContent) -> &'static str {
     match content {
-        PullRequestReactionContent::ThumbsUp => "👍",
-        PullRequestReactionContent::ThumbsDown => "👎",
-        PullRequestReactionContent::Laugh => "😄",
-        PullRequestReactionContent::Hooray => "🎉",
-        PullRequestReactionContent::Confused => "😕",
-        PullRequestReactionContent::Heart => "❤️",
-        PullRequestReactionContent::Rocket => "🚀",
-        PullRequestReactionContent::Eyes => "👀",
+        IssueReactionContent::ThumbsUp => "👍",
+        IssueReactionContent::ThumbsDown => "👎",
+        IssueReactionContent::Laugh => "😄",
+        IssueReactionContent::Hooray => "🎉",
+        IssueReactionContent::Confused => "😕",
+        IssueReactionContent::Heart => "❤️",
+        IssueReactionContent::Rocket => "🚀",
+        IssueReactionContent::Eyes => "👀",
     }
 }
 
 #[must_use]
-pub(super) const fn reaction_name(content: PullRequestReactionContent) -> &'static str {
+pub(super) const fn reaction_name(content: IssueReactionContent) -> &'static str {
     match content {
-        PullRequestReactionContent::ThumbsUp => "thumbs up",
-        PullRequestReactionContent::ThumbsDown => "thumbs down",
-        PullRequestReactionContent::Laugh => "laugh",
-        PullRequestReactionContent::Hooray => "hooray",
-        PullRequestReactionContent::Confused => "confused",
-        PullRequestReactionContent::Heart => "heart",
-        PullRequestReactionContent::Rocket => "rocket",
-        PullRequestReactionContent::Eyes => "eyes",
+        IssueReactionContent::ThumbsUp => "thumbs up",
+        IssueReactionContent::ThumbsDown => "thumbs down",
+        IssueReactionContent::Laugh => "laugh",
+        IssueReactionContent::Hooray => "hooray",
+        IssueReactionContent::Confused => "confused",
+        IssueReactionContent::Heart => "heart",
+        IssueReactionContent::Rocket => "rocket",
+        IssueReactionContent::Eyes => "eyes",
     }
 }
 
 /// Formats the hover tooltip for a reaction pill (`pullRequestReactionTooltip`).
 #[must_use]
-pub(super) fn reaction_tooltip(reaction: &PullRequestReaction) -> String {
+pub(super) fn reaction_tooltip(reaction: &IssueReaction) -> String {
     const NAMED_ACTOR_LIMIT: usize = 3;
     let count = usize::try_from(reaction.count.max(0)).unwrap_or(0);
     let viewer_has_room = reaction.actors.len() < count;
@@ -1739,7 +1740,7 @@ pub(super) fn reaction_tooltip(reaction: &PullRequestReaction) -> String {
 
 /// Stable signature of server-reported reactions so optimistic overlays clear on refresh.
 #[must_use]
-pub(super) fn reactions_signature(reactions: &[PullRequestReaction]) -> String {
+pub(super) fn reactions_signature(reactions: &[IssueReaction]) -> String {
     reactions
         .iter()
         .map(|r| {
@@ -1755,16 +1756,16 @@ pub(super) fn reactions_signature(reactions: &[PullRequestReaction]) -> String {
 }
 
 /// Merges optimistic pending reaction toggles onto server-reported reactions
-/// (`applyPendingPullRequestReactions`).
+/// (`applyPendingIssueReactions`).
 #[must_use]
 pub(super) fn apply_pending_reactions(
-    reactions: &[PullRequestReaction],
-    pending: &HashMap<PullRequestReactionContent, bool>,
-) -> Vec<PullRequestReaction> {
+    reactions: &[IssueReaction],
+    pending: &HashMap<IssueReactionContent, bool>,
+) -> Vec<IssueReaction> {
     if pending.is_empty() {
         return reactions.to_vec();
     }
-    let mut by_content: HashMap<PullRequestReactionContent, PullRequestReaction> =
+    let mut by_content: HashMap<IssueReactionContent, IssueReaction> =
         reactions.iter().map(|r| (r.content, r.clone())).collect();
     for (&content, &reacted) in pending {
         match by_content.get_mut(&content) {
@@ -1772,7 +1773,7 @@ pub(super) fn apply_pending_reactions(
                 if reacted {
                     by_content.insert(
                         content,
-                        PullRequestReaction {
+                        IssueReaction {
                             content,
                             count: 1,
                             actors: Vec::new(),
@@ -2188,6 +2189,7 @@ mod tests {
                 mentions: Some(true),
                 reference_sigils: None,
                 checks_always_report: None,
+                withheld_file_diff: None,
             },
             viewer_permissions: PullRequestViewerPermissions {
                 stack_rebase: None,
@@ -2215,7 +2217,7 @@ mod tests {
             title: "Add pull request surface".to_owned(),
             body: "Implements the PR surface.".to_owned(),
             url: "https://github.com/nckrtl/conn-gpui/pull/42".to_owned(),
-            author: Some(PullRequestActor {
+            author: Some(IssueActor {
                 is_bot: Some(false),
                 login: "nckrtl".to_owned(),
                 name: Some("Nick".to_owned()),
@@ -2224,6 +2226,7 @@ mod tests {
             state: PullRequestState::Open,
             is_draft: false,
             mergeability: PullRequestMergeability::Mergeable,
+            rebase_required: None,
             additions: 120,
             deletions: 15,
             changed_files: 4,
@@ -2235,6 +2238,8 @@ mod tests {
             updated_at: "2026-11-21T09:00:00Z".to_owned(),
             observed_at: None,
             merged_at: None,
+            merged_by: None,
+            merge_commit_sha: None,
             closed_at: None,
             reviewers: vec![],
             labels: vec![],
@@ -2302,6 +2307,7 @@ mod tests {
                 review_decision: None,
                 checks_state: None,
                 mergeability: None,
+                rebase_required: None,
             }),
             stack: None,
             watch: None,
@@ -2422,7 +2428,7 @@ mod tests {
             PullRequestComment {
                 id: "c1".to_owned(),
                 kind: PullRequestCommentKind::IssueComment,
-                author: Some(PullRequestActor {
+                author: Some(IssueActor {
                     is_bot: Some(true),
                     login: "dependabot[bot]".to_owned(),
                     name: None,
@@ -2440,7 +2446,7 @@ mod tests {
             PullRequestComment {
                 id: "c2".to_owned(),
                 kind: PullRequestCommentKind::Review,
-                author: Some(PullRequestActor {
+                author: Some(IssueActor {
                     is_bot: Some(false),
                     login: "alice".to_owned(),
                     name: None,
@@ -2608,8 +2614,8 @@ mod tests {
 
     #[test]
     fn applies_pending_reactions_and_formats_tooltips() {
-        let base = vec![PullRequestReaction {
-            content: PullRequestReactionContent::ThumbsUp,
+        let base = vec![IssueReaction {
+            content: IssueReactionContent::ThumbsUp,
             count: 2,
             actors: vec!["alice".to_owned()],
             viewer_has_reacted: true,
@@ -2620,26 +2626,26 @@ mod tests {
         );
 
         let mut pending = HashMap::new();
-        pending.insert(PullRequestReactionContent::ThumbsUp, false);
-        pending.insert(PullRequestReactionContent::Rocket, true);
+        pending.insert(IssueReactionContent::ThumbsUp, false);
+        pending.insert(IssueReactionContent::Rocket, true);
         let merged = apply_pending_reactions(&base, &pending);
         assert_eq!(merged.len(), 2);
-        assert_eq!(merged[0].content, PullRequestReactionContent::ThumbsUp);
+        assert_eq!(merged[0].content, IssueReactionContent::ThumbsUp);
         assert_eq!(merged[0].count, 1);
         assert!(!merged[0].viewer_has_reacted);
-        assert_eq!(merged[1].content, PullRequestReactionContent::Rocket);
+        assert_eq!(merged[1].content, IssueReactionContent::Rocket);
         assert_eq!(merged[1].count, 1);
         assert!(merged[1].viewer_has_reacted);
 
         // Removing the sole reaction deletes the pill.
-        let single = vec![PullRequestReaction {
-            content: PullRequestReactionContent::Heart,
+        let single = vec![IssueReaction {
+            content: IssueReactionContent::Heart,
             count: 1,
             actors: vec![],
             viewer_has_reacted: true,
         }];
         let mut remove_map = HashMap::new();
-        remove_map.insert(PullRequestReactionContent::Heart, false);
+        remove_map.insert(IssueReactionContent::Heart, false);
         assert!(apply_pending_reactions(&single, &remove_map).is_empty());
     }
 
@@ -2674,7 +2680,7 @@ mod tests {
             can_resolve: Some(true),
             comments: vec![conn_contract::PullRequestThreadComment {
                 id: "tc-1".to_owned(),
-                author: Some(PullRequestActor {
+                author: Some(IssueActor {
                     is_bot: Some(false),
                     login: "bob".to_owned(),
                     name: None,

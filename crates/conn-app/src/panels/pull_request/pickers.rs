@@ -2,15 +2,15 @@
 //! - Reviewer picker (`PullRequestReviewerPicker.tsx`)
 //! - Label picker (`PullRequestLabelPicker.tsx`)
 //! - Base-branch freshness popover (`PullRequestBaseBranch.tsx`)
-//! - Emoji reaction bar + picker (`PullRequestReactions.tsx`)
+//! - Emoji reaction bar + picker (`IssueReactions.tsx`)
 
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use conn_contract::{
-    PullRequestAction, PullRequestActionInputUpdateMethod, PullRequestActor,
-    PullRequestLabelCandidate, PullRequestReaction, PullRequestReactionContent,
-    PullRequestReviewerCandidate, PullRequestReviewerKind,
+    IssueActor, IssueReaction, IssueReactionContent, PullRequestAction,
+    PullRequestActionInputUpdateMethod, PullRequestLabelCandidate, PullRequestReviewerCandidate,
+    PullRequestReviewerKind,
 };
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::input::{Input, InputState};
@@ -141,7 +141,7 @@ pub(super) fn render_reviewer_picker(
         } else {
             for candidate in filtered {
                 let is_this_pending = pending_id == Some(candidate.id.as_str());
-                let actor = PullRequestActor {
+                let actor = IssueActor {
                     is_bot: candidate.is_bot,
                     login: candidate.login.clone(),
                     name: candidate.name.clone(),
@@ -517,8 +517,8 @@ pub(super) fn render_base_branch_freshness(
     anchor.into_any_element()
 }
 
-/// Renders an emoji reaction bar and add-reaction picker (`PullRequestReactionBar` in
-/// `PullRequestReactions.tsx`).
+/// Renders an emoji reaction bar and add-reaction picker (`IssueReactionBar` in
+/// `IssueReactions.tsx`).
 #[expect(
     clippy::too_many_arguments,
     reason = "view props passed explicitly from PullRequestPanel::render"
@@ -527,21 +527,13 @@ pub(super) fn render_reaction_bar(
     tokens: &Tokens,
     subject_key: &str,
     subject_id: Option<String>,
-    reactions: &[PullRequestReaction],
-    pending_map: Option<&(String, HashMap<PullRequestReactionContent, bool>)>,
+    reactions: &[IssueReaction],
+    pending_map: Option<&(String, HashMap<IssueReactionContent, bool>)>,
     can_react: bool,
     picker_open: bool,
     on_toggle_picker: Rc<dyn Fn(String, &mut Window, &mut App)>,
     on_toggle_reaction: Rc<
-        dyn Fn(
-            String,
-            Option<String>,
-            PullRequestReactionContent,
-            bool,
-            String,
-            &mut Window,
-            &mut App,
-        ),
+        dyn Fn(String, Option<String>, IssueReactionContent, bool, String, &mut Window, &mut App),
     >,
 ) -> Option<AnyElement> {
     let sig = reactions_signature(reactions);

@@ -2,27 +2,29 @@
 
 Read `docs/status.md` and `docs/scope.md` first. `docs/status.md` says what is proven, what is in progress, and what is next; `docs/scope.md` is the locked feature cutlist defining what belongs in **Orbit**, **`conn-server`**, **`conn-gpui`**, and future **SwiftUI iOS** (and what upstream T3 Code features are intentionally dropped). Update `docs/status.md` with every landed milestone.
 
-**conn-gpui** is a native Rust + GPUI macOS desktop client for Conn + Orbit: it matches the Conn desktop shell's look and feel (`../conn`) for everything in `docs/scope.md`, talks directly to `conn-server` (`../conn-server`) using its typed Rust contract crates (`conn-wire` and `conn-contract`), integrates tightly with Orbit (nodes, workspaces, profiles, themes, tasks, `ai-router`), and adopts proven GPUI patterns from Threadbear (`.refs/threadbear`).
+**conn-gpui** is a native Rust + GPUI macOS desktop client for Conn + Orbit: it matches the Conn desktop shell's look and feel (`.refs/conn`) for everything in `docs/scope.md`, talks directly to `conn-server` (`.refs/conn/apps/conn-server`) using its typed Rust contract crates (`conn-wire` and `conn-contract`), integrates tightly with Orbit (nodes, workspaces, profiles, themes, tasks, `ai-router`), and adopts proven GPUI patterns from Threadbear (`.refs/threadbear`).
 
-Read `README.md`, `docs/scope.md`, `docs/architecture.md`, and `docs/design-spec.md` before changing code. Do **not** port features marked `Drop` or `Orbit` in `docs/scope.md` into `conn-gpui`. For tracking upstream changes from T3 Code, Threadbear, and Rune, see `docs/radar.md`. If you are running a long autonomous session, read `GOAL.md` for the phased milestone plan and sub-agent split.
+Read `README.md`, `docs/scope.md`, `docs/architecture.md`, and `docs/design-spec.md` before changing code. Do **not** port features marked `Drop` or `Orbit` in `docs/scope.md` into `conn-gpui`. For tracking upstream changes from Conn, T3 Code, Threadbear, and Rune, see `docs/radar.md`. If you are running a long autonomous session, read `GOAL.md` for the phased milestone plan and sub-agent split.
 
 ## Inputs and references (read-only)
 
-This repo piggybacks on three upstream/sibling repos. Pin versions live in `references.pin`. Never edit any of them from `conn-gpui` work:
+This repo piggybacks on pinned upstream references under `.refs/` (gitignored; synced by `scripts/sync-refs.sh` from `references.pin`). **Never read mutable sibling checkouts like `../conn` or `../conn-server`**, and never edit anything inside `.refs/`:
 
-1. **`../conn`** (`nckrtl/conn`): The visual and behavioral specification. Every pixel, color role, token formula, layout metric, icon choice, keyboard shortcut, and right-panel surface comes from `../conn/apps/web`, `../conn/apps/desktop`, and `../conn/FORK.md`.
-2. **`../conn-server`** (`hardimpactdev/conn-server`): The Rust server and wire contract. `conn-gpui` directly imports `../conn-server/crates/conn-wire` and `../conn-server/crates/conn-contract` as path dependencies. Never duplicate or hand-roll Effect RPC frame types or contract schemas.
-3. **`.refs/threadbear`** (`mikecann/threadbear`, gitignored; run `scripts/sync-refs.sh` if missing): Primary GPUI engineering reference. Prefer its proven patterns over inventing from scratch:
+1. **`.refs/conn`** (`nckrtl/conn` `origin/main`, synced by `scripts/sync-refs.sh`): The **sole** visual, behavioral, and wire-contract specification — including `conn-server` under `.refs/conn/apps/conn-server/`.
+   - Every pixel, color role, token formula, layout metric, icon choice, keyboard shortcut, and right-panel surface comes from `.refs/conn/apps/web`, `.refs/conn/apps/desktop`, and `.refs/conn/FORK.md`.
+   - `conn-gpui` directly imports `.refs/conn/apps/conn-server/crates/conn-wire` and `.refs/conn/apps/conn-server/crates/conn-contract` as Cargo path dependencies. Never duplicate or hand-roll Effect RPC frame types or contract schemas.
+   - Always run `scripts/sync-refs.sh` (or verify `.refs/conn` matches `references.pin` and `origin/main`) before auditing or porting UI so stale branches can never slip in.
+2. **`.refs/threadbear`** (`mikecann/threadbear`, gitignored; run `scripts/sync-refs.sh` if missing): Primary GPUI engineering reference. Prefer its proven patterns over inventing from scratch:
    - `desktop/gpui/src/` for GPUI + `gpui-kit = "=0.9.0"` app structure, window chrome, AppKit shims, `alacritty_terminal` rendering, markdown/diff rows, and scripted `automation.rs`.
    - `desktop/web/` for CEF-on-demand (`cef-rs` + `dlopen` loader + `offscreen.rs` + `devtools.rs`).
    - `desktop/vendor/` and `desktop/Cargo.toml` for known `gpui-kit`/`gpui-base`/`gpui-pre` macOS fixes (popup menus, soft-wrap selection, long paste scroll, file drags, scroll bounce).
-4. **`.refs/rune`** (`anomalyco/rune`, gitignored; synced by `scripts/sync-refs.sh`): Secondary inspiration reference only (do not switch frameworks away from GPUI). Useful for its `research/` notes (GPUI perf/text/scroll/motion analyses), agent-verification patterns, frosted glass/token ideas, and `rune-kit` coding-agent UX patterns.
+3. **`.refs/rune`** (`anomalyco/rune`, gitignored; synced by `scripts/sync-refs.sh`): Secondary inspiration reference only (do not switch frameworks away from GPUI). Useful for its `research/` notes (GPUI perf/text/scroll/motion analyses), agent-verification patterns, frosted glass/token ideas, and `rune-kit` coding-agent UX patterns.
 
 ## Build and run safety
 
 This repo is cleared to build, test, and run locally on this Mac (or in `nick-vm` when preferred):
 
-1. **Own checkout / worktree.** Work in your own worktree (`git worktree add ~/apps/conn-gpui-<task>`) when multiple agents run concurrently. Relative path deps (`../conn-server/crates/...`) resolve cleanly from any sibling checkout in `~/apps/`.
+1. **Own checkout / worktree.** Work in your own worktree (`git worktree add ~/apps/conn-gpui-<task>`) when multiple agents run concurrently. Run `scripts/sync-refs.sh` (or symlink `.refs` from the main checkout) in any fresh worktree so `.refs/conn/apps/conn-server/crates/...` resolves cleanly.
 2. **Own build folder.** Keep Cargo target output in a git-ignored folder inside your checkout (default `target/` or `CARGO_TARGET_DIR`). Never clear shared caches or another checkout's build folder.
 3. **Own processes.** Track PIDs of every `conn-server` or `conn-gpui` process you launch and stop only those PIDs. Never run `killall` or `pkill`.
 4. **One GUI verification at a time.** Only the orchestrator launches `conn-app` windows or captures screenshots, so concurrent sub-agents do not fight over window focus.
@@ -51,8 +53,11 @@ Keep crate boundaries strict so parallel sub-agents do not collide:
 3. **Theme-driven tokens, never hardcoded hex in views:** Views read semantic tokens from `conn-theme` derived from the active theme's color roles (default dark verification theme: Dark Ocean; also verify Light).
 4. **Icons:** Every icon (chrome and thread timeline) is superheroicons 16/solid, copied from `~/apps/superheroicons/consumers/conn/final/` into `crates/conn-app/assets/icons/superhero/` (Nick, 2026-11-21; Conn decision `conn-icon-set-solid-v4`). `crates/conn-app/src/superhero.rs` maps gpui-kit Lucide names to concepts through the library manifest. Never redraw or patch glyphs here; fixes go to the superheroicons library, then re-copy.
 5. **Typography:** `13px` (`text-ui`, `20px` line height) for panel chrome, settings, tree items, status lines, and controls. Sans everywhere except code and terminal output; `tabular-nums` for aligned numbers; no uppercase section labels.
-6. **Prove visual parity with screenshots:** Every UI milestone must capture screenshots of `conn-gpui` (via its automation/capture hook) and compare against the real Conn desktop/web layout (`../conn`). Fix visible spacing, alignment, border, or color drift before marking a milestone done.
-7. **1:1 source-anchored porting (copy everything in scope first):** Never implement or polish a UI surface from memory or high-level summaries. Read every relevant `.tsx` and `.logic.ts` file in `../conn/apps/web/src/components/` and port *all* in-scope states, button transitions, hover actions, tooltips, label formats, badges, and edge cases directly (skipping only features explicitly marked `Drop` or `Orbit` in `docs/scope.md`). Track parity per surface under `docs/parity/{composer,timeline,shell-sidebar,panels}.md` (`[x]` exact, `[~]` drifted, `[ ]` missing, `[-]` out of scope). Default to including everything from `../conn` — Nick prefers removing unwanted details over discovering missing ones.
+6. **Prove visual parity with live side-by-side screenshots in `nick-vm`:** Every UI milestone or visual bug fix must be verified with the 3-layer harness:
+   - **Layer 1 (`scripts/check.sh`):** Headless `#[gpui_kit::test]` GPUI render + pointer/keyboard interaction tests run in `cargo test` with debug assertions on.
+   - **Layer 2 (`scripts/e2e.py`):** Expanded live E2E suite against the seeded disposable `:3891` `conn-server` asserting zero panics/crash logs.
+   - **Layer 3 (`scripts/vm-parity.sh` in `nick-vm` via VMPal):** Launch both current `Conn.app` and `Conn GPUI.app` against the same seeded `:3891` `conn-server` at identical `1440×900` bounds (Dark Ocean + Light), stitch side-by-side `Conn | Conn GPUI` comparisons, and inspect every image before marking UI work done.
+7. **1:1 source-anchored porting (copy everything in scope first):** Never implement or polish a UI surface from memory or high-level summaries. Read every relevant `.tsx` and `.logic.ts` file in `.refs/conn/apps/web/src/components/` (never `../conn`) and port *all* in-scope states, button transitions, hover actions, tooltips, label formats, badges, and edge cases directly (skipping only features explicitly marked `Drop` or `Orbit` in `docs/scope.md`). Track parity per surface under `docs/parity/{composer,timeline,shell-sidebar,panels}.md` (`[x]` exact, `[~]` drifted, `[ ]` missing, `[-]` out of scope). Default to including everything from `.refs/conn` — Nick prefers removing unwanted details over discovering missing ones.
 
 ## Rust & GPUI rules
 

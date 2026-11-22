@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = [".refs", "vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -17,9 +18,9 @@ conn-state = { path = "crates/conn-state" }
 conn-theme = { path = "crates/conn-theme" }
 conn-web = { path = "crates/conn-web" }
 
-# Shared wire and contract crates from sibling ../conn-server
-conn-wire = { path = "../conn-server/crates/conn-wire" }
-conn-contract = { path = "../conn-server/crates/conn-contract" }
+# Shared wire and contract crates from pinned .refs/conn (run `scripts/sync-refs.sh` first)
+conn-wire = { path = ".refs/conn/apps/conn-server/crates/conn-wire" }
+conn-contract = { path = ".refs/conn/apps/conn-server/crates/conn-contract" }
 
 # GPUI + UI component kit (pinned to match .refs/threadbear/desktop/gpui/Cargo.toml)
 # Note: if macOS polish patches are needed, vendor into vendor/ and add [patch.crates-io]

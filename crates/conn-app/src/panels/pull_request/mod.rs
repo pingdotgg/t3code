@@ -21,17 +21,17 @@ use conn_contract::rpc::pull_requests::{
 };
 use conn_contract::rpc::review::get_diff_preview;
 use conn_contract::{
-    GitPullRequestRefInput, OrchestrationV2ThreadProjection, PullRequestAction,
-    PullRequestActionInput, PullRequestActionInputUpdateMethod, PullRequestActivity,
-    PullRequestCommentInput, PullRequestDetail, PullRequestDetailAutoMergeMethod,
-    PullRequestDiffFileContentsInput, PullRequestFileViewedState, PullRequestInvalidateInput,
-    PullRequestLabelCandidate, PullRequestLabelChangeInput, PullRequestListInput,
-    PullRequestListState, PullRequestReactionContent, PullRequestReactionInput, PullRequestRef,
+    GitPullRequestRefInput, IssueReactionContent, OrchestrationV2ThreadProjection,
+    PullRequestAction, PullRequestActionInput, PullRequestActionInputUpdateMethod,
+    PullRequestActivity, PullRequestCommentInput, PullRequestDetail,
+    PullRequestDetailAutoMergeMethod, PullRequestDiffFileContentsInput, PullRequestFileViewedState,
+    PullRequestInvalidateInput, PullRequestLabelCandidate, PullRequestLabelChangeInput,
+    PullRequestListInput, PullRequestListState, PullRequestReactionInput, PullRequestRef,
     PullRequestReviewVerdict, PullRequestReviewerCandidate, PullRequestReviewerCandidatesInput,
     PullRequestReviewerRequestInput, PullRequestReviewerRequestInputReviewersItem,
     PullRequestSetFilesViewedInput, PullRequestSetFilesViewedInputFilesItem,
     PullRequestSubmitReviewInput, PullRequestThreadReplyInput, PullRequestThreadResolutionInput,
-    PullRequestUpdateInput, ReviewDiffFileContentsInputChangeType, ReviewDiffPreviewInput,
+    PullRequestUpdateInput, ReviewDiffChangeType, ReviewDiffPreviewInput,
 };
 use conn_theme::Tokens;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
@@ -170,7 +170,7 @@ pub(crate) struct PullRequestPanel {
 
     // Emoji reactions
     open_reaction_picker: Option<String>,
-    pending_reactions: HashMap<String, (String, HashMap<PullRequestReactionContent, bool>)>,
+    pending_reactions: HashMap<String, (String, HashMap<IssueReactionContent, bool>)>,
 
     // Floating comment & review composer
     composer_open: bool,
@@ -780,6 +780,7 @@ impl PullRequestPanel {
         let payload = PullRequestActionInput {
             stack_number: None,
             expected_stack_heads: None,
+            expected_head_sha: None,
             project_id: target.reference.project_id.clone(),
             host: target.reference.host.clone(),
             expected_account_id: target.reference.expected_account_id.clone(),
@@ -1291,9 +1292,9 @@ impl PullRequestPanel {
             number: target.reference.number,
             commit: None,
             change_type: if old_path != path {
-                ReviewDiffFileContentsInputChangeType::RenameChanged
+                ReviewDiffChangeType::RenameChanged
             } else {
-                ReviewDiffFileContentsInputChangeType::Change
+                ReviewDiffChangeType::Change
             },
             old_path: old_path.clone(),
             new_path: path.clone(),
@@ -1711,7 +1712,7 @@ impl PullRequestPanel {
         &mut self,
         subject_key: String,
         subject_id: Option<String>,
-        content: PullRequestReactionContent,
+        content: IssueReactionContent,
         reacted: bool,
         signature: String,
         cx: &mut Context<'_, Self>,

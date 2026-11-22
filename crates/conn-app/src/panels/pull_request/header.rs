@@ -5,7 +5,7 @@
 use std::rc::Rc;
 
 use conn_contract::{
-    PullRequestAction, PullRequestActionInputUpdateMethod, PullRequestActor, PullRequestComment,
+    IssueActor, PullRequestAction, PullRequestActionInputUpdateMethod, PullRequestComment,
     PullRequestCommit, PullRequestDetail, PullRequestDetailAutoMergeMethod,
     PullRequestLabelCandidate, PullRequestReviewerCandidate, PullRequestState,
 };
@@ -1519,17 +1519,17 @@ fn meta_row(
         .into_any_element()
 }
 
-/// Circular 16px/24px remote avatar with monogram fallback (`PullRequestActorAvatar`).
+/// Circular 16px/24px remote avatar with monogram fallback (`IssueActorAvatar`).
 pub(super) fn render_actor_avatar(
     tokens: &Tokens,
-    actor: Option<&PullRequestActor>,
+    actor: Option<&IssueActor>,
     size_px: f32,
 ) -> AnyElement {
     chrome::actor_avatar(tokens, actor, size_px, None, false)
 }
 
-/// Avatar + login label (`PullRequestActorLabel`).
-pub(super) fn render_actor_label(tokens: &Tokens, actor: Option<&PullRequestActor>) -> AnyElement {
+/// Avatar + login label (`IssueActorLabel`).
+pub(super) fn render_actor_label(tokens: &Tokens, actor: Option<&IssueActor>) -> AnyElement {
     let login = actor.map_or("ghost", |a| a.login.as_str()).to_owned();
     let tip = actor_tooltip_label(actor);
     h_flex()

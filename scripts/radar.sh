@@ -20,6 +20,7 @@ PIN_FILE="$ROOT/references.pin"
 # mode: "blobless" (no working tree, ideal for large monorepos like t3code)
 #       "checkout" (uses existing .refs/<key> working clone if present)
 RADAR_REPOS=(
+  "conn|https://github.com/nckrtl/conn.git|checkout"
   "t3code|https://github.com/pingdotgg/t3code.git|blobless"
   "threadbear|https://github.com/mikecann/threadbear.git|checkout"
   "rune|https://github.com/anomalyco/rune.git|checkout"
@@ -148,6 +149,9 @@ if [[ -n "$BUMP_TARGET" ]]; then
     new_sha="$(git -C "$dir" rev-parse "$ref")"
     old_sha="$(get_pin "$key")"
     set_pin "$key" "$new_sha"
+    if [[ "$mode" == "checkout" ]]; then
+      git -C "$dir" checkout --detach "$new_sha" >/dev/null 2>&1 || true
+    fi
     echo "bumped $key: ${old_sha:0:10} -> ${new_sha:0:10}"
   done
   if [[ "$matched" -eq 0 ]]; then

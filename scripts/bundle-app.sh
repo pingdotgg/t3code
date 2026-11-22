@@ -2,7 +2,7 @@
 # Wraps a built conn-app binary in a signed macOS .app bundle so it launches like a normal
 # app (Dock icon, activation, keyboard focus, `conn://` URLs) and satisfies Vault's
 # `--conn-bridge` caller signature check (`com.nckrtl.conn.dev` signed by team `9SVJ4SYB9B`,
-# matching `../conn/apps/desktop/scripts/electron-launcher.mjs`).
+# matching `.refs/conn/apps/desktop/scripts/electron-launcher.mjs`).
 #
 #   scripts/bundle-app.sh [debug|release] [--install]
 #

@@ -1729,6 +1729,8 @@ mod tests {
             setup: None,
             native_sessions: None,
             configurable_providers: None,
+            sub_providers: None,
+            workspace_rescanned_at: None,
             runtime_paths: None,
             enabled: true,
             installed: true,

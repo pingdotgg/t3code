@@ -679,6 +679,7 @@ impl LinkedItemsPanel {
                 repository: link.repository,
                 number: link.number,
                 watching,
+                until: None,
                 link: None,
             },
         );

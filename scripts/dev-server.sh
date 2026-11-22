@@ -11,7 +11,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEV="${CONN_GPUI_DEV:-/tmp/conn-gpui-dev}"
-SERVER_SRC="$ROOT/../conn-server"
+SERVER_SRC="$ROOT/.refs/conn/apps/conn-server"
 TARGET="$ROOT/target-conn-server"
 BIN="$TARGET/release/conn-server"
 PORT="${CONN_GPUI_PORT:-3891}"
@@ -28,8 +28,15 @@ case "$cmd" in
       echo "already running: pid $(cat "$DEV/server.pid"), $(cat "$DEV/pairing-url" 2>/dev/null)"
       exit 0
     fi
-    if [[ ! -x "$BIN" ]]; then
+    if [[ ! -d "$SERVER_SRC" ]]; then
+      "$ROOT/scripts/sync-refs.sh"
+    fi
+    want_sha="$(git -C "$ROOT/.refs/conn" rev-parse HEAD 2>/dev/null || echo unknown)"
+    built_sha="$(cat "$TARGET/.built-sha" 2>/dev/null || true)"
+    if [[ ! -x "$BIN" || "$built_sha" != "$want_sha" ]]; then
       (cd "$SERVER_SRC" && CARGO_TARGET_DIR="$TARGET" cargo build --release -p conn-server)
+      mkdir -p "$TARGET"
+      printf '%s\n' "$want_sha" > "$TARGET/.built-sha"
     fi
     mkdir -p "$DEV/state" "$DEV/projects"
     # Demo projects: throwaway clones, so threads can never edit a real checkout.
@@ -49,7 +56,7 @@ case "$cmd" in
       git -C "$DEV/projects/hello-rust" -c user.name=demo -c user.email=demo@example.com \
         -c commit.gpgsign=false commit -qm "init"
     fi
-    # A private copy of the Claude SDK host with its npm deps, so ../conn-server stays untouched.
+    # A private copy of the Claude SDK host with its npm deps, so .refs/conn stays untouched.
     if [[ ! -d "$DEV/sdk-host/node_modules/@anthropic-ai/claude-agent-sdk" ]]; then
       mkdir -p "$DEV/sdk-host"
       cp -R "$SERVER_SRC/helpers/sdk-host/"{index.mjs,drivers,package.json,package-lock.json} "$DEV/sdk-host/"

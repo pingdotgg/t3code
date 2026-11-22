@@ -1225,7 +1225,7 @@ pub(super) fn render_link_dialog(
 /// Circular remote avatar with initial fallback (`PullRequestActorAvatar`).
 fn render_actor_avatar(
     tokens: &Tokens,
-    actor: Option<&conn_contract::PullRequestActor>,
+    actor: Option<&conn_contract::IssueActor>,
     size_px: f32,
 ) -> AnyElement {
     chrome::actor_avatar(tokens, actor, size_px, None, false)

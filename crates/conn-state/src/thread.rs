@@ -484,7 +484,7 @@ impl ThreadState {
         snapshot: conn_contract::OrchestrationV2ThreadDetailSnapshot,
     ) {
         self.apply_projection(snapshot.projection, Some(snapshot.snapshot_sequence));
-        self.history_cursor = snapshot.history_cursor;
+        self.history_cursor = snapshot.history_cursor.flatten();
         self.has_more_history = snapshot.has_more_history.unwrap_or(false);
         self.loading_earlier = false;
     }
@@ -566,7 +566,7 @@ impl ThreadState {
             }
             ThreadStreamItem::Snapshot(snapshot) => {
                 self.apply_projection(snapshot.projection, Some(snapshot.snapshot_sequence));
-                self.history_cursor = snapshot.history_cursor;
+                self.history_cursor = snapshot.history_cursor.flatten();
                 self.has_more_history = snapshot.has_more_history.unwrap_or(false);
                 self.loading_earlier = false;
                 true

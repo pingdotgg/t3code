@@ -1227,6 +1227,7 @@ dependencies = [
  "conn-state",
  "conn-theme",
  "conn-web",
+ "conn-wire",
  "futures",
  "gpui-kit",
  "gpui-pre",
@@ -1244,6 +1245,7 @@ dependencies = [
  "serde_json",
  "syntect",
  "tokio",
+ "tokio-tungstenite",
  "url",
 ]
 
@@ -1268,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "conn-contract"
-version = "0.1.0"
+version = "0.4.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1333,7 +1335,7 @@ dependencies = [
 
 [[package]]
 name = "conn-wire"
-version = "0.1.0"
+version = "0.4.2"
 dependencies = [
  "serde",
  "serde_json",
