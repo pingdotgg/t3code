@@ -1,4 +1,6 @@
 /// <reference lib="dom" />
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect } from "e2e";
 import JSZip from "jszip";
 
@@ -7,23 +9,21 @@ import { test, WEB } from "./t3.ts";
 const SHEETS = ["Overview", "Actuals", "Forecast"];
 const RELATIONSHIPS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
-async function workbook(sheetNames = SHEETS) {
+async function workbook() {
   const archive = new JSZip();
-  const sheets = sheetNames
-    .map((name, index) => `<sheet name="${name}" sheetId="${index + 1}" r:id="sheet${index + 1}"/>`)
-    .join("");
+  const sheets = SHEETS.map(
+    (name, index) => `<sheet name="${name}" sheetId="${index + 1}" r:id="sheet${index + 1}"/>`,
+  ).join("");
   archive.file(
     "xl/workbook.xml",
     `<workbook xmlns:r="${RELATIONSHIPS}"><sheets>${sheets}</sheets></workbook>`,
   );
-  const relationships = sheetNames
-    .map(
-      (_, index) =>
-        `<Relationship Id="sheet${index + 1}" Type="${RELATIONSHIPS}/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`,
-    )
-    .join("");
+  const relationships = SHEETS.map(
+    (_, index) =>
+      `<Relationship Id="sheet${index + 1}" Type="${RELATIONSHIPS}/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`,
+  ).join("");
   archive.file("xl/_rels/workbook.xml.rels", `<Relationships>${relationships}</Relationships>`);
-  for (const [index] of sheetNames.entries())
+  for (const [index] of SHEETS.entries())
     archive.file(
       `xl/worksheets/sheet${index + 1}.xml`,
       `<worksheet><sheetData><row r="1"><c r="A1"><v>${index + 1}</v></c></row></sheetData></worksheet>`,
@@ -35,10 +35,18 @@ test(
   "Two rapid right arrows advance two tabs in an Excel preview",
   WEB,
   async ({ t3, app, screen, browser }) => {
-    const project = await t3.project("demo", {
-      "budget.xlsx": await workbook(),
-      "wraparound.xlsx": await workbook(["Overview", "Actuals"]),
-    });
+    const project = await t3.project("demo", { "budget.xlsx": await workbook() });
+    const archive = await JSZip.loadAsync(await workbook());
+    const manifest = (await archive.file("xl/workbook.xml")!.async("string")).replace(
+      '<sheet name="Forecast"',
+      '<sheet state="hidden" name="Forecast"',
+    );
+    archive.file("xl/workbook.xml", manifest);
+    await writeFile(
+      join(project, "wraparound.xlsx"),
+      await archive.generateAsync({ type: "uint8array" }),
+    );
+
     const thread = await t3.thread({ project, title: "Review budget", messages: ["Start"] });
     await t3.open(thread);
     await screen.getByText("fixture turn complete", { exact: false }).waitFor();
