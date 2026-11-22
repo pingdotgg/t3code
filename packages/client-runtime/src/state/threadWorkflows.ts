@@ -1,10 +1,14 @@
-import type {
-  ChatAttachment,
-  OrchestrationV2ProjectedTurnItem,
-  OrchestrationV2ProviderCapabilities,
+import {
+  type ChatAttachment,
+  isCompactionCommandMessage,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
+import { compactionBlocksSteering } from "./composerDispatch.ts";
 import type { ThreadStructure } from "./models.ts";
 
 type Projection = ThreadStructure;
@@ -26,14 +30,17 @@ export interface QueuedThreadRun {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly messageId: Message["id"];
   readonly context?: Message["context"];
+  /** Carries the attribution a sent message shows: automation, agent sender, or guest. */
+  readonly message?: Message;
 }
 
 export interface ThreadQueueWorkflowState {
   readonly activeRun: Run | null;
   readonly queuedRuns: ReadonlyArray<QueuedThreadRun>;
   readonly isHeld: boolean;
-  readonly canReorder: boolean;
   readonly canPromoteToSteer: boolean;
+  /** The active run is a compaction, so promoting a queued message stops it instead of steering. */
+  readonly promoteSkipsCompaction: boolean;
   readonly canSendNow: boolean;
 }
 
@@ -88,6 +95,41 @@ function resolveThreadProviderSession(projection: Projection): ProviderSession |
   );
 }
 
+export function threadSteersDuringCompaction(projection: Projection | null | undefined): boolean {
+  if (projection == null) return false;
+  return (
+    resolveThreadProviderSession(projection)?.capabilities.turns.activeSteeringDuringCompaction ===
+    true
+  );
+}
+
+function supportsSteering(turns: OrchestrationV2ProviderCapabilities["turns"]): boolean {
+  return (
+    turns.supportsActiveSteering ||
+    (turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart)
+  );
+}
+
+export function threadCanSteer(
+  projection: Projection | null,
+  input: {
+    readonly compactCommandIsActive: boolean;
+    readonly compactionRunning: boolean;
+    readonly activeRunId: Run["id"] | null | undefined;
+  },
+): boolean {
+  const turns = projection && resolveThreadProviderSession(projection)?.capabilities.turns;
+  // A steer submitted before the session attaches can wait for its provider turn.
+  if (turns && !supportsSteering(turns)) return false;
+  return !compactionBlocksSteering({
+    compactCommandIsActive: input.compactCommandIsActive,
+    compactionRunning: input.compactionRunning,
+    steersDuringCompaction: turns?.activeSteeringDuringCompaction === true,
+    run: projection?.runs.find((run) => run.id === input.activeRunId),
+    messages: projection?.messages,
+  });
+}
+
 export function threadSupportsProviderHandoff(projection: Projection | null | undefined): boolean {
   if (projection == null) return false;
   const session = resolveThreadProviderSession(projection);
@@ -97,20 +139,22 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
   if (resolveActiveThreadRun(projection) !== null) return false;
   if (projection.thread.historyOrigin === "v1_import" || projection.runs.length === 0) return true;
 
-  // Detaching a stopped session removes it from the projection, but its native
-  // provider thread remains available for the next turn's portable handoff.
+  // Detaching a stopped session removes it from the projection. The server still
+  // hands off from saved app history, which needs the source provider thread but
+  // not its native ref.
   return projection.providerThreads.some(
     (thread) =>
       thread.id === projection.thread.activeProviderThreadId &&
       thread.appThreadId === projection.thread.id &&
-      thread.providerInstanceId === projection.thread.modelSelection.instanceId &&
-      thread.nativeThreadRef !== null,
+      thread.providerInstanceId === projection.thread.modelSelection.instanceId,
   );
 }
 
 export function getUserQueuedThreadRuns(
   projection: Pick<Projection, "runs" | "messages">,
 ): ReadonlyArray<Run> {
+  if (!projection.runs.some((run) => run.status === "queued")) return [];
+
   const automaticCompletionMessageIds = new Set(
     projection.messages
       .filter(
@@ -124,10 +168,19 @@ export function getUserQueuedThreadRuns(
   );
 }
 
-export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {
+export function deriveThreadQueueWorkflowState(
+  projection: Projection,
+  resolve: MFunctionType = mFallback,
+): ThreadQueueWorkflowState {
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
+  const canSteer = capabilities !== undefined && supportsSteering(capabilities);
+  const activeMessage = projection.messages.find(
+    (message) => message.id === activeRun?.userMessageId,
+  );
+  const promoteSkipsCompaction =
+    activeMessage !== undefined && isCompactionCommandMessage(activeMessage);
   const hasSteerableProviderTurn =
     activeRun?.status === "running" &&
     activeRun.activeAttemptId !== null &&
@@ -143,10 +196,12 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
     return {
       run,
-      text: message?.text ?? "Queued message",
+      // A queued guest message shows the guest's words; the agent still gets the attributed text.
+      text: message?.context?.guest?.text ?? message?.text ?? resolve(msg("Queued message")),
       attachments: message?.attachments ?? [],
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
+      ...(message ? { message } : {}),
     };
   });
 
@@ -154,15 +209,16 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     activeRun,
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
-    canReorder: capabilities?.supportsQueuedMessages === true,
     canSendNow:
       activeRun === null &&
       projection.thread.archivedAt == null &&
       projection.thread.deletedAt == null,
     canPromoteToSteer:
-      hasSteerableProviderTurn &&
-      (capabilities?.supportsActiveSteering === true ||
-        capabilities?.supportsSteeringByInterruptRestart === true),
+      promoteSkipsCompaction ||
+      ((activeRun?.status === "preparing" || activeRun?.status === "starting") &&
+        (capabilities === undefined || canSteer)) ||
+      (hasSteerableProviderTurn && canSteer),
+    promoteSkipsCompaction,
   };
 }
 

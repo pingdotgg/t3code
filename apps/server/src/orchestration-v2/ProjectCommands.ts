@@ -6,6 +6,7 @@ import {
   type ProjectIconOverride,
   ProjectId,
   type ProjectScript,
+  type ProjectTrackedFolder,
   SCRIPT_RUN_COMMAND_PATTERN,
   type ThreadEnvMode,
 } from "@t3tools/contracts";
@@ -23,6 +24,7 @@ export interface ProjectCreateCommand {
   readonly title: string;
   readonly workspaceRoot: string;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
 }
 
 export interface ProjectMetaUpdateCommand {
@@ -37,6 +39,9 @@ export interface ProjectMetaUpdateCommand {
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
   readonly scripts?: ReadonlyArray<ProjectScript>;
+  readonly trackedFolders?: ReadonlyArray<ProjectTrackedFolder>;
+  readonly pinned?: boolean;
+  readonly archived?: boolean;
 }
 
 export interface ProjectDeleteCommand {
@@ -104,10 +109,7 @@ export interface ProjectCommandState {
 const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
-/**
- * The caller reads `state` under the project's lock and commits the planned
- * event.
- */
+/** Read state and commit the planned event under the project lock. */
 export function planProjectCommand(input: {
   readonly command: ProjectCommand;
   readonly state: ProjectCommandState;
@@ -164,6 +166,9 @@ export function planProjectCommand(input: {
           faviconPath: null,
           projectIcon: null,
           scripts: command.scripts ?? [],
+          ...(command.trackedFolders === undefined || command.trackedFolders.length === 0
+            ? {}
+            : { trackedFolders: command.trackedFolders }),
           createdAt: occurredAt,
           updatedAt: occurredAt,
         },
@@ -180,8 +185,7 @@ export function planProjectCommand(input: {
         return invariant("Project monograms must contain at most two characters.");
       }
       if (command.scripts !== undefined) {
-        // Persisted IDs predate shortcut validation. Let users edit or remove them
-        // without allowing another invalid ID to enter the project.
+        // Allow editing or removing persisted invalid script ids, while rejecting new invalid ids.
         const existingIds = new Set(project.scripts.map((script) => script.id));
         for (const script of command.scripts) {
           if (!existingIds.has(script.id) && !isScriptRunCommand(`script.${script.id}.run`)) {
@@ -212,6 +216,16 @@ export function planProjectCommand(input: {
           ...(command.faviconPath === undefined ? {} : { faviconPath: command.faviconPath }),
           ...(command.projectIcon === undefined ? {} : { projectIcon: command.projectIcon }),
           ...(command.scripts === undefined ? {} : { scripts: command.scripts }),
+          ...(command.trackedFolders === undefined
+            ? {}
+            : { trackedFolders: command.trackedFolders }),
+          // Repeating a pin or archive keeps the original time.
+          ...(command.pinned === undefined
+            ? {}
+            : { pinnedAt: command.pinned ? (project.pinnedAt ?? occurredAt) : null }),
+          ...(command.archived === undefined
+            ? {}
+            : { archivedAt: command.archived ? (project.archivedAt ?? occurredAt) : null }),
           updatedAt: occurredAt,
         },
       });

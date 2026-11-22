@@ -1,11 +1,17 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestRef, PullRequestStack, ThreadPullRequestLink } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 
 export function pullRequestStackMerge(
   stack: PullRequestStack,
   number: number,
   terminology: ChangeRequestTerminology,
+  resolve: MessageResolver = m,
 ) {
+  const term = changeRequestTermKind(terminology);
   const position = stack.layers.findIndex((layer) => layer.number === number);
   const layers = stack.layers.slice(0, position + 1).filter((layer) => layer.state !== "merged");
   const heads = layers.flatMap((layer) =>
@@ -13,15 +19,25 @@ export function pullRequestStackMerge(
   );
   const reason =
     position < 0
-      ? `This ${terminology.singular} is no longer in the stack. Refresh it.`
+      ? resolve(
+          msg(
+            "This {term, select, mr {merge request} cr {change request} other {pull request}} is no longer in the stack. Refresh it.",
+            { term },
+          ),
+        )
       : stack.layers[position]?.state !== "open" || layers.length === 0
-        ? `There are no open layers to merge through this ${terminology.singular}.`
+        ? resolve(
+            msg(
+              "There are no open layers to merge through this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+              { term },
+            ),
+          )
         : layers.some((layer) => layer.state !== "open")
-          ? "Reopen the closed layers before merging this stack."
+          ? resolve(msg("Reopen the closed layers before merging this stack."))
           : layers.some((layer) => layer.isDraft)
-            ? "Mark every layer being merged ready for review."
+            ? resolve(msg("Mark every layer being merged ready for review."))
             : heads.length !== layers.length
-              ? "Refresh the stack to load its latest revisions before merging."
+              ? resolve(msg("Refresh the stack to load its latest revisions before merging."))
               : null;
   return { position: position + 1, layers, heads, reason };
 }
@@ -65,6 +81,15 @@ export function savedPullRequestStack(
       };
     }),
   };
+}
+
+/** The list summary describes the layer it was opened from, so another layer's route drops it. */
+export function pullRequestLayerParams<Params extends { readonly initialSummary?: unknown }>(
+  params: Params,
+  number: number,
+) {
+  const { initialSummary: _, ...layer } = params;
+  return { ...layer, number };
 }
 
 export function singlePullRequestMergeAllowed(input: {

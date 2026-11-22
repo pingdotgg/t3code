@@ -10,11 +10,7 @@ export const threadOutboxManager = createThreadOutboxManager({
   storage: expoThreadOutboxStorage,
 });
 
-/**
- * An enqueued message is published to the atom immediately but its durable
- * write waits behind the mutation queue, so draining only the writes already
- * mid-file would miss it.
- */
+/** Drain queued mutations too; optimistic publication precedes the durable file write. */
 export async function flushThreadOutbox(): Promise<void> {
   await threadOutboxManager.serialize(async () => {});
   await flushThreadOutboxWrites();
@@ -28,11 +24,7 @@ export function confirmThreadOutboxMessageQueued(message: QueuedThreadMessage): 
   return threadOutboxManager.confirmQueued(message);
 }
 
-/**
- * Rewrite a queued message; no-op (false) if it was removed in the meantime,
- * or (with `expectedRevision` from `threadOutboxRevision`) if any other write
- * was accepted since the revision was read.
- */
+/** Returns false if removed or if expectedRevision differs from threadOutboxRevision; otherwise rewrites the message. */
 export function updateThreadOutboxMessage(
   message: QueuedThreadMessage,
   expectedRevision?: number,
@@ -40,10 +32,16 @@ export function updateThreadOutboxMessage(
   return threadOutboxManager.update(message, expectedRevision);
 }
 
+/** Changes the message as it is when its turn comes; false when it is gone or `change` returns null. */
+export function modifyThreadOutboxMessage(
+  messageId: QueuedThreadMessage["messageId"],
+  change: (message: QueuedThreadMessage) => QueuedThreadMessage | null,
+): Promise<boolean> {
+  return threadOutboxManager.modify(messageId, change);
+}
+
 export function threadOutboxRevision(messageId: QueuedThreadMessage["messageId"]): number {
   return threadOutboxManager.revisionOf(messageId);
 }
 
-// Removal lives in `thread-outbox-removal.ts`: taking a message out of the
-// outbox must also release its local attachment files, and that owner needs
-// the composer draft state this module must not depend on.
+// Removal needs draft-state ownership to release files; keep that dependency outside this module.

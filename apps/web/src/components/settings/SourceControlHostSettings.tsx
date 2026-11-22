@@ -1,5 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { SourceControlDefinition } from "@t3tools/client-runtime/source-control-clients";
+import * as Equal from "effect/Equal";
+import { T } from "gt-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -48,10 +50,11 @@ export function SourceControlHostSettings({
         value={saved ?? {}}
         idPrefix={`source-control-${definition.kind}-${environmentId}`}
         variant="settings"
+        environmentId={environmentId}
         onChange={(next) => {
           const fields = next ?? {};
           const changed = Object.fromEntries(
-            Object.entries(fields).filter(([key, value]) => saved?.[key] !== value),
+            Object.entries(fields).filter(([key, value]) => !Equal.equals(saved?.[key], value)),
           );
           const cleared = Object.keys(saved ?? {}).filter((key) => !(key in fields));
           void save({ ...changed, ...Object.fromEntries(cleared.map((key) => [key, ""])) });
@@ -66,7 +69,7 @@ export function SourceControlHostSettings({
               void save(Object.fromEntries(Object.keys(saved ?? {}).map((key) => [key, ""])))
             }
           >
-            Remove
+            <T>Remove</T>
           </Button>
         </div>
       ) : null}

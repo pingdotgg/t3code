@@ -1,9 +1,7 @@
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { MessageSquareIcon, Trash2Icon, XIcon } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useRef, useState } from "react";
 
 import { Button } from "../ui/button";
@@ -16,6 +14,9 @@ import {
   usePendingReviewComments,
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
+import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
+
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 export function PullRequestComposer({
   environmentId,
@@ -39,7 +40,8 @@ export function PullRequestComposer({
   onReviewSubmitted: () => void;
   openReviewRequest?: number | undefined;
 }) {
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const gt = useGT();
+  const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
   const [open, setOpen] = useState(false);
   const [reviewPending, setReviewPending] = useState(false);
   const [requestedMode, setRequestedMode] = useState<"comment" | "review">("comment");
@@ -47,8 +49,7 @@ export function PullRequestComposer({
   const reviewRef = useRef<HTMLTextAreaElement>(null);
   const pendingComments = usePendingReviewComments(reference);
   const clearComments = usePullRequestReviewStore((store) => store.clear);
-  // A summary typed but not sent is review work too, and it outlives the popover. Selected as a
-  // boolean rather than the text, so typing one does not re-render the composer per keystroke.
+  // Unsent summaries outlive the popover; select a boolean to avoid per-keystroke renders.
   const reviewKey = pullRequestReviewKey(reference);
   const summaryStarted = usePullRequestReviewStore(
     (store) => (store.summaries[reviewKey] ?? "").trim().length > 0,
@@ -81,10 +82,19 @@ export function PullRequestComposer({
         render={<Button size="icon" variant="glass" />}
         aria-label={
           pendingComments.length > 0
-            ? `Review ${term}, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`
+            ? gt(
+                "{count, plural, one {Review {term, select, mr {merge request} cr {change request} other {pull request}}, {count} comment pending} other {Review {term, select, mr {merge request} cr {change request} other {pull request}}, {count} comments pending}}",
+                { count: pendingComments.length, term },
+              )
             : reviewStarted || !canComment
-              ? `Review ${term}`
-              : `Comment on ${term}`
+              ? gt(
+                  "Review {term, select, mr {merge request} cr {change request} other {pull request}}",
+                  { term },
+                )
+              : gt(
+                  "Comment on {term, select, mr {merge request} cr {change request} other {pull request}}",
+                  { term },
+                )
         }
       >
         <MessageSquareIcon className="size-4" />
@@ -104,12 +114,15 @@ export function PullRequestComposer({
         sideOffset={8}
         width="lg"
         initialFocus={mode === "review" ? reviewRef : commentRef}
-        aria-label={`${capitalizeTerm(term)} composer`}
+        aria-label={gt(
+          "{term, select, mr {Merge request} cr {Change request} other {Pull request}} composer",
+          { term },
+        )}
       >
         <div className="mb-3 flex items-center justify-between gap-2">
           {canComment && verdicts.length > 0 ? (
             <ToggleGroup
-              aria-label="Composer mode"
+              aria-label={gt("Composer mode")}
               variant="segmented"
               value={[mode]}
               onValueChange={(next) => {
@@ -117,14 +130,26 @@ export function PullRequestComposer({
                 if (value === "comment" || value === "review") setRequestedMode(value);
               }}
             >
-              <Toggle value="comment">Comment</Toggle>
+              <Toggle value="comment">
+                <T context="noun, composer mode">Comment</T>
+              </Toggle>
               <Toggle value="review">
-                {pendingComments.length > 0 ? `Review (${pendingComments.length})` : "Review"}
+                {pendingComments.length > 0
+                  ? gt("Review ({count})", { count: pendingComments.length })
+                  : gt("Review", { $context: "noun, composer mode" })}
               </Toggle>
             </ToggleGroup>
           ) : (
             <PopoverTitle>
-              {mode === "review" ? `Review ${term}` : `Comment on ${term}`}
+              {mode === "review"
+                ? gt(
+                    "Review {term, select, mr {merge request} cr {change request} other {pull request}}",
+                    { term },
+                  )
+                : gt(
+                    "Comment on {term, select, mr {merge request} cr {change request} other {pull request}}",
+                    { term },
+                  )}
             </PopoverTitle>
           )}
           <div className="flex items-center gap-1">
@@ -132,8 +157,8 @@ export function PullRequestComposer({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label="Discard pending line comments"
-                title="Discard pending line comments"
+                aria-label={gt("Discard pending line comments")}
+                title={gt("Discard pending line comments")}
                 disabled={reviewPending}
                 onClick={() => clearComments(reviewKey)}
               >
@@ -142,19 +167,20 @@ export function PullRequestComposer({
             ) : null}
             <PopoverClose
               render={<Button size="icon-xs" variant="ghost" />}
-              aria-label="Close composer"
+              aria-label={gt("Close composer")}
             >
               <XIcon className="size-3.5" />
             </PopoverClose>
           </div>
         </div>
-        {/* Keep both forms mounted across toggles and dismissal so drafts and in-flight
-            submit guards survive closing and reopening the composer. */}
+        {/* Keep forms mounted to preserve drafts and submit guards across dismissal. */}
         {verdicts.length > 0 ? (
           <div hidden={mode !== "review"}>
             <PullRequestReviewForm
+              active={open && mode === "review"}
               environmentId={environmentId}
               reference={reference}
+              completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
               term={term}
               verdicts={verdicts}
               requestChangesSummaryRequired={sourceControlClients
@@ -173,6 +199,7 @@ export function PullRequestComposer({
         {canComment ? (
           <div hidden={mode !== "comment"}>
             <PullRequestCommentForm
+              active={open && mode === "comment"}
               environmentId={environmentId}
               reference={reference}
               detail={detail}

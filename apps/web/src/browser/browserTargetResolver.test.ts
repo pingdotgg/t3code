@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { isPrivateNetworkHost, isPublicFaviconHost } from "@t3tools/shared/hostClassification";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const readPreparedConnection = vi.fn();
@@ -10,76 +11,12 @@ vi.mock("~/env", () => env);
 describe("browser target resolver", () => {
   beforeEach(() => readPreparedConnection.mockReset());
 
-  it("maps environment ports onto a private network host", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "environment-port",
-        port: 5173,
-        path: "/dashboard",
-      }),
-    ).toEqual({
-      requestedUrl: "http://localhost:5173/dashboard",
-      resolvedUrl: "http://192.168.1.25:5173/dashboard",
-      resolutionKind: "direct-private-network",
-      environmentId: "environment-1",
-    });
-  });
-
-  it("preserves explicit loopback URL navigation for a remote Tailscale environment", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://100.65.180.100:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://localhost:5173/dashboard?mode=test#results",
-      }),
-    ).toEqual({
-      requestedUrl: "http://localhost:5173/dashboard?mode=test#results",
-      resolvedUrl: "http://localhost:5173/dashboard?mode=test#results",
-      resolutionKind: "direct",
-      environmentId: "environment-1",
-    });
-  });
-
-  it("preserves URL credentials on explicit loopback navigation", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://100.65.180.100:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://user:p%40ss@localhost:5173/dashboard",
-      }).resolvedUrl,
-    ).toBe("http://user:p%40ss@localhost:5173/dashboard");
-  });
-
-  it("preserves schemeless localhost navigation for a remote environment", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "localhost:3000/app",
-      }).resolvedUrl,
-    ).toBe("localhost:3000/app");
-  });
-
   it("refuses public relay hosts until the authenticated gateway exists", async () => {
     readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
-    const { resolveBrowserNavigationTarget } = await import("./browserTargetResolver");
-    expect(() =>
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "environment-port",
-        port: 5173,
-      }),
-    ).toThrow(/authenticated preview gateway/);
+    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     expect(
-      resolveBrowserNavigationTarget(EnvironmentId.make("environment-1"), {
-        kind: "url",
-        url: "http://localhost:5173",
-      }),
-    ).toMatchObject({ resolvedUrl: "http://localhost:5173", resolutionKind: "direct" });
+      resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "http://localhost:5173"),
+    ).toBe("http://localhost:5173");
   });
 
   it("normalizes schemeless localhost server-picker values", async () => {
@@ -102,9 +39,9 @@ describe("browser target resolver", () => {
   });
 
   it("keeps localhost for servers on the desktop's own WSL or primary backend", async () => {
-    // WSL NAT mode serves the backend on the distro IP, but a loopback-only dev
-    // server there answers only on localhost from the Windows desktop.
-    const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
+    // WSL NAT advertises a distro IP, but loopback-bound servers only answer on localhost.
+    const { resolveDiscoveredServerUrl, resolveExternalServerUrl } =
+      await import("./browserTargetResolver");
     env.isElectron = true;
     try {
       for (const target of [
@@ -120,16 +57,19 @@ describe("browser target resolver", () => {
         httpBaseUrl: "http://192.168.1.25:3773",
         target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" },
       });
+      // The webview's partition tunnels to the environment; the system browser has no tunnel.
       expect(
         resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/"),
-      ).toBe("http://192.168.1.25:3001/");
+      ).toBe("http://localhost:3001/");
+      expect(resolveExternalServerUrl(EnvironmentId.make("environment-1"), "localhost:3001/")).toBe(
+        "http://192.168.1.25:3001/",
+      );
     } finally {
       env.isElectron = false;
     }
   });
 
   it("classifies exact private IPv4 and IPv6 boundaries", async () => {
-    const { isPrivateNetworkHost } = await import("./browserTargetResolver");
     const privateHosts = [
       "0.0.0.0",
       "10.0.0.0",
@@ -185,7 +125,6 @@ describe("browser target resolver", () => {
   });
 
   it("allows only globally routable hosts to reach a public favicon provider", async () => {
-    const { isPublicFaviconHost } = await import("./browserTargetResolver");
     const nonPublic = [
       "192.0.0.0",
       "192.0.0.255",

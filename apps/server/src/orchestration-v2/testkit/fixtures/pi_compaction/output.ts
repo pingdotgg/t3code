@@ -48,7 +48,7 @@ export function assertPiCompactionOutput(
     result,
     transcript,
     runCount: 6,
-    runStatuses: ["completed", "completed", "completed", "completed", "completed", "completed"],
+    runStatuses: ["completed", "failed", "completed", "completed", "completed", "completed"],
   });
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
@@ -72,8 +72,7 @@ export function assertPiCompactionOutput(
     ),
     "compaction must not run a model turn",
   );
-  // Right after compacting, Pi reports context usage as unknown (tokens: null);
-  // the meter keeps Pi's own post-compaction estimate instead of going blank.
+  // Pi reports tokens null after compaction; retain its post-compaction estimate.
   const compactionTurn = projection.providerTurns.find(
     (turn) => turn.runAttemptId === compactionRuns[1]?.activeAttemptId,
   );

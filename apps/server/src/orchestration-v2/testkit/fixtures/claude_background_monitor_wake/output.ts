@@ -13,9 +13,7 @@ import { CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT } from "./input.ts";
 
 const MONITOR_TASK_ID = "b1htjkjev";
 
-// Claude reports a Monitor as task_type local_bash, the same as a background
-// Bash command. Only the Monitor tool call that started the task tells them
-// apart, so the roster and the wake must name it a monitor.
+// Claude reports Monitors as local_bash; only the launching tool call distinguishes them from background Bash.
 export function assertClaudeBackgroundMonitorWakeOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
@@ -29,20 +27,30 @@ export function assertClaudeBackgroundMonitorWakeOutput(
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
   assertUserMessagesInclude(projection, [CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT]);
+  const monitorItem = projection.turnItems.find(
+    (item) => item.nativeItemRef?.nativeId === "toolu_019b4EUbhEcYP4TS7vZn27N1",
+  );
+  assert.isDefined(monitorItem);
 
   const rosterTasks = result.domainEvents
     .flatMap((event) =>
       event.type === "provider-thread.updated" ? (event.payload.pendingBackgroundTasks ?? []) : [],
     )
     .filter((task) => task.taskId === MONITOR_TASK_ID);
-  // Claude's first roster snapshot lands one frame before the task_started
-  // that links the task to its Monitor call, so only that entry reads command.
+  // The first roster precedes task_started linking the Monitor call, so that entry reads command.
   assert.isAbove(rosterTasks.length, 1);
-  for (const task of rosterTasks.slice(1)) {
+  for (const { runId, ...task } of rosterTasks.slice(1)) {
+    // Adapter rosters carry no run; server rewrites of the stored thread carry the projection's stamp.
+    if (runId !== undefined) assert.equal(runId, monitorItem?.runId);
     assert.deepEqual(task, {
       taskId: MONITOR_TASK_ID,
       description: "Background monitor test",
       kind: "monitor",
+      awaited: true,
+      nativeItemId: "toolu_019b4EUbhEcYP4TS7vZn27N1",
+      command: "sleep 8 && echo MONITOR_DONE",
+      itemId: monitorItem?.id,
+      sourceThreadId: monitorItem?.threadId,
     });
   }
   assert.deepEqual(projection.providerThreads[0]?.pendingBackgroundTasks ?? [], []);

@@ -4,7 +4,9 @@ import {
   type FileTreeIcons,
 } from "@pierre/trees";
 import { VIDEO_FILE_EXTENSIONS } from "@t3tools/shared/video";
-import { fileIconPathForMimeType } from "@t3tools/shared/filePreview";
+import { fileIconPathForMimeType } from "@t3tools/shared/mediaPreview";
+
+import type { ContextChipAccentKind } from "~/lib/contextChipAccents";
 
 export interface PierreIconResolution {
   name: string;
@@ -12,6 +14,14 @@ export interface PierreIconResolution {
 }
 
 const PIERRE_ICON_SPRITE_ID = "t3code-pierre-file-icon-sprite";
+
+const DOCUMENT_ICON_COLORS: Readonly<Record<string, string>> = {
+  "t3-file-icon-pdf": "light-dark(#d52c36, #ff6762)",
+  "t3-file-icon-word": "light-dark(#1a85d4, #69b1ff)",
+  "t3-file-icon-spreadsheet": "light-dark(#199f43, #5ecc71)",
+  "t3-file-icon-slides": "light-dark(#d47628, #ffa359)",
+  "t3-file-icon-epub": "light-dark(#693acf, #9d6afb)",
+};
 
 const T3_FILE_ICON_SPRITE = `
 <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true">
@@ -40,6 +50,48 @@ const T3_FILE_ICON_SPRITE = `
   <!-- Lucide Code Xml icon, ISC license. -->
   <symbol id="t3-file-icon-xml" viewBox="0 0 24 24">
     <path fill="none" style="stroke: light-dark(#d47628, #ffa359)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m18 16 4-4-4-4M6 8l-4 4 4 4M14.5 4l-5 16" />
+  </symbol>
+  <!-- Lucide File Type, File Text, File Spreadsheet, Presentation and Book Open icons, ISC license. -->
+  <symbol id="t3-file-icon-pdf" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: var(--document-icon-stroke, ${DOCUMENT_ICON_COLORS["t3-file-icon-pdf"]})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M11 18h2" />
+      <path d="M12 12v6" />
+      <path d="M9 13v-.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 .5.5v.5" />
+    </g>
+  </symbol>
+  <symbol id="t3-file-icon-word" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: var(--document-icon-stroke, ${DOCUMENT_ICON_COLORS["t3-file-icon-word"]})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </g>
+  </symbol>
+  <symbol id="t3-file-icon-spreadsheet" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: var(--document-icon-stroke, ${DOCUMENT_ICON_COLORS["t3-file-icon-spreadsheet"]})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+      <path d="M8 13h2" />
+      <path d="M14 13h2" />
+      <path d="M8 17h2" />
+      <path d="M14 17h2" />
+    </g>
+  </symbol>
+  <symbol id="t3-file-icon-slides" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: var(--document-icon-stroke, ${DOCUMENT_ICON_COLORS["t3-file-icon-slides"]})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 3h20" />
+      <path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3" />
+      <path d="m7 21 5-5 5 5" />
+    </g>
+  </symbol>
+  <symbol id="t3-file-icon-epub" viewBox="0 0 24 24">
+    <g fill="none" style="stroke: var(--document-icon-stroke, ${DOCUMENT_ICON_COLORS["t3-file-icon-epub"]})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 7v14" />
+      <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+    </g>
   </symbol>
   <!-- Language logos from Simple Icons, CC0. -->
   <symbol id="t3-file-icon-csharp" viewBox="0 0 24 24">
@@ -95,6 +147,20 @@ export const T3_PIERRE_ICONS = {
     ...Object.fromEntries(
       VIDEO_FILE_EXTENSIONS.map((extension) => [extension, "t3-file-icon-video"]),
     ),
+    pdf: "t3-file-icon-pdf",
+    doc: "t3-file-icon-word",
+    docx: "t3-file-icon-word",
+    odt: "t3-file-icon-word",
+    rtf: "t3-file-icon-word",
+    xls: "t3-file-icon-spreadsheet",
+    xlsx: "t3-file-icon-spreadsheet",
+    ods: "t3-file-icon-spreadsheet",
+    csv: "t3-file-icon-spreadsheet",
+    tsv: "t3-file-icon-spreadsheet",
+    ppt: "t3-file-icon-slides",
+    pptx: "t3-file-icon-slides",
+    odp: "t3-file-icon-slides",
+    epub: "t3-file-icon-epub",
     cs: "t3-file-icon-csharp",
     csx: "t3-file-icon-csharp",
     dart: "t3-file-icon-dart",
@@ -103,11 +169,14 @@ export const T3_PIERRE_ICONS = {
     ex: "t3-file-icon-elixir",
     exs: "t3-file-icon-elixir",
     hs: "t3-file-icon-haskell",
+    heic: "file-tree-builtin-image",
+    heif: "file-tree-builtin-image",
     lhs: "t3-file-icon-haskell",
     java: "t3-file-icon-java",
     kt: "t3-file-icon-kotlin",
     kts: "t3-file-icon-kotlin",
     lua: "t3-file-icon-lua",
+    luau: "t3-file-icon-lua",
     php: "t3-file-icon-php",
     ps1: "t3-file-icon-powershell",
     psm1: "t3-file-icon-powershell",
@@ -116,6 +185,9 @@ export const T3_PIERRE_ICONS = {
     scala: "t3-file-icon-scala",
     toml: "t3-file-icon-toml",
     xml: "t3-file-icon-xml",
+    xsd: "t3-file-icon-xml",
+    xsl: "t3-file-icon-xml",
+    xslt: "t3-file-icon-xml",
   },
 } satisfies FileTreeIcons;
 
@@ -168,6 +240,8 @@ export function resolvePierreIconForEntry(
 ): PierreIconResolution | null {
   if (kind === "directory") return null;
   const icon = completeIconResolver.resolveIcon("file-tree-icon-file", pathValue);
+  if (icon?.name === "file-tree-builtin-image" && icon.token === undefined)
+    return { ...icon, token: "image" };
   return icon?.token === "default" && mimeType
     ? completeIconResolver.resolveIcon(
         "file-tree-icon-file",
@@ -176,12 +250,30 @@ export function resolvePierreIconForEntry(
     : icon;
 }
 
+const DOCUMENT_CHIP_KINDS: Readonly<Record<string, ContextChipAccentKind>> = {
+  "t3-file-icon-pdf": "doc-pdf",
+  "t3-file-icon-word": "doc-word",
+  "t3-file-icon-spreadsheet": "doc-spreadsheet",
+  "t3-file-icon-slides": "doc-slides",
+  "t3-file-icon-epub": "doc-epub",
+};
+
+export function documentChipKindForFileName(fileName: string) {
+  const icon = resolvePierreIconForEntry(fileName, "file");
+  return icon ? DOCUMENT_CHIP_KINDS[icon.name] : undefined;
+}
+
 export function hasSpecificPierreIconForFileName(fileName: string): boolean {
   return resolvePierreIconForEntry(fileName, "file")?.token !== "default";
 }
 
 export function ensurePierreIconSprite(): void {
-  if (typeof document === "undefined" || document.getElementById(PIERRE_ICON_SPRITE_ID)) return;
+  if (
+    typeof document === "undefined" ||
+    !document.body ||
+    document.getElementById(PIERRE_ICON_SPRITE_ID)
+  )
+    return;
   const container = document.createElement("div");
   container.id = PIERRE_ICON_SPRITE_ID;
   container.setAttribute("aria-hidden", "true");

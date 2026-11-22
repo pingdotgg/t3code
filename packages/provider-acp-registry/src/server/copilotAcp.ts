@@ -1,16 +1,14 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as AcpSchema from "effect-acp/compat";
+import * as AcpErrors from "effect-acp/errors";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import type {
   AcpAdapterV2ExtensionContext,
   AcpAdapterV2SubagentUpdate,
 } from "@t3tools/provider-acp/server/adapter";
 
-// Only its opt-in raw event feed says who wrote a chunk: each chunk is preceded
-// by an `assistant.*_delta` carrying the spawning `task` tool call id. Both
-// arrive inline on the same reader, in wire order, so the delta just before a
-// chunk is that chunk's author.
+// The opt-in raw feed identifies each chunk by the preceding assistant.*_delta task call id.
 
 const COPILOT_META_KEY = "github.com/copilot";
 const COPILOT_SESSION_EVENT = "github.com/copilot/sessionEvent";
@@ -23,9 +21,33 @@ export const copilotClientCapabilitiesMeta = {
       "subagent.failed",
       "assistant.message_delta",
       "assistant.reasoning_delta",
+      "session.compaction_complete",
+      "assistant.turn_start",
+      "assistant.idle",
+      "tool.execution_start",
     ],
   },
 };
+
+const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+
+/** Copilot keeps failing every prompt with these until its process is replaced. */
+const COPILOT_LOST_SESSION_MARKERS = [
+  "session event delivery failed: session not found: ",
+  "session lock unavailable during is_session_generation_current: acquisition timed out",
+];
+
+export function isCopilotLostSessionError(error: unknown): boolean {
+  if (!isAcpRequestError(error) || error.method !== "session/prompt" || error.code !== -32603) {
+    return false;
+  }
+  // Older Copilot reports the cause in data.details; its native ACP layer (1.0.105) in the message.
+  return [error.errorMessage, record(error.data)?.details].some(
+    (text) =>
+      typeof text === "string" &&
+      COPILOT_LOST_SESSION_MARKERS.some((marker) => text.includes(marker)),
+  );
+}
 
 const CopilotSessionEvent = Schema.Struct({
   sessionId: Schema.String,
@@ -42,9 +64,26 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 const childSessionId = (taskToolCallId: string) => `copilot-task:${taskToolCallId}`;
 
+// Copilot's tool_call reports MCP calls and glob/grep as kind "read" under a flattened title.
+type CopilotToolIdentity =
+  | { readonly kind: "mcp"; readonly server: string; readonly tool: string }
+  | { readonly kind: "search" };
+
+const COPILOT_SEARCH_TOOLS = new Set(["glob", "grep", "rg"]);
+
 interface CopilotSessionAttribution {
   delta: { readonly kind: string; readonly text: string; readonly task?: string } | undefined;
   readonly taskByAgentId: Map<string, string>;
+  readonly toolIdentityByCallId: Map<string, CopilotToolIdentity>;
+}
+
+function copilotToolIdentity(data: Record<string, unknown>): CopilotToolIdentity | undefined {
+  const server = typeof data.mcpServerName === "string" ? data.mcpServerName.trim() : "";
+  const tool = typeof data.mcpToolName === "string" ? data.mcpToolName.trim() : "";
+  if (server.length > 0 && tool.length > 0) return { kind: "mcp", server, tool };
+  return typeof data.toolName === "string" && COPILOT_SEARCH_TOOLS.has(data.toolName)
+    ? { kind: "search" }
+    : undefined;
 }
 
 export function makeCopilotSubagentRouting() {
@@ -52,13 +91,17 @@ export function makeCopilotSubagentRouting() {
   const session = (sessionId: string) => {
     let current = sessions.get(sessionId);
     if (current === undefined) {
-      current = { delta: undefined, taskByAgentId: new Map() };
+      current = { delta: undefined, taskByAgentId: new Map(), toolIdentityByCallId: new Map() };
       sessions.set(sessionId, current);
     }
     return current;
   };
   const release = (sessionId: string, current: CopilotSessionAttribution) => {
-    if (current.delta === undefined && current.taskByAgentId.size === 0) {
+    if (
+      current.delta === undefined &&
+      current.taskByAgentId.size === 0 &&
+      current.toolIdentityByCallId.size === 0
+    ) {
       sessions.delete(sessionId);
     }
   };
@@ -66,12 +109,19 @@ export function makeCopilotSubagentRouting() {
   const registerExtensions = (context: AcpAdapterV2ExtensionContext) =>
     context.runtime.handleExtNotification(COPILOT_SESSION_EVENT, CopilotSessionEvent, (event) => {
       const data = event.data ?? {};
-      const task = typeof data.parentToolCallId === "string" ? data.parentToolCallId : undefined;
       switch (event.type) {
         case "assistant.message_delta":
         case "assistant.reasoning_delta": {
           if (typeof data.deltaContent !== "string") return Effect.void;
-          session(event.sessionId).delta = {
+          const current = session(event.sessionId);
+          // Copilot 1.0.114+ names a subagent's deltas only by agentId, without parentToolCallId.
+          const task =
+            typeof data.parentToolCallId === "string"
+              ? data.parentToolCallId
+              : event.agentId === undefined
+                ? undefined
+                : current.taskByAgentId.get(event.agentId);
+          current.delta = {
             kind: event.type,
             text: data.deltaContent,
             ...(task === undefined ? {} : { task }),
@@ -81,6 +131,13 @@ export function makeCopilotSubagentRouting() {
         case "subagent.started": {
           if (event.agentId !== undefined && typeof data.toolCallId === "string") {
             session(event.sessionId).taskByAgentId.set(event.agentId, data.toolCallId);
+          }
+          return Effect.void;
+        }
+        case "tool.execution_start": {
+          const identity = copilotToolIdentity(data);
+          if (identity !== undefined && typeof data.toolCallId === "string") {
+            session(event.sessionId).toolIdentityByCallId.set(data.toolCallId, identity);
           }
           return Effect.void;
         }
@@ -100,6 +157,27 @@ export function makeCopilotSubagentRouting() {
             result: typeof data.error === "string" ? data.error : null,
           });
         }
+        // Copilot sends no ACP compaction_update; agentId marks a subagent's own compaction.
+        // Older Copilot builds report a successful compaction without `outcome`.
+        case "session.compaction_complete": {
+          if (
+            event.agentId !== undefined ||
+            data.success !== true ||
+            (data.outcome !== undefined && data.outcome !== "applied")
+          ) {
+            return Effect.void;
+          }
+          return context.markSessionCompacted(event.sessionId);
+        }
+        // Copilot holds session/prompt while an attached async shell runs (github/copilot-cli#5293).
+        case "assistant.turn_start":
+        case "assistant.idle": {
+          if (event.agentId !== undefined || data.aborted === true) return Effect.void;
+          return context.reportForegroundWork({
+            sessionId: event.sessionId,
+            state: event.type === "assistant.idle" ? "idle" : "running",
+          });
+        }
         default:
           return Effect.void;
       }
@@ -112,6 +190,7 @@ export function makeCopilotSubagentRouting() {
     const current = sessions.get(notification.sessionId);
     if (current === undefined) return notification;
     let task: string | undefined;
+    let normalized = notification;
     if (
       update.sessionUpdate === "agent_message_chunk" ||
       update.sessionUpdate === "agent_thought_chunk"
@@ -136,8 +215,25 @@ export function makeCopilotSubagentRouting() {
     ) {
       const agentId = record(record(update._meta)?.[COPILOT_META_KEY])?.agentId;
       task = typeof agentId === "string" ? current.taskByAgentId.get(agentId) : undefined;
+      const identity = current.toolIdentityByCallId.get(update.toolCallId);
+      if (identity !== undefined) {
+        if (update.status === "completed" || update.status === "failed") {
+          current.toolIdentityByCallId.delete(update.toolCallId);
+          release(notification.sessionId, current);
+        }
+        normalized = {
+          ...notification,
+          update:
+            identity.kind === "search"
+              ? { ...update, kind: "search" }
+              : {
+                  ...update,
+                  _meta: { ...update._meta, serverId: identity.server, toolName: identity.tool },
+                },
+        };
+      }
     }
-    return task === undefined ? notification : { ...notification, sessionId: childSessionId(task) };
+    return task === undefined ? normalized : { ...normalized, sessionId: childSessionId(task) };
   };
 
   return { registerExtensions, normalizeSessionUpdate };

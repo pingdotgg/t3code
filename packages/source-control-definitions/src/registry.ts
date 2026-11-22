@@ -1,33 +1,42 @@
 import * as AzureDevOps from "@t3tools/source-control-azure-devops/shared/definition";
 import * as Bitbucket from "@t3tools/source-control-bitbucket/shared/definition";
 import { makeSourceControlDefinitionRegistry } from "@t3tools/source-control-core/shared/definition";
+import * as CursorOrigin from "@t3tools/source-control-cursor-origin/shared/definition";
 import * as Forgejo from "@t3tools/source-control-forgejo/shared/definition";
 import * as GitCafe from "@t3tools/source-control-gitcafe/shared/definition";
 import * as GitHub from "@t3tools/source-control-github/shared/definition";
 import * as GitLab from "@t3tools/source-control-gitlab/shared/definition";
+import * as TanStackSource from "@t3tools/source-control-tanstack-source/shared/definition";
+
+export { canonicalizePullRequestUrl as canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-gitcafe/shared/definition";
 
 /**
- * The server and every client read hosts through this one registry, so they agree on which host
- * owns a URL or remote. GitHub comes first because a repository that has not reported its host
- * yet reads as GitHub, which is what clients have always shown there. A change request URL goes
- * to the first host whose shape it has, so GitCafe, which claims `/pull/` and `/pulls/` only on
- * its own hostnames, claims before GitHub and Forgejo, which claim them everywhere. A hostname can
- * carry more than one host's label (`gitea.github.example`), so remote recognition has its own
- * order.
+ * GitHub comes first as the client default for unknown hosts. GitCafe, TanStack Source and Origin
+ * claim URLs first: GitHub and Forgejo accept the same routes on any hostname. TanStack Source is a
+ * private beta: every reader knows its URLs, and only a server with its flag on offers the forge.
  */
 export const builtInSourceControlDefinitions = makeSourceControlDefinitionRegistry(
   [
     GitHub.definition,
+    CursorOrigin.definition,
     GitLab.definition,
     GitCafe.definition,
+    TanStackSource.definition,
     Forgejo.definition,
     Bitbucket.definition,
     AzureDevOps.definition,
   ],
   {
-    claimChangeRequestUrlsFirst: [GitCafe.definition.kind],
+    claimChangeRequestUrlsFirst: [
+      GitCafe.definition.kind,
+      TanStackSource.definition.kind,
+      CursorOrigin.definition.kind,
+      AzureDevOps.definition.kind,
+    ],
     recognizeRemotesIn: [
       GitCafe.definition.kind,
+      TanStackSource.definition.kind,
+      CursorOrigin.definition.kind,
       Forgejo.definition.kind,
       GitHub.definition.kind,
       GitLab.definition.kind,

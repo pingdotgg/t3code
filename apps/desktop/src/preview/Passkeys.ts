@@ -1,6 +1,7 @@
 // @effect-diagnostics globalTimers:off - Ceremonies settle inside IPC handlers, outside an Effect runtime.
 import type { IpcMainInvokeEvent, Session, WebContents, WebFrameMain } from "electron";
 import { app, BrowserWindow, dialog, webContents as electronWebContents } from "electron";
+import { msg } from "gt-i18n";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { m } from "../i18n/messages.ts";
 import { PASSKEY_CREATE_CHANNEL, PASSKEY_GET_CHANNEL } from "./GuestProtocol.ts";
 import type { PasskeyBackend, PasskeyCeremonyContext } from "./PasskeyBackend.ts";
 import { macPasskeyBackend } from "./PasskeyBackendMac.ts";
@@ -53,7 +55,7 @@ const notAllowed: PasskeyCeremonyResult = { success: false, error: "NotAllowedEr
 const accountLabel = (account: Electron.WebAuthnAccount) =>
   account.displayName && account.name && account.displayName !== account.name
     ? `${account.displayName} (${account.name})`
-    : (account.name ?? account.displayName ?? "Unnamed passkey");
+    : (account.name ?? account.displayName ?? m(msg("Unnamed passkey")));
 
 const ownerWindow = (frame: WebFrameMain | null) => {
   const contents = frame ? electronWebContents.fromFrame(frame) : undefined;
@@ -67,9 +69,9 @@ const chooseAccount = async (details: Electron.SelectWebauthnAccountDetails) => 
   if (details.accounts.length === 1) return onlyAccount?.credentialId;
   const options: Electron.MessageBoxOptions = {
     type: "none",
-    message: "Choose a passkey",
+    message: m(msg("Choose a passkey")),
     detail: details.relyingPartyId,
-    buttons: [...details.accounts.map(accountLabel), "Cancel"],
+    buttons: [...details.accounts.map(accountLabel), m(msg("Cancel"))],
     cancelId: details.accounts.length,
     defaultId: 0,
     noLink: true,
@@ -84,8 +86,7 @@ const chooseAccount = async (details: Electron.SelectWebauthnAccountDetails) => 
 const NATIVE_DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const NATIVE_MAX_TIMEOUT_MS = 60 * 60 * 1000;
 
-// Mirrors the native layer's own clamp, plus a margin: it can leave a ceremony
-// unsettled, and the page must still get an answer.
+// Native ceremonies can remain unsettled; match its deadline clamp with a margin.
 const ceremonyDeadline = (timeout: unknown) =>
   (typeof timeout === "number" && timeout > 0
     ? Math.min(timeout, NATIVE_MAX_TIMEOUT_MS)
@@ -99,9 +100,7 @@ const withDeadline = (ceremony: Promise<PasskeyCeremonyResult>, milliseconds: nu
   return Promise.race([ceremony, deadline]).finally(() => clearTimeout(timer));
 };
 
-// Secure contexts only: https, or http on this machine. Chromium also trusts
-// `*.localhost`, but the macOS layer refuses it, so it is turned away here
-// instead of failing deeper with a less useful error.
+// macOS refuses *.localhost even though Chromium trusts it.
 const isTrustworthyOrigin = (origin: string) => {
   if (!URL.canParse(origin)) return false;
   const { protocol, hostname } = new URL(origin);
@@ -112,9 +111,7 @@ const isTrustworthyOrigin = (origin: string) => {
   );
 };
 
-/**
- * Windows needs none: Chromium already hands WebAuthn to Windows Hello there.
- */
+// Chromium already delegates to Windows Hello.
 const backendFor = (platform: NodeJS.Platform): PasskeyBackend | undefined =>
   platform === "darwin" ? macPasskeyBackend : undefined;
 
@@ -168,9 +165,7 @@ const make = Effect.gen(function* () {
         // Only the guest's main frame runs the bridge preload.
         const frame = event.senderFrame;
         if (!frame || frame !== guest.mainFrame) return notAllowed;
-        // The page shares a JS world with the preload, so nothing it sends can
-        // be trusted for the origin. Read the committed origin before any await:
-        // the frame object outlives a navigation.
+        // The page shares the preload's JS world; read the frame's committed origin before any await/navigation.
         const origin = frame.origin;
         if (!isTrustworthyOrigin(origin) || ceremonyPending || !guest.isFocused()) {
           return notAllowed;

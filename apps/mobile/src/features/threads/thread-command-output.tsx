@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { TERMINAL_PALETTES, terminalOutputSpans } from "@t3tools/shared/terminalOutput";
 import type React from "react";
@@ -9,27 +10,22 @@ import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 
-// Within this many points of the end still counts as following the output.
 const FOLLOW_SLACK = 8;
 
-/** True when the environment streams command output; older servers only return final output. */
 export function useCommandOutputStreaming(environmentId: EnvironmentId): boolean {
   return (
     useServerConfigs().get(environmentId)?.environment.capabilities.commandOutputStreaming === true
   );
 }
 
-/**
- * Output of one expanded command row: streams while the command runs, then
- * shows its final output. Mount it only when `useCommandOutputStreaming` holds.
- * It subscribes only while mounted, so collapsed rows and other threads receive nothing.
- */
+/** Mount only while useCommandOutputStreaming holds; unmount to stop subscriptions for collapsed rows or other threads. */
 export function ThreadCommandOutput(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly itemId: TurnItemId;
   readonly themeAppearance: "light" | "dark";
 }) {
+  const gt = useGT();
   const { data, error } = useEnvironmentQuery(
     orchestrationEnvironment.v2.commandOutput({
       environmentId: props.environmentId,
@@ -37,7 +33,6 @@ export function ThreadCommandOutput(props: {
     }),
   );
   const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
-  // Follow new output until the reader scrolls up; scrolling back down resumes.
   const followRef = useRef(true);
   const text = data?.output.text ?? "";
   const spans = useMemo(
@@ -46,12 +41,12 @@ export function ThreadCommandOutput(props: {
   );
   if (text.length === 0) {
     const message = error
-      ? `Couldn't load output: ${error}`
+      ? gt("Couldn't load output: {error}", { error })
       : data === null
-        ? "Loading output…"
+        ? gt("Loading output…")
         : data.running
           ? null
-          : "No output.";
+          : gt("No output.");
     return message === null ? null : (
       <Text className="pt-1.5 font-mono text-2xs leading-normal text-foreground-muted">
         {message}
@@ -60,9 +55,6 @@ export function ThreadCommandOutput(props: {
   }
   return (
     <View className="pt-1.5">
-      {data?.output.truncated ? (
-        <Text className="pb-0.5 text-3xs text-foreground-subtle">Earlier output not shown</Text>
-      ) : null}
       <ScrollView
         ref={scrollRef}
         nestedScrollEnabled
@@ -80,6 +72,11 @@ export function ThreadCommandOutput(props: {
           if (followRef.current) scrollRef.current?.scrollToEnd({ animated: false });
         }}
       >
+        {data?.output.truncated ? (
+          <Text className="pb-0.5 text-3xs text-foreground-muted">
+            <T>Earlier output not shown</T>
+          </Text>
+        ) : null}
         <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
           {spans.map((span, index) =>
             span.style === null ? (

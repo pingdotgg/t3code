@@ -10,11 +10,14 @@ import {
   Text,
   useNativeState,
 } from "@expo/ui/jetpack-compose";
+import { verticalScroll } from "@expo/ui/jetpack-compose/modifiers";
 
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { msg, useGT } from "gt-react-native";
+import { useSyncExternalStore } from "react";
+import { m } from "../../i18n/messages";
 import { themeColorWithContrast } from "../../lib/mobileTheme";
 import type { Alert, AlertButton } from "react-native";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
@@ -33,64 +36,86 @@ type DialogRequest =
   | { readonly kind: "confirm"; readonly request: ConfirmDialogRequest }
   | { readonly kind: "text-input"; readonly request: TextInputDialogRequest };
 
-let presentRequest: ((request: DialogRequest) => void) | null = null;
+type PresentedDialog = DialogRequest & { readonly id: number };
+
+// App services raise dialogs before the root mounts, so the request lives in
+// the module and the Host renders whatever is current. One dialog shows at a
+// time: a new request replaces the presented one.
+let presented: PresentedDialog | null = null;
+let nextPresentationId = 0;
+const listeners = new Set<() => void>();
+
+function setPresented(next: PresentedDialog | null) {
+  presented = next;
+  for (const listener of listeners) listener();
+}
+
+function submitRequest(dialog: DialogRequest) {
+  const replaced = presented;
+  setPresented({ ...dialog, id: ++nextPresentationId });
+  // A replaced dialog closed without an answer, which its owner hears as a dismissal.
+  if (replaced) closeUnanswered(replaced);
+}
+
+function closeUnanswered(dialog: DialogRequest) {
+  if (dialog.kind === "alert") dialog.request.options?.onDismiss?.();
+  else dialog.request.onCancel?.();
+}
+
+/** Closes the dialog only if it is still the one the action came from. */
+function dismiss(id: number) {
+  if (presented?.id !== id) return false;
+  setPresented(null);
+  return true;
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function getPresented() {
+  return presented;
+}
 
 export function alert(...[title, message, buttons, options]: Parameters<typeof Alert.alert>): void {
-  const actions = buttons?.length ? buttons.slice(0, 3) : [{ text: "OK" }];
+  const actions = buttons?.length ? buttons.slice(0, 3) : [{ text: m(msg("OK")) }];
   const normalized = actions.map((action, index) =>
-    index === actions.length - 1 ? { ...action, text: action.text || "OK" } : action,
+    index === actions.length - 1 ? { ...action, text: action.text || m(msg("OK")) } : action,
   );
-  presentRequest?.({
+  submitRequest({
     kind: "alert",
     request: { title, message, buttons: normalized, options },
   });
 }
 
 export function confirm(request: ConfirmDialogRequest): void {
-  presentRequest?.({ kind: "confirm", request });
+  submitRequest({ kind: "confirm", request });
 }
 
 export function prompt(request: TextInputDialogRequest): void {
-  presentRequest?.({ kind: "text-input", request });
+  submitRequest({ kind: "text-input", request });
 }
 
-/** Android presenter for Dialog.alert, Dialog.confirm and Dialog.prompt; mounted once at the app root. */
 export function Host() {
-  const [presented, setPresented] = useState<(DialogRequest & { readonly id: number }) | null>(
-    null,
-  );
-  const [inputValue, setInputValue] = useState("");
-  const nextPresentationId = useRef(0);
-  useEffect(() => {
-    const present = (request: DialogRequest) => {
-      setInputValue(request.kind === "text-input" ? request.request.initialValue : "");
-      setPresented({ ...request, id: ++nextPresentationId.current });
-    };
-    presentRequest = present;
-    return () => {
-      // When Android replaces the activity, the new root's Host registers before the old root
-      // unmounts. Clearing unconditionally would leave the live Host without dialogs.
-      if (presentRequest === present) presentRequest = null;
-    };
-  }, []);
+  const gt = useGT();
+  const presented = useSyncExternalStore(subscribe, getPresented, getPresented);
 
-  const handleCancel = useCallback(() => {
-    setPresented(null);
-    if (presented?.kind === "alert") presented.request.options?.onDismiss?.();
-    else presented?.request.onCancel?.();
-  }, [presented]);
+  const handleCancel = () => {
+    if (!presented || !dismiss(presented.id)) return;
+    closeUnanswered(presented);
+  };
 
-  const handleConfirm = useCallback(
-    (nativeInputValue?: string) => {
-      setPresented(null);
-      if (presented?.kind === "confirm") {
-        presented.request.onConfirm();
-      } else if (presented?.kind === "text-input") {
-        presented.request.onConfirm(nativeInputValue ?? inputValue);
-      }
-    },
-    [inputValue, presented],
-  );
+  const handleConfirm = (nativeInputValue?: string) => {
+    if (!presented || !dismiss(presented.id)) return;
+    if (presented.kind === "confirm") {
+      presented.request.onConfirm();
+    } else if (presented.kind === "text-input") {
+      presented.request.onConfirm(nativeInputValue ?? presented.request.initialValue);
+    }
+  };
 
   if (presented?.kind === "alert") {
     return (
@@ -101,10 +126,10 @@ export function Host() {
           message: presented.request.message ?? undefined,
           confirmText: "",
         }}
-        alertActions={presented.request.buttons ?? [{ text: "OK" }]}
+        alertActions={presented.request.buttons ?? [{ text: gt("OK") }]}
         dismissable={presented.request.options?.cancelable ?? false}
         onAlertAction={(action) => {
-          setPresented(null);
+          dismiss(presented.id);
           action.onPress?.();
         }}
         onCancel={handleCancel}
@@ -121,7 +146,6 @@ export function Host() {
         presented.kind === "text-input" ? presented.request.initialValue : undefined
       }
       inputPlaceholder={presented.kind === "text-input" ? presented.request.placeholder : undefined}
-      onInputChange={setInputValue}
       onCancel={handleCancel}
       onConfirm={handleConfirm}
     />
@@ -129,6 +153,7 @@ export function Host() {
 }
 
 function DialogPresentation(props: DialogPresentationProps) {
+  const gt = useGT();
   const { themeVariables: colors } = useAppearancePreferences();
   const titleTypography = useScaledTextRole("title");
   const bodyTypography = useScaledTextRole("footnote");
@@ -140,7 +165,7 @@ function DialogPresentation(props: DialogPresentationProps) {
     props.onConfirm(value);
   };
   const actions = props.alertActions ?? [
-    { text: props.request.cancelText ?? "Cancel", onPress: props.onCancel },
+    { text: props.request.cancelText ?? gt("Cancel"), onPress: props.onCancel },
     {
       text: props.request.confirmText,
       style: props.request.destructive ? ("destructive" as const) : ("default" as const),
@@ -213,7 +238,6 @@ function DialogPresentation(props: DialogPresentationProps) {
                 singleLine
                 value={inputState}
                 selection={inputSelection}
-                onValueChange={props.onInputChange}
                 textStyle={inputTypography}
                 keyboardOptions={{ imeAction: "done" }}
                 keyboardActions={{
@@ -240,7 +264,9 @@ function DialogPresentation(props: DialogPresentationProps) {
           </AlertDialog.Text>
         ) : props.request.message ? (
           <AlertDialog.Text>
-            <Text style={bodyTypography}>{props.request.message}</Text>
+            <Text modifiers={[verticalScroll()]} style={bodyTypography}>
+              {props.request.message}
+            </Text>
           </AlertDialog.Text>
         ) : null}
         {actions.length > 1 ? (
@@ -268,7 +294,6 @@ interface DialogPresentationProps {
   >;
   readonly inputInitialValue?: string;
   readonly inputPlaceholder?: string;
-  readonly onInputChange?: (value: string) => void;
   readonly onCancel: () => void;
   readonly onConfirm: (inputValue?: string) => void;
 }

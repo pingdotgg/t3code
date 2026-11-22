@@ -1,11 +1,45 @@
 import { recognizeRemoteWith } from "@t3tools/source-control-core/shared/definition";
 import { describe, expect, it } from "vite-plus/test";
 
-import { definition } from "./definition.ts";
+import { canonicalizePullRequestUrl, definition, parsePullRequestUrl } from "./definition.ts";
 
 const parse = (url: string) => definition.parseChangeRequestUrl(new URL(url));
 
 describe("GitCafe change request URLs", () => {
+  it.each(["git.cafe", "staging.git.cafe"])("normalizes links for storage on %s", (host) => {
+    for (const repository of ["web", "pull", "pulls"]) {
+      for (const route of ["pull", "pulls"]) {
+        const url = `https://${host}/Acme/${repository}/${route}/42/files?w=1#diff`;
+        expect(parsePullRequestUrl(url)).toMatchObject({
+          host,
+          repository: `acme/${repository}`,
+          number: 42,
+        });
+        expect(definition.isChangeRequestReference(url)).toBe(true);
+        expect(canonicalizePullRequestUrl(url)).toBe(`https://${host}/acme/${repository}/pulls/42`);
+      }
+    }
+  });
+
+  it("preserves other URLs and rejects invalid GitCafe references", () => {
+    for (const url of [
+      "https://github.com/team/repo/pull/7",
+      "https://forge.example/team/repo/pulls/7",
+      "https://not.git.cafe/team/repo/pull/7",
+      "https://git.cafe.evil.test/team/repo/pull/7",
+      "https://git.cafe/tfs/collection/project/_git/repo/pullrequest/7",
+      "https://git.cafe/team/repo/pull/0",
+      "https://git.cafe/team/repo/pulls/9007199254740992",
+      "https://staging.git.cafe/team/repo/pull/7suffix",
+      "ftp://git.cafe/team/repo/pull/7",
+      "not a url",
+    ]) {
+      expect(parsePullRequestUrl(url), url).toBeNull();
+      expect(definition.isChangeRequestReference(url), url).toBe(false);
+      expect(canonicalizePullRequestUrl(url), url).toBe(url);
+    }
+  });
+
   it("reads its canonical /pull/ path and the older /pulls/ path on its own hosts", () => {
     for (const path of ["pull", "pulls"]) {
       expect(parse(`https://git.cafe/PingDotGG/T3Code/${path}/23897`), path).toEqual({

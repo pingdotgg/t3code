@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
@@ -5,12 +7,14 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
 } from "@t3tools/contracts";
 import * as Result from "effect/Result";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { FetchHttpClient, type HttpMethod } from "effect/http";
 
-import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
+import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
-import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
@@ -37,27 +41,29 @@ export function withOrchestrationProtocolHeader(
 }
 
 /**
- * Primary/local environments with no bearer or DPoP credential authenticate the
- * browser via a session cookie. A cross-origin `fetch` does not send cookies by
- * default, so those requests must opt into credentialed mode; bearer/DPoP
- * connections carry their credential in a header and need no cookies. Applied
- * per-request via `FetchHttpClient.RequestInit`, which the fetch client reads
- * from the fiber context at request time.
+ * Cookie-authenticated environments need credentialed mode for cross-origin fetches; bearer/DPoP uses headers.
+ * `FetchHttpClient` reads `RequestInit` from the fiber context per request.
  */
-const withEnvironmentCredentials = <A, E, R>(
+const withEnvironmentRequestInit = <A, E, R>(
   authorization: PreparedHttpAuthorization | null,
+  requestInit: RequestInit | undefined,
   request: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  authorization === null
-    ? request.pipe(Effect.provideService(FetchHttpClient.RequestInit, { credentials: "include" }))
-    : request;
+): Effect.Effect<A, E, R> => {
+  if (authorization !== null && requestInit === undefined) return request;
+  return request.pipe(
+    Effect.provideService(FetchHttpClient.RequestInit, {
+      ...requestInit,
+      ...(authorization === null ? { credentials: "include" as const } : {}),
+    }),
+  );
+};
 
 const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironmentAuthHeaders")(
   function* (
     authorization: PreparedHttpAuthorization | null,
     method: HttpMethod.HttpMethod,
     url: string,
-    signer: Option.Option<ManagedRelayDpopSigner["Service"]>,
+    signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>,
   ): Effect.fn.Return<EnvironmentHttpAuthHeaders, RemoteEnvironmentAuthFetchError> {
     if (authorization === null) {
       return {};
@@ -67,7 +73,9 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
     }
     if (Option.isNone(signer)) {
       return yield* new RemoteEnvironmentAuthFetchError({
-        message: "No DPoP signer is available to authorize the environment request.",
+        ...translatableMessage(
+          msg("No DPoP signer is available to authorize the environment request."),
+        ),
         cause: authorization._tag,
       });
     }
@@ -77,7 +85,9 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
         Effect.mapError(
           (cause) =>
             new RemoteEnvironmentAuthFetchError({
-              message: "Could not create the environment request authorization proof.",
+              ...translatableMessage(
+                msg("Could not create the environment request authorization proof."),
+              ),
               cause,
             }),
         ),
@@ -106,6 +116,33 @@ export const executeAuthenticatedEnvironmentHttpRequest = <
       )
     : executeEnvironmentRequest(input).pipe(Effect.withSpan(ENVIRONMENT_REQUEST_SPAN));
 
+/** Sends the request with this client's own credentials on the supervised environment. */
+export const executeConnectedEnvironmentHttpRequest = Effect.fn(
+  "clientRuntime.state.executeConnectedEnvironmentHttpRequest",
+)(function* <Group extends Parameters<typeof makeEnvironmentHttpApiGroupClient>[1], A, E, R>(
+  input: Omit<
+    Parameters<typeof executeEnvironmentRequest<Group, A, E, R>>[0],
+    "prepared" | "signer" | "remoteAuthorization"
+  >,
+) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+  if (Option.isNone(prepared)) {
+    return yield* new RemoteEnvironmentAuthFetchError({
+      ...translatableMessage(msg("The environment is not connected.")),
+      cause: supervisor.target._tag,
+    });
+  }
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    ...input,
+    prepared: prepared.value,
+    signer: yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
+    remoteAuthorization: yield* Effect.serviceOption(
+      RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+    ),
+  });
+});
+
 const ENVIRONMENT_REQUEST_SPAN = "clientRuntime.state.executeAuthenticatedEnvironmentHttpRequest";
 
 const executeEnvironmentRequest = Effect.fnUntraced(function* <
@@ -114,9 +151,14 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   E,
   R,
 >(input: {
-  readonly prepared: PreparedConnection;
-  readonly signer: Option.Option<ManagedRelayDpopSigner["Service"]>;
-  readonly remoteAuthorization?: Option.Option<RemoteEnvironmentAuthorization["Service"]>;
+  readonly prepared: Pick<
+    PreparedConnection,
+    "environmentId" | "httpBaseUrl" | "httpAuthorization" | "target"
+  >;
+  readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
+  readonly remoteAuthorization?: Option.Option<
+    RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
+  >;
   readonly method: HttpMethod.HttpMethod;
   /**
    * The URL to sign, from the group's contract URL builder. It encodes path
@@ -125,6 +167,8 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
    */
   readonly url: (urls: ReturnType<typeof makeEnvironmentHttpApiUrlBuilder>[Group]) => string;
   readonly timeoutMs: number;
+  /** Extra fetch options, such as refusing redirects for credentialed audio uploads. */
+  readonly requestInit?: RequestInit;
   readonly group: Group;
   readonly request: (input: {
     readonly client: Effect.Success<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>>;
@@ -148,29 +192,35 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         const remote = input.remoteAuthorization;
         if (remote === undefined || Option.isNone(remote)) {
           return yield* new RemoteEnvironmentAuthFetchError({
-            message: "No relay authorization service is available for the environment request.",
+            ...translatableMessage(
+              msg("No relay authorization service is available for the environment request."),
+            ),
             cause: input.prepared.target._tag,
           });
         }
-        const current = yield* remote.value
-          .authorizeDpopHttp({
-            expectedEnvironmentId: input.prepared.environmentId,
-            ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new RemoteEnvironmentAuthFetchError({
-                  message: "Could not authorize the environment request.",
-                  cause,
-                }),
-            ),
-          );
-        // A learned direct route keeps its own origin; only the token renews.
-        if (input.prepared.target._tag === "RelayConnectionTarget") {
-          httpBaseUrl = current.httpBaseUrl;
+        const authFetchError = (cause: unknown) =>
+          new RemoteEnvironmentAuthFetchError({
+            ...translatableMessage(msg("Could not authorize the environment request.")),
+            cause,
+          });
+        const direct = authorization.directConnection;
+        if (direct !== undefined) {
+          authorization = yield* remote.value
+            .authorizeDirectDpopHttp(direct, rejectedAccessToken)
+            .pipe(Effect.mapError(authFetchError));
+        } else {
+          const current = yield* remote.value
+            .authorizeDpopHttp({
+              expectedEnvironmentId: input.prepared.environmentId,
+              ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+            })
+            .pipe(Effect.mapError(authFetchError));
+          // A learned direct route keeps its own origin; only the token renews.
+          if (input.prepared.target._tag === "RelayConnectionTarget") {
+            httpBaseUrl = current.httpBaseUrl;
+          }
+          authorization = current.httpAuthorization;
         }
-        authorization = current.httpAuthorization;
       }
 
       const requestUrl = requestUrlFor(httpBaseUrl);
@@ -184,7 +234,11 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
       const result = yield* executeEnvironmentHttpRequest(
         requestUrl,
         input.timeoutMs,
-        withEnvironmentCredentials(authorization, input.request({ client, headers })),
+        withEnvironmentRequestInit(
+          authorization,
+          input.requestInit,
+          input.request({ client, headers }),
+        ),
       ).pipe(Effect.result);
 
       if (Result.isFailure(result)) {
@@ -209,7 +263,9 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
           continue;
         }
         return yield* new RemoteEnvironmentAuthFetchError({
-          message: "The environment rejected the renewed session authorization.",
+          ...translatableMessage(
+            msg("The environment rejected the renewed session authorization."),
+          ),
           cause: result.success,
         });
       }
@@ -220,7 +276,10 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
       duration: input.timeoutMs,
       orElse: () =>
         Effect.fail(
-          new RemoteEnvironmentAuthTimeoutError(requestUrlFor(httpBaseUrl), input.timeoutMs),
+          new RemoteEnvironmentAuthTimeoutError({
+            requestUrl: requestUrlFor(httpBaseUrl),
+            timeoutMs: input.timeoutMs,
+          }),
         ),
     }),
   );
