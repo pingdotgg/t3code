@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   mistralVibeAccountToUsageLimits,
   readMistralVibeUsageLimits,
+  withMistralVibeUsage,
 } from "./mistralVibeUsageLimits.ts";
 
 const checkedAt = "2026-11-19T10:00:00.000Z";
@@ -18,7 +19,7 @@ describe("mistralVibeAccountToUsageLimits", () => {
       mistralVibeAccountToUsageLimits(
         {
           status: "active",
-          plan: null,
+          plan: { name: "chat", title: "Pro" },
           paygEnabled: false,
           budget: { usagePercentage: 42.5, resetAt: "2026-12-01T00:00:00Z" },
         },
@@ -26,6 +27,7 @@ describe("mistralVibeAccountToUsageLimits", () => {
       ),
     ).toEqual({
       checkedAt,
+      authLabel: "Pro",
       windows: [
         {
           id: "monthly-budget",
@@ -47,6 +49,19 @@ describe("mistralVibeAccountToUsageLimits", () => {
     );
     expect(report?.windows[0]).not.toHaveProperty("resetsAt");
     expect(report?.windows[0]).not.toHaveProperty("windowDurationMins");
+  });
+
+  it("falls back to the plan name and omits a blank plan", () => {
+    const budget = { usagePercentage: 1 };
+    expect(
+      mistralVibeAccountToUsageLimits({ plan: { name: "Team", title: null }, budget }, checkedAt),
+    ).toHaveProperty("authLabel", "Team");
+    expect(
+      mistralVibeAccountToUsageLimits({ plan: { name: " " }, budget }, checkedAt),
+    ).not.toHaveProperty("authLabel");
+    expect(mistralVibeAccountToUsageLimits({ plan: null, budget }, checkedAt)).not.toHaveProperty(
+      "authLabel",
+    );
   });
 
   it("returns nothing when the budget is null or absent", () => {
@@ -107,4 +122,25 @@ describe("readMistralVibeUsageLimits", () => {
       expect(reports).toEqual([]);
     }),
   );
+});
+
+describe("withMistralVibeUsage", () => {
+  const report: ProviderUsageLimitsReport = {
+    checkedAt,
+    authLabel: "Pro",
+    windows: [{ id: "monthly-budget", kind: "monthly", label: "Monthly", usedPercent: 40 }],
+  };
+
+  it("restores the reported budget and plan onto a rebuilt snapshot", () => {
+    const rebuilt = { auth: { status: "unknown" as const }, usageLimits: undefined };
+    expect(withMistralVibeUsage(rebuilt, report)).toMatchObject({
+      auth: { status: "unknown", label: "Pro" },
+      usageLimits: { checkedAt, windows: [{ id: "monthly-budget", usedPercent: 40 }] },
+    });
+  });
+
+  it("leaves the snapshot alone before any session has reported", () => {
+    const rebuilt = { auth: { status: "unknown" as const }, usageLimits: undefined };
+    expect(withMistralVibeUsage(rebuilt, undefined)).toBe(rebuilt);
+  });
 });

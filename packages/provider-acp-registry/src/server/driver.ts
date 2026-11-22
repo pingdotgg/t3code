@@ -25,11 +25,11 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
-import { makeUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import * as Semaphore from "effect/Semaphore";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { withMistralVibeUsage } from "./mistralVibeUsageLimits.ts";
 import { createAcpRegistryAdapterV2, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -750,19 +750,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // A local executable's version comes only from probing it, so readiness checks reuse the last report.
     const reportedLocalVersion = yield* Ref.make<string | null>(null);
     const withLatestUsage = (provider: ServerProvider) =>
-      Ref.get(latestUsage).pipe(
-        Effect.map((report): ServerProvider =>
-          report
-            ? {
-                ...provider,
-                usageLimits: makeUsageLimits({
-                  checkedAt: report.checkedAt,
-                  windows: report.windows,
-                }),
-              }
-            : provider,
-        ),
-      );
+      Ref.get(latestUsage).pipe(Effect.map((report) => withMistralVibeUsage(provider, report)));
     const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap((provider) =>

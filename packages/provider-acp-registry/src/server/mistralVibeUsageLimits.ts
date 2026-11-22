@@ -4,11 +4,20 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import type * as EffectAcpErrors from "effect-acp/errors";
+import type { ServerProvider } from "@t3tools/contracts";
 import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
-import { clampPercent } from "@t3tools/provider-core/server/usageLimits";
+import { clampPercent, makeUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
-/** The `account/read` result's monthly Vibe Code budget; everything else is ignored. */
+/** The `account/read` result's plan and monthly Vibe Code budget; everything else is ignored. */
 const MistralVibeAccountRead = Schema.Struct({
+  plan: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        name: Schema.String,
+        title: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
   budget: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -33,11 +42,14 @@ export function mistralVibeAccountToUsageLimits(
   accountRead: unknown,
   checkedAt: string,
 ): ProviderUsageLimitsReport | undefined {
-  const budget = Option.getOrUndefined(decodeAccountRead(accountRead))?.budget;
+  const account = Option.getOrUndefined(decodeAccountRead(accountRead));
+  const budget = account?.budget;
   if (budget === undefined || budget === null) return undefined;
+  const authLabel = (account?.plan?.title ?? account?.plan?.name)?.trim();
   const resetMs = budget.resetAt ? Date.parse(budget.resetAt) : Number.NaN;
   return {
     checkedAt,
+    ...(authLabel ? { authLabel } : {}),
     windows: [
       {
         id: "monthly-budget",
@@ -76,3 +88,16 @@ export const readMistralVibeUsageLimits = Effect.fn("MistralVibe.readUsageLimits
   },
   (effect) => effect.pipe(Effect.ignore),
 );
+
+/** A readiness check rebuilds the snapshot, so it re-applies the last budget and plan the session reported. */
+export function withMistralVibeUsage<P extends Pick<ServerProvider, "auth" | "usageLimits">>(
+  provider: P,
+  report: ProviderUsageLimitsReport | undefined,
+): P {
+  if (report === undefined) return provider;
+  return {
+    ...provider,
+    ...(report.authLabel ? { auth: { ...provider.auth, label: report.authLabel } } : {}),
+    usageLimits: makeUsageLimits({ checkedAt: report.checkedAt, windows: report.windows }),
+  };
+}
