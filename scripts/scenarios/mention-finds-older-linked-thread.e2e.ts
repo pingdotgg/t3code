@@ -3,20 +3,14 @@ import { CommandId, ThreadId } from "@t3tools/contracts";
 import { expect } from "e2e";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 
-import { T3_HOME } from "../e2e.config.ts";
-import { SECOND_HOME, startSecondServer } from "./second-server.ts";
+import { linkEnvironments, SECOND_HOME, startSecondServer } from "./second-server.ts";
 import { makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
 
 // A shell keeps an environment's 25 newest settled threads; older ones come from search.
 const NEWER_SETTLED = 25;
 
 const uuid = Effect.flatMap(SecureRandom.SecureRandom, (random) => random.uuidV4());
-const decodePairing = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Struct({ credential: Schema.String })),
-);
-
 const settle = Effect.fn("scenario.settle")(
   function* (home: string, origin: string, threadIds: ReadonlyArray<string>) {
     const client = yield* rpcClient(home, origin);
@@ -32,25 +26,6 @@ const settle = Effect.fn("scenario.settle")(
   Effect.provide(NodeCrypto.layer),
 );
 
-/** Turns the Linked environments beta on for both servers and links the first to the second. */
-const linkEnvironments = Effect.fn("scenario.linkEnvironments")(function* (
-  primaryOrigin: string,
-  secondOrigin: string,
-) {
-  const primary = yield* rpcClient(T3_HOME, primaryOrigin);
-  const second = yield* rpcClient(SECOND_HOME, secondOrigin);
-  for (const client of [primary, second]) {
-    yield* client["server.updateSettings"]({ patch: { linkedEnvironmentsEnabled: true } });
-  }
-  const pairing = yield* makeState(SECOND_HOME).cli(["auth", "pairing", "create", "--json"]);
-  const { credential } = yield* decodePairing(pairing.stdout);
-  yield* primary["peerLinks.link"]({
-    url: secondOrigin,
-    pairingCode: credential,
-    access: "approval-required",
-  });
-}, Effect.scoped);
-
 test(
   "The @ picker finds an older settled thread on a linked machine",
   WEB,
@@ -60,7 +35,7 @@ test(
     const server = startSecondServer(app.baseUrl ?? "");
     try {
       const { host, token } = await server.ready;
-      await runPromise(linkEnvironments(app.baseUrl ?? "", host));
+      await runPromise(linkEnvironments(app.baseUrl ?? "", host, { access: "approval-required" }));
       const second = makeState(SECOND_HOME).state;
       const linkedProject = await second.project("linked");
       // Settled first, so the newer ones push it out of the linked machine's shell.
