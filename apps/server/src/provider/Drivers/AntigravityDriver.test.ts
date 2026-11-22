@@ -421,13 +421,8 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         ]);
 
         // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
-        // Auto is asked for even where agy does not list it, so agy can say why it refuses.
         h.controls.selected = yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" });
-        for (const [runtimeMode, sessionMode] of [
-          ["full-access", "default"],
-          ["auto-accept-edits", "default"],
-          ["auto", "auto"],
-        ] as const) {
+        for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
           const requestsBefore = (yield* h.readRequests).length;
           const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
           const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -462,8 +457,35 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
                   request.params?.configId === "mode",
               )
               .map((request) => request.params?.value),
-          ).toEqual([sessionMode]);
+          ).toEqual(["default"]);
         }
+        // A session without agy's own Auto must not run an Auto thread in `default`.
+        const autoThreadId = ThreadId.make("thread-antigravity-cli-auto");
+        const autoPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const autoOpen = yield* h.instance.orchestrationAdapter
+          .openSession({
+            threadId: autoThreadId,
+            providerSessionId: ProviderSessionId.make("provider-session-cli-auto"),
+            modelSelection,
+            runtimePolicy: autoPolicy,
+          })
+          .pipe(
+            Effect.flatMap((autoSession) =>
+              autoSession.ensureThread({
+                threadId: autoThreadId,
+                modelSelection,
+                runtimePolicy: autoPolicy,
+              }),
+            ),
+            Effect.flip,
+          );
+        expect(knownProviderFailureMessage(autoOpen)).toBe(
+          'The agent does not offer its "auto" mode in this session. Choose another permission mode, then retry.',
+        );
       }),
   );
 

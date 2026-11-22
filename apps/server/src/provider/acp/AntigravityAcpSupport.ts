@@ -168,8 +168,8 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
 /**
  * The agy CLI rejects `yolo` and `auto_edit`; those stay in `default`, where it asks before acting
  * and T3 answers from the live runtime policy, so permission changes apply on the next turn without
- * a restart. Auto is always requested: agy explains its refusal, where `default` would ask about
- * every command while the thread still says Auto.
+ * a restart. Auto is always requested: a session without it fails to open, where `default` would
+ * ask about every command while the thread still says Auto.
  */
 export function antigravitySessionMode(modeId: string): string {
   return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
