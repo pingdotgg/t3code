@@ -1221,6 +1221,22 @@ describe("mobile composer drafts", () => {
     expect(
       appAtomRegistry.get(composerDraftsAtom)[pasteKey]?.attachments.map(({ id }) => id),
     ).toEqual(["red", "blue"]);
+
+    const makeStoredPaste = (id: string) => ({
+      id,
+      type: "image" as const,
+      name: "pasted-image.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      fileUri: `file:///documents/t3-composer-attachments/${id}-pasted-image.png`,
+      previewUri: `file:///documents/t3-composer-attachments/${id}-pasted-image.png`,
+    });
+    const storedKey = "new-task:environment-1:project-stored-pastes";
+    appendComposerDraftAttachments(storedKey, [makeStoredPaste("red")]);
+    appendComposerDraftAttachments(storedKey, [makeStoredPaste("green")]);
+    expect(
+      appAtomRegistry.get(composerDraftsAtom)[storedKey]?.attachments.map(({ id }) => id),
+    ).toEqual(["red", "green"]);
   });
 
   it("keeps shared attachment files until every draft releases them", async () => {
