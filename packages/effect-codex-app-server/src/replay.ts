@@ -203,7 +203,20 @@ function normalizeReplayFrame(value: unknown): unknown {
     normalized.params !== null
   ) {
     const params = { ...(normalized.params as Record<string, unknown>) };
-    if (params.approvalPolicy === "never") {
+    // Older recordings used `never` for full access, before MCP prompts were kept interactive.
+    if (
+      params.approvalPolicy === "never" ||
+      stableStringify(params.approvalPolicy) ===
+        stableStringify({
+          granular: {
+            mcp_elicitations: true,
+            request_permissions: false,
+            rules: false,
+            sandbox_approval: false,
+            skill_approval: false,
+          },
+        })
+    ) {
       delete params.approvalPolicy;
     }
     if (
@@ -239,11 +252,20 @@ function recorderThreadConfigKeys(transcript: CodexAppServerReplayTranscript): R
 /**
  * `cwd`, `model`, host-supplied MCP servers (machine-local URLs, short-lived
  * authorization headers) and the T3 thread id vary per machine or run, and
- * recorder-only keys are not the client's.
+ * recorder-only keys are not the client's. The config read before a thread
+ * request carries the same `cwd`.
  */
 function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<string>): unknown {
   if (typeof frame !== "object" || frame === null) return frame;
   const record = frame as Record<string, unknown>;
+  if (
+    record.method === "config/read" &&
+    typeof record.params === "object" &&
+    record.params !== null
+  ) {
+    const { cwd: _cwd, ...params } = record.params as Record<string, unknown>;
+    return { ...record, params };
+  }
   if (
     (record.method !== "thread/start" &&
       record.method !== "thread/resume" &&

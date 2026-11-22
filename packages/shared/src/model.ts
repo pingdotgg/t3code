@@ -130,6 +130,24 @@ export function draftModelPickMatchesThread(pick: ModelSelection, thread: ModelS
   return modelSelectionsEqual(withoutFastModeOff(pick), withoutFastModeOff(thread));
 }
 
+/** Cursor ACP can default Fast to true; T3 requires a user selection. */
+export function withImplicitFastModeDefault(
+  caps: ModelCapabilities,
+  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const hasExplicitFastMode = modelOptions?.some((selection) => selection.id === "fastMode");
+  if (hasExplicitFastMode) {
+    return modelOptions ?? undefined;
+  }
+  const hasFastModeDescriptor = caps.optionDescriptors?.some(
+    (descriptor) => descriptor.type === "boolean" && descriptor.id === "fastMode",
+  );
+  if (!hasFastModeDescriptor) {
+    return modelOptions ?? undefined;
+  }
+  return [...(modelOptions ?? []), { id: "fastMode", value: false }];
+}
+
 function resolveDescriptorChoiceValue(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   raw: string | null | undefined,
@@ -266,6 +284,9 @@ export function getProviderOptionStatedValue(
   );
 }
 
+/** The variant choice that sends no variant; distinct from any variant name a provider defines. */
+export const DEFAULT_VARIANT_CHOICE_ID = "t3:default";
+
 export function getProviderOptionCurrentValue(
   descriptor: ProviderOptionDescriptor | null | undefined,
   selection?: ModelSelection | null,
@@ -278,6 +299,16 @@ export function getProviderOptionCurrentValue(
   // Reported values are display-only; callers that build dispatch options omit this context.
   const reportedValue = getReportedOptionValue(descriptor.id, selection, reportedSelection);
   if (reportedValue !== undefined) return reportedValue;
+  // Without an explicit variant none is sent, which is exactly the catalog's Default choice.
+  if (
+    descriptor.type === "select" &&
+    descriptor.id === "variant" &&
+    selection &&
+    !hasExplicitOption &&
+    descriptor.options.some((option) => option.id === DEFAULT_VARIANT_CHOICE_ID)
+  ) {
+    return DEFAULT_VARIANT_CHOICE_ID;
+  }
   if (descriptor.id === "variant" && selection && !hasExplicitOption) return undefined;
   if (descriptor.type === "boolean") {
     return descriptor.currentValue;
@@ -518,6 +549,17 @@ export function createModelSelection(
     model,
   };
   return selections.length > 0 ? { ...base, options: selections } : base;
+}
+
+/** A model picker's pick: re-picking the current model keeps its options, another model starts without any. */
+export function pickModelSelection(
+  current: ModelSelection | null | undefined,
+  instanceId: ProviderInstanceId,
+  model: string,
+): ModelSelection {
+  return current?.instanceId === instanceId && current.model === model
+    ? current
+    : createModelSelection(instanceId, model);
 }
 
 export function resolvePromptInjectedEffort(

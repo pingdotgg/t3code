@@ -1,5 +1,11 @@
+import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { useEffect } from "react";
-import { type ComposerContextRecord, ComposerContextId, EnvironmentId } from "@t3tools/contracts";
+import {
+  type ComposerContextRecord,
+  ComposerContextId,
+  EnvironmentId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render, stubGlobal } from "../../../test/render";
@@ -42,6 +48,7 @@ function deferred<T>() {
 it.each([
   { kind: "file", edit: "delete" },
   { kind: "image", edit: "delete" },
+  { kind: "image", edit: "retain" },
   { kind: "file", edit: "undo" },
   { kind: "file", edit: "retain" },
   { kind: "file", edit: "switch" },
@@ -118,7 +125,17 @@ it.each([
   const attachment = (
     kind === "file"
       ? { ...attachmentFields, kind: "file" as const }
-      : { ...attachmentFields, kind: "image" as const }
+      : {
+          ...attachmentFields,
+          kind: "image" as const,
+          source: {
+            kind: "snap-shot" as const,
+            appName: "Finder",
+            windowTitle: "Downloads",
+            capturedAt: "2026-01-01T00:00:00.000Z",
+            accessibleText: "Downloads",
+          },
+        }
   ) satisfies ComposerContextRecord;
   const annotation = {
     version: 1,
@@ -176,6 +193,10 @@ it.each([
   const draft = store.getComposerDraft(target)!;
   expect(draft.prompt).toBe(promptRef.current);
   const attachments = kind === "file" ? draft.files : draft.images;
+  if (kind === "image" && edit === "retain")
+    expect(draft.images[0]?.source).toEqual(
+      attachment.kind === "image" ? attachment.source : undefined,
+    );
   expect(attachments.map((file) => file.name)).toEqual(
     edit === "undo" ||
       edit === "retain" ||
@@ -186,3 +207,70 @@ it.each([
       : [],
   );
 });
+
+it.each(["same", "other-environment"] as const)(
+  "preserves thread identity across repeated pastes: %s",
+  async (variant) => {
+    const otherEnvironment = variant === "other-environment";
+    const target = DraftId.make(`thread-collision-${variant}`);
+    const store = useComposerDraftStore.getState();
+    using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+    const environmentId = EnvironmentId.make("thread-source");
+    const otherEnvironmentId = EnvironmentId.make("other-thread-source");
+    const first = threadContextRecord(
+      { environmentId, threadId: ThreadId.make("same-id") },
+      "First",
+    );
+    const pasted = otherEnvironment
+      ? threadContextRecord(
+          { environmentId: otherEnvironmentId, threadId: first.threadId },
+          "Second",
+        )
+      : first;
+    store.addThreadContexts(target, [first], { appendReference: false });
+    let importer!: Importer;
+    await using _screen = await render(
+      <Harness
+        input={{
+          environmentId,
+          linkedEnvironments: new Map([[otherEnvironmentId, "Other machine"]]),
+          activeThread: undefined,
+          activeThreadId: null,
+          composerDraftTarget: target,
+          attachmentDraftTarget: target,
+          attachmentTargetKey: target,
+          attachmentTargetKeyRef: { current: target },
+          questionAttachmentTarget: null,
+          pendingUserInputs: [],
+          composerContextRecords: new Map([[first.contextId, { kind: "thread", record: first }]]),
+          composerImages: [],
+          composerFilesRef: { current: [] },
+          pendingThreadImportsRef: { current: new Map() },
+          promptRef: { current: "" },
+          addComposerFilesToDraft: () => [],
+        }}
+        ready={(value) => {
+          importer = value;
+        }}
+      />,
+    );
+    let importedId: string | undefined;
+    await act(() => {
+      importedId = importer
+        .importContextRecords([pasted], pasted.environmentId, target)
+        .get(pasted.contextId);
+    });
+    const records = store.getComposerDraft(target)!.threadContexts;
+    expect(records.find((record) => record.contextId === importedId)).toMatchObject({
+      environmentId: pasted.environmentId,
+      threadId: pasted.threadId,
+    });
+    expect(records).toHaveLength(otherEnvironment ? 2 : 1);
+    expect(records[0]).toEqual(first);
+    await act(() => {
+      const repeated = importer.importContextRecords([pasted], pasted.environmentId, target);
+      expect(repeated.get(pasted.contextId)).toBe(importedId);
+    });
+    expect(store.getComposerDraft(target)!.threadContexts).toEqual(records);
+  },
+);
