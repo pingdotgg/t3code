@@ -2383,6 +2383,11 @@ export function deriveMessagesTimelineRows(
     }
   }
 
+  const latestTimelineEntry = timelineEntries.at(-1);
+  const replyIsStreaming =
+    latestTimelineEntry?.kind === "message" &&
+    latestTimelineEntry.message.role === "assistant" &&
+    latestTimelineEntry.message.streaming;
   const hasWorkingRow = nextRows.some((row) => row.kind === "working");
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === timelineEntries.length) {
     appendWorkingRow();
@@ -2390,6 +2395,7 @@ export function deriveMessagesTimelineRows(
   if (
     input.isWorking &&
     input.latestRun?.turnEnded !== true &&
+    !replyIsStreaming &&
     !setupOwnsWorkingSlot &&
     !hasActiveCompaction &&
     !compactionOnlyRunFinished &&
