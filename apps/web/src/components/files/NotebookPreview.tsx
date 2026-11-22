@@ -62,10 +62,11 @@ export default function NotebookPreview(props: {
         if (next.size >= 16) break;
         next.add(node);
       }
-      const measured = [...active]
-        .filter((node) => !next.has(node))
-        .map((node) => [outputKey(node), node.getBoundingClientRect().height] as const);
-      if (active.size === next.size && measured.length === 0) return;
+      const departing = [...active].filter((node) => !next.has(node));
+      if (active.size === next.size && departing.length === 0) return;
+      const measured = departing
+        .map((node) => [outputKey(node), node.clientHeight] as const)
+        .filter(([, height]) => height > 0);
       active = next;
       setOutputView((old) => ({
         mounted: new Set(Array.from(next, outputKey)),
@@ -126,42 +127,43 @@ export default function NotebookPreview(props: {
                   text={cell.source}
                 />
               ) : null}
-              {cell.outputs.map((output, outputIndex) => (
-                <div
-                  key={outputIndex}
-                  data-notebook-output={
-                    output.kind === "html" ? `${index}-${outputIndex}` : undefined
-                  }
-                  className="border-t border-border/60"
-                  style={{
-                    minHeight:
-                      output.kind !== "html" || outputView.mounted.has(`${index}-${outputIndex}`)
-                        ? undefined
-                        : (outputView.heights.get(`${index}-${outputIndex}`) ?? 80),
-                  }}
-                >
-                  {output.kind === "html" ? (
-                    !outputView.mounted.has(`${index}-${outputIndex}`) ? null : (
-                      <DocumentPages
-                        html={output.text}
-                        name={gt("Cell {number} HTML output", { number: String(index + 1) })}
-                        output
+              {cell.outputs.map((output, outputIndex) => {
+                const key = `${index}-${outputIndex}`;
+                const mounted = outputView.mounted.has(key);
+                const estimatedHeight = outputView.heights.get(key) ?? 80;
+                return (
+                  <div
+                    key={outputIndex}
+                    data-notebook-output={output.kind === "html" ? key : undefined}
+                    className="box-content border-t border-border/60"
+                    style={{
+                      minHeight: output.kind === "html" && !mounted ? estimatedHeight : undefined,
+                    }}
+                  >
+                    {output.kind === "html" ? (
+                      mounted ? (
+                        <DocumentPages
+                          html={output.text}
+                          name={gt("Cell {number} HTML output", { number: String(index + 1) })}
+                          output
+                          estimatedOutputHeight={estimatedHeight}
+                        />
+                      ) : null
+                    ) : output.kind === "image" ? (
+                      <img
+                        src={output.text}
+                        alt={gt("Cell {number} output", { number: String(index + 1) })}
+                        loading="lazy"
+                        className="max-h-96 max-w-full p-4 object-contain"
                       />
-                    )
-                  ) : output.kind === "image" ? (
-                    <img
-                      src={output.text}
-                      alt={gt("Cell {number} output", { number: String(index + 1) })}
-                      loading="lazy"
-                      className="max-h-96 max-w-full p-4 object-contain"
-                    />
-                  ) : (
-                    <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
-                      {output.text}
-                    </pre>
-                  )}
-                </div>
-              ))}
+                    ) : (
+                      <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
+                        {output.text}
+                      </pre>
+                    )}
+                  </div>
+                );
+              })}
             </section>
           ))}
           {props.notebook.cells.length === 0 ? (
