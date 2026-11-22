@@ -582,6 +582,7 @@ describe("large text preview recovery", () => {
           environmentId={EnvironmentId.make("test")}
           threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
           absolutePath="/repo/large.txt"
+          draftCwd={null}
           name="large.txt"
           delimiter={null}
           markdownCwd={null}

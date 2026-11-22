@@ -1467,7 +1467,6 @@ export default function FilePreviewPanel({
     !isMedia &&
     !renderBrowserFile &&
     !isDocument &&
-    !draft &&
     !renderMermaid &&
     file.data?.truncated === true;
   const copyLargeText = useRef<(() => Promise<string>) | null>(null);
@@ -1717,6 +1716,7 @@ export default function FilePreviewPanel({
               environmentId={environmentId}
               threadRef={threadRef}
               absolutePath={absolutePath}
+              draftCwd={draft ? cwd : null}
               name={relativePath}
               copyContents={copyLargeText}
             />
@@ -1750,7 +1750,7 @@ export default function FilePreviewPanel({
       !isMedia &&
       !renderBrowserFile &&
       file.data?.truncated &&
-      (draft || renderMermaid) ? (
+      renderMermaid ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
           {gt(
             "{count, plural, one {Preview limited to the first 1 MB of a {formatted} byte file.} other {Preview limited to the first 1 MB of a {formatted} byte file.}}",
@@ -1836,6 +1836,7 @@ export default function FilePreviewPanel({
               environmentId={environmentId}
               threadRef={threadRef}
               absolutePath={absolutePath}
+              draftCwd={draft ? cwd : null}
               name={relativePath}
               delimiter={renderTable ? tableDelimiter : null}
               markdownCwd={renderMarkdown ? cwd : null}
@@ -1993,13 +1994,25 @@ export default function FilePreviewPanel({
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
 const LargeMarkdownViewer = lazy(() => import("./LargeMarkdownViewer"));
 
-function largeFileResource(threadRef: ScopedThreadRef, absolutePath: string) {
-  return {
-    _tag: "media-file",
-    threadId: threadRef.threadId,
-    path: absolutePath,
-    disposition: "attachment",
-  } as const;
+// A draft has no thread yet, so its download is scoped to the draft's workspace instead.
+function largeFileResource(
+  threadRef: ScopedThreadRef,
+  absolutePath: string,
+  draftCwd: string | null,
+): AssetResource {
+  return draftCwd === null
+    ? {
+        _tag: "media-file",
+        threadId: threadRef.threadId,
+        path: absolutePath,
+        disposition: "attachment",
+      }
+    : {
+        _tag: "draft-workspace-file",
+        cwd: draftCwd,
+        path: absolutePath,
+        disposition: "attachment",
+      };
 }
 
 /** Copy and save for a file past the 1 MB preview, which the panel holds only in its viewer. */
@@ -2007,6 +2020,7 @@ function LargeFileActions(props: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   absolutePath: string;
+  draftCwd: string | null;
   name: string;
   copyContents: RefObject<(() => Promise<string>) | null>;
 }) {
@@ -2017,7 +2031,7 @@ function LargeFileActions(props: {
   const [saving, setSaving] = useState(false);
   const refreshAssetUrl = useAssetUrlRefresh(
     props.environmentId,
-    largeFileResource(props.threadRef, props.absolutePath),
+    largeFileResource(props.threadRef, props.absolutePath, props.draftCwd),
   );
   const showError = (cause: unknown) => {
     toastManager.add({
@@ -2071,6 +2085,8 @@ export function WorkspaceLargeTextPreview(props: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   absolutePath: string;
+  /** The draft's workspace while the thread does not exist yet. */
+  draftCwd: string | null;
   name: string;
   delimiter: "," | "\t" | null;
   /** Renders the file as Markdown resolving links against this workspace; null shows source. */
@@ -2081,7 +2097,7 @@ export function WorkspaceLargeTextPreview(props: {
   revealRequestId: number;
   wordWrap: boolean;
 }) {
-  const resource = largeFileResource(props.threadRef, props.absolutePath);
+  const resource = largeFileResource(props.threadRef, props.absolutePath, props.draftCwd);
   const gt = useGT();
   const [revision, setRevision] = useState(0);
   const showError = (cause: unknown) => {
