@@ -2547,7 +2547,7 @@ effectIt.effect.each(
     { ...choice, resuming: true },
   ]),
 )(
-  "$goalDriver goal prompts defer switched-provider history only with native support: $nativeGoals, resuming: $resuming",
+  "$goalDriver goal prompts go verbatim whether or not goals are native: $nativeGoals, resuming: $resuming",
   ({ goalDriver, nativeGoals, resuming }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
@@ -2570,11 +2570,7 @@ effectIt.effect.each(
       }
       harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
       yield* harness.start;
-      expect(harness.startTurn.mock.calls[0]?.[0].message.text.includes("SIDE_CHAT_CONTEXT")).toBe(
-        !nativeGoals,
-      );
-      if (nativeGoals)
-        expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("/goal all tests pass");
+      expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("/goal all tests pass");
     }),
 );
 
