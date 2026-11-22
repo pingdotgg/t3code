@@ -346,19 +346,21 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     else if (actionId === "enriched-share-link") void Share.share({ message: url });
     else onFileContextMenuAction?.(url, actionId);
   };
+  const defaultLinkMenu = (url: string) => ({
+    title: url,
+    actions: [
+      ...(props.canOpenLinkFromMenu?.(url) === false
+        ? []
+        : [{ id: "enriched-open-link", title: gt("Open link") }]),
+      { id: "enriched-copy-link", title: gt("Copy link") },
+      ...(Platform.OS === "ios" ? [{ id: "enriched-share-link", title: gt("Share link") }] : []),
+    ],
+  });
   const linkContextMenuItems =
     Platform.OS === "ios" && (fileContextMenu || props.onLinkPress || props.onImagePress)
       ? Object.fromEntries(
           linkUrls.map((url) => {
-            const menu = modelContextMenu(url) ??
-              fileContextMenu?.(url) ?? {
-                title: url,
-                actions: [
-                  { id: "enriched-open-link", title: gt("Open link") },
-                  { id: "enriched-copy-link", title: gt("Copy link") },
-                  { id: "enriched-share-link", title: gt("Share link") },
-                ],
-              };
+            const menu = modelContextMenu(url) ?? fileContextMenu?.(url) ?? defaultLinkMenu(url);
             return [
               enrichedLinkVariantPattern(url),
               menu.actions.map((action) => ({
@@ -438,14 +440,8 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     const onLinkLongPress =
       Platform.OS === "android" && props.fileContextMenu
         ? ({ url }: { url: string }) => {
-            const menu = modelContextMenu(url) ??
-              props.fileContextMenu?.(url) ?? {
-                title: url,
-                actions: [
-                  { id: "enriched-open-link", title: gt("Open link") },
-                  { id: "enriched-copy-link", title: gt("Copy link") },
-                ],
-              };
+            const menu =
+              modelContextMenu(url) ?? props.fileContextMenu?.(url) ?? defaultLinkMenu(url);
             setActiveMenu({ url, menu });
             openAndroidMenu?.();
           }

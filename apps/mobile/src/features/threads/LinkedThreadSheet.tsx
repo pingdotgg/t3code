@@ -51,6 +51,10 @@ function openWebLink(href: string) {
   if (link.kind === "external") void tryOpenExternalUrl(link.href, "markdown-link");
 }
 
+function canOpenWebLink(href: string) {
+  return resolveMarkdownLinkPresentation(href).kind === "external";
+}
+
 function ActivityRow(props: {
   readonly activity: ThreadFeedActivity;
   readonly target: LinkedThreadTarget;
@@ -175,6 +179,7 @@ function LinkedThreadEntry(props: {
         markdown={entry.text}
         textStyle={styles.nativeTextStyle}
         onLinkPress={openWebLink}
+        canOpenLinkFromMenu={canOpenWebLink}
       />
     );
   }
@@ -190,6 +195,7 @@ function LinkedThreadEntry(props: {
       markdown={entry.message.text}
       textStyle={styles.nativeTextStyle}
       onLinkPress={openWebLink}
+      canOpenLinkFromMenu={canOpenWebLink}
     />
   );
 }
