@@ -31,7 +31,23 @@ describe("TanStack Source definition", () => {
         number: 7,
       }),
     ).toBe("https://source.tanstack.com/@TanStack/router/pull/7");
+    // A stored link or an older client may name the repository as the web spells it.
+    for (const repository of ["@TanStack/router", "%40TanStack/router"])
+      expect(
+        definition.changeRequestUrl({ host: "source.tanstack.com", repository, number: 7 }),
+        repository,
+      ).toBe("https://source.tanstack.com/@TanStack/router/pull/7");
     expect(definition.checkoutCommandArgument("src pr checkout 7")).toBe("7");
     expect(definition.checkoutCommandArgument("gh pr checkout 7")).toBeNull();
   });
+
+  it.each(["tanstack/router", "@tanstack/router", "%40tanstack/router"])(
+    "keys %s as the API's owner/name",
+    (repository) => {
+      expect(definition.canonicalRepositoryKey?.(`source.tanstack.com/${repository}`)).toBe(
+        "source.tanstack.com/tanstack/router",
+      );
+      expect(definition.canonicalRepositoryKey?.(`github.com/${repository}`)).toBeNull();
+    },
+  );
 });
