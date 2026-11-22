@@ -272,7 +272,7 @@ export const listAllThreads = Effect.fn("cli.discovery.listAllThreads")(function
     while (cursor !== null) {
       const page: OrchestratorMcpThreadListResult = yield* tools.call(
         "t3_thread_list",
-        { ...input, includeSubagents: input.includeSubagents ?? false, limit: 100, cursor },
+        { ...input, includeSubagents: true, limit: 100, cursor },
         OrchestratorMcpThreadListResult,
       );
       for (const thread of page.threads) threads.set(thread.threadId, thread);
@@ -286,7 +286,11 @@ export const listAllThreads = Effect.fn("cli.discovery.listAllThreads")(function
       threads.size === total &&
       ((!paginated && previousIds === undefined) || ids === previousIds)
     ) {
-      return [...threads.values()].toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      return [...threads.values()]
+        .filter(
+          (thread) => input.includeSubagents === true || thread.relationshipToParent !== "subagent",
+        )
+        .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     }
     previousIds = ids;
   }

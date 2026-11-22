@@ -115,6 +115,7 @@ it.effect("discovery paginates existing MCP tools and preserves current-project 
           }
           assert.equal(tool, "t3_thread_list");
 
+          assert.equal(args.includeSubagents, true);
           const statuses = args.statuses as ReadonlyArray<string> | undefined;
           const visible = threads.filter(
             (item) =>
@@ -170,8 +171,10 @@ it.effect("discovery paginates existing MCP tools and preserves current-project 
         ["t3_project_list", 2],
         ["t3_thread_list", 0],
         ["t3_thread_list", 1],
+        ["t3_thread_list", 2],
         ["t3_thread_list", 0],
         ["t3_thread_list", 1],
+        ["t3_thread_list", 2],
       ],
     );
     for (const [extra, expected] of [
