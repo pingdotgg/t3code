@@ -1778,6 +1778,8 @@ impl ConnApp {
             .shell
             .find_thread(&thread_id)
             .map(|t| t.project_id.clone());
+        // Always reveal the chat column when selecting a thread in the sidebar.
+        self.right_panel_maximized = false;
         self.open_thread(thread_id);
         if project_id.is_some() {
             self.layout.selected_project_id = project_id;
@@ -1868,13 +1870,13 @@ impl ConnApp {
     ) {
         if self.layout.right_panel_open && self.layout.right_panel_tab == tab {
             self.layout.right_panel_open = false;
+            self.right_panel_maximized = false;
+            self.sync_chat(cx);
+            self.sync_browser_visibility(cx);
+            cx.notify();
         } else {
-            self.layout.right_panel_tab = tab;
-            self.layout.right_panel_open = true;
+            self.select_right_panel_tab(tab, cx);
         }
-        self.sync_chat(cx);
-        self.sync_browser_visibility(cx);
-        cx.notify();
     }
 
     /// Replaces the shell snapshot (projects and threads).
