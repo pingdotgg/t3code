@@ -34,7 +34,7 @@ raw-window-handle = "=0.6.2"
 # Async, networking, serialization, errors
 reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 tempfile = "=3.27.0"
 thiserror = "2"
 futures = "=0.3.34"
@@ -89,6 +89,14 @@ large_enum_variant = "allow"
 opt-level = 0
 
 [profile.dev.package."*"]
+opt-level = 2
+
+# Optimize wire decoding and state reducers even in dev/hot-reload builds so large
+# thread snapshots decode at full speed while conn-app stays opt-level = 0 for fast hot-patches.
+[profile.dev.package.conn-client]
+opt-level = 2
+
+[profile.dev.package.conn-state]
 opt-level = 2
 
 [profile.release]

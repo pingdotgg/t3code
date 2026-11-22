@@ -1514,14 +1514,16 @@ impl ConnApp {
 
     /// State read-out for the automation hook.
     #[cfg(feature = "automation")]
-    pub(crate) fn automation_dump(&self) -> serde_json::Value {
+    pub(crate) fn automation_dump(&self, cx: &App) -> serde_json::Value {
         let timeline = self.selected_timeline().map(|t| {
             serde_json::json!({
                 "working": t.working,
                 "synchronized": t.synchronized,
-                "entries": t.entries.iter().map(|e| format!("{e:?}").chars().take(120).collect::<String>()).collect::<Vec<_>>(),
+                "entryCount": t.entries.len(),
+                "entries": t.entries.iter().take(20).map(|e| format!("{e:?}").chars().take(120).collect::<String>()).collect::<Vec<_>>(),
             })
         });
+        let chat_metrics = self.chat.read(cx).timeline_metrics();
         serde_json::json!({
             "theme": self.theme_id(),
             "live": self.connection().is_some(),
@@ -1542,9 +1544,207 @@ impl ConnApp {
             "sidebarOpen": self.layout.sidebar_open,
             "rightPanel": self.layout.right_panel_open.then(|| format!("{:?}", self.layout.right_panel_tab)),
             "timeline": timeline,
+            "chatMetrics": chat_metrics,
             "palette": self.command_palette.is_some(),
             "settings": self.settings_modal.is_some(),
         })
+    }
+
+    /// Automation-only: seeds a synthetic large multi-turn thread in memory to benchmark
+    /// virtualized list rendering, lazy Markdown parsing, and TOC navigation.
+    #[cfg(feature = "automation")]
+    pub(crate) fn automation_seed_big_thread(
+        &mut self,
+        turns: usize,
+        cx: &mut Context<'_, Self>,
+    ) -> serde_json::Value {
+        use conn_state::{
+            EntryTiming, ItemStatus, RunTiming, ThreadState, TimelineEntry, TurnCheckpointSummary,
+        };
+
+        let turns = turns.clamp(2, 500);
+        let thread_id = format!("big-thread-{turns}");
+        let mut state = ThreadState::new(thread_id.clone());
+        state.synchronized = true;
+
+        let topics = [
+            "Audit virtualized timeline scrolling in GPUI",
+            "Inspect Antigravity compact snapshot hydration",
+            "Refactor Orbit Gateway async pairing flow",
+            "Verify Dark Ocean vibrancy shell tokens",
+            "Optimize markdown code block syntax highlighting",
+            "Check WebSocket 512 MiB frame limit",
+            "Profile thread switch latency across large histories",
+            "Add side message TOC navigator with hover preview",
+        ];
+
+        for turn in 1..=turns {
+            let topic = topics[(turn - 1) % topics.len()];
+            let run_id = format!("big-run-{turn}");
+            let start_ms = 1_700_000_000_000_i64 + (turn as i64) * 15_000;
+            state.run_timings.insert(
+                run_id.clone(),
+                RunTiming {
+                    started_at_ms: Some(start_ms),
+                    completed_at_ms: Some(start_ms + 4_200),
+                },
+            );
+
+            state.entries.push(TimelineEntry::User {
+                id: format!("big-u-{turn}"),
+                text: format!("Turn #{turn}: {topic} and verify edge cases."),
+                created_by_agent: false,
+            });
+
+            // Simulate realistic agent work (thinking + 3 tools) per turn.
+            let think_id = format!("big-th-{turn}");
+            state.entries.push(TimelineEntry::Thinking {
+                id: think_id.clone(),
+                text: format!("Analyzing turn #{turn} requirements for {topic}."),
+                streaming: false,
+            });
+            state.entry_timings.insert(
+                think_id,
+                EntryTiming {
+                    run_id: Some(run_id.clone()),
+                    started_at_ms: Some(start_ms),
+                    completed_at_ms: Some(start_ms + 900),
+                },
+            );
+
+            for step in 1..=3 {
+                let tool_id = format!("big-tool-{turn}-{step}");
+                let failed = turn % 19 == 0 && step == 2;
+                state.entries.push(TimelineEntry::Tool {
+                    id: tool_id.clone(),
+                    kind: match step {
+                        1 => "file_read",
+                        2 => "command",
+                        _ => "file_change",
+                    }
+                    .to_owned(),
+                    title: match step {
+                        1 => format!("Read crates/conn-app/src/chat/mod.rs (turn {turn})"),
+                        2 => format!("Run cargo test -p conn-app -- turn_{turn}"),
+                        _ => format!("Edit crates/conn-app/src/chat/cache.rs (turn {turn})"),
+                    },
+                    detail: Some(format!(
+                        "Simulated tool output for turn {turn} step {step}.\nAll checks completed."
+                    )),
+                    status: if failed {
+                        ItemStatus::Failed
+                    } else {
+                        ItemStatus::Completed
+                    },
+                });
+                state.entry_timings.insert(
+                    tool_id,
+                    EntryTiming {
+                        run_id: Some(run_id.clone()),
+                        started_at_ms: Some(start_ms + (step as i64) * 900),
+                        completed_at_ms: Some(start_ms + (step as i64) * 900 + 800),
+                    },
+                );
+            }
+
+            let asst_id = format!("big-a-{turn}");
+            state.entries.push(TimelineEntry::Assistant {
+                id: asst_id.clone(),
+                markdown: format!(
+                    "### Turn #{turn} Summary — {topic}\n\n\
+                     Completed the update cleanly with lazy Markdown parsing and virtualized list rows.\n\n\
+                     ```rust\n\
+                     pub fn handle_turn_{turn}(items: usize) -> usize {{\n\
+                         items.saturating_sub(1)\n\
+                     }}\n\
+                     ```\n\n\
+                     - Verified **zero eager parse** for offscreen rows.\n\
+                     - Checked `ListState::splice` anchor stability."
+                ),
+                streaming: false,
+            });
+            state.entry_timings.insert(
+                asst_id,
+                EntryTiming {
+                    run_id: Some(run_id.clone()),
+                    started_at_ms: Some(start_ms + 3_500),
+                    completed_at_ms: Some(start_ms + 4_200),
+                },
+            );
+
+            if turn % 5 == 0 {
+                state.turn_checkpoints.insert(
+                    run_id.clone(),
+                    TurnCheckpointSummary {
+                        run_id,
+                        app_run_ordinal: Some(turn as i64),
+                        file_count: 2 + (turn % 4),
+                        additions: (18 + turn) as i64,
+                        deletions: (4 + (turn % 7)) as i64,
+                    },
+                );
+            }
+        }
+
+        let entry_count = state.entries.len();
+        self.threads.insert(thread_id.clone(), state);
+        self.layout.selected_thread_id = Some(thread_id.clone());
+        self.draft = None;
+
+        let t0 = std::time::Instant::now();
+        self.sync_chat(cx);
+        let sync_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        cx.notify();
+
+        let metrics = self.chat.read(cx).timeline_metrics();
+        serde_json::json!({
+            "threadId": thread_id,
+            "turns": turns,
+            "entryCount": entry_count,
+            "syncMs": (sync_ms * 100.0).round() / 100.0,
+            "chatMetrics": metrics,
+        })
+    }
+
+    /// Automation-only: pins/unpins the chat TOC popover.
+    #[cfg(feature = "automation")]
+    pub(crate) fn automation_set_toc_open(
+        &mut self,
+        open: bool,
+        cx: &mut Context<'_, Self>,
+    ) -> serde_json::Value {
+        self.chat
+            .update(cx, |chat, cx| chat.set_toc_pinned(open, cx));
+        serde_json::to_value(self.chat.read(cx).timeline_metrics())
+            .unwrap_or(serde_json::Value::Null)
+    }
+
+    /// Automation-only: jumps the chat timeline to 1-based user turn `turn`.
+    #[cfg(feature = "automation")]
+    pub(crate) fn automation_toc_jump(
+        &mut self,
+        turn: usize,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<serde_json::Value, String> {
+        let item_index = self
+            .chat
+            .update(cx, |chat, cx| chat.jump_to_toc_turn(turn, cx))?;
+        Ok(serde_json::json!({
+            "turn": turn,
+            "itemIndex": item_index,
+            "chatMetrics": self.chat.read(cx).timeline_metrics(),
+        }))
+    }
+
+    /// Automation-only: jumps the chat timeline back to the live tail.
+    #[cfg(feature = "automation")]
+    pub(crate) fn automation_scroll_latest(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+    ) -> serde_json::Value {
+        self.chat.update(cx, |chat, cx| chat.scroll_to_latest(cx));
+        serde_json::to_value(self.chat.read(cx).timeline_metrics())
+            .unwrap_or(serde_json::Value::Null)
     }
 
     /// Selects a thread by id or by title (first match) for the automation hook.
@@ -2371,6 +2571,12 @@ impl ConnApp {
     /// Switches to a built-in or Orbit-synced custom theme by id and syncs the choice to Orbit.
     pub(crate) fn set_theme(&mut self, theme_id: &str, cx: &mut Context<'_, Self>) -> bool {
         self.apply_theme_choice(theme_id, true, cx)
+    }
+
+    /// Switches to a theme locally without pushing to Orbit (used by automation captures).
+    #[cfg(feature = "automation")]
+    pub(crate) fn set_theme_local(&mut self, theme_id: &str, cx: &mut Context<'_, Self>) -> bool {
+        self.apply_theme_choice(theme_id, false, cx)
     }
 
     fn apply_theme_choice(

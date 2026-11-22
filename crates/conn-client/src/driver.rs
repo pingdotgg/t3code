@@ -10,6 +10,7 @@ use conn_contract::{
 use conn_wire::{Exit, FromClient, FromServer, Request, RequestId, frame_parts};
 use futures::{SinkExt, StreamExt};
 use serde_json::Value;
+use serde_json::value::RawValue;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Instant, MissedTickBehavior};
 use tokio_tungstenite::tungstenite::Message;
@@ -20,8 +21,9 @@ use tracing::{debug, warn};
 
 use crate::auth::{TokenExchangeError, exchange_pairing_code};
 use crate::wire::{
-    Backoff, MAX_JOINED_MESSAGE_BYTES, build_ws_url, decode_server_message, encode_client_frame,
-    extract_shell_sequence, extract_thread_sequence,
+    Backoff, IncomingServerFrame, MAX_JOINED_MESSAGE_BYTES, build_ws_url,
+    decode_server_message_raw, encode_client_frame, extract_shell_sequence,
+    extract_thread_sequence,
 };
 use crate::{ClientError, ClientEvent, ConnectionStatus, Credential, ServerConfig, StreamId};
 
@@ -462,7 +464,7 @@ async fn run_session(
                                 );
                             }
                         };
-                        let frames = match decode_server_message(&whole) {
+                        let frames = match decode_server_message_raw(&whole) {
                             Ok(frames) => frames,
                             Err(err) => {
                                 eprintln!("conn-client failed to decode server frame: {err}");
@@ -471,7 +473,7 @@ async fn run_session(
                             }
                         };
                         for frame in frames {
-                            if let Err(outcome) = handle_server_frame(
+                            if let Err(outcome) = handle_incoming_frame(
                                 state,
                                 frame,
                                 &mut ws_write,
@@ -841,9 +843,9 @@ where
         .map_err(|err| format!("ws send failed: {err}"))
 }
 
-async fn handle_server_frame<S>(
+async fn handle_incoming_frame<S>(
     state: &mut DriverState,
-    frame: FromServer,
+    frame: IncomingServerFrame,
     ws_write: &mut S,
     events_tx: &mpsc::Sender<ClientEvent>,
     missed_pongs: &mut u8,
@@ -852,43 +854,56 @@ where
     S: futures::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
     match frame {
-        FromServer::Pong => {
+        IncomingServerFrame::Chunk { request_id, values } => {
+            handle_chunk_raw(state, request_id, values, ws_write, events_tx).await?;
+        }
+        IncomingServerFrame::Other(FromServer::Pong) => {
             *missed_pongs = 0;
         }
-        FromServer::Chunk { request_id, values } => {
-            handle_chunk(state, request_id, values, ws_write, events_tx).await?;
+        IncomingServerFrame::Other(FromServer::Chunk { request_id, values }) => {
+            let raw_values: Vec<Box<RawValue>> = values
+                .into_iter()
+                .filter_map(|v| {
+                    serde_json::to_string(&v)
+                        .ok()
+                        .and_then(|s| RawValue::from_string(s).ok())
+                })
+                .collect();
+            handle_chunk_raw(state, request_id, raw_values, ws_write, events_tx).await?;
         }
-        FromServer::Exit { request_id, exit } => {
+        IncomingServerFrame::Other(FromServer::Exit { request_id, exit }) => {
             handle_exit(state, request_id, exit, events_tx).await?;
         }
-        FromServer::Defect { defect } => {
+        IncomingServerFrame::Other(FromServer::Defect { defect }) => {
             for (_, reply) in state.in_flight_unary.drain() {
                 let _ = reply.send(Err(ClientError::Rpc(defect.clone())));
             }
         }
-        FromServer::ClientProtocolError { error, request_ids } => match request_ids {
-            Some(ids) => {
-                for id in ids {
-                    if let Some(reply) = state.in_flight_unary.remove(&id) {
+        IncomingServerFrame::Other(FromServer::ClientProtocolError { error, request_ids }) => {
+            match request_ids {
+                Some(ids) => {
+                    for id in ids {
+                        if let Some(reply) = state.in_flight_unary.remove(&id) {
+                            let _ = reply.send(Err(ClientError::Rpc(error.clone())));
+                        }
+                    }
+                }
+                None => {
+                    for (_, reply) in state.in_flight_unary.drain() {
                         let _ = reply.send(Err(ClientError::Rpc(error.clone())));
                     }
                 }
             }
-            None => {
-                for (_, reply) in state.in_flight_unary.drain() {
-                    let _ = reply.send(Err(ClientError::Rpc(error.clone())));
-                }
-            }
-        },
-        FromServer::Request(_) => {}
+        }
+        IncomingServerFrame::Other(FromServer::Request(_)) => {}
     }
     Ok(())
 }
 
-async fn handle_chunk<S>(
+async fn handle_chunk_raw<S>(
     state: &mut DriverState,
     request_id: RequestId,
-    values: Vec<Value>,
+    values: Vec<Box<RawValue>>,
     ws_write: &mut S,
     events_tx: &mpsc::Sender<ClientEvent>,
 ) -> Result<(), SessionOutcome>
@@ -909,8 +924,8 @@ where
 
     match state.in_flight_streams.get(&request_id) {
         Some(ActiveStream::Shell) => {
-            for value in values {
-                match serde_json::from_value::<OrchestrationV2ShellStreamItem>(value) {
+            for raw in values {
+                match serde_json::from_str::<OrchestrationV2ShellStreamItem>(raw.get()) {
                     Ok(item) => {
                         if matches!(item, OrchestrationV2ShellStreamItem::SnapshotRequired(_)) {
                             state.shell_after_sequence = None;
@@ -930,9 +945,18 @@ where
         }
         Some(ActiveStream::Thread(thread_id)) => {
             let thread_id = thread_id.clone();
-            for value in values {
-                match serde_json::from_value::<OrchestrationV2ThreadStreamItem>(value) {
+            for raw in values {
+                let raw_len = raw.get().len();
+                let t0 = Instant::now();
+                match serde_json::from_str::<OrchestrationV2ThreadStreamItem>(raw.get()) {
                     Ok(item) => {
+                        if raw_len >= 512 * 1024 {
+                            eprintln!(
+                                "conn-client: decoded thread item ({thread_id}, {:.2} MiB) in {:.1} ms",
+                                (raw_len as f64) / (1024.0 * 1024.0),
+                                t0.elapsed().as_secs_f64() * 1000.0
+                            );
+                        }
                         if let Some(seq) = extract_thread_sequence(&item)
                             && let Some(sub) = state.thread_subs.get_mut(&thread_id)
                         {
@@ -959,8 +983,8 @@ where
             }
         }
         Some(ActiveStream::PanelRequests) => {
-            for value in values {
-                match serde_json::from_value::<AgentPanelRequest>(value) {
+            for raw in values {
+                match serde_json::from_str::<AgentPanelRequest>(raw.get()) {
                     Ok(request) => {
                         if events_tx
                             .send(ClientEvent::PanelRequest(request))
@@ -978,8 +1002,8 @@ where
         }
         Some(ActiveStream::Annotations(project_id)) => {
             let project_id = project_id.clone();
-            for value in values {
-                match serde_json::from_value::<AnnotationList>(value) {
+            for raw in values {
+                match serde_json::from_str::<AnnotationList>(raw.get()) {
                     Ok(list) => {
                         if events_tx
                             .send(ClientEvent::Annotations {
@@ -1001,7 +1025,10 @@ where
         Some(ActiveStream::Generic { stream_id, tx }) => {
             let stream_id = *stream_id;
             let tx = tx.clone();
-            for value in values {
+            for raw in values {
+                let Ok(value) = serde_json::from_str::<Value>(raw.get()) else {
+                    continue;
+                };
                 if tx.send(value).await.is_err() {
                     drop_generic_stream = Some(stream_id);
                     break;

@@ -31,8 +31,9 @@ pub(super) const CARET_DOWN: &str = "superhero/chevron-down.svg";
 pub(super) const ARROW_UP: &str = "superhero/arrow-up.svg";
 pub(super) const CHECK: &str = "superhero/check.svg";
 
-/// Returns the superheroicons asset path for a `TimelineEntry::Tool` kind.
-pub(super) fn tool_icon_path(kind: &str) -> &'static str {
+/// Returns the superheroicons asset path for a `TimelineEntry::Tool` using both its
+/// contract `kind` and human-readable `title` (matching Conn's `toolGroupAction`).
+pub(super) fn tool_icon_path(kind: &str, title: &str) -> &'static str {
     match kind {
         "command" => TERMINAL,
         "file_change" => PENCIL,
@@ -43,8 +44,49 @@ pub(super) fn tool_icon_path(kind: &str) -> &'static str {
         "todo_list" => LIST_CHECKS,
         "thread_created" => THREAD,
         "approval" | "secret_request" | "link_request" => SHIELD_WARNING,
-        "dynamic_tool" => BUILD,
-        _ => TOOL,
+        _ => infer_tool_icon_from_title(title).unwrap_or(if kind == "dynamic_tool" {
+            BUILD
+        } else {
+            TOOL
+        }),
+    }
+}
+
+fn infer_tool_icon_from_title(title: &str) -> Option<&'static str> {
+    let lower = title.trim().to_ascii_lowercase();
+    if lower.starts_with("read ")
+        || lower.starts_with("view ")
+        || lower.starts_with("inspect ")
+        || lower == "read file"
+    {
+        Some(EYE)
+    } else if lower.starts_with("edit ")
+        || lower.starts_with("write ")
+        || lower.starts_with("create ")
+        || lower.starts_with("update ")
+        || lower.starts_with("patch ")
+        || lower.starts_with("delete ")
+    {
+        Some(PENCIL)
+    } else if lower.starts_with("ran ")
+        || lower.starts_with("run ")
+        || lower.starts_with("exec ")
+        || lower.starts_with("shell ")
+    {
+        Some(TERMINAL)
+    } else if lower.starts_with("search ")
+        || lower.starts_with("find ")
+        || lower.starts_with("grep ")
+        || lower.starts_with("glob ")
+        || lower.starts_with("list ")
+    {
+        Some(SEARCH)
+    } else if lower.starts_with("web ") || lower.starts_with("fetch ") {
+        Some(GLOBE)
+    } else if lower.starts_with("subagent") || lower.starts_with("delegate") {
+        Some(ROBOT)
+    } else {
+        None
     }
 }
 

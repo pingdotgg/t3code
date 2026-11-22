@@ -1,36 +1,206 @@
-//! Per-entry timeline row cache.
+//! Per-entry timeline row cache, flat virtual-list items, and turn TOC index.
 //!
-//! Keeps parsed Markdown blocks cached by [`TimelineEntry::id`] so calling `set_thread`
-//! on every streaming delta only re-parses the entry whose Markdown actually changed.
+//! Designed for arbitrarily large threads (thousands of items):
+//! - Assistant Markdown is parsed **lazily** on first render of a visible row
+//!   rather than eagerly on `set_thread`, and reused across streaming updates
+//!   whenever `(id, markdown)` is unchanged.
+//! - Consecutive `Thinking` / `Tool` rows are pre-grouped into flat [`VirtualItem`]
+//!   slots so GPUI's virtualized `list(ListState, ...)` renders in O(viewport).
+//! - A lightweight [`TocEntry`] outline (one entry per user turn) is built in the
+//!   same pass for the side message tracker and instant random-access jumps.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use conn_state::{ItemStatus, TimelineEntry};
+use conn_state::{EntryTiming, ItemStatus, TimelineEntry, TurnCheckpointSummary};
 
 use super::markdown::{MarkdownBlock, parse_markdown};
 
-/// Grouped view over cached timeline rows matching Conn's timeline layout:
-/// consecutive non-message work entries (`Thinking` / `Tool`) fold into one `WorkGroup`,
-/// while consecutive `User` messages tighten their adjacent corners and spacing.
-#[derive(Debug)]
-pub(super) enum TimelineItem<'a> {
+/// Maximum characters stored for a single-line TOC turn preview.
+const TOC_PREVIEW_MAX_CHARS: usize = 96;
+
+/// One cached timeline row ready for virtualized rendering.
+#[derive(Clone, Debug)]
+pub(super) struct CachedRow {
+    pub(super) entry: TimelineEntry,
+    /// Lazily parsed Markdown blocks for `TimelineEntry::Assistant`; `None` until
+    /// that row actually enters the virtualized viewport.
+    blocks: RefCell<Option<Arc<[MarkdownBlock]>>>,
+}
+
+impl CachedRow {
+    fn new(entry: TimelineEntry, blocks: Option<Arc<[MarkdownBlock]>>) -> Self {
+        Self {
+            entry,
+            blocks: RefCell::new(blocks),
+        }
+    }
+
+    /// Returns parsed Markdown blocks for an assistant entry, parsing and caching
+    /// on first access. Returns an empty slice for non-assistant entries.
+    pub(super) fn markdown_blocks(&self) -> Arc<[MarkdownBlock]> {
+        let TimelineEntry::Assistant { markdown, .. } = &self.entry else {
+            return Arc::from([]);
+        };
+        if let Some(existing) = self.blocks.borrow().as_ref() {
+            return Arc::clone(existing);
+        }
+        let parsed: Arc<[MarkdownBlock]> = Arc::from(parse_markdown(markdown));
+        *self.blocks.borrow_mut() = Some(Arc::clone(&parsed));
+        parsed
+    }
+
+    /// Returns whether parsed Markdown blocks are already cached for this row.
+    #[cfg(any(test, feature = "automation"))]
+    pub(super) fn has_parsed_markdown(&self) -> bool {
+        self.blocks.borrow().is_some()
+    }
+}
+
+/// One flat row in GPUI's virtualized `ListState`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum VirtualItem {
     User {
-        row: &'a CachedRow,
+        row_idx: usize,
         grouped_with_previous: bool,
         grouped_with_next: bool,
     },
     Assistant {
-        row: &'a CachedRow,
+        row_idx: usize,
         followed_by_work: bool,
     },
     WorkGroup {
         id: String,
-        rows: &'a [CachedRow],
+        row_start: usize,
+        row_end: usize,
         has_active: bool,
     },
-    Approval(&'a CachedRow),
-    Notice(&'a CachedRow),
+    Approval {
+        row_idx: usize,
+    },
+    Notice {
+        row_idx: usize,
+    },
+    ChangedFiles {
+        run_id: String,
+        summary: TurnCheckpointSummary,
+    },
+    Working,
+}
+
+impl VirtualItem {
+    /// Stable identity key used to detect prefix preservation for `ListState::splice`.
+    pub(super) fn stable_key(&self, rows: &[CachedRow]) -> String {
+        match self {
+            Self::User {
+                row_idx,
+                grouped_with_previous,
+                grouped_with_next,
+            } => format!(
+                "u:{}:{}:{}",
+                rows[*row_idx].entry.id(),
+                *grouped_with_previous as u8,
+                *grouped_with_next as u8
+            ),
+            Self::Assistant {
+                row_idx,
+                followed_by_work,
+            } => {
+                let (id, len, streaming) = match &rows[*row_idx].entry {
+                    TimelineEntry::Assistant {
+                        id,
+                        markdown,
+                        streaming,
+                    } => (id.as_str(), markdown.len(), *streaming),
+                    other => (other.id(), 0, false),
+                };
+                format!("a:{id}:{len}:{}:{streaming}", *followed_by_work as u8)
+            }
+            Self::WorkGroup {
+                id,
+                row_start,
+                row_end,
+                has_active,
+            } => format!(
+                "w:{id}:{}:{}:{}",
+                row_end - row_start,
+                rows[*row_end - 1].entry.id(),
+                *has_active as u8
+            ),
+            Self::Approval { row_idx } => format!("ap:{}", rows[*row_idx].entry.id()),
+            Self::Notice { row_idx } => format!("n:{}", rows[*row_idx].entry.id()),
+            Self::ChangedFiles { run_id, summary } => format!(
+                "cf:{run_id}:{}:{}:{}",
+                summary.file_count, summary.additions, summary.deletions
+            ),
+            Self::Working => "working".to_owned(),
+        }
+    }
+
+    /// Returns whether this virtual item contains an expandable entry/group matching `target_id`.
+    pub(super) fn contains_expandable_id(&self, target_id: &str, rows: &[CachedRow]) -> bool {
+        match self {
+            Self::User { row_idx, .. } => {
+                let id = rows[*row_idx].entry.id();
+                target_id == id || target_id == format!("agent-msg-{id}")
+            }
+            Self::Assistant { row_idx, .. } => {
+                let id = rows[*row_idx].entry.id();
+                target_id == id || target_id.starts_with(&format!("{id}:"))
+            }
+            Self::WorkGroup {
+                id,
+                row_start,
+                row_end,
+                ..
+            } => {
+                target_id == id
+                    || rows[*row_start..*row_end]
+                        .iter()
+                        .any(|r| r.entry.id() == target_id)
+            }
+            Self::Approval { row_idx } | Self::Notice { row_idx } => {
+                rows[*row_idx].entry.id() == target_id
+            }
+            Self::ChangedFiles { .. } | Self::Working => false,
+        }
+    }
+}
+
+/// One user-turn marker for the left-edge TimelineMinimap / TOC rail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct TocEntry {
+    /// 1-based user turn number.
+    pub(super) turn_number: usize,
+    /// Index in [`RowCache::items`] / GPUI `ListState` to jump to.
+    pub(super) item_index: usize,
+    /// Contract entry id of the user prompt starting this turn.
+    pub(super) entry_id: String,
+    /// Single-line truncated prompt preview.
+    pub(super) preview: String,
+    /// Optional short plain-text excerpt of the turn's assistant reply (for minimap hover card).
+    pub(super) assistant_preview: Option<String>,
+    /// Whether this turn was initiated by an agent prompt rather than the human user.
+    pub(super) is_agent_prompt: bool,
+    /// Whether the turn produced a git checkpoint with changed files.
+    pub(super) has_checkpoint: bool,
+    /// Whether any notice/tool in this turn failed.
+    pub(super) has_error: bool,
+}
+
+/// Summary of work performed during [`RowCache::sync`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct SyncStats {
+    pub(super) total: usize,
+    pub(super) reused: usize,
+    pub(super) invalidated: usize,
+    /// Start index in the virtual list where changes begin (`ListState::splice`).
+    pub(super) splice_start: usize,
+    /// Previous virtual item count before this sync.
+    pub(super) old_item_count: usize,
+    /// New virtual item count after this sync.
+    pub(super) new_item_count: usize,
 }
 
 fn is_work_entry(entry: &TimelineEntry) -> bool {
@@ -53,100 +223,65 @@ fn is_active_work_entry(entry: &TimelineEntry) -> bool {
     )
 }
 
-/// Groups consecutive `Thinking` and `Tool` rows into [`TimelineItem::WorkGroup`]s
-/// and computes neighbor-grouping flags for user and assistant rows.
-pub(super) fn group_rows(rows: &[CachedRow]) -> Vec<TimelineItem<'_>> {
-    let mut items = Vec::with_capacity(rows.len());
-    let mut idx = 0;
+fn single_line_preview(text: &str) -> String {
+    let first = text
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("Message");
+    let mut out = String::new();
+    for (count, ch) in first.chars().enumerate() {
+        if count >= TOC_PREVIEW_MAX_CHARS {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
 
-    while idx < rows.len() {
-        let row = &rows[idx];
-        match &row.entry {
-            TimelineEntry::Thinking { .. } | TimelineEntry::Tool { .. } => {
-                let start = idx;
-                while idx < rows.len() && is_work_entry(&rows[idx].entry) {
-                    idx += 1;
-                }
-                let slice = &rows[start..idx];
-                let has_active = slice.iter().any(|r| is_active_work_entry(&r.entry));
-                items.push(TimelineItem::WorkGroup {
-                    id: format!("work-group-{}", slice[0].entry.id()),
-                    rows: slice,
-                    has_active,
-                });
+fn assistant_excerpt(markdown: &str) -> String {
+    let mut out = String::new();
+    let mut chars = 0usize;
+    const MAX_EXCERPT_CHARS: usize = 160;
+    for raw_line in markdown.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("```") {
+            continue;
+        }
+        let cleaned = trimmed
+            .trim_start_matches('#')
+            .trim_start_matches('-')
+            .trim_start_matches('*')
+            .trim()
+            .replace("**", "")
+            .replace('`', "");
+        if cleaned.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+            chars += 1;
+        }
+        for ch in cleaned.chars() {
+            if chars >= MAX_EXCERPT_CHARS {
+                out.push('…');
+                return out;
             }
-            TimelineEntry::User {
-                created_by_agent, ..
-            } => {
-                let is_human_user = |entry: &TimelineEntry| {
-                    matches!(
-                        entry,
-                        TimelineEntry::User {
-                            created_by_agent: false,
-                            ..
-                        }
-                    )
-                };
-                let grouped_with_previous =
-                    !*created_by_agent && idx > 0 && is_human_user(&rows[idx - 1].entry);
-                let grouped_with_next = !*created_by_agent
-                    && idx + 1 < rows.len()
-                    && is_human_user(&rows[idx + 1].entry);
-                items.push(TimelineItem::User {
-                    row,
-                    grouped_with_previous,
-                    grouped_with_next,
-                });
-                idx += 1;
-            }
-            TimelineEntry::Assistant { .. } => {
-                let followed_by_work = idx + 1 < rows.len()
-                    && matches!(
-                        rows[idx + 1].entry,
-                        TimelineEntry::Thinking { .. }
-                            | TimelineEntry::Tool { .. }
-                            | TimelineEntry::Approval { .. }
-                    );
-                items.push(TimelineItem::Assistant {
-                    row,
-                    followed_by_work,
-                });
-                idx += 1;
-            }
-            TimelineEntry::Approval { .. } => {
-                items.push(TimelineItem::Approval(row));
-                idx += 1;
-            }
-            TimelineEntry::Notice { .. } => {
-                items.push(TimelineItem::Notice(row));
-                idx += 1;
-            }
+            out.push(ch);
+            chars += 1;
         }
     }
-
-    items
+    out
 }
 
-/// One cached timeline row ready for rendering.
-#[derive(Clone, Debug)]
-pub(super) struct CachedRow {
-    pub(super) entry: TimelineEntry,
-    /// Parsed Markdown blocks for `TimelineEntry::Assistant`; `None` for other variants.
-    pub(super) blocks: Option<Arc<[MarkdownBlock]>>,
-}
-
-/// Summary of work performed during [`RowCache::sync`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct SyncStats {
-    pub(super) total: usize,
-    pub(super) reparsed: usize,
-    pub(super) reused: usize,
-}
-
-/// Ordered cache of timeline rows keyed by contract entry id.
+/// Ordered cache of timeline rows, virtual list items, and turn TOC markers.
 #[derive(Debug, Default)]
 pub(super) struct RowCache {
     rows: Vec<CachedRow>,
+    items: Vec<VirtualItem>,
+    item_keys: Vec<String>,
+    toc: Vec<TocEntry>,
 }
 
 impl RowCache {
@@ -155,71 +290,345 @@ impl RowCache {
         &self.rows
     }
 
-    /// Clears all cached rows (for example when no thread is selected).
-    pub(super) fn clear(&mut self) {
-        self.rows.clear();
+    /// Returns the flat virtualized list items (`0..items.len()`).
+    pub(super) fn items(&self) -> &[VirtualItem] {
+        &self.items
     }
 
-    /// Synchronizes the cache against the latest `entries` slice.
-    ///
-    /// Assistant entries whose `id` and `markdown` text are unchanged reuse their
-    /// existing `Arc<Vec<MarkdownBlock>>` without re-parsing.
-    pub(super) fn sync(&mut self, entries: &[TimelineEntry]) -> SyncStats {
+    /// Returns the lightweight turn TOC outline.
+    pub(super) fn toc(&self) -> &[TocEntry] {
+        &self.toc
+    }
+
+    /// Returns how many assistant rows currently hold parsed Markdown blocks.
+    #[cfg(any(test, feature = "automation"))]
+    pub(super) fn parsed_markdown_count(&self) -> usize {
+        self.rows
+            .iter()
+            .filter(|row| row.has_parsed_markdown())
+            .count()
+    }
+
+    /// Finds the virtual list item index owning `target_id` (for targeted `remeasure_items`).
+    pub(super) fn find_item_index_for_id(&self, target_id: &str) -> Option<usize> {
+        self.items
+            .iter()
+            .position(|item| item.contains_expandable_id(target_id, &self.rows))
+    }
+
+    /// Maps a viewport top virtual item index to the active TOC entry index in O(log turns).
+    pub(super) fn active_toc_index(&self, top_item_index: usize) -> Option<usize> {
+        if self.toc.is_empty() {
+            return None;
+        }
+        let next_after = self
+            .toc
+            .partition_point(|entry| entry.item_index <= top_item_index);
+        Some(next_after.saturating_sub(1))
+    }
+
+    /// Clears all cached rows, virtual items, and TOC entries.
+    pub(super) fn clear(&mut self) {
+        self.rows.clear();
+        self.items.clear();
+        self.item_keys.clear();
+        self.toc.clear();
+    }
+
+    /// Synchronizes the cache against `entries`, `entry_timings`, `turn_checkpoints`, and
+    /// `working`, rebuilding [`Self::items`] and [`Self::toc`] without eagerly parsing Markdown.
+    pub(super) fn sync(
+        &mut self,
+        entries: &[TimelineEntry],
+        entry_timings: &HashMap<String, EntryTiming>,
+        turn_checkpoints: &HashMap<String, TurnCheckpointSummary>,
+        working: bool,
+    ) -> SyncStats {
         let mut previous: HashMap<String, CachedRow> = self
             .rows
             .drain(..)
             .map(|row| (row.entry.id().to_owned(), row))
             .collect();
+        let old_keys = std::mem::take(&mut self.item_keys);
+        let old_item_count = old_keys.len();
 
-        let mut stats = SyncStats {
-            total: entries.len(),
-            reparsed: 0,
-            reused: 0,
-        };
+        let mut reused = 0usize;
+        let mut invalidated = 0usize;
 
         self.rows.reserve(entries.len());
         for entry in entries {
             let prev = previous.remove(entry.id());
             let blocks = match entry {
                 TimelineEntry::Assistant { markdown, .. } => {
-                    let reusable = prev.as_ref().and_then(|old| match &old.entry {
+                    let unchanged = prev.as_ref().is_some_and(|old| match &old.entry {
                         TimelineEntry::Assistant {
                             markdown: old_md, ..
-                        } if old_md == markdown => old.blocks.clone(),
-                        _ => None,
+                        } => old_md == markdown,
+                        _ => false,
                     });
-                    if let Some(existing) = reusable {
-                        stats.reused += 1;
-                        Some(existing)
+                    if unchanged {
+                        reused += 1;
+                        prev.and_then(|old| old.blocks.into_inner())
                     } else {
-                        stats.reparsed += 1;
-                        Some(Arc::from(parse_markdown(markdown)))
+                        invalidated += 1;
+                        None
                     }
                 }
                 _ => {
                     if prev.is_some() {
-                        stats.reused += 1;
+                        reused += 1;
                     }
                     None
                 }
             };
-            self.rows.push(CachedRow {
-                entry: entry.clone(),
-                blocks,
-            });
+            self.rows.push(CachedRow::new(entry.clone(), blocks));
         }
 
-        stats
+        self.rebuild_virtual_items(entry_timings, turn_checkpoints, working);
+
+        let new_item_count = self.items.len();
+        let splice_start = old_keys
+            .iter()
+            .zip(self.item_keys.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        SyncStats {
+            total: entries.len(),
+            reused,
+            invalidated,
+            splice_start,
+            old_item_count,
+            new_item_count,
+        }
+    }
+
+    fn rebuild_virtual_items(
+        &mut self,
+        entry_timings: &HashMap<String, EntryTiming>,
+        turn_checkpoints: &HashMap<String, TurnCheckpointSummary>,
+        working: bool,
+    ) {
+        let rows = &self.rows;
+        let mut base_items: Vec<VirtualItem> = Vec::with_capacity(rows.len());
+        let mut idx = 0usize;
+
+        while idx < rows.len() {
+            match &rows[idx].entry {
+                TimelineEntry::Thinking { .. } | TimelineEntry::Tool { .. } => {
+                    let start = idx;
+                    while idx < rows.len() && is_work_entry(&rows[idx].entry) {
+                        idx += 1;
+                    }
+                    let has_active = rows[start..idx]
+                        .iter()
+                        .any(|r| is_active_work_entry(&r.entry));
+                    base_items.push(VirtualItem::WorkGroup {
+                        id: format!("work-group-{}", rows[start].entry.id()),
+                        row_start: start,
+                        row_end: idx,
+                        has_active,
+                    });
+                }
+                TimelineEntry::User {
+                    created_by_agent, ..
+                } => {
+                    let is_human_user = |entry: &TimelineEntry| {
+                        matches!(
+                            entry,
+                            TimelineEntry::User {
+                                created_by_agent: false,
+                                ..
+                            }
+                        )
+                    };
+                    let grouped_with_previous =
+                        !*created_by_agent && idx > 0 && is_human_user(&rows[idx - 1].entry);
+                    let grouped_with_next = !*created_by_agent
+                        && idx + 1 < rows.len()
+                        && is_human_user(&rows[idx + 1].entry);
+                    base_items.push(VirtualItem::User {
+                        row_idx: idx,
+                        grouped_with_previous,
+                        grouped_with_next,
+                    });
+                    idx += 1;
+                }
+                TimelineEntry::Assistant { .. } => {
+                    let followed_by_work = idx + 1 < rows.len()
+                        && matches!(
+                            rows[idx + 1].entry,
+                            TimelineEntry::Thinking { .. }
+                                | TimelineEntry::Tool { .. }
+                                | TimelineEntry::Approval { .. }
+                        );
+                    base_items.push(VirtualItem::Assistant {
+                        row_idx: idx,
+                        followed_by_work,
+                    });
+                    idx += 1;
+                }
+                TimelineEntry::Approval { .. } => {
+                    base_items.push(VirtualItem::Approval { row_idx: idx });
+                    idx += 1;
+                }
+                TimelineEntry::Notice { .. } => {
+                    base_items.push(VirtualItem::Notice { row_idx: idx });
+                    idx += 1;
+                }
+            }
+        }
+
+        let item_run_id = |item: &VirtualItem| -> Option<&str> {
+            let id = match item {
+                VirtualItem::User { row_idx, .. }
+                | VirtualItem::Assistant { row_idx, .. }
+                | VirtualItem::Approval { row_idx }
+                | VirtualItem::Notice { row_idx } => rows[*row_idx].entry.id(),
+                VirtualItem::WorkGroup { row_end, .. } => {
+                    rows.get(row_end.saturating_sub(1))?.entry.id()
+                }
+                VirtualItem::ChangedFiles { .. } | VirtualItem::Working => return None,
+            };
+            entry_timings.get(id).and_then(|t| t.run_id.as_deref())
+        };
+
+        // When the turn is actively working, the trailing WorkGroup belongs to the live
+        // turn even between consecutive tool calls (preventing a settled "Worked" flash).
+        if working && let Some(VirtualItem::WorkGroup { has_active, .. }) = base_items.last_mut() {
+            *has_active = true;
+        }
+
+        let working_before_idx = if working {
+            base_items
+                .last()
+                .filter(|item| matches!(item, VirtualItem::WorkGroup { .. }))
+                .map(|_| base_items.len() - 1)
+        } else {
+            None
+        };
+
+        let mut items: Vec<VirtualItem> = Vec::with_capacity(base_items.len() + 8);
+        let mut toc: Vec<TocEntry> = Vec::new();
+
+        for (base_idx, item) in base_items.iter().enumerate() {
+            if working_before_idx == Some(base_idx) {
+                items.push(VirtualItem::Working);
+            }
+
+            let out_idx = items.len();
+            match item {
+                VirtualItem::User {
+                    row_idx,
+                    grouped_with_previous,
+                    ..
+                } => {
+                    if !*grouped_with_previous
+                        && let TimelineEntry::User {
+                            id,
+                            text,
+                            created_by_agent,
+                        } = &rows[*row_idx].entry
+                    {
+                        toc.push(TocEntry {
+                            turn_number: toc.len() + 1,
+                            item_index: out_idx,
+                            entry_id: id.clone(),
+                            preview: single_line_preview(text),
+                            assistant_preview: None,
+                            is_agent_prompt: *created_by_agent,
+                            has_checkpoint: false,
+                            has_error: false,
+                        });
+                    }
+                }
+                VirtualItem::Assistant { row_idx, .. } => {
+                    if let TimelineEntry::Assistant { markdown, .. } = &rows[*row_idx].entry
+                        && let Some(last) = toc.last_mut()
+                    {
+                        let excerpt = assistant_excerpt(markdown);
+                        if !excerpt.is_empty() {
+                            last.assistant_preview = Some(excerpt);
+                        }
+                    }
+                }
+                VirtualItem::WorkGroup {
+                    row_start, row_end, ..
+                } => {
+                    let has_failed_tool = rows[*row_start..*row_end].iter().any(|r| {
+                        matches!(
+                            r.entry,
+                            TimelineEntry::Tool {
+                                status: ItemStatus::Failed,
+                                ..
+                            }
+                        )
+                    });
+                    if has_failed_tool && let Some(last) = toc.last_mut() {
+                        last.has_error = true;
+                    }
+                }
+                VirtualItem::Notice { row_idx } => {
+                    if matches!(
+                        rows[*row_idx].entry,
+                        TimelineEntry::Notice { is_error: true, .. }
+                    ) && let Some(last) = toc.last_mut()
+                    {
+                        last.has_error = true;
+                    }
+                }
+                _ => {}
+            }
+
+            items.push(item.clone());
+
+            // Insert ChangedFiles card after the final non-user item belonging to a run.
+            if !matches!(item, VirtualItem::User { .. })
+                && let Some(run_id) = item_run_id(item)
+            {
+                let next_same_run = base_items
+                    .get(base_idx + 1)
+                    .and_then(item_run_id)
+                    .is_some_and(|next_id| next_id == run_id);
+                if !next_same_run
+                    && let Some(cp) = turn_checkpoints.get(run_id).filter(|c| c.file_count > 0)
+                {
+                    if let Some(last) = toc.last_mut() {
+                        last.has_checkpoint = true;
+                    }
+                    items.push(VirtualItem::ChangedFiles {
+                        run_id: run_id.to_owned(),
+                        summary: cp.clone(),
+                    });
+                }
+            }
+        }
+
+        if working && working_before_idx.is_none() {
+            items.push(VirtualItem::Working);
+        }
+
+        let item_keys = items.iter().map(|item| item.stable_key(rows)).collect();
+        self.items = items;
+        self.item_keys = item_keys;
+        self.toc = toc;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use conn_state::ItemStatus;
+
+    fn empty_timings() -> HashMap<String, EntryTiming> {
+        HashMap::new()
+    }
+
+    fn empty_checkpoints() -> HashMap<String, TurnCheckpointSummary> {
+        HashMap::new()
+    }
 
     #[test]
-    fn reuses_unchanged_assistant_markdown_and_reparses_only_streaming_entry() {
+    fn lazily_parses_markdown_and_reuses_unchanged_rows_across_streaming() {
         let mut cache = RowCache::default();
         let initial = vec![
             TimelineEntry::User {
@@ -239,74 +648,123 @@ mod tests {
             },
         ];
 
-        let s1 = cache.sync(&initial);
+        let s1 = cache.sync(&initial, &empty_timings(), &empty_checkpoints(), true);
         assert_eq!(s1.total, 3, "initial sync count");
-        assert_eq!(s1.reparsed, 2, "both assistant entries parsed initially");
-        assert_eq!(s1.reused, 0, "nothing cached yet");
+        assert_eq!(
+            cache.parsed_markdown_count(),
+            0,
+            "sync must NOT eagerly parse markdown for offscreen rows"
+        );
 
-        let a1_ptr = cache.rows()[1]
-            .blocks
-            .as_ref()
-            .map(|b| b.as_ptr())
-            .unwrap_or(std::ptr::null());
+        // Simulate rendering only `a1` (as if visible in viewport).
+        let a1_blocks = cache.rows()[1].markdown_blocks();
+        let a1_ptr = a1_blocks.as_ptr();
+        assert_eq!(cache.parsed_markdown_count(), 1, "only rendered row parsed");
 
-        // Stream a delta into `a2`; `a1` must keep the exact same Arc allocation.
+        // Stream a delta into `a2`; `a1` must keep the exact same Arc allocation,
+        // and `splice_start` must preserve the unchanged prefix (`u1`, `a1`).
         let mut updated = initial.clone();
         updated[2] = TimelineEntry::Assistant {
             id: "a2".to_owned(),
             markdown: "Streaming... more text".to_owned(),
             streaming: true,
         };
-        let s2 = cache.sync(&updated);
-        assert_eq!(s2.reparsed, 1, "only changed assistant entry reparsed");
+        let s2 = cache.sync(&updated, &empty_timings(), &empty_checkpoints(), true);
         assert_eq!(s2.reused, 2, "user + unchanged assistant reused");
-        let a1_ptr_after = cache.rows()[1]
-            .blocks
-            .as_ref()
-            .map(|b| b.as_ptr())
-            .unwrap_or(std::ptr::null());
+        assert_eq!(s2.invalidated, 1, "only changed assistant invalidated");
+        assert_eq!(
+            s2.splice_start, 2,
+            "prefix u1 + a1 preserved for ListState::splice"
+        );
+        let a1_ptr_after = cache.rows()[1].markdown_blocks().as_ptr();
         assert_eq!(
             a1_ptr, a1_ptr_after,
             "unchanged assistant row must reuse Arc<[MarkdownBlock]>"
         );
 
-        // Finishing streaming without changing markdown must also reuse the parsed blocks.
+        // Finishing streaming without changing markdown must also reuse parsed blocks.
+        let _ = cache.rows()[2].markdown_blocks();
+        assert_eq!(cache.parsed_markdown_count(), 2);
         updated[2] = TimelineEntry::Assistant {
             id: "a2".to_owned(),
             markdown: "Streaming... more text".to_owned(),
             streaming: false,
         };
-        let s3 = cache.sync(&updated);
-        assert_eq!(
-            s3.reparsed, 0,
-            "toggling streaming flag with same markdown must not reparse"
-        );
-        assert_eq!(s3.reused, 3, "all three entries reused");
+        let s3 = cache.sync(&updated, &empty_timings(), &empty_checkpoints(), false);
+        assert_eq!(s3.invalidated, 0, "same markdown must not invalidate");
+        assert_eq!(cache.parsed_markdown_count(), 2, "both parsed arcs kept");
     }
 
     #[test]
-    fn drops_removed_entries_and_handles_tool_updates() {
+    fn builds_toc_outline_and_binary_searches_active_turn() {
         let mut cache = RowCache::default();
-        let entries = vec![
-            TimelineEntry::Tool {
-                id: "t1".to_owned(),
+        let mut entries = Vec::new();
+        let mut timings = HashMap::new();
+        let mut checkpoints = HashMap::new();
+
+        for turn in 1..=5 {
+            entries.push(TimelineEntry::User {
+                id: format!("u{turn}"),
+                text: format!("Turn {turn} prompt\nsecond line"),
+                created_by_agent: false,
+            });
+            entries.push(TimelineEntry::Tool {
+                id: format!("t{turn}"),
                 kind: "command".to_owned(),
                 title: "cargo test".to_owned(),
                 detail: None,
-                status: ItemStatus::Running,
-            },
-            TimelineEntry::Assistant {
-                id: "a1".to_owned(),
-                markdown: "Done".to_owned(),
+                status: if turn == 3 {
+                    ItemStatus::Failed
+                } else {
+                    ItemStatus::Completed
+                },
+            });
+            let aid = format!("a{turn}");
+            entries.push(TimelineEntry::Assistant {
+                id: aid.clone(),
+                markdown: format!("Reply {turn}"),
                 streaming: false,
-            },
-        ];
-        cache.sync(&entries);
-        assert_eq!(cache.rows().len(), 2, "two rows cached");
+            });
+            timings.insert(
+                aid,
+                EntryTiming {
+                    run_id: Some(format!("r{turn}")),
+                    started_at_ms: None,
+                    completed_at_ms: None,
+                },
+            );
+            if turn == 2 {
+                checkpoints.insert(
+                    format!("r{turn}"),
+                    TurnCheckpointSummary {
+                        run_id: format!("r{turn}"),
+                        app_run_ordinal: Some(turn as i64),
+                        file_count: 3,
+                        additions: 42,
+                        deletions: 7,
+                    },
+                );
+            }
+        }
 
-        cache.sync(&entries[..1]);
-        assert_eq!(cache.rows().len(), 1, "removed assistant row dropped");
-        assert_eq!(cache.rows()[0].entry.id(), "t1", "tool row remains");
+        cache.sync(&entries, &timings, &checkpoints, false);
+        assert_eq!(cache.toc().len(), 5, "one TOC entry per user turn");
+        assert_eq!(cache.toc()[0].preview, "Turn 1 prompt");
+        assert!(cache.toc()[1].has_checkpoint, "turn 2 flagged checkpoint");
+        assert!(cache.toc()[2].has_error, "turn 3 flagged failed tool");
+
+        // Virtual items for turn 1: [0]=u1, [1]=wg1, [2]=a1; turn 2 starts at [3]=u2.
+        assert_eq!(cache.toc()[0].item_index, 0);
+        assert_eq!(cache.toc()[1].item_index, 3);
+        // Turn 2 has a ChangedFiles card at [6], so turn 3 starts at [7].
+        assert_eq!(cache.toc()[2].item_index, 7);
+
+        assert_eq!(cache.active_toc_index(0), Some(0));
+        assert_eq!(cache.active_toc_index(2), Some(0));
+        assert_eq!(cache.active_toc_index(3), Some(1));
+        assert_eq!(cache.active_toc_index(6), Some(1));
+        assert_eq!(cache.active_toc_index(7), Some(2));
+        assert_eq!(cache.active_toc_index(999), Some(4));
     }
 
     #[test]
@@ -353,60 +811,58 @@ mod tests {
                 streaming: false,
             },
         ];
-        cache.sync(&entries);
-        let grouped = group_rows(cache.rows());
+        cache.sync(&entries, &empty_timings(), &empty_checkpoints(), false);
+        let items = cache.items();
         assert_eq!(
-            grouped.len(),
+            items.len(),
             6,
             "expected 2 users, 2 work groups, 1 approval, 1 assistant"
         );
-
+        assert_eq!(
+            cache.toc().len(),
+            1,
+            "consecutive human user bubbles fold into one TOC turn"
+        );
         assert!(matches!(
-            grouped[0],
-            TimelineItem::User {
+            items[0],
+            VirtualItem::User {
                 grouped_with_previous: false,
                 grouped_with_next: true,
                 ..
             }
         ));
         assert!(matches!(
-            grouped[1],
-            TimelineItem::User {
+            items[1],
+            VirtualItem::User {
                 grouped_with_previous: true,
                 grouped_with_next: false,
                 ..
             }
         ));
-        match &grouped[2] {
-            TimelineItem::WorkGroup {
-                id,
-                rows,
-                has_active,
-            } => {
-                assert_eq!(id, "work-group-th1", "group keyed by first entry id");
-                assert_eq!(rows.len(), 2, "thinking + tool collapsed together");
-                assert!(!has_active, "settled work group is not active");
-            }
-            other => panic!("expected WorkGroup at index 2, got {other:?}"),
-        }
-        assert!(matches!(grouped[3], TimelineItem::Approval(_)));
-        match &grouped[4] {
-            TimelineItem::WorkGroup {
-                id,
-                rows,
-                has_active,
-            } => {
-                assert_eq!(id, "work-group-t2", "second work group after approval");
-                assert_eq!(rows.len(), 1, "single running tool");
-                assert!(*has_active, "running tool marks group active");
-            }
-            other => panic!("expected active WorkGroup at index 4, got {other:?}"),
-        }
         assert!(matches!(
-            grouped[5],
-            TimelineItem::Assistant {
+            &items[2],
+            VirtualItem::WorkGroup {
+                id,
+                row_start: 2,
+                row_end: 4,
+                has_active: false,
+            } if id == "work-group-th1"
+        ));
+        assert!(matches!(items[3], VirtualItem::Approval { row_idx: 4 }));
+        assert!(matches!(
+            &items[4],
+            VirtualItem::WorkGroup {
+                id,
+                row_start: 5,
+                row_end: 6,
+                has_active: true,
+            } if id == "work-group-t2"
+        ));
+        assert!(matches!(
+            items[5],
+            VirtualItem::Assistant {
+                row_idx: 6,
                 followed_by_work: false,
-                ..
             }
         ));
     }

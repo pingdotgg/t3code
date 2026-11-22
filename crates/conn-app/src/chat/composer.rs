@@ -1447,7 +1447,7 @@ impl Composer {
             .justify_between()
             .gap(px(8.0))
             .w_full()
-            .pt(px(6.0))
+            .py(px(9.0))
             .px(px(6.0))
             .text_size(px(12.0))
             .line_height(px(16.0))

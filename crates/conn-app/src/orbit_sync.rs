@@ -429,12 +429,14 @@ pub(crate) struct OrbitAdoptEffects {
     pub(crate) reduce_transparency: Option<bool>,
 }
 
-/// Returns true unless `CONN_GPUI_ORBIT_SYNC=0` explicitly opts out (e.g. deterministic captures).
+/// Returns true unless `CONN_GPUI_ORBIT_SYNC=0` explicitly opts out, or the app is running
+/// under `CONN_GPUI_AUTOMATION` (where live profile sync defaults off unless explicitly opted in).
 #[must_use]
 pub(crate) fn orbit_sync_enabled_by_env() -> bool {
-    std::env::var("CONN_GPUI_ORBIT_SYNC")
-        .map(|v| !matches!(v.trim(), "0" | "false" | "off" | "no"))
-        .unwrap_or(true)
+    if let Ok(val) = std::env::var("CONN_GPUI_ORBIT_SYNC") {
+        return !matches!(val.trim(), "0" | "false" | "off" | "no");
+    }
+    std::env::var_os("CONN_GPUI_AUTOMATION").is_none()
 }
 
 /// Returns true when the user did NOT pin an explicit theme via `CONN_GPUI_THEME` /

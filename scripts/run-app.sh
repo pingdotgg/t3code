@@ -30,9 +30,15 @@ open -n "$APP_PATH" \
   --env CONN_GPUI_TOKEN_FILE="$DEV/bearer" \
   --env CONN_GPUI_AUTOMATION="$DEV/automation-port" \
   --env CONN_GPUI_CONTROL_STATE_DIR="${CONN_GPUI_CONTROL_STATE_DIR:-$DEV/state}" \
+  --env CONN_GPUI_ORBIT_SYNC="${CONN_GPUI_ORBIT_SYNC:-0}" \
   --env CONN_GPUI_THEME="${CONN_GPUI_THEME:-dark-mono}" \
   --env CONN_GPUI_BROWSER_URL="${CONN_GPUI_BROWSER_URL:-}" \
   --stdout "$DEV/app.log" --stderr "$DEV/app.log"
 for _ in $(seq 1 100); do [[ -s "$DEV/automation-port" ]] && break; sleep 0.1; done
-pgrep -f "Conn GPUI.app/Contents/MacOS/conn-app" | tail -1 > "$DEV/app.pid"
-echo "app pid $(cat "$DEV/app.pid"), automation port $(cat "$DEV/automation-port" 2>/dev/null)"
+AUTO_PORT="$(cat "$DEV/automation-port" 2>/dev/null || true)"
+if [[ -n "$AUTO_PORT" ]]; then
+  lsof -nP -ti "TCP:127.0.0.1:$AUTO_PORT" -sTCP:LISTEN | head -1 > "$DEV/app.pid"
+else
+  pgrep -x conn-app | tail -1 > "$DEV/app.pid"
+fi
+echo "app pid $(cat "$DEV/app.pid"), automation port $AUTO_PORT"

@@ -5,7 +5,8 @@ use conn_contract::{
     OrchestrationV2ShellStreamItem, OrchestrationV2ThreadStreamItem,
 };
 use conn_wire::{FromClient, FromServer, frame_parts};
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::value::RawValue;
 use url::Url;
 
 use crate::ClientError;
@@ -25,13 +26,63 @@ pub(crate) fn encode_client_frame(frame: &FromClient) -> Result<String, serde_js
     serde_json::to_string(frame)
 }
 
-/// Decodes one server WebSocket text message, which may be a single JSON frame or an array of
-/// frames.
+/// Decoded server message with `Chunk` payloads kept as raw JSON slices so huge thread
+/// snapshots deserialize directly from `&str` into typed contract structs in a single pass
+/// (avoiding intermediate `serde_json::Value` DOM trees).
+#[derive(Debug)]
+pub(crate) enum IncomingServerFrame {
+    Chunk {
+        request_id: conn_wire::RequestId,
+        values: Vec<Box<RawValue>>,
+    },
+    Other(FromServer),
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawChunkEnvelope {
+    #[serde(rename = "_tag")]
+    tag: String,
+    #[serde(default)]
+    request_id: Option<conn_wire::RequestId>,
+    #[serde(default)]
+    values: Option<Vec<Box<RawValue>>>,
+}
+
+fn decode_one_raw_frame(raw: &str) -> Result<IncomingServerFrame, serde_json::Error> {
+    // Fast-path `"Chunk"` frames without building a `serde_json::Value` DOM tree.
+    if let Ok(env) = serde_json::from_str::<RawChunkEnvelope>(raw)
+        && env.tag == "Chunk"
+        && let (Some(request_id), Some(values)) = (env.request_id, env.values)
+    {
+        return Ok(IncomingServerFrame::Chunk { request_id, values });
+    }
+    Ok(IncomingServerFrame::Other(serde_json::from_str(raw)?))
+}
+
+/// Decodes one server WebSocket text message (single JSON frame or JSON array of frames)
+/// in a single pass without building intermediate `serde_json::Value` trees for `Chunk`s.
+pub(crate) fn decode_server_message_raw(
+    text: &str,
+) -> Result<Vec<IncomingServerFrame>, serde_json::Error> {
+    if text.trim_start().starts_with('[') {
+        let items: Vec<Box<RawValue>> = serde_json::from_str(text)?;
+        items
+            .into_iter()
+            .map(|raw| decode_one_raw_frame(raw.get()))
+            .collect()
+    } else {
+        Ok(vec![decode_one_raw_frame(text)?])
+    }
+}
+
+/// Decodes one server WebSocket text message into [`FromServer`] frames (used by tests).
+#[cfg(test)]
 pub(crate) fn decode_server_message(text: &str) -> Result<Vec<FromServer>, serde_json::Error> {
-    let value: Value = serde_json::from_str(text)?;
-    match value {
-        Value::Array(items) => items.into_iter().map(serde_json::from_value).collect(),
-        single => Ok(vec![serde_json::from_value(single)?]),
+    if text.trim_start().starts_with('[') {
+        serde_json::from_str::<Vec<FromServer>>(text)
+    } else {
+        Ok(vec![serde_json::from_str::<FromServer>(text)?])
     }
 }
 
@@ -112,7 +163,7 @@ impl Backoff {
 #[cfg(test)]
 mod tests {
     use conn_wire::{Exit, Request, RequestId, frame_parts};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::*;
 

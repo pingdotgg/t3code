@@ -7,6 +7,7 @@ mod composer;
 mod icons;
 pub(crate) mod markdown;
 mod spinner;
+mod toc;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -16,16 +17,18 @@ use conn_state::{
     EntryTiming, ItemStatus, RunTiming, ThreadState, TimelineEntry, TurnCheckpointSummary,
 };
 use conn_theme::Tokens;
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Window, deferred, div, px, relative,
+    AnyElement, AppContext as _, Context, Entity, EventEmitter, FollowMode, FontWeight,
+    InteractiveElement, IntoElement, ListAlignment, ListOffset, ListState, MouseButton,
+    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window,
+    deferred, div, list, px, relative,
 };
 
-use self::cache::{CachedRow, RowCache, TimelineItem, group_rows};
+use self::cache::{CachedRow, RowCache, VirtualItem};
 use self::color::{hsla, hsla_alpha, message_highlight, muted_icon, prose_foreground};
 use self::composer::{Composer, ComposerEvent};
-use self::spinner::TurningArc;
+use self::spinner::{SHIMMER_STEP_INTERVAL, TurningArc, shimmer_text};
 use crate::a11y::ConnA11yExt as _;
 
 /// Centered chat content lane width matching Conn's `--chat-content-max-width` (`46rem`).
@@ -36,8 +39,8 @@ const CHAT_LANE_PADDING_X_PX: f32 = 48.0;
 const BUBBLE_RADIUS_PX: f32 = 14.0;
 /// Tight corner radius where consecutive user bubbles meet (`rounded-tr-md` / `rounded-br-md`).
 const BUBBLE_GROUPED_RADIUS_PX: f32 = 6.0;
-/// Distance from the bottom edge (in px) within which auto-follow stays engaged.
-const STICK_TO_BOTTOM_THRESHOLD_PX: f32 = 24.0;
+/// Overdraw distance past the viewport for GPUI's virtualized `ListState` (matches Threadbear).
+const LIST_OVERDRAW_PX: f32 = 600.0;
 /// Body text typography matching Conn's `text-sm leading-relaxed` (`14px` / `22.75px`).
 const BODY_FONT_PX: f32 = 14.0;
 const BODY_LINE_HEIGHT_PX: f32 = 22.75;
@@ -113,7 +116,10 @@ pub(crate) struct ChatView {
     error_banner: Option<String>,
     thread_id: Option<String>,
     thread_title: Option<String>,
+    synchronized: bool,
     working: bool,
+    working_started_at_ms: Option<i64>,
+    _working_tick: Option<gpui_kit::Task<()>>,
     cache: RowCache,
     entry_timings: HashMap<String, EntryTiming>,
     run_timings: HashMap<String, RunTiming>,
@@ -124,10 +130,27 @@ pub(crate) struct ChatView {
     model_label: String,
     /// Project root; tool row paths under it show relative, as in Conn.
     workspace_root: Option<String>,
-    scroll_handle: ScrollHandle,
-    stick_to_bottom: bool,
+    list_state: ListState,
+    toc_hovered_slot: Option<usize>,
+    toc_pinned_slot: Option<usize>,
     composer: Entity<Composer>,
     _input_sub: Subscription,
+}
+
+/// Snapshot of virtualized timeline & TOC metrics (used for diagnostics and automation).
+#[cfg(feature = "automation")]
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TimelineMetrics {
+    pub(crate) total_entries: usize,
+    pub(crate) virtual_items: usize,
+    pub(crate) toc_turns: usize,
+    pub(crate) parsed_markdown_rows: usize,
+    pub(crate) active_toc_turn: Option<usize>,
+    pub(crate) scroll_top_item: usize,
+    pub(crate) following_tail: bool,
+    pub(crate) at_bottom: bool,
+    pub(crate) toc_open: bool,
 }
 
 impl fmt::Debug for ChatView {
@@ -152,12 +175,23 @@ impl ChatView {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
+        let list_state = ListState::new(0, ListAlignment::Top, px(LIST_OVERDRAW_PX));
+        list_state.set_follow_mode(FollowMode::Tail);
+        let weak = cx.weak_entity();
+        list_state.set_scroll_handler(move |_, _, cx| {
+            let weak = weak.clone();
+            // GPUI holds the list borrow while dispatching scroll callbacks; notify after.
+            cx.defer(move |cx| {
+                let _ = weak.update(cx, |_, cx| cx.notify());
+            });
+        });
+
         let composer = cx.new(|cx| Composer::new(tokens.clone(), connection, window, cx));
         let input_sub = cx.subscribe(
             &composer,
             |this, _, event: &ComposerEvent, cx| match event {
                 ComposerEvent::Send { text, attachments } => {
-                    this.stick_to_bottom = true;
+                    this.scroll_to_latest(cx);
                     cx.emit(ChatEvent::Send {
                         text: text.clone(),
                         attachments: attachments.clone(),
@@ -201,7 +235,10 @@ impl ChatView {
             error_banner: None,
             thread_id: None,
             thread_title: None,
+            synchronized: true,
             working: false,
+            working_started_at_ms: None,
+            _working_tick: None,
             cache: RowCache::default(),
             entry_timings: HashMap::new(),
             run_timings: HashMap::new(),
@@ -211,8 +248,9 @@ impl ChatView {
             copied_code_key: None,
             model_label: "Default model".to_owned(),
             workspace_root: None,
-            scroll_handle: ScrollHandle::new(),
-            stick_to_bottom: true,
+            list_state,
+            toc_hovered_slot: None,
+            toc_pinned_slot: None,
             composer,
             _input_sub: input_sub,
         }
@@ -315,21 +353,24 @@ impl ChatView {
 
     /// Updates the rendered thread state.
     ///
-    /// Cheap to call on every streaming update: parsed Markdown blocks are cached by entry id
-    /// and only re-parsed when an assistant entry's text changes.
+    /// Fast even on huge threads: Markdown is parsed lazily when a row enters the
+    /// virtualized viewport, and streaming updates splice only the changed tail of
+    /// GPUI's `ListState` while preserving measured heights above.
     pub(crate) fn set_thread(
         &mut self,
         thread: Option<&ThreadState>,
         title: Option<String>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.refresh_stick_to_bottom();
         self.thread_title = title;
 
         let Some(thread) = thread else {
             self.has_thread = false;
             self.thread_id = None;
+            self.synchronized = true;
             self.working = false;
+            self.working_started_at_ms = None;
+            self._working_tick = None;
             self.cache.clear();
             self.entry_timings.clear();
             self.run_timings.clear();
@@ -337,7 +378,10 @@ impl ChatView {
             self.expanded_ids.clear();
             self.wrapped_code_keys.clear();
             self.copied_code_key = None;
-            self.stick_to_bottom = true;
+            self.toc_hovered_slot = None;
+            self.toc_pinned_slot = None;
+            self.list_state.reset(0);
+            self.list_state.set_follow_mode(FollowMode::Tail);
             self.composer.update(cx, |c, cx| c.set_working(false, cx));
             cx.notify();
             return;
@@ -349,19 +393,38 @@ impl ChatView {
             self.expanded_ids.clear();
             self.wrapped_code_keys.clear();
             self.copied_code_key = None;
-            self.stick_to_bottom = true;
+            self.toc_hovered_slot = None;
+            self.toc_pinned_slot = None;
+            self.working_started_at_ms = None;
         }
 
         self.has_thread = true;
+        self.synchronized = thread.synchronized;
         self.working = thread.working;
         self.entry_timings = thread.entry_timings.clone();
         self.run_timings = thread.run_timings.clone();
         self.turn_checkpoints = thread.turn_checkpoints.clone();
-        let _stats = self.cache.sync(&thread.entries);
+        self.sync_working_timer(cx);
+        let stats = self.cache.sync(
+            &thread.entries,
+            &self.entry_timings,
+            &self.turn_checkpoints,
+            self.working,
+        );
 
-        if self.stick_to_bottom {
-            self.scroll_handle.scroll_to_bottom();
+        if switched_thread || stats.old_item_count == 0 {
+            self.list_state.reset(stats.new_item_count);
+            self.list_state.set_follow_mode(FollowMode::Tail);
+            self.list_state.scroll_to_end();
+        } else if stats.splice_start < stats.old_item_count
+            || stats.splice_start < stats.new_item_count
+        {
+            self.list_state.splice(
+                stats.splice_start..stats.old_item_count,
+                stats.new_item_count - stats.splice_start,
+            );
         }
+
         cx.notify();
         let working = self.working;
         self.composer.update(cx, |c, cx| c.set_working(working, cx));
@@ -420,15 +483,23 @@ impl ChatView {
         });
     }
 
+    fn remeasure_for_id(&self, target_id: &str) {
+        if let Some(idx) = self.cache.find_item_index_for_id(target_id) {
+            self.list_state.remeasure_items(idx..idx + 1);
+        }
+    }
+
     pub(super) fn mark_code_copied(&mut self, key: String, cx: &mut Context<'_, Self>) {
+        self.remeasure_for_id(&key);
         self.copied_code_key = Some(key);
         cx.notify();
     }
 
     pub(super) fn toggle_code_wrap(&mut self, key: String, cx: &mut Context<'_, Self>) {
         if !self.wrapped_code_keys.remove(&key) {
-            self.wrapped_code_keys.insert(key);
+            self.wrapped_code_keys.insert(key.clone());
         }
+        self.remeasure_for_id(&key);
         cx.notify();
     }
 
@@ -436,7 +507,188 @@ impl ChatView {
         if !self.expanded_ids.remove(id) {
             self.expanded_ids.insert(id.to_owned());
         }
+        self.remeasure_for_id(id);
         cx.notify();
+    }
+
+    /// Updates which sampled tick slot is hovered on the left-edge minimap rail.
+    pub(super) fn set_toc_hovered_slot(
+        &mut self,
+        slot: usize,
+        hovered: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let next = if hovered {
+            Some(slot)
+        } else if self.toc_hovered_slot == Some(slot) {
+            None
+        } else {
+            self.toc_hovered_slot
+        };
+        if self.toc_hovered_slot != next {
+            self.toc_hovered_slot = next;
+            cx.notify();
+        }
+    }
+
+    /// Clears minimap hover when the pointer leaves the minimap column.
+    pub(super) fn clear_toc_hover(&mut self, cx: &mut Context<'_, Self>) {
+        if self.toc_hovered_slot.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Pins or unpins the minimap preview on the active tick (used by automation / inspection).
+    #[cfg(feature = "automation")]
+    pub(crate) fn set_toc_pinned(&mut self, pinned: bool, cx: &mut Context<'_, Self>) {
+        let next = if pinned {
+            let active = self.active_toc_index();
+            let sampled = toc::sample_tick_indices(self.cache.toc().len(), active);
+            active
+                .and_then(|idx| sampled.iter().position(|&s| s == idx))
+                .or_else(|| (!sampled.is_empty()).then_some(0))
+        } else {
+            None
+        };
+        if self.toc_pinned_slot != next {
+            self.toc_pinned_slot = next;
+            cx.notify();
+        }
+    }
+
+    /// Jumps directly to virtual list item `item_index` (disabling tail follow).
+    pub(super) fn jump_to_toc_item(&mut self, item_index: usize, cx: &mut Context<'_, Self>) {
+        if item_index >= self.cache.items().len() {
+            return;
+        }
+        self.list_state.set_follow_mode(FollowMode::Normal);
+        self.list_state.scroll_to(ListOffset {
+            item_ix: item_index,
+            offset_in_item: px(0.0),
+        });
+        cx.notify();
+    }
+
+    /// Jumps to 1-based user turn number (automation & keyboard navigation).
+    #[cfg(feature = "automation")]
+    pub(crate) fn jump_to_toc_turn(
+        &mut self,
+        turn_number: usize,
+        cx: &mut Context<'_, Self>,
+    ) -> Result<usize, String> {
+        let Some(entry) = self
+            .cache
+            .toc()
+            .iter()
+            .find(|entry| entry.turn_number == turn_number)
+        else {
+            return Err(format!(
+                "turn {turn_number} out of range (1..={})",
+                self.cache.toc().len()
+            ));
+        };
+        let item_index = entry.item_index;
+        self.jump_to_toc_item(item_index, cx);
+        Ok(item_index)
+    }
+
+    /// Jumps back to the live tail and re-engages bottom auto-follow.
+    pub(crate) fn scroll_to_latest(&mut self, cx: &mut Context<'_, Self>) {
+        self.list_state.set_follow_mode(FollowMode::Tail);
+        self.list_state.scroll_to_end();
+        cx.notify();
+    }
+
+    /// Whether the virtualized timeline is currently following/resting at the tail.
+    fn is_at_bottom(&self) -> bool {
+        self.cache.items().is_empty()
+            || self.list_state.is_following_tail()
+            || self.list_state.is_scrolled_to_end() == Some(true)
+    }
+
+    /// Index into `self.cache.toc()` for the turn currently visible in the viewport.
+    fn active_toc_index(&self) -> Option<usize> {
+        let toc = self.cache.toc();
+        if toc.is_empty() {
+            return None;
+        }
+        if self.is_at_bottom() {
+            return Some(toc.len() - 1);
+        }
+        let top = self.list_state.logical_scroll_top();
+        self.cache.active_toc_index(top.item_ix)
+    }
+
+    /// Returns diagnostic metrics for the virtualized timeline & TOC rail.
+    #[cfg(feature = "automation")]
+    pub(crate) fn timeline_metrics(&self) -> TimelineMetrics {
+        let top = self.list_state.logical_scroll_top();
+        let active_toc_turn = self
+            .active_toc_index()
+            .and_then(|idx| self.cache.toc().get(idx))
+            .map(|entry| entry.turn_number);
+        TimelineMetrics {
+            total_entries: self.cache.rows().len(),
+            virtual_items: self.cache.items().len(),
+            toc_turns: self.cache.toc().len(),
+            parsed_markdown_rows: self.cache.parsed_markdown_count(),
+            active_toc_turn,
+            scroll_top_item: top.item_ix,
+            following_tail: self.list_state.is_following_tail(),
+            at_bottom: self.is_at_bottom(),
+            toc_open: self.toc_hovered_slot.is_some() || self.toc_pinned_slot.is_some(),
+        }
+    }
+
+    /// Tracks the active turn's start timestamp and maintains a calm 1 Hz ticker while
+    /// `self.working` is true so `"Working for 44s"` updates smoothly without GPU spin.
+    fn sync_working_timer(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.working {
+            self.working_started_at_ms = None;
+            self._working_tick = None;
+            return;
+        }
+
+        // Prefer the newest incomplete run's `started_at_ms`, then the newest entry's start time.
+        let active_start = self
+            .run_timings
+            .values()
+            .filter(|r| r.completed_at_ms.is_none())
+            .filter_map(|r| r.started_at_ms)
+            .max()
+            .or_else(|| {
+                self.run_timings
+                    .values()
+                    .filter_map(|r| r.started_at_ms)
+                    .max()
+            });
+        if let Some(start) = active_start {
+            self.working_started_at_ms = Some(start);
+        } else if self.working_started_at_ms.is_none() {
+            self.working_started_at_ms = Some(now_epoch_ms());
+        }
+
+        if self._working_tick.is_none() {
+            self._working_tick = Some(cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(SHIMMER_STEP_INTERVAL).await;
+                    let keep_going = this
+                        .update(cx, |view, cx| {
+                            if view.working {
+                                cx.notify();
+                                true
+                            } else {
+                                view._working_tick = None;
+                                false
+                            }
+                        })
+                        .unwrap_or(false);
+                    if !keep_going {
+                        break;
+                    }
+                }
+            }));
+        }
     }
 
     fn work_group_duration_ms(&self, rows: &[CachedRow]) -> Option<u64> {
@@ -475,40 +727,6 @@ impl ChatView {
             return u64::try_from(end - start).ok();
         }
         None
-    }
-
-    fn item_run_id(&self, item: &TimelineItem<'_>) -> Option<&str> {
-        let id = match item {
-            TimelineItem::User { row, .. }
-            | TimelineItem::Assistant { row, .. }
-            | TimelineItem::Approval(row)
-            | TimelineItem::Notice(row) => row.entry.id(),
-            TimelineItem::WorkGroup { rows, .. } => rows.last()?.entry.id(),
-        };
-        self.entry_timings.get(id).and_then(|t| t.run_id.as_deref())
-    }
-
-    fn checkpoint_after_item(
-        &self,
-        items: &[TimelineItem<'_>],
-        idx: usize,
-    ) -> Option<&TurnCheckpointSummary> {
-        let item = items.get(idx)?;
-        if matches!(item, TimelineItem::User { .. }) {
-            return None;
-        }
-        let run_id = self.item_run_id(item)?;
-        // Only emit after the final non-user item belonging to this run.
-        let next_same_run = items
-            .get(idx + 1)
-            .and_then(|next| self.item_run_id(next))
-            .is_some_and(|next_id| next_id == run_id);
-        if next_same_run {
-            return None;
-        }
-        self.turn_checkpoints
-            .get(run_id)
-            .filter(|cp| cp.file_count > 0)
     }
 
     fn render_changed_files_card(
@@ -590,18 +808,6 @@ impl ChatView {
                     ),
             )
             .into_any_element()
-    }
-
-    fn refresh_stick_to_bottom(&mut self) {
-        let max_y = f32::from(self.scroll_handle.max_offset().y);
-        if max_y <= 0.0 {
-            self.stick_to_bottom = true;
-            return;
-        }
-        // GPUI scroll offset.y is <= 0.0 (0 at top, -max_y at bottom).
-        let current_y = -f32::from(self.scroll_handle.offset().y);
-        let distance_from_bottom = (max_y - current_y).max(0.0);
-        self.stick_to_bottom = distance_from_bottom <= STICK_TO_BOTTOM_THRESHOLD_PX;
     }
 
     fn render_empty_no_thread(&self, cx: &mut Context<'_, Self>) -> AnyElement {
@@ -962,109 +1168,136 @@ impl ChatView {
             .into_any_element()
     }
 
-    fn render_timeline_item(
-        &self,
-        item: &TimelineItem<'_>,
-        cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        match item {
-            TimelineItem::User {
-                row,
-                grouped_with_previous,
-                grouped_with_next,
-            } => {
-                if let TimelineEntry::User {
-                    id,
-                    text,
-                    created_by_agent,
-                } = &row.entry
-                {
-                    if *created_by_agent {
-                        self.render_agent_prompt_row(id, text, cx)
+    fn render_virtual_item(&self, idx: usize, cx: &mut Context<'_, Self>) -> AnyElement {
+        let items = self.cache.items();
+        let Some(item) = items.get(idx) else {
+            return div().into_any_element();
+        };
+        let rows = self.cache.rows();
+
+        let body =
+            match item {
+                VirtualItem::User {
+                    row_idx,
+                    grouped_with_previous,
+                    grouped_with_next,
+                } => {
+                    if let TimelineEntry::User {
+                        id,
+                        text,
+                        created_by_agent,
+                    } = &rows[*row_idx].entry
+                    {
+                        if *created_by_agent {
+                            self.render_agent_prompt_row(id, text, cx)
+                        } else {
+                            self.render_user_bubble(
+                                id,
+                                text,
+                                *grouped_with_previous,
+                                *grouped_with_next,
+                            )
+                        }
                     } else {
-                        self.render_user_bubble(
-                            id,
-                            text,
-                            *grouped_with_previous,
-                            *grouped_with_next,
-                        )
+                        div().into_any_element()
                     }
-                } else {
-                    div().into_any_element()
                 }
-            }
-            TimelineItem::Assistant {
-                row,
-                followed_by_work,
-            } => {
-                if let TimelineEntry::Assistant { id, .. } = &row.entry {
-                    let blocks = row.blocks.as_deref().unwrap_or(&[]);
-                    let entity_copy = cx.entity().downgrade();
-                    let entity_wrap = cx.entity().downgrade();
-                    let entity_file = cx.entity().downgrade();
-                    let options = markdown::MarkdownOptions {
-                        heading_style: markdown::HeadingStyle::Scale,
-                        copied_code_key: self.copied_code_key.as_deref(),
-                        on_copy_code: Some(Rc::new(move |key, _window, cx| {
-                            let _ =
-                                entity_copy.update(cx, |view, cx| view.mark_code_copied(key, cx));
-                        })),
-                        wrapped_code_keys: Some(&self.wrapped_code_keys),
-                        on_toggle_wrap_code: Some(Rc::new(move |key, _window, cx| {
-                            let _ =
-                                entity_wrap.update(cx, |view, cx| view.toggle_code_wrap(key, cx));
-                        })),
-                        workspace_root: self.workspace_root.as_deref(),
-                        on_open_file: Some(Rc::new(move |path, _window, cx| {
-                            let _ = entity_file.update(cx, |_view, cx| {
-                                cx.emit(ChatEvent::OpenFile(path));
-                            });
-                        })),
-                    };
-                    // Conn `AssistantTimelineRow`: `px-1 py-0.5`, row spacing `pb-2` before work or `pb-4`.
-                    div()
-                        .id(SharedString::from(format!("chat-assistant-{id}")))
-                        .a11y(
-                            gpui_kit::Role::Article,
-                            SharedString::from(format!("chat.message.assistant.{id}")),
-                            "Assistant message",
-                        )
-                        .w_full()
-                        .min_w_0()
-                        .pb(px(if *followed_by_work { 8.0 } else { 16.0 }))
-                        .child(
-                            div()
-                                .w_full()
-                                .min_w_0()
-                                .px(px(4.0))
-                                .py(px(2.0))
-                                .child(markdown::render_blocks(id, blocks, &self.tokens, &options)),
-                        )
-                        .into_any_element()
-                } else {
-                    div().into_any_element()
+                VirtualItem::Assistant {
+                    row_idx,
+                    followed_by_work,
+                } => {
+                    let row = &rows[*row_idx];
+                    if let TimelineEntry::Assistant { id, .. } = &row.entry {
+                        // Lazily parse & cache Markdown only when this row enters the viewport.
+                        let blocks = row.markdown_blocks();
+                        let entity_copy = cx.entity().downgrade();
+                        let entity_wrap = cx.entity().downgrade();
+                        let entity_file = cx.entity().downgrade();
+                        let options = markdown::MarkdownOptions {
+                            heading_style: markdown::HeadingStyle::Scale,
+                            copied_code_key: self.copied_code_key.as_deref(),
+                            on_copy_code: Some(Rc::new(move |key, _window, cx| {
+                                let _ = entity_copy
+                                    .update(cx, |view, cx| view.mark_code_copied(key, cx));
+                            })),
+                            wrapped_code_keys: Some(&self.wrapped_code_keys),
+                            on_toggle_wrap_code: Some(Rc::new(move |key, _window, cx| {
+                                let _ = entity_wrap
+                                    .update(cx, |view, cx| view.toggle_code_wrap(key, cx));
+                            })),
+                            workspace_root: self.workspace_root.as_deref(),
+                            on_open_file: Some(Rc::new(move |path, _window, cx| {
+                                let _ = entity_file.update(cx, |_view, cx| {
+                                    cx.emit(ChatEvent::OpenFile(path));
+                                });
+                            })),
+                        };
+                        // Conn `AssistantTimelineRow`: `px-1 py-0.5`, row spacing `pb-2` before work or `pb-4`.
+                        div()
+                            .id(SharedString::from(format!("chat-assistant-{id}")))
+                            .a11y(
+                                gpui_kit::Role::Article,
+                                SharedString::from(format!("chat.message.assistant.{id}")),
+                                "Assistant message",
+                            )
+                            .w_full()
+                            .min_w_0()
+                            .pb(px(if *followed_by_work { 8.0 } else { 16.0 }))
+                            .child(div().w_full().min_w_0().px(px(4.0)).py(px(2.0)).child(
+                                markdown::render_blocks(id, &blocks, &self.tokens, &options),
+                            ))
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }
                 }
-            }
-            TimelineItem::WorkGroup {
-                id,
-                rows,
-                has_active,
-            } => self.render_work_group(id, rows, *has_active, cx),
-            TimelineItem::Approval(row) => {
-                if let TimelineEntry::Approval { id, title, detail } = &row.entry {
-                    self.render_approval_row(id, title, detail.as_deref(), cx)
-                } else {
-                    div().into_any_element()
+                VirtualItem::WorkGroup {
+                    id,
+                    row_start,
+                    row_end,
+                    has_active,
+                } => self.render_work_group(id, &rows[*row_start..*row_end], *has_active, cx),
+                VirtualItem::Approval { row_idx } => {
+                    if let TimelineEntry::Approval { id, title, detail } = &rows[*row_idx].entry {
+                        self.render_approval_row(id, title, detail.as_deref(), cx)
+                    } else {
+                        div().into_any_element()
+                    }
                 }
-            }
-            TimelineItem::Notice(row) => {
-                if let TimelineEntry::Notice { text, is_error, .. } = &row.entry {
-                    self.render_notice_row(text, *is_error)
-                } else {
-                    div().into_any_element()
+                VirtualItem::Notice { row_idx } => {
+                    if let TimelineEntry::Notice { text, is_error, .. } = &rows[*row_idx].entry {
+                        self.render_notice_row(text, *is_error)
+                    } else {
+                        div().into_any_element()
+                    }
                 }
-            }
+                VirtualItem::ChangedFiles { summary, .. } => {
+                    self.render_changed_files_card(idx, summary, cx)
+                }
+                VirtualItem::Working => self.render_working_row(),
+            };
+
+        // Conn `.chat-content-lane`: centered `max-w-(--chat-content-max-width)` (736px) with
+        // 48px horizontal padding and 16px top/bottom timeline insets carried on first/last row.
+        let mut outer = div()
+            .w_full()
+            .min_w_0()
+            .px(px(CHAT_LANE_PADDING_X_PX))
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
+                    .mx_auto()
+                    .min_w_0()
+                    .child(body),
+            );
+        if idx == 0 {
+            outer = outer.pt(px(16.0));
         }
+        if idx + 1 == items.len() {
+            outer = outer.pb(px(16.0));
+        }
+        outer.into_any_element()
     }
 
     fn render_user_bubble(
@@ -1208,8 +1441,10 @@ impl ChatView {
 
     /// Renders a turn's grouped thinking/tool work entries.
     ///
-    /// Settled groups collapse under Conn's `"Worked"` toggle header with a chevron and
-    /// full-width divider (`TurnFoldTimelineRow`). Active groups render their rows live.
+    /// - Settled groups collapse under Conn's `"Worked"` toggle header (`TurnFoldTimelineRow`).
+    /// - Active groups match Conn's `LiveWorkEntryTimelineRow`: collapsed by default to the
+    ///   latest wrapped thought preview + current tool action (no spinner, no chevron), and
+    ///   clicking expands to reveal every step in the active turn.
     fn render_work_group(
         &self,
         group_id: &str,
@@ -1217,8 +1452,12 @@ impl ChatView {
         has_active: bool,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
-        let expanded = has_active || self.expanded_ids.contains(group_id);
+        let manually_expanded = self.expanded_ids.contains(group_id);
         let toggle_id = group_id.to_owned();
+
+        if has_active && !manually_expanded {
+            return self.render_live_work_group(group_id, rows, cx);
+        }
 
         let mut container = div().flex().flex_col().w_full().min_w_0();
 
@@ -1232,7 +1471,7 @@ impl ChatView {
             let fold_btn = div()
                 .id(SharedString::from(format!("fold-{group_id}")))
                 .a11y_button(worked_ax_id, worked_label.clone())
-                .aria_expanded(expanded)
+                .aria_expanded(manually_expanded)
                 .flex()
                 .flex_row()
                 .items_center()
@@ -1249,7 +1488,7 @@ impl ChatView {
                 }))
                 .child(worked_label)
                 .child(icons::icon(
-                    if expanded {
+                    if manually_expanded {
                         icons::CARET_DOWN
                     } else {
                         icons::CARET_RIGHT
@@ -1268,15 +1507,41 @@ impl ChatView {
                 .child(div().flex().flex_row().items_center().child(fold_btn));
 
             container = container.child(header);
+        } else {
+            // Active group explicitly expanded by clicking the live summary: offer a quiet collapse toggle.
+            let collapse_btn = div()
+                .id(SharedString::from(format!("fold-live-{group_id}")))
+                .a11y_button(
+                    SharedString::from(format!("chat.work-group.{group_id}")),
+                    "Collapse live steps",
+                )
+                .aria_expanded(true)
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .px(px(4.0))
+                .py(px(2.0))
+                .rounded(px(6.0))
+                .cursor_pointer()
+                .text_size(px(UI_FONT_PX))
+                .line_height(px(UI_LINE_HEIGHT_PX))
+                .text_color(hsla(self.tokens.muted_foreground))
+                .hover(|s| s.text_color(hsla(self.tokens.foreground)))
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    view.toggle_expanded(&toggle_id, cx);
+                }))
+                .child(format!("Hide {} steps", rows.len()))
+                .child(icons::icon(
+                    icons::CARET_DOWN,
+                    12.0,
+                    hsla(self.tokens.muted_foreground),
+                ));
+            container = container.child(div().flex().flex_row().items_center().child(collapse_btn));
         }
 
-        if expanded {
-            let mut list = div()
-                .flex()
-                .flex_col()
-                .w_full()
-                .min_w_0()
-                .pt(px(if has_active { 0.0 } else { 4.0 }));
+        if manually_expanded {
+            let mut list = div().flex().flex_col().w_full().min_w_0().pt(px(4.0));
             for row in rows {
                 list = list.child(self.render_work_entry(row, cx));
             }
@@ -1287,6 +1552,188 @@ impl ChatView {
         }
 
         container.into_any_element()
+    }
+
+    /// Renders Conn's `LiveWorkEntryTimelineRow`: calm 2-row live view showing the latest
+    /// wrapped reasoning paragraph (brain icon, no chevron) and the latest/active tool call
+    /// (action-specific icon, no spinner, no chevron). Clicking expands the full step list.
+    fn render_live_work_group(
+        &self,
+        group_id: &str,
+        rows: &[CachedRow],
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let toggle_id = group_id.to_owned();
+        let muted = hsla(self.tokens.muted_foreground);
+        let icon_muted = muted_icon(&self.tokens);
+        let destructive = hsla(self.tokens.destructive);
+
+        // Most recent non-empty Thinking entry in this active group.
+        let latest_thought = rows.iter().rev().find_map(|row| match &row.entry {
+            TimelineEntry::Thinking { id, text, .. } => {
+                let preview = live_thought_preview(text)?;
+                Some((id.as_str(), preview))
+            }
+            _ => None,
+        });
+        let latest_entry = rows.last().map(|r| &r.entry);
+
+        let mut col = div()
+            .id(SharedString::from(format!("live-work-{group_id}")))
+            .a11y_button(
+                SharedString::from(format!("chat.work-group.{group_id}")),
+                "Expand live work steps",
+            )
+            .aria_expanded(false)
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .w_full()
+            .min_w_0()
+            .pt(px(4.0))
+            .pb(px(8.0))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .on_click(cx.listener(move |view, _, _, cx| {
+                view.toggle_expanded(&toggle_id, cx);
+            }));
+
+        if let Some((_, ref thought_text)) = latest_thought {
+            // Conn `WorkLogRow wrapLabel`: `items-start gap-1.5 min-h-6 text-sm leading-relaxed`.
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap(px(6.0))
+                    .w_full()
+                    .min_w_0()
+                    .min_h(px(24.0))
+                    .px(px(2.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(24.0))
+                            .flex_none()
+                            .child(icons::icon(icons::BRAIN, 16.0, icon_muted)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(BODY_FONT_PX))
+                            .line_height(px(BODY_LINE_HEIGHT_PX))
+                            .text_color(muted)
+                            .child(thought_text.clone()),
+                    ),
+            );
+        }
+
+        if let Some(entry) = latest_entry {
+            match entry {
+                TimelineEntry::Tool {
+                    kind,
+                    title,
+                    status,
+                    ..
+                } => {
+                    let rel_title = self.relative_title(title);
+                    let icon_path = match status {
+                        ItemStatus::Failed => icons::ERROR_CIRCLE,
+                        ItemStatus::Running | ItemStatus::Completed => {
+                            icons::tool_icon_path(kind, &rel_title)
+                        }
+                    };
+                    let (ic_color, text_color) = match status {
+                        ItemStatus::Failed => (destructive, destructive),
+                        ItemStatus::Running => (icon_muted, muted),
+                        ItemStatus::Completed => (icon_muted, muted),
+                    };
+                    let bright_fg = hsla(self.tokens.foreground);
+                    let label_el: AnyElement = if matches!(status, ItemStatus::Running) {
+                        shimmer_text(&rel_title, muted, bright_fg).into_any_element()
+                    } else {
+                        rel_title.into_any_element()
+                    };
+                    col = col.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .w_full()
+                            .min_w_0()
+                            .min_h(px(24.0))
+                            .px(px(2.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size(px(24.0))
+                                    .flex_none()
+                                    .child(icons::icon(icon_path, 16.0, ic_color)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .text_size(px(BODY_FONT_PX))
+                                    .line_height(px(BODY_LINE_HEIGHT_PX))
+                                    .text_color(text_color)
+                                    .child(label_el),
+                            ),
+                    );
+                }
+                TimelineEntry::Thinking { streaming, .. }
+                    if latest_thought.is_none() || *streaming =>
+                {
+                    let bright_fg = hsla(self.tokens.foreground);
+                    let label_el: AnyElement = if *streaming {
+                        shimmer_text("Thinking", muted, bright_fg).into_any_element()
+                    } else {
+                        "Thought".into_any_element()
+                    };
+                    col = col.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .w_full()
+                            .min_w_0()
+                            .min_h(px(24.0))
+                            .px(px(2.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size(px(24.0))
+                                    .flex_none()
+                                    .child(icons::icon(icons::BRAIN, 16.0, icon_muted)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(BODY_FONT_PX))
+                                    .line_height(px(BODY_LINE_HEIGHT_PX))
+                                    .text_color(muted)
+                                    .child(label_el),
+                            ),
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        col.into_any_element()
     }
 
     fn render_work_entry(&self, row: &CachedRow, cx: &mut Context<'_, Self>) -> AnyElement {
@@ -1331,10 +1778,14 @@ impl ChatView {
             preview_line.unwrap_or("Thought").to_owned()
         };
 
-        let leading: AnyElement = if streaming {
-            TurningArc::new(14.0, hsla(self.tokens.muted_foreground)).into_any_element()
+        let leading: AnyElement =
+            icons::icon(icons::BRAIN, 16.0, muted_icon(&self.tokens)).into_any_element();
+        let muted = hsla(self.tokens.muted_foreground);
+        let bright_fg = hsla(self.tokens.foreground);
+        let label_el: AnyElement = if streaming {
+            shimmer_text(&label, muted, bright_fg).into_any_element()
         } else {
-            icons::icon(icons::BRAIN, 16.0, muted_icon(&self.tokens)).into_any_element()
+            label.into_any_element()
         };
 
         // Conn `WorkLogRow`: `min-h-6` (24px), `gap-1.5` (6px), `px-0.5`, `24px` icon box, `text-sm leading-relaxed`.
@@ -1352,11 +1803,7 @@ impl ChatView {
             .cursor_pointer()
             .text_size(px(BODY_FONT_PX))
             .line_height(px(BODY_LINE_HEIGHT_PX))
-            .text_color(if streaming {
-                prose_foreground(&self.tokens)
-            } else {
-                hsla(self.tokens.muted_foreground)
-            })
+            .text_color(muted)
             .hover(|s| s.text_color(hsla(self.tokens.foreground)))
             .on_click(cx.listener(move |view, _, _, cx| {
                 view.toggle_expanded(&toggle_id, cx);
@@ -1377,7 +1824,7 @@ impl ChatView {
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
-                    .child(label),
+                    .child(label_el),
             );
 
         if has_body {
@@ -1430,21 +1877,24 @@ impl ChatView {
         let toggle_id = id.to_owned();
         let has_detail = detail.is_some_and(|d| !d.trim().is_empty());
 
+        let muted = hsla(self.tokens.muted_foreground);
+        let bright_fg = hsla(self.tokens.foreground);
         let (icon_color, title_color) = match status {
             ItemStatus::Failed => (hsla(self.tokens.destructive), hsla(self.tokens.destructive)),
-            ItemStatus::Running => (muted_icon(&self.tokens), prose_foreground(&self.tokens)),
-            ItemStatus::Completed => (muted_icon(&self.tokens), hsla(self.tokens.muted_foreground)),
+            ItemStatus::Running | ItemStatus::Completed => (muted_icon(&self.tokens), muted),
+        };
+        let title_el: AnyElement = if matches!(status, ItemStatus::Running) {
+            shimmer_text(title, muted, bright_fg).into_any_element()
+        } else {
+            title.to_owned().into_any_element()
         };
 
         let leading: AnyElement = match status {
-            ItemStatus::Running => {
-                TurningArc::new(14.0, hsla(self.tokens.muted_foreground)).into_any_element()
-            }
             ItemStatus::Failed => {
                 icons::icon(icons::ERROR_CIRCLE, 16.0, icon_color).into_any_element()
             }
-            ItemStatus::Completed => {
-                icons::icon(icons::tool_icon_path(kind), 16.0, icon_color).into_any_element()
+            ItemStatus::Running | ItemStatus::Completed => {
+                icons::icon(icons::tool_icon_path(kind, title), 16.0, icon_color).into_any_element()
             }
         };
 
@@ -1479,7 +1929,7 @@ impl ChatView {
                     .text_ellipsis()
                     .whitespace_nowrap()
                     .text_color(title_color)
-                    .child(title.to_owned()),
+                    .child(title_el),
             );
 
         if has_detail {
@@ -1758,12 +2208,20 @@ impl ChatView {
     }
 
     /// Renders Conn's `WorkingTimelineRow`: `border-b border-(--shell-divider)! pb-2 pt-1`,
-    /// `h-6 px-1 text-sm leading-relaxed text-muted-foreground`.
+    /// `h-6 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums` — plain `"Working for 44s"`
+    /// text with no spinner, matching T3 Conn's calm header.
     fn render_working_row(&self) -> AnyElement {
+        let label = self
+            .working_started_at_ms
+            .map(|start| {
+                let elapsed_ms = (now_epoch_ms() - start).max(0) as u64;
+                format_working_elapsed(elapsed_ms)
+            })
+            .unwrap_or_else(|| "Working...".to_owned());
         div()
             .w_full()
             .min_w_0()
-            .pb(px(6.0))
+            .pb(px(4.0))
             .child(
                 div()
                     .w_full()
@@ -1776,14 +2234,12 @@ impl ChatView {
                             .flex()
                             .flex_row()
                             .items_center()
-                            .gap(px(8.0))
                             .h(px(24.0))
                             .px(px(4.0))
                             .text_size(px(BODY_FONT_PX))
                             .line_height(px(BODY_LINE_HEIGHT_PX))
                             .text_color(hsla(self.tokens.muted_foreground))
-                            .child(TurningArc::new(14.0, hsla(self.tokens.muted_foreground)))
-                            .child("Working..."),
+                            .child(label),
                     ),
             )
             .into_any_element()
@@ -1802,84 +2258,135 @@ impl Render for ChatView {
                 .child(self.render_empty_no_thread(cx));
         }
 
-        // Conn `.chat-content-lane`: centered `max-w-(--chat-content-max-width)` (736px),
-        // `TIMELINE_LIST_HEADER` (`h-4` = 16px) at top, `h-4` (16px) at bottom; each row owns its `pb-*`.
-        let mut lane = div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
-            .mx_auto()
-            .pt(px(16.0))
-            .pb(px(16.0));
-
-        if let Some(draft) = &self.draft {
-            lane = lane.flex_1().child(self.render_draft_canvas(draft, cx));
-        } else if self.cache.rows().is_empty() && !self.working {
-            // Conn `MessagesTimeline` empty state: centered muted `text-sm` prompt.
-            lane = lane.flex_1().items_center().justify_center().child(
-                div()
-                    .py(px(64.0))
-                    .text_size(px(BODY_FONT_PX))
-                    .line_height(px(BODY_LINE_HEIGHT_PX))
-                    .text_color(hsla(self.tokens.muted_foreground))
-                    .child("Send a message to start the conversation."),
-            );
+        let timeline: AnyElement = if let Some(draft) = &self.draft {
+            div()
+                .id("chat-timeline-scroll")
+                .a11y(
+                    gpui_kit::Role::Log,
+                    "chat.timeline",
+                    "Conversation timeline",
+                )
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .px(px(CHAT_LANE_PADDING_X_PX))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .size_full()
+                        .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
+                        .mx_auto()
+                        .pt(px(16.0))
+                        .pb(px(16.0))
+                        .child(self.render_draft_canvas(draft, cx)),
+                )
+                .into_any_element()
+        } else if self.cache.items().is_empty() && !self.synchronized {
+            let muted = hsla(self.tokens.muted_foreground);
+            div()
+                .id("chat-timeline-scroll")
+                .a11y(gpui_kit::Role::Log, "chat.timeline", "Loading conversation")
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .px(px(CHAT_LANE_PADDING_X_PX))
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.0))
+                        .py(px(64.0))
+                        .text_size(px(BODY_FONT_PX))
+                        .line_height(px(BODY_LINE_HEIGHT_PX))
+                        .text_color(muted)
+                        .child(TurningArc::new(14.0, muted))
+                        .child("Loading thread…"),
+                )
+                .into_any_element()
+        } else if self.cache.items().is_empty() {
+            div()
+                .id("chat-timeline-scroll")
+                .a11y(
+                    gpui_kit::Role::Log,
+                    "chat.timeline",
+                    "Conversation timeline",
+                )
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .px(px(CHAT_LANE_PADDING_X_PX))
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .py(px(64.0))
+                        .text_size(px(BODY_FONT_PX))
+                        .line_height(px(BODY_LINE_HEIGHT_PX))
+                        .text_color(hsla(self.tokens.muted_foreground))
+                        .child("Send a message to start the conversation."),
+                )
+                .into_any_element()
         } else {
-            let items = group_rows(self.cache.rows());
-            // When the active turn already has a trailing active work group, place Conn's
-            // `"Working..."` divider above those live work rows; otherwise place it at the end.
-            let working_before_idx = if self.working {
-                items
-                    .last()
-                    .filter(|item| {
-                        matches!(
-                            item,
-                            TimelineItem::WorkGroup {
-                                has_active: true,
-                                ..
-                            }
-                        )
-                    })
-                    .map(|_| items.len() - 1)
-            } else {
-                None
-            };
-
-            for (idx, item) in items.iter().enumerate() {
-                if working_before_idx == Some(idx) {
-                    lane = lane.child(self.render_working_row());
-                }
-                lane = lane.child(self.render_timeline_item(item, cx));
-                if let Some(cp) = self.checkpoint_after_item(&items, idx) {
-                    lane = lane.child(self.render_changed_files_card(idx, cp, cx));
-                }
-            }
-            if self.working && working_before_idx.is_none() {
-                lane = lane.child(self.render_working_row());
-            }
-        }
-
-        let timeline = div()
-            .id("chat-timeline-scroll")
-            .a11y(
-                gpui_kit::Role::Log,
-                "chat.timeline",
-                "Conversation timeline",
+            let list_state = self.list_state.clone();
+            let virtual_list = list(
+                list_state.clone(),
+                cx.processor(|this, ix: usize, _window, cx| this.render_virtual_item(ix, cx)),
             )
-            .flex_1()
-            .min_h_0()
-            .w_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle)
-            .px(px(CHAT_LANE_PADDING_X_PX))
-            .child(lane);
+            .size_full()
+            .min_h_0();
+
+            let active_toc = self.active_toc_index();
+            let hovered_slot = self.toc_hovered_slot.or(self.toc_pinned_slot);
+            let show_latest_pill = !self.is_at_bottom();
+
+            let mut container = div()
+                .id("chat-timeline-scroll")
+                .a11y(
+                    gpui_kit::Role::Log,
+                    "chat.timeline",
+                    "Conversation timeline",
+                )
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .min_w_0()
+                .overflow_hidden()
+                .child(virtual_list)
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .child(div().size_full().vertical_scrollbar(&list_state)),
+                );
+
+            if let Some(toc_overlay) = toc::render_toc_overlay(
+                self.cache.toc(),
+                active_toc,
+                hovered_slot,
+                &self.tokens,
+                cx,
+            ) {
+                container = container.child(toc_overlay);
+            }
+            if show_latest_pill {
+                container = container.child(toc::render_scroll_to_bottom_pill(&self.tokens, cx));
+            }
+            container.into_any_element()
+        };
 
         let mut composer_lane = div()
             .flex_none()
             .w_full()
             .px(px(CHAT_LANE_PADDING_X_PX))
-            .pb(px(16.0))
             .pt(px(8.0));
         if let Some(error) = self.error_banner.as_deref() {
             composer_lane = composer_lane.child(self.render_error_banner(error, cx));
@@ -1901,6 +2408,73 @@ impl Render for ChatView {
             .child(timeline)
             .child(composer_lane)
     }
+}
+
+/// Current wall-clock timestamp in Unix epoch milliseconds.
+#[must_use]
+fn now_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// Formats Conn's live `WorkingTimelineRow` header (`Working for 44s` / `Working for 1m 12s`).
+#[must_use]
+fn format_working_elapsed(elapsed_ms: u64) -> String {
+    let secs = elapsed_ms / 1000;
+    if secs < 60 {
+        format!("Working for {secs}s")
+    } else {
+        let mins = secs / 60;
+        let rem = secs % 60;
+        if rem == 0 {
+            format!("Working for {mins}m")
+        } else {
+            format!("Working for {mins}m {rem}s")
+        }
+    }
+}
+
+/// Extracts Conn's live wrapped thought preview (latest non-empty paragraph, flattened of
+/// simple Markdown emphasis markers, clamped to ~320 chars so it wraps cleanly to 2–4 lines).
+#[must_use]
+fn live_thought_preview(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let paragraph = trimmed
+        .rsplit("\n\n")
+        .map(str::trim)
+        .find(|p| !p.is_empty())
+        .unwrap_or(trimmed);
+    let cleaned = paragraph
+        .lines()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches('#')
+                .trim_start_matches('-')
+                .trim_start_matches('*')
+                .trim()
+        })
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("**", "")
+        .replace('`', "");
+    if cleaned.is_empty() {
+        return None;
+    }
+    const MAX_CHARS: usize = 320;
+    let mut out = String::new();
+    for (idx, ch) in cleaned.chars().enumerate() {
+        if idx >= MAX_CHARS {
+            out.push('…');
+            break;
+        }
+        out.push(ch);
+    }
+    Some(out)
 }
 
 /// Formats Conn's settled work-group label (`Worked` / `Worked for 7.5s` / `Worked for 2m 14s`).
@@ -1927,7 +2501,7 @@ fn format_worked_label(duration_ms: Option<u64>) -> String {
 
 #[cfg(test)]
 mod worked_label_tests {
-    use super::format_worked_label;
+    use super::{format_worked_label, format_working_elapsed, live_thought_preview};
 
     #[test]
     fn formats_worked_duration_labels() {
@@ -1947,6 +2521,20 @@ mod worked_label_tests {
             format_worked_label(Some(134_000)),
             "Worked for 2m 14s",
             "minutes and seconds"
+        );
+    }
+
+    #[test]
+    fn formats_working_elapsed_and_live_thought_preview() {
+        assert_eq!(format_working_elapsed(0), "Working for 0s");
+        assert_eq!(format_working_elapsed(44_200), "Working for 44s");
+        assert_eq!(format_working_elapsed(120_000), "Working for 2m");
+        assert_eq!(format_working_elapsed(134_000), "Working for 2m 14s");
+
+        assert_eq!(live_thought_preview("   "), None);
+        assert_eq!(
+            live_thought_preview("First paragraph.\n\n**Second** `paragraph`\ncontinues here."),
+            Some("Second paragraph continues here.".to_owned())
         );
     }
 }

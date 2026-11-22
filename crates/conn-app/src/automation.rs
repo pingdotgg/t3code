@@ -118,7 +118,32 @@ async fn run(
     let err = |e: anyhow_like::AnyError| e.0;
     match text(cmd, "cmd") {
         "dump" => app
-            .read_with(cx, |app, _| app.automation_dump())
+            .read_with(cx, |app, cx| app.automation_dump(cx))
+            .map_err(|e| err(e.into())),
+        "seed-big-thread" => {
+            let turns = cmd
+                .get("turns")
+                .and_then(Value::as_u64)
+                .map_or(100, |n| n as usize);
+            app.update(cx, |app, cx| app.automation_seed_big_thread(turns, cx))
+                .map_err(|e| err(e.into()))
+        }
+        "toc-open" => {
+            let open = cmd.get("open").and_then(Value::as_bool).unwrap_or(true);
+            app.update(cx, |app, cx| app.automation_set_toc_open(open, cx))
+                .map_err(|e| err(e.into()))
+        }
+        "toc-jump" => {
+            let turn = cmd
+                .get("turn")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "toc-jump requires integer `turn` (1-based)".to_owned())?
+                as usize;
+            app.update(cx, |app, cx| app.automation_toc_jump(turn, cx))
+                .map_err(|e| err(e.into()))?
+        }
+        "scroll-latest" => app
+            .update(cx, |app, cx| app.automation_scroll_latest(cx))
             .map_err(|e| err(e.into())),
         "a11y-tree" => {
             let tree = window
@@ -307,7 +332,7 @@ async fn run(
         "theme" => {
             let id = text(cmd, "id").to_owned();
             let ok = app
-                .update(cx, |app, cx| app.set_theme(&id, cx))
+                .update(cx, |app, cx| app.set_theme_local(&id, cx))
                 .map_err(|e| err(e.into()))?;
             if ok {
                 Ok(json!("ok"))

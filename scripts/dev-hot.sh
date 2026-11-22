@@ -14,9 +14,9 @@
 #   shadow Dioxus CLI.
 #
 # Usage:
-#   scripts/dev-hot.sh                        # default: dark-mono against local disposable server
-#   CONN_GPUI_THEME=t3-code-dark scripts/dev-hot.sh
-#   CONN_GPUI_EXTRA_FEATURES=cef scripts/dev-hot.sh
+#   scripts/dev-hot.sh                                  # live mode: connects to saved Orbit/nick server
+#   scripts/dev-hot.sh --sandbox                        # isolated disposable :3891 dev server + automation
+#   CONN_GPUI_EXTRA_FEATURES=cef scripts/dev-hot.sh     # live mode with embedded CEF browser
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -25,6 +25,18 @@ PORT="${CONN_GPUI_PORT:-3891}"
 DX_BIN="${DX_BIN:-$HOME/.cargo/bin/dx}"
 DX_PORT="${CONN_GPUI_DX_PORT:-18743}"
 
+SANDBOX=0
+for arg in "$@"; do
+  case "$arg" in
+    --sandbox) SANDBOX=1 ;;
+    --live) SANDBOX=0 ;;
+    *)
+      echo "usage: $0 [--live|--sandbox]" >&2
+      exit 2
+      ;;
+  esac
+done
+
 if [[ ! -x "$DX_BIN" ]] || ! "$DX_BIN" --version 2>/dev/null | grep -qi "dioxus"; then
   echo "error: Dioxus CLI (dx 0.7.10) not found at $DX_BIN" >&2
   echo "Install with:" >&2
@@ -32,21 +44,28 @@ if [[ ! -x "$DX_BIN" ]] || ! "$DX_BIN" --version 2>/dev/null | grep -qi "dioxus"
   exit 1
 fi
 
-if [[ -z "${CONN_GPUI_SERVER:-}" ]]; then
-  "$ROOT/scripts/dev-server.sh" start >/dev/null
-  BIN_SERVER="$ROOT/target-conn-server/release/conn-server"
-  if [[ ! -s "$DEV/bearer" ]]; then
-    "$BIN_SERVER" auth session issue --state-dir "$DEV/state" --token-only --label conn-gpui \
-      > "$DEV/bearer"
+FEATURES="hot-reload"
+if [[ "$SANDBOX" == "1" ]]; then
+  if [[ -z "${CONN_GPUI_SERVER:-}" ]]; then
+    "$ROOT/scripts/dev-server.sh" start >/dev/null
+    BIN_SERVER="$ROOT/target-conn-server/release/conn-server"
+    if [[ ! -s "$DEV/bearer" ]]; then
+      "$BIN_SERVER" auth session issue --state-dir "$DEV/state" --token-only --label conn-gpui \
+        > "$DEV/bearer"
+    fi
+    export CONN_GPUI_SERVER="http://127.0.0.1:$PORT"
+    export CONN_GPUI_TOKEN_FILE="$DEV/bearer"
   fi
-  export CONN_GPUI_SERVER="http://127.0.0.1:$PORT"
-  export CONN_GPUI_TOKEN_FILE="$DEV/bearer"
+  export CONN_GPUI_AUTOMATION="${CONN_GPUI_AUTOMATION:-$DEV/automation-port}"
+  export CONN_GPUI_ORBIT_SYNC="${CONN_GPUI_ORBIT_SYNC:-0}"
+  export CONN_GPUI_THEME="${CONN_GPUI_THEME:-dark-mono}"
+  FEATURES="$FEATURES automation"
+else
+  # Live mode: let conn-app auto-connect to the saved Orbit Node / direct server and
+  # adopt the live Orbit profile & theme without overriding env vars.
+  unset CONN_GPUI_AUTOMATION
 fi
 
-export CONN_GPUI_AUTOMATION="${CONN_GPUI_AUTOMATION:-$DEV/automation-port}"
-export CONN_GPUI_THEME="${CONN_GPUI_THEME:-dark-mono}"
-
-FEATURES="hot-reload automation"
 if [[ -n "${CONN_GPUI_EXTRA_FEATURES:-}" ]]; then
   FEATURES="$FEATURES $CONN_GPUI_EXTRA_FEATURES"
 fi
