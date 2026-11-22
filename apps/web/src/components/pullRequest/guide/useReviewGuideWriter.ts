@@ -34,7 +34,7 @@ export function useReviewGuideWriter({
   });
   const [starting, setStarting] = useState(false);
   const data = query.data;
-  const running = starting || data?.run?._tag === "Running";
+  const running = starting || (query.error === null && data?.run?._tag === "Running");
 
   // A run reported by the server is watched where its answer lands (state/pullRequests.ts).
   const write = async () => {
