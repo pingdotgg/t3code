@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { createMarkdownSplitter, splitLargeMarkdown } from "./markdownChunks.ts";
+import {
+  createMarkdownSplitter,
+  splitLargeMarkdown,
+  splitMarkdownForPreview,
+} from "./markdownChunks.ts";
 
 const starts = (text: string) =>
   splitLargeMarkdown(text, 1).map((chunk) => chunk.text.split("\n")[0]);
@@ -109,5 +113,25 @@ describe("splitLargeMarkdown", () => {
     }
     streamed.push(...splitter.end());
     expect(streamed).toEqual(splitLargeMarkdown(text, 64));
+  });
+
+  it("collects link definitions outside code so every piece can resolve them", () => {
+    const text = [
+      "[![badge][b]][site]",
+      "",
+      "```md",
+      "[fake]: /not-a-definition",
+      "```",
+      "",
+      "Paragraph",
+      "[inline]: /continues-the-paragraph",
+      "",
+      "[site]: https://example.com",
+      "[b]: https://example.com/badge.svg 'Badge'",
+      "[^note]: a footnote",
+    ].join("\n");
+    expect(splitMarkdownForPreview(text).definitions).toBe(
+      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'",
+    );
   });
 });

@@ -107,7 +107,7 @@ import { ChunkedMarkdown } from "./ChunkedMarkdown";
 import {
   CHUNKED_MARKDOWN_MIN_CHARS,
   LARGE_MARKDOWN_RENDER_MAX_BYTES,
-  splitLargeMarkdown,
+  splitMarkdownForPreview,
 } from "@t3tools/shared/markdownChunks";
 import {
   type FileCommentAnnotationEntry,
@@ -1239,7 +1239,7 @@ function RenderedMarkdownSurface({
   if (contents.length > CHUNKED_MARKDOWN_MIN_CHARS)
     return (
       <ChunkedMarkdown
-        chunks={splitLargeMarkdown(contents)}
+        {...splitMarkdownForPreview(contents)}
         cwd={cwd}
         relativePath={relativePath}
         threadRef={threadRef}

@@ -8,7 +8,11 @@ import { useState } from "react";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { ScrollView, View } from "react-native";
 import { LegendList } from "@legendapp/list/react-native";
-import { LARGE_MARKDOWN_CHUNK_MAX_CHARS, splitLargeMarkdown } from "@t3tools/shared/markdownChunks";
+import {
+  LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  splitMarkdownForPreview,
+  withMarkdownDefinitions,
+} from "@t3tools/shared/markdownChunks";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 
@@ -264,7 +268,7 @@ export function FileMarkdownPreview(props: {
 
   if (props.chunked) {
     // Only chunks near the viewport mount, so only they pay for the JS rewrites and native parse.
-    const chunks = splitLargeMarkdown(markdown);
+    const { chunks, definitions } = splitMarkdownForPreview(markdown);
     if (chunks.some((chunk) => chunk.text.length > LARGE_MARKDOWN_CHUNK_MAX_CHARS)) {
       return (
         <SourceFileSurface
@@ -291,7 +295,9 @@ export function FileMarkdownPreview(props: {
           contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 18 }}
           ItemSeparatorComponent={ChunkSeparator}
           renderItem={({ item }) => (
-            <View className="mx-auto w-full max-w-[760px]">{renderMarkdown(item.text)}</View>
+            <View className="mx-auto w-full max-w-[760px]">
+              {renderMarkdown(withMarkdownDefinitions(item.text, definitions))}
+            </View>
           )}
         />
         {modals}

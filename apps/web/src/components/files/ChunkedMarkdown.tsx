@@ -3,7 +3,11 @@ import { memo, useLayoutEffect, useRef, useState, type KeyboardEventHandler } fr
 
 import { Spinner } from "~/components/ui/spinner";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
-import { LARGE_MARKDOWN_CHUNK_MAX_CHARS, type MarkdownChunk } from "@t3tools/shared/markdownChunks";
+import {
+  LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  type MarkdownChunk,
+  withMarkdownDefinitions,
+} from "@t3tools/shared/markdownChunks";
 
 const viewportObservers = new WeakMap<Element, IntersectionObserver>();
 
@@ -49,6 +53,8 @@ function halfWindowFrom(chunks: readonly MarkdownChunk[], from: number, directio
 /** Mounts each chunk once it scrolls near the viewport; task offsets are file offsets. */
 export function ChunkedMarkdown(props: {
   readonly chunks: readonly MarkdownChunk[];
+  /** Link definitions from the whole file, so references resolve across pieces. */
+  readonly definitions: string;
   /** Shows a spinner after the last chunk while more of the file streams in. */
   readonly loading?: boolean;
   readonly cwd: string;
@@ -138,6 +144,22 @@ export function ChunkedMarkdown(props: {
       ref={observeViewport}
       data-chunk-viewport
       onKeyDown={props.onKeyDown}
+      onCopy={(event) => {
+        // Select All only reaches mounted pieces; copying all of it copies the whole file.
+        const selection = window.getSelection();
+        const viewport = event.currentTarget;
+        const { firstElementChild, lastElementChild } = viewport;
+        if (
+          !selection ||
+          !firstElementChild ||
+          !lastElementChild ||
+          !selection.containsNode(firstElementChild) ||
+          !selection.containsNode(lastElementChild)
+        )
+          return;
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", chunks.map((chunk) => chunk.text).join("\n"));
+      }}
       className="flex min-h-0 flex-1 flex-col gap-5 overflow-auto py-5 scrollbar-gutter-both [overflow-anchor:none]"
     >
       {base > 0 ? (
@@ -152,6 +174,7 @@ export function ChunkedMarkdown(props: {
             chunk={chunk}
             start={starts[index]!}
             mounted={mounted.has(index)}
+            definitions={props.definitions}
             cwd={props.cwd}
             relativePath={props.relativePath}
             threadRef={props.threadRef}
@@ -190,6 +213,7 @@ const ChunkSlot = memo(function ChunkSlot(props: {
   readonly chunk: MarkdownChunk;
   readonly start: number;
   readonly mounted: boolean;
+  readonly definitions: string;
   readonly cwd: string;
   readonly relativePath: string;
   readonly threadRef: ScopedThreadRef;
@@ -223,7 +247,7 @@ const ChunkSlot = memo(function ChunkSlot(props: {
         </pre>
       ) : (
         <FileMarkdownPreview
-          text={chunk.text}
+          text={withMarkdownDefinitions(chunk.text, props.definitions)}
           cwd={props.cwd}
           relativePath={props.relativePath}
           threadRef={props.threadRef}

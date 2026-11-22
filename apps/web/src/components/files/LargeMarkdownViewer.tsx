@@ -4,24 +4,28 @@ import { useEffect, useImperativeHandle, useState, type RefObject } from "react"
 
 import { ChunkedMarkdown } from "./ChunkedMarkdown";
 import { FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
-import { createMarkdownSplitter, type MarkdownChunk } from "@t3tools/shared/markdownChunks";
+import {
+  createMarkdownSplitter,
+  type MarkdownChunk,
+  type SplitMarkdown,
+} from "@t3tools/shared/markdownChunks";
 
-interface StreamedMarkdown {
-  readonly chunks: readonly MarkdownChunk[];
+interface StreamedMarkdown extends SplitMarkdown {
   readonly done: boolean;
 }
 
 // Switching back to a recently opened file reuses its pieces instead of downloading it again.
 const RECENT_FILES = 4;
 const RECENT_FILE_MAX_CHARS = 16 * 1024 * 1024;
-const recentFiles = new Map<string, readonly MarkdownChunk[]>();
+const recentFiles = new Map<string, SplitMarkdown>();
 // New pieces render in batches; a re-render per network read would repaint every placeholder.
 const PUBLISH_INTERVAL_MS = 200;
 
-function rememberFile(src: string, chunks: readonly MarkdownChunk[]) {
-  if (chunks.reduce((chars, chunk) => chars + chunk.text.length, 0) > RECENT_FILE_MAX_CHARS) return;
+function rememberFile(src: string, file: SplitMarkdown) {
+  if (file.chunks.reduce((chars, chunk) => chars + chunk.text.length, 0) > RECENT_FILE_MAX_CHARS)
+    return;
   recentFiles.delete(src);
-  recentFiles.set(src, chunks);
+  recentFiles.set(src, file);
   if (recentFiles.size > RECENT_FILES) recentFiles.delete(recentFiles.keys().next().value!);
 }
 
@@ -38,7 +42,7 @@ export default function LargeMarkdownViewer(props: {
   const gt = useGT();
   const [file, setFile] = useState<StreamedMarkdown | "failed" | null>(() => {
     const cached = recentFiles.get(props.src);
-    return cached ? { chunks: cached, done: true } : null;
+    return cached ? { ...cached, done: true } : null;
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the streamed download and cancels it when the source changes or the preview closes.
   useEffect(() => {
@@ -50,7 +54,7 @@ export default function LargeMarkdownViewer(props: {
     const publish = (done: boolean) => {
       if (!done && chunks.length === published) return;
       published = chunks.length;
-      setFile({ chunks: [...chunks], done });
+      setFile({ chunks: [...chunks], definitions: splitter.definitions(), done });
     };
     void (async () => {
       const response = await fetch(props.src, { cache: "no-store", signal: controller.signal });
@@ -67,7 +71,7 @@ export default function LargeMarkdownViewer(props: {
         }
       }
       chunks.push(...splitter.end());
-      rememberFile(props.src, chunks);
+      rememberFile(props.src, { chunks, definitions: splitter.definitions() });
       publish(true);
     })().catch(() => {
       if (!controller.signal.aborted) setFile("failed");
@@ -100,6 +104,7 @@ export default function LargeMarkdownViewer(props: {
   return (
     <ChunkedMarkdown
       chunks={file.chunks}
+      definitions={file.definitions}
       loading={!file.done}
       cwd={props.cwd}
       relativePath={props.relativePath}

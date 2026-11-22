@@ -58,11 +58,17 @@ const FRONTMATTER_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
 // An opening rule with no closer is a thematic break, not frontmatter; stop waiting for one.
 const FRONTMATTER_MAX_LINES = 1000;
 
+// A one-line link reference definition; footnotes are left alone so each piece does not grow
+// a footnote section.
+const LINK_DEFINITION = /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*\S/;
+// Definitions past this are not repeated into every piece; their parse cost would outweigh links.
+const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
+
 /**
  * Cuts Markdown into pieces of roughly `targetChars` as its text arrives, only at column-0
  * headings or paragraphs that start a new top-level block. Leading frontmatter stays in the
- * first piece. Definitions and footnotes resolve only inside their own piece, and duplicate
- * heading slugs restart per piece.
+ * first piece. Link definitions are collected so every piece can resolve them; footnotes
+ * resolve only inside their own piece, and duplicate heading slugs restart per piece.
  */
 export function createMarkdownSplitter(targetChars = CHUNK_TARGET_CHARS) {
   let lines: string[] = [];
@@ -71,6 +77,9 @@ export function createMarkdownSplitter(targetChars = CHUNK_TARGET_CHARS) {
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
   let afterBlankLine = false;
+  let afterDefinition = false;
+  const definitions: string[] = [];
+  let definitionChars = 0;
   const flush = (done: MarkdownChunk[]) => {
     done.push({ text: lines.join("\n"), lines: lines.length });
     lines = [];
@@ -89,6 +98,13 @@ export function createMarkdownSplitter(targetChars = CHUNK_TARGET_CHARS) {
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
       if (cut) flush(done);
       closes = blockCloser(line);
+      // A definition cannot interrupt a paragraph, so it follows a blank line or another one.
+      const definition = (first || afterBlankLine || afterDefinition) && LINK_DEFINITION.test(line);
+      afterDefinition = definition;
+      if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
+        definitions.push(line.trim());
+        definitionChars += line.length + 1;
+      }
     }
     first = false;
     lines.push(line);
@@ -112,6 +128,28 @@ export function createMarkdownSplitter(targetChars = CHUNK_TARGET_CHARS) {
       flush(done);
       return done;
     },
+    /** Link definitions seen so far, to append after each piece's text when rendering it. */
+    definitions(): string {
+      return definitions.join("\n");
+    },
+  };
+}
+
+/** Appends shared link definitions after a piece, leaving its own offsets unchanged. */
+export function withMarkdownDefinitions(text: string, definitions: string): string {
+  return definitions ? `${text}\n\n${definitions}` : text;
+}
+
+export interface SplitMarkdown {
+  readonly chunks: readonly MarkdownChunk[];
+  readonly definitions: string;
+}
+
+export function splitMarkdownForPreview(text: string): SplitMarkdown {
+  const splitter = createMarkdownSplitter();
+  return {
+    chunks: [...splitter.push(text), ...splitter.end()],
+    definitions: splitter.definitions(),
   };
 }
 
