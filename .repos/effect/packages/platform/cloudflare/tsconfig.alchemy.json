@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // The Alchemy integration surface (examples + typetests) compiles in its
+  // own project: the alchemy type graph loads bun globals that would clash
+  // with the shared tests project's node globals.
+  "extends": "../../../tsconfig.base.json",
+  "include": ["examples", "typetest/AlchemyCloudflareCluster.tst.ts"],
+  "references": [{ "path": "../../../tsconfig.packages.json" }],
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "erasableSyntaxOnly": false,
+    "types": ["@cloudflare/workers-types"],
+    "paths": {
+      "effect": ["../../effect/src/index.ts"],
+      "effect/*": ["../../effect/src/*.ts"],
+      "@effect/platform-cloudflare": ["./src/index.ts"],
+      "@effect/platform-cloudflare/*": ["./src/*.ts"]
+    }
+  }
+}

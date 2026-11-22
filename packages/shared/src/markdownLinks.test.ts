@@ -174,6 +174,9 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[".repeat(32_000), []],
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
+    ["See [the [docs] guide](docs/guide.md) and [[1]](src/a.ts)", ["docs/guide.md", "src/a.ts"]],
+    ["[a [b](x) [c \\[d](y) [e\\]](z)", ["x", "y", "z"]],
+    ["[a [b]\n\nc](src/a.ts) [outer [inner]()](src/b.ts)", []],
     [`See ${serializeComposerFileLink("pages/posts/[id].tsx")} now`, ["pages/posts/%5Bid%5D.tsx"]],
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
@@ -185,6 +188,9 @@ describe("extractMarkdownLinkHrefs", () => {
       ["/x/app/(a)/page.tsx", "/x/app/(b)/page.tsx"],
     ],
     ['[a](/tmp/a(1).txt "title") after', ["/tmp/a(1).txt"]],
+    [`[a](a.ts "it's a title") [b](b.ts 'a "quoted" title') [c](ok)`, ["a.ts", "b.ts", "ok"]],
+    [`[a](a.ts "mixed') [b](b.ts)`, ["b.ts"]],
+    [`[a](a.ts "it's\n\n[b](lib/a.ts)")`, ["lib/a.ts"]],
     ["[a](a(b(c))d) [b](ok)", ["a(b(c))d", "ok"]],
     ["[a](x\\)y) [b](x\\(y)", ["x\\)y", "x\\(y"]],
     ["[a](unclosed(paren) [b](ok)", ["ok"]],

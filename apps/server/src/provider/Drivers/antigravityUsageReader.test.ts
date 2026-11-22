@@ -383,6 +383,9 @@ describe("readAntigravityUsage", () => {
             "gemini-3-flash-agent",
             "gemini-3-flash",
             "gemini-default",
+            "gemini-pro-orchestrator-neon",
+            "gemini-4-hydrogen-orchestrator",
+            "gemini-pro-orchestrator-g1-pro",
           ].entries()) {
             yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
               idx,
@@ -393,6 +396,11 @@ describe("readAntigravityUsage", () => {
               new Uint8Array(protoBytes(9, protoNumber(2, 10 + idx))),
             ]);
           }
+          // Orchestrator (Neon), MODEL_PLACEHOLDER_M537, with no name in the metadata.
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+            20,
+            new Uint8Array(protoBytes(9, [...protoNumber(1, 1537), ...protoNumber(2, 30)])),
+          ]);
         }),
       );
       const result = yield* readAntigravityUsage(dir, 0);
@@ -405,6 +413,10 @@ describe("readAntigravityUsage", () => {
           ["gemini-3-flash-agent", "gemini-3.5-flash"],
           ["gemini-3-flash", "gemini-3-flash-preview"],
           ["gemini-default", undefined],
+          ["gemini-pro-orchestrator-neon", "gemini-4-neon"],
+          ["gemini-4-hydrogen-orchestrator", "gemini-4-hydrogen"],
+          ["gemini-pro-orchestrator-g1-pro", "gemini-4-argon"],
+          ["gemini-pro-orchestrator-neon", "gemini-4-neon"],
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -587,27 +599,38 @@ describe("readAntigravityUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reads Antigravity step-only stores and reports malformed databases", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* tempDir;
-      yield* seedDatabase(path.join(dir, "steps.db"), (db) =>
-        Effect.gen(function* () {
-          yield* db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
-          const usage = [...protoNumber(1, 246), ...protoNumber(2, 10), ...protoNumber(3, 5)];
-          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
-            0,
-            new Uint8Array([...protoBytes(9, usage), ...protoBytes(8, protoNumber(1, 1780000000))]),
-          ]);
-        }),
-      );
-      yield* fileSystem.writeFileString(path.join(dir, "broken.db"), "not a sqlite database");
-      const result = yield* readAntigravityUsage(dir, 0);
-      assert.strictEqual(result.errors.length, 1);
-      assert.strictEqual(records(result)[0]?.model, "gemini-2.5-pro");
-      assert.strictEqual(records(result)[0]?.totals.outputTokens, 5);
-    }).pipe(Effect.provide(NodeServices.layer)),
+  it.effect(
+    "reads Antigravity step-only stores, skips index files and reports malformed databases",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* tempDir;
+        // agy 1.5.x keeps this index beside its conversations; it is not a conversation store.
+        yield* seedDatabase(path.join(dir, "conversation_summaries.db"), (db) =>
+          db.exec(
+            "CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, title TEXT, step_count INTEGER)",
+          ),
+        );
+        yield* seedDatabase(path.join(dir, "steps.db"), (db) =>
+          Effect.gen(function* () {
+            yield* db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
+            const usage = [...protoNumber(1, 246), ...protoNumber(2, 10), ...protoNumber(3, 5)];
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+              0,
+              new Uint8Array([
+                ...protoBytes(9, usage),
+                ...protoBytes(8, protoNumber(1, 1780000000)),
+              ]),
+            ]);
+          }),
+        );
+        yield* fileSystem.writeFileString(path.join(dir, "broken.db"), "not a sqlite database");
+        const result = yield* readAntigravityUsage(dir, 0);
+        assert.deepStrictEqual(result.errors, [path.join(dir, "broken.db")]);
+        assert.strictEqual(records(result)[0]?.model, "gemini-2.5-pro");
+        assert.strictEqual(records(result)[0]?.totals.outputTokens, 5);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("ignores large values in unused Antigravity protobuf fields", () =>
