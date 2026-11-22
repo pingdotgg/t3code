@@ -304,6 +304,16 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
       }))
     }))
 
+  it.effect("reads anonymous records and record arrays", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const rows = yield* sql`
+        SELECT ROW(1, 'a', NULL::int4, ROW(true, ARRAY[1, 2])) AS record,
+               ARRAY[ROW(1, 'a'), ROW(2, 'b')] AS records
+      `
+      assert.deepStrictEqual(rows, [{ record: [1, "a", null, [true, [1, 2]]], records: [[1, "a"], [2, "b"]] }])
+    }))
+
   it.effect("reads bytea as Uint8Array", () =>
     Effect.gen(function*() {
       const sql = yield* PgClient.PgClient
@@ -393,6 +403,17 @@ it.layer(PgContainer.layerClient, { timeout: "30 seconds" })("PgClient", (it) =>
       assert.instanceOf(error, SqlError.SqlError)
       assert.strictEqual(error.reason._tag, "UnknownError")
       assert.strictEqual(error.reason.operation, "commit")
+    }))
+
+  it.effect("keeps the typed error when the server ends the session in a nested transaction", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      const cause = yield* sql.withTransaction(
+        sql.withTransaction(sql`SELECT pg_terminate_backend(pg_backend_pid())`)
+      ).pipe(Effect.sandbox, Effect.flip)
+
+      assert.isFalse(Cause.hasDies(cause))
+      assert.instanceOf(Cause.squash(cause), SqlError.SqlError)
     }))
 
   it.effect("afterCommit runs once other connections see the transaction's rows", () =>
@@ -499,6 +520,28 @@ it.layer(PgContainer.layerMakeClient, { timeout: "30 seconds" })("PgClient.makeC
 
       assert.isTrue(Option.isNone(rows))
     }).pipe(TestClock.withLive))
+
+  it.effect("times out a queued stream before the transaction connection is released", () =>
+    Effect.gen(function*() {
+      const sql = yield* PgClient.PgClient
+      yield* sql.withTransaction(Effect.gen(function*() {
+        const started = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        const holder = yield* sql`SELECT 1`.stream.pipe(
+          Stream.runForEach(() => Effect.andThen(Deferred.succeed(started, undefined), Deferred.await(release))),
+          Effect.forkChild
+        )
+        yield* Deferred.await(started)
+        const queued = yield* sql`SELECT 2`.stream.pipe(Stream.runDrain, Effect.timeoutOption(10), Effect.forkChild)
+        yield* TestClock.adjust(10)
+        const completedWhileQueued = queued.pollUnsafe() !== undefined
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(holder)
+        assert.isTrue(Option.isNone(yield* Fiber.join(queued)))
+        assert.isTrue(completedWhileQueued, "stream timeout waited for the connection")
+        assert.deepStrictEqual(yield* sql`SELECT 3 AS value`, [{ value: 3 }])
+      }))
+    }))
 
   it.effect("serializes transactions on its single connection", () =>
     Effect.gen(function*() {

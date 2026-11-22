@@ -8,8 +8,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Keep the native socket path within the temporary directory.
 import * as NodePath from "node:path";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -359,8 +361,11 @@ describe("GitHubRest", () => {
         const media = yield* instance.fetchMedia!({ url: mediaUrl, headers: {} });
         expect(media?.status).toBe(401);
         expect(directRequests).toEqual([mediaUrl]);
-      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
-    }).pipe(Effect.scoped),
+      }).pipe(
+        Effect.provide(layer.pipe(Layer.provideMerge(FeatureFlags.layerTest()))),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
+    }),
   );
 
   it.effect.each(["", "unavailable"])(
@@ -510,6 +515,58 @@ describe("GitHubRest", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("reads a proxy's 403 with Retry-After as a refusal and keeps the host open", () => {
+    const pages = [
+      "<html><head><title>403 Forbidden</title></head><body>nginx</body></html>",
+      "<html><body>Request blocked by proxy abuse detection; contact your administrator</body></html>",
+    ];
+    const { layer, requests } = harness(
+      () =>
+        new Response(pages.shift(), {
+          status: 403,
+          headers: { "content-type": "text/html", "retry-after": "5" },
+        }),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const api = yield* GitHubRest.GitHubRest;
+      const read = {
+        host: "ghes.example.internal",
+        operation: "checks",
+        path: "repos/acme/web/pulls/7",
+      };
+      const first = yield* Effect.flip(api.rest(read));
+      expect(first).toMatchObject({ _tag: "GitHubApiResponseError", status: 403 });
+      const second = yield* Effect.flip(api.rest(read));
+      expect(second).toMatchObject({ _tag: "GitHubApiResponseError", status: 403 });
+      expect(requests).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("pauses the host on an abuse-detection 403 that never says rate limit", () => {
+    const { layer, requests } = harness(() =>
+      json(
+        {
+          message: "You have triggered an abuse detection mechanism. Please wait before retrying.",
+          documentation_url:
+            "https://docs.github.com/rest/overview/resources-in-the-rest-api#abuse-rate-limits",
+        },
+        { status: 403, headers: { "retry-after": "60", "x-ratelimit-remaining": "4878" } },
+      ),
+    );
+    return Effect.gen(function* () {
+      yield* TestClock.setTime(NOW);
+      const api = yield* GitHubRest.GitHubRest;
+      const read = { host: "github.com", operation: "checks", path: "repos/acme/web/pulls/7" };
+      expect(yield* Effect.flip(api.rest(read))).toMatchObject({
+        _tag: "GitHubApiRateLimitError",
+        retryAt: NOW + 60_000,
+      });
+      expect((yield* Effect.flip(api.rest(read)))._tag).toBe("SourceControlRateLimitPausedError");
+      expect(requests).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("drops a refused token so the next request asks the source again", () => {
     const { layer, requests, invalidations } = harness((request) =>
       request.headers.authorization === "Bearer first"
@@ -559,15 +616,17 @@ describe("GitHubCredentials", () => {
     GitHubCredentials.layer.pipe(
       Layer.provide(TestSourceControlHost.layer({ process: { run } })),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(FileSystem.layerNoop({})),
       Layer.provide(Layer.succeed(HttpClient.HttpClient, unexpectedHttp)),
     );
 
-  it.effect("does not cache a gh failure that is not about signing in", () => {
+  it.effect("reports a gh timeout as a timeout and does not cache it", () => {
     let calls = 0;
     return Effect.gen(function* () {
       const credentials = yield* GitHubCredentials.GitHubCredentials;
       const first = yield* Effect.flip(credentials.get("github.com"));
-      expect(first._tag).toBe("GitHubCliFailedError");
+      expect(first._tag).toBe("GitHubCliTimeoutError");
+      expect(first.message).not.toContain("gh auth status");
       expect((yield* credentials.get("github.com")).source).toBe("gh");
       expect(calls).toBe(2);
     }).pipe(

@@ -139,7 +139,7 @@ export interface DeviceOperations {
     deviceId: string,
   ) => Effect.Effect<AgentDeviceBinding, DeviceHostUnavailableError>;
   /**
-   * Set by hosts that end devices on their own (EAS stops sessions at their
+   * Set by hosts that end devices on their own (Expo stops sessions at their
    * limits), so a session on a device the host stops listing is dropped.
    */
   readonly endsDevices?: boolean;

@@ -3,14 +3,14 @@ import {
   scopedThreadKey,
   scopeProjectRef,
 } from "@t3tools/client-runtime/environment";
-import type {
-  EnvironmentId,
-  PreviewSessionSnapshot,
-  ScopedProjectRef,
-  ScopedThreadRef,
+import {
+  type EnvironmentId,
+  INCOGNITO_BROWSER_PROFILE_ID,
+  type PreviewSessionSnapshot,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
@@ -39,7 +39,6 @@ import {
   isClientSettingsHydrated,
   useClientSettings,
 } from "./hooks/useSettings";
-import { resolveStorage } from "./lib/storage";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -179,6 +178,7 @@ export function migratePersistedBrowserHistoryState(persistedState: unknown): {
 
 const BROWSER_HISTORY_STORAGE_KEY = "t3code:browser-history:v1";
 
+const MAX_PERSISTED_THREAD_MAPPINGS = 100;
 const PENDING_MAX_PER_THREAD = 10;
 const PENDING_MAX_THREADS = 20;
 
@@ -198,7 +198,7 @@ interface BrowserHistoryStoreState {
     projectKey: string,
     url: string,
     title: string,
-    environmentHostname?: string | null,
+    options?: { environmentHostname?: string | null; onlyIfUntitled?: boolean },
   ) => void;
   removeUrl: (projectKey: string, url: string) => void;
   registerThreadProject: (ref: ScopedThreadRef, projectKey: string) => void;
@@ -220,100 +220,313 @@ function addPendingByThread<T>(
   return next;
 }
 
-export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()(
-  persist(
-    (set, get) => ({
-      byProjectKey: {},
-      projectKeyByThreadKey: {},
-      pendingVisitsByThreadKey: {},
-      recordVisit: (projectKey, url, at, options) => {
-        const normalized = normalizeHistoryUrl(url);
-        if (!normalized) return;
-        set((state) => {
-          return {
-            byProjectKey: evictExcessProjects({
-              ...state.byProjectKey,
-              [projectKey]: upsertHistoryEntry(
-                state.byProjectKey[projectKey] ?? [],
-                normalized,
-                at,
-                options,
-              ),
-            }),
-          };
-        });
+type PersistedBrowserHistory = Pick<
+  BrowserHistoryStoreState,
+  "byProjectKey" | "projectKeyByThreadKey"
+>;
+
+type UpdateHistory = (state: PersistedBrowserHistory) => PersistedBrowserHistory;
+
+function boundThreadMappings(
+  previous: PersistedBrowserHistory,
+  next: PersistedBrowserHistory,
+): PersistedBrowserHistory {
+  return {
+    ...next,
+    projectKeyByThreadKey: Object.fromEntries(
+      Object.entries(next.projectKeyByThreadKey)
+        // Keep new registrations for empty projects, but drop projects that lost their history.
+        .filter(
+          ([, projectKey]) =>
+            !Object.hasOwn(previous.byProjectKey, projectKey) ||
+            Object.hasOwn(next.byProjectKey, projectKey),
+        )
+        .slice(-MAX_PERSISTED_THREAD_MAPPINGS),
+    ),
+  };
+}
+
+const HISTORY_OBJECT_STORE = "history";
+const EMPTY_PERSISTED_HISTORY: PersistedBrowserHistory = {
+  byProjectKey: {},
+  projectKeyByThreadKey: {},
+};
+let historyDatabase: Promise<IDBDatabase> | undefined;
+let historyChannel: BroadcastChannel | undefined;
+
+function readLegacyHistory<Missing = PersistedBrowserHistory>(
+  missing: Missing = EMPTY_PERSISTED_HISTORY as Missing,
+): PersistedBrowserHistory | Missing {
+  try {
+    const value = window.localStorage.getItem(BROWSER_HISTORY_STORAGE_KEY);
+    if (value === null) return missing;
+    const parsed: { state?: unknown } | null = JSON.parse(value);
+    return {
+      ...migratePersistedBrowserHistoryState(parsed?.state),
+      projectKeyByThreadKey: migratePersistedThreadProjectKeys(parsed?.state),
+    };
+  } catch {
+    return EMPTY_PERSISTED_HISTORY;
+  }
+}
+
+function retireLegacyHistory(): void {
+  try {
+    window.localStorage.removeItem(BROWSER_HISTORY_STORAGE_KEY);
+  } catch {
+    // The browser can deny access to localStorage independently of IndexedDB.
+  }
+}
+
+// localStorage can gain visits after migration: from the fallback below, or a tab on an older build.
+function mergeLegacyHistory(
+  saved: PersistedBrowserHistory,
+  legacy: PersistedBrowserHistory,
+): PersistedBrowserHistory {
+  const byProjectKey = { ...saved.byProjectKey };
+  for (const [projectKey, entries] of Object.entries(legacy.byProjectKey))
+    byProjectKey[projectKey] = [...(byProjectKey[projectKey] ?? []), ...entries];
+  return {
+    ...migratePersistedBrowserHistoryState({ byProjectKey }),
+    projectKeyByThreadKey: { ...legacy.projectKeyByThreadKey, ...saved.projectKeyByThreadKey },
+  };
+}
+
+// Without IndexedDB, merge into the freshest localStorage snapshot so a reload keeps new visits.
+function transactLegacyHistory(update: UpdateHistory, current: PersistedBrowserHistory) {
+  const previous = readLegacyHistory(current);
+  const next = update(previous);
+  if (next === previous) return previous;
+  const history = boundThreadMappings(previous, next);
+  try {
+    window.localStorage.setItem(
+      BROWSER_HISTORY_STORAGE_KEY,
+      JSON.stringify({ state: history, version: 1 }),
+    );
+  } catch {
+    // History stays in memory when the browser denies both storage APIs.
+  }
+  return history;
+}
+
+function invalidateHistoryDatabase(opening: Promise<IDBDatabase>): void {
+  if (historyDatabase === opening) historyDatabase = undefined;
+}
+
+function openHistoryDatabase() {
+  if (historyDatabase) return historyDatabase;
+  const opening = new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(BROWSER_HISTORY_STORAGE_KEY, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(HISTORY_OBJECT_STORE);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onclose = () => invalidateHistoryDatabase(opening);
+      db.onversionchange = () => {
+        invalidateHistoryDatabase(opening);
+        db.close();
+      };
+      resolve(db);
+    };
+    request.onerror = () => reject(request.error);
+  });
+  historyDatabase = opening;
+  void opening.catch(() => invalidateHistoryDatabase(opening));
+  return opening;
+}
+
+async function transactIndexedHistory(update?: UpdateHistory, retry = true) {
+  const opening = openHistoryDatabase();
+  const db = await opening;
+  let transaction: IDBTransaction;
+  try {
+    transaction = db.transaction(HISTORY_OBJECT_STORE, update ? "readwrite" : "readonly");
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "InvalidStateError") {
+      invalidateHistoryDatabase(opening);
+      if (retry) return transactIndexedHistory(update, false);
+    }
+    throw error;
+  }
+
+  return new Promise<{ history: PersistedBrowserHistory; changed: boolean }>((resolve, reject) => {
+    const store = transaction.objectStore(HISTORY_OBJECT_STORE);
+    const request = store.get(BROWSER_HISTORY_STORAGE_KEY);
+    let history: PersistedBrowserHistory;
+    let changed = false;
+    request.onsuccess = () => {
+      const saved = request.result as PersistedBrowserHistory | undefined;
+      const legacy = update ? readLegacyHistory(null) : null;
+      const previous =
+        saved && legacy
+          ? mergeLegacyHistory(saved, legacy)
+          : (saved ?? legacy ?? EMPTY_PERSISTED_HISTORY);
+      const next = update?.(previous) ?? previous;
+      history = next === previous ? previous : boundThreadMappings(previous, next);
+      changed = history !== saved;
+      if (update && changed) store.put(history, BROWSER_HISTORY_STORAGE_KEY);
+    };
+    transaction.oncomplete = () => {
+      // Keep the migration source until the IndexedDB snapshot has committed.
+      if (update) retireLegacyHistory();
+      resolve({ history, changed });
+    };
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+export const useBrowserHistoryStore = create<BrowserHistoryStoreState>()((set, get) => {
+  const publish = ({ byProjectKey }: PersistedBrowserHistory) => {
+    if (byProjectKey !== get().byProjectKey) set({ byProjectKey });
+  };
+  const updateHistory = (update: UpdateHistory) => {
+    if (typeof window === "undefined") {
+      publish(update(get()));
+      return;
+    }
+    void transactIndexedHistory(update).then(
+      ({ history, changed }) => {
+        publish(history);
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel is scoped to the origin
+        if (changed) historyChannel?.postMessage(null);
       },
-      setTitleForUrl: (projectKey, url, title, environmentHostname) => {
-        const normalized = normalizeHistoryUrl(url);
-        const state = get();
+      () => {
+        const { byProjectKey, projectKeyByThreadKey } = get();
+        publish(transactLegacyHistory(update, { byProjectKey, projectKeyByThreadKey }));
+      },
+    );
+  };
+
+  return mergeBrowserHistoryState(undefined, {
+    byProjectKey: {},
+    projectKeyByThreadKey: {},
+    pendingVisitsByThreadKey: {},
+    recordVisit: (projectKey, url, at, options) => {
+      const normalized = normalizeHistoryUrl(url);
+      if (!normalized) return;
+      updateHistory((state) => {
+        const entries = state.byProjectKey[projectKey] ?? [];
+        return {
+          ...state,
+          byProjectKey: evictExcessProjects({
+            ...state.byProjectKey,
+            [projectKey]: upsertHistoryEntry(entries, normalized, at, {
+              ...options,
+              insertOrdered: options?.insertOrdered || (entries[0]?.lastVisitedAt ?? at) > at,
+            }),
+          }),
+        };
+      });
+    },
+    setTitleForUrl: (projectKey, url, title, options) => {
+      const normalized = normalizeHistoryUrl(url);
+      const trimmed = title.trim().slice(0, BROWSER_HISTORY_MAX_TITLE_LENGTH);
+      if (!normalized || trimmed.length === 0) return;
+      const key = titleLookupKey(normalized, options?.environmentHostname);
+      updateHistory((state) => {
         const entries = state.byProjectKey[projectKey];
-        const trimmed = title.trim().slice(0, BROWSER_HISTORY_MAX_TITLE_LENGTH);
-        if (!normalized || !entries || trimmed.length === 0) return;
-        const key = titleLookupKey(normalized, environmentHostname);
-        const index = entries.findIndex(
-          (candidate) => titleLookupKey(candidate.url, environmentHostname) === key,
-        );
-        if (index === -1 || entries[index]?.title === trimmed) return;
-        set({
+        const index =
+          entries?.findIndex(
+            (candidate) => titleLookupKey(candidate.url, options?.environmentHostname) === key,
+          ) ?? -1;
+        const entry = entries?.[index];
+        if (
+          !entries ||
+          !entry ||
+          entry.title === trimmed ||
+          (entry.title && options?.onlyIfUntitled)
+        )
+          return state;
+        return {
+          ...state,
           byProjectKey: {
             ...state.byProjectKey,
-            [projectKey]: entries.map((candidate, candidateIndex) =>
-              candidateIndex === index ? { ...candidate, title: trimmed } : candidate,
-            ),
+            [projectKey]: entries.with(index, { ...entry, title: trimmed }),
           },
-        });
-      },
-      removeUrl: (projectKey, url) => {
-        const normalized = normalizeHistoryUrl(url);
-        const state = get();
-        const entries = state.byProjectKey[projectKey];
-        if (!normalized || !entries) return;
-        const next = entries.filter((candidate) => candidate.url !== normalized);
-        if (next.length === entries.length) return;
-        if (next.length === 0) {
-          const { [projectKey]: _removed, ...rest } = state.byProjectKey;
-          set({ byProjectKey: rest });
-          return;
-        }
-        set({ byProjectKey: { ...state.byProjectKey, [projectKey]: next } });
-      },
-      registerThreadProject: (ref, projectKey) => {
-        const threadKey = scopedThreadKey(ref);
-        const state = get();
-        const pendingVisits = state.pendingVisitsByThreadKey[threadKey];
-        if (state.projectKeyByThreadKey[threadKey] === projectKey && !pendingVisits) return;
-        const nextPendingVisits = { ...state.pendingVisitsByThreadKey };
-        delete nextPendingVisits[threadKey];
-        set({
-          projectKeyByThreadKey: { ...state.projectKeyByThreadKey, [threadKey]: projectKey },
-          pendingVisitsByThreadKey: nextPendingVisits,
-        });
-        for (const visit of pendingVisits ?? [])
-          get().recordVisit(projectKey, visit.url, visit.at, {
-            insertOrdered: true,
-            environmentHostname: visit.environmentHostname,
-          });
-        if (pendingVisits)
-          recordPreviewTitles(ref, readThreadPreviewState(ref), {
-            urls: pendingVisits.map((visit) => visit.url),
-          });
-      },
-    }),
-    {
-      name: BROWSER_HISTORY_STORAGE_KEY,
-      version: 1,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
-      partialize: (state) => ({
-        byProjectKey: state.byProjectKey,
-        projectKeyByThreadKey: state.projectKeyByThreadKey,
-      }),
-      migrate: migratePersistedBrowserHistoryState,
-      merge: mergeBrowserHistoryState,
+        };
+      });
     },
-  ),
-);
+    removeUrl: (projectKey, url) => {
+      const normalized = normalizeHistoryUrl(url);
+      if (!normalized) return;
+      updateHistory((state) => {
+        const entries = state.byProjectKey[projectKey];
+        if (!entries) return state;
+        const next = entries.filter((candidate) => candidate.url !== normalized);
+        if (next.length === entries.length) return state;
+        const byProjectKey = { ...state.byProjectKey };
+        if (next.length === 0) delete byProjectKey[projectKey];
+        else byProjectKey[projectKey] = next;
+        return { ...state, byProjectKey };
+      });
+    },
+    registerThreadProject: (ref, projectKey) => {
+      const threadKey = scopedThreadKey(ref);
+      const state = get();
+      const pendingVisits = state.pendingVisitsByThreadKey[threadKey];
+      if (state.projectKeyByThreadKey[threadKey] === projectKey && !pendingVisits) return;
+      const nextPendingVisits = { ...state.pendingVisitsByThreadKey };
+      delete nextPendingVisits[threadKey];
+      set({
+        projectKeyByThreadKey: { ...state.projectKeyByThreadKey, [threadKey]: projectKey },
+        pendingVisitsByThreadKey: nextPendingVisits,
+      });
+      updateHistory((shared) =>
+        shared.projectKeyByThreadKey[threadKey] === projectKey
+          ? shared
+          : {
+              ...shared,
+              projectKeyByThreadKey: { ...shared.projectKeyByThreadKey, [threadKey]: projectKey },
+            },
+      );
+      for (const visit of pendingVisits ?? [])
+        get().recordVisit(projectKey, visit.url, visit.at, {
+          insertOrdered: true,
+          environmentHostname: visit.environmentHostname,
+        });
+      if (pendingVisits)
+        recordPreviewTitles(ref, readThreadPreviewState(ref), {
+          urls: pendingVisits.map((visit) => visit.url),
+        });
+    },
+  });
+});
+
+if (typeof window !== "undefined") {
+  try {
+    historyChannel = new BroadcastChannel(BROWSER_HISTORY_STORAGE_KEY);
+  } catch {
+    // History still persists when the browser cannot send change notifications.
+  }
+  if (historyChannel) {
+    historyChannel.onmessage = () => {
+      void transactIndexedHistory().then(
+        ({ history }) => useBrowserHistoryStore.setState({ byProjectKey: history.byProjectKey }),
+        () => undefined,
+      );
+    };
+  }
+  const hydrate = (history: PersistedBrowserHistory) => {
+    useBrowserHistoryStore.setState((state) => ({
+      byProjectKey: history.byProjectKey,
+      projectKeyByThreadKey: {
+        ...migratePersistedThreadProjectKeys(history, history.byProjectKey),
+        ...state.projectKeyByThreadKey,
+      },
+    }));
+  };
+  void transactIndexedHistory((history) => history).then(
+    ({ history }) => hydrate(history),
+    () => hydrate(readLegacyHistory()),
+  );
+  import.meta.hot?.dispose(() => {
+    historyChannel?.close();
+    historyChannel = undefined;
+    void historyDatabase?.then(
+      (db) => db.close(),
+      () => undefined,
+    );
+  });
+}
 
 export function mergeBrowserHistoryState(
   persistedState: unknown,
@@ -330,19 +543,16 @@ export function mergeBrowserHistoryState(
 
 function migratePersistedThreadProjectKeys(
   persistedState: unknown,
-  byProjectKey: Record<string, BrowserHistoryEntry[]>,
+  byProjectKey?: Record<string, BrowserHistoryEntry[]>,
 ): Record<string, string> {
   if (!persistedState || typeof persistedState !== "object") return {};
   const raw = (persistedState as { projectKeyByThreadKey?: unknown }).projectKeyByThreadKey;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  return Object.fromEntries(
-    Object.entries(raw as Record<string, unknown>)
-      .filter(
-        (entry): entry is [string, string] =>
-          typeof entry[1] === "string" && entry[1] in byProjectKey,
-      )
-      .slice(-100),
+  const entries = Object.entries(raw as Record<string, unknown>).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === "string" && (!byProjectKey || Object.hasOwn(byProjectKey, entry[1])),
   );
+  return Object.fromEntries(entries.slice(-MAX_PERSISTED_THREAD_MAPPINGS));
 }
 
 /**
@@ -434,24 +644,14 @@ function recordPreviewTitles(
 ): void {
   const state = useBrowserHistoryStore.getState();
   const projectKey = state.projectKeyByThreadKey[scopedThreadKey(ref)];
-  if (!projectKey || !state.byProjectKey[projectKey]?.length) return;
+  if (!projectKey) return;
   const connection = readPreparedConnection(ref.environmentId);
   const environmentHostname = connection ? new URL(connection.httpBaseUrl).hostname : null;
   const titleKey = (url: string) => {
     const normalized = normalizeHistoryUrl(url);
     return normalized ? titleLookupKey(normalized, environmentHostname) : null;
   };
-  const titled = new Set(
-    "urls" in only
-      ? state.byProjectKey[projectKey]?.flatMap((entry) =>
-          entry.title ? [titleLookupKey(entry.url, environmentHostname)] : [],
-        )
-      : [],
-  );
-  const visitKeys =
-    "urls" in only
-      ? new Set(only.urls.map(titleKey).filter((key) => key !== null && !titled.has(key)))
-      : null;
+  const visitKeys = "urls" in only ? new Set(only.urls.map(titleKey)) : null;
   // Resizes and list reconciles replace a session without loading a new page.
   const settledAgain = (session: PreviewSessionSnapshot, previous?: PreviewSessionSnapshot) =>
     previous?.navStatus._tag === "Success" &&
@@ -462,14 +662,20 @@ function recordPreviewTitles(
     "changedSince" in only
       ? !settledAgain(session, only.changedSince[session.tabId])
       : (visitKeys?.has(titleKey(url)) ?? false);
-  // Tabs can share a URL; applying oldest first lets the newest settle win.
+  // A fill uses the newest eligible title first because it only sets an untitled entry.
   const sessions = Object.values(preview.sessions).toSorted((a, b) =>
-    a.updatedAt.localeCompare(b.updatedAt),
+    "urls" in only
+      ? b.updatedAt.localeCompare(a.updatedAt)
+      : a.updatedAt.localeCompare(b.updatedAt),
   );
   for (const session of sessions) {
     const status = session.navStatus;
+    if (session.profileId === INCOGNITO_BROWSER_PROFILE_ID) continue;
     if (status._tag !== "Success" || !status.title || !include(session, status.url)) continue;
-    state.setTitleForUrl(projectKey, status.url, status.title, environmentHostname);
+    state.setTitleForUrl(projectKey, status.url, status.title, {
+      environmentHostname,
+      onlyIfUntitled: "urls" in only,
+    });
   }
 }
 
@@ -553,5 +759,4 @@ export function resetBrowserHistoryForTests(): void {
     projectKeyByThreadKey: {},
     pendingVisitsByThreadKey: {},
   });
-  useBrowserHistoryStore.persist.clearStorage();
 }

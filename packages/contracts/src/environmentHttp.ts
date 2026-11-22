@@ -30,6 +30,10 @@ import {
   AuthPairingCredentialResult,
   AuthRevokeClientSessionInput,
   AuthRevokePairingLinkInput,
+  AuthApproveConnectDeviceInput,
+  AuthApproveConnectDeviceResult,
+  AuthRevokeConnectDeviceInput,
+  AuthRevokeConnectDeviceResult,
   AuthEnvironmentScope,
   AuthTokenExchangeRequest,
   AuthSessionState,
@@ -56,7 +60,9 @@ import {
   CloudSpeechModels,
   CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
+  EnvironmentSpeechModelLinkRequest,
   EnvironmentSpeechModelRequest,
+  EnvironmentSpeechModelDownload,
   EnvironmentSpeechModels,
   EnvironmentSpeechModelUnloadTimeoutRequest,
   EnvironmentSpeechPostProcessingRequest,
@@ -64,9 +70,11 @@ import {
   EnvironmentSpeechStatus,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
+import { PeerLinkClientPairingCredential, PeerLinkClientPairingRequest } from "./peerLink.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
-  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellHttpSnapshot,
+  OrchestrationV2ShellResumable,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2ThreadHistoryPage,
@@ -138,6 +146,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "pairing_link_revoke_failed",
   "client_sessions_load_failed",
   "client_session_revoke_failed",
+  "connect_device_approve_failed",
+  "connect_device_revoke_failed",
   "project_snapshot_failed",
   "project_mutation_failed",
   "orchestration_snapshot_failed",
@@ -204,6 +214,26 @@ export class EnvironmentScopeRequiredError extends Schema.TaggedError<Environmen
   }
 }
 
+/** The host requires approval for this T3 Connect device and nobody has given it yet. */
+export class EnvironmentConnectApprovalPendingError extends Schema.TaggedError<EnvironmentConnectApprovalPendingError>()(
+  "EnvironmentConnectApprovalPendingError",
+  {
+    code: Schema.Literal("connect_approval_pending"),
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 403 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentConnectApprovalPendingError)(this, {
+      status: 403,
+    });
+  }
+
+  override get message(): string {
+    return "This device is waiting for approval on the host.";
+  }
+}
+
 export class EnvironmentOperationForbiddenError extends Schema.TaggedError<EnvironmentOperationForbiddenError>()(
   "EnvironmentOperationForbiddenError",
   {
@@ -227,6 +257,8 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   {
     code: Schema.Literal("internal_error"),
     reason: EnvironmentInternalErrorReason,
+    /** A reason safe to show the user, when the failure has one. */
+    detail: Schema.optionalKey(Schema.String),
     traceId: TrimmedNonEmptyString,
   },
   { httpApiStatus: 500 },
@@ -268,6 +300,7 @@ export const EnvironmentHttpCommonError = Schema.Union([
   EnvironmentOperationForbiddenError,
   EnvironmentResourceNotFoundError,
   EnvironmentInternalError,
+  EnvironmentConnectApprovalPendingError,
 ]);
 export type EnvironmentHttpCommonError = typeof EnvironmentHttpCommonError.Type;
 
@@ -357,6 +390,7 @@ const EnvironmentSessionCreationErrors = [
 const EnvironmentTokenExchangeErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentAuthInvalidError,
+  EnvironmentConnectApprovalPendingError,
   EnvironmentInternalError,
 ] as const;
 const EnvironmentScopedOperationErrors = [
@@ -620,6 +654,22 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("approveConnectDevice", "/api/auth/connect-devices/approve", {
+      headers: OptionalBearerHeaders,
+      payload: AuthApproveConnectDeviceInput,
+      success: AuthApproveConnectDeviceResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("revokeConnectDevice", "/api/auth/connect-devices/revoke", {
+      headers: OptionalBearerHeaders,
+      payload: AuthRevokeConnectDeviceInput,
+      success: AuthRevokeConnectDeviceResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("revokeOtherClients", "/api/auth/clients/revoke-others", {
       headers: OptionalBearerHeaders,
       success: AuthOtherClientSessionsRevokeResult,
@@ -681,19 +731,24 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
   threadId: ThreadId,
 });
 
-const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
+export const EnvironmentOrchestrationShellSnapshotQuery = Schema.Struct({
   omitIdleSubagents: Schema.optionalKey(Schema.String),
   omitOlderSettled: Schema.optionalKey(Schema.String),
+  /**
+   * The cursor of rows the client holds, loaded with the same omissions. The server answers
+   * `resumable` instead of a snapshot when the socket can replay from it.
+   */
+  resumeFrom: Schema.optionalKey(Schema.String),
 });
 
-const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
+export const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
   deferWork: Schema.optionalKey(Schema.String),
   compactTurnItems: Schema.optionalKey(Schema.String),
   dedupeBodies: Schema.optionalKey(Schema.String),
   compactIds: Schema.optionalKey(Schema.String),
 });
 
-const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
+export const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
   throughEntryId: Schema.optional(TrimmedNonEmptyString),
   view: Schema.optional(Schema.Literals(["conversation", "activity", "work"])),
@@ -713,7 +768,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OrchestrationProtocolHeaders,
       query: EnvironmentOrchestrationShellSnapshotQuery,
-      success: OrchestrationV2ShellSnapshot,
+      success: [OrchestrationV2ShellHttpSnapshot, OrchestrationV2ShellResumable],
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -860,7 +915,7 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     HttpApiEndpoint.post("downloadModel", "/api/voice/models/download", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechModelRequest,
-      success: EnvironmentSpeechModels,
+      success: EnvironmentSpeechModelDownload,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -884,6 +939,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     HttpApiEndpoint.post("removeModel", "/api/voice/models/remove", {
       headers: OptionalBearerHeaders,
       payload: EnvironmentSpeechModelRequest,
+      success: EnvironmentSpeechModels,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("linkModels", "/api/voice/models/link", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechModelLinkRequest,
       success: EnvironmentSpeechModels,
       error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -970,6 +1033,14 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("liveActivityPreference", "/api/connect/live-activity-preference", {
+      headers: OptionalBearerHeaders,
+      payload: Schema.Struct({ liveActivitiesEnabled: Schema.Boolean }),
+      success: Schema.Struct({ ok: Schema.Boolean }),
+      error: EnvironmentHttpCloudErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("health", "/api/t3-connect/health", {
       payload: RelayCloudEnvironmentHealthRequest,
       success: RelayEnvironmentHealthResponse,
@@ -983,6 +1054,23 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
       error: EnvironmentHttpCloudErrors,
     }),
   ) {}
+
+/**
+ * What a linking environment asks of this one over its link, outside `/mcp`. The handler accepts
+ * only a peer link's own session, so no agent's tool list ever carries it.
+ */
+class EnvironmentPeerLinkHttpApi extends HttpApiGroup.make("peerLink").add(
+  HttpApiEndpoint.post("clientPairing", "/api/peer-link/client-pairing", {
+    headers: OptionalBearerHeaders,
+    payload: PeerLinkClientPairingRequest,
+    success: PeerLinkClientPairingCredential,
+    error: [
+      EnvironmentHttpUnauthorizedError,
+      EnvironmentHttpForbiddenError,
+      EnvironmentHttpInternalServerError,
+    ],
+  }),
+) {}
 
 // Path tokens and optional body signatures authenticate webhooks; read raw bytes to verify signatures.
 const WebhookParams = Schema.Struct({
@@ -1002,7 +1090,8 @@ class EnvironmentWebhooksHttpApi extends HttpApiGroup.make("webhooks")
   .add(HttpApiEndpoint.post("webhookPost", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.put("webhookPut", WEBHOOK_PATH, webhookEndpoint))
   .add(HttpApiEndpoint.patch("webhookPatch", WEBHOOK_PATH, webhookEndpoint))
-  .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint)) {}
+  .add(HttpApiEndpoint.get("webhookGet", WEBHOOK_PATH, webhookEndpoint))
+  .annotate(HttpApi.RedactedNames, { params: ["token"] }) {}
 
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
@@ -1013,4 +1102,5 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentProjectsHttpApi)
   .add(EnvironmentVoiceHttpApi)
   .add(EnvironmentConnectHttpApi)
-  .add(EnvironmentWebhooksHttpApi) {}
+  .add(EnvironmentWebhooksHttpApi)
+  .add(EnvironmentPeerLinkHttpApi) {}

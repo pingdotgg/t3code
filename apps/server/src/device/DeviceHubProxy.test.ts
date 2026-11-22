@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import type * as DeviceHost from "./DeviceHost.ts";
 import * as DeviceService from "./DeviceService.ts";
 import * as DeviceHubProxy from "./DeviceHubProxy.ts";
@@ -24,10 +25,15 @@ const fixture = (
   fail = false,
   authError?: EnvironmentAuth.ServerAuthCredentialError | EnvironmentAuth.ServerAuthInternalError,
   upstream?: DeviceHost.DeviceHostReady["upstream"],
+  stream?: ReadableStream<Uint8Array>,
+  invalidated?: Promise<void>,
 ) => {
   let finalized = 0;
   const requests: string[] = [];
+  const screenshots: Array<Parameters<DeviceService.DeviceService["Service"]["screenshot"]>[0]> =
+    [];
   const headers: Array<Readonly<Record<string, string>>> = [];
+  const unexpectedOperation = Effect.die("Unexpected device operation");
   const client = HttpClient.make((request, _url, signal) =>
     Effect.gen(function* () {
       requests.push(request.url);
@@ -38,14 +44,14 @@ const fixture = (
       if (fail) return yield* Effect.die(new Error("upstream failed"));
       return HttpClientResponse.fromWeb(
         request,
-        new Response("frame", { headers: { "set-cookie": "upstream=1" } }),
+        new Response(stream ?? "frame", { headers: { "set-cookie": "upstream=1" } }),
       );
     }),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(
     DeviceHubProxy.layer.pipe(
       Layer.provideMerge(
-        Layer.succeed(EnvironmentAuth.EnvironmentAuth, {
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({
           authenticateWebSocketUpgrade: () =>
             authError
               ? Effect.fail(authError)
@@ -55,24 +61,57 @@ const fixture = (
                   method: "bearer-access-token",
                   scopes,
                 }),
-        } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
+        }),
       ),
       Layer.provideMerge(
-        Layer.succeed(DeviceService.DeviceService, {
-          currentReadiness: () =>
+        Layer.mock(DeviceService.DeviceService)({
+          currentReadiness: (hostId) =>
             Effect.succeed({
-              hostId: LOCAL_DEVICE_HOST_ID,
+              hostId: hostId ?? LOCAL_DEVICE_HOST_ID,
+              nodePath: "node",
               hub: { origin: "http://hub.test" },
+              devices: {
+                list: unexpectedOperation,
+                boot: () => unexpectedOperation,
+                attach: () => unexpectedOperation,
+                shutdown: () => unexpectedOperation,
+                screenshot: () => unexpectedOperation,
+              },
+              run: () => unexpectedOperation,
+              helpers: { serveSimAxSettings: null, serveSimCli: null },
               ...(upstream ? { upstream } : {}),
             }),
-        } as DeviceService.DeviceService["Service"]),
+          screenshot: (input) =>
+            Effect.sync(() => {
+              screenshots.push(input);
+              return {
+                device: {
+                  hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID,
+                  id: input.deviceId,
+                  platform: "ios",
+                  name: "Phone",
+                  version: "27.0",
+                  booted: true,
+                  physical: false,
+                },
+                png: new Uint8Array([137, 80, 78, 71]),
+              };
+            }),
+        }),
       ),
       Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
+      Layer.provideMerge(
+        Layer.mock(SessionStore.SessionStore, {
+          cookieName: "test",
+          legacyCookieName: undefined,
+          awaitInvalidation: () => (invalidated ? Effect.promise(() => invalidated) : Effect.never),
+        }),
+      ),
     ),
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, headers, finalized: () => finalized };
+  return { handler, requests, screenshots, headers, finalized: () => finalized };
 };
 
 describe("device hub proxy", () => {
@@ -84,6 +123,30 @@ describe("device hub proxy", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("frame");
     expect(requests).toEqual(["http://hub.test/api/devices"]);
+    expect(finalized()).toBe(1);
+  });
+
+  it("stops an open HTTP stream and releases its upstream on session invalidation", async () => {
+    const invalidated = Promise.withResolvers<void>();
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => controller.enqueue(new Uint8Array([1])),
+    });
+    const { handler, finalized } = fixture(
+      [AuthOrchestrationReadScope],
+      false,
+      undefined,
+      undefined,
+      stream,
+      invalidated.promise,
+    );
+    const response = await handler(
+      new Request("http://t3.test/api/device-hub/vendor/serve-sim/helper/device/stream.avcc"),
+    );
+    expect(response.status).toBe(200);
+    const reader = response.body!.getReader();
+    expect(await reader.read()).toEqual({ done: false, value: new Uint8Array([1]) });
+    invalidated.resolve();
+    expect((await reader.read()).done).toBe(true);
     expect(finalized()).toBe(1);
   });
 
@@ -239,6 +302,33 @@ describe("device hub proxy", () => {
     ).toBe(404);
     expect(requests).toEqual([]);
   });
+
+  it.each(["serve-sim", "serve-emu"])(
+    "captures %s screenshots through hosts with their own stream routing",
+    async (vendor) => {
+      const { handler, requests, screenshots } = fixture(
+        [AuthOrchestrationReadScope],
+        false,
+        undefined,
+        () => Effect.succeed(null),
+      );
+      const response = await handler(
+        new Request(
+          `http://t3.test/api/device-hub/vendor/${vendor}/api/screenshot?device=udid-1&hostId=pool`,
+          {
+            method: "POST",
+          },
+        ),
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/png");
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(
+        new Uint8Array([137, 80, 78, 71]),
+      );
+      expect(requests).toEqual([]);
+      expect(screenshots).toEqual([{ hostId: "pool", deviceId: "udid-1" }]);
+    },
+  );
 });
 
 it.each([
