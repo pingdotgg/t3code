@@ -29,6 +29,7 @@ pub(super) const CHAT_CIRCLE: &str = "superhero/comment.svg";
 pub(super) const CARET_RIGHT: &str = "superhero/chevron-right.svg";
 pub(super) const CARET_DOWN: &str = "superhero/chevron-down.svg";
 pub(super) const ARROW_UP: &str = "superhero/arrow-up.svg";
+pub(super) const FORWARD: &str = "superhero/forward.svg";
 pub(super) const CHECK: &str = "superhero/check.svg";
 
 /// Returns the superheroicons asset path for a `TimelineEntry::Tool` using both its

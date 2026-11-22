@@ -26,6 +26,7 @@ use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::input::{
     Enter, Escape, InputEvent, InputState, MoveDown, MoveUp, Paste, Textarea, TextareaState,
 };
+use gpui_kit::component::{Sizable as _, Size};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, ClipboardEntry, Context, Entity, EventEmitter, ExternalPaths,
@@ -1831,10 +1832,15 @@ impl Render for Composer {
             card = card.child(strip);
         }
 
+        // `Textarea` with `Size::XSmall` applies 4px horizontal / 0px vertical internal
+        // editor padding (versus 10px / 8px at the default `Size::Medium`), so wrapping
+        // with `px(12) pt(14) pb(6)` yields Conn's exact `px-4 pt-3.5` (16px / 14px)
+        // text inset aligned with the footer attach button below.
         card = card
             .child(
-                div().px(px(16.0)).pt(px(16.0)).pb(px(8.0)).child(
+                div().px(px(12.0)).pt(px(14.0)).pb(px(6.0)).child(
                     Textarea::new(&self.textarea)
+                        .with_size(Size::XSmall)
                         .appearance(false)
                         .bordered(false)
                         .text_size(px(14.0))
@@ -2052,7 +2058,7 @@ where
     FStop: Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
     FSend: Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
 {
-    if working {
+    if working && !has_text {
         div()
             .id("chat-composer-stop")
             .a11y_button("composer.stop", "Stop generation")
@@ -2065,6 +2071,7 @@ where
             .bg(hsla_alpha(tokens.destructive, 0.90))
             .hover(|s| s.bg(hsla(tokens.destructive)))
             .on_click(on_stop)
+            .conn_tooltip("Interrupt", tokens)
             .child(icons::icon(
                 icons::SQUARE,
                 12.0,
@@ -2072,9 +2079,17 @@ where
             ))
             .into_any_element()
     } else if has_text {
+        // Conn `ComposerPrimaryActions`: when running with sendable content, swap the stop
+        // button for the active primary pill with `CornerUpRight` (`forward.svg`) so users
+        // know submitting will queue/steer into the live turn.
+        let (icon_path, icon_size, label, tooltip) = if working {
+            (icons::FORWARD, 16.0, "Queue message", "Queue message")
+        } else {
+            (icons::ARROW_UP, 14.0, "Send message", "Submit message")
+        };
         div()
             .id("chat-composer-send")
-            .a11y_button("composer.send", "Send message")
+            .a11y_button("composer.send", label)
             .flex()
             .items_center()
             .justify_center()
@@ -2084,9 +2099,10 @@ where
             .bg(hsla(tokens.primary))
             .hover(|s| s.bg(hsla_alpha(tokens.primary, 0.88)))
             .on_click(on_send)
+            .conn_tooltip(tooltip, tokens)
             .child(icons::icon(
-                icons::ARROW_UP,
-                14.0,
+                icon_path,
+                icon_size,
                 hsla(tokens.primary_foreground),
             ))
             .into_any_element()

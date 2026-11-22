@@ -1554,9 +1554,14 @@ impl ChatView {
         container.into_any_element()
     }
 
-    /// Renders Conn's `LiveWorkEntryTimelineRow`: calm 2-row live view showing the latest
-    /// wrapped reasoning paragraph (brain icon, no chevron) and the latest/active tool call
-    /// (action-specific icon, no spinner, no chevron). Clicking expands the full step list.
+    /// Renders Conn's `LiveWorkEntryTimelineRow`: 1:1 port of `MessagesTimeline.logic.ts:1540-1575`
+    /// and `TimelineWorkGroupRows.tsx:488-580`:
+    /// - Row 1 (if any reasoning entry has text): static brain icon + frozen `liveThoughtLine`
+    ///   (bold opening heading or first sentence only — never mutates as later sentences stream).
+    /// - Row 2 (`LiveActivityRow`): latest running entry (or latest entry if none currently
+    ///   running), shimmering continuously while the turn is active (`latestToolKeepsActivityLive`
+    ///   keeps completed tools shimmering between steps, and renders shimmering `"Thinking"`
+    ///   when the latest entry is that reasoning item).
     fn render_live_work_group(
         &self,
         group_id: &str,
@@ -1567,8 +1572,9 @@ impl ChatView {
         let muted = hsla(self.tokens.muted_foreground);
         let icon_muted = muted_icon(&self.tokens);
         let destructive = hsla(self.tokens.destructive);
+        let bright_fg = hsla(self.tokens.foreground);
 
-        // Most recent non-empty Thinking entry in this active group.
+        // Conn `latestThoughtEntry`: most recent reasoning entry with non-empty text.
         let latest_thought = rows.iter().rev().find_map(|row| match &row.entry {
             TimelineEntry::Thinking { id, text, .. } => {
                 let preview = live_thought_preview(text)?;
@@ -1576,7 +1582,18 @@ impl ChatView {
             }
             _ => None,
         });
-        let latest_entry = rows.last().map(|r| &r.entry);
+
+        // Conn `latestRunningToolEntry ?? latestVisibleToolEntry`:
+        let latest_running = rows
+            .iter()
+            .rev()
+            .map(|r| &r.entry)
+            .find(|entry| match entry {
+                TimelineEntry::Tool { status, .. } => matches!(status, ItemStatus::Running),
+                TimelineEntry::Thinking { streaming, .. } => *streaming,
+                _ => false,
+            });
+        let active_entry = latest_running.or_else(|| rows.last().map(|r| &r.entry));
 
         let mut col = div()
             .id(SharedString::from(format!("live-work-{group_id}")))
@@ -1631,7 +1648,7 @@ impl ChatView {
             );
         }
 
-        if let Some(entry) = latest_entry {
+        if let Some(entry) = active_entry {
             match entry {
                 TimelineEntry::Tool {
                     kind,
@@ -1640,19 +1657,21 @@ impl ChatView {
                     ..
                 } => {
                     let rel_title = self.relative_title(title);
-                    let icon_path = match status {
-                        ItemStatus::Failed => icons::ERROR_CIRCLE,
-                        ItemStatus::Running | ItemStatus::Completed => {
-                            icons::tool_icon_path(kind, &rel_title)
-                        }
+                    let failed = matches!(status, ItemStatus::Failed);
+                    // Conn `latestToolKeepsActivityLive`: active when running OR succeeded during
+                    // an active turn (so shimmer stays alive between consecutive tool calls).
+                    let shimmer = self.working && !failed;
+                    let icon_path = if failed {
+                        icons::ERROR_CIRCLE
+                    } else {
+                        icons::tool_icon_path(kind, &rel_title)
                     };
-                    let (ic_color, text_color) = match status {
-                        ItemStatus::Failed => (destructive, destructive),
-                        ItemStatus::Running => (icon_muted, muted),
-                        ItemStatus::Completed => (icon_muted, muted),
+                    let (ic_color, text_color) = if failed {
+                        (destructive, destructive)
+                    } else {
+                        (icon_muted, muted)
                     };
-                    let bright_fg = hsla(self.tokens.foreground);
-                    let label_el: AnyElement = if matches!(status, ItemStatus::Running) {
+                    let label_el: AnyElement = if shimmer {
                         shimmer_text(&rel_title, muted, bright_fg).into_any_element()
                     } else {
                         rel_title.into_any_element()
@@ -1690,44 +1709,50 @@ impl ChatView {
                             ),
                     );
                 }
-                TimelineEntry::Thinking { streaming, .. }
-                    if latest_thought.is_none() || *streaming =>
-                {
-                    let bright_fg = hsla(self.tokens.foreground);
-                    let label_el: AnyElement = if *streaming {
-                        shimmer_text("Thinking", muted, bright_fg).into_any_element()
-                    } else {
-                        "Thought".into_any_element()
-                    };
-                    col = col.child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.0))
-                            .w_full()
-                            .min_w_0()
-                            .min_h(px(24.0))
-                            .px(px(2.0))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .size(px(24.0))
-                                    .flex_none()
-                                    .child(icons::icon(icons::BRAIN, 16.0, icon_muted)),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .text_size(px(BODY_FONT_PX))
-                                    .line_height(px(BODY_LINE_HEIGHT_PX))
-                                    .text_color(muted)
-                                    .child(label_el),
-                            ),
-                    );
+                TimelineEntry::Thinking { id, streaming, .. } => {
+                    // Conn `thoughtIsStatus`: when `row.entry === row.thought` (or thought has no
+                    // preview text yet), row 2 shows shimmering `"Thinking"` while active.
+                    let thought_is_status = latest_thought.is_none()
+                        || latest_thought
+                            .as_ref()
+                            .is_some_and(|(tid, _)| *tid == id.as_str());
+                    if thought_is_status {
+                        let shimmer = self.working || *streaming;
+                        let label_el: AnyElement = if shimmer {
+                            shimmer_text("Thinking", muted, bright_fg).into_any_element()
+                        } else {
+                            "Thought".into_any_element()
+                        };
+                        col = col.child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(6.0))
+                                .w_full()
+                                .min_w_0()
+                                .min_h(px(24.0))
+                                .px(px(2.0))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .size(px(24.0))
+                                        .flex_none()
+                                        .child(icons::icon(icons::BRAIN, 16.0, icon_muted)),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_size(px(BODY_FONT_PX))
+                                        .line_height(px(BODY_LINE_HEIGHT_PX))
+                                        .text_color(muted)
+                                        .child(label_el),
+                                ),
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -2209,7 +2234,8 @@ impl ChatView {
 
     /// Renders Conn's `WorkingTimelineRow`: `border-b border-(--shell-divider)! pb-2 pt-1`,
     /// `h-6 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums` — plain `"Working for 44s"`
-    /// text with no spinner, matching T3 Conn's calm header.
+    /// text with no spinner, plus Conn's `ThinkingTimelineRow` (brain icon + shimmering `"Thinking"`)
+    /// when no active work group has arrived yet.
     fn render_working_row(&self) -> AnyElement {
         let label = self
             .working_started_at_ms
@@ -2218,7 +2244,20 @@ impl ChatView {
                 format_working_elapsed(elapsed_ms)
             })
             .unwrap_or_else(|| "Working...".to_owned());
-        div()
+        let has_live_work_group = matches!(
+            self.cache.items().last(),
+            Some(VirtualItem::WorkGroup {
+                has_active: true,
+                ..
+            })
+        );
+        let muted = hsla(self.tokens.muted_foreground);
+        let icon_muted = muted_icon(&self.tokens);
+        let bright_fg = hsla(self.tokens.foreground);
+
+        let mut col = div()
+            .flex()
+            .flex_col()
             .w_full()
             .min_w_0()
             .pb(px(4.0))
@@ -2238,11 +2277,46 @@ impl ChatView {
                             .px(px(4.0))
                             .text_size(px(BODY_FONT_PX))
                             .line_height(px(BODY_LINE_HEIGHT_PX))
-                            .text_color(hsla(self.tokens.muted_foreground))
+                            .text_color(muted)
                             .child(label),
                     ),
-            )
-            .into_any_element()
+            );
+
+        if !has_live_work_group {
+            col = col.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .w_full()
+                    .min_w_0()
+                    .min_h(px(24.0))
+                    .pt(px(4.0))
+                    .pb(px(4.0))
+                    .px(px(2.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .size(px(24.0))
+                            .flex_none()
+                            .child(icons::icon(icons::BRAIN, 16.0, icon_muted)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(BODY_FONT_PX))
+                            .line_height(px(BODY_LINE_HEIGHT_PX))
+                            .text_color(muted)
+                            .child(shimmer_text("Thinking", muted, bright_fg)),
+                    ),
+            );
+        }
+
+        col.into_any_element()
     }
 }
 
@@ -2435,46 +2509,115 @@ fn format_working_elapsed(elapsed_ms: u64) -> String {
     }
 }
 
-/// Extracts Conn's live wrapped thought preview (latest non-empty paragraph, flattened of
-/// simple Markdown emphasis markers, clamped to ~320 chars so it wraps cleanly to 2–4 lines).
+/// 1:1 port of Conn's `liveThoughtLine` (`packages/client-runtime/src/work-log/presentation.ts:765-778`):
+/// a bold-only opening line (Codex summary heading) wins; otherwise strips lightweight Markdown
+/// and cuts after the FIRST sentence (`.`, `?`, `!` + optional closing quote/paren followed by
+/// whitespace), so the preview stays frozen once the opening sentence is complete.
 #[must_use]
-fn live_thought_preview(text: &str) -> Option<String> {
-    let trimmed = text.trim();
+fn live_thought_preview(markdown: &str) -> Option<String> {
+    let trimmed = markdown.trim();
     if trimmed.is_empty() {
         return None;
     }
-    let paragraph = trimmed
-        .rsplit("\n\n")
-        .map(str::trim)
-        .find(|p| !p.is_empty())
-        .unwrap_or(trimmed);
-    let cleaned = paragraph
+
+    // Check bold-only opening line: `^\s*\*\*([^*\r\n]+)\*\*[ \t]*\r?(?:\n|$)`.
+    let first_line = trimmed.lines().next().unwrap_or("").trim();
+    let heading = first_line
+        .strip_prefix("**")
+        .and_then(|rest| rest.strip_suffix("**"))
+        .filter(|inner| !inner.is_empty() && !inner.contains('*'));
+
+    let source = heading.unwrap_or(trimmed);
+    let stripped_links = strip_markdown_links(source);
+    let cleaned = stripped_links
         .lines()
-        .map(|line| {
-            line.trim()
-                .trim_start_matches('#')
-                .trim_start_matches('-')
-                .trim_start_matches('*')
-                .trim()
-        })
+        .map(strip_markdown_line_prefix)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
         .replace("**", "")
+        .replace("~~", "")
         .replace('`', "");
-    if cleaned.is_empty() {
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
         return None;
     }
-    const MAX_CHARS: usize = 320;
-    let mut out = String::new();
-    for (idx, ch) in cleaned.chars().enumerate() {
-        if idx >= MAX_CHARS {
-            out.push('…');
-            break;
-        }
-        out.push(ch);
+    if heading.is_some() {
+        return Some(collapsed);
     }
-    Some(out)
+
+    // Cut after the first `.`, `?`, or `!` (plus optional closing quote/paren) followed by space.
+    let bytes = collapsed.as_bytes();
+    let mut chars = collapsed.char_indices().peekable();
+    while let Some((idx, ch)) = chars.next() {
+        if matches!(ch, '.' | '?' | '!') {
+            let mut end = idx + ch.len_utf8();
+            if let Some(&(next_idx, next_ch)) = chars.peek()
+                && matches!(next_ch, '"' | '\'' | '\u{201D}' | '\u{2019}' | ')')
+            {
+                end = next_idx + next_ch.len_utf8();
+                chars.next();
+            }
+            if bytes.get(end).is_some_and(u8::is_ascii_whitespace) {
+                return Some(collapsed[..end].to_owned());
+            }
+        }
+    }
+    Some(collapsed)
+}
+
+fn strip_markdown_line_prefix(line: &str) -> &str {
+    let s = line.trim();
+    if let Some(rest) = s.strip_prefix('#') {
+        let rest = rest.trim_start_matches('#');
+        if let Some(after) = rest.strip_prefix(' ').or_else(|| rest.strip_prefix('\t')) {
+            return after.trim();
+        }
+    }
+    if let Some(rest) = s
+        .strip_prefix("- ")
+        .or_else(|| s.strip_prefix("* "))
+        .or_else(|| s.strip_prefix("+ "))
+    {
+        return rest.trim();
+    }
+    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+    if digits > 0
+        && s.as_bytes().get(digits) == Some(&b'.')
+        && s.as_bytes()
+            .get(digits + 1)
+            .is_some_and(u8::is_ascii_whitespace)
+    {
+        return s[digits + 2..].trim();
+    }
+    s
+}
+
+fn strip_markdown_links(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(open_bracket) = rest.find('[') {
+        let is_image = open_bracket > 0 && rest.as_bytes()[open_bracket - 1] == b'!';
+        let prefix_end = if is_image {
+            open_bracket - 1
+        } else {
+            open_bracket
+        };
+        if let Some(close_bracket_rel) = rest[open_bracket + 1..].find("](") {
+            let label_start = open_bracket + 1;
+            let label_end = label_start + close_bracket_rel;
+            if let Some(close_paren_rel) = rest[label_end + 2..].find(')') {
+                out.push_str(&rest[..prefix_end]);
+                out.push_str(&rest[label_start..label_end]);
+                rest = &rest[label_end + 2 + close_paren_rel + 1..];
+                continue;
+            }
+        }
+        out.push_str(&rest[..open_bracket + 1]);
+        rest = &rest[open_bracket + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Formats Conn's settled work-group label (`Worked` / `Worked for 7.5s` / `Worked for 2m 14s`).
@@ -2533,8 +2676,18 @@ mod worked_label_tests {
 
         assert_eq!(live_thought_preview("   "), None);
         assert_eq!(
-            live_thought_preview("First paragraph.\n\n**Second** `paragraph`\ncontinues here."),
-            Some("Second paragraph continues here.".to_owned())
+            live_thought_preview("**Checking composer layout**\n\nMore details follow here."),
+            Some("Checking composer layout".to_owned())
+        );
+        assert_eq!(
+            live_thought_preview(
+                "First **sentence** with `code`. Second sentence should never mutate the preview."
+            ),
+            Some("First sentence with code.".to_owned())
+        );
+        assert_eq!(
+            live_thought_preview("First paragraph.\n\nSecond paragraph should not replace first."),
+            Some("First paragraph.".to_owned())
         );
     }
 }
