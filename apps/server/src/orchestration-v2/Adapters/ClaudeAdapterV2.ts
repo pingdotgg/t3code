@@ -7144,7 +7144,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const preservedOpaqueTombstones = [...priorOpaqueTombstones].filter((taskId) =>
             bufferedTaskNotificationIds.has(taskId),
           );
-          // Idle outcomes reach Claude only through a wake, which this process can no longer run.
+          // Idle outcomes reach Claude only through a wake; a requested one still delivers its buffer.
           const wakeRequested = (yield* Ref.get(requestedContinuations)).has(nativeThreadId);
           const lostBackgroundTasks =
             options?.exitedUnexpectedly === true
@@ -7155,11 +7155,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       yield* Ref.get(awaitedBackgroundTasksByNativeThread),
                       nativeThreadId,
                     ),
-                  ).filter(
-                    (task) => !(wakeRequested && bufferedTaskNotificationIds.has(task.taskId)),
                   ),
-                  ...(wakeRequested ? [] : yield* owedWakeTasksForNativeThread(nativeThreadId)),
-                ]
+                  ...(yield* owedWakeTasksForNativeThread(nativeThreadId)),
+                ].filter((task) => !(wakeRequested && bufferedTaskNotificationIds.has(task.taskId)))
               : [];
           scheduledWakeupsByNativeThread.delete(nativeThreadId);
           possibleEarlyWakeNativeThreads.delete(nativeThreadId);
