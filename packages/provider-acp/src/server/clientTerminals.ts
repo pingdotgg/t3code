@@ -12,6 +12,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { gitForWindowsBash, SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 const MAX_LIVE_TERMINALS = 16;
 const MAX_UNRELEASED_TERMINALS = 64;
@@ -19,6 +21,7 @@ const MAX_RETAINED_TERMINALS = 32;
 const MAX_RETAINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 8 * 1024 * 1024;
+const OUTPUT_DRAIN_GRACE = "1 second";
 
 const terminalRequestError = (message: string, cause?: unknown) =>
   EffectAcpErrors.AcpRequestError.internalError(
@@ -135,16 +138,43 @@ export interface AcpClientTerminalsOptions {
 function acpTerminalCommand(input: {
   readonly request: EffectAcpSchema.CreateTerminalRequest;
   readonly shellCommands?: boolean | undefined;
+  /** Windows only: the shell source runs here instead of Node's cmd.exe. */
+  readonly posixShell: string | undefined;
   readonly defaultCwd: string;
-  readonly environment?: NodeJS.ProcessEnv | undefined;
+  readonly environment: NodeJS.ProcessEnv;
   readonly forceKillAfter: Duration.Input;
 }) {
-  return ChildProcess.make(input.request.command, input.request.args ?? [], {
+  const options = {
     cwd: input.request.cwd ?? input.defaultCwd,
-    ...(input.environment === undefined ? {} : { env: input.environment }),
-    shell: input.shellCommands === true && (input.request.args?.length ?? 0) === 0,
+    env: input.environment,
     forceKillAfter: input.forceKillAfter,
+  };
+  const isShellSource = input.shellCommands === true && (input.request.args?.length ?? 0) === 0;
+  if (isShellSource && input.posixShell !== undefined) {
+    // Native tools write in the console code page and output is decoded as UTF-8. The spawner
+    // hides the window, so each terminal has its own console and the change stays inside it.
+    const source = `chcp.com 65001 >/dev/null 2>&1\n${input.request.command}`;
+    return ChildProcess.make(input.posixShell, ["-c", source], options);
+  }
+  return ChildProcess.make(input.request.command, input.request.args ?? [], {
+    ...options,
+    shell: isShellSource,
   });
+}
+
+// Windows variable names are case-insensitive and Node passes only one spelling to the child,
+// so a later layer's `Path` must replace an earlier `PATH` rather than sit beside it.
+function mergeEnvironments(
+  isWindows: boolean,
+  layers: ReadonlyArray<Iterable<readonly [string, string | undefined]>>,
+) {
+  const variables = new Map<string, readonly [string, string | undefined]>();
+  for (const layer of layers) {
+    for (const [name, value] of layer) {
+      variables.set(isWindows ? name.toUpperCase() : name, [name, value]);
+    }
+  }
+  return Object.fromEntries(variables.values());
 }
 
 export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(function* (
@@ -152,6 +182,8 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
 ): Effect.fn.Return<AcpClientTerminals, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const forceKillAfter = options.forceKillAfter ?? "5 seconds";
+  const isWindows = yield* HostProcess.isWindows;
+  const resolveExecutable = yield* SpawnExecutableResolution;
   const creationPermit = yield* Semaphore.make(1);
   const terminals = new Map<string, ManagedAcpTerminal>();
   let nextTerminalNumber = 1;
@@ -214,16 +246,27 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
               `ACP terminal/create exceeded the limit of ${MAX_LIVE_TERMINALS} concurrent terminals.`,
             );
           }
-          const requestEnvironment = Object.fromEntries(
-            (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
+          // Thread credentials and identity must come from the requesting session.
+          const inheritedEnvironment = Object.fromEntries(
+            Object.entries(options.environment ?? (yield* HostProcess.Environment)).filter(
+              ([name]) =>
+                !name.toUpperCase().startsWith("T3_ACP_MCP_") &&
+                name.toUpperCase() !== "T3CODE_THREAD_ID",
+            ),
           );
           const sessionEnvironment = options.environmentForSession?.(request.sessionId);
-          const environment =
-            options.environment === undefined &&
-            sessionEnvironment === undefined &&
-            (request.env?.length ?? 0) === 0
-              ? undefined
-              : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
+          const environment = mergeEnvironments(isWindows, [
+            Object.entries(inheritedEnvironment),
+            Object.entries(sessionEnvironment ?? {}),
+            (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
+          ]);
+          // Agents that send shell source write bash; Node's shell on Windows is cmd.exe.
+          const gitExecutable =
+            isWindows && options.shellCommands === true
+              ? resolveExecutable("git", "win32", environment)
+              : undefined;
+          const posixShell =
+            gitExecutable === undefined ? undefined : gitForWindowsBash(gitExecutable);
           const terminalScope = yield* Scope.make();
           const child = yield* restore(
             spawner
@@ -231,6 +274,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                 acpTerminalCommand({
                   request,
                   shellCommands: options.shellCommands,
+                  posixShell,
                   defaultCwd: options.defaultCwd,
                   environment,
                   forceKillAfter,
@@ -301,6 +345,8 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                 Effect.all([Fiber.join(stdoutPump), Fiber.join(stderrPump)], {
                   discard: true,
                 }).pipe(
+                  // A background child can inherit the pipes and hold them open indefinitely.
+                  Effect.timeoutOption(OUTPUT_DRAIN_GRACE),
                   Effect.andThen(
                     Effect.sync(() => {
                       record.exitStatus = status;
