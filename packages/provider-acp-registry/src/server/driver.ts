@@ -89,13 +89,15 @@ export function acpRegistryProbeSupersedesLiveCatalog(input: {
   readonly probedModelCount: number;
   readonly probedModelsFromModelSelect: boolean;
   readonly liveModelCount: number;
+  readonly liveModelsFromModelSelect: boolean;
 }): boolean {
-  return (
-    input.probedModelCount > 1 ||
-    (input.probedModelCount === 1 &&
-      (input.probedModelsFromModelSelect || input.liveModelCount <= 1)) ||
-    input.liveModelCount === 0
-  );
+  if (input.liveModelCount === 0) return true;
+  if (input.probedModelCount > 1) return true;
+  if (input.probedModelCount === 1) {
+    if (input.probedModelsFromModelSelect) return true;
+    return input.liveModelCount === 1 && !input.liveModelsFromModelSelect;
+  }
+  return false;
 }
 
 export function isAcpRegistryCacheValid(
@@ -166,9 +168,12 @@ const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
   };
 };
 
+const EMPTY_SLUG_SET: ReadonlySet<string> = new Set();
+
 function mergeLearnedModelOptions(
   models: ReadonlyArray<ServerProviderModel>,
   learned: ReadonlyArray<ServerProviderModel>,
+  reasoningDisabledModelSlugs: ReadonlySet<string> = EMPTY_SLUG_SET,
 ): ReadonlyArray<ServerProviderModel> {
   if (learned.length === 0) return models;
   const learnedBySlug = new Map(
@@ -182,13 +187,15 @@ function mergeLearnedModelOptions(
     if (previousDescriptors.length === 0) return model;
     const currentDescriptors = model.capabilities?.optionDescriptors ?? [];
     const currentIds = new Set(currentDescriptors.map((descriptor) => descriptor.id));
-    const hasAdvertisedReasoning = currentDescriptors.some(
-      (descriptor) => descriptor.type === "select" && descriptor.role === "reasoning",
-    );
+    const hasExplicitReasoningState =
+      reasoningDisabledModelSlugs.has(model.slug) ||
+      currentDescriptors.some(
+        (descriptor) => descriptor.type === "select" && descriptor.role === "reasoning",
+      );
     const extra = previousDescriptors.filter(
       (descriptor) =>
         !currentIds.has(descriptor.id) &&
-        (!hasAdvertisedReasoning ||
+        (!hasExplicitReasoningState ||
           descriptor.type !== "select" ||
           descriptor.role !== "reasoning"),
     );
@@ -567,6 +574,7 @@ interface DetailedAcpRegistryProviderStatus {
   readonly provider: ServerProvider;
   readonly probedModelCount: number;
   readonly probedModelsFromModelSelect: boolean;
+  readonly reasoningDisabledModelSlugs: ReadonlySet<string>;
 }
 
 const checkAcpRegistryProviderStatusDetailed = Effect.fn(
@@ -588,6 +596,7 @@ const checkAcpRegistryProviderStatusDetailed = Effect.fn(
     provider,
     probedModelCount: 0,
     probedModelsFromModelSelect: false,
+    reasoningDisabledModelSlugs: EMPTY_SLUG_SET,
   });
   if (!input.settings.enabled) {
     return withoutProbe(yield* buildInitialAcpRegistrySnapshot(input));
@@ -641,6 +650,11 @@ const checkAcpRegistryProviderStatusDetailed = Effect.fn(
         }),
         probedModelCount: probed.success.probe.models.length,
         probedModelsFromModelSelect: probed.success.modelsFromModelSelect === true,
+        reasoningDisabledModelSlugs: new Set(
+          probed.success.probe.models
+            .filter((model) => model.reasoningEffort === null)
+            .map((model) => model.id),
+        ),
       };
 });
 
@@ -793,10 +807,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         return [next, next.models === provider.models ? learned : next.models];
       });
     const clearLearnedModels = Ref.set(learnedModels, []);
+    // Readiness checks do not read enrichmentCache; keep the last accepted catalog separately
+    // so a skipped background enrichment does not regress the snapshot to synthetic default.
+    const acceptedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
+    const clearAcceptedModels = Ref.set(acceptedModels, []);
     const lastObservedLiveRevision = yield* Ref.make(0);
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
-      options?: { readonly recordLiveRevision?: boolean },
+      options?: {
+        readonly recordLiveRevision?: boolean;
+        readonly fallbackToAcceptedModels?: boolean;
+      },
     ) {
       if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
       const provider =
@@ -806,8 +827,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         (yield* confirmedAuthentication.get)
           ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
           : input;
+      const applyAcceptedModelsFallback = (target: ServerProvider) =>
+        options?.fallbackToAcceptedModels === true && target.enabled && target.installed
+          ? Ref.get(acceptedModels).pipe(
+              Effect.map((models) => (models.length > 0 ? { ...target, models } : target)),
+            )
+          : Effect.succeed(target);
       return yield* Option.isNone(runtimeCoordinator)
-        ? Effect.succeed(provider)
+        ? applyAcceptedModelsFallback(provider)
         : Effect.all({
             commands: runtimeCoordinator.value.getAvailableCommands(instanceId),
             liveConfiguration:
@@ -819,17 +846,22 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 ? Ref.set(lastObservedLiveRevision, liveConfiguration.revision)
                 : Effect.void,
             ),
-            Effect.flatMap(({ commands, liveConfiguration, authAction }) => {
-              const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
-              return Option.match(liveConfiguration.configuration, {
-                onNone: () => Effect.succeed(withCommands),
-                onSome: (configuration) => applyLiveConfiguration(withCommands, configuration),
-              }).pipe(
+            Effect.flatMap(({ commands, liveConfiguration, authAction }) =>
+              applyAcceptedModelsFallback(
+                applyAcpRegistryAvailableCommands(provider, commands),
+              ).pipe(
+                Effect.flatMap((withBaseModels) =>
+                  Option.match(liveConfiguration.configuration, {
+                    onNone: () => Effect.succeed(withBaseModels),
+                    onSome: (configuration) =>
+                      applyLiveConfiguration(withBaseModels, configuration),
+                  }),
+                ),
                 Effect.map((withConfiguration) =>
                   applyAcpRegistryUrlAuthAction(withConfiguration, authAction),
                 ),
-              );
-            }),
+              ),
+            ),
           );
     });
     // A local executable's version comes only from probing it, so readiness checks reuse the last report.
@@ -845,7 +877,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           ),
         ),
       ),
-      Effect.flatMap((provider) => withLiveRuntimeState(provider, { recordLiveRevision: true })),
+      Effect.flatMap((provider) =>
+        withLiveRuntimeState(provider, {
+          recordLiveRevision: true,
+          fallbackToAcceptedModels: true,
+        }),
+      ),
     );
     const enrichProvider = checkAcpRegistryProviderStatusDetailed(
       {
@@ -891,6 +928,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           probeStartLiveRevision: 0,
           probedModelCount: 0,
           probedModelsFromModelSelect: false,
+          reasoningDisabledModelSlugs: EMPTY_SLUG_SET,
         };
       }
       const probeStartLiveRevision = Option.isSome(runtimeCoordinator)
@@ -907,6 +945,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         probeStartLiveRevision,
         probedModelCount: enriched.probedModelCount,
         probedModelsFromModelSelect: enriched.probedModelsFromModelSelect,
+        reasoningDisabledModelSlugs: enriched.reasoningDisabledModelSlugs,
       };
     });
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
@@ -946,6 +985,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 probeStartLiveRevision,
                 probedModelCount,
                 probedModelsFromModelSelect,
+                reasoningDisabledModelSlugs,
               }) =>
                 liveSnapshotSemaphore.withPermit(
                   Effect.gen(function* () {
@@ -962,10 +1002,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         onNone: () => 0,
                         onSome: (configuration) => configuration.models.length,
                       });
+                      const liveModelsFromModelSelect = Option.match(liveSnapshot.configuration, {
+                        onNone: () => false,
+                        onSome: (configuration) => configuration.modelsFromModelSelect === true,
+                      });
                       const probeSupersedesLiveCatalog = acpRegistryProbeSupersedesLiveCatalog({
                         probedModelCount,
                         probedModelsFromModelSelect,
                         liveModelCount: previousLiveModels,
+                        liveModelsFromModelSelect,
                       });
                       // A fresh non-provisional probe supersedes any live session catalog observed before it started.
                       const cleared = probeSupersedesLiveCatalog
@@ -977,7 +1022,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           : true
                         : false;
                       const models = yield* Ref.modify(learnedModels, (learned) => {
-                        const merged = mergeLearnedModelOptions(provider.models, learned);
+                        const merged = mergeLearnedModelOptions(
+                          provider.models,
+                          learned,
+                          reasoningDisabledModelSlugs,
+                        );
                         return [merged, cleared ? merged : learned] as const;
                       });
                       resolved = models === provider.models ? provider : { ...provider, models };
@@ -996,10 +1045,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           },
                         });
                       }
+                      if (published.status === "ready") {
+                        yield* Ref.set(acceptedModels, published.models);
+                      }
                       yield* publishSnapshot(published);
                       return;
                     }
-                    yield* withLiveRuntimeState(resolved).pipe(Effect.flatMap(publishSnapshot));
+                    const published = yield* withLiveRuntimeState(resolved);
+                    if (published.status === "ready") {
+                      yield* Ref.set(acceptedModels, published.models);
+                    }
+                    yield* publishSnapshot(published);
                   }),
                 ),
             }),
@@ -1030,6 +1086,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 liveSnapshotSemaphore.withPermit(
                   getSnapshot.pipe(
                     Effect.flatMap((current) => applyLiveConfiguration(current, configuration)),
+                    Effect.tap((next) =>
+                      next.status === "ready" ? Ref.set(acceptedModels, next.models) : Effect.void,
+                    ),
                     Effect.tap(() =>
                       Clock.currentTimeMillis.pipe(
                         Effect.flatMap((now) =>
@@ -1114,7 +1173,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             .clearLiveConfiguration(instanceId)
             .pipe(Effect.andThen(runtimeCoordinator.value.clearAvailableCommands(instanceId)))
         : Effect.void
-    ).pipe(Effect.andThen(clearLearnedModels));
+    ).pipe(Effect.andThen(clearLearnedModels), Effect.andThen(clearAcceptedModels));
     const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
       instanceId,
       settings: effectiveConfig,
@@ -1161,8 +1220,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
         : Effect.void
       ).pipe(
-        Effect.andThen(clearLearnedModels),
-        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+        Effect.andThen(
+          liveSnapshotSemaphore.withPermit(
+            invalidateEnrichmentCache.pipe(
+              Effect.andThen(clearLearnedModels),
+              Effect.andThen(clearAcceptedModels),
+            ),
+          ),
+        ),
       ),
       orchestrationAdapter,
       textGeneration: makeUnsupportedTextGeneration(),
@@ -1233,6 +1298,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.tap(() =>
               liveSnapshotSemaphore.withPermit(
                 invalidateEnrichmentCache.pipe(
+                  Effect.andThen(clearLearnedModels),
+                  Effect.andThen(clearAcceptedModels),
                   Effect.andThen(
                     Option.isSome(runtimeCoordinator)
                       ? Effect.all(

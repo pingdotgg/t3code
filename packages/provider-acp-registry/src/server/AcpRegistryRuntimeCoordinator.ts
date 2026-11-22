@@ -239,15 +239,18 @@ const make = Effect.gen(function* () {
       });
 
   const clearLiveConfigurationIfRevision: AcpRegistryRuntimeCoordinator["Service"]["clearLiveConfigurationIfRevision"] =
-    (instanceId, revision) =>
-      Ref.modify(liveConfigurations, (state) => {
-        const current = state.entries.get(instanceId);
-        if (current === undefined) return [true, state] as const;
-        if (current.revision !== revision) return [false, state] as const;
-        const entries = new Map(state.entries);
-        entries.delete(instanceId);
-        return [true, { ...state, entries }] as const;
-      });
+    Effect.fn("AcpRegistryRuntimeCoordinator.clearLiveConfigurationIfRevision")(
+      function* (instanceId, revision) {
+        return yield* Ref.modify(liveConfigurations, (state) => {
+          const current = state.entries.get(instanceId);
+          if (current === undefined) return [true, state] as const;
+          if (current.revision !== revision) return [false, state] as const;
+          const entries = new Map(state.entries);
+          entries.delete(instanceId);
+          return [true, { ...state, entries }] as const;
+        });
+      },
+    );
 
   const publishLiveConfiguration: AcpRegistryRuntimeCoordinator["Service"]["publishLiveConfiguration"] =
     (instanceId, configuration) =>
@@ -300,10 +303,9 @@ const make = Effect.gen(function* () {
             yield* onUpdate(current.configuration);
           }
           yield* Stream.fromSubscription(subscription).pipe(
-            Stream.filter(
-              (update) => update.instanceId === instanceId && update.revision > deliveredRevision,
-            ),
+            Stream.filter((update) => update.instanceId === instanceId),
             Stream.runForEach((update) => {
+              if (update.revision <= deliveredRevision) return Effect.void;
               deliveredRevision = update.revision;
               return onUpdate(update.configuration);
             }),
