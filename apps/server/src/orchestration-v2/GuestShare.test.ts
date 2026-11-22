@@ -113,6 +113,19 @@ it.effect("redeems a guest link once and sends each guest message once, with its
     });
     assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 1);
 
+    const now = yield* DateTime.now;
+    const replacement = orchestrator.dispatch({
+      type: "thread.guest-share.open",
+      commandId: CommandId.make("replace-pending-share"),
+      threadId,
+      shareId: GuestShareId.make("share:replacement"),
+      host: "env.t3.test",
+      expiresAt: DateTime.formatIso(DateTime.add(now, { hours: 24 })),
+    });
+    assert.isTrue(Exit.isFailure(yield* Effect.exit(replacement)));
+    assert.equal((yield* projections.getThread(threadId)).guestShare?.id, shareId);
+    assert.equal((yield* projections.getThreadShell(threadId))?.pendingGuestMessageCount, 1);
+
     yield* sendGuestMessage(orchestrator, "send-1");
     const projection = yield* projections.getThreadProjection(threadId);
     assert.deepEqual(

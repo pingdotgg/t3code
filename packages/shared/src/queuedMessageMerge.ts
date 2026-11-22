@@ -26,6 +26,7 @@ export interface QueuedMessageMergePart {
     | "restartContinuationOfRunId"
     | "usageLimitContinuationOfRunId"
     | "delegatedTaskId"
+    | "outputSchema"
   >;
   readonly message?:
     | Pick<
@@ -103,7 +104,8 @@ function partBlocked(
     message.idleCompaction !== undefined ||
     message.workflowScript === true ||
     message.delegatedCompletion !== undefined ||
-    message.notification !== undefined
+    message.notification !== undefined ||
+    run.outputSchema !== undefined
   ) {
     return blocked("automated", "Messages from agents and automations are sent on their own.");
   }

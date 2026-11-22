@@ -502,7 +502,7 @@ describe("PgConnection in-process server", () => {
       assert.match(names[0], /^effect_[0-9a-f]{16}_1$/)
     }))
 
-  it.effect("ends a custom stream after writing Terminate", () =>
+  it.live("ends and destroys a custom stream after writing Terminate", () =>
     Effect.gen(function*() {
       const writes: Array<Buffer> = []
       const socket: Duplex = new Duplex({
@@ -516,11 +516,15 @@ describe("PgConnection in-process server", () => {
         }
       })
 
+      yield* Effect.addFinalizer(() => Effect.sync(() => socket.destroy()))
+      const closed = new Promise<void>((resolve) => socket.once("close", resolve))
       yield* Effect.scoped(PgConnection.make({ username: "test", stream: () => socket }))
+      const close = yield* Effect.promise(() => closed).pipe(Effect.timeoutOption("500 millis"))
 
       assert.strictEqual(writes.at(-1)?.toString("hex"), "5800000004")
       assert.isTrue(socket.writableEnded)
-      assert.isFalse(socket.destroyed)
+      assert.isTrue(socket.destroyed)
+      assert.isTrue(Option.isSome(close))
     }))
 
   it.live.each(["statement", "stream"] as const)(
@@ -987,6 +991,59 @@ describe("PgConnection in-process server", () => {
 
       assert.strictEqual(message.toString("hex"), "5800000004")
     })))
+
+  it.live("destroys the socket after Terminate when the peer withholds FIN", () =>
+    Effect.gen(function*() {
+      let signalTerminate!: (message: Buffer) => void
+      const terminated = new Promise<Buffer>((resolve) => {
+        signalTerminate = resolve
+      })
+      const sockets: Array<Net.Socket> = []
+      const { port } = yield* withTcpServer((socket) => {
+        socket.allowHalfOpen = true
+        sockets.push(socket)
+        consumeFrontend(socket, (tag, message) => {
+          if (tag === undefined) {
+            socket.write(Buffer.concat([authenticationOk, backendKeyData, readyForQuery]))
+          } else if (tag === "X") {
+            signalTerminate(message)
+          }
+        })
+      })
+      // Destroy both ends even when the assertion fails, before closing the server.
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const socket of sockets) socket.destroy()
+        })
+      )
+      const original = Net.connect
+      let client!: Net.Socket
+      let closed!: Promise<void>
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          vi.spyOn(Net, "connect").mockImplementation(
+            ((options: Net.NetConnectOpts) => {
+              const socket = original(options)
+              if ("port" in options && options.port === port) {
+                client = socket
+                sockets.push(socket)
+                closed = new Promise<void>((resolve) => socket.once("close", resolve))
+              }
+              return socket
+            }) as typeof Net.connect
+          )
+        ),
+        (spy) => Effect.sync(() => spy.mockRestore())
+      )
+
+      yield* Effect.scoped(PgConnection.make({ host: "127.0.0.1", port, username: "test" }))
+      const message = yield* Effect.promise(() => terminated).pipe(Effect.timeout("2 seconds"))
+      assert.strictEqual(message.toString("hex"), "5800000004")
+      // Stay below the backstop: a successful flush must retire the socket promptly.
+      const close = yield* Effect.promise(() => closed).pipe(Effect.timeoutOption("500 millis"))
+      assert.isTrue(Option.isSome(close), "client socket did not close after flushing Terminate")
+      assert.isTrue(client.destroyed)
+    }), { concurrent: false })
 
   it.live("authenticates with a cleartext password request", () =>
     Effect.scoped(Effect.gen(function*() {

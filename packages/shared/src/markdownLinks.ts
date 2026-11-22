@@ -1,3 +1,4 @@
+import type { mediaKindFromPath } from "./mediaPreview.ts";
 import {
   isNetworkPath,
   isWindowsAbsolutePath,
@@ -285,6 +286,71 @@ export function markdownDestinationHostPath(source: string): string | null {
   );
 }
 
+const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
+const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+
+export type MarkdownImageSource =
+  | { readonly _tag: "Direct"; readonly uri: string }
+  | { readonly _tag: "WorkspaceFile"; readonly path: string; readonly relative?: true }
+  | { readonly _tag: "Blocked" };
+
+function joinWorkspacePath(workspaceRoot: string, relativePath: string): string {
+  const separator = isWindowsAbsolutePath(workspaceRoot) ? "\\" : "/";
+  const root = workspaceRoot.replace(/[\\/]+$/, "");
+  const path = relativePath.replace(/[\\/]/g, separator).replace(/^[\\/]+/, "");
+  return `${root}${separator}${path}`;
+}
+
+/** Rendering is not a click, so a network path loads only from the project's own share. */
+function hostFileSource(
+  path: string,
+  workspaceRoot: string | null | undefined,
+): MarkdownImageSource {
+  return isNetworkPath(path) && workspaceRelativeFilePath(path, workspaceRoot) === null
+    ? { _tag: "Blocked" }
+    : { _tag: "WorkspaceFile", path };
+}
+
+/**
+ * Filesystem paths belong to the environment host and must never reach a
+ * browser or native image component without first becoming a signed asset URL.
+ */
+export function classifyMarkdownImageSource(
+  value: string | null | undefined,
+  workspaceRoot?: string | null,
+): MarkdownImageSource {
+  if (value === null || value === undefined) return { _tag: "Blocked" };
+
+  const source = normalizeMarkdownLinkDestination(value);
+  if (source.length === 0 || source.startsWith("#") || source.startsWith("?")) {
+    return { _tag: "Blocked" };
+  }
+  if (DIRECT_IMAGE_SOURCE_PATTERN.test(source)) {
+    return { _tag: "Direct", uri: source };
+  }
+
+  const path = markdownDestinationHostPath(source);
+  if (path === null) return { _tag: "Blocked" };
+  if (/^file:/i.test(source)) return hostFileSource(path, workspaceRoot);
+  if (path.length === 0) return { _tag: "Blocked" };
+  if (path.startsWith("/") || isWindowsAbsolutePath(path)) {
+    return hostFileSource(path, workspaceRoot);
+  }
+  if (URI_SCHEME_PATTERN.test(path) || path.startsWith("~/") || path.startsWith("~\\")) {
+    return { _tag: "Blocked" };
+  }
+  if (!workspaceRoot) return { _tag: "Blocked" };
+
+  return { _tag: "WorkspaceFile", path: joinWorkspacePath(workspaceRoot, path), relative: true };
+}
+
+export function shouldRenderMarkdownImageAsFileLink(
+  source: MarkdownImageSource,
+  mediaKind: ReturnType<typeof mediaKindFromPath>,
+): boolean {
+  return source._tag === "WorkspaceFile" && mediaKind === null;
+}
+
 export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const destination = parseMarkdownFileLink(href);
   if (!destination) return false;
@@ -395,15 +461,18 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
 }
 
 function markdownLinkTailScanner(markdown: string) {
-  const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
-  const titleEnd = markdownRunEndFinder(markdown, /["']/g);
-  const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
+  // A blank line ends the paragraph, so no part of a link's tail runs past one.
+  const whitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
+  const doubleQuoteEnd = markdownRunEndFinder(markdown, /"|\n[ \t\r]*\n/g);
+  const singleQuoteEnd = markdownRunEndFinder(markdown, /'|\n[ \t\r]*\n/g);
+  const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
   return (start: number) => {
     const end = whitespaceEnd(start);
-    if (markdown[end] === ")") return end + 1;
-    if (end === start || (markdown[end] !== '"' && markdown[end] !== "'")) return null;
-    const quoteEnd = titleEnd(end + 1);
-    if (quoteEnd === markdown.length) return null;
+    const quote = markdown[end];
+    if (quote === ")") return end + 1;
+    if (end === start || (quote !== '"' && quote !== "'")) return null;
+    const quoteEnd = (quote === '"' ? doubleQuoteEnd : singleQuoteEnd)(end + 1);
+    if (markdown[quoteEnd] !== quote) return null;
     const close = titleWhitespaceEnd(quoteEnd + 1);
     return markdown[close] === ")" ? close + 1 : null;
   };
@@ -450,41 +519,36 @@ function markdownLinkDestinationScanner(markdown: string) {
       }
     }
     const hrefEnd = bareMarkdownLinkDestinationEnd(markdown, hrefStart);
-    if (hrefEnd === null || hrefEnd === hrefStart) return null;
+    if (hrefEnd === null) return null;
     const end = bareTail(hrefEnd);
     return end === null ? null : { hrefStart, hrefEnd, end };
   };
 }
 
-// The composer escapes brackets in labels (`[\[id\].tsx](...)`), and `\]` does not close one.
-function unescapedLabelEnd(markdown: string, start: number): number {
-  let end = markdown.indexOf("]", start);
-  while (end !== -1) {
-    let backslashes = 0;
-    while (end - backslashes > start && markdown[end - backslashes - 1] === "\\") backslashes += 1;
-    if (backslashes % 2 === 0) return end;
-    end = markdown.indexOf("]", end + 1);
-  }
-  return -1;
-}
-
+// Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
+// (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
-  let cursor = 0;
-  while (cursor < markdown.length) {
-    const labelStart = markdown.indexOf("[", cursor);
-    if (labelStart === -1) break;
-    const labelEnd = unescapedLabelEnd(markdown, labelStart + 1);
-    if (labelEnd === -1) break;
-
-    // Skip a failed label once; nested openings share its closing bracket.
-    cursor = labelEnd + 1;
-    const destination = scanDestination(cursor);
-    if (!destination) continue;
-    cursor = destination.end;
-    const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
-    if (href) hrefs.push(href);
+  const bracket = /[[\]\\]|\n[ \t\r]*\n/g;
+  let openBrackets = 0;
+  for (let match = bracket.exec(markdown); match; match = bracket.exec(markdown)) {
+    if (match[0] === "\\") {
+      bracket.lastIndex = match.index + 2;
+    } else if (match[0].startsWith("\n")) {
+      openBrackets = 0;
+    } else if (match[0] === "[") {
+      openBrackets += 1;
+    } else if (openBrackets > 0) {
+      openBrackets -= 1;
+      const destination = scanDestination(match.index + 1);
+      if (!destination) continue;
+      // A link cannot contain a link, so the brackets still open around it become text.
+      openBrackets = 0;
+      bracket.lastIndex = destination.end;
+      const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
+      if (href) hrefs.push(href);
+    }
   }
   return hrefs;
 }
@@ -494,10 +558,35 @@ export function resolveMarkdownFileLinkTarget(
   cwd?: string,
   baseDir: string | undefined = cwd,
 ): string | null {
-  if (!href) return null;
-  const target = parseMarkdownFileLink(href);
-  if (!target) return null;
+  return resolveMarkdownFileLink(href, cwd, baseDir)?.targetPath ?? null;
+}
 
+/** Resolves the displayed position and the editor target, which opens at the start line. */
+export function resolveMarkdownFileLink(
+  href: string | undefined,
+  cwd?: string,
+  baseDir: string | undefined = cwd,
+): { sourcePath: string; targetPath: string; position: FilePathPosition } | null {
+  const source = href ? parseMarkdownFileLink(href) : null;
+  if (!source) return null;
+
+  const targetPath = resolveParsedFileLinkTarget(source, cwd, baseDir);
+  if (!targetPath) return null;
+  return {
+    sourcePath: source.path,
+    targetPath,
+    position: {
+      ...splitFilePathPosition(targetPath),
+      ...(source.endLine !== undefined ? { endLine: source.endLine } : {}),
+    },
+  };
+}
+
+function resolveParsedFileLinkTarget(
+  target: FilePathPosition,
+  cwd: string | undefined,
+  baseDir: string | undefined,
+): string | null {
   const pathWithPosition = formatFilePathPosition(target);
   if (!isRelativeFilePath(pathWithPosition)) {
     // Opening a network path makes Windows sign in to its host with the user's
@@ -557,3 +646,6 @@ export function absoluteFilePathMatches(text: string): Array<{ index: number; pa
   }
   return paths;
 }
+
+// A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
+export const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;
