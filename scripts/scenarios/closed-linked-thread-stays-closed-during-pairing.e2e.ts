@@ -25,6 +25,7 @@ test(
       const { host } = await server.ready;
       const second = makeState(SECOND_HOME);
       const issued = await runPromise(second.cli(["auth", "session", "issue", "--token-only"]));
+      // @effect-diagnostics-next-line globalFetch:off -- Seeds the real peer link from the scenario's Node fixture.
       const pairing = await fetch(`${host}/api/auth/pairing-token`, {
         method: "POST",
         headers: {

@@ -213,7 +213,7 @@ export function useConnectLinkedEnvironment(
       panelRef === null
         ? undefined
         : useRightPanelStore.subscribe((state) => {
-            tabClosed ||= !hasTab(state);
+            if (!tabClosed && !hasTab(state)) tabClosed = true;
           });
     const stayed = () => !tabClosed && router.state.location.href === startedOn;
     const outcome = await connectLinkedEnvironment({
