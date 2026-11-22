@@ -1957,10 +1957,16 @@ export function deriveThreadFeedPresentation(
     }
   }
   if (liveFold !== null && !liveFoldPlaced) result.push(liveFold);
+  const latestRow = result.at(-1);
+  const replyIsStreaming =
+    latestRow?.type === "message" &&
+    latestRow.message.role === "assistant" &&
+    latestRow.message.streaming;
   if (
     isWorking &&
     activeWorkStartedAt !== null &&
     latestRun?.turnEnded !== true &&
+    !replyIsStreaming &&
     (activeRunId === null || !compactionCommandRunIds.has(activeRunId)) &&
     !result.some(
       (row) =>

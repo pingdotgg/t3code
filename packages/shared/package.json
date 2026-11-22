@@ -519,6 +519,10 @@
       "types": "./src/markdownGithubAlerts.ts",
       "import": "./src/markdownGithubAlerts.ts"
     },
+    "./markdownChunks": {
+      "types": "./src/markdownChunks.ts",
+      "import": "./src/markdownChunks.ts"
+    },
     "./markdownHast": {
       "types": "./src/markdownHast.ts",
       "import": "./src/markdownHast.ts"

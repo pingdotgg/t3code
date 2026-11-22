@@ -131,7 +131,6 @@ import {
   useThreadActions,
 } from "../hooks/useThreadActions";
 import {
-  mountNewThreadProjectFile,
   readLastUsedProjectKey,
   resolveDefaultProjectRef,
   useNewThreadHandler,
@@ -1055,13 +1054,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const [searchHighlightKey, setSearchHighlightKey] = useState<string | null>(null);
   const connectedEnvironmentIds = useConnectedEnvironmentIds();
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prefetches the default project's workspace defaults when its connection is ready
-  useEffect(() => {
-    const projectRef = readSidebarDefaultProjectRef(projects);
-    if (projectRef && connectedEnvironmentIds.includes(projectRef.environmentId)) {
-      return mountNewThreadProjectFile(projectRef);
-    }
-  }, [connectedEnvironmentIds, projects]);
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
   const [renamingThreadRef, setRenamingThreadRef] = useState<ScopedThreadRef | null>(null);
