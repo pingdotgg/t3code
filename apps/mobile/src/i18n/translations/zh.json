@@ -3449,8 +3449,6 @@
   "ebcd1772bbd579f2": "通知将通过 {distributor} 送达",
   "9b8ee344472a389a": "没有 UnifiedPush 分发器",
   "6a67d59cacbd3eec": "请安装 ntfy 等 UnifiedPush 分发器，然后重新开启通知。",
-  "2146ec7e4a90c920": "请将此内容添加到 watcher 的配置文件中，放在服务器列表旁边。",
-  "e451da8b3679396a": "复制 watcher 配置",
   "d78f597ad4c6206d": "上次通知",
   "a59f4fd74121d0a6": "搜索软件包",
   "8c93ed63299ff531": "搜索开源许可",

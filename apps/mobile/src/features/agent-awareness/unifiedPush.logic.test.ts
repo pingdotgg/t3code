@@ -1,19 +1,20 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  unifiedPushRegistration,
   unifiedPushStatus,
-  unifiedPushWatcherConfig,
   type UnifiedPushState,
 } from "./unifiedPush.logic";
 
 const base: UnifiedPushState = {
   available: true,
-  distributor: "ntfy",
+  distributor: "Sunup",
   enabled: true,
-  endpoint: "http://ntfy.example/upabc",
-  keys: null,
+  endpoint: "https://push.example/up",
+  keys: { p256dh: "pub", auth: "secret" },
   failure: null,
   lastMessageAt: null,
+  deviceId: "device-1",
 };
 
 describe("unifiedPushStatus", () => {
@@ -29,19 +30,24 @@ describe("unifiedPushStatus", () => {
   });
 });
 
-describe("unifiedPushWatcherConfig", () => {
-  it("names the endpoint, device and the fixed user id the native receiver matches", () => {
-    expect(
-      JSON.parse(
-        unifiedPushWatcherConfig({ endpoint: "http://h/upx", deviceId: "dev-1", keys: null }),
-      ),
-    ).toEqual({ endpoint: "http://h/upx", deviceId: "dev-1", userId: "unifiedpush" });
+describe("unifiedPushRegistration", () => {
+  it("names the device, endpoint and keys the servers push to", () => {
+    expect(unifiedPushRegistration(base)).toEqual({
+      deviceId: "device-1",
+      endpoint: "https://push.example/up",
+      keys: { p256dh: "pub", auth: "secret" },
+    });
   });
 
-  it("carries the distributor's keys so the watcher can encrypt", () => {
-    const keys = { p256dh: "pub", auth: "secret" };
-    expect(
-      JSON.parse(unifiedPushWatcherConfig({ endpoint: "https://p/x", deviceId: "d", keys })).keys,
-    ).toEqual(keys);
+  it.each([
+    ["disabled", { ...base, enabled: false }],
+    ["without an endpoint yet", { ...base, endpoint: null }],
+    ["before notifications are configured", { ...base, deviceId: null }],
+  ] as const)("is null when %s", (_label, state) => {
+    expect(unifiedPushRegistration(state)).toBeNull();
+  });
+
+  it("omits keys for a distributor that issues none", () => {
+    expect(unifiedPushRegistration({ ...base, keys: null })).not.toHaveProperty("keys");
   });
 });

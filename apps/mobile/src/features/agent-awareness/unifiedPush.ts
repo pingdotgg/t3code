@@ -68,5 +68,3 @@ export function disableUnifiedPush(): void {
   native?.unifiedPushDisable?.();
   clearAndroidAgentNotifications();
 }
-
-export const loadUnifiedPushDeviceId = loadOrCreateAgentAwarenessDeviceId;

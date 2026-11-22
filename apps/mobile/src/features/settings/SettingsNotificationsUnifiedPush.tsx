@@ -5,7 +5,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import * as Dialog from "../../components/ui/Dialog";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { runtime } from "../../lib/runtime";
 import { settleAsyncResult } from "@t3tools/client-runtime/state/runtime";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
@@ -13,10 +12,10 @@ import {
   disableUnifiedPush,
   enableUnifiedPush,
   getUnifiedPushState,
-  loadUnifiedPushDeviceId,
   subscribeUnifiedPushState,
 } from "../agent-awareness/unifiedPush";
-import { unifiedPushStatus, unifiedPushWatcherConfig } from "../agent-awareness/unifiedPush.logic";
+import { unifiedPushStatus } from "../agent-awareness/unifiedPush.logic";
+import { unregisterUnifiedPushEverywhere } from "../agent-awareness/UnifiedPushRegistrar";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -61,19 +60,15 @@ export function SettingsNotificationsUnifiedPush() {
     }
   };
 
-  const copyWatcherConfig = async () => {
-    if (!state?.endpoint) return;
-    const deviceId = await loadUnifiedPushDeviceId();
-    copyTextWithHaptic(
-      unifiedPushWatcherConfig({ endpoint: state.endpoint, deviceId, keys: state.keys }),
-      {
-        target: "watcher config",
-      },
-    );
-    Dialog.alert(
-      gt("Copied"),
-      gt("Add this to the watcher's config file, next to its list of servers."),
-    );
+  const disable = async () => {
+    // Tell the servers first: disabling clears the device id they push to.
+    const deviceId = state?.deviceId;
+    if (deviceId) {
+      await settleAsyncResult(() =>
+        runtime.runPromiseExit(unregisterUnifiedPushEverywhere(deviceId)),
+      );
+    }
+    disableUnifiedPush();
   };
 
   return (
@@ -93,18 +88,9 @@ export function SettingsNotificationsUnifiedPush() {
             value={state?.enabled === true}
             onValueChange={(enabled) => {
               if (enabled) void enable();
-              else disableUnifiedPush();
+              else void disable();
             }}
           />
-          {state?.endpoint ? (
-            <SettingsRow
-              icon="link"
-              label={gt("Copy watcher config")}
-              value={state.endpoint}
-              valuePosition="below"
-              onPress={() => void copyWatcherConfig()}
-            />
-          ) : null}
           {state?.lastMessageAt ? (
             <SettingsRow
               icon="clock"

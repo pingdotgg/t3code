@@ -17,11 +17,13 @@ type Alert = NonNullable<ReturnType<typeof androidAlertForState>>;
 export function makeUnifiedPushWatch(identity: {
   readonly deviceId: string;
   readonly userId: string;
+  /** Names the sender; the phone keeps one card per source. */
+  readonly source?: string;
 }) {
   const servers = new Map<string, Map<string, RelayAgentActivityState>>();
   const rejectedAlerts = new Map<string, string>();
   let previouslyActive = false;
-  let lastCard = "";
+  let lastCard: string | undefined;
 
   const message = (nowMs: number, alert: Alert | null, label: (active: boolean) => string) => {
     const aggregate = makeAggregateState({
@@ -33,8 +35,10 @@ export function makeUnifiedPushWatch(identity: {
     const active = activity.active === "true";
     const card = JSON.stringify(activity);
     const unchanged = card === lastCard;
+    // A fresh watch always sends its first card, so the phone drops any stale one it holds.
+    const first = lastCard === undefined;
     lastCard = card;
-    if (!alert && (unchanged || (!active && !previouslyActive))) return null;
+    if (!alert && !first && (unchanged || (!active && !previouslyActive))) return null;
     previouslyActive = active;
     return {
       label: label(active),
@@ -42,6 +46,7 @@ export function makeUnifiedPushWatch(identity: {
         t3_kind: "agent_activity",
         device_id: identity.deviceId,
         user_id: identity.userId,
+        ...(identity.source === undefined ? {} : { source: identity.source }),
         updated_at: String(nowMs),
         ...activity,
         ...alert,

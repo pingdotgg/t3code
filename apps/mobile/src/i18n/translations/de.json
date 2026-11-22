@@ -3452,8 +3452,6 @@
   "ebcd1772bbd579f2": "Benachrichtigungen kommen über {distributor}",
   "9b8ee344472a389a": "Kein UnifiedPush-Distributor",
   "6a67d59cacbd3eec": "Installiere einen UnifiedPush-Distributor wie ntfy und aktiviere Benachrichtigungen dann erneut.",
-  "2146ec7e4a90c920": "Füge dies in die Konfigurationsdatei des Watchers ein, neben seiner Serverliste.",
-  "e451da8b3679396a": "Watcher-Konfiguration kopieren",
   "d78f597ad4c6206d": "Letzte Benachrichtigung",
   "a59f4fd74121d0a6": "Pakete suchen",
   "8c93ed63299ff531": "Open-Source-Lizenzen durchsuchen",

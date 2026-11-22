@@ -54,6 +54,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as UnifiedPushDelivery from "../unifiedPush/UnifiedPushDelivery.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -423,8 +424,10 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
     .map((thread) => thread.id);
 }
 
-/** @public */
-export const make = Effect.gen(function* () {
+// Given `unifiedPush`, this instance publishes there instead: no relay gates, its own state.
+const makePublisher = Effect.fnUntraced(function* (
+  unifiedPush?: UnifiedPushDelivery.UnifiedPushDelivery["Service"],
+) {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -503,7 +506,8 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
-  const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
+  // Untraced: publishThreadUnsafe's span covers it. Yields nothing while the relay is off.
+  const openRelayPublish = Effect.fnUntraced(function* (threadId: ThreadId) {
     const publishAgentActivity = yield* readPublishAgentActivityEnabled;
     if (!publishAgentActivity) {
       yield* cancelPublishRetries;
@@ -578,6 +582,16 @@ export const make = Effect.gen(function* () {
         deliveries: deliveryStats(response.deliveries),
       });
     });
+    return publishState;
+  });
+
+  const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
+    const publishState = unifiedPush
+      ? (input: { readonly state: RelayAgentActivityState | null }) =>
+          unifiedPush.publish(threadId, input.state)
+      : yield* openRelayPublish(threadId);
+    if (publishState === undefined) return;
+    const environmentId = yield* serverEnvironment.getEnvironmentId;
 
     // Read only this thread; full shell reads would make each activity event scale with all threads.
     const threadShell = yield* readAwarenessThread(threadId);
@@ -855,7 +869,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const publishActiveThreadsUnsafe = Effect.gen(function* () {
+  const relayCatchUpBlocker = Effect.gen(function* () {
     const relayUrl = yield* readSecretString(RELAY_URL_SECRET).pipe(
       Effect.orElseSucceed(() => null),
     );
@@ -875,6 +889,12 @@ export const make = Effect.gen(function* () {
       yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
       return "unlinked" as const;
     }
+    return undefined;
+  });
+
+  const publishActiveThreadsUnsafe = Effect.gen(function* () {
+    const blocker = unifiedPush ? undefined : yield* relayCatchUpBlocker;
+    if (blocker !== undefined) return blocker;
     const environmentId = yield* serverEnvironment.getEnvironmentId;
     const projectSnapshot = yield* projects.snapshot;
     const activitySnapshot = yield* threads.getAgentAwarenessSnapshot();
@@ -959,7 +979,7 @@ export const make = Effect.gen(function* () {
         relayConfigured: relayConfig !== null,
         publishEnabled,
       });
-      switch (startupState) {
+      switch (unifiedPush ? null : startupState) {
         case "waiting-for-link":
           yield* Effect.logInfo(
             "agent activity publishing standby; waiting for T3 Connect link reconciliation",
@@ -976,7 +996,9 @@ export const make = Effect.gen(function* () {
       }
       yield* forkParked(
         Effect.sleep("1 second").pipe(
-          Effect.andThen(publishActiveThreadsWhenConfigured(startupState !== "enabled")),
+          Effect.andThen(
+            publishActiveThreadsWhenConfigured(!unifiedPush && startupState !== "enabled"),
+          ),
         ),
       );
       yield* forkParked(
@@ -1001,6 +1023,29 @@ export const make = Effect.gen(function* () {
       return Queue.offer(catchUpRequests, undefined).pipe(Effect.asVoid);
     }),
     start,
+  });
+});
+
+/** @public */
+export const make = Effect.gen(function* () {
+  const relay = yield* makePublisher();
+  // Optional, so tests and builds without UnifiedPush keep the relay-only publisher.
+  const unifiedPush = yield* Effect.serviceOption(UnifiedPushDelivery.UnifiedPushDelivery);
+  if (Option.isNone(unifiedPush)) return relay;
+  const label = Effect.annotateLogs({ agentActivityTarget: "unifiedpush" });
+  const push = yield* makePublisher(unifiedPush.value).pipe(label);
+  // Untraced: both run inside the callers' spans, as the single publisher's did.
+  return AgentAwarenessRelay.of({
+    publishThread: Effect.fnUntraced(function* (threadId) {
+      yield* relay.publishThread(threadId);
+      yield* push.publishThread(threadId);
+    }),
+    drain: relay.drain.pipe(Effect.andThen(push.drain)),
+    requestCatchUp: relay.requestCatchUp,
+    start: Effect.fnUntraced(function* () {
+      yield* relay.start();
+      yield* push.start().pipe(label);
+    }),
   });
 });
 

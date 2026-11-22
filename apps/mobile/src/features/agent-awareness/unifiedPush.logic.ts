@@ -1,3 +1,5 @@
+import type { UnifiedPushRegistration } from "@t3tools/contracts";
+
 export const UNIFIED_PUSH_USER_ID = "unifiedpush";
 
 export interface UnifiedPushState {
@@ -8,6 +10,7 @@ export interface UnifiedPushState {
   readonly keys: { readonly p256dh: string; readonly auth: string } | null;
   readonly failure: string | null;
   readonly lastMessageAt: number | null;
+  readonly deviceId: string | null;
 }
 
 export type UnifiedPushStatus = "off" | "no-distributor" | "failed" | "waiting" | "ready";
@@ -18,20 +21,14 @@ export function unifiedPushStatus(state: UnifiedPushState | null): UnifiedPushSt
   return state.endpoint ? "ready" : "waiting";
 }
 
-/** The watcher reads these fields from its config file next to its server list; keys make it encrypt for the distributor. */
-export function unifiedPushWatcherConfig(input: {
-  readonly endpoint: string;
-  readonly deviceId: string;
-  readonly keys: UnifiedPushState["keys"];
-}): string {
-  return JSON.stringify(
-    {
-      endpoint: input.endpoint,
-      deviceId: input.deviceId,
-      userId: UNIFIED_PUSH_USER_ID,
-      ...(input.keys ? { keys: input.keys } : {}),
-    },
-    null,
-    2,
-  );
+/** What each paired server needs to push here, once the distributor has issued an endpoint. */
+export function unifiedPushRegistration(
+  state: UnifiedPushState | null,
+): UnifiedPushRegistration | null {
+  if (!state?.enabled || !state.endpoint || !state.deviceId) return null;
+  return {
+    deviceId: state.deviceId,
+    endpoint: state.endpoint,
+    ...(state.keys ? { keys: state.keys } : {}),
+  };
 }

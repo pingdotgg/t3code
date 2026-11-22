@@ -16,6 +16,10 @@ const concat = (...parts: ReadonlyArray<Uint8Array>) => {
   return out;
 };
 
+// Node's type definitions declare CryptoKey only as a value and no CryptoKeyPair, so the key
+// type comes from the API both runtimes share.
+type WebCryptoKey = Parameters<typeof crypto.subtle.exportKey>[1];
+
 const hkdf = async (
   salt: Uint8Array<ArrayBuffer>,
   secret: Uint8Array<ArrayBuffer>,
@@ -37,7 +41,7 @@ export async function encryptWebPush(input: {
   readonly plaintext: Uint8Array<ArrayBuffer>;
   readonly p256dh: string;
   readonly auth: string;
-  readonly ephemeral?: CryptoKeyPair;
+  readonly ephemeral?: { readonly publicKey: WebCryptoKey; readonly privateKey: WebCryptoKey };
   readonly salt?: Uint8Array<ArrayBuffer>;
 }) {
   if (input.plaintext.length > MAX_PLAINTEXT_BYTES) throw new RangeError("Message too large");

@@ -574,6 +574,8 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverRunStorageCleanup: "server.runStorageCleanup",
+  unifiedPushRegister: "unifiedPush.register",
+  unifiedPushUnregister: "unifiedPush.unregister",
   serverGetStorageCleanupReport: "server.getStorageCleanupReport",
   serverGetDatabaseStorage: "server.getDatabaseStorage",
   serverReclaimDatabaseSpace: "server.reclaimDatabaseSpace",
@@ -902,6 +904,30 @@ const WsServerRunStorageCleanupRpc = Rpc.make(WS_METHODS.serverRunStorageCleanup
   payload: Schema.Struct({}),
   success: StorageCleanupReport,
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+export class UnifiedPushRegistrationError extends Schema.TaggedError<UnifiedPushRegistrationError>()(
+  "UnifiedPushRegistrationError",
+  { message: Schema.String },
+) {}
+
+/** A phone's UnifiedPush subscription; the server pushes its agent activity there. */
+export const UnifiedPushRegistration = Schema.Struct({
+  deviceId: TrimmedNonEmptyString,
+  endpoint: TrimmedNonEmptyString,
+  /** The subscription's Web Push keys; with them every push is encrypted (RFC 8291). */
+  keys: Schema.optional(
+    Schema.Struct({ p256dh: TrimmedNonEmptyString, auth: TrimmedNonEmptyString }),
+  ),
+});
+export type UnifiedPushRegistration = typeof UnifiedPushRegistration.Type;
+
+const WsUnifiedPushRegisterRpc = Rpc.make(WS_METHODS.unifiedPushRegister, {
+  payload: UnifiedPushRegistration,
+  error: Schema.Union([UnifiedPushRegistrationError, EnvironmentAuthorizationError]),
+});
+const WsUnifiedPushUnregisterRpc = Rpc.make(WS_METHODS.unifiedPushUnregister, {
+  payload: Schema.Struct({ deviceId: TrimmedNonEmptyString }),
+  error: Schema.Union([UnifiedPushRegistrationError, EnvironmentAuthorizationError]),
 });
 const WsServerGetStorageCleanupReportRpc = Rpc.make(WS_METHODS.serverGetStorageCleanupReport, {
   payload: Schema.Struct({}),
@@ -2412,6 +2438,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerRunStorageCleanupRpc,
+  WsUnifiedPushRegisterRpc,
+  WsUnifiedPushUnregisterRpc,
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
   WsServerGetSettingsRpc,

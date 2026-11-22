@@ -3453,8 +3453,6 @@
   "ebcd1772bbd579f2": "Aviseringar kommer via {distributor}",
   "9b8ee344472a389a": "Ingen UnifiedPush-distributör",
   "6a67d59cacbd3eec": "Installera en UnifiedPush-distributör, till exempel ntfy, och slå sedan på aviseringar igen.",
-  "2146ec7e4a90c920": "Lägg till detta i watcherns konfigurationsfil, bredvid dess serverlista.",
-  "e451da8b3679396a": "Kopiera watcher-konfiguration",
   "d78f597ad4c6206d": "Senaste avisering",
   "a59f4fd74121d0a6": "Sök paket",
   "8c93ed63299ff531": "Sök licenser för öppen källkod",

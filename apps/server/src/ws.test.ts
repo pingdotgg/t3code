@@ -190,6 +190,7 @@ import {
   WS_RPC_SERVER_OPTIONS,
   withLateConfigDiscovery,
 } from "./ws.ts";
+import * as UnifiedPushDelivery from "./unifiedPush/UnifiedPushDelivery.ts";
 
 const snapshotConfig = (fields: Partial<ServerConfig>) =>
   ({ availableEditors: [], settings: {}, ...fields }) as unknown as ServerConfig;
@@ -906,6 +907,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(TaskFolders.TaskFolders)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
+  Layer.mock(UnifiedPushDelivery.UnifiedPushDelivery)({}),
 );
 
 const layerConfigSources = Layer.mergeAll(

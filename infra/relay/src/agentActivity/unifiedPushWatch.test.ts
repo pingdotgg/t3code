@@ -44,7 +44,14 @@ describe("unifiedPushWatch", () => {
       activity_active_count: "2",
     });
     expect(message?.data).not.toHaveProperty("alert_id");
+    expect(message?.data).not.toHaveProperty("source");
     expect(watch.applySnapshot("a", [], now)).not.toHaveProperty("data.alert_id");
+  });
+
+  it("sends a fresh watch's first card even when idle, tagged with its source", () => {
+    const watch = makeUnifiedPushWatch({ deviceId: "phone", userId: "unifiedpush", source: "a" });
+    expect(watch.applySnapshot("a", [], now)?.data).toMatchObject({ active: "false", source: "a" });
+    expect(watch.applySnapshot("a", [], now)).toBeNull();
   });
 
   it("alerts once per phase change", () => {
