@@ -754,6 +754,8 @@ export interface ClaudeAgentSdkQuerySession {
   >;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Windows only: ends the CLI and everything it started, and waits for the CLI's exit. */
+  readonly stopProcessTree?: Effect.Effect<void>;
 }
 
 type ClaudeQueryStreamExit = Exit.Exit<void, ClaudeAgentSdkQueryRunnerError>;
@@ -948,6 +950,8 @@ function claudeProcessExitFailure(
   const exit = claudeProcessExit(isClaudeAgentSdkQueryRunnerError(error) ? error.cause : error);
   return exit === undefined ? undefined : { message: `${exit.status}.`, code: exit.code };
 }
+
+const CLAUDE_WINDOWS_EXIT_TIMEOUT = "5 seconds";
 
 function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   return Effect.try({
@@ -1513,6 +1517,18 @@ export const layerQueryRunner: Layer.Layer<
         Effect.map((result) => (result.code === 0 ? parseClaudeProcessTable(result.stdout) : [])),
         Effect.orElseSucceed(() => []),
       );
+    // Windows has no process group to signal, and the CLI's children (its MCP servers) outlive
+    // it holding their folder. The tree is only reachable while the CLI still runs.
+    const stopWindowsTree = (pid: number | undefined, exited: boolean) =>
+      pid === undefined || exited
+        ? Effect.void
+        : processRunner
+            .run({
+              command: "taskkill",
+              args: ["/PID", String(pid), "/T", "/F"],
+              timeout: CLAUDE_WINDOWS_EXIT_TIMEOUT,
+            })
+            .pipe(Effect.ignore);
     // Without an agent scope, a job that left the CLI's group escapes the group kill and is
     // re-parented once the CLI exits. So the CLI's tree is recorded while it runs, and what is
     // still the same process (pid and start time) is stopped after it exits.
@@ -1613,6 +1629,7 @@ export const layerQueryRunner: Layer.Layer<
         stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
       };
       let refreshDescendants: Effect.Effect<void> = Effect.void;
+      let windowsChild: { readonly pid?: number | undefined } | undefined;
       const spawnProcess =
         options.spawnClaudeCodeProcess ??
         ((spawnOptions: ClaudeSpawnOptions) => {
@@ -1646,6 +1663,7 @@ export const layerQueryRunner: Layer.Layer<
             windowsHide: true,
           });
           child.stderr.setEncoding("utf8").on("data", (chunk: string) => options.stderr?.(chunk));
+          windowsChild = child;
           return child;
         });
       let spawnedProcess: ClaudeSpawnedProcess | undefined;
@@ -2017,6 +2035,20 @@ export const layerQueryRunner: Layer.Layer<
             }),
           ),
         ),
+        ...(platform === "win32"
+          ? {
+              stopProcessTree: Effect.suspend(() =>
+                stopWindowsTree(windowsChild?.pid, processExited),
+              ).pipe(
+                Effect.andThen(
+                  Effect.promise(() => processExit ?? Promise.resolve()).pipe(
+                    Effect.timeoutOption(CLAUDE_WINDOWS_EXIT_TIMEOUT),
+                  ),
+                ),
+                Effect.asVoid,
+              ),
+            }
+          : {}),
         // A job started since the last poll is recorded before the CLI is told to exit.
         close: Effect.suspend(() => (processExited ? Effect.void : refreshDescendants)).pipe(
           Effect.andThen(Queue.shutdown(promptQueue)),
@@ -14270,6 +14302,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Marked first so a concurrent Stop skips or tolerates writes to the closing CLI;
             // the scope interrupts the stream fiber, so it may never mark its query closed.
             yield* Deferred.succeed(existing.closed, undefined);
+            if (existing.query.stopProcessTree !== undefined) {
+              // The kill ends the CLI before the SDK is told to close it.
+              existing.stopping = true;
+              yield* existing.query.stopProcessTree;
+            }
             yield* existing.query.close.pipe(Effect.ignore);
           }
           yield* Effect.yieldNow;

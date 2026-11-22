@@ -1888,6 +1888,7 @@ describe("ClaudeAdapterV2 MCP elicitation acceptance", () => {
 const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(function* (
   binaryPath: string,
   environment: ResolvedProviderInstanceEnvironment = [],
+  session: Partial<ClaudeAdapterV2.ClaudeAgentSdkQuerySession> = {},
 ) {
   const executablePaths: Array<string | undefined> = [];
   const taskToolEnvironment: Array<string | undefined> = [];
@@ -1930,6 +1931,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             stopTask: () => Effect.void,
             interrupt: Effect.void,
             close: Effect.void,
+            ...session,
           };
         }),
       forkSession: () => Effect.die("unused"),
@@ -1978,6 +1980,29 @@ describe("ClaudeAdapterV2 executable path", () => {
         assert.deepEqual(executablePaths, [packageExe]);
       }),
     ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          ProviderInstallationGate.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+  // regression: #27018 the CLI's MCP servers outlived a closed session on Windows, holding its worktree
+  it.effect("stops the CLI's process tree before closing a session that has one to stop", () =>
+    Effect.gen(function* () {
+      const order: Array<string> = [];
+      yield* Effect.scoped(
+        captureSdkExecutablePaths("/custom/claude", [], {
+          stopProcessTree: Effect.sync(() => order.push("process tree stopped")),
+          close: Effect.sync(() => order.push("query closed")),
+        }),
+      );
+      assert.deepEqual(order, ["process tree stopped", "query closed"]);
+    }).pipe(
       Effect.provide(
         Layer.mergeAll(
           IdAllocator.layer,
