@@ -64,6 +64,7 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
+import * as ThreadViewers from "./ThreadViewers.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
@@ -419,6 +420,215 @@ it.effect(
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
 );
 
+function nodeComparisonEvent(thread: OrchestrationV2AppThread, now: DateTime.Utc) {
+  const nodeId = NodeId.make(`node:${thread.id}`);
+  return {
+    id: EventId.make(`node-cache:${thread.id}`),
+    type: "node.updated",
+    threadId: thread.id,
+    occurredAt: now,
+    payload: {
+      id: nodeId,
+      threadId: thread.id,
+      runId: null,
+      parentNodeId: null,
+      rootNodeId: nodeId,
+      kind: "assistant_message",
+      status: "running",
+      countsForRun: false,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: now,
+      completedAt: null,
+    },
+  } satisfies OrchestrationV2DomainEvent;
+}
+
+it.effect("commits other threads' writes ahead of a thread's queued provider snapshots", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const [busy, independent] = ["busy", "independent"].map((id) =>
+      makeThread(ThreadId.make(id), now),
+    );
+    yield* sink.write({
+      events: [busy!, independent!].map((thread) =>
+        threadCreatedEvent({ id: `created:${thread.id}`, thread, now }),
+      ),
+    });
+    const highWater = yield* sink.latestSequence();
+    const busyNode = nodeComparisonEvent(busy!, now);
+    const snapshot = {
+      type: "node.updated" as const,
+      driver: providerDriver,
+      node: busyNode.payload,
+    };
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const pulled = yield* Deferred.make<void>();
+    let writes = 0;
+    let pulls = 0;
+    const input = yield* Queue.unbounded<typeof snapshot>();
+    const provider = yield* sink
+      .consumeProviderEvents(
+        Stream.fromQueue(input).pipe(
+          Stream.take(3),
+          Stream.tap(() => (++pulls === 3 ? Deferred.succeed(pulled, undefined) : Effect.void)),
+        ),
+        () =>
+          Effect.gen(function* () {
+            const id = EventId.make(`busy-provider-${++writes}`);
+            yield* sink.write({ events: [{ ...busyNode, id }] });
+            if (writes > 1) return;
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+          }),
+        Effect.succeed(false),
+        Effect.succeed(true),
+      )
+      .pipe(Effect.forkScoped({ startImmediately: true }));
+    yield* Queue.offer(input, snapshot);
+    yield* Deferred.await(started);
+    yield* Queue.offerAll(
+      input,
+      [2, 3].map((n) => ({
+        ...snapshot,
+        node: { ...busyNode.payload, id: NodeId.make(`node:busy:${n}`) },
+      })),
+    );
+    yield* Deferred.await(pulled);
+    yield* TestClock.adjust(0);
+    const writeTo = (event: OrchestrationV2DomainEvent, id: string) =>
+      sink
+        .write({ events: [{ ...event, id: EventId.make(id) }] })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+    const sameThread = yield* writeTo(busyNode, "busy-command");
+    const otherThread = yield* writeTo(nodeComparisonEvent(independent!, now), "independent");
+    const childOfBusy = yield* writeTo(
+      {
+        id: EventId.make("unused"),
+        type: "provider-thread.updated",
+        threadId: independent!.id,
+        driver: providerDriver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: ProviderThreadId.make("provider-thread:busy-child"),
+          driver: providerDriver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: busy!.id,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      "busy-child",
+    );
+    yield* TestClock.adjust(0);
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(provider);
+    yield* Fiber.join(sameThread);
+    yield* Fiber.join(otherThread);
+    yield* Fiber.join(childOfBusy);
+    const store = yield* EventStore.EventStoreV2;
+    const events = yield* store.read({ afterSequence: highWater }).pipe(Stream.runCollect);
+    assert.deepEqual(
+      events.map((stored) => stored.event.id),
+      [
+        "busy-provider-1",
+        "independent",
+        "busy-provider-2",
+        "busy-provider-3",
+        "busy-command",
+        "busy-child",
+      ],
+    );
+  }).pipe(Effect.scoped, Effect.provide(Layer.fresh(layerTest))),
+);
+
+it.effect(
+  "reuses node comparisons and writes thread bookkeeping once per provider transaction",
+  () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const thread = makeThread(ThreadId.make("node-comparison-cache"), now);
+      yield* sink.write({
+        events: [threadCreatedEvent({ id: "node-cache-created", thread, now })],
+      });
+      const event = nodeComparisonEvent(thread, now);
+      const statements = { nodeReads: 0, threadTouches: 0, highWaterWrites: 0 };
+      const observe: Statement.Transformer = (statement) => {
+        const text = statement.compile()[0];
+        if (
+          text.includes("SELECT payload_json FROM orchestration_v2_projection_nodes WHERE node_id")
+        )
+          statements.nodeReads++;
+        if (text.includes("UPDATE orchestration_v2_projection_threads")) statements.threadTouches++;
+        if (text.includes("INSERT INTO orchestration_v2_projection_metadata"))
+          statements.highWaterWrites++;
+        return Effect.succeed(statement);
+      };
+      const lastOccurredAt = DateTime.add(now, { minutes: 3 });
+      yield* sink
+        .withProviderBatch(
+          Effect.gen(function* () {
+            for (let n = 0; n < 21; n++)
+              assert.isFalse(yield* projections.isNodeStored(event.payload));
+            assert.equal(statements.nodeReads, 1);
+            yield* sink.write({ events: [event] });
+            assert.isTrue(yield* projections.isNodeStored(event.payload));
+            for (const minutes of [1, 2, 3]) {
+              yield* sink.write({
+                events: [
+                  {
+                    ...event,
+                    id: EventId.make(`node-cache-touch:${minutes}`),
+                    occurredAt: DateTime.add(now, { minutes }),
+                  },
+                ],
+              });
+            }
+            assert.deepEqual([statements.threadTouches, statements.highWaterWrites], [0, 0]);
+          }),
+        )
+        .pipe(Effect.provideService(Statement.CurrentTransformer, observe));
+      assert.deepEqual([statements.threadTouches, statements.highWaterWrites], [1, 1]);
+      assert.deepEqual(
+        DateTime.toEpochMillis((yield* projections.getThread(thread.id)).updatedAt),
+        DateTime.toEpochMillis(lastOccurredAt),
+      );
+      assert.deepEqual(
+        yield* sql`SELECT last_sequence FROM orchestration_v2_projection_metadata
+        WHERE projection_name = 'thread-projections'`,
+        [{ last_sequence: yield* sink.latestSequence() }],
+      );
+      const completed = { ...event.payload, status: "completed" as const, completedAt: now };
+      yield* sink.write({
+        events: [{ ...event, id: EventId.make("node-cache-completed"), payload: completed }],
+      });
+      yield* sink.withProviderBatch(
+        Effect.gen(function* () {
+          assert.isFalse(yield* projections.isNodeStored(event.payload));
+          assert.isTrue(yield* projections.isNodeStored(completed));
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.fresh(layerTest))),
+);
+
 it.effect.each(
   (["none", "duplicate", "after-write"] as const).flatMap((failure) =>
     [1, 10].map((streams) => ({ failure, streams })),
@@ -427,7 +637,7 @@ it.effect.each(
   "shares the writer and isolates failure=$failure across $streams independent consumers",
   ({ failure, streams }) => {
     const rollback = failure !== "none";
-    const failedIndex = streams - 1;
+    const failedIndex = failure === "after-write" ? 0 : streams - 1;
     const jobError = { _tag: "InvalidUpdate" } as const;
     const writes: number[] = [];
     const tracer = Tracer.make({
@@ -455,6 +665,8 @@ it.effect.each(
           threadCreatedEvent({ id: `created:${index}`, thread, now }),
         ),
       });
+      const node = nodeComparisonEvent(threads[0]!, now);
+      yield* sink.write({ events: [node] });
       const highWater = yield* sink.latestSequence();
       const store = yield* EventStore.EventStoreV2;
       const publications = yield* Queue.unbounded<EventId>();
@@ -465,7 +677,7 @@ it.effect.each(
       const pulled = yield* Deferred.make<void>();
       let arrivals = 0;
       const inputs = yield* Effect.forEach(threads, () =>
-        Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>(),
+        Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event, Cause.Done>(),
       );
       const consumers = yield* Effect.forEach(inputs, (input, index) =>
         sink
@@ -477,8 +689,11 @@ it.effect.each(
             ),
             (raw) =>
               raw.type === "message.updated"
-                ? sink
-                    .write({
+                ? Effect.gen(function* () {
+                    if (failure === "after-write" && index !== failedIndex) {
+                      assert.isTrue(yield* projections.isNodeStored(node.payload));
+                    }
+                    yield* sink.write({
                       events: [
                         {
                           id: EventId.make(
@@ -487,19 +702,29 @@ it.effect.each(
                               : `shared-event:${index}`,
                           ),
                           threadId: raw.message.threadId,
-                          occurredAt: now,
+                          occurredAt: DateTime.add(now, { minutes: index + 1 }),
                           type: "message.updated",
                           payload: raw.message,
                         },
+                        ...(failure === "after-write" && index === failedIndex
+                          ? [
+                              {
+                                ...node,
+                                id: EventId.make("rolled-back-node"),
+                                occurredAt: DateTime.add(now, { hours: 1 }),
+                                payload: {
+                                  ...node.payload,
+                                  status: "completed" as const,
+                                  completedAt: now,
+                                },
+                              },
+                            ]
+                          : []),
                       ],
-                    })
-                    .pipe(
-                      Effect.andThen(
-                        failure === "after-write" && index === failedIndex
-                          ? Effect.fail(jobError)
-                          : Effect.void,
-                      ),
-                    )
+                    });
+                    if (failure === "after-write" && index === failedIndex)
+                      return yield* Effect.fail(jobError);
+                  })
                 : Effect.void,
             Effect.succeed(false),
             Effect.succeed(true),
@@ -527,10 +752,10 @@ it.effect.each(
         });
       }
       yield* Deferred.await(pulled);
-      yield* TestClock.adjust(0);
-      yield* sink.write({ events: [] });
+      yield* Effect.forEach(inputs, Queue.end, { discard: true });
+      const exits = yield* Effect.forEach(consumers, Fiber.join);
       if (rollback) {
-        const exit = yield* Fiber.join(consumers[failedIndex]!);
+        const exit = exits[failedIndex]!;
         assert.isTrue(Exit.isFailure(exit));
         if (failure === "after-write" && Exit.isFailure(exit))
           assert.strictEqual(Cause.squash(exit.cause), jobError);
@@ -544,10 +769,21 @@ it.effect.each(
       assert.equal(yield* Queue.size(publications), 0);
       assert.deepEqual(writes, rollback && streams === 1 ? [] : [streams - (rollback ? 1 : 0)]);
       assert.equal(yield* sink.latestSequence(), highWater + streams - (rollback ? 1 : 0));
+      const sql = yield* SqlClient.SqlClient;
+      assert.deepEqual(
+        yield* sql`SELECT last_sequence FROM orchestration_v2_projection_metadata
+          WHERE projection_name = 'thread-projections'`,
+        [{ last_sequence: yield* sink.latestSequence() }],
+      );
       for (let index = 0; index < threads.length; index++) {
+        const failed = rollback && index === failedIndex;
         assert.lengthOf(
           (yield* projections.getThreadRecords(threads[index]!.id, ["messages"])).messages,
-          rollback && index === failedIndex ? 0 : 1,
+          failed ? 0 : 1,
+        );
+        assert.equal(
+          DateTime.toEpochMillis((yield* projections.getThread(threads[index]!.id)).updatedAt),
+          DateTime.toEpochMillis(failed ? now : DateTime.add(now, { minutes: index + 1 })),
         );
       }
     }).pipe(
@@ -2752,6 +2988,66 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }).pipe(Effect.provide(layerIsolatedOutbox)),
   );
 
+  it.effect("fails an effect this build cannot decode and claims the thread's next effect", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const sql = yield* SqlClient.SqlClient;
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const workerId = "undecodable-worker";
+      const commandId = CommandId.make("command:foundation-undecodable");
+      const threadId = ThreadId.make("thread:foundation-undecodable");
+      yield* sql`
+        INSERT INTO orchestration_v2_effect_outbox (
+          effect_id, command_id, thread_id, effect_type, payload_json, status,
+          available_at, created_at, updated_at
+        )
+        VALUES (
+          'effect:foundation-undecodable:a', ${commandId}, ${threadId}, 'future-effect.kind',
+          '{"type":"future-effect.kind"}', 'pending', ${nowIso}, ${nowIso}, ${nowIso}
+        )
+      `;
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-undecodable:b",
+          commandId,
+          threadId,
+          request: { type: "provider-turn.start", runId: RunId.make("run:foundation-undecodable") },
+        },
+      ]);
+
+      const claimed = yield* Effect.exit(outbox.claimNext({ workerId }));
+
+      const rows = yield* sql<{
+        readonly effect_id: string;
+        readonly status: string;
+        readonly lease_owner: string | null;
+        readonly last_error: string | null;
+      }>`
+        SELECT effect_id, status, lease_owner, last_error
+        FROM orchestration_v2_effect_outbox
+        ORDER BY effect_id
+      `;
+      assert.deepEqual(rows, [
+        {
+          effect_id: "effect:foundation-undecodable:a",
+          status: "failed",
+          lease_owner: null,
+          last_error: "This server build cannot decode the future-effect.kind effect.",
+        },
+        {
+          effect_id: "effect:foundation-undecodable:b",
+          status: "running",
+          lease_owner: workerId,
+          last_error: null,
+        },
+      ]);
+      assert.equal(
+        Exit.isSuccess(claimed) ? Option.getOrUndefined(claimed.value)?.id : undefined,
+        "effect:foundation-undecodable:b",
+      );
+    }).pipe(Effect.provide(layerIsolatedOutbox)),
+  );
+
   it.effect.each(["queued", "waiting"])(
     "keeps a %s continuation's crash budget past outbox retention",
     (status) =>
@@ -4021,6 +4317,7 @@ it.effect.each(["direct", "provider-batch", "cancel-provider-batch"] as const)(
             layerCommandReceiptStoreProvided,
             ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
             TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ThreadViewers.layer,
           ),
         ),
       );
@@ -4319,6 +4616,7 @@ it.effect.each(["cancel transaction", "fail transaction", "cancel publication"] 
             layerCommandReceiptStoreProvided,
             ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
             TurnItemPositionStore.layer.pipe(Layer.provide(layerDatabase)),
+            ThreadViewers.layer,
           ),
         ),
       );
