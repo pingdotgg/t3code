@@ -109,6 +109,7 @@ const defaultMaxEventSize = 10 * 1024 * 1024
  *
  * SSE `retry` directives are emitted as `Retry` failures so callers can
  * reconnect with the requested delay.
+ * Events parsed before an event-size error are emitted before the channel fails.
  *
  * @stability unstable
  * @category decoding
@@ -125,10 +126,10 @@ export const decode = <IE, Done>(options?: DecodeOptions): Channel.Channel<
   Channel.fromTransform((upstream, _scope) =>
     Effect.sync(() => {
       let buffer: Array<Event> = []
-      let retry: Retry | undefined
+      let failure: Retry | SseError | undefined
       const parser = makeParser((event) => {
         if (event._tag === "Retry") {
-          retry = event
+          failure = event
         } else {
           buffer.push(event)
         }
@@ -138,7 +139,8 @@ export const decode = <IE, Done>(options?: DecodeOptions): Channel.Channel<
         for (let i = 0; i < arr.length; i++) {
           const error = parser.feed(arr[i])
           if (error !== undefined) {
-            return Effect.fail(error)
+            failure = error
+            break
           }
         }
         return Effect.void
@@ -149,8 +151,8 @@ export const decode = <IE, Done>(options?: DecodeOptions): Channel.Channel<
           const out = buffer
           buffer = []
           return Effect.succeed(out)
-        } else if (retry) {
-          return Effect.fail(retry)
+        } else if (failure !== undefined) {
+          return Effect.fail(failure)
         }
         return Effect.flatMap(pump, loop)
       })
