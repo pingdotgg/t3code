@@ -1613,17 +1613,9 @@ impl ChatView {
             .flex_none()
             .child(icons::icon(icons::ROBOT, 16.0, muted));
         if let Some(dot_color) = dot {
-            lead_icon = lead_icon.child(
-                div()
-                    .absolute()
-                    .top(px(-2.0))
-                    .right(px(-2.0))
-                    .size(px(8.0))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(ring_fill)
-                    .bg(dot_color),
-            );
+            lead_icon = lead_icon.child(crate::panels::chrome::status_dot_cutout(
+                dot_color, ring_fill, None, false,
+            ));
         }
         let line1 = div()
             .flex()

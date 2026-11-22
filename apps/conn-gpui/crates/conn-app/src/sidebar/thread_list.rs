@@ -964,29 +964,38 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .min_w_0();
 
     if let Some(project) = row.project {
-        let dot_ring = if row.selected {
-            active_bg
-        } else {
-            hsla(tokens.shell_inner_fill)
-        };
-        let mut favicon_badge = div()
+        let (dot_ring, dot_hover_ring) =
+            crate::panels::chrome::sidebar_status_dot_rings(tokens, row.selected);
+        let favicon_badge = div()
+            .id(("thread-favicon-badge", row.row_key))
             .relative()
             .flex()
             .items_center()
             .flex_shrink_0()
             .child(render_project_favicon(project, ROW_FAVICON_PX, tokens));
+        #[cfg(test)]
+        let mut favicon_badge = favicon_badge.test_support().a11y_group(
+            SharedString::from(format!("test.sidebar.thread.{}.favicon", thread.id)),
+            SharedString::from(format!("Thread favicon: {}", thread.id)),
+        );
+        #[cfg(not(test))]
+        let mut favicon_badge = favicon_badge;
         if let Some(status) = status {
-            favicon_badge = favicon_badge.child(
-                div()
-                    .absolute()
-                    .top(px(-2.0))
-                    .right(px(-2.0))
-                    .size(px(8.0))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(dot_ring)
-                    .bg(status.dot_color(tokens)),
+            let cutout = crate::panels::chrome::status_dot_cutout(
+                status.dot_color(tokens),
+                dot_ring,
+                dot_hover_ring.map(|hover| (group.clone(), hover)),
+                false,
             );
+            #[cfg(test)]
+            let cutout = cutout
+                .id(("thread-status-cutout", row.row_key))
+                .test_support()
+                .a11y_group(
+                    SharedString::from(format!("test.sidebar.thread.{}.status-cutout", thread.id)),
+                    SharedString::from(format!("Status cutout: {}", thread.id)),
+                );
+            favicon_badge = favicon_badge.child(cutout);
         }
         line1 = line1.child(favicon_badge);
     }

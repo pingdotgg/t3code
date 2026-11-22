@@ -41,8 +41,6 @@ const LANE_GAP_PX: f32 = 8.0;
 const LANE_RADIUS_PX: f32 = 12.0;
 /// Project monogram size on a task card (`size-4` = 16px).
 const CARD_PROJECT_ICON_PX: f32 = 16.0;
-/// Status dot diameter (`size-1.5` = 6px).
-const STATUS_DOT_PX: f32 = 6.0;
 
 /// Callbacks wired from the board back into `TasksPanel`.
 pub(super) struct BoardCallbacks {
@@ -611,17 +609,7 @@ fn render_status_dot_badge(
             StatusDot::Done => to_hsla(tokens.success),
             StatusDot::Failed => to_hsla(tokens.destructive),
         };
-        wrapper = wrapper.child(
-            div()
-                .absolute()
-                .top(px(-2.0))
-                .right(px(-2.0))
-                .size(px(STATUS_DOT_PX + 2.0))
-                .rounded_full()
-                .bg(dot_color)
-                .border(px(1.5))
-                .border_color(ring),
-        );
+        wrapper = wrapper.child(chrome::status_dot_cutout(dot_color, ring, None, false));
     }
     wrapper
 }

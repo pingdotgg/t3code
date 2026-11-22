@@ -1049,7 +1049,7 @@ fn lineage_row(
     row
 }
 
-/// Provider icon with the `8px` status dot (`ThreadRelationshipIcon`).
+/// Provider icon with the `6px` status dot + `2px` cutout ring (`ThreadRelationshipIcon`).
 fn relationship_icon(child: &ThreadShell, dot: Hsla, tokens: &Tokens) -> AnyElement {
     div()
         .relative()
@@ -1059,17 +1059,12 @@ fn relationship_icon(child: &ThreadShell, dot: Hsla, tokens: &Tokens) -> AnyElem
             ICON_PX,
             hsla(tokens.muted_foreground),
         ))
-        .child(
-            div()
-                .absolute()
-                .bottom(px(-2.0))
-                .right(px(-2.0))
-                .size(px(8.0))
-                .rounded_full()
-                .border_2()
-                .border_color(hsla(tokens.card))
-                .bg(dot),
-        )
+        .child(crate::panels::chrome::status_dot_cutout(
+            dot,
+            hsla(tokens.popover),
+            None,
+            true,
+        ))
         .into_any_element()
 }
 

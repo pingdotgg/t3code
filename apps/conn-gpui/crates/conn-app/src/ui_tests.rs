@@ -932,3 +932,41 @@ fn composer_keeps_bottom_breathing_room_and_context_strip_layout(cx: &mut TestAp
         );
     });
 }
+
+#[gpui_kit::test]
+fn sidebar_status_dot_renders_10px_cutout_around_6px_dot(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            // Select a working thread so we assert both selected and unselected rows with dots.
+            app.set_thread_for_test("thread-working-bg".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        for thread_id in ["thread-working-bg", "thread-waiting", "thread-failed"] {
+            let favicon = window
+                .find_by_label(&format!("Thread favicon: {thread_id}"))
+                .bounds();
+            let cutout = window
+                .find_by_label(&format!("Status cutout: {thread_id}"))
+                .bounds();
+            let width = f32::from(cutout.size.width);
+            let height = f32::from(cutout.size.height);
+            assert!(
+                (width - 10.0).abs() <= 0.5 && (height - 10.0).abs() <= 0.5,
+                "{thread_id} status cutout must be 10x10 (6px dot + 2px ring on each side), got {width:.1}x{height:.1}"
+            );
+            let center_x = f32::from(cutout.center().x);
+            let center_y = f32::from(cutout.center().y);
+            let expected_x = f32::from(favicon.right());
+            let expected_y = f32::from(favicon.top());
+            assert!(
+                (center_x - expected_x).abs() <= 0.75 && (center_y - expected_y).abs() <= 0.75,
+                "{thread_id} cutout center must sit on the icon corner (half-width/half-height) = ({expected_x:.1}, {expected_y:.1}), got ({center_x:.1}, {center_y:.1})"
+            );
+        }
+    });
+}

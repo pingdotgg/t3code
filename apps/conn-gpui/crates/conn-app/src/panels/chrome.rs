@@ -252,7 +252,93 @@ pub(crate) const ICON_BUTTON_GLYPH_PX: f32 = 14.0;
 pub(crate) const SECTION_TABS_HEIGHT_PX: f32 = 36.0;
 /// Row inset used by panel lists (`ps-4`, `px-4`).
 pub(crate) const ROW_PAD_START_PX: f32 = 16.0;
+/// Conn `StatusDotBadge` (`apps/web/src/components/StatusDotBadge.tsx`) geometry:
+/// `6px` solid status dot (`size-1.5`) with a `2px` opaque cutout ring (`10px` outer disc)
+/// centered right on the icon's corner (`top: -5px, right: -5px`, half-width / half-height).
+pub(crate) const STATUS_DOT_INNER_PX: f32 = 6.0;
+pub(crate) const STATUS_DOT_RING_PX: f32 = 2.0;
+pub(crate) const STATUS_DOT_OUTER_PX: f32 = STATUS_DOT_INNER_PX + 2.0 * STATUS_DOT_RING_PX;
+pub(crate) const STATUS_DOT_OFFSET_PX: f32 = -(STATUS_DOT_OUTER_PX / 2.0);
 const PILL_RADIUS_PX: f32 = 9999.0;
+
+/// Alpha-composites a translucent `overlay` over an opaque `backdrop` (`a = 1.0`).
+#[must_use]
+pub(crate) fn composite_over(
+    overlay: conn_theme::Rgba,
+    backdrop: conn_theme::Rgba,
+) -> conn_theme::Rgba {
+    let a = overlay.a.clamp(0.0, 1.0);
+    conn_theme::Rgba::new(
+        overlay.r * a + backdrop.r * (1.0 - a),
+        overlay.g * a + backdrop.g * (1.0 - a),
+        overlay.b * a + backdrop.b * (1.0 - a),
+        1.0,
+    )
+}
+
+/// Computes opaque `(rest_ring, hover_ring)` colors matching a sidebar row's composited surface
+/// so the `2px` status-dot cutout blends cleanly into the row in both translucent vibrancy mode
+/// (`shell_inner_fill.a < 1.0`) and opaque `reduce_transparency` mode (`shell_inner_fill.a == 1.0`).
+#[must_use]
+pub(crate) fn sidebar_status_dot_rings(tokens: &Tokens, selected: bool) -> (Hsla, Option<Hsla>) {
+    let vibrancy_backdrop = match tokens.appearance {
+        Appearance::Dark => conn_theme::Rgba::new(50.0 / 255.0, 50.0 / 255.0, 50.0 / 255.0, 1.0),
+        Appearance::Light => {
+            conn_theme::Rgba::new(238.0 / 255.0, 238.0 / 255.0, 238.0 / 255.0, 1.0)
+        }
+    };
+    let sidebar_base = composite_over(tokens.shell_inner_fill, vibrancy_backdrop);
+    if selected {
+        (
+            to_hsla(composite_over(tokens.sidebar_row_active, sidebar_base)),
+            None,
+        )
+    } else {
+        (
+            to_hsla(sidebar_base),
+            Some(to_hsla(composite_over(
+                tokens.sidebar_row_hover,
+                sidebar_base,
+            ))),
+        )
+    }
+}
+
+/// Renders Conn's `StatusDotBadge` corner overlay as two nested circles — an opaque `10px` cutout
+/// disc (`ring_color`) containing a centered `6px` status dot (`dot_color`) — so the `2px` cutout
+/// ring never bleeds `dot_color` underneath a GPUI border.
+#[must_use]
+pub(crate) fn status_dot_cutout(
+    dot_color: Hsla,
+    ring_color: Hsla,
+    hover_ring: Option<(SharedString, Hsla)>,
+    bottom: bool,
+) -> Div {
+    let mut outer = div()
+        .absolute()
+        .right(px(STATUS_DOT_OFFSET_PX))
+        .size(px(STATUS_DOT_OUTER_PX))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(ring_color)
+        .child(
+            div()
+                .size(px(STATUS_DOT_INNER_PX))
+                .rounded_full()
+                .bg(dot_color),
+        );
+    outer = if bottom {
+        outer.bottom(px(STATUS_DOT_OFFSET_PX))
+    } else {
+        outer.top(px(STATUS_DOT_OFFSET_PX))
+    };
+    if let Some((group, hover_bg)) = hover_ring {
+        outer = outer.group_hover(group, move |s| s.bg(hover_bg));
+    }
+    outer
+}
 
 /// The surface subheader row (`data-surface-subheader`): `py-toolbar ps-2 pe-toolbar-end
 /// gap-2`, with the shell divider under it.
@@ -677,5 +763,34 @@ mod tests {
             remote_avatar_uri(Some(&same_name)).is_none(),
             "non-http(s) avatar URLs must be rejected"
         );
+    }
+
+    #[test]
+    fn sidebar_status_dot_rings_are_opaque_and_distinct_per_row_state() {
+        for theme in conn_theme::builtin_themes() {
+            let theme_id = &theme.id;
+            let tokens = conn_theme::Tokens::derive(&theme);
+            let (rest, hover) = super::sidebar_status_dot_rings(&tokens, false);
+            let hover = hover.expect("unselected sidebar row should define a hover ring");
+            let (selected, selected_hover) = super::sidebar_status_dot_rings(&tokens, true);
+            assert!(
+                selected_hover.is_none(),
+                "selected sidebar row keeps active ring on hover"
+            );
+            assert!(
+                (rest.a - 1.0).abs() < 1e-4
+                    && (hover.a - 1.0).abs() < 1e-4
+                    && (selected.a - 1.0).abs() < 1e-4,
+                "cutout rings must be 100% opaque to punch cleanly through the icon ({theme_id})"
+            );
+            assert_ne!(
+                rest, selected,
+                "selected row ring must match active row fill ({theme_id})"
+            );
+            assert_ne!(
+                rest, hover,
+                "hovered row ring must match hover row fill ({theme_id})"
+            );
+        }
     }
 }
