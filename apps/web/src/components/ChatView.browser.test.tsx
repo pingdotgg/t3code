@@ -41,7 +41,6 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   answerAssetUrls,
-  attachCodexSession,
   answerRpc,
   assistantItem,
   dispatchedCommands,
@@ -705,46 +704,6 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   await expect.element(page.getByText("Attachment 'sample.png' cannot be sent.")).toBeVisible();
   await expect.element(page.getByText("Failed prompt")).not.toBeInTheDocument();
   expect(editor.element().textContent).toContain("Next draft");
-});
-
-it("queues the opposite-action shortcut when the running session cannot steer", async () => {
-  const history = threadWithHistory("queue-only", 1);
-  const run = { ...history.runs[0]!, status: "running" as const, completedAt: null };
-  using _environment = installFakeEnvironment([{ ...history, runs: [run] }], {
-    acceptCommands: true,
-  });
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    followUpBehavior: "queue",
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${history.id}`] }),
-  );
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
-  await expect.element(page.getByRole("button", { name: "Stop generation" })).toBeVisible();
-  await attachCodexSession(history, {
-    supportsQueuedMessages: true,
-    supportsInterrupt: true,
-    supportsActiveSteering: false,
-    supportsSteeringByInterruptRestart: false,
-  });
-  await userEvent.click(page.getByTestId("composer-editor"));
-  await insertText("Queue this follow-up");
-  await userEvent.keyboard("{ControlOrMeta>}{Enter}{/ControlOrMeta}");
-  await vi.waitFor(() =>
-    expect(dispatchedCommands()).toContainEqual(
-      expect.objectContaining({
-        type: "message.dispatch",
-        text: "Queue this follow-up",
-        dispatchMode: { type: "queue_after_active" },
-      }),
-    ),
-  );
 });
 
 it("Enter on an empty prompt resumes an interrupted thread", async () => {

@@ -12,11 +12,8 @@ import {
   OrchestrationV2DispatchCommandError,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_V2_WS_METHODS,
-  OrchestrationV2ProviderCapabilities,
   ProjectId,
   ProviderInstanceId,
-  ProviderDriverKind,
-  ProviderSessionId,
   RunId,
   RuntimeRequestId,
   ServerConfig,
@@ -48,7 +45,6 @@ import type {
 import type { WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { APP_VERSION } from "~/branding";
-import * as Arbitrary from "effect/Arbitrary";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -747,37 +743,6 @@ export function runningRun(threadId: ThreadId, id: string, ordinal: number, user
     status: "running" as const,
     completedAt: null,
   };
-}
-
-export async function attachCodexSession(
-  thread: FakeThread,
-  turns: Partial<OrchestrationV2ProviderCapabilities["turns"]>,
-) {
-  const capabilities = (
-    await Effect.runPromise(
-      Arbitrary.sampleEffect(Arbitrary.schema(OrchestrationV2ProviderCapabilities), {
-        count: 1,
-        seed: 1,
-      }),
-    )
-  )[0]!;
-  const model = thread.modelSelection ?? MODEL;
-  await emitThreadEvent(thread.id, {
-    type: "provider-session.attached",
-    payload: {
-      id: ProviderSessionId.make(`${thread.id}-session`),
-      providerInstanceId: model.instanceId,
-      driver: ProviderDriverKind.make("codex"),
-      status: "running",
-      cwd: project.workspaceRoot,
-      model: model.model,
-      capabilities: { ...capabilities, turns: { ...capabilities.turns, ...turns } },
-      extensionStatuses: [],
-      createdAt: AT,
-      updatedAt: AT,
-      lastError: null,
-    },
-  });
 }
 
 export { userItem };

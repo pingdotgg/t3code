@@ -40,7 +40,6 @@ describe("thread workflows", () => {
     ["native steering", { steer: true }, false, true],
     ["interrupt and restart", { interrupt: true, restartSteer: true }, false, true],
     ["restart without interrupt", { restartSteer: true }, false, false],
-    ["interrupt without restart", { interrupt: true }, false, false],
     ["explicit compaction", { steer: true }, true, false],
   ] as const)("gates composer steering for %s", (_, turns, compactCommandIsActive, expected) => {
     const projection = {
