@@ -30,7 +30,7 @@ export interface ProviderContinuationRequest {
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
   readonly clearIfCurrent?: () => Effect.Effect<void>;
-  /** Called when the run this request dispatched ends without starting, such as a cancelled queued run. */
+  /** Called when the run this request dispatched reaches a terminal state; adapters guard by wake generation/token so it is a no-op once a turn attaches. */
   readonly onRunEndedWithoutStarting?: () => Effect.Effect<void>;
 }
 

@@ -2156,6 +2156,40 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         });
       }).pipe(Effect.provide(layerSession)),
   );
+
+  it.effect(
+    "cancels a detached approval-required permission request when continuation is unavailable",
+    () =>
+      Effect.gen(function* () {
+        const { startTurn, throughTerminal, requestPermission } =
+          yield* openSessionWithRunningCommand(
+            { IsDaemon: true, WaitMsBeforeAsync: 500 },
+            undefined,
+            undefined,
+            { runtimeMode: "approval-required", disableContinuationRequests: true },
+          );
+        yield* startTurn(1, false);
+        yield* throughTerminal;
+
+        const response = yield* requestPermission(
+          {
+            sessionId: "mock-session-1",
+            toolCall: {
+              toolCallId: "call_ask_no_cont",
+              kind: "execute",
+              title: "git push",
+              status: "pending",
+            },
+            options: [
+              { optionId: "allow", name: "Allow", kind: "allow_once" },
+              { optionId: "deny", name: "Deny", kind: "reject_once" },
+            ],
+          },
+          { requestId: "permission-ask-no-cont", method: "session/request_permission" },
+        );
+        assert.deepEqual(response, { outcome: { outcome: "cancelled" } });
+      }).pipe(Effect.provide(layerSession)),
+  );
 });
 
 describe("AntigravityAdapterV2 subagent reads", () => {

@@ -6643,14 +6643,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         );
 
         const cancelPendingRuntimeRequests = Effect.fnUntraced(function* (
-          options: {
-            readonly stopMcpCalls: boolean;
-            readonly cancelDetachedRequests?: boolean;
-          } = { stopMcpCalls: true, cancelDetachedRequests: true },
+          options: { readonly stopMcpCalls: boolean } = { stopMcpCalls: true },
         ) {
-          if (options.cancelDetachedRequests !== false) {
-            yield* resolveTurnAttached("cancelled");
-          }
+          yield* resolveTurnAttached("cancelled");
           // session/cancel does not end the agent's MCP calls; T3 runs them, so it stops them.
           if (options.stopMcpCalls && runtimeMcpBridge !== undefined) {
             yield* runtimeMcpBridge.stopCalls;
@@ -7372,94 +7367,75 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
-              let turnState: "attached" | "unattached" | "cancelled" = "attached";
               if (
                 (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") ||
                 (postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
               ) {
-                turnState = yield* awaitRequestTurn(handlerGeneration);
-                if (turnState === "cancelled")
+                if ((yield* awaitRequestTurn(handlerGeneration)) === "cancelled")
                   return { outcome: { outcome: "cancelled" } } as const;
               }
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
+                  let immediateResponse: EffectAcpSchema.RequestPermissionResponse | undefined;
                   if (yield* Ref.get(stoppedRunQuarantine)) {
-                    return {
-                      _tag: "Immediate" as const,
-                      response: { outcome: { outcome: "cancelled" } } as const,
-                    };
+                    immediateResponse = { outcome: { outcome: "cancelled" } };
+                  } else {
+                    const context = yield* Ref.get(activeTurn);
+                    // Kiro sends the tool's kind on its `tool_call` and leaves it
+                    // off the permission request for that call; take it from the
+                    // tool already seen under the same id so policy can tell a
+                    // read from a write.
+                    const knownKind = context?.tools.get(params.toolCall.toolCallId)?.kind;
+                    const disposition = dispositionFor(
+                      context?.input.runtimePolicy ?? latestRuntimePolicy,
+                      params.toolCall.kind == null && knownKind !== undefined
+                        ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
+                        : params,
+                    );
+                    if (disposition === "allow") {
+                      const optionId = selectAutoApprovedPermissionOption(answerableParams);
+                      immediateResponse =
+                        optionId === undefined
+                          ? { outcome: { outcome: "cancelled" } }
+                          : { outcome: { outcome: "selected", optionId } };
+                    } else if (disposition === "deny") {
+                      const optionId = selectPermissionOptionId(answerableParams, "decline");
+                      immediateResponse =
+                        optionId === undefined
+                          ? { outcome: { outcome: "cancelled" } }
+                          : { outcome: { outcome: "selected", optionId } };
+                    } else if (context === null) {
+                      immediateResponse = { outcome: { outcome: "cancelled" } };
+                    } else {
+                      return {
+                        _tag: "Pending" as const,
+                        pending: yield* beginApprovalRequest(
+                          context,
+                          params,
+                          handlerGeneration,
+                          transportRequestId,
+                        ),
+                      };
+                    }
                   }
-                  const context = yield* Ref.get(activeTurn);
-                  // Kiro sends the tool's kind on its `tool_call` and leaves it
-                  // off the permission request for that call; take it from the
-                  // tool already seen under the same id so policy can tell a
-                  // read from a write.
-                  const knownKind = context?.tools.get(params.toolCall.toolCallId)?.kind;
-                  const disposition = dispositionFor(
-                    context?.input.runtimePolicy ?? latestRuntimePolicy,
-                    params.toolCall.kind == null && knownKind !== undefined
-                      ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
-                      : params,
+                  const nativeResponseAcknowledgement = yield* Deferred.make<
+                    void,
+                    EffectAcpErrors.AcpError
+                  >();
+                  yield* registerNativeResponseAcknowledgement(
+                    handlerGeneration,
+                    transportRequestId,
+                    nativeResponseAcknowledgement,
                   );
-                  if (disposition === "allow") {
-                    const optionId = selectAutoApprovedPermissionOption(answerableParams);
-                    return {
-                      _tag: "Immediate" as const,
-                      response:
-                        optionId === undefined
-                          ? ({ outcome: { outcome: "cancelled" } } as const)
-                          : ({ outcome: { outcome: "selected", optionId } } as const),
-                    };
-                  }
-                  if (disposition === "deny") {
-                    const optionId = selectPermissionOptionId(answerableParams, "decline");
-                    return {
-                      _tag: "Immediate" as const,
-                      response:
-                        optionId === undefined
-                          ? ({ outcome: { outcome: "cancelled" } } as const)
-                          : ({ outcome: { outcome: "selected", optionId } } as const),
-                    };
-                  }
-                  if (context === null && turnState === "unattached") {
-                    return {
-                      _tag: "Immediate" as const,
-                      response: { outcome: { outcome: "cancelled" } } as const,
-                    };
-                  }
-                  return {
-                    _tag: "Pending" as const,
-                    pending: yield* beginApprovalRequest(
-                      context ?? (yield* activeContext),
-                      params,
-                      handlerGeneration,
-                      transportRequestId,
-                    ),
-                  };
+                  return { _tag: "Immediate" as const, response: immediateResponse };
                 }),
               );
               if (Option.isNone(admitted)) {
                 return yield* Effect.never;
               }
               if (admitted.value._tag === "Immediate") {
-                const response = admitted.value.response;
-                const checked = yield* runRuntimeCallbackAtGeneration(
-                  handlerGeneration,
-                  Effect.gen(function* () {
-                    const nativeResponseAcknowledgement = yield* Deferred.make<
-                      void,
-                      EffectAcpErrors.AcpError
-                    >();
-                    yield* registerNativeResponseAcknowledgement(
-                      handlerGeneration,
-                      transportRequestId,
-                      nativeResponseAcknowledgement,
-                    );
-                    return response;
-                  }),
-                );
-                return Option.isSome(checked) ? checked.value : yield* Effect.never;
+                return admitted.value.response;
               }
               const {
                 context,
@@ -10415,10 +10391,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         yield* quarantineStoppedRun();
                       }
                       // A settled soft interrupt keeps background subagents, and with them their MCP calls.
-                      yield* cancelPendingRuntimeRequests({
-                        stopMcpCalls: !settledSoftInterrupt,
-                        cancelDetachedRequests: !settledSoftInterrupt,
-                      });
+                      yield* cancelPendingRuntimeRequests({ stopMcpCalls: !settledSoftInterrupt });
                       // Finalize before killing so projection catches up and concurrent interrupts see activeTurn cleared.
                       if (
                         (hardRestart || context.promptSettled || settledSoftInterrupt) &&

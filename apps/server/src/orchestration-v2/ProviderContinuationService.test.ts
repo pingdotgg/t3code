@@ -12,6 +12,7 @@ import {
   type OrchestrationV2Notification,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -20,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -660,5 +662,63 @@ describe("ProviderContinuationService", () => {
         );
       });
     },
+  );
+
+  it.effect(
+    "calls onRunEndedWithoutStarting when a started continuation run fails before attaching a turn",
+    () =>
+      Effect.gen(function* () {
+        const continuationRunId = RunId.make("run-provider-continuation-start-failed");
+        const released = yield* Deferred.make<void>();
+        const startedAt = DateTime.makeUnsafe("2026-11-22T05:00:00.000Z");
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          dispatch: (command) =>
+            Effect.succeed({
+              sequence: 10,
+              storedEvents: [
+                {
+                  sequence: 10,
+                  event: {
+                    type: "run.created",
+                    payload: {
+                      id: continuationRunId,
+                      userMessageId: "messageId" in command ? command.messageId : undefined,
+                    },
+                  },
+                },
+              ],
+            } as never),
+          streamStoredEventsFrom: () =>
+            Stream.make({
+              sequence: 11,
+              event: {
+                type: "run.updated",
+                payload: {
+                  id: continuationRunId,
+                  status: "failed",
+                  startedAt,
+                },
+              },
+            } as never),
+        });
+        const layerWorker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(),
+            onRunEndedWithoutStarting: () => Deferred.succeed(released, undefined),
+          });
+          yield* Deferred.await(released);
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      }),
   );
 });
