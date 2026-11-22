@@ -1058,6 +1058,7 @@ function ComposerPromptEditorTiptapInner(
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
+  const pendingHistoryDirectionRef = useRef<ComposerPromptHistoryChange["direction"]>(null);
   const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
@@ -1135,6 +1136,12 @@ function ComposerPromptEditorTiptapInner(
         (node) => node?.isInline && node.isAtom && !node.isText && node.type.name !== "hardBreak",
       );
     const textChanged = previousSnapshot.value !== nextValue;
+    const rawHistory = composerHistoryRevisionOf(updated.state);
+    const history =
+      pendingHistoryDirectionRef.current !== null && rawHistory.direction === null
+        ? { ...rawHistory, direction: pendingHistoryDirectionRef.current }
+        : rawHistory;
+    pendingHistoryDirectionRef.current = null;
     readCallbacks().onChange(
       nextValue,
       nextCursor,
@@ -1142,7 +1149,7 @@ function ComposerPromptEditorTiptapInner(
       suppressTrigger,
       contextIds,
       textChanged,
-      composerHistoryRevisionOf(updated.state),
+      history,
     );
   };
 
@@ -1572,6 +1579,7 @@ function ComposerPromptEditorTiptapInner(
             isKnownModel,
           ).filter(({ node }) => node.isText);
           if (stale.length > 0) {
+            pendingHistoryDirectionRef.current = composerHistoryRevisionOf(updated.state).direction;
             replaceSkillChips(updated, stale);
             return;
           }
