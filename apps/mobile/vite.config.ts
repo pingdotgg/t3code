@@ -40,7 +40,6 @@ const reactTests = [
   "src/features/threads/PendingUserInputCard.test.tsx",
   "src/features/threads/NewTaskDraftRouteScreen.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
-  "src/native/EnrichedMarkdownText.test.tsx",
   "src/components/ComposerEditor.ios.test.tsx",
   "src/native/V5StackHeader.ios.test.tsx",
   "src/native/createV5StackNavigator.ios.test.tsx",
