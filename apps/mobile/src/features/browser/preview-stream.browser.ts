@@ -156,9 +156,6 @@ export function start(configuration: PreviewStreamConfiguration) {
   };
 
   const connect = () => {
-    // The server releases control with the old socket, and agent tabs never hand it back.
-    const heldGeneration = interactive && control?.controller === "you" ? control.generation : null;
-    let retake = heldGeneration !== null;
     if (client) reportStatus("connecting");
     client?.stop();
     control = null;
@@ -208,26 +205,6 @@ export function start(configuration: PreviewStreamConfiguration) {
         onControl: (nextControl) => {
           const previous = control;
           control = nextControl;
-          if (retake) {
-            // At our held generation, the other viewer is our old socket; showing it would flash.
-            if (
-              nextControl.controller === "another-viewer" &&
-              nextControl.generation === heldGeneration
-            ) {
-              clearInput();
-              return;
-            }
-            if (
-              (nextControl.controller === "agent" || nextControl.controller === "unclaimed") &&
-              nextControl.canOperate
-            ) {
-              retake = false;
-              clearInput();
-              next.send({ type: "takeControl" });
-              return;
-            }
-            retake = false;
-          }
           post({ type: "control", ...nextControl });
           if (nextControl.controller === "you") agentCursor.style.opacity = "0";
           if (nextControl.controller !== "you") clearInput();
@@ -267,6 +244,12 @@ export function start(configuration: PreviewStreamConfiguration) {
     const height = Math.round((interactive ? next.height : side) * ratio);
     if (cap && cap.width >= width && cap.height >= height) return;
     cap = { width: Math.max(width, cap?.width ?? 0), height: Math.max(height, cap?.height ?? 0) };
+    // A new socket would release control, and agent-owned tabs do not hand it back.
+    if (
+      control?.controller === "you" &&
+      send({ type: "maxSize", maxWidth: cap.width, maxHeight: cap.height })
+    )
+      return;
     connect();
   };
   const observer = new ResizeObserver(() => {

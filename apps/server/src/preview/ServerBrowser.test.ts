@@ -1596,6 +1596,30 @@ it.effect("keeps a tab's zoom when its viewer resizes", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("raises a viewer's frame cap on its open stream without releasing control", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const session = contexts[0]!.sessions.at(-1)!;
+      session.send.mockClear();
+      yield* viewer.input({ type: "maxSize", maxWidth: 2064, maxHeight: 9000 });
+      expect(session.send).toHaveBeenCalledWith(
+        "Page.startScreencast",
+        expect.objectContaining({ maxWidth: 2064, maxHeight: 4320 }),
+      );
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.control).toMatchObject({ owner: "human" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect(
   "streams to a read-only viewer without allowing takeover, input, or viewport changes",
   () =>
