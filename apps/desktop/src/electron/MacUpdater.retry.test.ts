@@ -26,7 +26,7 @@ it.each(["closed feed", "interrupted transfer"] as const)(
         try {
           if (++attempts === 1 && fault === "closed feed") {
             // Make the first handoff fail, leaving the downloaded archive intact.
-            const closed = NodeEvents.once(updater.server, "close");
+            const closed = NodeEvents.EventEmitter.once(updater.server, "close");
             updater.server.close();
             await closed;
           }
@@ -73,10 +73,10 @@ it.each(["closed feed", "interrupted transfer"] as const)(
         { downloadedFile },
       );
       const listeningAtDownload = updater.server?.listening ?? false;
-      const firstFailure = NodeEvents.once(native, "error");
+      const firstFailure = NodeEvents.EventEmitter.once(native, "error");
       updater.quitAndInstall();
       await firstFailure;
-      const staged = NodeEvents.once(native, "update-downloaded");
+      const staged = NodeEvents.EventEmitter.once(native, "update-downloaded");
       updater.quitAndInstall();
       updater.quitAndInstall();
       await staged;
