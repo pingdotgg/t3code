@@ -106,6 +106,7 @@ function makeEnvironmentLinks(
     listForUser: () => Effect.succeed([]),
     getForUser: () => Effect.succeed(null),
     findActiveManagedForEnvironment: () => Effect.succeed([]),
+    updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
     setHoldWebhooksWhileOffline: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
     ...overrides,
@@ -116,6 +117,7 @@ function makeApnsDeliveries(
   overrides: Partial<ApnsDeliveries.ApnsDeliveries["Service"]> = {},
 ): ApnsDeliveries.ApnsDeliveries["Service"] {
   return {
+    processBatch: () => Effect.void,
     sendForTarget: () => Effect.succeed(null),
     sendLiveActivity: () =>
       Effect.succeed({
@@ -198,6 +200,73 @@ describe("AgentActivityPublisher", () => {
                     fcmCalls.push(input);
                     return null;
                   }),
+                process: () => Effect.void,
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect.each([
+    {
+      name: "skips the activity query without a running iOS Live Activity",
+      activityToken: null,
+      listCalls: 0,
+    },
+    {
+      name: "aggregates activity for a running iOS Live Activity",
+      activityToken: "activity-token",
+      listCalls: 1,
+    },
+  ])("$name", ({ activityToken, listCalls }) => {
+    const android = { ...target("android"), platform: "android" as const, ios_major_version: null };
+    const ios = { ...target("ios"), activity_push_token: activityToken };
+    let listed = 0;
+    const hasAggregate: boolean[] = [];
+    return Effect.gen(function* () {
+      const publisher = yield* AgentActivityPublisher.AgentActivityPublisher;
+      yield* publisher.publish({
+        environmentId: state.environmentId,
+        environmentPublicKey: "key",
+        threadId: state.threadId,
+        state,
+      });
+      expect(listed).toBe(listCalls);
+      expect(hasAggregate).toEqual([listCalls > 0]);
+    }).pipe(
+      Effect.provide(
+        AgentActivityPublisher.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(
+                AgentActivityRows.AgentActivityRows,
+                makeAgentActivityRows({
+                  listForUser: () =>
+                    Effect.sync(() => {
+                      listed += 1;
+                      return [state];
+                    }),
+                }),
+              ),
+              Layer.succeed(EnvironmentLinks.EnvironmentLinks, makeEnvironmentLinks()),
+              Layer.succeed(
+                LiveActivities.LiveActivities,
+                makeLiveActivities({ listTargets: () => Effect.succeed([android, ios]) }),
+              ),
+              Layer.succeed(
+                ApnsDeliveries.ApnsDeliveries,
+                makeApnsDeliveries({
+                  sendForTarget: (input) =>
+                    Effect.sync(() => {
+                      hasAggregate.push(input.aggregate !== null);
+                      return null;
+                    }),
+                }),
+              ),
+              Layer.succeed(FcmDeliveries.FcmDeliveries, {
+                enqueue: () => Effect.succeed(null),
                 process: () => Effect.void,
               }),
             ),
