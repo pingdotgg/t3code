@@ -36,11 +36,13 @@ interface LiveConfigurationEntry {
 interface LiveConfigurationState {
   readonly nextRevision: number;
   readonly entries: ReadonlyMap<ProviderInstanceId, LiveConfigurationEntry>;
+  readonly clearedThroughRevision: ReadonlyMap<ProviderInstanceId, number>;
 }
 
 export interface AcpRegistryLiveConfigurationSnapshot {
   readonly configuration: Option.Option<AcpRegistryLiveConfiguration>;
   readonly revision: number;
+  readonly clearedThroughRevision: number;
 }
 
 interface UrlAuthActionUpdate {
@@ -99,7 +101,10 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     ) => Effect.Effect<AcpRegistryLiveConfigurationSnapshot>;
     readonly watchLiveConfiguration: (
       instanceId: ProviderInstanceId,
-      onUpdate: (configuration: AcpRegistryLiveConfiguration) => Effect.Effect<void>,
+      onUpdate: (
+        configuration: AcpRegistryLiveConfiguration,
+        revision: number,
+      ) => Effect.Effect<void>,
       options?: { readonly afterRevision?: number },
     ) => Effect.Effect<void>;
     readonly requestUrlAuthentication: (
@@ -130,6 +135,7 @@ const make = Effect.gen(function* () {
   const liveConfigurations = yield* Ref.make<LiveConfigurationState>({
     nextRevision: 0,
     entries: new Map(),
+    clearedThroughRevision: new Map(),
   });
   const urlAuthActionUpdates = yield* PubSub.unbounded<UrlAuthActionUpdate>();
   const pendingUrlAuthActions = yield* Ref.make(
@@ -232,10 +238,14 @@ const make = Effect.gen(function* () {
   const clearLiveConfiguration: AcpRegistryRuntimeCoordinator["Service"]["clearLiveConfiguration"] =
     (instanceId) =>
       Ref.update(liveConfigurations, (state) => {
-        if (!state.entries.has(instanceId)) return state;
+        const previousCleared = state.clearedThroughRevision.get(instanceId) ?? 0;
+        const nextCleared = Math.max(previousCleared, state.nextRevision);
+        if (!state.entries.has(instanceId) && nextCleared === previousCleared) return state;
         const entries = new Map(state.entries);
         entries.delete(instanceId);
-        return { ...state, entries };
+        const clearedThroughRevision = new Map(state.clearedThroughRevision);
+        clearedThroughRevision.set(instanceId, nextCleared);
+        return { ...state, entries, clearedThroughRevision };
       });
 
   const clearLiveConfigurationIfRevision: AcpRegistryRuntimeCoordinator["Service"]["clearLiveConfigurationIfRevision"] =
@@ -243,11 +253,18 @@ const make = Effect.gen(function* () {
       function* (instanceId, revision) {
         return yield* Ref.modify(liveConfigurations, (state) => {
           const current = state.entries.get(instanceId);
-          if (current === undefined) return [true, state] as const;
-          if (current.revision !== revision) return [false, state] as const;
+          if (current !== undefined && current.revision !== revision)
+            return [false, state] as const;
+          const previousCleared = state.clearedThroughRevision.get(instanceId) ?? 0;
+          const nextCleared = Math.max(previousCleared, revision);
+          if (current === undefined && nextCleared === previousCleared) {
+            return [true, state] as const;
+          }
           const entries = new Map(state.entries);
           entries.delete(instanceId);
-          return [true, { ...state, entries }] as const;
+          const clearedThroughRevision = new Map(state.clearedThroughRevision);
+          clearedThroughRevision.set(instanceId, nextCleared);
+          return [true, { ...state, entries, clearedThroughRevision }] as const;
         });
       },
     );
@@ -258,7 +275,7 @@ const make = Effect.gen(function* () {
         const revision = state.nextRevision + 1;
         const entries = new Map(state.entries);
         entries.set(instanceId, { configuration, revision });
-        return [revision, { nextRevision: revision, entries }] as const;
+        return [revision, { ...state, nextRevision: revision, entries }] as const;
       }).pipe(
         Effect.flatMap((revision) =>
           PubSub.publish(liveConfigurationUpdates, {
@@ -278,6 +295,7 @@ const make = Effect.gen(function* () {
         return {
           configuration: Option.fromNullishOr(entry?.configuration),
           revision: entry?.revision ?? state.nextRevision,
+          clearedThroughRevision: state.clearedThroughRevision.get(instanceId) ?? 0,
         };
       },
     );
@@ -300,14 +318,14 @@ const make = Effect.gen(function* () {
             (afterRevision === undefined || current.revision > afterRevision)
           ) {
             deliveredRevision = current.revision;
-            yield* onUpdate(current.configuration);
+            yield* onUpdate(current.configuration, current.revision);
           }
           yield* Stream.fromSubscription(subscription).pipe(
             Stream.filter((update) => update.instanceId === instanceId),
             Stream.runForEach((update) => {
               if (update.revision <= deliveredRevision) return Effect.void;
               deliveredRevision = update.revision;
-              return onUpdate(update.configuration);
+              return onUpdate(update.configuration, update.revision);
             }),
           );
         }),

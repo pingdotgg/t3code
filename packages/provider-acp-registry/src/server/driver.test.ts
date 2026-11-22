@@ -1471,8 +1471,14 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           Option.getOrThrow(yield* Fiber.join(nextCached)).models.map((model) => model.slug),
         ).toEqual(["new-model", "old-model", "other-model"]);
 
-        // Once the live entry has been cleared, a later provisional post-TTL probe must not
-        // regress the settled accepted catalog to a placeholder model.
+        // Once the live entry has been cleared, a later provisional post-TTL probe—even after an
+        // intervening provisional live update—must not regress the settled accepted catalog.
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [{ id: "live-placeholder", name: "Live Placeholder", description: null }],
+          currentModelId: "live-placeholder",
+          configOptions: [],
+          modelsFromModelSelect: false,
+        });
         yield* fileSystem.writeFileString(
           modelsPath,
           JSON.stringify({ provisional: "placeholder" }),
@@ -1610,5 +1616,154 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         ),
       ).toEqual(Option.some("entitled-model"));
     }),
+  );
+
+  it.effect(
+    "skips a delayed live-watcher callback after a fresh probe supersedes its revision",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "acp-driver-stale-watcher-",
+        });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-model", "other-model"]));
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const allowProbe = yield* Deferred.make<void>();
+        const staleCallbackEntered = yield* Deferred.make<void>();
+        const releaseStaleCallback = yield* Deferred.make<void>();
+        const staleCallbackDone = yield* Deferred.make<void>();
+        const secondWatcherSubscribed = yield* Deferred.make<void>();
+        let postTtlLiveReads = 0;
+        let armed = false;
+        let trackNextWatcher = false;
+
+        const gatedCoordinator: AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator["Service"] =
+          {
+            ...coordinator,
+            getLiveConfigurationWithRevision: (instanceId) =>
+              Effect.gen(function* () {
+                if (armed) {
+                  postTtlLiveReads += 1;
+                  // 1st read is checkProvider; 2nd read is enrichProviderCached capturing probeStartLiveRevision.
+                  if (postTtlLiveReads === 2) {
+                    armed = false;
+                    yield* Deferred.await(allowProbe);
+                  }
+                }
+                return yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+              }),
+            watchLiveConfiguration: (instanceId, onUpdate, options) =>
+              Effect.gen(function* () {
+                if (trackNextWatcher) {
+                  trackNextWatcher = false;
+                  yield* Deferred.succeed(secondWatcherSubscribed, undefined);
+                }
+                return yield* coordinator.watchLiveConfiguration(
+                  instanceId,
+                  (configuration, revision) =>
+                    configuration.currentModelId === "stale-live-model"
+                      ? Deferred.succeed(staleCallbackEntered, undefined).pipe(
+                          Effect.andThen(Deferred.await(releaseStaleCallback)),
+                          Effect.andThen(onUpdate(configuration, revision)),
+                          Effect.andThen(Deferred.succeed(staleCallbackDone, undefined)),
+                          Effect.asVoid,
+                        )
+                      : onUpdate(configuration, revision),
+                  options,
+                );
+              }),
+          };
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            gatedCoordinator,
+          ),
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection({
+              status: "ready",
+              agentId: "test-agent",
+              version: "1.0.0",
+              distribution: "npx",
+            }),
+            resolve: () =>
+              Effect.succeed({
+                distribution: "npx" as const,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              }),
+          }),
+        );
+
+        const waitForEnriched = () =>
+          instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+            Stream.runHead,
+          );
+
+        const initial = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(initial);
+
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify(["old-model", "other-model", "new-model"]),
+        );
+        yield* TestClock.adjust("16 minutes");
+        armed = true;
+        trackNextWatcher = true;
+
+        const probed = yield* waitForEnriched().pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(secondWatcherSubscribed);
+
+        // Publish a live configuration whose watcher callback pauses before acquiring the snapshot semaphore.
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [
+            { id: "old-model", name: "old-model", description: null },
+            { id: "stale-live-model", name: "stale-live-model", description: null },
+          ],
+          currentModelId: "stale-live-model",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        yield* Deferred.await(staleCallbackEntered);
+
+        // Let the fresh probe observe and clear that revision, publishing the newer catalog.
+        yield* Deferred.succeed(allowProbe, undefined);
+        expect(
+          Option.getOrThrow(yield* Fiber.join(probed)).models.map((model) => model.slug),
+        ).toEqual(["old-model", "other-model", "new-model"]);
+
+        // Releasing the delayed watcher callback must not overwrite the snapshot, cache, or accepted catalog.
+        yield* Deferred.succeed(releaseStaleCallback, undefined);
+        yield* Deferred.await(staleCallbackDone);
+        expect((yield* instance.snapshot.getSnapshot).models.map((model) => model.slug)).toEqual([
+          "old-model",
+          "other-model",
+          "new-model",
+        ]);
+
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify(["unexpected-reprobe", "other-model"]),
+        );
+        const cached = yield* waitForEnriched().pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* instance.snapshot.refresh;
+        expect(
+          Option.getOrThrow(yield* Fiber.join(cached)).models.map((model) => model.slug),
+        ).toEqual(["old-model", "other-model", "new-model"]);
+      }),
   );
 });

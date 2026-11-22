@@ -97,6 +97,17 @@ const EMPTY_ACCEPTED_CATALOG: AcceptedAcpRegistryCatalog = {
   modelsFromModelSelect: false,
 };
 
+function liveConfigurationReplacesAcceptedCatalog(
+  configuration: AcpRegistryLiveConfiguration,
+  accepted: AcceptedAcpRegistryCatalog,
+): boolean {
+  return (
+    configuration.models.length > 1 ||
+    (configuration.models.length === 1 &&
+      (configuration.modelsFromModelSelect === true || accepted.builtInModelCount <= 1))
+  );
+}
+
 export function acpRegistryProbeSupersedesLiveCatalog(input: {
   readonly probedModelCount: number;
   readonly probedModelsFromModelSelect: boolean;
@@ -1012,18 +1023,24 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(
                             instanceId,
                           )
-                        : { configuration: Option.none(), revision: 0 };
+                        : { configuration: Option.none(), revision: 0, clearedThroughRevision: 0 };
                       const accepted = yield* Ref.get(acceptedCatalog);
-                      const incumbent = Option.match(liveSnapshot.configuration, {
-                        onNone: () => ({
-                          modelCount: accepted.builtInModelCount,
-                          modelsFromModelSelect: accepted.modelsFromModelSelect,
-                        }),
-                        onSome: (configuration) => ({
-                          modelCount: configuration.models.length,
-                          modelsFromModelSelect: configuration.modelsFromModelSelect === true,
-                        }),
+                      const liveCatalogUsed = Option.match(liveSnapshot.configuration, {
+                        onNone: () => false,
+                        onSome: (configuration) =>
+                          liveConfigurationReplacesAcceptedCatalog(configuration, accepted),
                       });
+                      const incumbent =
+                        liveCatalogUsed && Option.isSome(liveSnapshot.configuration)
+                          ? {
+                              modelCount: liveSnapshot.configuration.value.models.length,
+                              modelsFromModelSelect:
+                                liveSnapshot.configuration.value.modelsFromModelSelect === true,
+                            }
+                          : {
+                              modelCount: accepted.builtInModelCount,
+                              modelsFromModelSelect: accepted.modelsFromModelSelect,
+                            };
                       const probeSupersedesLiveCatalog = acpRegistryProbeSupersedesLiveCatalog({
                         probedModelCount,
                         probedModelsFromModelSelect,
@@ -1041,7 +1058,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         : false;
                       if (
                         !probeSupersedesLiveCatalog &&
-                        Option.isNone(liveSnapshot.configuration) &&
+                        !liveCatalogUsed &&
                         accepted.models.length > 0
                       ) {
                         resolved = { ...provider, models: accepted.models };
@@ -1108,48 +1125,44 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           Effect.flatMap((afterRevision) =>
             runtimeCoordinator.value.watchLiveConfiguration(
               instanceId,
-              (configuration) =>
+              (configuration, revision) =>
                 liveSnapshotSemaphore.withPermit(
-                  getSnapshot.pipe(
-                    Effect.flatMap((current) => applyLiveConfiguration(current, configuration)),
-                    Effect.tap((next) =>
-                      next.status === "ready"
-                        ? Ref.update(acceptedCatalog, (previous) => {
-                            const liveUsed =
-                              configuration.models.length > 1 ||
-                              (configuration.models.length === 1 &&
-                                (configuration.modelsFromModelSelect === true ||
-                                  previous.builtInModelCount <= 1));
-                            return liveUsed
-                              ? {
-                                  models: next.models,
-                                  builtInModelCount: configuration.models.length,
-                                  modelsFromModelSelect:
-                                    configuration.modelsFromModelSelect === true,
-                                }
-                              : {
-                                  ...previous,
-                                  models: next.models,
-                                };
-                          })
-                        : Effect.void,
-                    ),
-                    Effect.tap(() =>
-                      Clock.currentTimeMillis.pipe(
-                        Effect.flatMap((now) =>
-                          Ref.update(enrichmentCache, (cache) =>
-                            updateAcpRegistryEnrichmentCache({
-                              cache,
-                              configuration,
-                              customModels: effectiveConfig.customModels,
-                              now,
-                            }),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Effect.flatMap(publishSnapshot),
-                  ),
+                  Effect.gen(function* () {
+                    const currentLive =
+                      yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId);
+                    if (
+                      Option.isNone(currentLive.configuration) ||
+                      revision <= currentLive.clearedThroughRevision
+                    ) {
+                      return;
+                    }
+                    const current = yield* getSnapshot;
+                    const next = yield* applyLiveConfiguration(current, configuration);
+                    if (next.status === "ready") {
+                      yield* Ref.update(acceptedCatalog, (previous) =>
+                        liveConfigurationReplacesAcceptedCatalog(configuration, previous)
+                          ? {
+                              models: next.models,
+                              builtInModelCount: configuration.models.length,
+                              modelsFromModelSelect: configuration.modelsFromModelSelect === true,
+                            }
+                          : {
+                              ...previous,
+                              models: next.models,
+                            },
+                      );
+                    }
+                    const now = yield* Clock.currentTimeMillis;
+                    yield* Ref.update(enrichmentCache, (cache) =>
+                      updateAcpRegistryEnrichmentCache({
+                        cache,
+                        configuration,
+                        customModels: effectiveConfig.customModels,
+                        now,
+                      }),
+                    );
+                    yield* publishSnapshot(next);
+                  }),
                 ),
               { afterRevision },
             ),
