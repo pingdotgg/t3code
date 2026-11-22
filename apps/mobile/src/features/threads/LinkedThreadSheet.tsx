@@ -359,7 +359,7 @@ export function LinkedThreadView(props: {
           ) : (
             <>
               {view.thread.historyCursor !== null ? (
-                <View className="items-center self-center">
+                <View className="flex-row flex-wrap justify-center">
                   <Button
                     size="compact"
                     tone="text"
@@ -372,7 +372,7 @@ export function LinkedThreadView(props: {
                     <Text
                       accessibilityLiveRegion="polite"
                       accessibilityRole="alert"
-                      className="text-center text-xs text-danger-foreground"
+                      className="w-full text-center text-xs text-danger-foreground"
                     >
                       {gt("Could not load earlier turns. Try again.")}
                     </Text>
