@@ -2191,6 +2191,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.as<ReadonlyArray<string>>([]),
               ),
             ),
+            withAppServerDeadline("config/read"),
           );
         const now = yield* DateTime.now;
         const session = providerSession({
