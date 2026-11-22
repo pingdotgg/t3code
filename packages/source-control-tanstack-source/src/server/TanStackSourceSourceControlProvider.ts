@@ -566,11 +566,18 @@ export const make = Effect.gen(function* () {
                   "--no-track",
                   "-B",
                   localBranch,
-                  `refs/remotes/${remoteName}/${localBranch}`,
+                  `refs/remotes/${remoteBranch.remoteName}/${localBranch}`,
                   "--",
                 ],
               });
             yield* git.setBranchUpstream({ ...remoteBranch, branch: localBranch });
+            // Whatever push defaults say, this branch must not be published to the public remote.
+            if (companion !== null)
+              yield* git.writeConfigValue({
+                cwd: input.cwd,
+                key: `branch.${localBranch}.pushRemote`,
+                value: remoteBranch.remoteName,
+              });
             yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
             return;
           }

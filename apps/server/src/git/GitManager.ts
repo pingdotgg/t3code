@@ -2922,18 +2922,23 @@ export const make = Effect.gen(function* () {
       );
     }
     const companion = yield* provider.privateChangeRequestRemote({ cwd });
+    const remoteName = yield* gitCore.ensureRemote({
+      cwd,
+      preferredName: companion.repository.split("/")[0] || "private",
+      url: companion.url,
+    });
     // Recorded before the push, so a later push of this branch, by T3 or by plain `git push`,
     // goes to the companion too and never publishes the branch.
     yield* gitCore.writeConfigValue({
       cwd,
       key: `branch.${branch}.pushRemote`,
-      value: companion.url,
+      value: remoteName,
     });
     yield* gitCore
       .execute({
         operation: "GitManager.openPrivatePullRequest.push",
         cwd,
-        args: ["push", "--", companion.url, `HEAD:refs/heads/${branch}`],
+        args: ["push", "--", remoteName, `refs/heads/${branch}:refs/heads/${branch}`],
         timeoutMs: null,
       })
       .pipe(
@@ -2941,6 +2946,8 @@ export const make = Effect.gen(function* () {
           fail(`Could not push ${branch} to ${companion.repository}: ${cause.detail}`, cause),
         ),
       );
+    // The companion branch is the pull request's head, so status finds it through the upstream.
+    yield* gitCore.setBranchUpstream({ cwd, branch, remoteName, remoteBranch: branch });
     const findOpen = provider
       .listChangeRequests({ cwd, headSelector: branch, state: "open" })
       .pipe(

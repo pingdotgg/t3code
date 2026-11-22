@@ -122,6 +122,7 @@ export const PullRequestListRow = memo(
               ),
               item.title,
               status.label,
+              item.visibility === "private" ? gt("Private") : null,
               conflict ? conflict.label.toLowerCase() : null,
               gt("by {author}", { author: item.author?.login ?? gt("unknown author") }),
               review ? review.accessibleLabel : null,
@@ -179,7 +180,7 @@ export const PullRequestListRow = memo(
                   {item.repository} <Text className={tertiaryForeground}>#{item.number}</Text>
                 </Text>
                 {item.visibility === "private" ? (
-                  <View accessible accessibilityRole="image" accessibilityLabel={gt("Private")}>
+                  <View>
                     <SymbolView
                       name={PullRequestGlyph.private}
                       size={11}

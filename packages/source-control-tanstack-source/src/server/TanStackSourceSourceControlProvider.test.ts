@@ -36,6 +36,7 @@ function checkout(options: {
   readonly recordedOwner: string | null;
   readonly isAncestor: boolean;
   readonly pull?: Partial<typeof PULL>;
+  readonly force?: boolean;
 }) {
   const git: Array<string> = [];
   const config = new Map<string, string>(
@@ -61,6 +62,7 @@ function checkout(options: {
           () =>
             void git.push(`fetch ${input.remoteName} ${input.remoteBranch}:${input.localBranch}`),
         ),
+      fetchRemoteTrackingBranch: () => Effect.void,
       setBranchUpstream: (input) =>
         Effect.sync(
           () => void git.push(`upstream ${input.branch} ${input.remoteName}/${input.remoteBranch}`),
@@ -100,7 +102,13 @@ function checkout(options: {
     },
   });
   const run = TanStackSourceSourceControlProvider.make.pipe(
-    Effect.flatMap((provider) => provider.checkoutChangeRequest({ cwd: "/repo", reference: "42" })),
+    Effect.flatMap((provider) =>
+      provider.checkoutChangeRequest({
+        cwd: "/repo",
+        reference: "42",
+        ...(options.force === undefined ? {} : { force: options.force }),
+      }),
+    ),
     Effect.provideService(TanStackSourceApi.TanStackSourceApi, api),
     Effect.provide(Layer.merge(host, FileSystem.layerNoop({}))),
   );
@@ -146,13 +154,14 @@ describe("TanStackSourceSourceControlProvider.checkoutChangeRequest", () => {
 
   // Source publishes no `refs/pull/<n>/head` for a private pull request, on either repository.
   it.effect("takes a private pull request's branch from the companion repository", () => {
-    const { run, git } = checkout({
-      recordedOwner: null,
-      isAncestor: true,
-      pull: { head: "acme:fix-thing", headRepo: "acme/web.private" },
-    });
+    const pull = { head: "acme:fix-thing", headRepo: "acme/web.private" };
+    const { run, git, config } = checkout({ recordedOwner: null, isAncestor: true, pull });
+    const forced = checkout({ recordedOwner: null, isAncestor: true, pull, force: true });
     return Effect.gen(function* () {
+      yield* forced.run;
+      assert.include(forced.git, "checkout --no-track -B fix-thing refs/remotes/acme/fix-thing --");
       yield* run;
+      assert.strictEqual(config.get("branch.fix-thing.pushRemote"), "acme");
       assert.deepStrictEqual(git, [
         `remote source ${REMOTE}`,
         "remote acme https://source.tanstack.com/@acme/web.private.git",

@@ -5170,6 +5170,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         });
         expect(yield* heads(companionDir)).toEqual(["refs/heads/sec/fix"]);
         expect(yield* heads("origin")).toEqual(["refs/heads/main"]);
+        // The branch tracks the companion, which is how status finds its pull request.
+        expect(
+          (yield* runGit(repoDir, [
+            "rev-parse",
+            "--abbrev-ref",
+            "sec/fix@{upstream}",
+          ])).stdout.trim(),
+        ).toBe("pingdotgg/sec/fix");
+        expect(
+          (yield* runGit(repoDir, ["config", "--get", "branch.sec/fix.pushRemote"])).stdout.trim(),
+        ).toBe("pingdotgg");
         expect(
           supported.providerCalls.flatMap((call) =>
             call.operation === "createChangeRequest" ? [call] : [],
