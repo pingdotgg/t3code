@@ -38,6 +38,9 @@
 "effect/FastCheck#check":
   replacement: "FastCheck.check"
   note: "Depend on fast-check and import it directly. The runner remains, but RunDetails.error was replaced by errorInstance in fast-check v4."
+"effect/FastCheck#Command":
+  replacement: "FastCheck.Command"
+  note: "Depend on fast-check and import it directly. The API is unchanged."
 "effect/FastCheck#constant":
   replacement: "FastCheck.constant"
   note: "Depend on fast-check and import it directly. The API remains; v4 infers literal types by default."
