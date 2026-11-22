@@ -324,7 +324,7 @@ it.effect(
     }),
 );
 
-it.effect("a launch steps an inherited mode down to the provider's, and refuses one it lacks", () =>
+it.effect("a launch runs auto as full-access on a provider without auto", () =>
   Effect.gen(function* () {
     // Pi offers no Auto; a mode a provider lacks would run as Supervised.
     const pi = ProviderInstanceId.make("pi");
@@ -369,11 +369,14 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
     });
 
     const inherited = yield* launchPi();
-    expect(inherited.launched[0]?.runtimeMode).toBe("auto-accept-edits");
+    expect(inherited.launched[0]?.runtimeMode).toBe("full-access");
 
     const requested = yield* launchPi("auto");
-    expect(requested.result).toMatchObject({ code: "invalid_request" });
-    expect(requested.launched).toHaveLength(0);
+    expect(requested.launched[0]?.runtimeMode).toBe("full-access");
+
+    const escalated = yield* launchPi("full-access");
+    expect(escalated.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
+    expect(escalated.launched).toHaveLength(0);
 
     const offered = yield* launchPi("approval-required");
     expect(offered.launched[0]?.runtimeMode).toBe("approval-required");

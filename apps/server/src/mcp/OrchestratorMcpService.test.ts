@@ -5020,7 +5020,10 @@ describe("OrchestratorMcpService provider resolution", () => {
     it.effect("steps an inherited mode down to the broadest one the provider offers", () =>
       Effect.gen(function* () {
         assert.equal(yield* resolveRuntimeMode("full-access", "inherit", muse), "full-access");
-        assert.equal(yield* resolveRuntimeMode("auto", undefined, muse), "approval-required");
+        assert.equal(
+          yield* resolveRuntimeMode("auto-accept-edits", undefined, muse),
+          "approval-required",
+        );
       }),
     );
   });

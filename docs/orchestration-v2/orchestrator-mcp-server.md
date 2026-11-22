@@ -264,8 +264,10 @@ A provider runs a runtime mode it does not offer as `approval-required`, so a
 child would ask for approval on every command. `orchestrator_capabilities`
 lists `runtimeModes` only for a provider that offers some of the modes, and
 omits it for a provider that offers all of them. When the target lists
-`runtimeModes`, an explicit `runtimeMode` outside that list is refused, and an
-inherited mode steps down to the broadest mode the target offers.
+`runtimeModes`, `auto` runs as `full-access` when the target lacks `auto`, since
+every narrower mode asks. Otherwise an explicit `runtimeMode` outside that list
+is refused, and an inherited mode steps down to the broadest mode the target
+offers.
 
 Each independent delegated review round uses a new `delegate_task` call with the
 original brief, prior findings, responses, and unresolved objections. Track each
@@ -353,9 +355,10 @@ Pass the task in `message`. Project, model, and modes inherit when omitted;
 workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. A new worktree with `startFromOrigin` omitted follows the new-worktree setting. For stacked PRs, use the parent branch as `baseRef` with
 `startFromOrigin: false`. The new thread may not run with broader runtime or
-interaction modes than the caller. As for `delegate_task`, a runtime mode the
-provider does not offer is refused, and an inherited or default one steps down
-to the broadest mode it offers. `create_threads` remains the batch option for a
+interaction modes than the caller. As for `delegate_task`, `auto` runs as
+`full-access` on a provider without it, any other runtime mode the provider does
+not offer is refused, and an inherited or default one steps down to the broadest
+mode it offers. `create_threads` remains the batch option for a
 shared checkout.
 
 Set `clientRequestId` on the initial launch to make it retryable. After an error

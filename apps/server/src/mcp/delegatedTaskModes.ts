@@ -30,8 +30,9 @@ export function interactionModeRank(mode: ProviderInteractionMode): number {
 
 /**
  * The mode a child runs at: the one asked for, never broader than its parent's.
- * An inherited mode the target provider does not offer steps down to the
- * broadest one it does; an explicitly requested one is refused instead.
+ * Auto runs as full-access on a provider without auto. Otherwise an inherited
+ * mode the target provider does not offer steps down to the broadest one it
+ * does; an explicitly requested one is refused instead.
  */
 export function resolveRuntimeMode(
   parentMode: RuntimeMode,
@@ -54,6 +55,10 @@ export function resolveRuntimeMode(
   const supported = target?.supportedRuntimeModes;
   if (supported === undefined || supported.length === 0 || supported.includes(resolved)) {
     return Effect.succeed(resolved);
+  }
+  // Auto means "run without asking"; every narrower mode asks, so full-access is the faithful stand-in.
+  if (resolved === "auto" && supported.includes("full-access")) {
+    return Effect.succeed("full-access");
   }
   if (!inherited) {
     return Effect.fail(
