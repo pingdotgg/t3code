@@ -29,7 +29,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/shared/AgentScope";
+import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -278,7 +278,6 @@ export function wrapCommandForLinuxCgroup(
       "-c",
       [
         "lease_path=$1; expected=$2; shift 2",
-        RAISE_OOM_SCORE_LINE,
         'printf "%s\\n" "$$" > "$lease_path/cgroup.procs" || exit 125',
         "actual=",
         "while IFS= read -r line; do",
