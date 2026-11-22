@@ -89,6 +89,8 @@ const uuid = SecureRandom.SecureRandom.pipe(
   Effect.provide(NodeCrypto.layer),
 );
 
+export const newProjectId = uuid.pipe(Effect.map(ProjectId.make));
+
 /** State for the server on `home`, made through the app's own CLI and API: real events, not inserted rows. */
 export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
   const cli = Effect.fn("scenario.cli")(function* (
@@ -180,7 +182,7 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     const created = yield* mutate({
       type: "project.create",
       commandId: CommandId.make(yield* uuid),
-      projectId: ProjectId.make(yield* uuid),
+      projectId: yield* newProjectId,
       title,
       workspaceRoot: workspace,
     });
