@@ -177,6 +177,8 @@ describe("cloneUrlForProtocol", () => {
     );
     expect(cloneUrlForProtocol("git@host.example:/srv/repo.git", "https")).toBeNull();
     expect(cloneUrlForProtocol("git@[2001:db8::1]:/srv/repo.git", "https")).toBeNull();
+    expect(cloneUrlProtocol(String.raw`D:\repos\app.git`)).toBeNull();
+    expect(cloneUrlForProtocol(String.raw`D:\repos\app.git`, "https")).toBeNull();
     expect(cloneUrlForProtocol("[2001:db8::1]:/srv/repo.git", "https")).toBeNull();
     expect(cloneUrlForProtocol("/srv/git/repo.git", "https")).toBeNull();
     expect(cloneUrlProtocol("file:///srv/git/repo.git")).toBeNull();
