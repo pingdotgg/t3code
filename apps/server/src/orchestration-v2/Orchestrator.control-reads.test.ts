@@ -266,6 +266,146 @@ it.effect.each(
 );
 
 it.effect(
+  "refuses picker runtime-mode saves while a non-in-session run is active and skips detaching on same-mode writes",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("thread:runtime-mode-busy");
+      const sessionId = ProviderSessionId.make("session:runtime-mode-busy");
+      const providerThreadId = ProviderThreadId.make("provider-thread:runtime-mode-busy");
+      const runId = RunId.make("run:runtime-mode-busy");
+      const now = yield* DateTime.now;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-runtime-mode-busy"),
+        threadId,
+        projectId: ProjectId.make("project:runtime-mode-busy"),
+        title: "Runtime mode busy",
+        modelSelection,
+        runtimeMode: "auto",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* projections.apply({
+        id: EventId.make("runtime-mode-busy:session"),
+        type: "provider-session.attached",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          status: "ready",
+          cwd: "/repo",
+          model: modelSelection.model,
+          capabilities: {
+            ...CodexProviderCapabilitiesV2,
+            sessions: {
+              ...CodexProviderCapabilitiesV2.sessions,
+              supportsRuntimeModeSwitchInSession: false,
+            },
+          },
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("runtime-mode-busy:provider-thread"),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          providerSessionId: sessionId,
+          nativeThreadRef: { driver: adapter.driver, nativeId: "native:busy", strength: "strong" },
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      // Same-mode write on an idle non-in-session provider must not detach the live session.
+      const noopId = CommandId.make("runtime-mode-noop");
+      yield* orchestrator.dispatch({
+        type: "thread.runtime-mode.set",
+        commandId: noopId,
+        threadId,
+        runtimeMode: "auto",
+      });
+      assert.deepEqual(yield* outbox.listByCommandId(noopId), []);
+
+      // Once a turn starts, preserveActiveSession rejects instead of detaching the active session.
+      yield* projections.apply({
+        id: EventId.make("runtime-mode-busy:run"),
+        type: "run.created",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          modelSelection,
+          providerThreadId,
+          userMessageId: MessageId.make("message:runtime-mode-busy"),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "running",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      const before = yield* projections.getThreadProjection(threadId);
+      const busyId = CommandId.make("runtime-mode-picker-busy");
+      const outcome = yield* orchestrator
+        .dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: busyId,
+          threadId,
+          runtimeMode: "full-access",
+          preserveActiveSession: true,
+        })
+        .pipe(Effect.result);
+      assert.ok(Result.isFailure(outcome));
+      assert.instanceOf(outcome.failure, Orchestrator.OrchestratorProviderSelectionBusyError);
+      assert.deepEqual(yield* projections.getThreadProjection(threadId), before);
+      assert.deepEqual(yield* outbox.listByCommandId(busyId), []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerDatabase,
+          ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+          EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "runtime-mode-busy" },
+            ProviderAdapterRegistry.layerFromAdapters([adapter]),
+            { databaseLayer: layerDatabase, runEffectWorker: false },
+          ),
+        ),
+      ),
+    ),
+);
+
+it.effect(
   "records approval feedback and targets only its runtime request without dispatching a parent turn",
   () =>
     Effect.gen(function* () {

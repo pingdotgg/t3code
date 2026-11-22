@@ -3501,6 +3501,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runtimeMode: RuntimeMode,
+    /** Refuses to detach a live session that has active work, so picker saves can stay in draft. */
+    preserveActiveSession: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.interaction-mode.set"),
@@ -4384,6 +4386,7 @@ export class OrchestrationV2DispatchCommandError extends Schema.TaggedError<Orch
     commandType: Schema.String,
     message: Schema.String,
     detail: Schema.optional(Schema.String),
+    code: Schema.optional(Schema.Literal("provider_selection_busy")),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}

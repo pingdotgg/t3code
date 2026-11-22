@@ -1,7 +1,15 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { isRuntimeModeSelectionBusyError } from "@t3tools/client-runtime/state/thread-workflows";
 import type { UnifiedSettings } from "@t3tools/contracts";
-import { useMessages } from "gt-react";
+import { msg, useMessages } from "gt-react";
 import type { Dispatch } from "react";
+import { m } from "~/i18n/messages";
 import type { ComposerThreadTarget, DraftSessionState } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
@@ -15,9 +23,9 @@ import {
 } from "@t3tools/contracts";
 import type { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type SetStateAction } from "react";
+import { type SetStateAction, useRef } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { toastManager } from "../ui/toast";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
 import {
   draftModelSelectionApplies,
@@ -25,6 +33,7 @@ import {
   threadHasStarted,
 } from "../../lib/chatThreadActions";
 import {
+  composerTargetKey,
   type DraftThreadEnvMode,
   isSameModel,
   useComposerDraftStore,
@@ -58,6 +67,17 @@ interface ComposerSelectionInput {
     SetStateAction<Record<string, boolean>>
   >;
   readonly scheduleComposerFocus: () => void;
+  readonly setThreadRuntimeMode: (input: {
+    readonly environmentId: EnvironmentId;
+    readonly input: {
+      readonly threadId: ThreadId;
+      readonly runtimeMode: RuntimeMode;
+      readonly createdAt?: string;
+      readonly preserveActiveSession?: boolean;
+    };
+  }) => Promise<AtomCommandResult<unknown, unknown>>;
+  /** False while active work runs on a provider whose session detaches on mode change. */
+  readonly canPersistRuntimeModeImmediately: boolean;
 }
 
 /**
@@ -83,6 +103,8 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
+    setThreadRuntimeMode,
+    canPersistRuntimeModeImmediately,
   } = input;
   const messages = useMessages();
   const navigate = useNavigate();
@@ -93,12 +115,66 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const applyThreadModelPick = useApplyThreadModelPick();
+  const runtimeModeSelectionSeqRef = useRef(new Map<string, number>());
 
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
     if (mode === runtimeMode) return;
-    setComposerDraftRuntimeMode(composerDraftTarget, mode);
+    // Permissions belong to the thread, not a queued-message edit draft.
+    const target =
+      !isLocalDraftThread && activeThread
+        ? scopeThreadRef(activeThread.environmentId, activeThread.id)
+        : composerDraftTarget;
+    const targetKey = composerTargetKey(target);
+    const seq = (runtimeModeSelectionSeqRef.current.get(targetKey) ?? 0) + 1;
+    runtimeModeSelectionSeqRef.current.set(targetKey, seq);
     if (isLocalDraftThread) {
-      setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
+      setComposerDraftRuntimeMode(target, mode);
+      setDraftThreadContext(target, { runtimeMode: mode });
+    } else if (activeThread && canPersistRuntimeModeImmediately && typeof target !== "string") {
+      setComposerDraftRuntimeMode(target, mode);
+      const threadId = activeThread.id;
+      void setThreadRuntimeMode({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId,
+          runtimeMode: mode,
+          createdAt: new Date().toISOString(),
+          preserveActiveSession: true,
+        },
+      }).then((result) => {
+        if (runtimeModeSelectionSeqRef.current.get(targetKey) !== seq) {
+          return;
+        }
+        if (result._tag === "Success") {
+          useComposerDraftStore.getState().releaseRuntimeMode(target, mode);
+          return;
+        }
+        if (isAtomCommandInterrupted(result)) {
+          return;
+        }
+        const error = squashAtomCommandFailure(result);
+        // Another client may have started a turn first; keep the pick in draft for the next send.
+        if (isRuntimeModeSelectionBusyError(error)) {
+          return;
+        }
+        useComposerDraftStore.getState().releaseRuntimeMode(target, mode);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: m(msg("Could not apply permission mode")),
+            description: m(
+              msg("This permission mode was not saved. {detail}", {
+                detail: thrownErrorMessage(error, m) ?? m(msg("Try again.")),
+              }),
+            ),
+          }),
+        );
+      });
+    } else {
+      setComposerDraftRuntimeMode(
+        target,
+        activeThread && mode === activeThread.runtimeMode ? null : mode,
+      );
     }
     scheduleComposerFocus();
   };

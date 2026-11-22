@@ -670,6 +670,8 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     runtimeMode: RuntimeMode | null | undefined,
   ) => void;
+  /** Lets the thread's permission mode show again once this pick settled on the server. */
+  releaseRuntimeMode: (threadRef: ScopedThreadRef, runtimeMode: RuntimeMode) => void;
   setInteractionMode: (
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
@@ -3559,6 +3561,26 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextDraft: ComposerThreadDraftState = {
               ...base,
               runtimeMode: nextRuntimeMode,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        releaseRuntimeMode: (threadRef, runtimeMode) => {
+          const threadKey = scopedThreadKey(threadRef);
+          set((state) => {
+            const draft = state.draftsByThreadKey[threadKey];
+            if (draft?.runtimeMode !== runtimeMode) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...draft,
+              runtimeMode: null,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

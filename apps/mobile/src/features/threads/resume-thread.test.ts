@@ -87,4 +87,16 @@ describe("resumeThread", () => {
 
     expect(calls.map((call) => call.command)).toEqual(["resumeQueue"]);
   });
+
+  it("saves a picked permission mode before releasing a held queue", async () => {
+    const { calls, base } = setup();
+    await resumeThread({
+      ...base,
+      runtimeMode: "approval-required",
+      resumableRunId: null,
+      queueHeld: true,
+    });
+
+    expect(calls.map((call) => call.command)).toEqual(["setRuntimeMode", "resumeQueue"]);
+  });
 });

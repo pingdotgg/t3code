@@ -1754,8 +1754,9 @@ function ThreadDetailBody(
                     ) : null}
                     {props.canOperateThread ? (
                       <ManagedRuntimeModeNotice
+                        thread={props.selectedThread}
+                        selectedThreadDetailRef={props.selectedThreadDetailRef}
                         threadKey={selectedThreadKey}
-                        threadRuntimeMode={props.selectedThread.runtimeMode}
                         supportedRuntimeModes={
                           props.serverConfig?.providers.find(
                             (provider) =>

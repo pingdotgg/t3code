@@ -755,4 +755,46 @@ describe("remote thread lifecycle commands", () => {
       expect((yield* Fiber.join(result))._tag).toBe("Success");
     }),
   );
+
+  it.effect("shows a picked runtime mode optimistically and rolls back when rejected", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), SNAPSHOT);
+
+      const ok = yield* Effect.forkChild(
+        Effect.exit(
+          h.commands.setRuntimeMode.run(h.registry, {
+            environmentId: ENVIRONMENT_ID,
+            input: { threadId: THREAD_ID, runtimeMode: "auto" },
+          }),
+        ),
+        { startImmediately: true },
+      );
+      const firstRequest = yield* Queue.take(h.requests);
+      expect(firstRequest.command).toMatchObject({
+        type: "thread.runtime-mode.set",
+        threadId: THREAD_ID,
+        runtimeMode: "auto",
+      });
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.runtimeMode).toBe("auto");
+      yield* Deferred.succeed(firstRequest.reply, { sequence: 2 });
+      expect((yield* Fiber.join(ok))._tag).toBe("Success");
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.runtimeMode).toBe("auto");
+
+      const rejected = yield* Effect.forkChild(
+        Effect.exit(
+          h.commands.setRuntimeMode.run(h.registry, {
+            environmentId: ENVIRONMENT_ID,
+            input: { threadId: THREAD_ID, runtimeMode: "approval-required" },
+          }),
+        ),
+        { startImmediately: true },
+      );
+      const secondRequest = yield* Queue.take(h.requests);
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.runtimeMode).toBe("approval-required");
+      yield* Deferred.fail(secondRequest.reply, new Error("policy ceiling"));
+      expect((yield* Fiber.join(rejected))._tag).toBe("Failure");
+      expect(h.registry.get(h.visibleAtom)?.threads[0]?.runtimeMode).toBe("auto");
+    }),
+  );
 });

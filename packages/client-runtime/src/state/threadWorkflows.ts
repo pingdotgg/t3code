@@ -8,7 +8,11 @@ import { copySorted } from "@t3tools/shared/Array";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
-import type { ThreadStructure } from "./models.ts";
+import {
+  type EnvironmentThreadShell,
+  type ThreadStructure,
+  threadRuntimeIsActive,
+} from "./models.ts";
 
 type Projection = ThreadStructure;
 type Run = Projection["runs"][number];
@@ -120,6 +124,72 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
       thread.appThreadId === projection.thread.id &&
       thread.providerInstanceId === projection.thread.modelSelection.instanceId,
   );
+}
+
+/**
+ * True when every live provider session attached to this thread can switch runtime modes
+ * without detaching, so `thread.runtime-mode.set` is safe while a run is active.
+ */
+export function threadSupportsRuntimeModeSwitchInSession(
+  projection: Projection | null | undefined,
+): boolean {
+  if (projection == null) return false;
+  const liveSessions = projection.providerSessions.filter(
+    (session) => session.status !== "stopped" && session.status !== "error",
+  );
+  return (
+    liveSessions.length > 0 &&
+    liveSessions.every(
+      (session) => session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+    )
+  );
+}
+
+/**
+ * True when `thread.runtime-mode.set` can be sent straight away without risking an active
+ * turn or open prompt on a provider whose session detaches on mode change.
+ */
+export function canPersistThreadRuntimeModeImmediately(input: {
+  readonly thread: Pick<
+    EnvironmentThreadShell,
+    "runtime" | "hasPendingApprovals" | "hasPendingUserInput" | "pendingBackgroundTasks"
+  >;
+  readonly projection: Projection | null | undefined;
+  readonly isWorking?: boolean;
+}): boolean {
+  const hasActiveWork =
+    input.isWorking === true ||
+    threadRuntimeIsActive(input.thread.runtime) ||
+    input.thread.hasPendingApprovals ||
+    input.thread.hasPendingUserInput ||
+    input.thread.pendingBackgroundTasks.length > 0 ||
+    (input.projection != null &&
+      (resolveActiveThreadRun(input.projection) !== null ||
+        input.projection.runtimeRequests.some((request) => request.status === "pending")));
+  if (!hasActiveWork) return true;
+  return threadSupportsRuntimeModeSwitchInSession(input.projection);
+}
+
+/** True when the server refused a picker mode save because a live session became busy. */
+export function isRuntimeModeSelectionBusyError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current = error;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const candidate = current as {
+      readonly code?: unknown;
+      readonly _tag?: unknown;
+      readonly cause?: unknown;
+    };
+    if (
+      candidate.code === "provider_selection_busy" ||
+      candidate._tag === "OrchestratorProviderSelectionBusyError"
+    ) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
 }
 
 export function getUserQueuedThreadRuns(

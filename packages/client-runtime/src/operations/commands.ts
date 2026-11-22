@@ -161,6 +161,8 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
 
 export interface SetThreadRuntimeModeInput extends ThreadCommandInput {
   readonly runtimeMode: RuntimeMode;
+  /** Refuse to detach a live session that has active work, so picker picks stay in draft. */
+  readonly preserveActiveSession?: boolean;
 }
 
 export interface SetThreadInteractionModeInput extends ThreadCommandInput {
@@ -751,6 +753,7 @@ export const setThreadRuntimeMode = Effect.fn("EnvironmentCommands.setThreadRunt
       commandId: yield* allocateCommandId(input),
       threadId: input.threadId,
       runtimeMode: input.runtimeMode,
+      ...(input.preserveActiveSession === true ? { preserveActiveSession: true } : {}),
     });
   },
 );

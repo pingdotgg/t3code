@@ -12455,5 +12455,7 @@
   "b7df38b7d8792d78": "Abrir guía",
   "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
   "d8aaf932f90429c4": "Mover este comando al principio de la cola ({shortcut})",
-  "425ab15036aec8a4": "Mover este comando al principio de la cola"
+  "425ab15036aec8a4": "Mover este comando al principio de la cola",
+  "b62b5c8ef10071e1": "No se pudo aplicar el modo de permisos",
+  "f597860c2939672e": "No se guardó este modo de permisos. {detail}"
 }

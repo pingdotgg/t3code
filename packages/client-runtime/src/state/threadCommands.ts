@@ -531,6 +531,7 @@ export function createThreadEnvironmentAtoms<R, E>(
     rowActionsAtom,
     mcpSignedInAtom,
     snapshotAtom: optimistic.snapshotAtom,
+    durableSnapshotAtom: snapshotAtom,
     pendingThreadIdsAtom: optimistic.pendingThreadIdsAtom,
     settle: optimistic.wrap(commands.settle, (thread, _input, now, accepted) =>
       !accepted &&
@@ -616,6 +617,10 @@ export function createThreadEnvironmentAtoms<R, E>(
     setModelSelection: optimistic.wrap(commands.setModelSelection, (thread, input) => ({
       ...thread,
       modelSelection: input.modelSelection,
+    })),
+    setRuntimeMode: optimistic.wrap(commands.setRuntimeMode, (thread, input) => ({
+      ...thread,
+      runtimeMode: input.runtimeMode,
     })),
   };
 }

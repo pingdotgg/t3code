@@ -2057,6 +2057,9 @@ export const layerWsRpc = (
                       commandType: command.type,
                       message: detail ?? "Failed to dispatch orchestration V2 command",
                       ...(detail === undefined ? {} : { detail }),
+                      ...(cause._tag === "OrchestratorProviderSelectionBusyError"
+                        ? { code: "provider_selection_busy" as const }
+                        : {}),
                       cause,
                     });
                   }),

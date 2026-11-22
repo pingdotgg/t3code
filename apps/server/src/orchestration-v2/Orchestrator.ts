@@ -4758,7 +4758,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             command.worktreePath !== undefined &&
             command.worktreePath !== thread.worktreePath
           ? (providerContext?.providerSessions ?? []).map((session) => session.id)
-          : command.type === "thread.runtime-mode.set"
+          : command.type === "thread.runtime-mode.set" && command.runtimeMode !== thread.runtimeMode
             ? (providerContext?.providerSessions ?? [])
                 .filter(
                   (session) => !session.capabilities.sessions.supportsRuntimeModeSwitchInSession,
@@ -4773,6 +4773,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         session.status !== "error",
     );
     if (
+      command.type === "thread.runtime-mode.set" &&
+      command.preserveActiveSession === true &&
+      liveSessions.length > 0
+    ) {
+      const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
+        turnItemTypes: [],
+      });
+      if (
+        projection.runs.some(isActiveRun) ||
+        projection.runtimeRequests.some((request) => request.status === "pending")
+      ) {
+        return yield* new OrchestratorProviderSelectionBusyError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+        });
+      }
+    }
+    if (
       command.type !== "thread.archive" &&
       command.type !== "thread.settle" &&
       liveSessions.length > 0
@@ -4786,6 +4804,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(mapDispatchError(command));
       for (const session of liveSessions) {
         if (yield* sessionHasBackgroundWork(session, providerThreads)) {
+          if (
+            command.type === "thread.runtime-mode.set" &&
+            command.preserveActiveSession === true
+          ) {
+            return yield* new OrchestratorProviderSelectionBusyError({
+              commandId: command.commandId,
+              threadId: command.threadId,
+            });
+          }
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,

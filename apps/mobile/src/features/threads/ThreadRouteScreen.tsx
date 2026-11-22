@@ -53,6 +53,8 @@ import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { appAtomRegistry } from "../../state/atom-registry";
+import { releaseComposerDraftRuntimeMode } from "../../state/use-composer-drafts";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import { connectionRetryLabel } from "./floating-working-status";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -706,8 +708,13 @@ function ThreadRouteContent(
 
   const handleResumeQueue = async () => {
     if (!selectedThread) return;
+    const durableRuntimeMode =
+      appAtomRegistry
+        .get(threadEnvironment.durableSnapshotAtom(selectedThread.environmentId))
+        ?.threads.find((candidate) => candidate.id === selectedThread.id)?.runtimeMode ??
+      selectedThread.runtimeMode;
     const result = await resumeThread({
-      thread: selectedThread,
+      thread: { ...selectedThread, runtimeMode: durableRuntimeMode },
       resumableRunId: composer.resumableRunId,
       queueHeld: composer.queueHeld,
       runtimeMode: composer.runtimeMode ?? selectedThread.runtimeMode,
@@ -716,6 +723,11 @@ function ThreadRouteContent(
       messageId: MessageId.make(uuidv4()),
       createdAt: new Date().toISOString(),
       setRuntimeMode: setThreadRuntimeMode,
+      onRuntimeModePersisted: (mode) =>
+        releaseComposerDraftRuntimeMode(
+          scopedThreadKey(selectedThread.environmentId, selectedThread.id),
+          mode,
+        ),
       setInteractionMode: setThreadInteractionMode,
       startTurn: continueThreadRun,
       resumeQueue: resumeThreadQueue,
