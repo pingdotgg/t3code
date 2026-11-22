@@ -668,16 +668,14 @@ impl RowStatus {
         }
     }
 
-    /// `STATUS_DOT_CLASS` (`StatusDotBadge.tsx` + `TOP_STATUS_DOT`):
-    /// `working`/`goal` -> `bg-info`, `waiting`/`approval`/`input` -> `bg-muted-foreground/70`,
-    /// `done` -> `bg-success`, `failed` -> `bg-destructive`.
+    /// Conn's `STATUS_DOT_CLASS` (`StatusDotBadge.tsx`) gives `approval` and `input` the same grey
+    /// as `waiting`, so a thread that needs the user looks idle. Here they get the warning token.
     #[must_use]
     pub(crate) fn dot_color(self, tokens: &Tokens) -> gpui_kit::Hsla {
         match self {
             Self::Working | Self::Goal => hsla(tokens.info),
-            Self::Waiting | Self::Approval | Self::Input => {
-                hsla_alpha(tokens.muted_foreground, 0.70)
-            }
+            Self::Waiting => hsla_alpha(tokens.muted_foreground, 0.70),
+            Self::Approval | Self::Input => hsla(tokens.warning),
             Self::Done => hsla(tokens.success),
             Self::Failed => hsla(tokens.destructive),
         }
@@ -1764,6 +1762,44 @@ mod tests {
         ] {
             assert!(assets.load(path).ok().flatten().is_some(), "{path} exists");
         }
+    }
+
+    #[test]
+    fn questions_and_approvals_get_the_yellow_warning_dot() {
+        let theme = conn_theme::theme_by_id("dark-ocean").expect("built-in theme");
+        let tokens = Tokens::derive(&theme);
+        let warning = hsla(tokens.warning);
+        assert_eq!(RowStatus::Input.dot_color(&tokens), warning);
+        assert_eq!(RowStatus::Approval.dot_color(&tokens), warning);
+        assert_ne!(RowStatus::Waiting.dot_color(&tokens), warning);
+    }
+
+    #[test]
+    fn a_pending_request_resolves_to_input_or_approval_unless_auth_refresh() {
+        use conn_contract::OrchestrationV2PendingRuntimeRequestSummary as Request;
+        use conn_contract::OrchestrationV2PendingRuntimeRequestSummaryKind as Kind;
+        let shell = crate::fixture::demo_shell_state();
+        let mut thread = shell
+            .find_thread("thread-theme-tokens")
+            .expect("fixture thread with a pending request")
+            .clone();
+        let request = |kind| {
+            Some(Request {
+                id: "req".to_owned(),
+                kind,
+                created_at: "2026-11-21T00:54:00.000Z".to_owned(),
+                blocking: Some(true),
+                user_only: None,
+            })
+        };
+        thread.pending_runtime_request = request(Kind::UserInput);
+        assert_eq!(resolve_row_status(&thread), Some(RowStatus::Input));
+        thread.pending_runtime_request = request(Kind::Permission);
+        assert_eq!(resolve_row_status(&thread), Some(RowStatus::Approval));
+        thread.pending_runtime_request = request(Kind::McpElicitation);
+        assert_eq!(resolve_row_status(&thread), Some(RowStatus::Approval));
+        thread.pending_runtime_request = request(Kind::AuthRefresh);
+        assert_ne!(resolve_row_status(&thread), Some(RowStatus::Approval));
     }
 
     #[test]
