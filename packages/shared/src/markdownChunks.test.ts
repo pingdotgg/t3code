@@ -121,6 +121,9 @@ describe("splitMarkdown", () => {
       "",
       "---",
       "[t]: /after-break",
+      "",
+      "===",
+      "[p]: /paragraph-text",
     ].join("\n");
     expect(splitMarkdown(text).definitions).toBe(
       "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break",
