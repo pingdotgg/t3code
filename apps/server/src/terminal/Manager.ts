@@ -438,6 +438,7 @@ function summary(session: TerminalSessionState): TerminalSummary {
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     hasRunningSubprocess: session.hasRunningSubprocess,
+    ...(session.stopOnSettle ? { stopOnSettle: true } : {}),
     label: terminalWireLabel(session),
     updatedAt: session.updatedAt,
   };

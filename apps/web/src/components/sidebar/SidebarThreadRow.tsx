@@ -124,7 +124,10 @@ import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
-import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
+import {
+  useKnownTerminalSessions,
+  useThreadRunningTerminalIds,
+} from "../../state/terminalSessions";
 import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
@@ -287,7 +290,11 @@ function SidebarThreadTooltip({
   } | null;
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
-  settleReadiness: { readonly snoozed: boolean; readonly unread: boolean } | null;
+  settleReadiness: {
+    readonly snoozed: boolean;
+    readonly unread: boolean;
+    readonly terminalRunning: boolean;
+  } | null;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
   const previousProviderNames = thread.providerInstanceHistory
@@ -405,6 +412,7 @@ function SettleReadinessRows(props: {
   thread: SidebarThreadSummary;
   snoozed: boolean;
   unread: boolean;
+  terminalRunning: boolean;
 }) {
   const { thread } = props;
   const gt = useGT();
@@ -417,6 +425,7 @@ function SettleReadinessRows(props: {
     readiness: readiness ?? "default",
     snoozed: props.snoozed,
     unread: props.unread,
+    terminalRunning: props.terminalRunning,
   });
   if (trace === null) return null;
   const labels: Record<SettleCheckId, string> = {
@@ -429,6 +438,7 @@ function SettleReadinessRows(props: {
     snoozed: gt("Not snoozed"),
     "latest-run-failed": gt("Latest run did not fail"),
     "unread-reply": gt("Latest reply read"),
+    "terminal-running": gt("No terminal program running"),
   };
   return (
     <div className="flex min-w-0 flex-col gap-1 border-t border-border/60 pt-2">
@@ -786,6 +796,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   });
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds, messages);
   const terminalProcessCount = runningTerminalIds.length;
+  const knownTerminalSessions = useKnownTerminalSessions({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  });
+  // Mirrors TerminalManager.hasActiveSubprocess: stop-on-settle terminals do not hold settlement.
+  const terminalHoldsSettle = (knownTerminalSessions ?? []).some(
+    (session) => session.state.hasRunningSubprocess && session.state.summary?.stopOnSettle !== true,
+  );
   const hasUnsentDraft = useThreadHasUnsentDraft(threadRef) && !props.isRouteThread;
   const handleDiscardDraftClick = (event: ReactMouseEvent) => {
     event.preventDefault();
@@ -943,7 +961,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       terminalProcessCount={terminalProcessCount}
       settleReadiness={
         props.settlementSupported
-          ? { snoozed: props.snoozeWakeLabelText !== null, unread: isUnread }
+          ? {
+              snoozed: props.snoozeWakeLabelText !== null,
+              unread: isUnread,
+              terminalRunning: terminalHoldsSettle,
+            }
           : null
       }
     />

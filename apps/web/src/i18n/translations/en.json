@@ -12487,5 +12487,6 @@
   "d83e117cdc12d296": "Not snoozed",
   "aecc07dd06ebdd02": "Latest run did not fail",
   "0f853a328afd4d03": "Latest reply read",
-  "7b6b9f6f6ee689ae": "Not ready to settle"
+  "7b6b9f6f6ee689ae": "Not ready to settle",
+  "2912ce105ad78132": "No terminal program running"
 }

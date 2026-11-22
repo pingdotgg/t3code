@@ -21,7 +21,7 @@ const failedIds = (trace: ReturnType<typeof settleReadinessTrace>) =>
 describe("settleReadinessTrace", () => {
   it("adds the failed-run and unread-reply checks only for strict readiness", () => {
     const failedUnread = thread({ source: { ...thread().source, status: "failed" } });
-    const options = { snoozed: false, unread: true };
+    const options = { snoozed: false, unread: true, terminalRunning: false };
     const defaultTrace = settleReadinessTrace(failedUnread, { ...options, readiness: "default" });
     expect(defaultTrace?.ready).toBe(true);
     expect(defaultTrace?.checks.map((check) => check.id)).not.toContain("unread-reply");
@@ -41,7 +41,14 @@ describe("settleReadinessTrace", () => {
       source: { status: "running", activityRunStatus: "running", pendingRuntimeRequest: null },
     });
     expect(
-      failedIds(settleReadinessTrace(held, { readiness: "default", snoozed: true, unread: false })),
+      failedIds(
+        settleReadinessTrace(held, {
+          readiness: "default",
+          snoozed: true,
+          unread: false,
+          terminalRunning: true,
+        }),
+      ),
     ).toEqual([
       "kept-active",
       "pinned",
@@ -50,8 +57,14 @@ describe("settleReadinessTrace", () => {
       "working",
       "watching-pull-request",
       "snoozed",
+      "terminal-running",
     ]);
-    const options = { readiness: "strict" as const, snoozed: false, unread: false };
+    const options = {
+      readiness: "strict" as const,
+      snoozed: false,
+      unread: false,
+      terminalRunning: false,
+    };
     expect(
       settleReadinessTrace(thread({ archivedAt: "2026-06-10T00:00:00.000Z" }), options),
     ).toBeNull();

@@ -15,7 +15,8 @@ export type SettleCheckId =
   | "watching-pull-request"
   | "snoozed"
   | "latest-run-failed"
-  | "unread-reply";
+  | "unread-reply"
+  | "terminal-running";
 
 export interface SettleCheck {
   readonly id: SettleCheckId;
@@ -49,6 +50,8 @@ export function settleReadinessTrace(
     readonly readiness: SidebarAutoSettleReadiness;
     readonly snoozed: boolean;
     readonly unread: boolean;
+    /** A terminal program the server would not stop on settle is still running. */
+    readonly terminalRunning: boolean;
   },
 ): { readonly ready: boolean; readonly checks: ReadonlyArray<SettleCheck> } | null {
   if (thread.archivedAt !== null || thread.settledOverride === "settled") return null;
@@ -76,5 +79,7 @@ export function settleReadinessTrace(
       { id: "unread-reply", passed: !options.unread },
     );
   }
+  // The server checks terminals last, after the settings-based decision.
+  checks.push({ id: "terminal-running", passed: !options.terminalRunning });
   return { ready: checks.every((check) => check.passed), checks };
 }

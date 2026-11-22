@@ -273,6 +273,8 @@ export const TerminalSummary = Schema.Struct({
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
   hasRunningSubprocess: Schema.Boolean,
+  // Settling stops this terminal, so its program does not hold settlement. Older servers omit it.
+  stopOnSettle: Schema.optionalKey(Schema.Boolean),
   label: Schema.String.check(Schema.isMaxLength(128)),
   updatedAt: Schema.String,
 });
