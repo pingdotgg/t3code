@@ -6720,13 +6720,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
-    const getThreadChangedFiles: ProjectionStoreV2Shape["getThreadChangedFiles"] = ({
+    const getThreadChangedFiles = Effect.fn("ProjectionStore.getThreadChangedFiles")(function* ({
       threadId,
       limit,
-    }) =>
+    }: {
+      readonly threadId: ThreadId;
+      readonly limit: number;
+    }) {
       // Delegated tasks run in child threads. A Codex change lists each file in `changes`; a
       // Claude change names its one file. A path whose latest change deleted it is left out.
-      sql<{ path: string; thread_id: string; changed_at: string; deleted: number }>`
+      return yield* sql<{ path: string; thread_id: string; changed_at: string; deleted: number }>`
         WITH RECURSIVE family(thread_id, depth) AS (
           SELECT ${threadId}, 0
           UNION
@@ -6785,6 +6788,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         })),
         Effect.mapError(controlReadError(threadId)),
       );
+    });
 
     // A run fork shows its source's history through the fork run without copying it, and every
     // run fork below it shows that history too. Returns the last source run live forks show, with

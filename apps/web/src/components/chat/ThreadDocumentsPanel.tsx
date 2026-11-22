@@ -215,9 +215,7 @@ function ThreadDocumentRow(props: {
             ) : null}
           </span>
         </TooltipTrigger>
-        <TooltipPopup side="left" className="max-w-96">
-          {displayPath}
-        </TooltipPopup>
+        <TooltipPopup side="left">{displayPath}</TooltipPopup>
       </Tooltip>
       <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
         {canReveal ? (
