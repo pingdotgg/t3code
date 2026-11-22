@@ -7179,6 +7179,20 @@ describe("AcpRegistrySupport", () => {
           yield* cat.resolve(settings(), "/workspace");
         }
         failSidecarWrite = false;
+        // Prove old-chain pending options are active on all three catalogs while chain Y is readable.
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        for (const [cat, arg] of [
+          [xcRetireCat, "--xc-stale-retire"],
+          [xcLockedCat, "--xc-stale-locked"],
+          [xcUnreadableCat, "--xc-stale-unreadable"],
+        ] as const) {
+          yield* cat.invalidateIndex();
+          yield* cat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+          expect((yield* cat.resolve(settings(), "/workspace")).spawn.args).toEqual([arg]);
+        }
         // Corrupt sidecar and repair into chain Z at rev 1 (< old chain Y base rev 4).
         yield* fileSystem.writeFileString(xcSidecarPath, "{corrupt-xc");
         upstream = makeBinary("1.0.0", {
