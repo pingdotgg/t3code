@@ -380,6 +380,102 @@ it.effect(
     }),
 );
 
+it.effect("a turn that touches no repository records none, however many start dirty", () =>
+  Effect.gen(function* () {
+    const scope: OrchestrationV2CheckpointScope = {
+      id: CheckpointScopeId.make("checkpoint-scope:many-dirty"),
+      threadId: ThreadId.make("thread:many-dirty"),
+      runId: RunId.make("run:many-dirty:1"),
+      nodeId: NodeId.make("node:many-dirty:1"),
+      parentScopeId: null,
+      providerThreadId: ProviderThreadId.make("provider-thread:many-dirty"),
+      kind: "root_run",
+      ordinalWithinParent: 0,
+      advancesAppRunCount: true,
+      cwd: "/wrapper",
+      createdAt: DateTime.makeUnsafe("2026-11-22T00:00:00.000Z"),
+    };
+    const thread = { projectId: ProjectId.make("project:many-dirty"), worktreePath: null };
+    // Every repository has uncommitted work, and each snapshot takes a while: more of them
+    // than fit in one turn's baseline budget.
+    const repositories = Array.from({ length: 18 }, (_, index) => `/wrapper/repo-${index}`);
+    const refs = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const baselinePhase = yield* Ref.make(true);
+    const sleeping = yield* Ref.make(0);
+    const firstWaveSleeping = yield* Deferred.make<void>();
+    const layerTest = CheckpointService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          NodeServices.layer,
+          Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+            forThread: () =>
+              Effect.succeed({
+                folders: repositories.map((path) => ({ name: path, path, isGitRepository: true })),
+                extraRoots: [],
+              }),
+            submodules: () => Effect.succeed([]),
+          }),
+          Layer.mock(CheckpointStore.CheckpointStore)({
+            isGitRepository: (cwd) => Effect.succeed(cwd !== "/wrapper"),
+            resolveCleanHead: () => Effect.succeed(null),
+            hasCheckpointRef: ({ checkpointRef }) =>
+              Ref.get(refs).pipe(Effect.map((current) => current.has(checkpointRef))),
+            captureCheckpoint: ({ checkpointRef }) =>
+              Effect.gen(function* () {
+                if (yield* Ref.get(baselinePhase)) {
+                  if ((yield* Ref.updateAndGet(sleeping, (count) => count + 1)) === 6) {
+                    yield* Deferred.succeed(firstWaveSleeping, undefined);
+                  }
+                  yield* Effect.sleep("2 seconds");
+                }
+                yield* Ref.update(refs, (current) => new Set([...current, checkpointRef]));
+              }),
+            // The turn edited nothing: each snapshot matches the one before it.
+            diffCheckpoints: () => Effect.succeed(""),
+            listAuthoredPaths: () => Effect.succeed(null),
+          }),
+        ),
+      ),
+      Layer.provideMerge(NodeCrypto.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
+      const scopes = yield* checkpoints.repositoryScopes({ rootScope: scope, ...thread });
+      assert.lengthOf(scopes, repositories.length);
+
+      const turnStart = yield* checkpoints
+        .captureBaseline({ scope, ordinalWithinScope: 0, thread })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(firstWaveSleeping);
+      yield* TestClock.adjust("10 seconds");
+      yield* Fiber.join(turnStart);
+      yield* Ref.set(baselinePhase, false);
+
+      const recorded = (yield* Effect.forEach(scopes, (repository) =>
+        checkpoints.captureRepository({
+          scope: repository,
+          runId: scope.runId!,
+          nodeId: scope.nodeId,
+          ordinalWithinScope: 1,
+          capturedAt: scope.createdAt,
+          baselineCapturedAt: scope.createdAt,
+          baselineRecorded: false,
+        }),
+      )).flatMap(Option.toArray);
+      // Nothing changed, so no repository gets a row, not one "cannot be listed" row each.
+      assert.deepEqual(
+        recorded.map(({ checkpoint }) => ({
+          cwd: scopes.find((repository) => repository.id === checkpoint.scopeId)?.cwd,
+          files: checkpoint.files.length,
+        })),
+        [],
+      );
+    }).pipe(Effect.provide(layerTest));
+  }),
+);
+
 it.effect("records a repository probe failure as an error checkpoint, not a missing one", () =>
   Effect.gen(function* () {
     const scope: OrchestrationV2CheckpointScope = {
