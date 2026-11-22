@@ -254,7 +254,7 @@ it("reads only while open and supported, shows pass/citations/stale reasons and 
   );
   expect(screen.container.textContent).toContain("Keep the canonical sources. [#1, #2, #10]");
   expect(screen.container.textContent).toContain(
-    "Outdated: source changed. The summary text is hidden",
+    "Outdated: Source changed. The summary text is hidden",
   );
   await screen.click("Later summaries");
   expect(state.lists.at(-1)?.input.cursor).toBe(staleId);
