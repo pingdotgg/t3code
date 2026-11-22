@@ -1,3 +1,99 @@
+diff --git a/out/MacUpdater.js b/out/MacUpdater.js
+index 78b89a7ac91d2158583f642f6c608cbef8d5e711..25947be490d0b015b889e46710b6ab536572e61c 100644
+--- a/out/MacUpdater.js
++++ b/out/MacUpdater.js
+@@ -120,6 +120,16 @@ class MacUpdater extends AppUpdater_1.AppUpdater {
+         });
+     }
+     async updateDownloaded(zipFileInfo, event) {
++        if (!this.autoInstallOnAppQuit) {
++            this.closeServerIfExists();
++            // The archive is cached. Create its native feed only when the user installs it.
++            this.prepareManualInstall = () => this.serveDownloadedUpdate(zipFileInfo, event, false);
++            this.dispatchUpdateDownloaded(event);
++            return [];
++        }
++        return this.serveDownloadedUpdate(zipFileInfo, event, true);
++    }
++    async serveDownloadedUpdate(zipFileInfo, event, automatic) {
+         var _a;
+         const downloadedFile = event.downloadedFile;
+         const updateFileSize = (_a = zipFileInfo.info.size) !== null && _a !== void 0 ? _a : (await (0, fs_extra_1.stat)(downloadedFile)).size;
+@@ -206,18 +216,27 @@ class MacUpdater extends AppUpdater_1.AppUpdater {
+                 readStream.pipe(response);
+             });
+             this.debug(`Proxy server for native Squirrel.Mac is starting to listen (${logContext})`);
++            this.server.once("error", reject);
+             this.server.listen(0, "127.0.0.1", () => {
++                this.server.removeListener("error", reject);
+                 this.debug(`Proxy server for native Squirrel.Mac is listening (address=${getServerUrl(this.server)}, ${logContext})`);
+-                this.nativeUpdater.setFeedURL({
+-                    url: getServerUrl(this.server),
+-                    headers: {
+-                        "Cache-Control": "no-cache",
+-                        Authorization: `Basic ${authInfo.toString("base64")}`,
+-                    },
+-                });
++                try {
++                    this.nativeUpdater.setFeedURL({
++                        url: getServerUrl(this.server),
++                        headers: {
++                            "Cache-Control": "no-cache",
++                            Authorization: `Basic ${authInfo.toString("base64")}`,
++                        },
++                    });
++                }
++                catch (error) {
++                    this.closeServerIfExists();
++                    reject(error);
++                    return;
++                }
+                 // The update has been downloaded and is ready to be served to Squirrel
+-                this.dispatchUpdateDownloaded(event);
+-                if (this.autoInstallOnAppQuit) {
++                if (automatic) {
++                    this.dispatchUpdateDownloaded(event);
+                     this.nativeUpdater.once("error", reject);
+                     // This will trigger fetching and installing the file on Squirrel side
+                     this.nativeUpdater.checkForUpdates();
+@@ -242,6 +261,37 @@ class MacUpdater extends AppUpdater_1.AppUpdater {
+             // update already fetched by Squirrel, it's ready to install
+             this.handleUpdateDownloaded();
+         }
++        else if (!this.autoInstallOnAppQuit && this.prepareManualInstall) {
++            if (this.pendingManualInstall) {
++                return;
++            }
++            const clear = () => {
++                this.pendingManualInstall = null;
++                this.nativeUpdater.removeListener("error", failed);
++                this.nativeUpdater.removeListener("update-downloaded", ready);
++            };
++            const failed = () => {
++                clear();
++                this.closeServerIfExists();
++            };
++            const ready = () => {
++                clear();
++                this.handleUpdateDownloaded();
++            };
++            this.pendingManualInstall = failed;
++            this.nativeUpdater.once("error", failed);
++            this.nativeUpdater.once("update-downloaded", ready);
++            this.prepareManualInstall().then(() => {
++                if (this.pendingManualInstall === failed) {
++                    this.nativeUpdater.checkForUpdates();
++                }
++            }).catch(error => {
++                if (this.pendingManualInstall === failed) {
++                    failed();
++                    this.dispatchError(error);
++                }
++            });
++        }
+         else {
+             // Quit and install as soon as Squirrel get the update
+             this.nativeUpdater.on("update-downloaded", () => this.handleUpdateDownloaded());
 diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
 index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..e6fb0b8aafda6ae0797d3127b5aa661b0d202ca5 100644
 --- a/out/electronHttpExecutor.js
