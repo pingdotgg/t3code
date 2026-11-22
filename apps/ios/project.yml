@@ -48,6 +48,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nckrtl.conn.ios
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
   ConnUITests:
     type: bundle.ui-testing
     platform: iOS

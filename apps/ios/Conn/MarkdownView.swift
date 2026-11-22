@@ -86,10 +86,26 @@ struct MarkdownView: View {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )
-        if let parsed = try? AttributedString(markdown: raw, options: options) {
+        if var parsed = try? AttributedString(markdown: raw, options: options) {
+            for run in parsed.runs {
+                if run.inlinePresentationIntent?.contains(.code) == true {
+                    let snippet = String(parsed[run.range].characters)
+                    if looksLikeFilePath(snippet) {
+                        parsed[run.range].foregroundColor = theme.primary
+                    }
+                }
+            }
             return Text(parsed)
         }
         return Text(raw)
+    }
+
+    private func looksLikeFilePath(_ s: String) -> Bool {
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(" ") else { return false }
+        if trimmed.hasSuffix("/") || trimmed.contains("/") { return true }
+        let exts = [".rs", ".ts", ".tsx", ".swift", ".md", ".toml", ".json", ".yml", ".yaml", ".sh", ".py"]
+        return exts.contains { trimmed.lowercased().hasSuffix($0) }
     }
 }
 

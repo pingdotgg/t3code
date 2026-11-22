@@ -5,12 +5,36 @@ struct ThreadView: View {
     @Bindable var store: CoreStore
     let threadId: String
     let initialTitle: String
+    let initialProjectTitle: String?
     let initialBranch: String?
+    let initialSettled: Bool
     let onOpenThread: (String) -> Void
 
     @Environment(\.connTheme) private var theme
     @State private var draft = ""
     @State private var stickToBottom = true
+    @State private var settled: Bool
+    @State private var showingRename = false
+    @State private var renameDraft = ""
+
+    init(
+        store: CoreStore,
+        threadId: String,
+        initialTitle: String,
+        initialProjectTitle: String?,
+        initialBranch: String?,
+        initialSettled: Bool,
+        onOpenThread: @escaping (String) -> Void
+    ) {
+        self.store = store
+        self.threadId = threadId
+        self.initialTitle = initialTitle
+        self.initialProjectTitle = initialProjectTitle
+        self.initialBranch = initialBranch
+        self.initialSettled = initialSettled
+        self.onOpenThread = onOpenThread
+        self._settled = State(initialValue: initialSettled)
+    }
 
     private var snapshot: FfiThreadSnapshot? {
         guard let current = store.openThread, current.threadId == threadId else { return nil }
@@ -22,8 +46,16 @@ struct ThreadView: View {
         return initialTitle.isEmpty ? "Thread" : initialTitle
     }
 
-    private var displayBranch: String? {
-        snapshot?.branch ?? initialBranch
+    private var displaySubtitle: String? {
+        var parts: [String] = []
+        if let project = initialProjectTitle, !project.isEmpty {
+            parts.append(project)
+        }
+        let branch = snapshot?.branch ?? initialBranch
+        if let branch, !branch.isEmpty {
+            parts.append(branch)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var isWorking: Bool {
@@ -47,8 +79,6 @@ struct ThreadView: View {
                     if let error = store.lastError, !error.isEmpty {
                         KitNotice(error, icon: .warning, tone: .error)
                     }
-
-                    metadataHeader
 
                     if let snapshot {
                         if snapshot.entries.isEmpty {
@@ -125,7 +155,7 @@ struct ThreadView: View {
                     }
 
                     KitComposer(
-                        isWorking ? "Queue a follow-up…" : "Message…",
+                        isWorking ? "Queue a follow-up…" : "Ask anything",
                         text: $draft,
                         maxLines: 6,
                         isBusy: isWorking && !hasDraft,
@@ -139,14 +169,11 @@ struct ThreadView: View {
                             }
                         },
                         leading: {
-                            // TODO(wave3): wire attachments and model picker
                             Menu {
                                 Button("Attachments (coming soon)") {}
                                     .disabled(true)
-                                Button("Model Picker (coming soon)") {}
-                                    .disabled(true)
                             } label: {
-                                Image(systemName: "plus")
+                                ConnIcon("plus")
                                     .font(.system(size: 16, weight: .medium))
                                     .foregroundStyle(theme.mutedForeground)
                                     .frame(width: 28, height: 28)
@@ -154,18 +181,29 @@ struct ThreadView: View {
                             .accessibilityLabel("More composer actions")
                         },
                         trailing: {
-                            if isWorking && hasDraft {
-                                Button {
-                                    Task {
-                                        await store.stopThread(threadId: threadId)
+                            HStack(spacing: 4) {
+                                if isWorking && hasDraft {
+                                    Button {
+                                        Task {
+                                            await store.stopThread(threadId: threadId)
+                                        }
+                                    } label: {
+                                        KitIconImage(.stop, size: 13)
+                                            .foregroundStyle(theme.destructive)
+                                            .frame(width: 28, height: 28)
                                     }
-                                } label: {
-                                    KitIconImage(.stop, size: 13)
-                                        .foregroundStyle(theme.destructive)
-                                        .frame(width: 28, height: 28)
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Stop")
                                 }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("Stop")
+                                HStack(spacing: 3) {
+                                    Image(systemName: "sparkle")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Color(red: 0.85, green: 0.47, blue: 0.34))
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundStyle(theme.mutedForeground)
+                                }
+                                .padding(.trailing, 4)
                             }
                         }
                     )
@@ -173,38 +211,52 @@ struct ThreadView: View {
                 }
             }
         }
-        .navigationTitle(displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 1) {
+                    Text(displayTitle)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(theme.foreground)
+                        .lineLimit(1)
+                    if let subtitle = displaySubtitle {
+                        Text(subtitle)
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.mutedForeground)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    if isWorking {
-                        Button(role: .destructive) {
-                            Task {
-                                await store.stopThread(threadId: threadId)
-                            }
-                        } label: {
-                            Label("Stop Run", systemImage: "stop.circle")
-                        }
+                    Button {
+                    } label: {
+                        Label("Terminal", systemImage: "terminal")
                     }
                     Button {
-                        Task {
-                            await store.settleThread(threadId: threadId, settled: true)
-                        }
                     } label: {
-                        Label("Settle Thread", systemImage: "checkmark.circle")
+                        Label("Git", systemImage: "arrow.triangle.branch")
                     }
                     Button {
-                        Task {
-                            await store.markThreadUnread(threadId: threadId)
-                        }
                     } label: {
-                        Label("Mark Unread", systemImage: "envelope.badge")
+                        Label("Open files", systemImage: "folder")
                     }
                 } label: {
-                    KitIconImage(.more, size: 16)
+                    Image(systemName: "ellipsis")
                 }
-                .accessibilityLabel("Thread actions")
+                .accessibilityLabel("More actions")
+                .accessibilityIdentifier("thread.moreButton")
+            }
+        }
+        .alert("Rename Thread", isPresented: $showingRename) {
+            TextField("Title", text: $renameDraft)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                let newTitle = renameDraft
+                Task {
+                    await store.renameThread(threadId: threadId, title: newTitle)
+                }
             }
         }
         .task(id: threadId) {
@@ -212,24 +264,6 @@ struct ThreadView: View {
         }
         .onDisappear {
             store.closeThread(threadId)
-        }
-    }
-
-    @ViewBuilder
-    private var metadataHeader: some View {
-        let hasBranch = !(displayBranch?.isEmpty ?? true)
-        let hasModel = !(snapshot?.modelLabel?.isEmpty ?? true)
-        if hasBranch || hasModel {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Kit.Space.s) {
-                    if let branch = displayBranch, !branch.isEmpty {
-                        KitBadge(branch, icon: .branch, monospaced: true)
-                    }
-                    if let model = snapshot?.modelLabel, !model.isEmpty {
-                        KitBadge(model)
-                    }
-                }
-            }
         }
     }
 

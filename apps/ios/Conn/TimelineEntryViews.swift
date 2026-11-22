@@ -4,6 +4,7 @@ import SwiftUI
 struct WorkGroupCard: View {
     let group: FfiWorkGroupTiming
     let entries: [FfiTimelineEntry]
+    @Environment(\.connTheme) private var theme
     @State private var expanded = false
 
     private var title: String {
@@ -18,26 +19,148 @@ struct WorkGroupCard: View {
     }
 
     var body: some View {
-        KitCollapsibleCard(
-            title,
-            status: group.hasActive ? .working : .ok,
-            trailingText: entries.count > 1 ? "\(entries.count) items" : nil,
-            isExpanded: $expanded
-        ) {
-            VStack(alignment: .leading, spacing: Kit.Space.s) {
-                ForEach(entries, id: \.entryId) { entry in
-                    switch entry {
-                    case let .thinking(_, text, streaming, _, _):
-                        ThinkingRow(text: text, streaming: streaming)
-                    case let .tool(_, kind, title, detail, status, _, _, durationMs):
-                        ToolRow(kind: kind, title: title, detail: detail, status: status, durationMs: durationMs)
-                    default:
-                        EmptyView()
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(Kit.Motion.fast) {
+                    expanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(theme.mutedForeground)
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.mutedForeground)
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if expanded {
+                VStack(alignment: .leading, spacing: Kit.Space.s) {
+                    ForEach(entries, id: \.entryId) { entry in
+                        switch entry {
+                        case let .thinking(_, text, streaming, _, _):
+                            ThinkingRow(text: text, streaming: streaming)
+                        case let .tool(_, kind, title, detail, status, _, _, durationMs):
+                            ToolRow(kind: kind, title: title, detail: detail, status: status, durationMs: durationMs)
+                        default:
+                            EmptyView()
+                        }
                     }
                 }
+                .padding(.bottom, 4)
             }
+
+            Divider()
+                .overlay(theme.border.opacity(0.6))
         }
         .accessibilityIdentifier("thread.workGroup.\(group.id)")
+    }
+}
+
+private struct AgentMessageCard: View {
+    let text: String
+    @Environment(\.connTheme) private var theme
+    @State private var expanded = false
+
+    var body: some View {
+        Button {
+            withAnimation(Kit.Motion.fast) {
+                expanded.toggle()
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text("Agent")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(theme.foreground)
+                    Text("·")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.mutedForeground)
+                    Text("Agent message")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.mutedForeground)
+                    Spacer()
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.mutedForeground)
+                }
+                Text(text)
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.mutedForeground)
+                    .lineLimit(expanded ? nil : 2)
+                    .multilineTextAlignment(.leading)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.card)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(theme.border.opacity(0.7), lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct AssistantMessageFooter: View {
+    let markdown: String
+    let timestamp: String?
+    @Environment(\.connTheme) private var theme
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Button {
+                UIPasteboard.general.string = markdown
+                copied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    copied = false
+                }
+            } label: {
+                ConnIcon(copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.mutedForeground)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Copy message")
+
+            Button {
+            } label: {
+                ConnIcon("arrow.triangle.branch")
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.mutedForeground)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Fork from here")
+
+            if let timeLabel = formattedClockTime(from: timestamp) {
+                Text(timeLabel)
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(theme.mutedForeground)
+            }
+            Spacer()
+        }
+        .padding(.top, 4)
+    }
+
+    private func formattedClockTime(from raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+        guard let date else { return nil }
+        let fmt = DateFormatter()
+        fmt.timeStyle = .short
+        fmt.dateStyle = .none
+        return fmt.string(from: date)
     }
 }
 
@@ -51,31 +174,28 @@ struct TimelineEntryRow: View {
     var body: some View {
         switch entry {
         case let .user(_, text, _, createdByAgent, isSteer, _, attachments):
-            HStack {
-                Spacer(minLength: 48)
-                VStack(alignment: .trailing, spacing: Kit.Space.xs) {
-                    if createdByAgent || isSteer {
-                        HStack(spacing: Kit.Space.xs) {
-                            if createdByAgent {
-                                KitBadge("Agent")
-                            }
-                            if isSteer {
-                                KitBadge("Steer")
-                            }
+            if createdByAgent {
+                AgentMessageCard(text: text)
+            } else {
+                HStack {
+                    Spacer(minLength: 48)
+                    VStack(alignment: .trailing, spacing: Kit.Space.xs) {
+                        if isSteer {
+                            KitBadge("Steer")
                         }
-                    }
-                    Text(text)
-                        .font(.kitBody)
-                        .foregroundStyle(theme.messageForeground)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, Kit.Space.xl)
-                        .padding(.vertical, Kit.Space.m + 2)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(theme.messageSurface)
-                        )
-                    if !attachments.isEmpty {
-                        KitBadge("\(attachments.count) attachment\(attachments.count == 1 ? "" : "s")")
+                        Text(text)
+                            .font(.kitBody)
+                            .foregroundStyle(theme.messageForeground)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, Kit.Space.xl)
+                            .padding(.vertical, Kit.Space.m + 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(theme.messageSurface)
+                            )
+                        if !attachments.isEmpty {
+                            KitBadge("\(attachments.count) attachment\(attachments.count == 1 ? "" : "s")")
+                        }
                     }
                 }
             }
@@ -101,11 +221,13 @@ struct TimelineEntryRow: View {
                 }
             }
 
-        case let .assistant(_, markdown, streaming, _, _, _):
+        case let .assistant(_, markdown, streaming, timestamp, _, _):
             VStack(alignment: .leading, spacing: Kit.Space.xs) {
                 MarkdownView(source: markdown)
                 if streaming {
                     KitStatusIcon(.working, size: 12, label: "Streaming")
+                } else {
+                    AssistantMessageFooter(markdown: markdown, timestamp: timestamp)
                 }
             }
 
