@@ -121,12 +121,12 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
 
   return (
     <div
-      className="@container/changed-files mt-4 rounded-card surface-card"
+      className="@container/changed-files mt-4 rounded-card surface-panel"
       data-changed-files-state="tree"
     >
       <div
         data-changed-files-header=""
-        className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-t-card surface-card px-4 py-2"
+        className="sticky top-2 z-10 flex items-center justify-between gap-2 rounded-t-card surface-card-fill px-4 py-2"
       >
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs font-medium text-foreground">
           <span>

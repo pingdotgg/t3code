@@ -1371,6 +1371,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background: var(--card-background, var(--card-fill));
   box-shadow: var(--card-shadow, none);
 }
+/* The fill alone, for an opaque part inside a panel that paints the rim. */
+@utility surface-card-fill {
+  background: var(--card-fill);
+}
 @utility surface-card-settings {
   background: var(--card-settings-background, var(--card-settings-fill));
   box-shadow: var(--card-shadow, none);
