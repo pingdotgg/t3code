@@ -5788,6 +5788,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           )
             return;
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
+          if (
+            update.sessionUpdate === "tool_call_update" &&
+            endedCarriedToolCallIds.has(sessionScopedId(notification.sessionId, update.toolCallId))
+          )
+            return;
+          const carriedBackgroundTool =
+            update.sessionUpdate === "tool_call_update"
+              ? carryoverBackgroundTools.get(update.toolCallId)
+              : undefined;
+          if (carriedBackgroundTool?.sessionId === notification.sessionId) {
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              yield* emitTool(carriedBackgroundTool.context, event.toolCall);
+              const status = toolStatus(
+                carriedBackgroundTool.context.tools.get(event.toolCall.toolCallId)?.status,
+              );
+              if (status !== "completed" && status !== "failed") continue;
+              carryoverBackgroundTools.delete(event.toolCall.toolCallId);
+              yield* markBackgroundTaskEnded(carriedBackgroundTool.taskId);
+            }
+            return;
+          }
           if (yield* projectDetachedBackgroundCommand(notification, context)) return;
           if (flavor.replyEndsWithUsageUpdate === true) {
             if (context === null) {
@@ -5866,28 +5888,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 // Agents like Kimi report usage after the prompt settles, when no run receives it.
                 ...(context === null ? { sessionScoped: true } : {}),
               });
-            }
-            return;
-          }
-          if (
-            update.sessionUpdate === "tool_call_update" &&
-            endedCarriedToolCallIds.has(sessionScopedId(notification.sessionId, update.toolCallId))
-          )
-            return;
-          const carriedBackgroundTool =
-            update.sessionUpdate === "tool_call_update"
-              ? carryoverBackgroundTools.get(update.toolCallId)
-              : undefined;
-          if (carriedBackgroundTool?.sessionId === notification.sessionId) {
-            for (const event of parseSessionUpdateEvent(notification).events) {
-              if (event._tag !== "ToolCallUpdated") continue;
-              yield* emitTool(carriedBackgroundTool.context, event.toolCall);
-              const status = toolStatus(
-                carriedBackgroundTool.context.tools.get(event.toolCall.toolCallId)?.status,
-              );
-              if (status !== "completed" && status !== "failed") continue;
-              carryoverBackgroundTools.delete(event.toolCall.toolCallId);
-              yield* markBackgroundTaskEnded(carriedBackgroundTool.taskId);
             }
             return;
           }

@@ -4427,6 +4427,7 @@ describe("AcpAdapterV2", () => {
       );
       assert.equal(finished?.id, execUpdates.at(-1)?.id);
       assert.equal(finished?.runId, execUpdates.at(-1)?.runId);
+      assert.isFalse(yield* shell.runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
