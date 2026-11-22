@@ -121,6 +121,25 @@ describe("SchemaGetter", () => {
     await encoding("f", "Zg==")
   })
 
+  it.effect("text encoding getters report unpaired surrogates as invalid values", () =>
+    Effect.gen(function*() {
+      const input = "a\uD800b"
+      for (
+        const getter of [
+          SchemaGetter.encodeBase64<string>(),
+          SchemaGetter.encodeBase64Url<string>(),
+          SchemaGetter.encodeBase64Url<string>({ padding: true }),
+          SchemaGetter.encodeHex<string>(),
+          SchemaGetter.encodeUriComponent<string>()
+        ]
+      ) {
+        const issue = yield* SchemaGetter.run(getter, Option.some(input), { reportInput: true }).pipe(Effect.flip)
+        assert.instanceOf(issue, SchemaIssue.InvalidValue)
+        assert(SchemaIssue.hasInput(issue))
+        assert.strictEqual(issue.input, input)
+      }
+    }))
+
   it("splitKeyValue trims and keeps empty values when requested", async () => {
     const input = " b = x ,empty=,blank= , =ignored,novalue"
     await makeAsserts(SchemaGetter.splitKeyValue<string>())(input, { " b ": " x ", blank: " ", " ": "ignored" })
