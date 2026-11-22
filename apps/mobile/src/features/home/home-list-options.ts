@@ -1,11 +1,12 @@
 import type { EnvironmentId, SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { DEFAULT_SIDEBAR_PROJECT_SORT_ORDER } from "@t3tools/contracts";
-import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { createContext, createElement, useContext, useState, type PropsWithChildren } from "react";
 
 import type { ThreadListFilters } from "../../persistence/mobile-preferences";
-import { updateMobilePreferencesAtom } from "../../state/preferences";
+import { saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import type { HomeProjectSortOrder } from "./homeThreadList";
 
 export interface HomeListOptions {
@@ -48,7 +49,7 @@ export function HomeListOptionsProvider({
   const registry = useContext(RegistryContext);
   const [optionsAtom] = useState(() => Atom.make(defaultHomeListOptions(savedFilters)));
   const options = useAtomValue(optionsAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   // Only the scope persists; the sort order is per session. Updates read the
   // registry, so several in one event each build on the last and save it.
   const updateOptions = (patch: Partial<HomeListOptions>) => {
@@ -59,7 +60,7 @@ export function HomeListOptionsProvider({
       next.selectedEnvironmentId !== current.selectedEnvironmentId ||
       next.selectedProjectKey !== current.selectedProjectKey
     ) {
-      savePreferences({
+      void savePreferences({
         threadListFilters: {
           environmentId: next.selectedEnvironmentId,
           projectKey: next.selectedProjectKey,

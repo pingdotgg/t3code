@@ -1,14 +1,20 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  type ChatAttachment,
+  type OrchestrationV2Command,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
+import { rpcAuthorizationError } from "../auth/RpcAuthorization.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
+import { isProviderSignOutPrompt } from "./CommandPolicy.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -85,11 +91,52 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
   return { ...command, attachments: message?.attachments ?? [] };
 });
 
+/**
+ * For a caller without `providers:manage`. An edit that omits `attachments` keeps the queued
+ * ones, so `/logout` signs out only when the queued message has none. The edit goes on with
+ * the files read here, so an edit racing this one cannot strip them afterwards.
+ */
+export const withQueuedAttachmentsOnSignOutText = Effect.fn(
+  "ThreadMessageIntake.withQueuedAttachmentsOnSignOutText",
+)(function* (command: Extract<OrchestrationV2Command, { readonly type: "queued-run.edit" }>) {
+  if (
+    command.attachments !== undefined ||
+    !isProviderSignOutPrompt({ text: command.text, attachments: [] })
+  ) {
+    return command;
+  }
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  // A retry of an accepted edit replays its receipt, even after its run left the queue.
+  if (yield* threads.hasReceipt(command.commandId)) return command;
+  const { runs } = yield* threads.getThreadRecords(command.threadId, ["runs"], {
+    runIds: [command.runId],
+  });
+  const queuedRun = runs.find((run) => run.id === command.runId && run.status === "queued");
+  const attachments =
+    queuedRun === undefined
+      ? []
+      : ((yield* threads.getMessagesById(command.threadId, [queuedRun.userMessageId])).get(
+          queuedRun.userMessageId,
+        )?.attachments ?? []);
+  if (attachments.length === 0) return yield* rpcAuthorizationError(AuthProvidersManageScope);
+  return { ...command, attachments };
+});
+
+/**
+ * `sender.managesProviders` is whether the caller holds `providers:manage`. RPC authorization
+ * has already checked every command whose payload shows a provider sign-out; a queued edit
+ * that keeps its attachments is the one case decided here.
+ */
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
+  sender: { readonly managesProviders: boolean },
 ) {
   const command =
-    incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
+    incoming.type === "message.dispatch"
+      ? yield* withGuestAttachments(incoming)
+      : incoming.type === "queued-run.edit" && !sender.managesProviders
+        ? yield* withQueuedAttachmentsOnSignOutText(incoming)
+        : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
