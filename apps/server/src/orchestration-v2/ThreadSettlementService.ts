@@ -3,6 +3,7 @@ import {
   isPullRequestWatchTask,
   turnItemUpdateCanEndBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { resolveProjectScripts, settleProjectScript } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -20,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
@@ -758,7 +760,21 @@ export const make = Effect.gen(function* () {
       if (settled.deletedAt !== null || settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
       const worktreePath = settled.worktreePath;
-      if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
+      if (worktreePath === null) return;
+      if (!(yield* fileSystem.exists(worktreePath))) {
+        // A settle script that tears something down would otherwise be skipped with no trace.
+        const project = Option.getOrUndefined(yield* projectStore.getShell(settled.projectId));
+        if (
+          project !== undefined &&
+          settleProjectScript(resolveProjectScripts(yield* settingsService.getSettings, project))
+        ) {
+          yield* Effect.logWarning(
+            "settle script skipped: the thread's worktree no longer exists",
+            { threadId, worktreePath },
+          );
+        }
+        return;
+      }
       // Recheck after closing and worktree I/O; only live, settled threads may run scripts.
       const thread = yield* projections.getThread(threadId);
       if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;

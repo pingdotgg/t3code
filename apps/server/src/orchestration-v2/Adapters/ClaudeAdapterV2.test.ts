@@ -42,6 +42,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
+  OrchestrationV2ProviderTurnTokenUsage,
   ProjectId,
   ProviderInstanceId,
   type ResolvedProviderInstanceEnvironment,
@@ -112,6 +113,7 @@ import {
 } from "../../provider/ClaudeCodeModelRoutes.ts";
 import { resolveProviderCatalog } from "../../provider/ModelManifest.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { AGENT_FEEDBACK_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -911,8 +913,12 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
   });
 });
 
-describe("ClaudeAdapterV2 device instructions", () => {
-  const options = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+describe("ClaudeAdapterV2 T3 tool instructions", () => {
+  const options = (input: {
+    readonly mcp: boolean;
+    readonly deviceToolsAvailable: boolean;
+    readonly agentFeedback?: "off" | "on-request" | "auto";
+  }) =>
     ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: {
         instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -925,9 +931,10 @@ describe("ClaudeAdapterV2 device instructions", () => {
         ? { mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } } }
         : {}),
       deviceToolsAvailable: input.deviceToolsAvailable,
+      agentFeedback: input.agentFeedback ?? "off",
       environment: {},
     });
-  const append = (input: { readonly mcp: boolean; readonly deviceToolsAvailable: boolean }) =>
+  const append = (input: Parameters<typeof options>[0]) =>
     (options(input).systemPrompt as { readonly append?: string }).append ?? "";
 
   it("gives a session with device access the device block and the ToolSearch line to load it", () => {
@@ -941,12 +948,20 @@ describe("ClaudeAdapterV2 device instructions", () => {
     assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## T3 Code devices");
   });
 
+  it("gives the agent feedback line only to a session with T3 tools", () => {
+    const feedback = (mcp: boolean, agentFeedback: "off" | "auto") =>
+      append({ mcp, deviceToolsAvailable: false, agentFeedback }).includes("t3_feedback");
+    assert.include(
+      append({ mcp: true, deviceToolsAvailable: false, agentFeedback: "auto" }),
+      AGENT_FEEDBACK_INSTRUCTIONS.auto,
+    );
+    assert.isFalse(feedback(true, "off"));
+    assert.isFalse(feedback(false, "auto"));
+  });
+
   it("gives native subagents the device block only in a session with device access", async () => {
     // Subagents start from their task prompt, not the parent's system prompt.
-    const subagentContext = (input: {
-      readonly mcp: boolean;
-      readonly deviceToolsAvailable: boolean;
-    }) =>
+    const subagentContext = (input: Parameters<typeof options>[0]) =>
       Promise.all(
         (options(input).hooks?.SubagentStart ?? []).flatMap((matcher) =>
           matcher.hooks.map((hook) =>
@@ -975,8 +990,21 @@ describe("ClaudeAdapterV2 device instructions", () => {
     ]);
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
+    // A custom subagent can lack T3 tools even when this session has them.
+    assert.notInclude(
+      JSON.stringify(
+        await subagentContext({
+          mcp: true,
+          deviceToolsAvailable: true,
+          agentFeedback: "auto",
+        }),
+      ),
+      "t3_feedback",
+    );
   });
 });
+
+const decodeProviderTurnTokenUsage = Schema.decodeSync(OrchestrationV2ProviderTurnTokenUsage);
 
 describe("ClaudeAdapterV2 context usage", () => {
   it("dates cache expiry from the request start, not the response end", () => {
@@ -992,6 +1020,28 @@ describe("ClaudeAdapterV2 context usage", () => {
       DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
     );
     assert.strictEqual(usage.promptCacheExpiresAt, "2026-08-29T00:05:00.000Z");
+  });
+
+  it("counts missing, negative, or non-finite usage fields as zero", () => {
+    const partialUsage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+      {
+        input_tokens: 1_200,
+        cache_creation_input_tokens: Number.NaN,
+        cache_read_input_tokens: -5,
+        output_tokens: undefined,
+      },
+      200_000,
+      "2026-08-29T00:03:00.000Z",
+    );
+    assert.deepEqual(decodeProviderTurnTokenUsage(partialUsage), {
+      usedTokens: 1_200,
+      maxTokens: 200_000,
+      inputTokens: 1_200,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+      updatedAt: "2026-08-29T00:03:00.000Z",
+    });
   });
 });
 
@@ -10347,6 +10397,90 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "completed");
       assert.deepEqual(reportedContextTokens(harness.events), [38_123]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("ignores empty stream usage frames and accepts partial usage deltas from proxies", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-empty-start-usage"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      // Some Anthropic-compatible proxies send an empty `usage: {}` object on
+      // message_start or omit fields from message_delta / assistant snapshots.
+      const frames = [
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "msg_empty_first", usage: {} },
+        }),
+        usageSnapshotFrame("msg_empty_first", "00000000-0000-4000-8000-000000000674", {}),
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "tool_use", stop_sequence: null },
+          usage: { input_tokens: 12_345 },
+        }),
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "msg_empty_second", usage: {} },
+        }),
+        usageSnapshotFrame("msg_empty_second", "00000000-0000-4000-8000-000000000675", {
+          input_tokens: 12_500,
+        }),
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { output_tokens: 80 },
+        }),
+        usageStreamFrame({
+          type: "message_start",
+          message: { id: "msg_null_usage", usage: null },
+        }),
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { input_tokens: 12_600, output_tokens: 40 },
+        }),
+        usageSnapshotFrame("msg_null_usage", "00000000-0000-4000-8000-000000000676", {}),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000677", result: "Done." }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      const tokenUsages = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+          ? [decodeProviderTurnTokenUsage(event.providerTurn.tokenUsage)]
+          : [],
+      );
+      assert.deepEqual(
+        tokenUsages.map((usage) => ({
+          usedTokens: usage.usedTokens,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          cachedInputTokens: usage.cachedInputTokens,
+        })),
+        [
+          { usedTokens: 12_345, inputTokens: 12_345, outputTokens: 0, cachedInputTokens: 0 },
+          { usedTokens: 12_500, inputTokens: 12_500, outputTokens: 0, cachedInputTokens: 0 },
+          { usedTokens: 12_580, inputTokens: 12_500, outputTokens: 80, cachedInputTokens: 0 },
+          { usedTokens: 12_640, inputTokens: 12_600, outputTokens: 40, cachedInputTokens: 0 },
+        ],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

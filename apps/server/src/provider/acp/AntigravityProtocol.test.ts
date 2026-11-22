@@ -535,24 +535,42 @@ describe("Antigravity tool results", () => {
     );
   });
 
+  it("keeps the start of a long command line, where the program and target are", () => {
+    const head = "cat > notes.md <<'EOF'";
+    const commandLine = `${head}\n${"note line\n".repeat(1_000)}EOF`;
+    const toolCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...commandStarted,
+        update: { ...commandStarted.update, rawInput: { CommandLine: commandLine } },
+      }).toolCall,
+    );
+    expect(toolCall.command?.startsWith(head)).toBe(true);
+    expect(toolCall.command).not.toContain("[Earlier output truncated]");
+    expect((toolCall.data.rawInput as { CommandLine: string }).CommandLine.startsWith(head)).toBe(
+      true,
+    );
+  });
+
   it("keeps 1.5 command input and output valid Unicode when cut", () => {
     const tail = `${"x".repeat(7_982)}build completed\r\n`;
     const output = `Command output:\nprefix\r\n🚀${tail}`;
     const expected = `[Earlier output truncated]\n\n${tail}`;
+    const head = "x".repeat(7_999);
+    const expectedCommand = `${head}\n\n[Command truncated]`;
     const toolCall = normalizeAntigravityToolCall(
       parseToolUpdate({
         ...commandCompleted,
         update: {
           ...commandCompleted.update,
-          rawInput: { CommandLine: output },
+          rawInput: { CommandLine: `${head}🚀 --flag` },
           rawOutput: { output, exit_code: 0 },
           content: [{ type: "content", content: { type: "text", text: output } }],
         },
       }).toolCall,
     );
-    expect(toolCall.command).toBe(expected.trimEnd());
+    expect(toolCall.command).toBe(expectedCommand);
     expect(toolCall.data).toMatchObject({
-      rawInput: { CommandLine: expected },
+      rawInput: { CommandLine: expectedCommand },
       rawOutput: { output: expected },
       content: [{ content: { text: expected.trimEnd() } }],
     });

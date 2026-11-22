@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  PeerLinkThreadReadError,
   WS_METHODS,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadStreamItem,
@@ -15,6 +16,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { TestClock } from "effect/testing";
 
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
@@ -25,7 +27,7 @@ import { createPeerLinkEnvironmentAtoms, linkThroughRoutes } from "./peerLinks.t
 
 // regression: #40544 earlier messages vanished when a linked thread's view opened again
 it.effect(
-  "keeps loaded messages when a linked thread's view opens again on the same snapshot",
+  "keeps loaded messages when a linked thread retries and reopens on the same snapshot",
   () =>
     Effect.gen(function* () {
       const recent = v2MessageRow("Recent message", 2);
@@ -38,7 +40,7 @@ it.effect(
         hasMoreHistory: true,
       });
       const subscriptions = yield* Queue.unbounded<{
-        items: Queue.Queue<OrchestrationV2ThreadStreamItem>;
+        items: Queue.Queue<OrchestrationV2ThreadStreamItem, PeerLinkThreadReadError>;
         stopped: Deferred.Deferred<void>;
       }>();
       const requested: string[] = [];
@@ -46,7 +48,10 @@ it.effect(
         [WS_METHODS.peerLinksSubscribeThread]: () =>
           Stream.unwrap(
             Effect.gen(function* () {
-              const items = yield* Queue.unbounded<OrchestrationV2ThreadStreamItem>();
+              const items = yield* Queue.unbounded<
+                OrchestrationV2ThreadStreamItem,
+                PeerLinkThreadReadError
+              >();
               const stopped = yield* Deferred.make<void>();
               yield* Effect.addFinalizer(() => Deferred.succeed(stopped, undefined));
               yield* Queue.offer(subscriptions, { items, stopped });
@@ -102,8 +107,26 @@ it.effect(
         older.sourceItemId,
         recent.sourceItemId,
       ]);
+      const unreachable = new PeerLinkThreadReadError({
+        reason: "unreachable",
+        label: "Linked",
+        message: "The linked machine is temporarily unreachable.",
+      });
+      yield* Queue.fail(first.items, unreachable);
+      expect((yield* Queue.take(views)).error).toBe(unreachable);
+
+      registry.refresh(links.threadView(target));
+      yield* TestClock.adjust(0);
+      const retry = yield* Queue.poll(subscriptions);
+      if (Option.isNone(retry)) throw new Error("Refresh did not start a new linked thread read");
+      yield* Queue.offer(retry.value.items, snapshot("before-recent"));
+      const recovered = yield* Queue.take(views).pipe(
+        Effect.repeat({ until: (view) => view.error === null }),
+      );
+      expect(visibleMessages(recovered)).toEqual([older.sourceItemId, recent.sourceItemId]);
+
       unmount();
-      yield* Deferred.await(first.stopped);
+      yield* Deferred.await(retry.value.stopped);
 
       open();
       const reopened = yield* Queue.take(subscriptions);
