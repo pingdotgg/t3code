@@ -1,28 +1,46 @@
 /// <reference lib="dom" />
 import {
+  ProjectSnapshot,
   SourceControlProviderKind,
   type PullRequestDetail,
   type PullRequestReviewGuideResult,
 } from "@t3tools/contracts";
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { rpcClient, runPromise, test, WEB } from "./t3.ts";
+import { makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
 
 const repository = "scenario/demo";
+
+const projectIn = Effect.fn("scenario.projectIn")(
+  function* (origin: string, workspaceRoot: string) {
+    const issued = yield* makeState(T3_HOME).cli(["auth", "session", "issue", "--token-only"]);
+    const { projects } = yield* HttpClient.execute(
+      HttpClientRequest.get(`${origin}/api/projects`).pipe(
+        HttpClientRequest.bearerToken(issued.stdout.trim()),
+      ),
+    ).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(ProjectSnapshot)),
+    );
+    const project = projects.find((entry) => entry.workspaceRoot === workspaceRoot);
+    if (!project) throw new Error("Scenario project is missing.");
+    const rpc = yield* rpcClient(T3_HOME, origin);
+    yield* rpc["server.updateSettings"]({ patch: { reviewGuidesEnabled: true } });
+    return project;
+  },
+  Effect.scoped,
+  Effect.provide(FetchHttpClient.layer),
+);
 
 test(
   "The Guide tab reports that it lost access to a running guide",
   WEB,
   async ({ t3, app, browser, screen }) => {
-    const project = await t3.createProject("demo");
-    await runPromise(
-      Effect.gen(function* () {
-        const rpc = yield* rpcClient(T3_HOME, app.baseUrl ?? "");
-        yield* rpc["server.updateSettings"]({ patch: { reviewGuidesEnabled: true } });
-      }).pipe(Effect.scoped),
-    );
+    const workspace = await t3.project("demo");
+    const project = await runPromise(projectIn(app.baseUrl ?? "", workspace));
     const reference = { projectId: project.id, host: "gitlab.com", repository, number: 42 };
     const now = "2026-10-01T00:00:00.000Z";
     const detail = {
