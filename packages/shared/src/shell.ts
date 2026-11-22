@@ -1012,14 +1012,15 @@ const runXcrunFindGit = (xcrun: string, env: NodeJS.ProcessEnv) =>
 
 // xcrun honors DEVELOPER_DIR and the `xcode-select` choice, as the shim does.
 // It takes ~15 ms and reruns when the cached answer expires, so it must not block the event loop.
-export const locateXcodeGitWithXcrun = (
+export const locateXcodeGitWithXcrun = Effect.fn("shell.locateXcodeGitWithXcrun")(function* (
   env: NodeJS.ProcessEnv,
   options: { readonly xcrun?: string } = {},
-): Effect.Effect<string | undefined> =>
-  runXcrunFindGit(options.xcrun ?? "/usr/bin/xcrun", env).pipe(
+) {
+  return yield* runXcrunFindGit(options.xcrun ?? "/usr/bin/xcrun", env).pipe(
     Effect.timeoutOption(XCRUN_DEADLINE),
     Effect.map((found) => Option.getOrUndefined(Option.flatten(found))),
   );
+});
 
 export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
   "@t3tools/shared/shell/XcodeGitLocation",
