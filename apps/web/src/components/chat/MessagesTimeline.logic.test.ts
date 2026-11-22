@@ -307,6 +307,30 @@ describe("deriveMessagesTimelineRows", () => {
     });
   });
 
+  it("labels an Antigravity read of a profile skill's SKILL.md as the skill", () => {
+    const fixture = makeStreamingTimelineFixture();
+    const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
+    if (source.item.type !== "dynamic_tool") throw new Error("Expected tool fixture");
+    const path =
+      "/home/user/.t3/userdata/providers/antigravity/ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32/config/skills/effect/SKILL.md";
+    const item = {
+      ...source.item,
+      type: "dynamic_tool" as const,
+      status: "completed" as const,
+      title: "Read",
+      toolName: "Read",
+      input: { Path: path, path },
+    };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [{ ...source, item }],
+      optimisticMessages: [],
+    });
+    const entry = entries.find((row) => row.kind === "work");
+    expect(entry?.kind === "work" && workEntryDisplayLabel(entry.entry, undefined)).toBe(
+      "Skill: effect",
+    );
+  });
+
   it.each(["waiting", "completed"] as const)(
     "groups approval and user-input requests with commands without expanding them when %s",
     (status) => {
